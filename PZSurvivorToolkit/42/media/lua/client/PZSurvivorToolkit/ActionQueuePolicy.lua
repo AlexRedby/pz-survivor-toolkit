@@ -731,10 +731,12 @@ function Policy.installContracts()
         if edit then
             local result=resources(action)
             result.edit=edit
-            result.capacityNonIncreasing=not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
+            local extraFoodWeight=action.item:haveExtraItems()
+            result.capacityNonIncreasing=not extraFoodWeight
+                and not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
             -- Replacement food decreases in weight only while it survives every
             -- portion. A transfer edit can otherwise bypass the food component.
-            result.capacityRequiresEdit=not result.capacityNonIncreasing
+            result.capacityRequiresEdit=not extraFoodWeight and not result.capacityNonIncreasing
             result.targets[action.character]=true
             for _,resource in ipairs(edit.resources) do
                 if resource.domain=="item" then
@@ -1176,6 +1178,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
     local function fits(container, weight)
         local load = loads[container]
         if not load then
+            if not ItemEditAdapters or not ItemEditAdapters.weightInspectionSafe(container) then return false end
             if cartCapacity and (not carts or not carts.capacitySafe or not carts.capacitySafe(container)) then return false end
             load = {container:getCapacityWeight(), container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
             loads[container] = load
@@ -1205,6 +1208,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 if seen[id] then return true end
                 seen[id] = true
                 if kind == "CandleLit" or kind == "Lantern_HurricaneLit" then return false end
+                if not ItemEditAdapters or not ItemEditAdapters.weightInspectionSafe(item) then return false end
                 local weight = item:getUnequippedWeight()
                 if not finiteWeight(weight) then return false end
                 if destinationCarried then incoming[root] = incoming[root] + weight end

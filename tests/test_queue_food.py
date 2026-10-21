@@ -33,14 +33,15 @@ class FoodAdapterTests(unittest.TestCase):
             smart, utensil, cookable = case in food.SMART_CASES, case in food.UTENSIL_CASES, case in food.COOKABLE_CASES
             replacement = case in food.REPLACEMENT_CASES
             custom_weight = case in food.CUSTOM_WEIGHT_CASES
-            consumption = custom_weight or case in food.CONSUMPTION_CASES
+            extra_weight = case in food.EXTRA_WEIGHT_CASES
+            consumption = extra_weight or custom_weight or case in food.CONSUMPTION_CASES
             thermal = cookable or replacement
             cooked = case in (food.COOKED_MOVE_CASE, food.COOKED_CANCEL_CASE)
-            base_hunger = -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
-            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE, food.UTENSIL_CANCEL_CASE, food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE, food.REPLACEMENT_CANCEL_CASE, food.CONSUMPTION_CANCEL_CASE, food.CUSTOM_WEIGHT_CANCEL_CASE) and enabled
+            base_hunger = -.06 if extra_weight else -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
+            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE, food.UTENSIL_CANCEL_CASE, food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE, food.REPLACEMENT_CANCEL_CASE, food.CONSUMPTION_CANCEL_CASE, food.CUSTOM_WEIGHT_CANCEL_CASE, food.EXTRA_WEIGHT_CANCEL_CASE) and enabled
             base = 100 + 10 * index
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', bagCount=1,
-                        foodId=base + 1, foodType='Base.CannedPeachesOpen' if consumption else 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal',
+                        foodId=base + 1, foodType='Base.Salad' if extra_weight else 'Base.CannedPeachesOpen' if consumption else 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal',
                         baseHunger=base_hunger, remaining=-.3 if smart else base_hunger,
                         source='bag' if bag else 'root', foodCount=1, foodTypeCount=1, deleted=False,
                         anchorId=base + 2, anchorType='Base.WaterBottle', anchorAmount=1.0,
@@ -51,8 +52,11 @@ class FoodAdapterTests(unittest.TestCase):
             if replacement:
                 prep.update(replacementType='Base.Toast', replacementCount=0, cookingTime=0)
             if consumption:
-                prep.update(consumptionReplacementType='Base.TinCanEmpty', consumptionReplacementCount=0,
-                            foodWeight=1.1 if custom_weight else .8, customWeight=custom_weight, extraItems=False)
+                prep.update(consumptionReplacementType='Base.Bowl' if extra_weight else 'Base.TinCanEmpty', consumptionReplacementCount=0,
+                            foodWeight=.62 if extra_weight else 1.1 if custom_weight else .8, customWeight=custom_weight, extraItems=extra_weight)
+            if extra_weight:
+                prep.update(extraTypes=['Base.Tomato'], baseFoodWeight=.5, extraScriptWeight=.2, emptyWeight=.5,
+                            foodThirstChange=-.04, extraIngredientCount=0)
             if utensil:
                 prep.update(forkId=base + 3, forkType='Base.Fork', forkCount=1,
                             forkSource='bag' if case == food.UTENSIL_MOVE_CASE else 'root',
@@ -60,13 +64,15 @@ class FoodAdapterTests(unittest.TestCase):
                             spoonId=base + 4, spoonType='Base.Spoon', spoonCount=1,
                             spoonSource='root' if case == food.UTENSIL_MOVE_CASE else 'bag', spoonCondition=5)
             fraction = (.125 if cancel else .75) if utensil else (.375 if cancel else .5) if smart else 1 if depletion else .5 if bag else .25 if cancel else .75
-            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if thermal else set()) | (food.REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (food.CONSUMPTION_RECEIPT_KEYS if consumption else set())}
+            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if thermal else set()) | (food.REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (food.CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (food.EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set())}
             receipt.update(remaining=prep['remaining'] - prep['baseHunger'] * fraction if smart else prep['baseHunger'] * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
                            foodCount=0 if depletion else 1, foodTypeCount=0 if depletion else 1, deleted=depletion,
                            anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] + prep['baseHunger'] * fraction * (1.3 if cooked else 1),
                            thirst=.55 - (.1 * fraction if cookable and not cooked else 0))
             if consumption:
-                receipt['foodWeight'] = prep['foodWeight'] if custom_weight else .2 + .6 * (1 - fraction)
+                receipt['foodWeight'] = .5 + .12 * (1 - fraction) if extra_weight else prep['foodWeight'] if custom_weight else .2 + .6 * (1 - fraction)
+            if extra_weight:
+                receipt.update(foodThirstChange=-.04 * (1 - fraction), thirst=receipt['thirst'] - .04 * fraction)
             commands = [dict(id=base + 1, portion=portion, baseHunger=prep['baseHunger'], dispatchRemaining=prep['remaining'],
                              dispatchSource=prep['source'], menuDispatched=not bag, nativeDuration=464 if portion == 1 else 232,
                              progress=not (cancel and n == 0), cancelled=cancel and n == 0, pickupObserved=bag)
@@ -83,7 +89,7 @@ class FoodAdapterTests(unittest.TestCase):
                 for command, goal in zip(commands, (15, 5)):
                     command.update(smartGoal=goal, dispatchHunger=prep['hunger'])
             edit = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE, food.CUSTOM_WEIGHT_MOVE_CASE),
+                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE, food.CUSTOM_WEIGHT_MOVE_CASE, food.EXTRA_WEIGHT_MOVE_CASE),
                         waitingCancel=cancel, moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag,
                         manualPickup=bag, untouchedBefore=True, nativeDurationsUnchanged=True,
                         order=[1] if bag else [1, 2] if depletion else [2] if cancel else [2, 1] if enabled else [1, 2])
@@ -113,6 +119,25 @@ class FoodAdapterTests(unittest.TestCase):
         (self.root / 'client1-launch.log').write_text(client + (authority if self.selection['kind'] == 'sp' or wrong_authority else ''))
         (self.root / 'server-launch.log').write_text('' if wrong_authority else authority)
         return food.verify(self.root, self.selection, {})
+
+    def test_extra_weight_rejects_changed_ingredients_shells_and_native_weight(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in food.EXTRA_WEIGHT_CASES:
+                    self.selection.update(kind=kind, mode=mode, cases=[case])
+                    self.assertEqual([], self.verify()['issues'])
+                    for field, value in [('extraTypes', ['Base.UnknownIngredient']),
+                                         ('baseFoodWeight', .4), ('emptyWeight', .4),
+                                         ('extraScriptWeight', .3), ('extraIngredientCount', 1),
+                                         ('foodWeight', .62), ('foodThirstChange', -.04),
+                                         ('consumptionReplacementCount', 1)]:
+                        rows, raw = self.evidence()
+                        row = rows[1]
+                        row[field] = row['client'][field] = raw[1][1][field] = value
+                        self.assertTrue(self.verify((rows, raw))['issues'], (kind, mode, case, field))
+                    rows, raw = self.evidence()
+                    rows[1]['client']['extraTypes'] = ['Base.Potato']
+                    self.assertTrue(self.verify((rows, raw))['issues'], 'client-only ingredient drift must fail')
 
     def test_progress_observer_handles_idle_optional_pickup_and_queue_end(self):
         lua = shutil.which('luajit')

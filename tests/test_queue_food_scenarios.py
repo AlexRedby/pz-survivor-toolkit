@@ -86,6 +86,18 @@ class FoodScenarioTests(unittest.TestCase):
                     self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                      self.row(recorded, action, scenario, kind, mode)['status'])
 
+    def test_extra_weight_cases_require_effects_and_actual_queue_edits(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.assertEqual(list(food.EXTRA_WEIGHT_CASES),
+                                 scenarios.select(self.suite, 'success-queued', 'eat-extra-weight', kind, mode)[0])
+                recorded = self.recorded(kind, mode)
+                self.assertEqual('passed', self.row(recorded, 'eat-extra-weight', 'success-queued', kind, mode)['status'])
+                for scenario in ('move-independent', 'cancel-waiting'):
+                    self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                                     self.row(recorded, 'eat-extra-weight', scenario, kind, mode)['status'])
+                self.assertEqual('unimplemented', self.row(recorded, 'eat-extra-weight', 'return-items', kind, mode)['status'])
+
     def test_custom_weight_cases_have_separate_native_and_toolkit_coverage(self):
         action = 'eat-custom-weight'
         for kind in ('sp', 'mp'):

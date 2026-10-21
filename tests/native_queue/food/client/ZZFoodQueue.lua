@@ -232,6 +232,8 @@ local function clientReady()
   if type(value)=='number'then
    local tolerance=(field=='hunger'or field=='thirst')and .01 or .0001
    if type(current[field])~='number'or math.abs(current[field]-value)>tolerance then return end
+  elseif type(value)=='table'then
+   if type(current[field])~='table'or JSON.encode(current[field])~=JSON.encode(value)then return end
   elseif current[field]~=value then return end
  end
  return current

@@ -164,11 +164,13 @@ do
     root.getAcceptItemFunction=function()end
     root.getOnlyAcceptCategory=function()end
     root.getCapacityWeight=function()return root.load or 0 end
+    root.getItems=function()return {size=function()return 0 end,get=function()end}end
     root.getEffectiveCapacity=function()return 50 end
     local bag=f.item('Base.Bag_DuffelBag');bag.class='InventoryContainer'
     local container={class='ItemContainer',getType=function()return 'bag'end,
         getContainingItem=function()return bag end,getParent=function()end,getAcceptItemFunction=function()end,
         getCapacityWeight=function()return 0 end,getEffectiveCapacity=function()return 50 end}
+    container.getItems=function()return {size=function()return 0 end,get=function()end}end
     local item=f.item('Base.Nails')
     item.getType=function()return 'Nails'end
     item.getUnequippedWeight=function()return 2 end

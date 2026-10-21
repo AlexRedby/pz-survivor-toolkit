@@ -207,9 +207,32 @@ local function singleton(value)
     for key in pairs(value) do if key~=1 then return false end end
     return true
 end
+-- Native Food.getActualWeight constructs fresh ingredient items for extras.
+-- Keep policy inspection away from that getter, including indirect bag loads.
+function Adapters.weightInspectionSafe(value)
+    if not instanceof(value,"InventoryItem") and not instanceof(value,"ItemContainer") then return false end
+    local pending,seen={value},{}
+    while #pending>0 do
+        local current=table.remove(pending)
+        if seen[current] then return false end
+        seen[current]=true
+        if instanceof(current,"Food") and current:haveExtraItems() then return false end
+        if instanceof(current,"InventoryContainer") then
+            if type(current.getInventory)~="function" then return false end
+            pending[#pending+1]=current:getInventory()
+        elseif instanceof(current,"ItemContainer") then
+            if type(current.getItems)~="function" then return false end
+            local items=current:getItems()
+            if not items or type(items.size)~="function" or type(items.get)~="function" then return false end
+            for i=0,items:size()-1 do pending[#pending+1]=items:get(i) end
+        end
+    end
+    return true
+end
 function Adapters.transfer(action)
     if not pending(action,transfer) or not leaf(action.item,action.character) or action.srcContainer==action.destContainer
-        or not ancestry(action.srcContainer,action.character) or not ancestry(action.destContainer,action.character) then return end
+        or not ancestry(action.srcContainer,action.character) or not ancestry(action.destContainer,action.character)
+        or not Adapters.weightInspectionSafe(action.item) then return end
     local bag=action.destContainer:getContainingItem()
     if bag then
         local maximum,weight=bag:getMaxItemSize(),action.item:getUnequippedWeight()
@@ -295,16 +318,43 @@ function Adapters.drink(action)
     return {version=1,complete=true,capacity="external",resources=resources}
 end
 
+local function extraFoodWeight(item,emptyWeight)
+    local actual=item:getActualWeightUnmodded()
+    if not finite(actual) or not finite(emptyWeight) or emptyWeight<0 or actual<emptyWeight then return false end
+    local extras=item:getExtraItems()
+    if not extras or extras:size()<1 or extras:size()>6 then return false end
+    -- Bound the native float additions below Float.MAX_VALUE, with room for
+    -- their rounding and the ingredient's initial hunger-ratio rounding.
+    local ceiling=3.4028234663852886e38/(extras:size()+2)
+    if actual>ceiling then return false end
+    for i=0,extras:size()-1 do
+        local kind=extras:get(i)
+        if type(kind)~="string" or kind=="" then return false end
+        local extra=ScriptManager.instance:getItem(kind)
+        -- This is the reviewed plain native Food creation branch. Construction
+        -- callbacks, item configs/components and recursive replacement weights
+        -- cannot be inferred from an ingredient name.
+        if not extra or tostring(extra:getItemType())~="base:food" or extra:getLuaCreate()
+            or extra:getItemConfig() or extra:getItemConfigKey() or extra:hasComponents()
+            or extra:getReplaceOnUse() then return false end
+        local hunger,weight=extra:getHungerChange(),extra:getActualWeight()
+        if not finite(hunger) or hunger>=0 or not finite(weight) or weight<0 or weight>ceiling then return false end
+    end
+    -- E is the finite nonnegative ingredient contribution. Native actual weight
+    -- is (A+E-shell)*(hung/base)+shell. A>=shell proves a nonnegative slope
+    -- without constructing E; partial Eat preserves A, base and the extra list.
+    return true
+end
 local function partialReplacement(item,script)
     -- Even without creating the empty container, native partial eating uses its
-    -- script weight. The transfer proof needs a nonincreasing actual weight;
-    -- evolved extras use another formula and may materialize item callbacks.
-    if item:haveExtraItems() then return false end
+    -- script weight. Ordinary food can share the transfer proof; reviewed
+    -- evolved extras use a pure base/shell bound and remain outside transfers.
     local fullType=item:getReplaceOnUseFullType()
     if type(fullType)~="string" or fullType=="" or not ScriptManager or not ScriptManager.instance then return false end
     local output=ScriptManager.instance:getItem(fullType)
     if not output then return false end
     local emptyWeight=output:getActualWeight()
+    if item:haveExtraItems() then return extraFoodWeight(item,emptyWeight) end
     if item:isCustomWeight() then
         -- Without extras, Food.getActualWeight uses InventoryItem.actualWeight.
         -- Native partial Eat only writes the separate weight field. Keep both
@@ -341,7 +391,8 @@ function Adapters.food(action)
     local cookedOutputs=item:getReplaceOnCooked()
     local replacement=script and (script:getReplaceOnUse() or item:getReplaceOnUse())
     if not script or script:isCantEat() or script:getOpeningRecipe() or script:getOnBreak()
-        or script:getReplaceOnDeplete() or replacement and not partialReplacement(item,script)
+        or script:getReplaceOnDeplete() or item:haveExtraItems() and not replacement
+        or replacement and not partialReplacement(item,script)
         or item:getOnEat() or item:getOnCooked() or item:getReplaceOnRotten()
         or cookedOutputs and not cookedOutputs:isEmpty() and not item:isCookable()
         or item:getRequireInHandOrInventory() or item:getCustomMenuOption()
