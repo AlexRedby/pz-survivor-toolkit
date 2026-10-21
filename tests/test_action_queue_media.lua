@@ -58,13 +58,25 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
  f.player.isDraggingCorpse=function()return false end
  f.player.isRunning=function()return false end;f.player.isSprinting=function()return false end
  f.player.isAiming=function()return false end
+ local knownItems,knownContainers={},{}
+ local nativeItem=f.item
+ f.item=function(kind)
+  local item=nativeItem(kind);knownItems[#knownItems+1]=item
+  item.getInventory=function(self)for _,candidate in ipairs(knownContainers)do if candidate.owner==self then return candidate end end end
+  return item
+ end
  local function container(kind)
-  return {class='ItemContainer',kind=kind or 'none',load=0,capacity=100,
+  local value={class='ItemContainer',kind=kind or 'none',load=0,capacity=100,
    getType=function(self)return self.kind end,getParent=function(self)return self.parent end,
    getContainingItem=function(self)return self.owner end,getCapacityWeight=function(self)return self.load end,
    getEffectiveCapacity=function(self)return self.capacity end,getAcceptItemFunction=function(self)return self.accept end,
    getOnlyAcceptCategory=function()end,isExistYet=function(self)return not self.gone end,
    contains=function(self,item)return item:getContainer()==self end}
+  value.getItems=function(self)
+   local values={};for _,item in ipairs(knownItems)do if item:getContainer()==self then values[#values+1]=item end end
+   return {size=function()return #values end,get=function(_,index)return values[index+1]end}
+  end
+  knownContainers[#knownContainers+1]=value;return value
  end
  local root=container();f.player.inventory=root
  f.player.getVehicle=function()end

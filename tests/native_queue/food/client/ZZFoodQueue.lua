@@ -97,7 +97,7 @@ local function eat(portion,menu,smartGoal)
  local option,dispatchHunger
  if smartGoal then option,dispatchHunger=smartOption(player,food,smartGoal);portion=option.param1 end
  local command={id=food:getID(),portion=portion,baseHunger=food:getBaseHunger(),dispatchRemaining=food:getHungChange(),
-  dispatchSource=food:getContainer()==player:getInventory()and 'root'or 'bag',menuDispatched=menu,
+  dispatchSource=food:getContainer()==player:getInventory()and 'root'or spec.world and 'world'or 'bag',menuDispatched=menu,
   nativeDuration=0,progress=false,cancelled=false,pickupObserved=false}
  if smartGoal then command.smartGoal=smartGoal;command.dispatchHunger=dispatchHunger end
  if spec.cookable then command.cooked,command.dispatchHeat=food:isCooked(),food:getHeat()end
@@ -128,7 +128,8 @@ local function observeReturn(returning)
   local current=Fixture.items(getPlayer(),ids)
   if not current then error('return identity unresolved')end
   local source=current.food:getContainer()
-  return source==getPlayer():getInventory()and 'root'or source==current.bag:getItemContainer()and 'bag'or 'unknown'
+  return source==getPlayer():getInventory()and 'root'or source==current.bag:getItemContainer()and 'bag'
+   or current.storage and source==current.storage and 'world'or 'unknown'
  end
  local function recordSafely(fn)
   local ok=pcall(fn);if not ok then record.observationFailed=true end
@@ -154,7 +155,7 @@ local function observeReturn(returning)
  q.onCompleted=callback;observer={queue=q,callback=callback,previous=previousRaw,returning=returning}
 end
 local function dispatch()
- local player=getPlayer();local current=items();local food,bag=current.food,current.bag:getItemContainer()
+ local player=getPlayer();local current=items();local food,bag=current.food,current.storage or current.bag:getItemContainer()
  assert(Progress.running(queue().current,anchor),'food needs running native anchor')
  evidence.anchorRunning=true;evidence.untouchedBefore=false
  if spec.extraWeight then
@@ -170,7 +171,7 @@ local function dispatch()
   end
   evidence.weightBounds=values
  end
- if spec.bag then
+ if spec.bag or spec.world then
   local actions=capture(function()Operations.run(ISInventoryPaneContextMenu.onGrabItems,{food},player:getPlayerNum())end)
   assert(#actions==1,'manual food pickup count differs')
   local pickup=actions[1];assert(pickup.Type=='ISInventoryTransferAction'and pickup.item:getID()==ids.foodId
@@ -185,7 +186,7 @@ local function dispatch()
   if config.mode=='toolkit'then
    for _,action in ipairs({pickup,eating,returning})do local contract=Policy.inspect(action);assert(contract and contract.edit,'food edit contract missing')end
    evidence.contractsVerified=true
-   if spec.capacity then
+   if spec.capacity or spec.worldCapacity then
     Checks.deniedMove(queue(),Queue,Policy,returning,pickup,false,'container_capacity')
     Checks.unchanged(queue(),{anchor,pickup,eating,returning});evidence.capacityDenied=true
    else
@@ -218,7 +219,7 @@ local function dispatch()
   else Checks.unchanged(queue(),{anchor,half,quarter})end
  end
  local fresh=items();assert(fresh.food:getHungChange()==ids.remaining and fresh.food:getBaseHunger()==ids.baseHunger
-  and fresh.food:getContainer()==(spec.bag and fresh.bag:getItemContainer()or player:getInventory()),'edit touched pending food')
+  and fresh.food:getContainer()==(fresh.storage or spec.bag and fresh.bag:getItemContainer()or player:getInventory()),'edit touched pending food')
  for index,value in ipairs(observed)do
   local action,command=value.eat,commands[index]
   assert(action.maxTime==command.nativeDuration and action.percentage==command.portion
@@ -313,7 +314,7 @@ Events.OnTick.Add(function()
     reordered=false,waitingCancel=false,moveRejected=false,cancelRejected=false,manualPickup=false,
     untouchedBefore=false,nativeDurationsUnchanged=false,order={}}
    if spec.depletion then evidence.denialReason='not-requested'end
-   if spec.capacity then evidence.capacityDenied=false end
+   if spec.capacity or spec.worldCapacity then evidence.capacityDenied=false end
    anchor=ISDrinkFluidAction:new(player,items().anchor,.5);assert(anchor.maxTime==460,'anchor duration differs')
    ISTimedActionQueue.add(anchor);phase='running';since=getTimestampMs();return
   elseif phase=='running'then

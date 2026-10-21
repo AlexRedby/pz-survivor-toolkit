@@ -36,6 +36,9 @@ class FoodAdapterTests(unittest.TestCase):
             extra_weight = case in food.EXTRA_WEIGHT_CASES
             consumption = extra_weight or custom_weight or case in food.CONSUMPTION_CASES
             capacity_case = case == food.EXTRA_CAPACITY_CASE
+            world = case in food.WORLD_CASES
+            tight = capacity_case or case == food.WORLD_CAPACITY_CASE
+            storage_source = 'world' if world else 'bag'
             thermal = cookable or replacement
             cooked = case in (food.COOKED_MOVE_CASE, food.COOKED_CANCEL_CASE)
             base_hunger = -.06 if extra_weight else -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
@@ -44,7 +47,7 @@ class FoodAdapterTests(unittest.TestCase):
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', bagCount=1,
                         foodId=base + 1, foodType='Base.Salad' if extra_weight else 'Base.CannedPeachesOpen' if consumption else 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal',
                         baseHunger=base_hunger, remaining=-.3 if smart else base_hunger,
-                        source='bag' if bag else 'root', foodCount=1, foodTypeCount=1, deleted=False,
+                        source=storage_source if bag else 'root', foodCount=1, foodTypeCount=1, deleted=False,
                         anchorId=base + 2, anchorType='Base.WaterBottle', anchorAmount=1.0,
                         anchorCount=1, anchorThirstChange=-.5, hunger=.2 if smart else .8, thirst=.8, foodTimer=0, foodLevel=0)
             if thermal:
@@ -61,6 +64,14 @@ class FoodAdapterTests(unittest.TestCase):
             if capacity_case:
                 prep.update(capacityFillerId=base + 5, capacityFillerType='Base.Nails',
                             capacityFillerWeight=27.28, capacityFillerCount=1, bagCapacity=28, bagLoad=27.9)
+            if world:
+                food_weight = .2
+                filler_weight = 5 - food_weight - .1 if tight else .05
+                prep.update(storageX=100, storageY=101, storageZ=0, storageObjectIndex=2, storageContainerIndex=0,
+                            storageType='crate', storageCapacity=5, storageLoad=food_weight + filler_weight,
+                            storageItemCount=2, storageFoodCount=1, storageFoodWeight=food_weight,
+                            storageFillerId=base + 6, storageFillerType='Base.Nails',
+                            storageFillerWeight=filler_weight, storageFillerCount=1)
             if utensil:
                 prep.update(forkId=base + 3, forkType='Base.Fork', forkCount=1,
                             forkSource='bag' if case == food.UTENSIL_MOVE_CASE else 'root',
@@ -68,8 +79,8 @@ class FoodAdapterTests(unittest.TestCase):
                             spoonId=base + 4, spoonType='Base.Spoon', spoonCount=1,
                             spoonSource='root' if case == food.UTENSIL_MOVE_CASE else 'bag', spoonCondition=5)
             fraction = (.125 if cancel else .75) if utensil else (.375 if cancel else .5) if smart else 1 if depletion else .5 if bag else .25 if cancel else .75
-            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if thermal else set()) | (food.REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (food.CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (food.EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set()) | (food.CAPACITY_RECEIPT_KEYS if capacity_case else set())}
-            receipt.update(remaining=prep['remaining'] - prep['baseHunger'] * fraction if smart else prep['baseHunger'] * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled and not capacity_case else 'bag',
+            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if thermal else set()) | (food.REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (food.CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (food.EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set()) | (food.CAPACITY_RECEIPT_KEYS if capacity_case else set()) | (food.WORLD_RECEIPT_KEYS if world else set())}
+            receipt.update(remaining=prep['remaining'] - prep['baseHunger'] * fraction if smart else prep['baseHunger'] * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled and not tight else storage_source,
                            foodCount=0 if depletion else 1, foodTypeCount=0 if depletion else 1, deleted=depletion,
                            anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] + prep['baseHunger'] * fraction * (1.3 if cooked else 1),
                            thirst=.55 - (.1 * fraction if cookable and not cooked else 0))
@@ -79,6 +90,12 @@ class FoodAdapterTests(unittest.TestCase):
                 receipt.update(foodThirstChange=-.04 * (1 - fraction), thirst=receipt['thirst'] - .04 * fraction)
             if capacity_case:
                 receipt['bagLoad'] = prep['bagLoad'] - .06
+            if world:
+                world_food_count = 0 if enabled and not tight else 1
+                final_food_weight = food_weight * (1 - fraction)
+                receipt.update(storageFoodCount=world_food_count, storageItemCount=1 + world_food_count,
+                               storageFoodWeight=final_food_weight,
+                               storageLoad=filler_weight + world_food_count * final_food_weight)
             commands = [dict(id=base + 1, portion=portion, baseHunger=prep['baseHunger'], dispatchRemaining=prep['remaining'],
                              dispatchSource=prep['source'], menuDispatched=not bag, nativeDuration=464 if portion == 1 else 232,
                              progress=not (cancel and n == 0), cancelled=cancel and n == 0, pickupObserved=bag)
@@ -95,7 +112,7 @@ class FoodAdapterTests(unittest.TestCase):
                 for command, goal in zip(commands, (15, 5)):
                     command.update(smartGoal=goal, dispatchHunger=prep['hunger'])
             edit = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE, food.CUSTOM_WEIGHT_MOVE_CASE, food.EXTRA_WEIGHT_MOVE_CASE, food.EXTRA_BAG_CASE),
+                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE, food.CUSTOM_WEIGHT_MOVE_CASE, food.EXTRA_WEIGHT_MOVE_CASE, food.EXTRA_BAG_CASE, food.WORLD_CASE),
                         waitingCancel=cancel, moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag,
                         manualPickup=bag, untouchedBefore=True, nativeDurationsUnchanged=True,
                         order=[1] if bag else [1, 2] if depletion else [2] if cancel else [2, 1] if enabled else [1, 2])
@@ -106,13 +123,13 @@ class FoodAdapterTests(unittest.TestCase):
                                      ('root', 8.0)]:
                     edit['weightBounds'].update({name + 'Upper': actual + .00001,
                                                  name + 'Lower': 0, name + 'Native': actual})
-            if capacity_case: edit['capacityDenied'] = enabled
+            if tight: edit['capacityDenied'] = enabled
             if depletion: edit['denialReason'] = 'edit_resource_amount' if enabled else 'not-requested'
             if bag:
                 edit.update(pickupDuration=-1 if self.selection['kind'] == 'mp' else 50,
                             returnDuration=-1 if self.selection['kind'] == 'mp' else 50,
                             returning=dict(boundary=True, completed=True, observationFailed=False,
-                                           before='bag' if enabled and not capacity_case else 'root', after='bag',
+                                           before=storage_source if enabled and not tight else 'root', after=storage_source,
                                            started=False, transactionId=0, dontAdd=enabled))
             rows.append(dict(event='case', id=case, status='passed', commands=commands,
                              editEvidence=edit, client=copy.deepcopy(receipt), **receipt))
@@ -133,6 +150,95 @@ class FoodAdapterTests(unittest.TestCase):
         (self.root / 'client1-launch.log').write_text(client + (authority if self.selection['kind'] == 'sp' or wrong_authority else ''))
         (self.root / 'server-launch.log').write_text('' if wrong_authority else authority)
         return food.verify(self.root, self.selection, {})
+
+    def test_world_transfers_preserve_exact_food_and_crate_across_controls(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in food.WORLD_CASES:
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        self.selection.update(kind=kind, mode=mode, cases=[case])
+                        self.assertEqual([], self.verify()['issues'])
+                        rows, raw = self.evidence()
+                        prep, receipt = raw[0][1], raw[1][1]
+                        in_root = mode == 'toolkit' and case == food.WORLD_CASE
+                        self.assertEqual('world', prep['source'])
+                        self.assertEqual('root' if in_root else 'world', receipt['source'])
+                        self.assertEqual(int(not in_root), receipt['storageFoodCount'])
+                        self.assertEqual((1, 1, False), (receipt['foodCount'], receipt['foodTypeCount'], receipt['deleted']))
+                        self.assertEqual(prep['foodId'], receipt['foodId'])
+                        self.assertAlmostEqual(.2, prep['storageFoodWeight'])
+                        self.assertAlmostEqual(prep['storageFoodWeight'] * .5, receipt['storageFoodWeight'])
+                        self.assertAlmostEqual(-.2, receipt['remaining'])
+                        self.assertEqual([.5], [command['portion'] for command in rows[1]['commands']])
+                        self.assertTrue(rows[1]['commands'][0]['pickupObserved'])
+                        self.assertEqual('world' if in_root else 'root', rows[1]['editEvidence']['returning']['before'])
+                        self.assertEqual('world', rows[1]['editEvidence']['returning']['after'])
+                        self.assertEqual(mode == 'toolkit', rows[1]['editEvidence']['moveRejected'])
+                        self.assertEqual(mode == 'toolkit', rows[1]['editEvidence']['cancelRejected'])
+                        self.assertEqual(in_root, rows[1]['editEvidence']['reordered'])
+                        self.assertFalse(rows[1]['editEvidence']['waitingCancel'])
+                        self.assertEqual(case == food.WORLD_CAPACITY_CASE, 'capacityDenied' in rows[1]['editEvidence'])
+                        if case == food.WORLD_CAPACITY_CASE:
+                            self.assertEqual(mode == 'toolkit', rows[1]['editEvidence']['capacityDenied'])
+                            self.assertAlmostEqual(4.9, prep['storageLoad'])
+                            self.assertAlmostEqual(4.8, receipt['storageLoad'])
+                        else:
+                            self.assertAlmostEqual(.05 if in_root else .15, receipt['storageLoad'])
+
+    def test_world_storage_rejects_corrupted_location_identity_load_and_filler(self):
+        changes = [('storageX', 99), ('storageY', 99), ('storageZ', 1), ('storageObjectIndex', 3),
+                   ('storageContainerIndex', 1), ('storageType', 'bag'), ('storageCapacity', 6),
+                   ('storageFillerId', 999), ('storageFillerType', 'Base.Screws'), ('storageFillerCount', 0),
+                   ('storageFillerWeight', .04), ('storageFoodWeight', .2), ('storageLoad', 0),
+                   ('storageItemCount', 9), ('storageFoodCount', 2), ('foodCount', 2), ('foodTypeCount', 2),
+                   ('source', 'bag'), ('foodId', 999), ('deleted', True)]
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in food.WORLD_CASES:
+                    self.selection.update(kind=kind, mode=mode, cases=[case])
+                    for field, value in changes:
+                        rows, raw = self.evidence()
+                        rows[1][field] = rows[1]['client'][field] = raw[1][1][field] = value
+                        with self.subTest(kind=kind, mode=mode, case=case, field=field):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+                    rows, raw = self.evidence()
+                    rows[1]['client']['storageObjectIndex'] = 3
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+                    rows, raw = self.evidence()
+                    rows[1]['editEvidence']['capacityDenied'] = mode != 'toolkit'
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_world_preparation_requires_real_crate_schema_and_finite_native_weight(self):
+        for case in food.WORLD_CASES:
+            self.selection['cases'] = [case]
+            for field, value in [('storageX', True), ('storageY', 100.5), ('storageZ', 0.5),
+                                 ('storageObjectIndex', -1), ('storageObjectIndex', True),
+                                 ('storageContainerIndex', True), ('storageCapacity', 6),
+                                 ('storageFillerWeight', float('inf')), ('storageFoodWeight', float('nan')),
+                                 ('storageFoodWeight', 0), ('storageFoodWeight', .3), ('storageFoodCount', 0), ('storageItemCount', 1),
+                                 ('storageLoad', 5), ('storageFillerId', 100), ('foodTypeCount', 2)]:
+                rows, raw = self.evidence()
+                raw[0][1][field] = value
+                with self.subTest(case=case, field=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            for field in food.WORLD_RECEIPT_KEYS:
+                rows, raw = self.evidence()
+                del raw[0][1][field]
+                self.assertTrue(self.verify((rows, raw))['issues'], field)
+            rows, raw = self.evidence()
+            rows[1]['editEvidence']['returning']['after'] = 'bag'
+            self.assertTrue(self.verify((rows, raw))['issues'])
+        for case in (food.MOVE_CASE, food.BAG_CASE):
+            rows, raw = self.single(case)
+            rows[1]['storageFoodWeight'] = .2
+            self.assertTrue(self.verify((rows, raw))['issues'])
+        for field, value in [('heat', 1), ('extraTypes', ['Base.Tomato']), ('foodWeight', .2), ('weightBounds', {})]:
+            rows, raw = self.single(food.WORLD_CASE)
+            if field == 'weightBounds':
+                rows[1]['editEvidence'][field] = value
+            else:
+                rows[1][field] = rows[1]['client'][field] = raw[1][1][field] = value
+            self.assertTrue(self.verify((rows, raw))['issues'], field)
 
     def test_extra_bag_controls_and_tight_capacity_require_exact_evidence(self):
         for kind in ('sp', 'mp'):

@@ -24,6 +24,7 @@ Before pushing changes to main, compare each changed component with the latest m
 - Modes: single-player and Host from the game menu. A separate dedicated server is not a required target environment.
 - Players use Windows and macOS, but agent verification on macOS is sufficient for this project. Do not pursue Windows test environments or maintain an active Windows verification requirement; whoever runs the project on Windows checks it there. State the platform actually tested; do not present verification on one platform as verification on the other.
 - Run in-game checks with separate test settings and saves, without changing the user's current settings or saves.
+- On macOS, AeroSpace placement is the primary native-test launch policy. `desktop_mode=current` is only a fallback when CoreGraphics confirms that all online displays are asleep and AeroSpace cannot discover the launched client's window. Use the runner's default `auto` policy, or `aerospace` to require placement without fallback. Never select `current` as a persistent awake-desktop bypass, infer sleep from lock status or an empty display list, or mask missing/malformed AeroSpace, foreign windows, routing/identity failures or an escaped window. An unknown probe, including a sandbox-restricted zero-online result, must not trigger fallback. Keep the owned PID/GLFW gate and focus/fullscreen suppression; never change the user's display, workspace or focus to enable testing.
 
 ## Proportionate checks
 

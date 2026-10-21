@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.189
+
+- **Improved:** Pending pickup/food/return edits can use adjacent ordinary world crates and shelves when exact container identity, native item effects and capacity are proven. Required pickups and walking dependencies remain protected; favorite outbound items, cookable world transfers, special containers and unknown callbacks keep their safeguards.
+- **Development:** Native tests prefer an isolated AeroSpace workspace. Current-desktop fallback requires a confirmed sleeping display, unavailable owned-window discovery and a valid owned GLFW handshake; other routing failures remain errors. Reports record the effective mode and fallback reason.
+
 ### 0.1.188
 
 - Build inventory category/tag choices when opening their menus instead of classifying every item on each selection restore. Keep the full refresh universe, live instance categories and exact physical-item visibility; selecting a tag or combined rule rebuilds rows once.
