@@ -378,7 +378,29 @@ public final class CartGrip {
 
     static boolean target(String model, boolean left, boolean female, Matrix4f delta, Matrix4f cart, Matrix4f out,
         float pressure) {
-        if(!Float.isFinite(pressure) || pressure<0) return false;
+        return target(model,left,female,delta,cart,out,pressure,(float)Math.toRadians(5));
+    }
+
+    static boolean transitionTarget(String model, boolean left, boolean female, Matrix4f delta,
+        Matrix4f cart, Matrix4f out) {
+        float radial=(float)Math.toRadians(5);
+        if("WheelbarrowMetal".equals(model)) {
+            // Follow the actual shaft elevation, including a cancelled/restarted lift.
+            // Turning the complete grasp around the shaft keeps its contact station,
+            // thumb opposition and across-palm angle, while relaxing the low wrist.
+            var held=CartWheelbarrow.METAL.held(new Matrix4f());
+            double heldAngle=Math.atan2(held.m21(),Math.hypot(held.m20(),held.m22()));
+            double angle=Math.atan2(cart.m21(),Math.hypot(cart.m20(),cart.m22()));
+            double lift=Math.max(0,Math.min(1,(angle+CartWorldSupport.pitch())/(heldAngle+CartWorldSupport.pitch())));
+            radial=(float)Math.toRadians(-20+25*lift);
+        }
+        return target(model,left,female,delta,cart,out,
+            (float)Math.abs(Math.atan2(delta.m01(),delta.m00())),radial);
+    }
+
+    private static boolean target(String model, boolean left, boolean female, Matrix4f delta, Matrix4f cart,
+        Matrix4f out, float pressure, float radial) {
+        if(!Float.isFinite(pressure) || pressure<0 || !Float.isFinite(radial)) return false;
         var point=new Vector3f();
         if(!handle(model,left,point)) return false;
         cart.transformPosition(point);
@@ -392,8 +414,9 @@ public final class CartGrip {
             cart.transformDirection(axis).normalize();cart.transformDirection(down).normalize();
             var inward=down.cross(axis,new Vector3f()).normalize().mul(left?1:-1);
             // Diagonal underhand grip: shaft across curled fingers, palm inward/up, wrist above the handle.
-            var x=down.mul(.9961947f,new Vector3f()).fma(.08715574f,inward);
-            var z=inward.mul(.9961947f,new Vector3f()).fma(-.08715574f,down);
+            float cos=(float)Math.cos(radial),sin=(float)Math.sin(radial);
+            var x=down.mul(cos,new Vector3f()).fma(sin,inward);
+            var z=inward.mul(cos,new Vector3f()).fma(-sin,down);
             float beta=(float)Math.toRadians(wood?25+10*CartSteeringMath.woodenTurnAmount(pressure):40);
             x.mul((float)Math.cos(beta)).fma(-(float)Math.sin(beta),axis).normalize();
             var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
@@ -690,12 +713,12 @@ public final class CartGrip {
 
     static boolean transitionGrip(Matrix4f[] poses, SkinningData actor, boolean female, Matrix4f delta,
         Matrix4f cart, float reachWeight, float gripWeight, AnimationClip thumbReference, String model) {
-        if(thumbReference==null && reachWeight==1 && gripWeight==1) {
+        if(thumbReference==null && reachWeight==1 && gripWeight==1 && !"WheelbarrowMetal".equals(model)) {
             if(!grip(poses,actor,model,female,delta,cart)) return false;
         } else for(String side:new String[]{"L","R"}) {
             var hand=actor.getBone("Bip01_"+side+"_Hand");
             var target=new Matrix4f();
-            if(!target(model,"L".equals(side),female,delta,cart,target)
+            if(!transitionTarget(model,"L".equals(side),female,delta,cart,target)
                 || !CartTransitionMath.blend(poses[hand.index],target,CartTransitionMath.smooth(reachWeight),target)
                 || !reach(poses,actor,hand.name,target,delta,"WheelbarrowWood".equals(model),reachWeight)) return false;
             var before=new Matrix4f[actor.numBones()];

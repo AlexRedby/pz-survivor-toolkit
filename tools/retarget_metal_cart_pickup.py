@@ -112,10 +112,11 @@ def solve(samples, parents, game, jdk, patch_jar):
                 stream.write(struct.pack('>d', sample['time']))
                 for name in names:
                     stream.write(struct.pack('>16d', *sample['bones'][name]))
-        subprocess.run([str(jdk / 'bin/java'), '-Djava.awt.headless=true', '-cp',
+        subprocess.run([str(jdk / 'bin/java'), '-Djava.awt.headless=true', f'-Djava.library.path={game}', '-cp',
                         os.pathsep.join((str(work), classpath)),
                         'net.alexredby.pztoolkitjavapatches.CartMetalPickupRetarget',
-                        str(work / 'input.bin'), str(work / 'output.bin')], check=True)
+                        str(work / 'input.bin'), str(work / 'output.bin'),
+                        str(game / 'media/anims_X/Bob/Bob_Idle.x')], check=True)
         data = (work / 'output.bin').read_bytes()
     count, = struct.unpack_from('>i', data)
     if count != len(samples) or len(data) != 4 + count * len(names) * 64:
@@ -128,8 +129,8 @@ def solve(samples, parents, game, jdk, patch_jar):
             offset += 64
             # Keep editable torso values exact; current runtime IK restores planted
             # feet and solves the rigid leg and arm chains.
-            if sample['time'] > 0 and any(descendant(name, f'Bip01_{s}_{branch}', parents)
-                    for s in ('L', 'R') for branch in (('Clavicle', 'Thigh') if sample['time'] < 1 else ('Clavicle',))):
+            if (any(descendant(name, f'Bip01_{s}_Thigh', parents) for s in ('L', 'R')) and sample['time'] < 1
+                    or sample['time'] > 0 and any(descendant(name, f'Bip01_{s}_Clavicle', parents) for s in ('L', 'R'))):
                 sample['bones'][name] = matrix
     return result
 

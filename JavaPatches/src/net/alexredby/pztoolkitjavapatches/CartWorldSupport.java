@@ -11,6 +11,7 @@ public final class CartWorldSupport {
     // Solve footY*cos(a)-footZ*sin(a) = wheelCenterY*cos(a)-wheelCenterZ*sin(a)-radius.
     // The cylindrical envelope supports every retained wheel shader phase, rather than one polygon vertex.
     private static final float PITCH=(float)Math.toRadians(5.637007483322471);
+    static float pitch() {return PITCH;}
     private static final float FLOOR=.008f-.00175f*2.44949f/1.5f;
 
     /** laterScale is the scale native code applies after this call; it never scales model translation. */

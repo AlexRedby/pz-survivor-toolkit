@@ -62,40 +62,53 @@ public final class CartMetalGripSurfaceChecks {
 
     public static void check() {
         // Translation and rotation exercise real target() in world coordinates, independent of its palm offset.
-        var cart=new Matrix4f().translation(.13f,.24f,-.71f).rotateX(.4f).rotateZ(-.08f).scale(SCALE);
-        var inverseCart=new Matrix4f(cart).invert();
-        for(var f:FIXTURES) {
-            String side=f.left?"L":"R";int sideIndex=f.left?0:1;
-            var hand=new Matrix4f();
-            if(!CartGrip.target("WheelbarrowMetal",f.left,f.female,new Matrix4f(),cart,hand))
-                throw new AssertionError("metal target rejected");
-            Matrix4f[] poses={new Matrix4f(),hand,new Matrix4f(hand).mul(new Matrix4f().set(f.thumb)),
-                new Matrix4f(hand).mul(new Matrix4f().set(f.finger))};
-            var thumbBefore=new Matrix4f(poses[2]);
-            var fingerKnuckle=poses[3].getTranslation(new Vector3f());
-            CartGrip.closeFingers(poses,actor(side),side,CartGrip.grasp(f.female,"WheelbarrowMetal"),true);
-            if(!poses[2].equals(thumbBefore,.000002f)
-                || poses[3].getTranslation(new Vector3f()).distance(fingerKnuckle)>.000002f)
-                throw new AssertionError("metal closure moved native thumb or finger knuckle");
-            var rawContacts=new Vector3f[3];
-            for(int i=0;i<3;i++) {
-                var a=f.anchors[i];
-                var raw=inverseCart.transformPosition(poses[i+1].transformPosition(new Vector3f(a[0],a[1],a[2])));
-                rawContacts[i]=raw;
-                // The independent source point must contact the physical finite shaft, including the cap.
-                float signed=gap(raw,sideIndex);
-                if(Math.abs(signed)>.0025f || raw.z<Z_MIN || raw.z>Z_MAX)
-                    throw new AssertionError("metal skin contact missed finite shaft: female="+f.female+" side="+side
-                        +" bone="+i+" sourceVertex="+f.sourceVertices[i]+" gap="+signed+" rawZ="+raw.z);
+        // Sample the complete low-to-held grasp path, including actual pitch after a retry.
+        // The old held-motion capture remains a separate unchanged control.
+        for(int step=-1;step<=40;step++) {
+            var held=CartWheelbarrow.METAL.held(new Matrix4f());
+            double heldAngle=Math.atan2(held.m21(),Math.hypot(held.m20(),held.m22()));
+            float pitch=(float)(CartWorldSupport.pitch()-(heldAngle+CartWorldSupport.pitch())*step/40);
+            var cart=step<0?new Matrix4f().translation(.13f,.24f,-.71f).rotateX(.4f).rotateZ(-.08f).scale(SCALE)
+                :new Matrix4f().translation(.13f,.24f,-.71f).rotateY(.7f).rotateX(pitch).scale(SCALE);
+            var inverseCart=new Matrix4f(cart).invert();
+            for(var f:FIXTURES) {
+                String side=f.left?"L":"R";int sideIndex=f.left?0:1;
+                var hand=new Matrix4f();
+                boolean solved=step<0?CartGrip.target("WheelbarrowMetal",f.left,f.female,new Matrix4f(),cart,hand)
+                    :CartGrip.transitionTarget("WheelbarrowMetal",f.left,f.female,new Matrix4f(),cart,hand);
+                if(!solved) throw new AssertionError("metal target rejected");
+                if(step==40) {
+                    var steady=new Matrix4f();CartGrip.target("WheelbarrowMetal",f.left,f.female,new Matrix4f(),cart,steady);
+                    if(!hand.equals(steady,.000002f)) throw new AssertionError("metal wrist changed at held handoff");
+                }
+                Matrix4f[] poses={new Matrix4f(),hand,new Matrix4f(hand).mul(new Matrix4f().set(f.thumb)),
+                    new Matrix4f(hand).mul(new Matrix4f().set(f.finger))};
+                var thumbBefore=new Matrix4f(poses[2]);
+                var fingerKnuckle=poses[3].getTranslation(new Vector3f());
+                CartGrip.closeFingers(poses,actor(side),side,CartGrip.grasp(f.female,"WheelbarrowMetal"),true);
+                if(!poses[2].equals(thumbBefore,.000002f)
+                    || poses[3].getTranslation(new Vector3f()).distance(fingerKnuckle)>.000002f)
+                    throw new AssertionError("metal closure moved native thumb or finger knuckle");
+                var rawContacts=new Vector3f[3];
+                for(int i=0;i<3;i++) {
+                    var a=f.anchors[i];
+                    var raw=inverseCart.transformPosition(poses[i+1].transformPosition(new Vector3f(a[0],a[1],a[2])));
+                    rawContacts[i]=raw;
+                    // The independent source point must contact the physical finite shaft, including the cap.
+                    float signed=gap(raw,sideIndex);
+                    if(Math.abs(signed)>.0025f || raw.z<Z_MIN || raw.z>Z_MAX)
+                        throw new AssertionError("metal skin contact missed finite shaft: female="+f.female+" side="+side
+                            +" bone="+i+" sourceVertex="+f.sourceVertices[i]+" gap="+signed+" rawZ="+raw.z);
+                }
+                // Finger mitten and thumb must oppose each other across the measured shaft, not lie along it.
+                float cx=f.left?-7.409948f:-39.674755f,cy=6.614635f;
+                var thumb=new Vector3f(rawContacts[1]).sub(cx,cy,rawContacts[1].z).normalize();
+                var finger=new Vector3f(rawContacts[2]).sub(cx,cy,rawContacts[2].z).normalize();
+                if(thumb.dot(finger)>-.25f) throw new AssertionError("metal thumb/fingers no longer oppose shaft");
+                var handX=inverseCart.transformDirection(hand.transformDirection(new Vector3f(1,0,0))).normalize();
+                if(Math.abs(handX.z)>.7072f || Math.abs(handX.z)<.342f)
+                    throw new AssertionError("metal shaft no longer crosses palm at 45..70 degrees");
             }
-            // Finger mitten and thumb must oppose each other across the measured shaft, not lie along it.
-            float cx=f.left?-7.409948f:-39.674755f,cy=6.614635f;
-            var thumb=new Vector3f(rawContacts[1]).sub(cx,cy,rawContacts[1].z).normalize();
-            var finger=new Vector3f(rawContacts[2]).sub(cx,cy,rawContacts[2].z).normalize();
-            if(thumb.dot(finger)>-.25f) throw new AssertionError("metal thumb/fingers no longer oppose shaft");
-            var handX=inverseCart.transformDirection(hand.transformDirection(new Vector3f(1,0,0))).normalize();
-            if(Math.abs(handX.z)>.7072f || Math.abs(handX.z)<.342f)
-                throw new AssertionError("metal shaft no longer crosses palm at 45..70 degrees");
         }
     }
 

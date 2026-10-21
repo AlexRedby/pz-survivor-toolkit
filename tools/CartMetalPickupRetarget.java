@@ -6,6 +6,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import jassimp.AiPostProcessSteps;
+import jassimp.Jassimp;
+import zombie.core.skinnedmodel.animation.AnimationClip;
+import zombie.core.skinnedmodel.model.jassimp.ImportedSkeleton;
+import zombie.core.skinnedmodel.model.jassimp.ImportedSkeletonParams;
+import zombie.core.skinnedmodel.model.jassimp.JAssImpImporter;
+import zombie.core.skinnedmodel.model.jassimp.ProcessedAiSceneParams;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import zombie.core.skinnedmodel.model.SkinningBone;
@@ -35,8 +45,76 @@ public final class CartMetalPickupRetarget {
         for(int i=0;i<poses.length;i++) if(descendant(actor.getBoneAt(i),thumb)) change.mul(poses[i],poses[i]);
     }
 
+    private record Sample(double time,Matrix4f[] poses) {}
+
+    private static Object field(Object owner,String name) throws Exception {
+        var field=owner.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(owner);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Matrix4f> idleFeet(Path path) throws Exception {
+        var params=ProcessedAiSceneParams.create();
+        params.scene=Jassimp.importFile(path.toString(),EnumSet.of(AiPostProcessSteps.MAKE_LEFT_HANDED,
+            AiPostProcessSteps.REMOVE_REDUNDANT_MATERIALS));
+        params.mode=JAssImpImporter.LoadMode.AnimationOnly;
+        params.animBonesScaleModifier=1;params.animBonesRotateModifier=null;
+        var imported=ImportedSkeleton.process(ImportedSkeletonParams.create(params,params.scene.getMeshes().get(0)));
+        var indices=(HashMap<String,Integer>)field(imported,"boneIndices");
+        var parents=(ArrayList<Integer>)field(imported,"skeletonHierarchy");
+        var clips=(HashMap<String,AnimationClip>)field(imported,"clips");
+        if(indices.size()!=45 || clips.size()!=1) throw new IllegalArgumentException("expected native Bob_Idle rig/clip");
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(int i=0;i<indices.size();i++) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=new SkinningData(new HashMap<>(),offsets,offsets,offsets,parents,indices);
+        var clip=clips.values().iterator().next();var targets=new LinkedHashMap<String,Matrix4f>();
+        for(String side:new String[]{"L","R"}) for(String part:new String[]{"Foot","Toe0","Toe0Nub"}) {
+            String name="Bip01_"+side+"_"+part;var pose=new Matrix4f();
+            if(!CartGrounding.referencePose(clip,actor,name,pose)) throw new IllegalArgumentException("missing idle "+name);
+            targets.put(name,pose);
+        }
+        return targets;
+    }
+
+    private static Map<String,Matrix4f> footTargets(Sample sample,SkinningData actor) {
+        var phase=CartTransitionMath.progress(sample.time(),false);
+        float lowering=(float)(.05*phase.balance());
+        float shiftX=(float)(((.216849-.21714664)-(-.005859375+.0060535767))*phase.center());
+        var targets=new LinkedHashMap<String,Matrix4f>();
+        for(String side:new String[]{"L","R"}) for(String part:new String[]{"Foot","Toe0","Toe0Nub"}) {
+            String name="Bip01_"+side+"_"+part;
+            targets.put(name,new Matrix4f(sample.poses()[actor.getBone(name).index]).translateLocal(-shiftX,lowering,0));
+        }
+        return targets;
+    }
+
+    private static Matrix4f childTarget(Matrix4f firstParent,Matrix4f first,Matrix4f lastParent,Matrix4f last,
+        Matrix4f parent,double weight) {
+        var from=new Matrix4f(firstParent).invert().mul(first);var to=new Matrix4f(lastParent).invert().mul(last);
+        var local=new Matrix4f();
+        if(!CartTransitionMath.blend(from,to,weight,local)) throw new AssertionError("foot child blend rejected");
+        var position=local.getTranslation(new Vector3f());
+        float length=from.getTranslation(new Vector3f()).length()*(1-(float)weight)
+            +to.getTranslation(new Vector3f()).length()*(float)weight;
+        if(length>0) local.setTranslation(position.normalize(length));
+        return new Matrix4f(parent).mul(local);
+    }
+
+    private static void idleEndTargets(Map<String,Matrix4f> targets,Map<String,Matrix4f> idle,
+        Map<String,Matrix4f> handover,double weight) {
+        for(String side:new String[]{"L","R"}) {
+            String foot="Bip01_"+side+"_Foot",toe="Bip01_"+side+"_Toe0",nub="Bip01_"+side+"_Toe0Nub";
+            var footGoal=new Matrix4f();
+            if(!CartTransitionMath.blend(idle.get(foot),handover.get(foot),weight,footGoal))
+                throw new AssertionError("idle foot blend rejected");
+            var toeGoal=childTarget(idle.get(foot),idle.get(toe),handover.get(foot),handover.get(toe),footGoal,weight);
+            var nubGoal=childTarget(idle.get(toe),idle.get(nub),handover.get(toe),handover.get(nub),toeGoal,weight);
+            targets.put(foot,footGoal);targets.put(toe,toeGoal);targets.put(nub,nubGoal);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
-        if(args.length!=2) throw new IllegalArgumentException("input.bin output.bin");
+        if(args.length!=3) throw new IllegalArgumentException("input.bin output.bin Bob_Idle.x");
+        var idle=idleFeet(Path.of(args[2]));
         try(var input=new DataInputStream(Files.newInputStream(Path.of(args[0])));
             var output=new DataOutputStream(Files.newOutputStream(Path.of(args[1])))) {
             if(input.readInt()!=0x434d5052) throw new IllegalArgumentException("bad retarget input");
@@ -56,19 +134,33 @@ public final class CartMetalPickupRetarget {
             // Actor-space capture includes native item placement height after model calibration.
             ground.translateLocal(0,.00175f*2.44949f/1.5f,.06f-profile.pickupStanceBack());
             int frames=input.readInt();output.writeInt(frames);int contacts=0;
+            var samples=new ArrayList<Sample>();
             for(int frame=0;frame<frames;frame++) {
-                double time=input.readDouble();var phase=CartTransitionMath.progress(time,false);
-                var poses=new Matrix4f[count];
+                double time=input.readDouble();var poses=new Matrix4f[count];
                 for(int i=0;i<count;i++) {var values=new float[16];for(int j=0;j<16;j++) values[j]=(float)input.readDouble();poses[i]=new Matrix4f().set(values);}
-                // Match groundFeet: keep the source foot targets and solve each rigid
-                // leg after the additional metal lowering and exact center correction.
-                float lowering=(float)(.05*phase.balance());
-                float shiftX=(float)(((.216849-.21714664)-(-.005859375+.0060535767))*phase.center());
-                if(lowering>0 || shiftX!=0) for(String side:new String[]{"L","R"}) {
-                    var foot=actor.getBone("Bip01_"+side+"_Foot");
-                    var target=new Matrix4f(poses[foot.index]).translateLocal(-shiftX,lowering,0);
+                samples.add(new Sample(time,poses));
+            }
+            // The original first keys retained an arriving character's splayed feet.
+            // Replace only that idle end, joining the first settled key after .10s
+            // (currently .118182s); the grounded squat and cart end stay unchanged.
+            var join=samples.stream().filter(sample->sample.time()>=.10).findFirst().orElseThrow();
+            if(join.time()>.16) throw new IllegalArgumentException("missing settled idle-end key");
+            var handover=footTargets(join,actor);
+            for(int frame=0;frame<frames;frame++) {
+                var sample=samples.get(frame);double time=sample.time();var poses=sample.poses();
+                var phase=CartTransitionMath.progress(time,false);var targets=footTargets(sample,actor);
+                if(time<join.time()) idleEndTargets(targets,idle,handover,CartTransitionMath.smooth(time/join.time()));
+                if(time<1) for(String side:new String[]{"L","R"}) {
+                    var foot=actor.getBone("Bip01_"+side+"_Foot");var toe=actor.getBone("Bip01_"+side+"_Toe0");
+                    var target=targets.get(foot.name);var toeTarget=targets.get(toe.name);
+                    // The leg solver's signed knee pole must follow the desired toes,
+                    // rather than the discarded arrival pose's sideways toe direction.
+                    var direction=toeTarget.getTranslation(new Vector3f()).sub(target.getTranslation(new Vector3f()));
+                    poses[toe.index].setTranslation(poses[foot.index].getTranslation(new Vector3f()).add(direction));
                     if(!CartGrip.reach(poses,actor,foot.name,target,null,false))
                         throw new AssertionError("metal squat refused frame="+frame+" time="+time);
+                    poses[toe.index].set(toeTarget);
+                    poses[actor.getBone("Bip01_"+side+"_Toe0Nub").index].set(targets.get("Bip01_"+side+"_Toe0Nub"));
                 }
                 var cart=new Matrix4f();
                 if(!CartTransitionMath.blend(ground,held,phase.lift(),cart)) throw new AssertionError("cart blend rejected");
@@ -82,7 +174,7 @@ public final class CartMetalPickupRetarget {
                     if(!CartGrip.transitionGrip(poses,actor,false,new Matrix4f(),cart,(float)phase.reach(),(float)phase.grip(),null,"WheelbarrowMetal"))
                         throw new AssertionError("metal IK refused frame="+frame+" time="+time);
                     if(phase.reach()==1) for(String side:new String[]{"L","R"}) {
-                        var target=new Matrix4f();CartGrip.target("WheelbarrowMetal",side.equals("L"),false,new Matrix4f(),cart,target);
+                        var target=new Matrix4f();CartGrip.transitionTarget("WheelbarrowMetal",side.equals("L"),false,new Matrix4f(),cart,target);
                         if(!poses[actor.getBone("Bip01_"+side+"_Hand").index].equals(target,.000002f))
                             throw new AssertionError("metal contact missed at "+time);
                         contacts++;

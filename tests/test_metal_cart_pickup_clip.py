@@ -30,8 +30,12 @@ class MetalPickupClipTests(unittest.TestCase):
 
     def test_preserves_foot_targets_and_body_endpoints(self):
         self.assertEqual([r['time'] for r in self.metal], [r['time'] for r in self.wood])
-        self.assertEqual(self.metal[0], self.wood[0], 'pickup starts at the accepted native pose')
+        for bone in self.parents:
+            if not any(retarget.descendant(bone, f'Bip01_{s}_Thigh', self.parents) for s in ('L', 'R')):
+                self.assertEqual(self.metal[0]['bones'][bone], self.wood[0]['bones'][bone], bone)
         for old, new in zip(self.wood, self.metal):
+            if old['time'] < .11818218976259232:
+                continue
             for bone in self.parents:
                 if any(retarget.descendant(bone, f'Bip01_{s}_Foot', self.parents) for s in ('L', 'R')):
                     self.assertLess(max(abs(a-b) for a,b in zip(new['bones'][bone], old['bones'][bone])),
@@ -39,6 +43,37 @@ class MetalPickupClipTests(unittest.TestCase):
         for bone in self.parents:
             if not any(retarget.descendant(bone, f'Bip01_{s}_Clavicle', self.parents) for s in ('L', 'R')):
                 self.assertEqual(self.metal[-1]['bones'][bone], self.wood[-1]['bones'][bone], bone)
+
+    def test_idle_endpoint_matches_native_feet_without_a_release_twist(self):
+        # Settled Bob_Idle from native03 action-tail-poses.jsonl, wall 1792540229454.
+        # The new endpoint must meet the native fade target, independently of the
+        # arriving source pose that had 25-27 degree outward-pointing feet.
+        idle = {'L': ((.07056365, .06529306, .043610204),
+                      (.07056385, -.00007939339, -.022839691)),
+                'R': ((-.07334151, .06529245, .04361728),
+                      (-.07334125, -.00007596612, -.022836585))}
+        axes = {'Foot': ((0, -1, 0), (-1, 0, 0), (0, 0, -1)),
+                'Toe0': ((0, 0, -1), (-1, 0, 0), (0, 1, 0))}
+        for side in ('L', 'R'):
+            for part, target in zip(('Foot', 'Toe0'), idle[side]):
+                matrix = self.metal[0]['bones'][f'Bip01_{side}_{part}']
+                self.assertLess(distance(position(matrix), target), .00003, (side, part))
+                for column, expected in enumerate(axes[part]):
+                    axis = matrix[column*4:column*4+3]
+                    cosine = sum(a*b for a,b in zip(axis, expected)) / distance(axis, (0, 0, 0))
+                    self.assertLess(math.degrees(math.acos(max(-1, min(1, cosine)))), .1,
+                                    (side, part, 'idle orientation mismatch'))
+        for posed in self.metal:
+            if posed['time'] >= .11818218976259232:
+                break
+            for side in ('L', 'R'):
+                foot = position(posed['bones'][f'Bip01_{side}_Foot'])
+                toe = position(posed['bones'][f'Bip01_{side}_Toe0'])
+                forward = [a-b for a,b in zip(toe, foot)]
+                self.assertLess(abs(math.degrees(math.atan2(forward[0], -forward[2]))), .1,
+                                (posed['time'], side, 'idle-end toes twist outward'))
+                self.assertAlmostEqual(toe[1], idle[side][1][1], delta=.00003,
+                                       msg=(posed['time'], side, 'toe leaves the floor'))
 
     def test_grounded_body_envelope_preserves_rigid_links(self):
         torso = retarget.torso_poses(self.wood, self.parents)
@@ -63,13 +98,22 @@ class MetalPickupClipTests(unittest.TestCase):
     def test_contacts_measured_metal_ground_and_held_handles_with_unlocked_elbows(self):
         # Shared cylindrical tire/feet support, followed by the .09 actor-unit approach advance.
         peak = next(r for r in self.metal if .44 <= r['time'] <= .48)
-        expected = {'L': (.17458296, .25217247, .04884455),
-                    'R': (-.17289874, .25217244, .04884465)}
+        # Physical handle centers measured before the wrist-angle change. These
+        # remain fixed while the hand rotates around its .057 X + .022 Z grasp.
+        expected = {'L': (.1488610450, .2143914815, .0082985286),
+                    'R': (-.1471768658, .2143914434, .0082986037)}
         held = {'L': (.17488745, .5312701, -.083618924),
                 'R': (-.17256463, .53127027, -.083618864)}
         for side in ('L', 'R'):
             names = [f'Bip01_{side}_{part}' for part in ('UpperArm', 'Forearm', 'Hand')]
-            self.assertLess(distance(position(peak['bones'][names[2]]), expected[side]), .00001)
+            hand = peak['bones'][names[2]]
+            palm = [hand[12+i] + .057*hand[i] + .022*hand[8+i] for i in range(3)]
+            self.assertLess(distance(palm, expected[side]), .00001, (side, 'palm misses handle'))
+            forearm = [a-b for a,b in zip(position(hand), position(peak['bones'][names[1]]))]
+            cosine = sum(a*b for a,b in zip(forearm, hand[:3])) / (
+                distance(forearm, (0, 0, 0)) * distance(hand[:3], (0, 0, 0)))
+            bend = math.degrees(math.acos(max(-1, min(1, cosine))))
+            self.assertLessEqual(bend, 45, (side, 'ground wrist bends too far'))
             self.assertLess(distance(position(self.metal[-1]['bones'][names[2]]), held[side]), .00001)
             s, e, w = [position(peak['bones'][name]) for name in names]
             a, b, d = distance(s, e), distance(e, w), distance(s, w)
@@ -97,7 +141,7 @@ class MetalPickupClipTests(unittest.TestCase):
             return math.sqrt(dot(a,a))
         def project(a, axis):
             return [x-dot(a,axis)*y for x,y in zip(a,axis)]
-        for posed, baseline in zip(self.metal[1:-1], torso[1:-1]):
+        for posed, baseline in zip(self.metal[:-1], torso[:-1]):
             for side in ('L','R'):
                 p = lambda name: position(posed['bones'][f'Bip01_{side}_{name}'])
                 b = lambda name: position(baseline['bones'][f'Bip01_{side}_{name}'])
