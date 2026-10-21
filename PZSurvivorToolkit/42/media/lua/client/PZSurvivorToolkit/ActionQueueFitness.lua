@@ -351,9 +351,28 @@ function Fitness.describe(action)
 end
 Events.OnTick.Add(function()
  -- Kahlua ignores weak tables; retain proofs through receipt waits and cleanup while queued.
+ local queues
  for action,record in pairs(records) do
   local queue=ISTimedActionQueue.queues[record.saved.player]
-  if not queue or queue:indexOf(action)==-1 then records[action]=nil end
+  if not queue then records[action]=nil
+  else
+   queues=queues or {}
+   local group=queues[queue]
+   if not group then group={pending={},remaining=0};queues[queue]=group end
+   group.pending[action],group.remaining=true,group.remaining+1
+  end
+ end
+ if queues then
+  for queue,group in pairs(queues) do
+   -- Stop after the last tracked member, rather than scanning an unrelated tail.
+   for _,action in ipairs(queue.queue) do
+    if group.pending[action] then
+     group.pending[action],group.remaining=nil,group.remaining-1
+     if group.remaining==0 then break end
+    end
+   end
+   for action in pairs(group.pending) do records[action]=nil end
+  end
  end
 end)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records={} end) end

@@ -15,8 +15,9 @@ public final class SourceProofChecks {
         thread.debugOwnerThread = Thread.currentThread();
         try (var reader = Files.newBufferedReader(root.resolve(
                 "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua"))) {
-            environment.rawset("TestSourceProof", thread.call(
-                LuaCompiler.loadis(reader, "SourceProof.lua", environment), new Object[]{}));
+            var loader = LuaCompiler.loadis(reader, "SourceProof.lua", environment);
+            environment.rawset("TestLoadSourceProof", loader);
+            environment.rawset("TestSourceProof", thread.call(loader, new Object[]{}));
         }
         // Kahlua's compiler truncates non-ASCII literals; reader strings arrive from Java intact.
         environment.rawset("TestUnicodeA", "A洗😀é");

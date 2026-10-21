@@ -68,7 +68,7 @@ local function checkPlan(items, boxes, carriers, budget, accepts, acceptsDestina
     local categories, categoryTables, knownItems, knownBoxes = {}, {}, {}, {}
     for _, record in ipairs(items) do categories[record], knownItems[record] = record.cat, true end
     for _, record in ipairs(boxes) do categoryTables[record], knownBoxes[record] = record.cats, true end
-    local plan = LootSorter.planTrips(items, boxes, carriers or {carrier}, budget or 100, accepts, Rules.matches, acceptsDestination)
+    local plan = LootSorter.planTrips(items, boxes, carriers or {carrier}, budget or 100, accepts, Rules.matcher(), acceptsDestination)
     for _, record in ipairs(items) do assert(record.cat == categories[record], 'planner left a transient item category') end
     for _, record in ipairs(boxes) do assert(record.cats == categoryTables[record], 'planner replaced original category-table identity') end
     local destinations = {}
@@ -350,4 +350,37 @@ Tags.matchesRule = function(...)
 end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.matchesRule = originalMatches
+
+-- A large set of alternative boxes must not reclassify each physical item for
+-- each candidate. A new plan/standalone read still sees repaired or retagged items.
+do
+    local records, alternatives = {}, {}
+    for index=1,100 do records[index]=item('Base.Candy','Food','Candy '..index) end
+    for index=1,40 do alternatives[index]=box(seedRule) end
+    local classify, reads = Tags.forItem, 0
+    Tags.forItem=function(ref) reads=reads+1; return classify(ref) end
+    local _,failed=checkPlan(records,alternatives)
+    Tags.forItem=classify
+    assert(#failed.leftover==100 and reads==100,'routing reclassified items for alternative/full-reason checks')
+
+    local state={category='Food',broken=false}
+    local record={cat='Food',name='Mutable',weight=1,ref={
+        getDisplayCategory=function() return state.category end,
+        getFullType=function() return 'Base.Mutable' end,
+        isBroken=function() return state.broken end}}
+    local tools=box({mode='all',include={'tool'},exclude={}})
+    local match=Rules.matcher()
+    assert(not match(tools,record))
+    state.category,record.cat='toolCarpentry','toolCarpentry'
+    assert(Rules.matches(tools,record) and Rules.matcher()(tools,record),'next planning operation retained old item tags')
+    state.broken=true
+    assert(not Rules.matches(tools,record) and not Rules.matcher()(tools,record),'broken tool lost its exclusion')
+    state.broken=false
+    assert(Rules.matches(tools,record) and Rules.matcher()(tools,record),'repaired tool retained a previous planning snapshot')
+    enabled=false
+    local legacy=box(nil,{toolCarpentry=true})
+    state.broken=true
+    assert(Rules.matcher()(legacy,record),'tag opt-out retained a broken-tool classification')
+    enabled=true
+end
 print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, destination admission, capacity/carriers/leftovers and failure safety.')

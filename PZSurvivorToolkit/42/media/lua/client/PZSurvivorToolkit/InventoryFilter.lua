@@ -1,5 +1,6 @@
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 local Rows = require "PZSurvivorToolkit/InventoryRows"
+local Membership = require "PZSurvivorToolkit/InventoryMembership"
 local Search = require "PZSurvivorToolkit/InventorySearch"
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
@@ -12,6 +13,22 @@ local Toolkit = PZSurvivorToolkit
 local Filter = {}
 Toolkit.InventoryFilter = Filter
 local patched = {}
+local transferMembership
+
+local function pack(...)
+    return {n = select("#", ...), ...}
+end
+
+-- A command only enumerates/queues transfers; native execution validates them later.
+-- Never retain membership across commands, frames, or nested enumerations.
+local function withTransferMembership(callback, ...)
+    local previous = transferMembership
+    transferMembership = {parent = previous, index = {}}
+    local result = pack(pcall(callback, ...))
+    transferMembership = previous
+    if not result[1] then error(result[2], 0) end
+    return unpack(result, 2, result.n)
+end
 
 local function categoryName(category)
     return getTextOrNull("IGUI_ItemCat_" .. category) or category
@@ -29,11 +46,12 @@ local function tagFilterActive(pane)
     return Tags.enabled() and Tags.ruleActive(tagRule(pane))
 end
 
-local function visibleForTransfer(pane, item)
+local function visibleForTransfer(pane, item, membership)
     if not Toolkit.Settings.inventoryFilters() or not pane.toolkitVisibleItems then return true end
     if not pane.toolkitCategory and not tagFilterActive(pane) and not hasSearch(pane) then return true end
     -- Drag/drop calls the destination pane; its filter must not reject incoming items.
-    local fromPane = item:getContainer() == pane.inventory or pane.inventory:getItems():contains(item)
+    local index = membership or transferMembership and transferMembership.index
+    local fromPane = item:getContainer() == pane.inventory or Membership.contains(index, pane.inventory, item)
     return not fromPane or pane.toolkitVisibleItems[item] == true
 end
 
@@ -87,7 +105,7 @@ local function applyFilter(pane, selected)
         end
         pane.toolkitFilterItems = items
     end
-    local categories, kept, visible, equipped, itemTags = {}, {}, {}, false, {}
+    local categories, itemTags = {}, {}
     local tagsEnabled = Tags.enabled()
     local function tagsFor(item)
         if not itemTags[item] then itemTags[item] = Tags.forItem(item) end
@@ -103,6 +121,12 @@ local function applyFilter(pane, selected)
     local search = Search.forPane(pane)
     local filterTags = tagFilterActive(pane)
     local active = pane.toolkitCategory or filterTags or search
+    for category in pairs(categories) do
+        pane.toolkitCategories[#pane.toolkitCategories + 1] = {id = category, name = categoryName(category)}
+    end
+    table.sort(pane.toolkitCategories, function(a, b) return a.name < b.name end)
+    if not active then return end
+    local kept, visible, equipped = {}, {}, false
     local rule = filterTags and tagRule(pane)
     local function accepts(item)
         local category = item:getDisplayCategory() or item:getCategory()
@@ -113,8 +137,7 @@ local function applyFilter(pane, selected)
     local remappedSelection
     for _, group in ipairs(pane.itemslist) do
         if group.type ~= "separator" then
-            local shown = group
-            if active then shown = filterGroup(group, accepts) end
+            local shown = filterGroup(group, accepts)
             if shown then
                 kept[group] = shown
                 if shown ~= group and selected and selected[group.items[1]] == "group" then
@@ -129,11 +152,6 @@ local function applyFilter(pane, selected)
             end
         end
     end
-    for category in pairs(categories) do
-        pane.toolkitCategories[#pane.toolkitCategories + 1] = {id = category, name = categoryName(category)}
-    end
-    table.sort(pane.toolkitCategories, function(a, b) return a.name < b.name end)
-    if not active then return end
     pane.toolkitVisibleItems = visible
     local rows = {}
     for _, group in ipairs(pane.itemslist) do
@@ -255,6 +273,11 @@ local function install(class)
     patched[class] = true
     local refresh = class.refreshContainer
     class.refreshContainer = function(self, ...)
+        local membership = transferMembership
+        while membership do
+            membership.index = {}
+            membership = membership.parent
+        end
         self.toolkitFilterItems = nil
         return refresh(self, ...)
     end
@@ -284,8 +307,9 @@ local function install(class)
         end
         if self.toolkitVisibleItems then
             local filtered = {}
+            local membership = {}
             for _, item in ipairs(items) do
-                if visibleForTransfer(self, item) then filtered[#filtered + 1] = item end
+                if visibleForTransfer(self, item, membership) then filtered[#filtered + 1] = item end
             end
             items = filtered
         end
@@ -304,9 +328,11 @@ local function installQuickTransfers()
     local canTransfer = handler.canTransferItem
     handler.canTransferItem = function(item, container, player, ...)
         if item and player then
-            for _, page in ipairs({getPlayerInventory(player:getPlayerNum()), getPlayerLoot(player:getPlayerNum())}) do
-                if page.inventoryPane and not visibleForTransfer(page.inventoryPane, item) then return false end
-            end
+            local playerNum = player:getPlayerNum()
+            local pane = getPlayerInventory(playerNum).inventoryPane
+            if pane and not visibleForTransfer(pane, item) then return false end
+            pane = getPlayerLoot(playerNum).inventoryPane
+            if pane and not visibleForTransfer(pane, item) then return false end
         end
         return canTransfer(item, container, player, ...)
     end
@@ -315,7 +341,14 @@ local function installQuickTransfers()
         local original = handler[name]
         handler[name] = function(page, ...)
             page.inventoryPane:refreshContainer()
-            return original(page, ...)
+            return withTransferMembership(original, page, ...)
+        end
+    end
+    -- These enumerate the same eligibility predicate without executing transfers.
+    for _, name in ipairs({"getQuickTransferItems", "showTransferMenu"}) do
+        local original = handler[name]
+        if original then
+            handler[name] = function(...) return withTransferMembership(original, ...) end
         end
     end
     handler.takeSameType = handler.transferSameType

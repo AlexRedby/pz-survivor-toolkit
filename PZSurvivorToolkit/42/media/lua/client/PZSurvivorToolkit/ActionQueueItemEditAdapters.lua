@@ -3,6 +3,7 @@ require "TimedActions/ISTransferAction"
 require "TimedActions/ISDrinkFluidAction"
 require "TimedActions/ISEatFoodAction"
 local Proof = require "PZSurvivorToolkit/SourceProof"
+local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local Toolkit = PZSurvivorToolkit
 local Adapters = {}
 Toolkit.ActionQueueItemEditAdapters = Adapters
@@ -207,12 +208,18 @@ local function singleton(value)
     for key in pairs(value) do if key~=1 then return false end end
     return true
 end
+Adapters.weightInspectionSafe=Weights.factoryFree
 function Adapters.transfer(action)
     if not pending(action,transfer) or not leaf(action.item,action.character) or action.srcContainer==action.destContainer
         or not ancestry(action.srcContainer,action.character) or not ancestry(action.destContainer,action.character) then return end
+    local provenWeight
+    if not Weights.factoryFree(action.item) then
+        provenWeight=Weights.unequipped(action.item)
+        if not finite(provenWeight) or provenWeight<0 then return end
+    end
     local bag=action.destContainer:getContainingItem()
     if bag then
-        local maximum,weight=bag:getMaxItemSize(),action.item:getUnequippedWeight()
+        local maximum,weight=bag:getMaxItemSize(),provenWeight or Weights.unequipped(action.item)
         if not finite(maximum) or maximum<0 or not finite(weight) or weight<0 or maximum>0 and weight>maximum then return end
     end
     local groups=action.queueList
@@ -297,14 +304,23 @@ end
 
 local function partialReplacement(item,script)
     -- Even without creating the empty container, native partial eating uses its
-    -- script weight. Only a decreasing ordinary weight is safe for the existing
-    -- full-current-weight transfer proof; custom/evolved weights need a contract.
-    if item:isCustomWeight() or item:haveExtraItems() then return false end
+    -- script weight. Reviewed evolved extras use the shared pure view; every
+    -- retained portion must still prove that no replacement is created.
     local fullType=item:getReplaceOnUseFullType()
     if type(fullType)~="string" or fullType=="" or not ScriptManager or not ScriptManager.instance then return false end
     local output=ScriptManager.instance:getItem(fullType)
     if not output then return false end
-    local hunger,weight,emptyWeight=script:getHungerChange(),script:getActualWeight(),output:getActualWeight()
+    local emptyWeight=output:getActualWeight()
+    if item:haveExtraItems() then return Weights.extraFood(item)~=nil end
+    if item:isCustomWeight() then
+        -- Without extras, Food.getActualWeight uses InventoryItem.actualWeight.
+        -- Native partial Eat only writes the separate weight field. Keep both
+        -- observed weights finite and above the empty shell's native weight.
+        local weight,actual=item:getWeight(),item:getActualWeight()
+        return finite(weight) and finite(actual) and finite(emptyWeight)
+            and emptyWeight>=0 and emptyWeight<=weight and emptyWeight<=actual
+    end
+    local hunger,weight=script:getHungerChange(),script:getActualWeight()
     return finite(hunger) and hunger<0 and finite(weight) and finite(emptyWeight)
         and emptyWeight>=0 and emptyWeight<=weight
 end
@@ -332,7 +348,8 @@ function Adapters.food(action)
     local cookedOutputs=item:getReplaceOnCooked()
     local replacement=script and (script:getReplaceOnUse() or item:getReplaceOnUse())
     if not script or script:isCantEat() or script:getOpeningRecipe() or script:getOnBreak()
-        or script:getReplaceOnDeplete() or replacement and not partialReplacement(item,script)
+        or script:getReplaceOnDeplete() or item:haveExtraItems() and not replacement
+        or replacement and not partialReplacement(item,script)
         or item:getOnEat() or item:getOnCooked() or item:getReplaceOnRotten()
         or cookedOutputs and not cookedOutputs:isEmpty() and not item:isCookable()
         or item:getRequireInHandOrInventory() or item:getCustomMenuOption()

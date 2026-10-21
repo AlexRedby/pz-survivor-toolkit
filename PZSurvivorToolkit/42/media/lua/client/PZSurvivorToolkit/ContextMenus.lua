@@ -1,6 +1,7 @@
 require "ISUI/ISContextMenu"
 require "PZSurvivorToolkit/Settings"
 local Rules = require "PZSurvivorToolkit/ContextMenuRules"
+local Duplicates = require "PZSurvivorToolkit/ContextMenuDuplicates"
 
 if PZSurvivorToolkit.ContextMenus then return PZSurvivorToolkit.ContextMenus end
 local Profile = require "PZSurvivorToolkit/ContextMenuProfile"
@@ -39,7 +40,7 @@ local function copyMenu(source)
         for _, option in ipairs(menu.options) do
             if not option.isDefaultOption then
                 local copied = {}; for key, value in pairs(option) do copied[key] = value end
-                if getmetatable(option) then
+                if getmetatable(option) ~= nil then
                     -- Snapshot inherited fields without running a foreign __newindex on preview writes.
                     for key in ([[isDefaultOption isTitle name text notAvailable onSelect target subOption
                         pzstCategory pzstKey toolkitBulkAttachments toolkitBulkRecipe toolkitBulkUnload
@@ -61,7 +62,7 @@ end
 
 local function action(option, pass, defaults, discover)
     if option.isDefaultOption or option.isTitle or option.toolkitContextGroup then return nil end
-    local category, key = Rules.classify(option)
+    local category, key = pass.classify(option)
     category = defaults and defaults[option] or pass.semanticDefaults[option] or category
     local label = tostring(option.name or option.text or "")
     if label == "" then return nil end
@@ -139,19 +140,6 @@ local function restore(root)
 end
 Organizer.restore = restore
 
-local function sameAction(left, right)
-    if getmetatable(left) or getmetatable(right)
-        or not left.onSelect or left.isTitle or right.isTitle then return false end
-    -- Labels alone cannot distinguish actions on different items or mod-specific metadata.
-    for key, value in pairs(left) do
-        if key ~= "id" and right[key] ~= value then return false end
-    end
-    for key, value in pairs(right) do
-        if key ~= "id" and left[key] ~= value then return false end
-    end
-    return true
-end
-
 local function sortActions(options, priorities)
     local changed, start = false, 1
     for boundary = 1, #options + 1 do
@@ -184,7 +172,7 @@ local function menuDefaults(root, pass)
     for _, option in ipairs(root.options) do
         if Rules.cartCorpseRole(option) == "root" then
             defaults[option] = "root"
-            local _, key = Rules.classify(option)
+            local _, key = pass.classify(option)
             if not option.notAvailable and (pass.automatic or Organizer.getOverride(key, pass.scope, pass.tagScopes) ~= "hidden") then
                 roots[#roots + 1] = option
             end
@@ -213,7 +201,7 @@ local function organizeNode(menu, pass, visited, selectorsOnly, context, parentK
     local state = pass.state
     if visited[menu] or not menu.options then return end
     visited[menu] = true
-    local original, unique, categories, explicit, counts, keys, priorities = {}, {}, {}, {}, {}, {}, {}
+    local original, categories, explicit, counts, keys, priorities = {}, {}, {}, {}, {}, {}
     local changed, hasTitle, groupable, visibleCount = false, false, {}, 0
     local selected = menu.options[menu.mouseOver]
     for index, option in ipairs(menu.options) do
@@ -228,7 +216,7 @@ local function organizeNode(menu, pass, visited, selectorsOnly, context, parentK
     for _, option in ipairs(original) do
         local _, manual = action(option, pass)
         if not menu.parent and not selectorsOnly and not manual and (not context or context == "inventory" or context == "loot")
-            and Rules.isMore(menu, option) then
+            and Rules.isMore(menu, option, pass.classify) then
             local child = menu:getSubMenu(option.subOption)
             local rows = {}
             for _, row in ipairs(child.options) do
@@ -246,23 +234,11 @@ local function organizeNode(menu, pass, visited, selectorsOnly, context, parentK
     end
     local defaults = Rules.defaults(menu, candidates, context, function(option)
         return not option.notAvailable and action(option, pass) ~= "hidden"
-    end)
-    local named = {}
-    for _, option in ipairs(candidates) do
-        local name = option.name or false
-        local matches = named[name] or {}
-        named[name] = matches
-        local duplicate
-        for _, kept in ipairs(matches) do
-            if sameAction(option, kept) then duplicate = kept; break end
-        end
-        if duplicate then
-            changed = true
-            if selected == option then selected = duplicate end
-        else
-            unique[#unique + 1] = option
-            matches[#matches + 1] = option
-        end
+    end, pass.classify)
+    local unique, aliases = Duplicates.collect(candidates)
+    for option, duplicate in pairs(aliases) do
+        changed = true
+        if selected == option then selected = duplicate end
     end
     for _, option in ipairs(unique) do
         local category, manual, key = action(option, pass, defaults, not menu.parent)
@@ -402,6 +378,7 @@ end
 local function runPass(root, automatic, scope, tagScopes)
     local pass = {
         automatic = automatic, scope = scope, tagScopes = tagScopes, semanticDefaults = {},
+        classify = Rules.newClassifier(),
         state = {nodes = {}, parents = {}, groups = {}, borrowed = {}, anchors = {}, anchorOptions = {}},
     }
     -- Attach before any traversal or native mutation so a failed pass can restore partial work.

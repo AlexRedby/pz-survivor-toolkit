@@ -17,8 +17,13 @@ TAG_TESTS = ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.
 ACTION_TESTS = ("test_vehicle_light_dashboard.lua", "test_vehicle_lighting.lua", "test_source_proof.lua", "test_drink_fluid.lua", "test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_ui_text_fit.lua", "test_sidebar_tools.lua", "test_inventory_classes.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_craft_ui_fixture.lua", "test_queue_engine_fixture.lua", "test_queue_fire_fixture.lua", "test_queue_fire_tidy.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_grab_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_profile_storage.lua", "test_context_menu_profile_failures.lua", "test_context_menu_editor.lua")
 ACTION_TESTS += ("test_action_queue_media.lua", "test_device_media_native_order.lua", "test_bc_pins.lua", "test_action_queue_fitness.lua", "test_crafting_controls.lua")
 ACTION_TESTS += ("test_action_queue_edit_model.lua", "test_action_queue_edit_adapters.lua", "test_action_queue_edit_policy.lua")
-ACTION_TESTS += ("test_action_queue_item_edit_adapters.lua", "test_food_eatsmart_compat.lua", "test_food_goal_labels.lua")
+ACTION_TESTS += ("test_action_queue_weights.lua", "test_action_queue_item_edit_adapters.lua", "test_food_eatsmart_compat.lua", "test_food_goal_labels.lua")
 ACTION_TESTS += ("test_inventory_search.lua", "test_inventory_transfer_operations.lua")
+ACTION_TESTS += ("test_vva_compat.lua",)
+ACTION_TESTS += ("test_manifest_text_fit.lua",)
+ACTION_TESTS += ("test_action_queue_membership.lua",)
+ACTION_TESTS += ("test_inventory_membership.lua",)
+ACTION_TESTS += ("test_context_menu_duplicates.lua",)
 EXTRA_TESTS = (
     'test_quartermaster_rpc.lua',
     'test_container_tag_icons.lua',
@@ -101,6 +106,7 @@ def main() -> None:
     parser.add_argument("--native-vehicles", type=Path, help="vanilla Vehicles.lua for mechanics item-collection checks")
     parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
+    parser.add_argument("--vva-source", type=Path, help="Vanilla Vehicles Animated effective content root containing media/")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--oc-stick-source", type=Path, help="organizedCategories_itemStick.lua for Quantity transfer protection checks")
     parser.add_argument("--oc-display-source", type=Path, help="organizedCategories_displayOverride.lua for inventory stack splitting checks")
@@ -254,6 +260,8 @@ def main() -> None:
             continue
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if name == "test_vva_compat.lua" and args.vva_source:
+            lua.globals().NativeVVASourceRoot = str(args.vva_source.resolve())
         if args.saucedcarts_source:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         if args.native_action_root:
@@ -297,6 +305,10 @@ def main() -> None:
                 lua.globals()["NativeNavigator" + suffix] = (args.navigator_source / (source_name + ".lua")).read_text(encoding="utf-8")
         if name in ("test_inventory_filter.lua", "test_inventory_search.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_inventory_transfer_operations.lua") and args.cleanui_inventory_pane:
             lua.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
+            if name == "test_inventory_filter.lua":
+                handler = args.cleanui_inventory_pane.parent / "ISInventoryPageTransferHandler.lua"
+                if handler.is_file():
+                    lua.globals().CleanUIInventoryTransferHandlerSource = handler.read_text(encoding="utf-8")
             if name == "test_inventory_transfer_operations.lua":
                 vanilla = args.cleanui_inventory_pane.parent.parent / "CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua"
                 lua.globals().CleanUIVanillaInventoryPaneSource = vanilla.read_text(encoding="utf-8")

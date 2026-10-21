@@ -29,27 +29,18 @@ local noEquipmentHooks = {ISGeneratorInfoAction = true, ISPlugGenerator = true, 
 local helperOwners = {}
 local continued = {}
 local pendingPerform = {}
+local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
+local registries = {records, continued, pendingPerform, equipmentRecords}
 
 function Generators.prune()
-    local pending = false
-    for _, registry in ipairs({records, continued, pendingPerform, equipmentRecords}) do
-        for _ in pairs(registry) do pending = true; break end
-        if pending then break end
-    end
-    if not pending then return end
-    local queued = {}
-    for character, queue in pairs(ISTimedActionQueue.queues) do
-        if not character:isDead() then
-            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
-        end
-    end
-    for _, registry in ipairs({records, continued, pendingPerform, equipmentRecords}) do
+    local queued = Membership.find(registries)
+    for _, registry in ipairs(registries) do
         for action in pairs(registry) do if not queued[action] then registry[action] = nil end end
     end
 end
 Events.OnTick.Add(Generators.prune)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
-    for _, registry in ipairs({records, continued, pendingPerform, equipmentRecords}) do
+    for _, registry in ipairs(registries) do
         for key in pairs(registry) do registry[key] = nil end
     end
 end) end
@@ -295,6 +286,7 @@ end
 function Generators.sharesTarget(first, second, context)
     return powerConflict(first, second, context) or powerConflict(second, first, context)
 end
+if Policy and Policy.registerTargetChecker then Policy.registerTargetChecker("generators", Generators, Generators.sharesTarget) end
 local installed
 function Generators.install()
     if installed then return end

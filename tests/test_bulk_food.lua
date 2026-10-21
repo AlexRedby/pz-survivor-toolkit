@@ -1,5 +1,14 @@
 -- Exact food selection and native eating chains; Java animation/network state is represented explicitly.
 require = function(name)
+    if name == "PZSurvivorToolkit/ActionQueueWeights" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
+    if name == "PZSurvivorToolkit/InventoryMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua"))()
+    end
+    if name == "PZSurvivorToolkit/ActionQueueMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
     if name == 'PZSurvivorToolkit/InventoryClasses' then
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryClasses.lua'))()
     end
@@ -110,7 +119,10 @@ local function list(values)
         contains = function(_, value) for _, candidate in ipairs(values) do if candidate == value then return true end end return false end}
 end
 local function container()
-    return {items = {}, contains = function(self, item) return self.items[item:getID()] == item end,
+    return {items = {}, getItems = function(self)
+            local values = {}; for _, item in pairs(self.items) do values[#values + 1] = item end
+            return list(values)
+        end, contains = function(self, item) return self.items[item:getID()] == item end,
         containsID = function(self, id) return self.items[id] ~= nil end,
         getItemById = function(self, id) return self.items[id] end,
         getFirstTagEvalRecurse = function() end, getFirstTypeEvalRecurse = function() end}
@@ -254,6 +266,35 @@ local function finish()
         q:onCompleted(current)
     end
 end
+-- Realistic large selections must enumerate each source once, rather than call
+-- the native recursive ID search for every selected food.
+do
+    for _, count in ipairs({32, 128, 512}) do
+        local source, selected, reads, searches, snapshots = container(), {}, 0, 0, 0
+        local beforeAvailable = available
+        available = {source}
+        for i = 1, count do selected[i] = food({container = source}) end
+        source.getItems = function()
+            snapshots = snapshots + 1
+            local values = {}; for _, item in pairs(source.items) do values[#values + 1] = item end
+            return {size = function() return #values end, get = function(_, i) reads = reads + 1; return values[i + 1] end}
+        end
+        source.getItemById = function(_, id)
+            searches = searches + 1
+            for _, item in pairs(source.items) do if item:getID() == id then return item end end
+        end
+        assert(#Bulk.entries(player, {{items = selected}}) == count)
+        assert(searches == 0 and snapshots == 1 and reads == count,
+            'food selection must make one raw source pass, not one recursive ID search per item')
+        source.items[selected[1].id] = nil
+        assert(#Bulk.entries(player, selected) == count - 1, 'the next enumeration must see removal')
+        local replacement = food({container = source})
+        source.items[replacement.id] = nil; replacement.id = selected[1].id; source.items[replacement.id] = replacement
+        assert(Bulk.entries(player, {selected[1]})[1] == selected[1],
+            'selection admission retains native ID semantics for a replicated replacement')
+        available = beforeAvailable
+    end
+end
 local a, b, unselected = food(), food({container = bag}), food()
 local rows = {{items = {a, a, b}}, a}
 local selected = Bulk.entries(player, rows)
@@ -290,7 +331,17 @@ assert(#eaten == 2 and eaten[1] == a and eaten[2] == b and inventory:contains(un
 assert(#calls == 2 and Batch.progress(q, first).total == 2 and Batch.progress(q, first).completed == 2)
 reset()
 a, b = food(), food()
-assert(Bulk.queueOne({{items = {a, a, b}}}, 1, 0, nil, 100) == 1)
+do
+    local actions = PZSurvivorToolkit.BulkActions
+    local original, preparations, laterChecks = actions.selectedItems, 0, 0
+    local laterScript = b.getScriptItem
+    actions.selectedItems = function(...) preparations = preparations + 1; return original(...) end
+    b.getScriptItem = function(...) laterChecks = laterChecks + 1; return laterScript(...) end
+    assert(Bulk.queueOne({{items = {a, a, b}}}, 1, 0, nil, 100) == 1)
+    actions.selectedItems, b.getScriptItem = original, laterScript
+    assert(preparations == 1, 'a single-food click must prepare its selection only once')
+    assert(laterChecks == 0, 'a one-food click needs no eligibility checks after its first eligible item')
+end
 assert(Bulk.queueOne({{items = {a, a, b}}}, 1, 0, nil, 100) == 1)
 assert(#q.queue == 2 and #Bulk.entries(player, {a, b}) == 0, 'repeat All clicks reserve successive foods without cancelling earlier commands')
 assert(Bulk.queueOne({a, b}, 1, 0, nil, 100) == 0 and #q.queue == 2, 'exhausted selection never substitutes an unselected item')
@@ -309,6 +360,15 @@ reset(); a = food(); assert(Bulk.queue(player, {a}) == 1)
 local ownedCommand = q.current
 assert(onTick[#onTick] == Bulk.prune, 'ownership pruning must run independently of settings and the panel')
 Bulk.prune(); assert(Bulk.isCommand(ownedCommand), 'queued command retains its private entry during pruning')
+do
+    local visits = assert(loadfile(ProjectRoot .. '/tests/support/queue_registry_visits.lua'))()
+    local original = q.queue
+    q.queue = {ownedCommand}
+    for i = 2, 4097 do q.queue[i] = {} end
+    assert(visits(q.queue, Bulk.prune) == 1 and Bulk.isCommand(ownedCommand),
+        'one retained food command must not inspect 4096 unrelated queued actions every tick')
+    q.queue = original
+end
 executeCommand(ownedCommand)
 local ownedMeal = q.current
 Bulk.prune()
@@ -346,7 +406,15 @@ local half = sub:addOption(getText('ContextMenu_Eat_Half'), {a, b}, originalEat,
 local quarter = sub:addOption(getText('ContextMenu_Eat_Quarter'), {a, b}, originalEat, .25, 0, nil, 25)
 local smart = function() end
 local smartOption = sub:addOption('Smart target', {a, b}, smart, 1, 0); smartOption.ES_EatSmart = true
-fill(0, context, {a, b}); fill(0, context, {a, b})
+do
+    local actions = PZSurvivorToolkit.BulkActions
+    local original, preparations = actions.selectedItems, 0
+    actions.selectedItems = function(...) preparations = preparations + 1; return original(...) end
+    fill(0, context, {a, b})
+    actions.selectedItems = original
+    assert(preparations == 1, 'one food menu must normalize selected rows once')
+end
+fill(0, context, {a, b})
 assert(ISInventoryPaneContextMenu.onEatItems == originalEat and half.onSelect == Bulk.queueOne and smartOption.onSelect == smart,
     'native portions select unreserved items while public callback and EatSmart retain their contracts')
 assert(all.onSelect == Bulk.queueOne and all.param1 == 1 and all.param2 == 0, 'only native All option chooses an unreserved exact item')

@@ -42,16 +42,20 @@ end
 
 -- getInputCount returns uses for drainables, so subtract only item-count inputs.
 -- Applied ScriptItems retain the per-type scale used by the native recipe engine.
-local function appliedUnits(logic, input, fullType)
-    local units = 0
+local function appliedUnits(logic, input)
+    local total, byType = 0, {}
     listEach(logic:getSatisfiedInputItems(input), function(item)
         local appliedType = item:getFullName()
-        if (not input:isExclusive() or appliedType == fullType) and not input:isUsesPartialItem(item) then
+        if not input:isUsesPartialItem(item) then
             local scale = input:getRelativeScale(appliedType)
-            if scale and scale > 0 then units = units + 1 / scale end
+            if scale and scale > 0 then
+                local units = 1 / scale
+                total = total + units
+                byType[appliedType] = (byType[appliedType] or 0) + units
+            end
         end
     end)
-    return units
+    return {total = total, byType = byType, exclusive = input:isExclusive()}
 end
 
 function Crafting.inputChoices(logic, input, force)
@@ -59,11 +63,18 @@ function Crafting.inputChoices(logic, input, force)
             or input:isAcceptsAnyItem() or (not force and logic:isInputSatisfied(input)) then return {} end
     local fluidContainer = input:hasConsumeFromItem()
     if fluidContainer and not force and logic:getSatisfiedInputItems(input):size() > 0 then return {} end
+    local applied
     return choicesFor(input:getPossibleInputItems(), function(item, fullType)
         -- Fluids and uses cannot be converted to a guaranteed number of containers/items.
         if fluidContainer or input:isUsesPartialItem(item) then return 1 end
         local amount = input:getAmount(fullType)
-        if not force then amount = amount - appliedUnits(logic, input, fullType) * input:getRelativeScale(fullType) end
+        if not force then
+            -- One input can offer hundreds of alternative types. Read its applied
+            -- ingredients once for this menu, rather than once for every choice.
+            applied = applied or appliedUnits(logic, input)
+            local units = applied.exclusive and (applied.byType[fullType] or 0) or applied.total
+            amount = amount - units * input:getRelativeScale(fullType)
+        end
         return math.max(0, amount)
     end, function(item)
         if fluidContainer then return "UI_PZSW_OneContainer" end
@@ -120,10 +131,11 @@ local function submit(playerNum, entries)
     W.Client.addItems(playerNum, clean)
 end
 
-local function itemOption(context, playerNum, choice, kind, display)
-    local list = W.Client.selected(playerNum)
+local function itemOption(context, playerNum, choice, kind, display, membership)
+    local list = membership and membership.list
+    if not membership then list = W.Client.selected(playerNum) end
     local listId = list and list.id
-    local keys = W.Client.entryKeys(list, choice.fullType)
+    local keys = W.Client.entryKeys(list, choice.fullType, membership and membership.index)
     if #keys == 0 then
         context:addOption(getText("UI_PZSW_Add" .. kind) .. ": " .. (display or label(choice)), playerNum, function(num)
             if not enabled() then return end
@@ -141,6 +153,11 @@ local function itemOption(context, playerNum, choice, kind, display)
             if enabled() then W.Client.edit(num, "remove", {listId = listId, fullType = key}) end
         end)
     end
+end
+
+local function menuMembership(playerNum)
+    local list = W.Client.selected(playerNum)
+    return {list = list, index = W.Client.entryIndex(list)}
 end
 
 -- Commit a batch only after each ambiguous input has one explicit choice.
@@ -168,9 +185,10 @@ function Crafting.openMenu(panel)
     if not enabled() or not panel.player then return end
     local playerNum = panel.player:getPlayerNum()
     local context = ISContextMenu.get(playerNum, getMouseX(), getMouseY())
+    local membership = menuMembership(playerNum)
     for _, group in ipairs(Crafting.results(panel.logic)) do
         for _, choice in ipairs(group) do
-            itemOption(context, playerNum, choice, "Result")
+            itemOption(context, playerNum, choice, "Result", nil, membership)
         end
     end
     local groups = Crafting.missing(panel.logic)
@@ -184,9 +202,11 @@ function Crafting.openInput(widget)
     if not enabled() or widget.displayAsOutput or not widget.player then return end
     local choices = Crafting.inputChoices(widget.logic, widget.inputScript, true)
     if #choices == 0 then return end
-    local context = ISContextMenu.get(widget.player:getPlayerNum(), getMouseX(), getMouseY())
+    local playerNum = widget.player:getPlayerNum()
+    local context = ISContextMenu.get(playerNum, getMouseX(), getMouseY())
+    local membership = menuMembership(playerNum)
     for _, choice in ipairs(choices) do
-        itemOption(context, widget.player:getPlayerNum(), choice, "Ingredient")
+        itemOption(context, playerNum, choice, "Ingredient", nil, membership)
     end
     return context
 end

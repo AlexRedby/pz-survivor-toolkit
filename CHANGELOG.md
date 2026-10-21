@@ -10,17 +10,107 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Selected mod set
 
+- **Added:** Detailed Skill Tooltips, Foraging Tooltip Extended and Custom Light Switch to the B42.21 selection (52 Mod IDs / 49 Workshop items). Adds skill-level explanations, foraging-radius information and buildable room-light switches. Author version/MP claims are documented in the catalog; full-pack SP/Host behavior remains unverified.
+
 - **Added:** Archery Nexus with Wilderness Progression: Archery Nexus to the B42.21 selection (49 Mod IDs / 46 Workshop items), with the base loaded before its companion. Includes crafting/progression, arrow recovery and draw endurance/strain; full-pack and Host behavior remain unverified. Existing sandbox settings are unchanged.
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit
 
-### 0.1.169
+### 0.1.187
 
 - **Changed:** Shopping-cart ground actions approach the push bar and use their own standing acquisition/release clip, preserving native cart and cargo ownership.
 - **Fixed:** Metal wheelbarrow setdown no longer briefly splays the feet before blending back into the normal idle stance.
 - **Changed:** Metal wheelbarrow pickup and put-down use a separate body clip matched to its grounded handles, with a closer approach between the shafts, planted feet and continuous hand contact.
 - **Changed:** Metal wheelbarrows now use the shared wheelbarrow pickup, put-down, cancellation/recovery and movement presentation, including native multiplayer ownership and observer animation.
+
+### 0.1.186
+
+- Classify ordinary context-menu options once per rebuild instead of repeating callback discovery for defaults and layout snapshots. New rebuilds remain fresh; opaque mod options retain live classification.
+- Narrow duplicate candidates with a per-rebuild metadata index while retaining exact comparison, custom equality and distinct commands. Preserve false-protected mod option tables consistently in live menus and editor previews.
+
+### 0.1.185
+
+- Prepare food selections with one resumable recursive inventory-ID lookup instead of searching the entire source for each item. Small selections stop at the needed prefix; later clicks and action dispatch recheck live items and reachability.
+- Normalize selected rows once per food/firearm menu build and single-food click. One-food commands stop after the first eligible item; native weapon-part callbacks, portions and execution checks are preserved.
+
+### 0.1.184
+
+- **Improved:** Reviewed ingredient-based food no longer blocks carried-container transfer edits solely because native weight reads construct ingredient items. Queue checks use non-creating upper bounds for food and nested/worn bag loads, preserve native equipment weight reduction and charge incoming capacity conservatively. Uncertain released space, unknown ingredient constructors and full food replacement remain protected.
+
+### 0.1.183
+
+- Avoid scanning unrelated queue tails every tick when pruning food, fire, generator and mod-integration records. Share a fresh tracked-action lookup that stops once all tracked actions are found, preserving delayed Tidy restores, fire retries and cleanup after cancellation or world changes.
+
+### 0.1.182
+
+- **Improved:** Pending partial portions of food with reviewed native ingredients can be reordered or cancelled while the original dish survives. Ingredient and empty-container state remain protected; unsupported ingredient creation/configuration stays blocked. Queue inspection avoids native ingredient factories; capacity-dependent transfer edits remain protected while their carried contents include ingredient-based food.
+
+### 0.1.181
+
+- Reuse measured text-fitting results across UI redraws with bounded storage and automatic invalidation when native fonts change. Preserve exact glyph measurement and Unicode boundaries.
+- Use the same fitting mechanism in the storage Manifest, retaining its font and two-dot suffix while keeping Unicode labels inside narrow columns.
+
+### 0.1.180
+
+- **Improved:** Pending partial food portions with a custom item weight and a native empty-container replacement can be reordered or cancelled when the original food survives every remaining portion. Queue checks preserve native portions and weight, keep required pickups and capacity constraints, and protect evolved ingredients, callbacks and full replacement consumption.
+
+### 0.1.179
+
+- **Fixed:** Wishlist row highlighting reuses unique item types for visible inventory groups instead of rescanning every hidden child on each frame. Mixed stacks, filters and pin projections remain accurate; Wishlist membership still updates immediately, and refreshes invalidate the summaries.
+- **Fixed:** Crafting menus with many Wishlist alternatives prepare one selected-list entry index rather than scanning every request for every option. Exact entries, completed requests and overlapping vehicle groups keep their removal order and captured target; reopening reads fresh membership.
+
+### 0.1.178
+
+- **Fixed:** Wishlist reads already-applied recipe ingredients once when calculating missing alternatives, instead of rebuilding and scanning that list for every possible ingredient type. Exclusive choices, relative amounts, partial-item/fluid caveats and fresh state on reopening are preserved.
+
+### 0.1.177
+
+- **Fixed:** Quantity transfers index raw proximity-container membership once while preparing a selection and rebuild that index separately on confirmation. Large selections avoid repeated full scans while still checking changed contents, item protections, sources and destinations.
+- **Changed:** Filtered and quantity transfers share one command-scoped membership implementation. Quartermaster classifies each item once per sort plan when considering alternative destinations; later plans and standalone reads remain fresh. Tag rules build one membership set for their include/exclude checks instead of rebuilding it for every exclusion.
+
+### 0.1.176
+
+- **Development:** Added grouped world-radio queue checks for pending reorder, cancellation and legacy barriers, with queue-disabled controls, native timing, exact device receipts and shared scenario-matrix coverage. Full selected-pack SP and menu-Host checks distinguish server volume/channel effects from native client-local microphone mute.
+- **Fixed:** Filtered bulk transfers and CleanUI transfer previews index raw container membership once per synchronous enumeration instead of scanning the whole container for each candidate. Hidden aggregate items remain excluded, incoming items remain accepted and later commands read fresh contents; native transfer checks are preserved.
+- **Fixed:** Inventory refresh no longer builds and discards a visible-row projection when no category, tag or search filter is active. Category and tag choices still follow current item metadata.
+
+### 0.1.175
+
+- **Fixed:** Source-origin checks reuse the compile-time filename of loaded Lua functions instead of querying it repeatedly for every queued action. The bounded cache follows the original filename accessor; replacements, live callbacks, item state, capacities and file checksums retain their independent checks.
+- **Fixed:** Multiplayer acknowledgement tracking retains only the current receipt per local player slot, while pending late results remain independently correlated. Completed floor-placement repair records are removed through queue and main-menu cleanup; neither registry relies on unsupported weak-table collection.
+
+### 0.1.174
+
+- **Fixed:** Removed three obsolete modern police separator references from the reviewed Vanilla Vehicles Animated profiles after validating and applying their existing bars template. The missing references previously produced startup errors without changing the parsed vehicles. Vehicle parameters and the single existing bars model are preserved; unknown source versions and templates or profiles provided by other mods remain untouched.
+
+### 0.1.173
+
+- **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.
+- **Fixed:** Automatic priority skips checks when the request is already at its earliest possible position and creates edit snapshots only when attempting an actual move. Live prerequisite changes remain visible to retries.
+- **Fixed:** Medical and exercise queue bookkeeping checks membership once per relevant queue instead of searching the queue separately for every tracked action.
+- **Fixed:** Dependency analysis indexes disjoint item groups and item-only transfer components before comparing action pairs. Possible overlaps, complex effects and spatial or capacity-sensitive cases retain their existing detailed checks.
+
+### 0.1.172
+
+- **Fixed:** TidyUpMeister floor returns in Host remain valid when their transfer is the first action after disabling the queue. Mode bookkeeping now runs before capturing the return receipt; later cancellation, changed item identity and changed placement still invalidate it.
+- **Fixed:** Corrected Vanilla Vehicles Animated's stale ranger-car separator reference to its existing normal police bars, following the upstream migration. Source and template checks protect unknown versions. The three modern police separator references remain unresolved and visible in the logs.
+
+### 0.1.171
+
+- **Fixed:** A new multiplayer character reapplies the local auto-drink preference after the server connection reply, so respawning with auto-drink disabled no longer leaves the character enabled while the menu shows it disabled.
+
+### 0.1.170
+
+- **Fixed:** A VHS taken from a backpack can finish insertion after being moved ahead of active shelf reading in Host. The queue follows the replacement client item only after its exact native pickup succeeds; item identity, media contents, endpoints and dependent playback remain checked.
+- **Fixed:** Queue move/cancel capacity checks no longer call the unavailable `next()` global in the game's Kahlua runtime. Shelf returns combined with backpack pickups retain their existing capacity checks without errors while drawing or editing the queue.
+- **Fixed:** Corrected the reviewed Vanilla Vehicles Animated references for StepVan trunk decor and modern police-car bars. Existing trunk decor remains applied once; the bars use the mod's existing template. Unknown upstream versions and templates or profiles supplied by other mods keep their own behavior. Missing police-separator templates remain unresolved and visible in the logs.
+- **Development:** Added the worn-backpack VHS variant to the shelf-reading/TV checks, with exact pickup, grouping and server receipts. The shared log audit now recognizes native `LOG: General > ERROR:` records instead of reporting them as clean.
+
+### 0.1.169
+
+- **Fixed:** Long action queues, including magazines read from a container, no longer repeatedly inspect the whole queue while drawing every visible row. Move/cancel hints are calculated for the hovered control; actual edits still validate fresh state.
+- **Fixed:** Bulk and deferred commands update their operation titles incrementally instead of rescanning the queue after every addition. Transfers also reuse their fixed heading while waiting behind other work, including CleanUI's deferred drops. Individual operation boundaries, native action execution and transfer batching are preserved.
 
 ### 0.1.168
 

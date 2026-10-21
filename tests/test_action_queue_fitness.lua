@@ -519,6 +519,83 @@ pending,q=request('squats',10)
 assert(fitnessQueue.isManaged(pending),'main menu reset prevented subsequent fitness records')
 print('PASS explicit fitness record pruning preserves queued work and releases removed/menu records')
 
+do
+    fitnessMenuReset();reset()
+    q=f.queue(head())
+    local tracked={}
+    for i=1,64 do
+        panel('squats',10):onClick({internal='OK'})
+        tracked[i]=assert(q.queue[i+1])
+    end
+    local unrelatedOwner={}
+    local unrelated={queue={head()}}
+    ISTimedActionQueue.queues[unrelatedOwner]=unrelated
+    local scans,visits,foreignScans=0,0,0
+    local nativeIpairs,nativeNext=ipairs,next
+    ipairs=function(values)
+        local iterator,state,index=nativeIpairs(values)
+        if values==unrelated.queue then foreignScans=foreignScans+1 end
+        if values~=q.queue then return iterator,state,index end
+        scans=scans+1
+        return function(...)
+            local key,value=iterator(...)
+            if key then visits=visits+1 end
+            return key,value
+        end,state,index
+    end
+    next=nil -- Kahlua has no next global.
+    fitnessPrune()
+    next,ipairs=nativeNext,nativeIpairs
+    assert(scans==1 and visits==#q.queue and foreignScans==0,
+        'fitness pruning must visit its live queue once and skip unrelated player queues')
+    for _,action in ipairs(tracked) do assert(fitnessQueue.isManaged(action),'linear pruning lost queued fitness ownership') end
+    tracked[1].character=unrelatedOwner
+    fitnessPrune();tracked[1].character=player
+    assert(fitnessQueue.isManaged(tracked[1]),'fitness pruning must resolve the captured player queue')
+    local oldQueue=q
+    q=f.queue(head(),tracked[1]);fitnessPrune()
+    assert(oldQueue.queue[2]==tracked[1] and fitnessQueue.isManaged(tracked[1]) and not fitnessQueue.isManaged(tracked[2]),
+        'queue replacement must retain only fitness actions in the current registered queue')
+    table.remove(q.queue,2);fitnessPrune()
+    assert(not fitnessQueue.isManaged(tracked[1]),'completed fitness request retained ownership after the next tick')
+    scans=0;ipairs=function(values)
+        if values==q.queue then scans=scans+1 end
+        return nativeIpairs(values)
+    end
+    fitnessPrune();ipairs=nativeIpairs
+    assert(scans==0,'empty fitness registry must not scan the queue')
+    local single
+    single,q=request('squats',10);table.remove(q.queue,1);q.current=single
+    local tail=head()
+    for i=1,4096 do q.queue[#q.queue+1]=tail end
+    local function checkPrefix(expected)
+        scans,visits=0,0
+        ipairs=function(values)
+            local iterator,state,index=nativeIpairs(values)
+            if values~=q.queue then return iterator,state,index end
+            scans=scans+1
+            return function(...)
+                local key,value=iterator(...)
+                if key then visits=visits+1 end
+                return key,value
+            end,state,index
+        end
+        fitnessPrune();ipairs=nativeIpairs
+        assert(scans==1 and visits==expected,'fitness pruning must stop at the last sought member')
+    end
+    checkPrefix(1);assert(fitnessQueue.isManaged(single),'tracked current fitness action lost ownership')
+    panel('squats',10):onClick({internal='OK'})
+    local second=table.remove(q.queue);table.insert(q.queue,2,second);checkPrefix(2)
+    assert(fitnessQueue.isManaged(single) and fitnessQueue.isManaged(second),'tracked fitness prefix lost ownership')
+    panel('squats',10):onClick({internal='OK'})
+    local missing=table.remove(q.queue)
+    checkPrefix(#q.queue)
+    assert(not fitnessQueue.isManaged(missing) and fitnessQueue.isManaged(second),
+        'missing fitness member needs a full scan and must not remove a live member')
+    ISTimedActionQueue.queues[unrelatedOwner]=nil
+    print('PASS fitness pruning has one linear queue pass and no empty-registry scans')
+end
+
 reset();enabled=false
 q=f.queue(head());window=panel('squats',10)
 window:onClick({internal='OK'})

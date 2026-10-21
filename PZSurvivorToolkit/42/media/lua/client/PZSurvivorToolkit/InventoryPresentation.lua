@@ -94,6 +94,7 @@ local function installPane(class)
     end
     local nativeRefresh = class.refreshContainer
     class.refreshContainer = function(pane, ...)
+        Wishlist.invalidate(pane)
         local anchor = pane.items and pane.firstSelect and pane.items[pane.firstSelect]
         anchor = anchor or (contexts[pane] and contexts[pane].anchor)
         local result = nativeRefresh(pane, ...)

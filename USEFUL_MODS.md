@@ -292,3 +292,27 @@ The companion preserves the base bow, visuals and sounds while adding a dedicate
 Baseline sandbox settings under Wilderness Progression are damage/range multipliers `1`, Endurance Drain `Normal` and Muscle Strain `Normal`. Increased Bow Hit Chance and plastic-bottle fletching default on; these are upstream defaults, not settings supplied by the selected INI. Keep the existing world's sandbox settings unless deliberately changing them.
 
 Requires both Workshop items on Host and clients. Do not combine the companion with Archery Nexus Fixed or Lite; do not add RadArchery or the RadBows Upgrade as dependencies. As checked on 20 October 2026, the companion was updated on 15 October, but its author explicitly says multiplayer live testing is incomplete. B42.21 full-pack/Host behavior, hunting, arrow conservation and Toolkit queue/crafting integrations have not been verified. Before installing into a gameplay world, use a disposable profile to check crafting, nocking/firing, hit/miss recovery, breakage, restringing, unequipping and Host synchronization. See [installation](MOD_INSTALL.md#archery).
+
+## 49 Detailed Skill Tooltips
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3572846242) · Workshop `3572846242` · Mod `EURY_DST`
+
+Adds per-level numerical bonuses and optional recipe/buildable unlock lists to skill tooltips, without changing XP rates or balance. Recipe/buildable sections and list limits are configurable in Mod Options. This complements the selected Detailed Descriptions for Occupations and Traits; the author explicitly confirms they provide different features and can coexist.
+
+The author declares B42.x support; no required dependencies are listed. Mods replacing skill tooltips may need load-order adjustments. B42.21 full-pack SP/Host behavior, translated numerical descriptions and custom Archery skill coverage have not been verified.
+
+## 50 Foraging Tooltip Extended
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3507997225) · Workshop `3507997225` · Mod `Ivmakk_ForagingTooltipExtended`
+
+Breaks down search-radius modifiers from weather, darkness, exhaustion, skills and traits, highlights radius limits and optionally shows the current radius next to the eye icon. Persistent radius display and tooltip value alignment are configurable in Mod Options. No required dependencies are listed; Quick Forage Icon Discard is an optional recommendation and is not selected.
+
+The author declares 42.15+ support and reports testing on 42.20.4 in SP/MP. Other mods replacing the Vision Effectiveness tooltip can conflict. B42.21 full-pack SP/Host behavior has not been verified.
+
+## 51 Custom Light Switch
+
+[Steam Workshop](https://steamcommunity.com/workshop/filedetails/?id=3779343349) · Workshop `3779343349` · Mod `CustomLightSwitch`
+
+Adds buildable and dismantlable wall switches, including lighting for player-built rooms, using lightbulbs and grid/generator power. Switches in the same room share their on/off state. Learn the recipe at Electrical 3, or read the added magazine at Electrical 1. Construction requires a screwdriver, electronics scrap, electric wire and screws; the new switch also needs a bulb. Building/dismantling grants Electrical XP, can wear the screwdriver and only partly returns construction materials, so this adds construction/progression behavior alongside convenience.
+
+No required dependencies are listed. The author declares B42.21+ support and reports SP and live-server multiplayer tests. English, French and Russian are listed. As checked on 21 October 2026, recent Workshop reports describe bulb-insertion and grid-power problems, including a switch still needing a generator before the power shutoff; an author update does not establish resolution in this set. B42.21 full-pack SP/Host construction, lighting, dismantling, Toolkit queue/menu integration and second-player synchronization have not been verified. Existing world settings are unchanged by the selected INI.

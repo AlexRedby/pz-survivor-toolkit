@@ -770,16 +770,34 @@ function Health.install()
     end, true)
     Events.OnTick.Add(function()
         -- Kahlua ignores weak tables; keep proofs only while their actions remain queued.
-        for action in pairs(records) do
+        local queues, live
+        for action, saved in pairs(records) do
             local queue = ISTimedActionQueue.queues[action.character]
-            if not queue or queue:indexOf(action) == -1 then records[action] = nil end
+            if not queue then records[action] = nil
+            else
+                queues = queues or {}
+                local group = queues[queue]
+                if not group then group = {pending = {}, remaining = 0}; queues[queue] = group end
+                group.pending[action], group.remaining = saved, group.remaining + 1
+            end
         end
-        local live = {}
-        for _, saved in pairs(records) do
-            if saved.handler then live[saved.handler] = true end
-            if saved.origin then live[saved.origin.handler] = true end
+        if queues then
+            for queue, group in pairs(queues) do
+                -- A short tracked prefix must not scan an unrelated long tail.
+                for _, action in ipairs(queue.queue) do
+                    local saved = group.pending[action]
+                    if saved then
+                        group.pending[action], group.remaining = nil, group.remaining - 1
+                        live = live or {}
+                        if saved.handler then live[saved.handler] = true end
+                        if saved.origin then live[saved.origin.handler] = true end
+                        if group.remaining == 0 then break end
+                    end
+                end
+                for action in pairs(group.pending) do records[action] = nil end
+            end
         end
-        for handler in pairs(droppedSupplies) do if not live[handler] then droppedSupplies[handler] = nil end end
+        for handler in pairs(droppedSupplies) do if not live or not live[handler] then droppedSupplies[handler] = nil end end
     end)
     if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records, droppedSupplies = {}, {} end) end
     installInventoryProducer()

@@ -1,7 +1,33 @@
 -- Shared setup for new native-source policy fixtures; native execution/Java state remains explicit per test.
+local native,project
+local itemAdapters,capacityAdapters,weights
+local function itemInspector()
+    if not itemAdapters then
+        if not ISTransferAction then native('shared/TimedActions/ISTransferAction.lua') end
+        if not ISEatFoodAction then native('shared/TimedActions/ISEatFoodAction.lua') end
+        if not ISDrinkFluidAction then native('shared/TimedActions/ISDrinkFluidAction.lua') end
+        itemAdapters=project('ActionQueueItemEditAdapters')
+        -- General policy fixtures intentionally provide resource contracts
+        -- without projected item-edit facts. Exercise the real pure weight
+        -- inspector while retaining that scope; the dedicated item adapter
+        -- suite supplies complete native state and loads the whole module.
+        local function absent()end
+        capacityAdapters={weightInspectionSafe=itemAdapters.weightInspectionSafe,
+            transfer=absent,drink=absent,food=absent,adoptMethods=absent,adoptBase=absent,
+            fullnessNeutralDrink=function()return true end}
+    end
+    return capacityAdapters
+end
 require = function(module)
     if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
+    if module == 'PZSurvivorToolkit/ActionQueueWeights' then
+        if not weights then weights=project('ActionQueueWeights') end
+        return weights
+    end
+    if module == 'PZSurvivorToolkit/ActionQueueItemEditAdapters' then
+        return itemInspector()
+    end
 end
 local function derive(self, name)
     local class = {Type=name, derive=derive}; class.__index=class
@@ -17,16 +43,32 @@ end
 getText=function(key) return key end
 instanceof=function(value,name) return type(value)=='table' and value.class==name end
 table.wipe=function(t) for k in pairs(t) do t[k]=nil end end
-local function native(path)
+native=function(path)
     local source
     if NativeReadText then source=NativeReadText(NativeActionRoot..'/'..path)
     else local f=assert(io.open(NativeActionRoot..'/'..path));source=f:read('*a');f:close() end
     -- Stock Kahlua accepts this native suffix; Lua 5.1 used by the fixture does not.
     assert(loadstring((source:gsub('(%d+%.%d+)f','%1')), '@'..path))()
 end
-local function project(name)
+project=function(name)
     if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
- return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'))() end
+    local savedRequire=require
+    if name=='ActionQueuePolicy' then
+        require=function(module)
+            if module=='PZSurvivorToolkit/ActionQueueItemEditAdapters' then
+                return savedRequire(module) or itemInspector()
+            end
+            if module=='PZSurvivorToolkit/ActionQueueWeights' then
+                if not weights then weights=project('ActionQueueWeights') end
+                return savedRequire(module) or weights
+            end
+            return savedRequire(module)
+        end
+    end
+    local result=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'))()
+    require=savedRequire
+    return result
+end
 native('shared/TimedActions/ISBaseTimedAction.lua')
 native('client/TimedActions/ISTimedActionQueue.lua')
 native('client/TimedActions/ISQueueActionsAction.lua')

@@ -32,18 +32,43 @@ function Client.selected(playerNum)
 end
 
 -- Removal targets entries in one displayed list, including completed requests.
-function Client.entryKeys(list, fullType)
-    local keys = {}
-    if not list then return keys end
+-- Batch menus invert the variants once; standalone reads restrict work to one type.
+local function entryIndex(list, onlyType)
+    local index, exact = {}, {}
+    if not list then return index end
     for key, entry in pairs(list.entries) do
+        if not onlyType or key == onlyType then
+            exact[key] = true
+            index[key] = index[key] or {}
+        end
         if entry.vehicleTypes then
+            local seen = {}
             for _, variant in ipairs(entry.vehicleTypes) do
-                if variant == fullType then keys[#keys + 1] = key; break end
+                if (not onlyType or variant == onlyType) and not seen[variant] then
+                    local keys = index[variant] or {}
+                    index[variant], seen[variant] = keys, true
+                    keys[#keys + 1] = key
+                    if onlyType then break end
+                end
             end
         end
     end
-    table.sort(keys)
-    if list.entries[fullType] then table.insert(keys, 1, fullType) end
+    for fullType, keys in pairs(index) do
+        table.sort(keys)
+        if exact[fullType] then table.insert(keys, 1, fullType) end
+    end
+    return index
+end
+
+function Client.entryIndex(list)
+    -- Detached snapshot for one menu build; do not retain across menu openings.
+    return entryIndex(list)
+end
+
+function Client.entryKeys(list, fullType, index)
+    if not index then return entryIndex(list, fullType)[fullType] or {} end
+    local keys = {}
+    for _, key in ipairs(index[fullType] or {}) do keys[#keys + 1] = key end
     return keys
 end
 

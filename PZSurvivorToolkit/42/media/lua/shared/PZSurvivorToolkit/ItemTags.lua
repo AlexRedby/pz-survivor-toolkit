@@ -81,12 +81,16 @@ function Tags.label(id)
     return (getTextOrNull and getTextOrNull("UI_PZST_Tag_" .. id)) or schema.labels[id] or id
 end
 
-function Tags.matches(categoryOrTags, selected, mode)
+local function tagSet(categoryOrTags)
     local tags = type(categoryOrTags) == "string" and Tags.forCategory(categoryOrTags) or categoryOrTags
     local present = {}
     for _, id in ipairs(tags or {}) do present[id] = true end
     -- Saved exact-category filters survive a category gaining semantic tags later.
     if tags and type(tags.legacyCategory) == "string" then present["category:" .. tags.legacyCategory] = true end
+    return present
+end
+
+local function matchesSelection(present, selected, mode)
     local count = 0
     for _, id in ipairs(selected) do
         count = count + 1
@@ -94,6 +98,10 @@ function Tags.matches(categoryOrTags, selected, mode)
         if mode ~= "any" and not present[id] then return false end
     end
     return count == 0 or mode ~= "any"
+end
+
+function Tags.matches(categoryOrTags, selected, mode)
+    return matchesSelection(tagSet(categoryOrTags), selected, mode)
 end
 
 function Tags.normalizeRule(value)
@@ -136,9 +144,9 @@ end
 function Tags.matchesRule(categoryOrTags, rule)
     if type(rule) ~= "table" or (rule.mode ~= "all" and rule.mode ~= "any")
         or type(rule.include) ~= "table" or type(rule.exclude) ~= "table" then return false end
-    local tags = type(categoryOrTags) == "string" and Tags.forCategory(categoryOrTags) or categoryOrTags
-    for _, id in ipairs(rule.exclude) do if Tags.matches(tags, {id}) then return false end end
-    return #rule.include == 0 or Tags.matches(tags, rule.include, rule.mode)
+    local present = tagSet(categoryOrTags)
+    for _, id in ipairs(rule.exclude) do if present[id] then return false end end
+    return #rule.include == 0 or matchesSelection(present, rule.include, rule.mode)
 end
 
 return Tags

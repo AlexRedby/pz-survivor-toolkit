@@ -28,20 +28,11 @@ end
 local snapshots = {}
 local expanded = {}
 local returns = {}
+local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
+local actionRegistries = {records, returns, equipmentRecords}
 
 function Fire.prune()
-    local pending = false
-    for _, registry in ipairs({records, snapshots, expanded, returns, equipmentRecords}) do
-        for _ in pairs(registry) do pending = true; break end
-        if pending then break end
-    end
-    if not pending then return end
-    local queued, active = {}, {}
-    for character, queue in pairs(ISTimedActionQueue.queues) do
-        if not character:isDead() then
-            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
-        end
-    end
+    local queued, active = Membership.find(actionRegistries), {}
     for action, record in pairs(records) do
         if queued[action] then active[record.saved] = true else records[action] = nil end
     end

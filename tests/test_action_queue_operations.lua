@@ -321,7 +321,10 @@ helpersSafe = true; retryBeforeReturn(false, true)
 local client=false
 isClient=function()return client end
 PZSurvivorToolkit.Settings={actionQueue=function()return true end}
+local previousFilename = getFilenameOfClosure
+getFilenameOfClosure = function() return 'ISQueueActionsAction.lua' end
 local Lifecycle=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+getFilenameOfClosure = previousFilename
 local legacyCompleted=q.onCompleted
 q.onCompleted=function(queue,a)
     if Lifecycle.deferCompletion(queue,a) then return end
@@ -389,4 +392,112 @@ operations.perform(parent,function(a)
     assert(operations.deferCompletion(q,a),'unmigrated producer lost its family fallback')
 end)
 Lifecycle.finish(parent,'perform',true);Lifecycle.reset(q)
+
+-- Presentation enqueue must stay linear for separate shelf reads and large native
+-- operations. These counts include the real native add -> addToQueue delegation.
+local previousGetText = getText
+getText = function(key) return key end
+local definitions = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
+local describe, bounds = definitions.describe, operations.bounds
+local descriptions, searches = 0, 0
+definitions.describe = function(...) descriptions = descriptions + 1; return describe(...) end
+operations.bounds = function(...) searches = searches + 1; return bounds(...) end
+for _, n in ipairs({10, 30, 60, 120}) do
+    for _, batch in ipairs({false, true}) do
+        reset(); descriptions, searches = 0, 0
+        local function readSelected()
+            for i = 1, n do ISInventoryPaneContextMenu.readItem(book({}), 0) end
+        end
+        if batch then ISContextMenu.onMouseUp({}, readSelected) else readSelected() end
+        assert(#q.queue == 3 * n and descriptions == 3 * n and searches == 0,
+            'ordinary shelf reading rebuilt prior titles or searched the queue')
+        for i = 1, #q.queue, 3 do
+            assert(q.queue[i].toolkitQueueOperation.presentation.title == 'ContextMenu_Read')
+            assert(q.queue[i].toolkitQueueOperation ~= (q.queue[i + 3] or {}).toolkitQueueOperation,
+                'reading optimization merged independent book operations')
+        end
+    end
+    reset(); descriptions, searches = 0, 0
+    operations.run(function() for i = 1, n do ISTimedActionQueue.add(action('ISReadABook')) end end)
+    assert(descriptions == n and searches == 0, 'one large operation must also contribute each title once')
+    reset(); descriptions, searches = 0, 0
+    operations.run(function()
+        for i = 1, n do
+            ISTimedActionQueue.add(action('ISInventoryTransferAction'))
+            ISTimedActionQueue.add(action('ISWalkToTimedAction'))
+        end
+    end)
+    assert(descriptions == 2 * n and searches == 0,
+        'fixed transfer headings must retain the incremental summary for preparation additions')
+end
+
+-- Native deferred expansion inserts before unrelated work rather than appending.
+-- Only its first child needs a range rebuild; later children contribute once.
+reset()
+local command = operations.command(player, function()
+    for i = 1, 60 do ISTimedActionQueue.add(action('ISReadABook')) end
+end, {})
+command.forceComplete = function() end
+local following = action('UnrelatedPresentation')
+ISTimedActionQueue.add(command); ISTimedActionQueue.add(following)
+descriptions, searches = 0, 0
+command:start()
+assert(q.queue[62] == following and searches == 1 and descriptions == 61,
+    'deferred expansion rebuilt the growing operation on every insertion')
+assert(command.toolkitQueueOperation.presentation.title == 'ContextMenu_Read')
+reset()
+command = ISQueueActionsAction:new(player, function()
+    for i = 1, 60 do ISTimedActionQueue.add(action('ISReadABook')) end
+end)
+command.forceComplete = function() end
+ISTimedActionQueue.add(command); ISTimedActionQueue.add(following)
+descriptions, searches = 0, 0
+command:start()
+assert(q.queue[62] == following and searches == 1 and descriptions == 61,
+    'native deferred start lost its shared presentation scope')
+
+-- Higher priority work replaces preparation/transfer titles; returns cannot
+-- replace it, and distinct primary signatures remain mixed after more additions.
+reset()
+local presentationToken = {}
+operations.runWith(presentationToken, function()
+    ISTimedActionQueue.add(action('ISWalkToTimedAction'))
+    ISTimedActionQueue.add(action('ISInventoryTransferAction'))
+    ISTimedActionQueue.add(action('ISReadABook'))
+    local returning = action('ISInventoryTransferAction'); returning.allowMissingItems = true
+    ISTimedActionQueue.add(returning)
+end)
+assert(presentationToken.presentation.title == 'ContextMenu_Read')
+operations.runWith(presentationToken, function()
+    ISTimedActionQueue.add(action('OtherPresentation'))
+    ISTimedActionQueue.add(action('ISReadABook'))
+end)
+assert(presentationToken.presentation.title == 'UI_PZSurvivorToolkit_queue_mixed')
+q:removeFromQueue(q.queue[5])
+operations.runWith(presentationToken, function() ISTimedActionQueue.add(action('ISReadABook')) end)
+assert(presentationToken.presentation.title == 'ContextMenu_Read',
+    'a later command reused the removed mixed-title member')
+local inserted = action('InsertedPresentation')
+ISTimedActionQueue.addAfter(q.queue[2], inserted)
+assert(presentationToken.presentation.title == 'UI_PZSurvivorToolkit_queue_mixed',
+    'addAfter failed to refresh the actual operation range')
+
+-- Deferred continuations retain ownership but rebuild presentation membership
+-- after intervening removal/reordering, rather than retaining a dispatch cache.
+handle = operations.attachContinuation(presentationToken, player)
+q:removeFromQueue(inserted)
+local firstRead = table.remove(q.queue, 3); table.insert(q.queue, 2, firstRead)
+operations.runContinuation(handle, function() ISTimedActionQueue.add(action('ISReadABook')) end)
+assert(presentationToken.presentation.title == 'ContextMenu_Read')
+reset()
+local completedPrimaryToken, completedRead = {}, action('ISReadABook')
+operations.runWith(completedPrimaryToken, function()
+    ISTimedActionQueue.add(completedRead)
+    ISTimedActionQueue.add(action('ISInventoryTransferAction'))
+end)
+q:removeFromQueue(completedRead)
+operations.runWith(completedPrimaryToken, function() ISTimedActionQueue.add(action('ISInventoryTransferAction')) end)
+assert(completedPrimaryToken.presentation.title == 'ContextMenu_Read',
+    'completed primary title must survive its remaining lower-rank transfers')
+definitions.describe, operations.bounds, getText = describe, bounds, previousGetText
 print('Action operation grouping native-contract checks passed.')

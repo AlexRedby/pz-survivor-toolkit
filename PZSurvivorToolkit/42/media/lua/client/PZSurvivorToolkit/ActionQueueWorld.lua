@@ -325,6 +325,9 @@ function World.sharesTarget(first, second)
         and first.toolkitWorldZ < second.toolkitWorldZ + (second.toolkitWorldLayers or 1)
         and second.toolkitWorldZ < first.toolkitWorldZ + (first.toolkitWorldLayers or 1)
 end
+if Toolkit.ActionQueuePolicy and Toolkit.ActionQueuePolicy.registerTargetChecker then
+    Toolkit.ActionQueuePolicy.registerTargetChecker("world", World, World.sharesTarget)
+end
 
 -- The game loads the server-side cursor class after client Lua.
 local installAppliances, installFuel, installWrecks, installDevices

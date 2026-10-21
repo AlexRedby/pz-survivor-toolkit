@@ -27,7 +27,18 @@ REPLACEMENT_CASES = (REPLACEMENT_MOVE_CASE, REPLACEMENT_CANCEL_CASE)
 CONSUMPTION_MOVE_CASE = 'food-consumption-replacement-move-portions'
 CONSUMPTION_CANCEL_CASE = 'food-consumption-replacement-cancel-first-portion'
 CONSUMPTION_CASES = (CONSUMPTION_MOVE_CASE, CONSUMPTION_CANCEL_CASE)
-CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES, *REPLACEMENT_CASES, *CONSUMPTION_CASES]
+CUSTOM_WEIGHT_MOVE_CASE = 'food-custom-weight-move-portions'
+CUSTOM_WEIGHT_CANCEL_CASE = 'food-custom-weight-cancel-first-portion'
+CUSTOM_WEIGHT_CASES = (CUSTOM_WEIGHT_MOVE_CASE, CUSTOM_WEIGHT_CANCEL_CASE)
+EXTRA_WEIGHT_MOVE_CASE = 'food-extra-weight-move-portions'
+EXTRA_WEIGHT_CANCEL_CASE = 'food-extra-weight-cancel-first-portion'
+EXTRA_PORTION_CASES = (EXTRA_WEIGHT_MOVE_CASE, EXTRA_WEIGHT_CANCEL_CASE)
+EXTRA_BAG_CASE = 'food-extra-weight-bag-edit-pickup-return'
+EXTRA_CAPACITY_CASE = 'food-extra-weight-bag-capacity'
+EXTRA_TRANSFER_CASES = (EXTRA_BAG_CASE, EXTRA_CAPACITY_CASE)
+EXTRA_WEIGHT_CASES = (*EXTRA_PORTION_CASES, *EXTRA_TRANSFER_CASES)
+BAG_CASES = (BAG_CASE, *EXTRA_TRANSFER_CASES)
+CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES, *REPLACEMENT_CASES, *CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES]
 # The full selected installation. Locked EatSmart debug logging leaves native completion unchanged.
 MODS = next(line.split('=', 1)[1].split(';') for line in
             (Path(__file__).resolve().parents[3] / 'SurvivorQoL-selected.ini').read_text().splitlines()
@@ -42,6 +53,8 @@ COOKABLE_RECEIPT_KEYS = {'cookable', 'cooked', 'burnt', 'rotten', 'fertilized', 
 COOKABLE_COMMAND_KEYS = {'cooked', 'dispatchHeat'}
 REPLACEMENT_RECEIPT_KEYS = {'replacementType', 'replacementCount', 'cookingTime'}
 CONSUMPTION_RECEIPT_KEYS = {'consumptionReplacementType', 'consumptionReplacementCount', 'foodWeight', 'customWeight', 'extraItems'}
+EXTRA_WEIGHT_RECEIPT_KEYS = {'extraTypes', 'baseFoodWeight', 'extraScriptWeight', 'emptyWeight', 'foodThirstChange', 'extraIngredientCount'}
+CAPACITY_RECEIPT_KEYS = {'capacityFillerId', 'capacityFillerType', 'capacityFillerWeight', 'capacityFillerCount', 'bagCapacity', 'bagLoad'}
 FLAGS = {'emptyStart', 'anchorRunning', 'anchorProgress', 'anchorDuration', 'contractsVerified',
          'reordered', 'waitingCancel', 'moveRejected', 'cancelRejected', 'manualPickup',
          'untouchedBefore', 'nativeDurationsUnchanged', 'order'}
@@ -101,6 +114,29 @@ def definitions():
                 'move-independent': {CONSUMPTION_MOVE_CASE: edited[CONSUMPTION_MOVE_CASE]},
                 'cancel-waiting': {CONSUMPTION_CANCEL_CASE: edited[CONSUMPTION_CANCEL_CASE]},
                 'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in CONSUMPTION_CASES}}},
+        'eat-custom-weight': {
+            'scope': 'Base.CannedPeachesOpen with explicit custom actualWeight=1.1 and no extra ingredients retains its exact original ID through native .5 and .25 portions. Move the second first or cancel the first behind a real clean-water drink; native controls keep both. B42.21 preserves custom actualWeight throughout partial eating. Empty-can count remains unchanged. No evolved ingredients, full depletion, callbacks, active cancellation or physical input.',
+            'mods': MODS, 'checks': {
+                'success-queued': {case: common[case] for case in CUSTOM_WEIGHT_CASES},
+                'repeat-same': {case: common[case] for case in CUSTOM_WEIGHT_CASES},
+                'move-independent': {CUSTOM_WEIGHT_MOVE_CASE: edited[CUSTOM_WEIGHT_MOVE_CASE]},
+                'cancel-waiting': {CUSTOM_WEIGHT_CANCEL_CASE: edited[CUSTOM_WEIGHT_CANCEL_CASE]},
+                'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in CUSTOM_WEIGHT_CASES}}},
+        'eat-extra-weight': {
+            'scope': 'Settled native Base.Salad prepared with Base.Tomato ingredient metadata, original hunger -.06 and thirst -.04, without custom weight or cutlery. Original .5/.25 portions wait behind clean water; move quarter first or cancel half. Exact ingredient list, unchanged Bowl/Tomato counts and native interpolated weight are checked on both endpoints. No ingredient-application producer, full depletion, unknown ingredient constructors, active cancellation or physical input.',
+            'mods': MODS, 'checks': {
+                'success-queued': {case: common[case] for case in EXTRA_PORTION_CASES},
+                'repeat-same': {case: common[case] for case in EXTRA_PORTION_CASES},
+                'move-independent': {EXTRA_WEIGHT_MOVE_CASE: edited[EXTRA_WEIGHT_MOVE_CASE]},
+                'cancel-waiting': {EXTRA_WEIGHT_CANCEL_CASE: edited[EXTRA_WEIGHT_CANCEL_CASE]},
+                'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in EXTRA_PORTION_CASES}}},
+        'eat-extra-transfers': {
+            'scope': 'A settled Base.Salad with one Tomato extra starts in a worn army bag. Real pickup, original half-eat and return commands wait behind clean water. With room, move the already-destination return before pickup; deny removing the required pickup. A tight bag with an exact retained Nails keeps original order and denies relying on future released space. Separate client/server receipts verify the exact dish, filler and native half consumption. No full depletion, world containers or physical input.',
+            'mods': MODS, 'checks': {
+                'success-queued': {case: common[case] for case in EXTRA_TRANSFER_CASES},
+                'move-independent': {EXTRA_BAG_CASE: edited[EXTRA_BAG_CASE]},
+                'move-dependent': {case: edited[case] for case in EXTRA_TRANSFER_CASES},
+                'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in EXTRA_TRANSFER_CASES}}},
         'eat-transfers': {
             'scope': 'A native manual cereal grab and standalone half-eat/return pending behind a real drink. Move an already-destination return before pickup; deny pickup removal and pickup-after-eat. Native controls retain pickup/eat/return and finish in the bag.',
             'mods': MODS, 'checks': {
@@ -156,16 +192,19 @@ def _authority(text):
 
 def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     issues = []
-    bag, enabled, depletion = case == BAG_CASE, mode == 'toolkit', case == DEPLETION_CASE
+    bag, enabled, depletion = case in BAG_CASES, mode == 'toolkit', case == DEPLETION_CASE
     smart, utensil, cookable = case in SMART_CASES, case in UTENSIL_CASES, case in COOKABLE_CASES
     replacement = case in REPLACEMENT_CASES
-    consumption = case in CONSUMPTION_CASES
+    custom_weight = case in CUSTOM_WEIGHT_CASES
+    extra_weight = case in EXTRA_WEIGHT_CASES
+    consumption = extra_weight or custom_weight or case in CONSUMPTION_CASES
     thermal = cookable or replacement
     cooked = case in (COOKED_MOVE_CASE, COOKED_CANCEL_CASE)
-    base_hunger = -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
-    food_type = 'Base.CannedPeachesOpen' if consumption else 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal'
-    receipt_keys = RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if utensil else set()) | (COOKABLE_RECEIPT_KEYS if thermal else set()) | (REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (CONSUMPTION_RECEIPT_KEYS if consumption else set())
-    identity_keys = ('bagId', 'foodId', 'anchorId') + (('forkId', 'spoonId') if utensil else ())
+    base_hunger = -.06 if extra_weight else -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
+    food_type = 'Base.Salad' if extra_weight else 'Base.CannedPeachesOpen' if consumption else 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal'
+    capacity_case = case == EXTRA_CAPACITY_CASE
+    receipt_keys = RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if utensil else set()) | (COOKABLE_RECEIPT_KEYS if thermal else set()) | (REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set()) | (CAPACITY_RECEIPT_KEYS if capacity_case else set())
+    identity_keys = ('bagId', 'foodId', 'anchorId') + (('forkId', 'spoonId') if utensil else ()) + (('capacityFillerId',) if capacity_case else ())
     if not utensil and UTENSIL_RECEIPT_KEYS & set(row):
         return ['Food unexpected utensil evidence: ' + case]
     if not thermal and COOKABLE_RECEIPT_KEYS & set(row):
@@ -174,7 +213,7 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
         return ['Food unexpected cooking replacement evidence: ' + case]
     if not consumption and CONSUMPTION_RECEIPT_KEYS & set(row):
         return ['Food unexpected consumption replacement evidence: ' + case]
-    cancelled = case in (CANCEL_CASE, SMART_CANCEL_CASE, UTENSIL_CANCEL_CASE, COOKED_CANCEL_CASE, RAW_CANCEL_CASE, REPLACEMENT_CANCEL_CASE, CONSUMPTION_CANCEL_CASE) and enabled
+    cancelled = case in (CANCEL_CASE, SMART_CANCEL_CASE, UTENSIL_CANCEL_CASE, COOKED_CANCEL_CASE, RAW_CANCEL_CASE, REPLACEMENT_CANCEL_CASE, CONSUMPTION_CANCEL_CASE, CUSTOM_WEIGHT_CANCEL_CASE, EXTRA_WEIGHT_CANCEL_CASE) and enabled
     if (set(prep) != receipt_keys | {'foodTimer', 'foodLevel'}
             or not craft._matches(prep, dict(case=case, bagType=fluid.BAG_TYPE, bagCount=1, foodType=food_type,
                 source='bag' if bag else 'root', foodCount=1, deleted=False, anchorType='Base.WaterBottle', anchorCount=1,
@@ -194,10 +233,24 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
                         or type(prep.get('replacementCount')) is not int or prep['replacementCount'] < 0
                         or not fluid._number(prep.get('cookingTime')) or prep['cookingTime'] != 0):
         return ['Food preparation cooking replacement state differs: ' + case]
-    if consumption and (not craft._matches(prep, dict(consumptionReplacementType='Base.TinCanEmpty', customWeight=False, extraItems=False))
+    if consumption and (not craft._matches(prep, dict(consumptionReplacementType='Base.Bowl' if extra_weight else 'Base.TinCanEmpty', customWeight=custom_weight, extraItems=extra_weight))
                         or type(prep.get('consumptionReplacementCount')) is not int or prep['consumptionReplacementCount'] < 0
-                        or not fluid._close(prep.get('foodWeight'), .8, 1e-5)):
+                        or not fluid._close(prep.get('foodWeight'), .62 if extra_weight else 1.1 if custom_weight else .8, 1e-5)):
         return ['Food preparation consumption replacement state differs: ' + case]
+    if extra_weight and (not craft._matches(prep, dict(extraTypes=['Base.Tomato']))
+            or any(not fluid._close(prep.get(key), value, 1e-5) for key, value in
+                   dict(baseFoodWeight=.5, extraScriptWeight=.2, emptyWeight=.5, foodThirstChange=-.04).items())
+            or type(prep.get('extraIngredientCount')) is not int or prep['extraIngredientCount'] < 0):
+        return ['Food preparation extra-ingredient state differs: ' + case]
+    if not extra_weight and EXTRA_WEIGHT_RECEIPT_KEYS & set(row):
+        return ['Food unexpected extra-ingredient evidence: ' + case]
+    if capacity_case and (not craft._matches(prep, dict(capacityFillerType='Base.Nails', capacityFillerCount=1))
+            or not fluid._number(prep.get('bagCapacity')) or prep['bagCapacity'] < 1
+            or not fluid._close(prep.get('bagLoad'), prep['bagCapacity'] - .1, 1e-4)
+            or not fluid._close(prep.get('capacityFillerWeight'), prep['bagCapacity'] - .72, 1e-4)):
+        return ['Food tight bag preparation differs: ' + case]
+    if not capacity_case and CAPACITY_RECEIPT_KEYS & set(row):
+        return ['Food unexpected capacity evidence: ' + case]
     if utensil and (not craft._matches(prep, dict(forkType='Base.Fork', spoonType='Base.Spoon',
             forkSource='bag' if case == UTENSIL_MOVE_CASE else 'root',
             spoonSource='root' if case == UTENSIL_MOVE_CASE else 'bag', forkCount=1, spoonCount=1))
@@ -205,8 +258,8 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             or (prep['forkCondition'] <= 0 if case == UTENSIL_MOVE_CASE else prep['forkCondition'] != 0)
             or type(prep.get('spoonCondition')) is not int or prep['spoonCondition'] <= 0):
         return ['Food preparation utensil identity/state differs: ' + case]
-    fixed = {key: prep[key] for key in receipt_keys - {'remaining', 'source', 'hunger', 'thirst', 'anchorAmount', 'foodCount', 'foodTypeCount', 'deleted', 'anchorThirstChange', 'heat', 'foodWeight'}}
-    fixed.update(source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
+    fixed = {key: prep[key] for key in receipt_keys - {'remaining', 'source', 'hunger', 'thirst', 'anchorAmount', 'foodCount', 'foodTypeCount', 'deleted', 'anchorThirstChange', 'heat', 'foodWeight', 'foodThirstChange', 'bagLoad'}}
+    fixed.update(source='deleted' if depletion else 'root' if not bag or enabled and not capacity_case else 'bag',
                  foodCount=0 if depletion else 1, foodTypeCount=prep['foodTypeCount'] - int(depletion), deleted=depletion)
     portion = (.125 if cancelled else .75) if utensil else (.375 if cancelled else .5) if smart else 1 if depletion else .5 if bag else .25 if cancelled else .75
     commands = row.get('commands')
@@ -219,15 +272,21 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             or set(row['client']) != receipt_keys
             or not craft._matches(row['client'], {key: receipt[key] for key in receipt_keys - {'hunger', 'thirst'}})
             or thermal and (not fluid._number(receipt.get('heat')) or not 0 <= receipt['heat'] <= 1.6)
-            or consumption and not fluid._close(receipt.get('foodWeight'), .2 + .6 * (1 - portion), 1e-5)
+            or consumption and not fluid._close(receipt.get('foodWeight'), .5 + .12 * (1 - portion) if extra_weight else prep['foodWeight'] if custom_weight else .2 + .6 * (1 - portion), 1e-5)
             or any(not fluid._close(row['client'].get(field), receipt.get(field), .01) for field in ('hunger', 'thirst'))
             or not fluid._close(receipt.get('remaining'), expected_remaining)
             or not fluid._number(receipt.get('anchorAmount')) or not .49 <= receipt['anchorAmount'] <= .5001
             or not fluid._close(receipt.get('anchorThirstChange'),
                                 prep['anchorThirstChange'] * receipt['anchorAmount'] / prep['anchorAmount'])):
         return ['Food authority/client identity or consumption differs: ' + case]
+    if capacity_case and not fluid._close(receipt.get('bagLoad'), prep['bagLoad'] - .06, 1e-4):
+        issues.append('Food tight bag final load differs: ' + case)
+    if extra_weight and not fluid._close(receipt.get('foodThirstChange'), -.04 * (1 - portion), 1e-5):
+        issues.append('Food extra-ingredient thirst differs: ' + case)
     expected_hunger = prep['hunger'] + prep['baseHunger'] * portion * (1.3 if cooked else 1)
     expected_thirst = prep['thirst'] + (prep['anchorAmount'] - receipt['anchorAmount']) * prep['anchorThirstChange'] / prep['anchorAmount']
+    if extra_weight:
+        expected_thirst -= .04 * portion
     if cookable and not cooked:
         # Native Base.Cabbage ThirstChange=-10 applies to each original-food fraction.
         expected_thirst -= .1 * portion
@@ -263,21 +322,34 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
                 issues.append('Food native target/original portion/progress/duration differs: ' + case)
     evidence = row.get('editEvidence')
     expected = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE, SMART_MOVE_CASE, UTENSIL_MOVE_CASE, COOKED_MOVE_CASE, RAW_MOVE_CASE, REPLACEMENT_MOVE_CASE, CONSUMPTION_MOVE_CASE), waitingCancel=cancelled,
+        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE, SMART_MOVE_CASE, UTENSIL_MOVE_CASE, COOKED_MOVE_CASE, RAW_MOVE_CASE, REPLACEMENT_MOVE_CASE, CONSUMPTION_MOVE_CASE, CUSTOM_WEIGHT_MOVE_CASE, EXTRA_WEIGHT_MOVE_CASE, EXTRA_BAG_CASE), waitingCancel=cancelled,
         moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag, manualPickup=bag,
         untouchedBefore=True, nativeDurationsUnchanged=True,
         order=[1] if bag else [1, 2] if depletion else [2] if cancelled else [2, 1] if enabled else [1, 2])
-    if type(evidence) is not dict or set(evidence) != FLAGS | ({'pickupDuration', 'returnDuration', 'returning'} if bag else set()) | ({'denialReason'} if depletion else set()) or not craft._matches(evidence, expected):
+    if capacity_case:
+        expected['capacityDenied'] = enabled
+    if type(evidence) is not dict or set(evidence) != FLAGS | ({'weightBounds'} if extra_weight else set()) | ({'capacityDenied'} if capacity_case else set()) | ({'pickupDuration', 'returnDuration', 'returning'} if bag else set()) | ({'denialReason'} if depletion else set()) or not craft._matches(evidence, expected):
         issues.append('Food pending native edit/order evidence differs: ' + case)
+    elif extra_weight:
+        values = evidence.get('weightBounds')
+        keys = {name + suffix for name in ('food', 'bag', 'root') for suffix in ('Upper', 'Lower', 'Native')}
+        if type(values) is not dict or set(values) != keys or any(not fluid._number(values[key]) for key in keys):
+            issues.append('Food pure weight interval evidence missing: ' + case)
+        elif any(not 0 <= values[name + 'Lower'] <= values[name + 'Native'] <= values[name + 'Upper']
+                 or values[name + 'Upper'] - values[name + 'Native'] >= .01 for name in ('food', 'bag', 'root')):
+            issues.append('Food pure weight interval excludes native load: ' + case)
+        elif (not fluid._close(values['foodNative'], prep['foodWeight'], 1e-5)
+              or not fluid._close(values['bagNative'], prep['bagLoad'] if capacity_case else prep['foodWeight'] if bag else 0, 1e-4)):
+            issues.append('Food pure weight interval input differs: ' + case)
     elif depletion and not craft._matches(evidence, dict(denialReason='edit_resource_amount' if enabled else 'not-requested')):
         issues.append('Food depletion dependency denial differs: ' + case)
-    elif bag:
+    if bag and not issues and type(evidence) is dict:
         returning = evidence.get('returning')
         if (any(not fluid._number(evidence[field]) or (evidence[field] != -1 if kind == 'mp' else evidence[field] <= 0)
                 for field in ('pickupDuration', 'returnDuration'))
                 or type(returning) is not dict or set(returning) != {'boundary', 'completed', 'observationFailed', 'before', 'after', 'started', 'transactionId', 'dontAdd'}
                 or not craft._matches(returning, dict(boundary=True, completed=True, observationFailed=False,
-                    before='bag' if enabled else 'root', after='bag', started=False, transactionId=0))
+                    before='bag' if enabled and not capacity_case else 'root', after='bag', started=False, transactionId=0))
                 or type(returning.get('dontAdd')) is not bool):
             issues.append('Food native transfer duration/return boundary differs: ' + case)
     return issues
@@ -312,9 +384,11 @@ def verify(root, selection, catalog):
         receipt = next((value for marker, value in raw if marker == 'VERIFIED' and value.get('case') == case), {})
         case_issues = _case(case, row, prep, receipt, selection['kind'], selection['mode'])
         issues.extend(case_issues)
-        identities += [prep.get(field) for field in ('bagId', 'foodId', 'anchorId', 'forkId', 'spoonId')
-                       if case in UTENSIL_CASES or field not in ('forkId', 'spoonId')]
-        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in (*COOKABLE_CASES, *REPLACEMENT_CASES) else set()) | (REPLACEMENT_RECEIPT_KEYS if case in REPLACEMENT_CASES else set()) | (CONSUMPTION_RECEIPT_KEYS if case in CONSUMPTION_CASES else set()) | {'commands', 'editEvidence', 'client'}}
+        identity_fields = ['bagId', 'foodId', 'anchorId']
+        if case in UTENSIL_CASES: identity_fields += ['forkId', 'spoonId']
+        if case == EXTRA_CAPACITY_CASE: identity_fields += ['capacityFillerId']
+        identities += [prep.get(field) for field in identity_fields]
+        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in (*COOKABLE_CASES, *REPLACEMENT_CASES) else set()) | (REPLACEMENT_RECEIPT_KEYS if case in REPLACEMENT_CASES else set()) | (CONSUMPTION_RECEIPT_KEYS if case in (*CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES) else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if case in EXTRA_WEIGHT_CASES else set()) | (CAPACITY_RECEIPT_KEYS if case == EXTRA_CAPACITY_CASE else set()) | {'commands', 'editEvidence', 'client'}}
         outcome.update(effectsVerified=not case_issues, pendingRequestsVerified=not case_issues, pendingEditsVerified=not case_issues and selection['mode'] == 'toolkit',
                        serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
@@ -328,5 +402,5 @@ def verify(root, selection, catalog):
         'Base.Cereal native/public EatSmart, Base.OatsRaw native utensils, cooked Base.ChickenFillet and raw cookable Base.Cabbage pending edits only; full selected mod set, real native actions and durations.',
         'Callback-driven menu dispatch does not establish physical input or visual correctness.',
         'Cold Base.BreadSlices keeps ReplaceOnCooked dormant with zero cooking time and unchanged Base.Toast count; no active or hot cooking or callback coverage.',
-        'Partial Base.CannedPeachesOpen keeps its original identity, native can-plus-food weight and unchanged Base.TinCanEmpty count; no full depletion coverage.',
+        'Partial Base.CannedPeachesOpen keeps its original identity and empty-can count; ordinary weight decreases, explicit custom actualWeight stays constant. No full depletion or evolved-ingredient coverage.',
         'No OnEat, smoking, utensil transfers, active eating cancellation or WAN coverage.']}}

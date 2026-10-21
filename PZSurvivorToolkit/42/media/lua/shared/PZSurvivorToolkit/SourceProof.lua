@@ -67,10 +67,32 @@ function Proof.matches(path, expected, mod, adler, limit)
     return valid and closed and checksum ~= nil and checksum == expected
 end
 
+local filenameAccessor = getFilenameOfClosure
+local closureSources, closureCount = {}, 0
 function Proof.closure(callback, filename)
-    if type(callback) ~= "function" or type(getFilenameOfClosure) ~= "function" then return false end
-    local ok, source = pcall(getFilenameOfClosure, callback)
-    return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == filename
+    local accessor = getFilenameOfClosure
+    local memoize = accessor == filenameAccessor
+    -- A replacement accessor may compute changing results. Keep it live rather
+    -- than assuming it has the native binding's compile-time metadata semantics.
+    if not memoize then closureSources, closureCount = {}, 0 end
+    if type(callback) ~= "function" or type(accessor) ~= "function" or type(filename) ~= "string" then return false end
+    local source = memoize and closureSources[callback]
+    if not source then
+        local ok, path = pcall(accessor, callback)
+        if not ok or type(path) ~= "string" then return false end
+        source = path:gsub("\\", "/"):match("([^/]+)$")
+        if not source then return false end
+        -- Native getFilenameOfClosure reads the loaded prototype's compile-time
+        -- filename. Retain only that metadata; callback identities, file contents
+        -- and the live facts used by callers are still checked independently.
+        -- Kahlua ignores weak-table modes, so bound retained callback identities.
+        if memoize then
+            if closureCount >= 1024 then closureSources, closureCount = {}, 0 end
+            closureSources[callback] = source
+            closureCount = closureCount + 1
+        end
+    end
+    return source == filename
 end
 
 return Proof

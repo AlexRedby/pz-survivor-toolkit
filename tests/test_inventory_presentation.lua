@@ -58,7 +58,10 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     local function paneClass()
         return {renderdetails=nativeRender, rendericons=nativeRender,
             drawItemDetails=function() fallbacks=fallbacks+1 end,
-            refreshContainer=function() return 'refreshed' end}
+            refreshContainer=function(pane)
+                if pane.failRefresh then error('refresh failure') end
+                return 'refreshed'
+            end}
     end
     local button = {getWidth=function() return 32 end,getHeight=function() return 32 end,
         drawRect=function(self,...) self.rects[#self.rects+1]={...} end,drawRectBorder=function() end,
@@ -217,9 +220,97 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         pane.fail=true; assert(not pcall(pane.renderdetails,pane,false)); pane.fail=false
         assert(#wishlistBorders==0,'failed native render decorated stale rows')
     end
+    -- The invalidation belongs before native refresh, even if rebuilding fails.
+    pane.pzswRowTypes={retained=true}; pane.failRefresh=true
+    assert(not pcall(pane.refreshContainer,pane))
+    assert(next(pane.pzswRowTypes)==nil,'failed native refresh retained the previous membership summary')
+    pane.failRefresh=nil
     local capacity=require 'PZSurvivorToolkit/InventoryCapacity'
     assert(capacity.ratio(inventory(12,10),{})==1 and capacity.ratio(inventory(-1,10),{})==0)
     assert(capacity.ratio(inventory(0,0),{})==nil)
 end
 run(true,false); run(false,false); run(true,true); run(true,false,true); run(false,false,true)
+
+-- Summary ownership follows refresh and the final native row projection.
+-- Count work, rather than wall time, so a collapsed huge stack stays cheap
+-- without losing a wanted child beyond the owner's rendered-child limit.
+local function rowSummaryChecks()
+    local typeReads, wantedCalls, wantedEnabled, enabled = 0, 0, true, true
+    PZSurvivorWishlist={Client={isWanted=function(player, fullType)
+        wantedCalls=wantedCalls+1
+        return wantedEnabled and player==1 and fullType=='Base.Wanted'
+    end},Settings={rowsEnabled=function() return enabled end}}
+    local Inventory=dofile(root..'PZSurvivorWishlist/Inventory.lua')
+    local function item(fullType)
+        return {getFullType=function() typeReads=typeReads+1; return fullType end}
+    end
+    local ordinary, target=item('Base.Ordinary'),item('Base.Wanted')
+    local group={name='same display name',items={ordinary}}
+    for index=2,5001 do group.items[index]=ordinary end
+    group.items[5001]=target
+    local pane={player=1,items={group},itemHgt=20,collapsed={[group.name]=true},
+        getYScroll=function(self) return self.scroll or 0 end,
+        getHeight=function(self) return self.height or 20 end}
+    Inventory.invalidate(pane)
+    assert(#Inventory.marks(pane)==1 and typeReads==5001 and wantedCalls==2,
+        'collapsed mixed stack lost its wanted child beyond the render cap')
+    typeReads,wantedCalls=0,0
+    assert(#Inventory.marks(pane)==1 and typeReads==0 and wantedCalls==2,
+        'steady redraw walked physical children instead of unique types')
+    wantedEnabled=false; wantedCalls=0
+    assert(#Inventory.marks(pane)==0 and typeReads==0 and wantedCalls==2,
+        'cached row retained stale wanted state after a server update')
+    wantedEnabled=true
+    assert(#Inventory.marks(pane)==1 and typeReads==0,'wanted reactivation required a container refresh')
+
+    -- OC pin projection can retain a source row while replacing its items.
+    local replacement={}
+    for index=1,5001 do replacement[index]=ordinary end
+    group.items=replacement
+    typeReads,wantedCalls=0,0
+    assert(#Inventory.marks(pane)==0 and typeReads==5001 and wantedCalls==1,
+        'same-count items-table replacement reused the old type set')
+    group.items[5001]=target
+    Inventory.invalidate(pane)
+    typeReads=0
+    assert(#Inventory.marks(pane)==1 and typeReads==5001,
+        'refresh invalidation missed a same-table same-count replacement')
+    group.items[5001]=ordinary
+    group.items[#group.items+1]=target
+    typeReads=0
+    assert(#Inventory.marks(pane)==1 and typeReads==5002,'changed membership count reused a summary')
+
+    -- Filter projection shallow-copies metadata but supplies different items.
+    local filtered={}
+    for key,value in pairs(group) do filtered[key]=value end
+    filtered.items={ordinary,ordinary}
+    pane.items={filtered}; typeReads=0
+    assert(#Inventory.marks(pane)==0 and typeReads==2,'filtered group inherited an unwanted summary')
+    assert(group.pzswRowTypes==nil and filtered.pzswRowTypes==nil,'summary leaked into row metadata')
+
+    -- Each draw retires offscreen, dragged, disabled and absent groups.
+    local second={items={target,target}}
+    pane.items={filtered,second}; pane.scroll=0
+    Inventory.marks(pane)
+    assert(pane.pzswRowTypes[filtered] and not pane.pzswRowTypes[second])
+    pane.scroll=-20; typeReads=0
+    assert(#Inventory.marks(pane)==1 and typeReads==2)
+    assert(not pane.pzswRowTypes[filtered] and pane.pzswRowTypes[second],'offscreen row retained')
+    pane.dragging=true; pane.dragStarted=true; pane.selected={[2]=true}
+    assert(#Inventory.marks(pane)==0 and next(pane.pzswRowTypes)==nil,'dragged row retained')
+    pane.dragging=nil; pane.dragStarted=nil
+    Inventory.marks(pane); enabled=false
+    assert(#Inventory.marks(pane)==0 and next(pane.pzswRowTypes)==nil,'disabled rows retained')
+    enabled=true; Inventory.marks(pane); pane.items={}
+    assert(#Inventory.marks(pane)==0 and next(pane.pzswRowTypes)==nil,'empty pane retained groups')
+
+    -- Standalone consumers have no refresh owner: preserve live scanning.
+    local live={items={ordinary,ordinary}}
+    local unmanaged={player=1,items={live},itemHgt=20,getYScroll=pane.getYScroll,getHeight=pane.getHeight}
+    assert(#Inventory.marks(unmanaged)==0)
+    live.items[2]=target
+    assert(#Inventory.marks(unmanaged)==1 and unmanaged.pzswRowTypes==nil,
+        'unmanaged pane cached an unobservable in-place mutation')
+end
+rowSummaryChecks()
 print('inventory presentation: actual icon coordinates, modes, settings, details boundary and pooled buttons passed')

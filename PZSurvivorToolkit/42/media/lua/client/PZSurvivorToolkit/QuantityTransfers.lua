@@ -1,5 +1,6 @@
 require "PZSurvivorToolkit/BulkActions"
 require "PZSurvivorToolkit/InventoryTransferProtection"
+local Membership = require "PZSurvivorToolkit/InventoryMembership"
 require "ISUI/ISTextBox"
 if getActivatedMods():contains("TakeAnyAmount") then return end
 
@@ -15,7 +16,7 @@ function Quantity.parse(text, maximum)
     end
 end
 
-local function eligible(player, item, destination, containers)
+local function eligible(player, item, destination, containers, membership)
     local source = item:getContainer()
     if not source or source == destination or isForceDropHeavyItem(item)
         or not destination:isItemAllowed(item) or item:isFavorite()
@@ -23,7 +24,7 @@ local function eligible(player, item, destination, containers)
     if source:isInCharacterInventory(player) or containers:contains(source) then return true end
     -- Proximity views can expose actual items through a virtual container.
     for i = 0, containers:size() - 1 do
-        if containers:get(i):getItems():contains(item) then return true end
+        if Membership.contains(membership, containers:get(i), item) then return true end
     end
     return false
 end
@@ -32,10 +33,11 @@ function Quantity.snapshot(playerNum, rows, destination, grab)
     local player = getSpecificPlayer(playerNum)
     if not player or player:isDead() or not destination then return end
     local containers = ISInventoryPaneContextMenu.getContainers(player)
+    local membership = {}
     local selection = {player = player, playerNum = playerNum, destination = destination,
         grab = grab, items = {}, sources = {}, allowsStuck = Protection.selectionAllowsStuck(rows)}
     for _, item in ipairs(Toolkit.BulkActions.selectedItems(rows)) do
-        if eligible(player, item, destination, containers)
+        if eligible(player, item, destination, containers, membership)
             and (selection.allowsStuck or Protection.allowsAutomatic(item))
             and (grab or item:getContainer():isInCharacterInventory(player)) then
             selection.items[#selection.items + 1] = item
@@ -51,6 +53,7 @@ function Quantity.transfer(selection, text)
     local limit = Quantity.parse(text, #selection.items)
     if not limit or player ~= selection.player or player:isDead() then return end
     local containers = ISInventoryPaneContextMenu.getContainers(player)
+    local membership = {}
     if not selection.destination:isInCharacterInventory(player)
         and not containers:contains(selection.destination) then return end
     local items = {}
@@ -58,7 +61,7 @@ function Quantity.transfer(selection, text)
         if #items >= limit then break end
         if item:getContainer() == selection.sources[item]
             and (selection.allowsStuck or Protection.allowsAutomatic(item))
-            and eligible(player, item, selection.destination, containers) then
+            and eligible(player, item, selection.destination, containers, membership) then
             items[#items + 1] = item
         end
     end

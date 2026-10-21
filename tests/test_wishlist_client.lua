@@ -153,6 +153,23 @@ beforeRevoked=#sent;removal.callback(0)
 assert(#sent==beforeRevoked and C.state(0).error=='forbidden', 'revoked group removal never edits a fallback list')
 assert(#C.entryKeys(C.selected(0),'Base.ModernTire2')==0, 'highlighted or removed shared entries do not imply membership')
 print('PASS wishlist grouped removal: variant membership, done, overlap, exact coexistence, classes and captured/revoked targets')
+
+do
+    local entries={['Base.Part']={amount=1,done=true},
+        ['vehicle:Base.Z']={vehicleTypes={'Base.Part','Base.Part','Base.Other'},done=true},
+        ['vehicle:Base.A']={vehicleTypes={'Base.Part'},done=false}}
+    local displayed={entries=entries}
+    local index=C.entryIndex(displayed)
+    local keys=C.entryKeys(displayed,'Base.Part',index)
+    assert(#keys==3 and keys[1]=='Base.Part' and keys[2]=='vehicle:Base.A' and keys[3]=='vehicle:Base.Z',
+        'batch entry index changed exact-first ordering, completed groups or duplicate variants')
+    keys[1]='changed'
+    assert(C.entryKeys(displayed,'Base.Part',index)[1]=='Base.Part','entry result mutated the prepared index')
+    entries['Base.Part']=nil;entries['Base.Replacement']={amount=1,done=false}
+    assert(#C.entryKeys(displayed,'Base.Part')==2 and #C.entryKeys(displayed,'Base.Replacement')==1,
+        'standalone removal lookup reused an earlier snapshot')
+    assert(#C.entryKeys(displayed,'Base.Missing',index)==0 and #C.entryKeys(nil,'Base.Part')==0)
+end
 C.receive(0,snapshot(4,other))
 local bag = { class="InventoryContainer", getFullType=function()return "Base.Bag_Schoolbag" end }
 local function container(items)

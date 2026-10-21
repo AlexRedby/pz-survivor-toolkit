@@ -9,6 +9,8 @@ from . import adapters
 
 MARKER = "[QUEUE_CHECK] "
 RECORD = re.compile(r"^\s*(?:LOG|WARN|ERROR|DEBUG|TRACE)\s*:")
+# Some native script errors use DebugLog.General.println with ERROR in the payload.
+GENERAL_ERROR = re.compile(r"^\s*LOG\s*:\s*General\b[^>\r\n]*>\s*ERROR\s*:")
 STAMP = re.compile(r"^\s*\[\d{2}-\d{2}-\d{2,4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*")
 MIC = ("System create record sound", "initialisedRecDev=true", "fmodRecordSound=", "Microphone was not disabled")
 RECEIPT = re.compile(r"HEALTH_AUTH_RECEIPT (\S*) phase=(\w+) ok=(true|false) patient=(\S*) error=([^\n]+)")
@@ -231,7 +233,7 @@ def audit_log(path, cache, background=False, native_game_sha256=None):
         terminal_kick = kick is not None and 0 < int(kick[2]) <= int(kick[1])
         text = "\n".join(block)
         serious = bool(terminal_kick or EXCEPTION.search(text) or RUNTIME_FAILURE.search(text))
-        is_error = re.match(r"^\s*ERROR\s*:", block[0]) or serious
+        is_error = re.match(r"^\s*ERROR\s*:", block[0]) or GENERAL_ERROR.match(block[0]) or serious
         if not is_error:
             continue
         message = block[0].split(">", 1)[-1].strip()

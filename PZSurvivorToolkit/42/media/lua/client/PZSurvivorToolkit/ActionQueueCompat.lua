@@ -30,7 +30,9 @@ local washWalkHelper
 local tidyClassUnchanged, tidyActionUnchanged
 local tidyFloorPage, tidyFloorGetter
 local tidyFloorValid
-local repairedFloors = setmetatable({}, {__mode = "k"})
+-- Queued actions only; prune explicitly because Kahlua ignores weak-key modes.
+local repairedFloors = {}
+local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local projectCookActionSources = {
@@ -85,19 +87,13 @@ local sourceFiles = {
 local function pack(...) return {n = select("#", ...), ...} end
 
 function Compat.prune()
-    local pending = false
-    for _, registry in ipairs({records, sessions}) do
-        for _ in pairs(registry) do pending = true; break end
-        if pending then break end
-    end
-    if not pending then return end
-    local queued = {}
-    for character, queue in pairs(ISTimedActionQueue.queues) do
-        if not character:isDead() then
-            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
-        end
-    end
+    -- Sessions outlive their source actions for delayed Tidy restores. Only
+    -- their seen actions need queue membership, not the session/player keys.
+    local registries = {records, repairedFloors}
+    for _, session in pairs(sessions) do registries[#registries + 1] = session.seen end
+    local queued = Membership.find(registries)
     for action in pairs(records) do if not queued[action] then records[action] = nil end end
+    for action in pairs(repairedFloors) do if not queued[action] then repairedFloors[action] = nil end end
     for character, session in pairs(sessions) do
         if character:isDead() or ISTimedActionQueue.queues[character] ~= session.queue
             or (session.queue.toolkitOperationGeneration or 0) ~= session.generation then
@@ -112,6 +108,7 @@ Events.OnTick.Add(Compat.prune)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
     worldGeneration = worldGeneration + 1
     for action in pairs(records) do records[action] = nil end
+    for action in pairs(repairedFloors) do repairedFloors[action] = nil end
     for character in pairs(sessions) do sessions[character] = nil end
 end) end
 
@@ -352,7 +349,7 @@ local function adopt(action)
             record.expanded = true
             if live(record) and matches(self) then
                 self:beginAddingActions()
-                scoped(record, callback, self.character, unpack(self.args))
+                Operations.runWith(record.token, scoped, record, callback, self.character, unpack(self.args))
                 self:endAddingActions()
             end
             -- The source may have lost its target; native's empty-command path clears unrelated work.
@@ -437,6 +434,7 @@ scoped = function(context, callback, ...)
             if adopt(action) == false then return end
             local results = pack(insert(target, unpack(args, 1, args.n)))
             if rememberTidy then rememberTidy(action) end
+            Operations.invalidateTitle(action)
             return unpack(results, 1, results.n)
         end
         return insert(target, unpack(args, 1, args.n))
@@ -543,6 +541,8 @@ local function repairTidyFloor(character, callback, ...)
         for _, action in ipairs(buffered) do add(action) end
         return unpack(results, 2, results.n)
     end
+    local controller = Toolkit.ActionQueue
+    if controller then controller.updateOperationState(queue) end
     local inventory = character:getInventory()
     local floor = tidyFloorGetter(character:getPlayerNum())
     local planned, transfers = {}, {}

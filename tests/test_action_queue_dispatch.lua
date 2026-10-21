@@ -85,6 +85,9 @@ if cookPath then nativeFunction(text(cookPath), '(function PJCK_CookerPicker:onS
 local function project(name) return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
 require = function(name)
     if name == 'PZSurvivorToolkit/ActionQueueGeneratorOverlay' then return project('ActionQueueGeneratorOverlay') end
+    if name == 'PZSurvivorToolkit/SourceProof' then
+        return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
+    end
 end
 getText = function(key) return key end
 project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueGenerators'); project('ActionQueueWorld'); install()

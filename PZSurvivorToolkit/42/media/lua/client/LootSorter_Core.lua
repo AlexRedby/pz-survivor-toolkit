@@ -616,7 +616,7 @@ function LootSorter.sort(sourceContainer, playerNum)
             end)
             return ok and allowed == true
         end
-        local plan = LootSorter.planTrips(itemRecs, boxRecs, carrierRecs, budget, accepts, TagRules.matches, acceptsDestination)
+        local plan = LootSorter.planTrips(itemRecs, boxRecs, carrierRecs, budget, accepts, TagRules.matcher(), acceptsDestination)
         local selfPlaced
         plan.trips, selfPlaced = LootSorter.stripSelfPlacements(plan.trips, sourceContainer)
         if selfPlaced > 0 then

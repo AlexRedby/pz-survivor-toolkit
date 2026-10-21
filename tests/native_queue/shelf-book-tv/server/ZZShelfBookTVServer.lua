@@ -22,18 +22,22 @@ end
 local function execute(command,player,args)
     local key=player:getUsername()
     if command=='Prepare' then
-        assert(args.case=='demote-and-control' and not sessions[key],'unexpected or duplicate shelf/TV preparation')
-        local state=Fixture.prepare(player)
+        assert((args.case=='demote-and-control' or args.case=='worn-bag') and not sessions[key],'unexpected or duplicate shelf/TV preparation')
+        local state=Fixture.prepare(player,args.case)
         sessions[key]=state
         print('[SHELF_TV] PREPARED shelfId='..state.ids.shelf..' bookId='..state.ids.book
             ..' tv='..state.ids.x..','..state.ids.y..','..state.ids.z..' tapeId='..state.ids.tape
             ..' mediaIndex='..state.ids.mediaIndex..' mediaType='..state.ids.mediaType..' power=electric daylight=true')
+        if state.bag then
+            print('[SHELF_TV] BAG_PREPARED bagId='..state.ids.bag..' location='..state.ids.bagLocation
+                ..' tapeId='..state.ids.tape..' worn=true root=true tapeInBag=true')
+        end
         sendServerCommand(player,MODULE,'Prepared',{ok=true,ids=state.ids})
     elseif command=='Progress' then
         progress(player,args)
     elseif command=='Verify' then
         local state=assert(sessions[key],'missing server-owned shelf/TV state')
-        assert(args.case=='demote-and-control' and args.ids.book==state.ids.book
+        assert(args.case==state.ids.case and args.ids.book==state.ids.book and args.ids.bag==state.ids.bag
             and args.ids.tape==state.ids.tape and args.ids.shelf==state.ids.shelf,'client receipt identity differs')
         local value=Fixture.verify(state)
         local result={ok=true,bookReturned=value.returned,exactCount=value.exactCount,
@@ -43,6 +47,10 @@ local function execute(command,player,args)
             ..' exactBookCount='..value.exactCount..' tapeRemoved='..tostring(value.tapeDebited)
             ..' mediaIndex='..value.mediaIndex..' mediaType='..value.mediaType
             ..' tvMedia='..value.mediaTitle..' playing='..tostring(value.playing)..' actor='..key)
+        if state.bag then
+            result.bagReceipt=Fixture.bagReceipt(state)
+            print('[SHELF_TV] BAG_AUTHORITY '..result.bagReceipt..' actor='..key)
+        end
         sessions[key]=nil
         sendServerCommand(player,MODULE,'Verified',result)
     else

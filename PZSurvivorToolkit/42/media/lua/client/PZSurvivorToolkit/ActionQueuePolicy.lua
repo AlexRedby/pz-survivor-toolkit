@@ -23,6 +23,7 @@ local Proof = require "PZSurvivorToolkit/SourceProof"
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
+local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -38,6 +39,28 @@ local transferItemGuard
 local inspect
 local ordinaryTransfer
 local sharedEditResource
+local targetCheckers = {}
+local targetModules = {world = "ActionQueueWorld", generators = "ActionQueueGenerators"}
+
+-- Owned modules register their original helper at definition time. A later
+-- override or module replacement cannot silently extend this negative proof.
+function Policy.registerTargetChecker(kind, owner, callback)
+    local name = targetModules[kind]
+    if not name or targetCheckers[kind] or type(owner) ~= "table" or owner ~= Toolkit[name]
+        or type(callback) ~= "function" or owner.sharesTarget ~= callback then return false end
+    targetCheckers[kind] = {owner = owner, callback = callback}
+    return true
+end
+
+local function targetCheckersUnchanged()
+    for kind, name in pairs(targetModules) do
+        local owner, saved = Toolkit[name], targetCheckers[kind]
+        if owner and owner.sharesTarget then
+            if not saved or saved.owner ~= owner or saved.callback ~= owner.sharesTarget then return false end
+        elseif saved then return false end
+    end
+    return true
+end
 
 local function craft(action)
     return Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.supports(action)
@@ -709,7 +732,9 @@ function Policy.installContracts()
         if edit then
             local result=resources(action)
             result.edit=edit
-            result.capacityNonIncreasing=not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
+            local extraFoodWeight=action.item:haveExtraItems()
+            result.capacityNonIncreasing=not extraFoodWeight
+                and not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
             -- Replacement food decreases in weight only while it survives every
             -- portion. A transfer edit can otherwise bypass the food component.
             result.capacityRequiresEdit=not result.capacityNonIncreasing
@@ -849,6 +874,98 @@ sharedEditResource = function(left, right)
     return false
 end
 
+local function emptyResourceMap(value)
+    if value == nil then return true end
+    if type(value) ~= "table" or getmetatable(value) then return false end
+    for _ in pairs(value) do return false end
+    return true
+end
+
+local pairResourceMaps = {"targets", "dynamicInputs", "dynamicInputsByType", "outputTypes"}
+local spatialFields = {"generator", "charger", "object", "moveProps", "toolkitWorldTarget", "isoObject",
+    "toolkitWorldX", "toolkitGeneratorCommand", "toolkitWorldCommand", "stove", "mcwave"}
+local function plainItemFootprint(action, context, connectivity)
+    local contract = inspect(action, context)
+    if type(contract) ~= "table" or getmetatable(contract)
+        or (contract.knownInputs ~= nil and contract.knownInputs ~= true)
+        or contract.unknownOutputs or (not connectivity and contract.edit ~= nil) or contract.hands or contract.equipment
+        or type(contract.items) ~= "table" or getmetatable(contract.items)
+        or (contract.itemTypes ~= nil and (type(contract.itemTypes) ~= "table" or getmetatable(contract.itemTypes)))
+        or (not connectivity and (action.Type == "ISInventoryTransferAction" or action.Type == "ISCartTransferAction"))
+        or repairInputs(action) then return end
+    if connectivity then
+        if contract.containerOwners ~= nil and (type(contract.containerOwners) ~= "table" or getmetatable(contract.containerOwners)) then return end
+    elseif not emptyResourceMap(contract.containerOwners) then return end
+    for _, name in ipairs(pairResourceMaps) do if not emptyResourceMap(contract[name]) then return end end
+    for _, name in ipairs(spatialFields) do if action[name] ~= nil then return end end
+    return operationItems(action, context)
+end
+
+-- Only eliminate pairs whose complete legacy footprint is item IDs. Anything
+-- unknown, spatial, dynamic, projected, repairing or capacity-sensitive keeps
+-- the original ordered pair checks, including their exact diagnostic result.
+local function plainGroupItems(queue, first, last, context)
+    if not targetCheckersUnchanged() then return end
+    local items = {}
+    for index = first, last do
+        local footprint = plainItemFootprint(queue.queue[index], context)
+        if not footprint then return end
+        for item in pairs(footprint) do items[item] = true end
+    end
+    return items
+end
+
+local function mayShareGroupResource(items, other, context)
+    if not items then return true end
+    local footprint = plainItemFootprint(other, context)
+    if not footprint or not targetCheckersUnchanged() then return true end
+    for item in pairs(footprint) do if items[item] then return true end end
+    return false
+end
+
+local function connectivityFootprint(action, context)
+    local items = plainItemFootprint(action, context, true)
+    if not items then return end
+    local contract = inspect(action, context)
+    local edit = contract.edit
+    local footprint = {items = items, owners = contract.containerOwners or {}, edits = {}}
+    if edit == nil then return footprint end
+    if type(edit) ~= "table" or getmetatable(edit) or edit.version ~= 1 or edit.complete ~= true
+        or (edit.capacity ~= "unchanged" and edit.capacity ~= "external")
+        or type(edit.resources) ~= "table" or getmetatable(edit.resources) then return end
+    for index, resource in pairs(edit.resources) do
+        if type(index) ~= "number" or index < 1 or index % 1 ~= 0 or index > #edit.resources
+            or type(resource) ~= "table" or getmetatable(resource) or type(resource.domain) ~= "string"
+            or resource.key == nil or (type(resource.key) == "number" and (resource.key ~= resource.key
+                or resource.key == math.huge or resource.key == -math.huge)) then return end
+        local keys = footprint.edits[resource.domain] or {}
+        footprint.edits[resource.domain] = keys
+        keys[resource.key] = true
+    end
+    return footprint
+end
+
+local function addConnectivity(index, footprint)
+    for item in pairs(footprint.items) do index.items[item] = true end
+    for owner in pairs(footprint.owners) do index.owners[owner] = true end
+    for domain, keys in pairs(footprint.edits) do
+        local aggregate = index.edits[domain] or {}
+        index.edits[domain] = aggregate
+        for key in pairs(keys) do aggregate[key] = true end
+    end
+end
+
+local function mayConnect(index, footprint)
+    if not index or not footprint or not targetCheckersUnchanged() then return true end
+    for item in pairs(footprint.items) do if index.items[item] or index.owners[item] then return true end end
+    for owner in pairs(footprint.owners) do if index.items[owner] then return true end end
+    for domain, keys in pairs(footprint.edits) do
+        local aggregate = index.edits[domain]
+        if aggregate then for key in pairs(keys) do if aggregate[key] then return true end end end
+    end
+    return false
+end
+
 local function editComponent(queue, members, component, context)
     if not EditModel then return {status = "unhandled"} end
     local contracts = {}
@@ -861,16 +978,32 @@ local function editComponent(queue, members, component, context)
         end
         contracts[member] = contract
     end
+    -- Capacity validation remains downstream. Connectivity only names shared
+    -- items, item owners and declared edit resources; owner-owner references
+    -- alone do not connect independent transfers through the same carried bag.
+    local footprints, index = {}, nil
+    if targetCheckersUnchanged() then
+        index = {items = {}, owners = {}, edits = {}}
+        for _, member in ipairs(members) do footprints[member] = connectivityFootprint(member, context) or false end
+        for member in pairs(component) do
+            if not footprints[member] then index = nil; break end
+            addConnectivity(index, footprints[member])
+        end
+    end
     local changed = true
     while changed do
         changed = false
         for _, member in ipairs(members) do
-            if not component[member] then
+            if not component[member] and mayConnect(index, footprints[member]) then
                 for related in pairs(component) do
                     if sharedEditResource(contracts[member], contracts[related])
                         or sharedItem(member, related, context) or sharedWorldTarget(member, related, context)
                         or dynamicConflict(member, related, context) or dynamicConflict(related, member, context) then
                         component[member], changed = true, true
+                        if index then
+                            if footprints[member] then addConnectivity(index, footprints[member])
+                            else index = nil end
+                        end
                         break
                     end
                 end
@@ -1020,13 +1153,15 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
         end
         if i <= last and (not check.to or i < check.first or i > check.last) then order[#order + 1] = queue.queue[i] end
     end
-    local cartCapacity, conditionalCapacity = false, {}
+    local cartCapacity, conditionalCapacity, hasConditionalCapacity = false, {}, false
     for _, action in ipairs(order) do
         if action.Type == "ISCartTransferAction" or (carts and type(carts.involvesCart) == "function" and carts.involvesCart(action)) then cartCapacity = true end
         local contract = inspect(action, context)
-        if contract and contract.capacityRequiresEdit then conditionalCapacity[action] = true end
+        if contract and contract.capacityRequiresEdit then
+            conditionalCapacity[action], hasConditionalCapacity = true, true
+        end
     end
-    if next(conditionalCapacity) then
+    if hasConditionalCapacity then
         -- Prove all conditional weight effects in the global proposed prefix,
         -- including unchanged portions and their required pickups/returns. The
         -- selected edit's dependency component alone may contain none of them.
@@ -1044,8 +1179,10 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
     local function fits(container, weight)
         local load = loads[container]
         if not load then
+            local current=Weights.capacity(container,character)
+            if not finiteWeight(current) then return false end
             if cartCapacity and (not carts or not carts.capacitySafe or not carts.capacitySafe(container)) then return false end
-            load = {container:getCapacityWeight(), container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
+            load = {current, container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
             loads[container] = load
         end
         local current, capacity = load[1], load[2]
@@ -1073,8 +1210,8 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 if seen[id] then return true end
                 seen[id] = true
                 if kind == "CandleLit" or kind == "Lantern_HurricaneLit" then return false end
-                local weight = item:getUnequippedWeight()
-                if not finiteWeight(weight) then return false end
+                local weight,release = Weights.unequipped(item)
+                if not finiteWeight(weight) or not finiteWeight(release) then return false end
                 if destinationCarried then incoming[root] = incoming[root] + weight end
                 for _, container in ipairs(destinations) do
                     if container ~= root then
@@ -1093,7 +1230,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                     and item:getContainer() == source and source:contains(item) and not item:getIsCraftingConsumed()
                     and not character:getVehicle() and root:getAcceptItemFunction() == nil
                     and root:getOnlyAcceptCategory() == nil then
-                    incoming[source] = (incoming[source] or 0) - weight
+                    incoming[source] = (incoming[source] or 0) - release
                 end
                 touched[id] = true
                 return true
@@ -1202,20 +1339,23 @@ function Policy.cancelOperationReason(queue, action, context)
     end
     for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
     local capacityCheck = {first = first, last = last}
+    local groupItems = plainGroupItems(queue, first, last, context)
     for i, other in ipairs(queue.queue) do
         if i > last or (i < first and not pendingRemovalOnly) then
             if other._isAddingActions or not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
             for item in pairs(operationItems(other, context)) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
-            for j = first, last do
-                local item = sharedItem(queue.queue[j], other, context)
-                if item then return "operation_shared_item", nil, nil, other, item end
-                local conflict = sharedWorldTarget(queue.queue[j], other, context) or dynamicConflict(queue.queue[j], other, context)
-                    or dynamicConflict(other, queue.queue[j], context)
-                if conflict then return "operation_dependent", nil, nil, other, conflict end
-                local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context)
-                if capacity then return "container_capacity", nil, nil, other, capacity end
+            if mayShareGroupResource(groupItems, other, context) then
+                for j = first, last do
+                    local item = sharedItem(queue.queue[j], other, context)
+                    if item then return "operation_shared_item", nil, nil, other, item end
+                    local conflict = sharedWorldTarget(queue.queue[j], other, context) or dynamicConflict(queue.queue[j], other, context)
+                        or dynamicConflict(other, queue.queue[j], context)
+                    if conflict then return "operation_dependent", nil, nil, other, conflict end
+                    local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context)
+                    if capacity then return "container_capacity", nil, nil, other, capacity end
+                end
             end
             -- shortcut: output requirements of arbitrary later actions are unknown; add verified adapters to allow them.
             if output and i > last then
@@ -1341,6 +1481,7 @@ function Policy.moveReason(queue, action, target, after, context)
         end
         context.editFallback = edit
     end
+    local groupItems = plainGroupItems(queue, first, last, context)
     for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
         if i < first or i > last then
             local crossed = queue.queue[i]
@@ -1348,9 +1489,11 @@ function Policy.moveReason(queue, action, target, after, context)
             if not knownCraftInputs(crossed, context) and not repairInputs(crossed) then
                 return craft(crossed) and "move_craft_inputs" or "move_dependent", nil, nil, nil, nil, crossed
             end
-            for j = first, last do
-                local reason, resource = moveConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck, context)
-                if reason then return reason, nil, nil, nil, nil, crossed, resource end
+            if mayShareGroupResource(groupItems, crossed, context) then
+                for j = first, last do
+                    local reason, resource = moveConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck, context)
+                    if reason then return reason, nil, nil, nil, nil, crossed, resource end
+                end
             end
         end
     end
@@ -1420,6 +1563,25 @@ local function editDenial(reason, blocker, resource, context)
     return reason, blocker, resource
 end
 
+-- Presentation only: no edit snapshot or authority to mutate the queue. Callers
+-- must evaluate again at the actual move/cancel boundary, with fresh live facts.
+function Policy.previewMove(queue, action, target, after, context)
+    context = context or {contracts = {}, items = {}}
+    local reason, to, first, last, preempt, blocker, resource = Policy.moveReason(queue, action, target, after, context)
+    reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    return {reason = reason, blocker = blocker, resource = resource,
+        to = to, first = first, last = last, preempt = preempt}
+end
+
+function Policy.previewCancel(queue, action, whole)
+    local context = {contracts = {}, items = {}}
+    local reason, first, last, blocker, resource
+    if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
+    else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
+    reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    return {reason = reason, blocker = blocker, resource = resource}
+end
+
 function Policy.evaluateMove(queue, action, target, after, context)
     context = context or {contracts = {}, items = {}}
     local snapshot = editSnapshot(queue)
@@ -1443,19 +1605,32 @@ function Policy.evaluateCancel(queue, action, whole)
         mode = queue and action == queue.current and "active" or "pending", blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
-function Policy.evaluatePriority(queue, action, preempt)
+local function priorityDecision(queue, action, preempt, decide)
     if not queue or not queue.current or queue.queue[1] ~= queue.current then return {allowed = false, reason = "unavailable"} end
     local _, activeLast = Operations.bounds(queue, queue.current)
     if not activeLast then return {allowed = false, reason = "operation_dependent"} end
     local activeToken = queue.current.toolkitQueueOperation
     local context = {contracts = {}, items = {}}
-    if preempt and activeLast == 1 and not (activeToken and activeToken.toolkitPriority == "urgent") then
-        local decision = Policy.evaluateMove(queue, action, queue.current, false, context)
-        if decision.allowed then decision.target = queue.current; return decision end
+    if preempt and activeLast == 1 and not (activeToken and activeToken.toolkitPriority == "urgent")
+        and (queue.current.Type == "ISReadABook" or resumableWorld(queue.current)) then
+        local decision = decide(queue, action, queue.current, false, context)
+        if not decision.reason then decision.target = queue.current; return decision end
     end
     local target = queue.queue[activeLast]
-    local decision = Policy.evaluateMove(queue, action, target, true, context)
+    local decision = decide(queue, action, target, true, context)
     decision.target, decision.after = target, true
+    return decision
+end
+
+function Policy.evaluatePriority(queue, action, preempt)
+    return priorityDecision(queue, action, preempt, Policy.evaluateMove)
+end
+
+-- A tick only chooses a possible move. Authority and its edit snapshot belong
+-- to Queue.move immediately before mutation, not every unsuccessful retry.
+function Policy.priorityIntent(queue, action, preempt)
+    local decision = priorityDecision(queue, action, preempt, Policy.previewMove)
+    decision.candidate = not decision.reason and decision.to ~= decision.first
     return decision
 end
 

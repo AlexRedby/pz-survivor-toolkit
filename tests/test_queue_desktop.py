@@ -79,6 +79,51 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual((self.root / 'Lua/test-window-routed.txt').read_text(), '123:456\n')
         manager.check(self.process)
 
+    def test_current_desktop_acknowledges_owned_glfw_without_aerospace(self):
+        with patch.object(desktop.shutil, 'which') as lookup:
+            manager = desktop.prepare({'options': {'desktop_mode': 'current'}})
+            manager.route(self.process, self.root, self.log)
+            manager.check(self.process)
+            lookup.assert_not_called()
+        self.assertEqual(self.commands, [])
+        self.assertEqual((self.root / 'Lua/test-window-routed.txt').read_text(), '123:456\n')
+        self.assertEqual(manager.evidence, {'mode': 'current', 'workspace': None,
+                                          'windows': {}, 'glfw_handles': {'123': '456'}})
+
+    def test_current_desktop_refuses_foreign_or_missing_handshake_and_dead_process(self):
+        manager = desktop.prepare({'options': {'desktop_mode': 'current'}})
+        self.log.write_text('[QUEUE_TEST] WINDOW_ROUTING_READY pid=999 glfw=456\n')
+        with self.assertRaisesRegex(RuntimeError, 'owned client PID'):
+            manager.route(self.process, self.root, self.log)
+        self.log.write_text('')
+        with patch.object(desktop.time, 'monotonic', side_effect=[0, 31]):
+            with self.assertRaisesRegex(RuntimeError, 'GLFW window was not ready'):
+                manager.route(self.process, self.root, self.log)
+        dead = SimpleNamespace(pid=123, poll=lambda: -11)
+        with self.assertRaisesRegex(RuntimeError, 'exited'):
+            manager.route(dead, self.root, self.log)
+        with self.assertRaisesRegex(RuntimeError, 'exited'):
+            manager.check(dead)
+        self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
+        self.assertEqual(self.commands, [])
+
+    def test_unknown_desktop_mode_is_not_an_implicit_fallback(self):
+        for mode in ('auto', '', None, []):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'desktop_mode'):
+                desktop.prepare({'options': {'desktop_mode': mode}})
+        self.assertEqual(self.commands, [])
+
+    def test_current_desktop_still_requires_agent_and_fresh_acknowledgement(self):
+        manager = desktop.prepare({'options': {'desktop_mode': 'current'}})
+        with self.assertRaisesRegex(RuntimeError, 'agent is missing'):
+            manager.arguments(self.root, self.root)
+        (self.root / 'test-window-agent.jar').touch()
+        self.assertIn('-Dtoolkit.test.windowGate=' + str(self.root / 'Lua/test-window-routed.txt'),
+                      manager.arguments(self.root, self.root))
+        (self.root / 'Lua/test-window-routed.txt').write_text('old\n')
+        with self.assertRaisesRegex(RuntimeError, 'already exists'):
+            manager.arguments(self.root, self.root)
+
     def test_foreign_window_or_foreign_handshake_is_never_mutated_or_acknowledged(self):
         for row, marker in [('789|999|C\n', 'pid=123 glfw=456'), ('789|123|C\n', 'pid=999 glfw=456')]:
             with self.subTest(row=row, marker=marker):

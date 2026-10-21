@@ -7,7 +7,14 @@ isClient = function() return client end
 sendClientCommand = function() error('receipts must never send commands or create native actions') end
 local players = {}
 getSpecificPlayer = function(slot) return players[slot] end
-local acknowledgements = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
+local sourcePath = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'
+local source
+if NativeReadText then source = NativeReadText(sourcePath)
+else local file = assert(io.open(sourcePath)); source = file:read('*a'); file:close() end
+local seams
+source, seams = source:gsub('\nreturn Acknowledgements', '\nAcknowledgements.fixtureRecords = records\nreturn Acknowledgements')
+assert(seams == 1, 'receipt retention fixture must expose only its private current registry')
+local acknowledgements = assert(loadstring(source))()
 assert(type(receive) == 'function')
 
 local serial = 0
@@ -151,6 +158,9 @@ local completedToken = token()
 deliver(message(first, 'started', completedToken, 125))
 local _, completedRecord = state(completedAction)
 currentQueue.current, currentQueue.queue = build, {build}
+local nextToken = token()
+deliver(message(first, 'started', nextToken, 127, 'build'))
+assert(acknowledgements.capture(build), 'following action must acquire its own current receipt')
 deliver(message(first, 'completed', completedToken, 125))
 assert(completedRecord.state == 'completed' and acknowledgements.capture(completedAction) == nil,
     'late outcome must settle observation without granting removed action permission')
@@ -160,8 +170,31 @@ local resetToken = token()
 deliver(message(first, 'started', resetToken, 124))
 local _, resetRecord = state(resetAction)
 acknowledgements.reset(currentQueue)
+assert(not acknowledgements.capture(resetAction) and not acknowledgements.fixtureRecords[first.slot],
+    'reset must release the current action receipt as well as terminal observation')
+assert(acknowledgements.capture(foreign), 'reset must preserve another local player\'s current receipt')
 deliver(message(first, 'completed', resetToken, 124))
 assert(resetRecord.state == 'started', 'explicit reset retained pending terminal observation')
+-- Inspect strong registry keys directly: Lua 5.1 weak-key collection would hide
+-- Kahlua's ignored __mode, so GC cannot establish that completed actions retire.
+for i = 1, 500 do
+    local finished = action(first, -126, 'ToolkitAckProbe')
+    currentQueue.current, currentQueue.queue = finished, {finished}
+    local identity = token()
+    deliver(message(first, 'started', identity))
+    deliver(message(first, 'completed', identity))
+    assert(state(finished) == 'completed')
+    local count = 0
+    for slot, entry in pairs(acknowledgements.fixtureRecords) do
+        assert(type(slot) == 'number' and (entry.action == finished or entry.action == foreign),
+            'current receipts must retain only each local slot\'s latest action')
+        count = count + 1
+    end
+    assert(count == 2, 'completed actions must not accumulate in the current receipt registry')
+end
+acknowledgements.reset(currentQueue)
+assert(not acknowledgements.fixtureRecords[first.slot] and acknowledgements.fixtureRecords[second.slot],
+    'reset must release only its queue\'s bounded current receipt')
 currentQueue.current, currentQueue.queue = build, {build}
 assert(currentQueue.current == build and currentQueue.queue[1] == build
     and foreignQueue.current == foreign and foreignQueue.queue[1] == foreign, 'receipt handling mutated native queue')

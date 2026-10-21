@@ -17,6 +17,9 @@ local function derive(self, name)
 end
 local craftContainers
 require = function(name)
+    if name == "PZSurvivorToolkit/ActionQueueMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
     if name == 'PZSurvivorToolkit/InventoryClasses' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
@@ -276,6 +279,9 @@ local Outfit = {
 local Gather = {build = function() return {} end, find = function(_, descriptor) return descriptor.item, 'container', descriptor.item:getContainer() end}
 local loaded = {}
 require = function(module)
+    if module == "PZSurvivorToolkit/ActionQueueMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. module .. ".lua"))()
+    end
     if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
         craftContainers = craftContainers or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
         return craftContainers
@@ -350,7 +356,7 @@ compatSource,proofSeams=compatSource:gsub('local carts=ready%.SaucedCartsTransfe
     'local carts=Toolkit.ActionQueueCarts')
 assert(proofSeams==1,'late-hook fixture must replace only the Carts proof capture')
 local compat = assert(loadstring((compatSource:gsub('\nreturn Compat',
-    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nreturn Compat'))))()
+    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nCompat.fixtureFloorRepairs = repairedFloors\nCompat.fixtureScoped = scoped\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
 for name, available in pairs({WS=WS~=nil, NEQ_Dresser=NEQ_Dresser~=nil, TidyFixture=TidyFixture~=nil,
@@ -446,6 +452,101 @@ end
 local function tail()
     local action = ISBaseTimedAction:new(player); ISTimedActionQueue.add(action); return action
 end
+-- The actual audited source-scope table.insert hook must upgrade a previously
+-- saved transfer heading even though it bypasses native enqueue callbacks.
+do
+    reset()
+    local transfer = ISInventoryTransferAction:new(player, item(inventory, 19001), inventory, inventory)
+    ISTimedActionQueue.add(transfer)
+    local token = transfer.toolkitQueueOperation
+    assert(definitions.taskTitle(queue, 1, 1) == 'UI_PZSurvivorToolkit_queue_action_transfer')
+    local readAction = ISReadABook:new(player, item(inventory, 19002))
+    readAction.toolkitQueueOperation = token
+    compat.fixtureScoped({id = 'WashFix', token = token, character = player, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0}, function()
+        table.insert(queue.queue, readAction)
+    end)
+    assert(queue.queue[2] == readAction and definitions.taskTitle(queue, 1, 2) == 'ContextMenu_Read',
+        'direct audited primary insertion failed to upgrade a saved transfer heading')
+    reset()
+    transfer = ISInventoryTransferAction:new(player, item(inventory, 19003), inventory, inventory)
+    ISTimedActionQueue.add(transfer)
+    token = transfer.toolkitQueueOperation
+    local custom = ISInventoryTransferAction:new(player, item(inventory, 19004), inventory, inventory)
+    custom.toolkitQueueOperation = token
+    custom.craftRecipe = {class = 'CraftRecipe', getName = function() return 'direct' end,
+        getTranslationName = function() return 'Direct custom transfer' end}
+    compat.fixtureScoped({id = 'WashFix', token = token, character = player, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0}, function()
+        table.insert(queue.queue, 2, custom)
+    end)
+    assert(definitions.taskTitle(queue, 1, 2) == 'UI_PZSurvivorToolkit_queue_mixed',
+        'direct audited custom insertion failed to refresh a saved transfer heading')
+    reset()
+    transfer = ISInventoryTransferAction:new(player, item(inventory, 19005), inventory, inventory)
+    ISTimedActionQueue.add(transfer)
+    token = transfer.toolkitQueueOperation
+    local preparation = ISBaseTimedAction:new(player)
+    preparation.Type, preparation.toolkitQueueOperation = 'ISWalkToTimedAction', token
+    compat.fixtureScoped({id = 'WashFix', token = token, character = player, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0}, function() table.insert(queue.queue, preparation) end)
+    assert(token.presentation.dirty)
+    queue:removeFromQueue(transfer)
+    assert(definitions.taskTitle(queue, 1, 1) == 'UI_PZSurvivorToolkit_queue_action_transfer'
+        and not token.presentation.dirty, 'retaining a higher saved title must still clear lazy invalidation')
+    reset()
+    local describe, bounds = definitions.describe, operations.bounds
+    local descriptions, searches = 0, 0
+    definitions.describe = function(...) descriptions = descriptions + 1; return describe(...) end
+    operations.bounds = function(...) searches = searches + 1; return bounds(...) end
+    for _, count in ipairs({10, 30, 60, 120}) do
+        reset(); tail()
+        descriptions, searches = 0, 0
+        local group = {}
+        operations.runWith(group, function()
+            compat.fixtureScoped({id = 'WashFix', token = group, character = player, queue = queue,
+                generation = queue.toolkitOperationGeneration or 0}, function()
+                for i = 1, count do
+                    ISTimedActionQueue.add(ISInventoryTransferAction:new(player,
+                        item(inventory, 19100 + i), inventory, inventory))
+                end
+            end)
+        end)
+        assert(#queue.queue == count + 1 and descriptions == 2 * count - 1 and searches == 0,
+            'nested ordinary source adds must not rebuild their growing title range')
+        descriptions = 0
+        compat.fixtureScoped({id = 'WashFix', token = group, character = player, queue = queue,
+            generation = queue.toolkitOperationGeneration or 0}, function()
+            for i = 1, count do
+                local direct = ISInventoryTransferAction:new(player, item(inventory, 19300 + i), inventory, inventory)
+                direct.toolkitQueueOperation = group
+                table.insert(queue.queue, direct)
+            end
+        end)
+        assert(descriptions == count and searches == 0, 'raw fixed transfers must inspect only their new member')
+        descriptions = 0
+        for frame = 1, 100 do definitions.taskTitle(queue, 2, #queue.queue) end
+        assert(descriptions == 0, 'raw fixed transfer additions must retain their fixed heading')
+        compat.fixtureScoped({id = 'WashFix', token = group, character = player, queue = queue,
+            generation = queue.toolkitOperationGeneration or 0}, function()
+            for i = 1, count do
+                local direct = ISReadABook:new(player, item(inventory, 19500 + i))
+                direct.toolkitQueueOperation = group
+                table.insert(queue.queue, direct)
+            end
+        end)
+        assert(descriptions == 0 and group.presentation.dirty, 'raw primary additions must invalidate lazily')
+        assert(definitions.taskTitle(queue, 2, #queue.queue) == 'ContextMenu_Read')
+        assert(descriptions == 3 * count and not group.presentation.dirty and searches == 0,
+            'raw primary additions must rebuild their heading once')
+        descriptions = 0
+        for frame = 1, 100 do definitions.taskTitle(queue, 2, #queue.queue) end
+        assert(descriptions == 0, 'a refreshed direct-primary heading must not rebuild each frame')
+    end
+    definitions.describe, operations.bounds = describe, bounds
+    reset()
+end
+print('Audited direct queue insertion: primary/custom title upgrades and linear raw/native additions passed.')
 do
     local ordinary=ISInventoryTransferAction:new(player,item(inventory,22),inventory,inventory)
     assert(fixturePolicy.isOrdinaryTransfer(ordinary),'reviewed Better Containers allows ordinary transfers')
@@ -529,6 +630,18 @@ do
         reset(); wash(item(bag,10000+i)); compat.prune()
         assert(count(records)==1 and count(sessions[player].seen)==1, 'completed source actions must not accumulate in registries')
     end
+    reset()
+    local visits = assert(loadfile(ProjectRoot .. '/tests/support/queue_registry_visits.lua'))()
+    local queuedSource = wash(item(bag, 19050))
+    queue.queue, queue.current = {queuedSource}, queuedSource
+    for i = 2, 4097 do queue.queue[i] = {} end
+    assert(visits(queue.queue, compat.prune) == 1 and records[queuedSource],
+        'queued compatibility source must not scan an unrelated long tail')
+    table.remove(queue.queue, 1)
+    compat.prune()
+    assert(not records[queuedSource] and sessions[player] and count(sessions[player].seen) == 0)
+    assert(visits(queue.queue, compat.prune) == 0 and sessions[player],
+        'delayed Tidy history with no seen actions must retain its session without scanning the queue')
     reset(); dirty=item(bag,1)
     -- Native completion may dispatch this callback after the queue has already released its parent.
     local delayed=wash(dirty); local later=tail()
@@ -557,6 +670,28 @@ do
     -- Even reusing the same player/queue with its original generation must not revive an old callback.
     stale.onCompleteFunc(unpack(stale.onCompleteArgs))
     assert(#queue.queue==1 and queue.queue[1]==later, 'a new world cannot revive an already pruned source callback')
+    -- Floor repair receipts can outlive all other compatibility registries.
+    -- Inspect entries directly, without relying on Lua's weak-key GC behavior.
+    local floorRepairs=compat.fixtureFloorRepairs
+    for _, lifecycle in ipairs({'completed','dead','replacement','world','menu'}) do
+        reset()
+        for _,callback in ipairs(events.OnMainMenuEnter or {}) do callback() end
+        local repaired={character=player}
+        queue.queue,queue.current={repaired},repaired
+        floorRepairs[repaired]={queue=queue,character=player}
+        assert(count(records)==0 and count(sessions)==0,
+            'floor-only cleanup must exercise prune without another registry keeping it active')
+        compat.prune()
+        assert(floorRepairs[repaired], 'queued floor placement must retain its repair receipt')
+        if lifecycle=='completed' then queue.queue,queue.current={},nil
+        elseif lifecycle=='dead' then dead=true
+        elseif lifecycle=='replacement' then ISTimedActionQueue.queues[player]={queue={},character=player}
+        elseif lifecycle=='world' then ISTimedActionQueue.queues={}
+        else for _,callback in ipairs(events.OnMainMenuEnter or {}) do callback() end end
+        if lifecycle~='menu' then compat.prune() end
+        assert(not floorRepairs[repaired], lifecycle..' must release departed floor placement receipts')
+        ISTimedActionQueue.queues[player]=queue; dead=false
+    end
     reset(); dirty=item(bag,1)
 end
 local transfer = wash(dirty); local unrelated = tail()
@@ -1562,6 +1697,7 @@ do
             assert(old:getContainer()==(staleFloor and floor or nil),'repair mutated the stale source proxy')
             local replica
             if staleFloor then
+                assert(compat.fixtureFloorRepairs[placementAction], 'actual Host floor repair must own its queued receipt')
                 -- Native MP removes the held proxy and receives a new world replica before relocation starts.
                 returned:perform();live.container=nil
                 replica=worldItem(live:getID());floor.values={};floorLoot.worldItems={replica}
@@ -1574,6 +1710,8 @@ do
                 assert(not definitions.inspect(placementAction),'mixed floor validation widened opaque queue rights')
             end
             drain();assert((replica or live):getContainer()==floor and TidyFixture.restoring[player]==nil)
+            compat.prune()
+            assert(not compat.fixtureFloorRepairs[placementAction], 'completed Host placement must release its repair receipt')
             isClient,isMultiplayer=client,multi
         end
     end
@@ -1583,14 +1721,25 @@ do
             'callback','instance','class','owner','getter','refresh','missing-refresh','loot-api','loot-method','loot-player','loot-character',
             'generation','removed','cancelled'})do
             clearIntent();reset();enabled=queueEnabled;doNotReequip=false
+            -- No prior tick has initialized this mode, as on the first return
+            -- after entering the world or disabling the queue in settings.
+            queue.toolkitOperationsInvalid=nil
+            if change=='none'then queue.toolkitOperationGeneration=nil end
+            local generation=queue.toolkitOperationGeneration or 0
             isClient=function()return true end
             local old,held=item(floor,148),item(inventory,148);inventory.values={held}
             local action=placement(old)
             local getter,refresh,lootAPI,owner=ISInventoryPage.GetFloorContainer,ISInventoryPage.refreshBackpacks,getPlayerLoot,P4TidyUpMeister
             local nativeValid=P4RestoreFloorAction.isValid
             compat.fixtureRepairTidyFloor(player,function()ISTimedActionQueue.add(action)end)
+            assert(compat.fixtureFloorRepairs[action].generation == (queue.toolkitOperationGeneration or 0),
+                'native enqueue invalidated a fresh floor receipt queue='..tostring(queueEnabled))
+            assert((queue.toolkitOperationGeneration or 0) == generation + (queueEnabled and 0 or 1),
+                'first enqueue must initialize disabled bookkeeping exactly once')
             assert(#queue.queue==2 and action.item==held,'owned relocation fixture failed to create exact return pair')
             queue.queue[1]:perform();held.container=nil
+            assert(compat.fixtureFloorRepairs[action].generation == (queue.toolkitOperationGeneration or 0),
+                'beginning the placement invalidated its transfer receipt')
             local replica=worldItem(148);floor.values={};floorLoot.worldItems={replica}
             floorLoot.player,floorLoot.onCharacter,floorLoot.refreshBackpacks=0,false,nativeFloorRefresh
             if change=='missing'then floorLoot.worldItems={}
@@ -1620,7 +1769,7 @@ do
             elseif change=='loot-method'then floorLoot.refreshBackpacks=function()end
             elseif change=='loot-player'then floorLoot.player=1
             elseif change=='loot-character'then floorLoot.onCharacter=true
-            elseif change=='generation'then queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+            elseif change=='generation'then operations.invalidateQueue(queue)
             elseif change=='removed'then queue.queue,queue.current={},nil
             elseif change=='cancelled'then dead=true end
             local ok=nativeValid(action)

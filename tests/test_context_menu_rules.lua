@@ -345,3 +345,65 @@ child.options = {{onSelect = NC_InventorySearch.searchAsInput}, {onSelect = NC_I
 assert(groupable('world', nil, 'inventory', search, menu), 'coherent crafting lookup belongs in More')
 child.options[2].onSelect = noop
 assert(not groupable('world', nil, 'inventory', search, menu), 'foreign crafting submenu stays root')
+
+-- A rebuild reuses classifications without retaining them across native callback changes.
+do
+    local liveClassify, calls = Rules.classify, 0
+    local classify = Rules.newClassifier()
+    Rules.classify = function(option)
+        calls = calls + 1
+        return liveClassify(option)
+    end
+    local known = {onSelect = ISInventoryPaneContextMenu.onEatItems}
+    local unknown = {onSelect = noop}
+    for _ = 1, 2 do
+        local category, key = classify(known)
+        assert(category == 'consume' and key == 'callback:ISInventoryPaneContextMenu.onEatItems')
+        category, key = classify(unknown)
+        assert(category == nil and key == nil, 'unknown results must keep both nil values')
+    end
+    assert(calls == 2, 'plain known and unknown actions must each classify once per rebuild')
+    classify(nil);classify(nil);classify(false);classify(false)
+    assert(calls == 6, 'non-table values must use the live classifier')
+
+    local category = 'consume'
+    local opaque = setmetatable({}, {__metatable = false, __index = function(_, key)
+        if key == 'pzstCategory' then return category end
+        if key == 'pzstKey' then return 'opaque' end
+    end})
+    assert(classify(opaque) == 'consume')
+    category = 'world'
+    assert(classify(opaque) == 'world' and calls == 8, 'protected mod options must retain live field reads')
+
+    local callback = ISInventoryPaneContextMenu.onEatItems
+    ISInventoryPaneContextMenu.onEatItems = function() end
+    assert(Rules.classify(known) == nil, 'direct classification must observe callback replacement')
+    assert(Rules.newClassifier()(known) == nil, 'a new rebuild must reject the old native callback')
+    known.onSelect = ISInventoryPaneContextMenu.onEatItems
+    assert(Rules.newClassifier()(known) == 'consume', 'a new rebuild must recognize the replacement callback')
+    ISInventoryPaneContextMenu.onEatItems = callback
+    Rules.classify = liveClassify
+end
+print('PASS per-rebuild classification caches nil results, bypasses opaque options and refreshes native callbacks')
+
+do
+    local row, calls = {onSelect = noop}, 0
+    local child = {options = {row}}
+    local menu = {getSubMenu = function() return child end}
+    local option = {name = getText('ContextMenu_More'), subOption = 1}
+    assert(not Rules.isMore(menu, option), 'direct More checks must retain live classification')
+    assert(Rules.isMore(menu, option, function(candidate)
+        assert(candidate == row);calls = calls + 1
+        return 'world', 'test:more'
+    end) and calls == 1, 'More checks must route through the supplied classifier')
+
+    local fluid = {name = getText('ContextMenu_Fluid')}
+    calls = 0
+    local defaults = Rules.defaults({options = {fluid}}, {fluid}, 'inventory', function() return true end,
+        function(candidate)
+            assert(candidate == fluid);calls = calls + 1
+            return 'transfer', 'text:ContextMenu_Fluid'
+        end)
+    assert(defaults[fluid] == 'root' and calls == 1, 'defaults must reuse category and key from one supplied classification')
+end
+print('PASS More and semantic defaults share an optional rebuild classifier')

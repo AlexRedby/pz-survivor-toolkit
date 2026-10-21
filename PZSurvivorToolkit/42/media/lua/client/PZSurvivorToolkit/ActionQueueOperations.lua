@@ -12,6 +12,7 @@ local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 local Operations = {}
 PZSurvivorToolkit.ActionQueueOperations = Operations
 local scope
+local titleScope
 local completionScope
 local continuationScope
 local continuationMarker = {}
@@ -72,10 +73,11 @@ local function pack(...)
 end
 
 local function run(token, callback, ...)
-    local previous = scope
+    local previous, previousTitle = scope, titleScope
     scope = token
+    titleScope = titleScope or {}
     local results = pack(pcall(callback, ...))
-    scope = previous
+    scope, titleScope = previous, previousTitle
     if not results[1] then error(results[2], 0) end
     return unpack(results, 2, results.n)
 end
@@ -153,7 +155,7 @@ end
 
 local function startCommand(action)
     action:beginAddingActions()
-    action.addActionsFunction(action.character, unpack(action.args))
+    Operations.runWith(action.toolkitQueueOperation, action.addActionsFunction, action.character, unpack(action.args))
     action:endAddingActions()
     -- An invalid future target skips its command without clearing unrelated native actions.
     action:forceComplete()
@@ -276,13 +278,24 @@ function Operations.adopt(action, token)
     stamp(action, token)
 end
 
-local function rememberTitle(action)
+local function rememberTitle(action, queue, index, previousCount)
     local definitions = PZSurvivorToolkit.ActionQueueDefinitions
     if not definitions or action.ignoreAction then return end
-    local queue = ISTimedActionQueue.queues[action.character]
+    queue = queue or ISTimedActionQueue.queues[action.character]
     if not queue then return end
+    -- This presentation summary lives only within one synchronous dispatch. Native
+    -- completion, later commands and queue edits cannot reuse its old membership.
+    local context = titleScope or {}
+    if index and definitions.appendTaskTitle and definitions.appendTaskTitle(queue, action, index, previousCount, context) then return end
     local first, last = Operations.bounds(queue, action)
-    if first then definitions.taskTitle(queue, first, last, true) end
+    if first then definitions.taskTitle(queue, first, last, true, context) end
+end
+
+-- Audited source callbacks may bypass enqueue hooks. Invalidate display only;
+-- the next heading read rebuilds once, or ordinary enqueue refreshes it first.
+function Operations.invalidateTitle(action)
+    local definitions = PZSurvivorToolkit.ActionQueueDefinitions
+    if definitions and definitions.invalidateTaskTitle then definitions.invalidateTaskTitle(action) end
 end
 
 local add = ISTimedActionQueue.add
@@ -320,12 +333,21 @@ ISTimedActionQueue.add = function(action)
         if index > last then
             table.remove(queue.queue, index)
             table.insert(queue.queue, last + 1, action)
+            if titleScope then titleScope[queue] = nil end
+            rememberTitle(action)
         end
-        rememberTitle(action)
         return result
     end
+    -- Native deferred commands insert directly, bypassing addToQueue.
+    local parentQueue = ISTimedActionQueue.queues[action.character]
+    local parent = parentQueue and parentQueue.queue[1]
+    local inserting = parent and parentQueue:isCurrentActionAddingOtherActions()
+    local previousCount = inserting and #parentQueue.queue
+    local index = inserting and 2 + parent._numAddedActions
     local result = add(action)
-    rememberTitle(action)
+    if inserting and #parentQueue.queue == previousCount + 1 and parentQueue.queue[index] == action then
+        rememberTitle(action, parentQueue, index, previousCount)
+    end
     return result
 end
 
@@ -333,8 +355,9 @@ local addToQueue = ISTimedActionQueue.addToQueue
 ISTimedActionQueue.addToQueue = function(queue, action)
     if continuationScope and not continuationValid(continuationScope) then return end
     stamp(action)
+    local previousCount = #queue.queue
     local result = addToQueue(queue, action)
-    rememberTitle(action)
+    rememberTitle(action, queue, previousCount + 1, previousCount)
     return result
 end
 
@@ -348,6 +371,7 @@ ISTimedActionQueue.addAfter = function(previous, action)
     if added then
         stamp(added)
         previous.toolkitQueueLinked, added.toolkitQueueLinked = true, true
+        if titleScope then titleScope[queue] = nil end
         rememberTitle(added)
     end
     return queue, added

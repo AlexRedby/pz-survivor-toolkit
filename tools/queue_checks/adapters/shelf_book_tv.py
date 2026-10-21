@@ -8,16 +8,17 @@ from ..mod_selection import metadata, mod_ids
 PROJECT = Path(__file__).resolve().parents[3]
 MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 MARKER = '[SHELF_TV] '
+CASES = ('demote-and-control', 'worn-bag')
 
 
 def definitions():
     return {'shelf-book-tv': {'status': 'ready', 'clients': 1, 'default_mods': list(MODS),
-            'cases': [{'id': 'demote-and-control', 'producer': 'fixture', 'capability': 'effect',
-                       'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['toolkit', 'native']}]}}
+            'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
+                       'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['toolkit', 'native']} for case in CASES]}}
 
 
 def validate(selection):
-    if (selection.get('cases') != ['demote-and-control'] or selection.get('kind') not in ('sp', 'mp')
+    if (len(selection.get('cases', [])) != 1 or selection['cases'][0] not in CASES or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('toolkit', 'native') or selection.get('languages') != ['EN']
             or selection.get('clients') != 1 or selection.get('mods') != MODS
             or selection.get('options', {}).get('world_template')):
@@ -57,12 +58,15 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
-    return role == 'client1' and len(re.findall(re.escape(MARKER) + r'COMPLETE case=demote-and-control(?:\s|$)', text)) == 1
+    case = re.escape(selection['cases'][0])
+    return role == 'client1' and len(re.findall(re.escape(MARKER) + rf'COMPLETE case={case}(?:\s|$)', text)) == 1
 
 
 def verify(root, selection, catalog):
     root = Path(root)
     issues, evidence = [], {}
+    case = selection['cases'][0]
+    bag_case = case == 'worn-bag'
     try:
         client = (root / 'client1-launch.log').read_text(errors='replace')
         required = [r'PREPARED shelfId=\d+ bookId=\d+ tv=\d+,-?\d+,-?\d+ tapeId=\d+ mediaIndex=\d+ mediaType=\d+ power=electric daylight=true',
@@ -75,7 +79,13 @@ def verify(root, selection, catalog):
                     r'ACTIONS powerStarted=true powered=true insertStarted=true exactTape=true playStarted=true mediaMatched=true',
                     r'RETURN sameBook=true exactCount=1',
                     r'MEDIA tapeDebited=true exactTape=true mediaIndex=\d+ mediaType=\d+ title=Carzone playing=true',
-                    r'COMPLETE case=demote-and-control']
+                    r'COMPLETE case=' + re.escape(case)]
+        if bag_case:
+            required += [r'BAG_PREPARED bagId=\d+ location=\S+ tapeId=\d+ worn=true root=true tapeInBag=true',
+                         r'PICKUP_QUEUED type=ISInventoryTransferAction sourceBag=\d+ tapeId=\d+ destination=main grouped='
+                         + str(selection['mode'] == 'toolkit').lower() + r' menu=true nativeDurations=true',
+                         r'PICKUP_EFFECT sourceBag=\d+ tapeId=\d+ exactTape=true root=true',
+                         r'BAG_AUTHORITY bagId=\d+ location=\S+ worn=true root=true sameContainer=true empty=true tapeRemoved=true actor=client1']
         if selection['mode'] == 'toolkit':
             required += [r'PROMOTED current=ISReadABook target=ISRadioAction after=true accepted=true',
                          r'RESUMED sameAction=false sameBook=true sameOperation=true pagesBefore=\d+ pagesAfter=\d+']
@@ -85,13 +95,16 @@ def verify(root, selection, catalog):
         if any(len(found) != 1 for found in matches) or MARKER + 'FAIL ' in client:
             issues.append('Missing or duplicate real shelf-book/TV interaction evidence')
         evidence['clientMarkers'] = [line[line.find(MARKER) + len(MARKER):] for line in client.splitlines() if MARKER in line]
-        sequence = ['PREPARED', 'PROGRESS', 'READ', 'COMMANDS', 'PROMOTED' if selection['mode'] == 'toolkit' else 'CONTROL']
+        sequence = ['PREPARED'] + (['BAG_PREPARED'] if bag_case else []) + ['PROGRESS', 'READ', 'COMMANDS']
+        if bag_case:
+            sequence.append('PICKUP_QUEUED')
+        sequence.append('PROMOTED' if selection['mode'] == 'toolkit' else 'CONTROL')
         if selection['mode'] == 'native':
             sequence.append('NATURAL_ORDER')
-        sequence += ['POWER_EFFECT', 'INSERT_EFFECT', 'PLAY_EFFECT']
+        sequence += ['POWER_EFFECT'] + (['PICKUP_EFFECT'] if bag_case else []) + ['INSERT_EFFECT', 'PLAY_EFFECT']
         if selection['mode'] == 'toolkit':
             sequence.append('RESUMED')
-        sequence += ['ACTIONS', 'RETURN', 'MEDIA', 'COMPLETE']
+        sequence += ['ACTIONS'] + (['BAG_AUTHORITY'] if bag_case else []) + ['RETURN', 'MEDIA', 'COMPLETE']
         lines = client.splitlines()
         positions = []
         for prefix in sequence:
@@ -132,6 +145,21 @@ def verify(root, selection, catalog):
         if any(any((at := line.find(MARKER)) >= 0 and line[at + len(MARKER):].startswith(prefix + ' ')
                    for line in lines) for prefix in forbidden):
             issues.append('Evidence included the opposite queue-mode branch')
+        bag_prepared_pattern = r'BAG_PREPARED bagId=(\d+) location=(\S+) tapeId=(\d+) worn=true root=true tapeInBag=true'
+        bag_authority_pattern = r'BAG_AUTHORITY bagId=(\d+) location=(\S+) worn=true root=true sameContainer=true empty=true tapeRemoved=true actor=client1'
+        if bag_case:
+            bag_prepared = re.findall(re.escape(MARKER) + bag_prepared_pattern + r'(?:\s|$)', client)
+            bag_authority = re.findall(re.escape(MARKER) + bag_authority_pattern + r'(?:\s|$)', client)
+            pickup_queued = re.findall(re.escape(MARKER) + r'PICKUP_QUEUED type=ISInventoryTransferAction sourceBag=(\d+) tapeId=(\d+) destination=main grouped=(?:true|false) menu=true nativeDurations=true(?:\s|$)', client)
+            pickup_effect = re.findall(re.escape(MARKER) + r'PICKUP_EFFECT sourceBag=(\d+) tapeId=(\d+) exactTape=true root=true(?:\s|$)', client)
+            if len(bag_prepared) == len(bag_authority) == len(pickup_queued) == len(pickup_effect) == len(prepared_client) == 1:
+                bag_id, location, tape_id = bag_prepared[0]
+                if (bag_authority[0] != (bag_id, location) or pickup_queued[0] != (bag_id, tape_id)
+                        or pickup_effect[0] != (bag_id, tape_id) or prepared_client[0][5] != tape_id):
+                    issues.append('Worn bag/pickup/final identity differs from the exact prepared bag and tape')
+            else:
+                issues.append('Missing unique exact worn bag/pickup/final receipts')
+            evidence['bagAuthority'] = bag_authority
         if selection['kind'] == 'mp':
             server = (root / 'server-launch.log').read_text(errors='replace')
             progress = re.findall(re.escape(MARKER) + r'AUTH_PROGRESS pagesBefore=(\d+) pagesCommitted=(\d+) actor=client1(?:\s|$)', server)
@@ -147,11 +175,23 @@ def verify(root, selection, catalog):
                 issues.append('Client progress receipt differs from server-committed page progress')
             if len(prepared) == 1 and len(prepared_client) == 1 and prepared[0] != prepared_client[0][6:8]:
                 issues.append('Client exact tape identity differs from server-prepared tape')
+            if bag_case:
+                server_bag_prepared = re.findall(re.escape(MARKER) + bag_prepared_pattern + r'(?:\s|$)', server)
+                server_bag_authority = re.findall(re.escape(MARKER) + bag_authority_pattern + r'(?:\s|$)', server)
+                if len(server_bag_prepared) != 1 or server_bag_prepared != bag_prepared:
+                    issues.append('Client worn bag preparation differs from unique server-owned exact bag/tape receipt')
+                if len(server_bag_authority) != 1 or server_bag_authority != bag_authority:
+                    issues.append('Client worn bag final state differs from unique server-owned exact bag receipt')
+                server_exact_prepared = re.findall(re.escape(MARKER) +
+                    r'PREPARED shelfId=(\d+) bookId=(\d+) tv=(\d+),(-?\d+),(-?\d+) tapeId=(\d+) mediaIndex=(\d+) mediaType=(\d+) power=electric daylight=true(?:\s|$)', server)
+                if len(server_exact_prepared) != 1 or server_exact_prepared != prepared_client:
+                    issues.append('Client prepared shelf/book/TV/tape IDs differ from server-owned exact identities')
+                evidence['serverBagAuthority'] = server_bag_authority
             evidence['serverAuthority'] = authority
         if not complete(selection, 'client1', client):
             issues.append('Missing unique shelf-book/TV completion')
     except OSError as error:
         issues.append(str(error))
-    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'demote-and-control',
+    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': case,
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
             'evidence': dict(evidence, limits=['One EN client in fresh SP/Host; full selected pack; programmatic native UI callbacks, no physical input.'])}
