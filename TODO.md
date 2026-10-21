@@ -4,22 +4,17 @@
 
 # Shopping cart animation port
 
+- [ ] Fix the brief cart orientation jump at the final pickup-repeat handoff, especially the observer-side cart flip above/behind the character. Preserve exact ownership/cargo, the native six-action evidence and motion grip. Keep the native06 short endpoint recordings for visual regression; actual body/cart draw coverage does not establish a natural handoff.
 - [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
 - [ ] Extend shopping-cart cancellation/retry beyond the two selected restart scenes to moving recovery and the remaining interruption routes. Close the shared analyzer's selected-retry grip-phase coverage gap; exact native lifecycle/ownership and clock evidence do not replace that gate.
 - [ ] Extend shopping-cart wheel/caster presentation to the remaining load/sex/speed/obstacle combinations. Four independent tire phases, smoothed front caster direction, tire support and held/world continuity are checked in selected light/full SP recordings; this is not the full matrix or a collision check.
 - [ ] Review shopping-cart tight pivots before changing handling: the preserved nose-pivot path can slide the fixed rear tires sideways. Agree on the desired steering path before changing it; retain grip, natural stepping, collision and manual reverse.
-- [ ] Verify Host owner/observer shopping-cart transition presentation, exact ownership/cargo and bounded synchronization before treating the shopping-cart port as Host-verified. Extend the Host fixture action gate first; current shopping native coverage supports selected SP interaction/repeat and wheel captures only.
-  - Freeze matching current Toolkit/Java and upstream inputs; use the shared FIFO runner, native menu Host, at least 2048 MiB Java heap per process and separate disposable profiles. Use AeroSpace/PZ-TEST on the active display.
-  - Close the short shopping pickup-cancel sampling gap without weakening the five-actual-frame gate, then capture metal and shopping motion plus completion/cancellation/repeat on owner and observer; require exact authority/cargo, both active render/IK streams and measured bounded pose payloads.
-  - Inspect synchronized short clips and actual pose/contact evidence, retain unresolved differences, then archive evidence and remove raw video/disposable profiles.
 
 # Metal wheelbarrow animation port
 
-- [ ] Inspect and remove the brief owner-side nose-up cart jump at the end of pickup-repeat, preserving the accepted grip, support and exact held/world handoff. It is visible in the selected native04 Host recording; lifecycle/IK evidence does not close this visual gate.
-- [ ] Verify the corrected metal-cart grip through fresh native owner/observer sprint braking and action captures. The two refusing native poses have local fixed-length regressions for the continuous metal-only 40-degree clavicle envelope; retain exact handle positions, native gait, unreachable-target rejection and the 35-degree policy for other models. Keep unresolved clothing/contact limits separate.
+- [ ] Inspect and remove the brief owner-side nose-up cart jump at the end of pickup-repeat, preserving the accepted grip, support and exact held/world handoff. It was observed in the selected native04 Host run; archived pose/draw diagnostics are retained. Lifecycle/IK evidence does not close this visual gate.
 - [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
 - [ ] Refine the remaining overlap between the stock mitten skin and metal shafts without changing the accepted arm/cart motion. Evaluate the full hand triangles: the finite-shaft palm/thumb/finger anchors pass, but coarse bridge faces still intersect the shaft.
-- [ ] Complete an isolated Host owner/observer run for the metal wheelbarrow with the installed mod set and at least 2048 MiB Java heap per process. Check motion, pickup/setdown, cancellation/retry, exact cart/cargo identity and both clients' presentation; review short recordings. A startup failure is not functional coverage.
 
 # Selected QoL additions
 
