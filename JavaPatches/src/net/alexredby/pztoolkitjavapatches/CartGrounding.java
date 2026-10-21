@@ -232,7 +232,9 @@ public final class CartGrounding {
         CartWheelSpin.prepare(slot,Double.NaN);
         CartShoppingWheels.clear(slot);
         if(CartTransition.render(slot)) return;
-        if(!(slot.character instanceof IsoPlayer player) || !CartMotionSync.visualEnabled(player)) return;
+        if(!(slot.character instanceof IsoPlayer player)) return;
+        boolean handoff=CartTransition.pickupHandoff(player);
+        if(!handoff && !CartMotionSync.visualEnabled(player)) return;
         var expected=resolvedModel(player.getPrimaryHandItem());
         if(expected==null) return;
         String name=expected.getName();
@@ -246,12 +248,12 @@ public final class CartGrounding {
             Matrix4f transform=state.transform;
             boolean rigid=rigid(data,clip,transform);
             if(rigid) lowerHandles(transform,name);
-            float lean=(float)(player.isLocalPlayer()?CartSteeringHooks.lean(player):CartMotionSync.lean(player));
-            float pressure=(float)(player.isLocalPlayer()?CartSteeringHooks.clearanceLean(player):CartMotionSync.pressure(player));
+            float lean=handoff?0:(float)(player.isLocalPlayer()?CartSteeringHooks.lean(player):CartMotionSync.lean(player));
+            float pressure=handoff?0:(float)(player.isLocalPlayer()?CartSteeringHooks.clearanceLean(player):CartMotionSync.pressure(player));
             if(rigid
                 && (CartShopping.model(name)?CartShopping.align(transform,CartTransition.model(player.getPrimaryHandItem()),
                         player.getPrimaryHandItem().worldScale,state.delta)
-                    :profile!=null?alignWheelbarrow(transform,profile,lean,pressure,CartLegPace.woodenGaitShift(player),state.delta)
+                    :profile!=null?alignWheelbarrow(transform,profile,lean,pressure,handoff?0:CartLegPace.woodenGaitShift(player),state.delta)
                     :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                         contact(instance.modelScript.getName()),lean,state.delta))) {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.

@@ -4,7 +4,6 @@
 
 # Shopping cart animation port
 
-- [ ] Fix the brief cart orientation jump at the final pickup-repeat handoff, especially the observer-side cart flip above/behind the character. Preserve exact ownership/cargo, the native six-action evidence and motion grip. Keep the native06 short endpoint recordings for visual regression; actual body/cart draw coverage does not establish a natural handoff.
 - [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
 - [ ] Extend shopping-cart cancellation/retry beyond the two selected restart scenes to moving recovery and the remaining interruption routes. Close the shared analyzer's selected-retry grip-phase coverage gap; exact native lifecycle/ownership and clock evidence do not replace that gate.
 - [ ] Extend shopping-cart wheel/caster presentation to the remaining load/sex/speed/obstacle combinations. Four independent tire phases, smoothed front caster direction, tire support and held/world continuity are checked in selected light/full SP recordings; this is not the full matrix or a collision check.
@@ -12,7 +11,6 @@
 
 # Metal wheelbarrow animation port
 
-- [ ] Inspect and remove the brief owner-side nose-up cart jump at the end of pickup-repeat, preserving the accepted grip, support and exact held/world handoff. It was observed in the selected native04 Host run; archived pose/draw diagnostics are retained. Lifecycle/IK evidence does not close this visual gate.
 - [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
 - [ ] Refine the remaining overlap between the stock mitten skin and metal shafts without changing the accepted arm/cart motion. Evaluate the full hand triangles: the finite-shaft palm/thumb/finger anchors pass, but coarse bridge faces still intersect the shaft.
 

@@ -42,7 +42,7 @@ public final class CartGroundingTest {
  private static final class Player extends IsoPlayer {
   InventoryItem cart;
   ItemContainer inventory;
-  boolean remote,action;
+  boolean remote,action,motionDisabled;
   int resets;
   java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> actions=new java.util.Stack<>();
   zombie.ai.StateMachine machine;
@@ -54,8 +54,12 @@ public final class CartGroundingTest {
    return actions;
   }
   @Override public boolean isNpc() {return false;}
+  @Override public boolean isAiming() {return false;}
+  @Override public boolean isSneaking() {return false;}
+  @Override public float getVariableFloat(String name,float fallback) {return fallback;}
+  @Override public void clearVariable(String name) {}
   @Override public boolean getVariableBoolean(String name) {
-   return "ToolkitCartMotion".equals(name) || action && "IsPerformingAnAction".equals(name);
+   return !motionDisabled && "ToolkitCartMotion".equals(name) || action && "IsPerformingAnAction".equals(name);
   }
   @Override public boolean isDead() {return false;}
   @Override public boolean hasHitReaction() {return false;}
@@ -73,6 +77,32 @@ public final class CartGroundingTest {
   @Override public InventoryItem getSecondaryHandItem() {return cart;}
   @Override public ItemContainer getInventory() {return inventory;}
   @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator() {return null;}
+ }
+ private static final class Cart extends InventoryItem {
+  Cart(){super(null,null,null,(String)null);}
+  @Override public String getWorldStaticModel(){return getStaticModel();}
+ }
+ private static final class World extends zombie.iso.objects.IsoWorldInventoryObject {
+  World(){super((zombie.iso.IsoCell)null);}
+  @Override public void invalidateRenderChunkLevel(long flags){}
+ }
+ private static void field(Object object,Class<?> owner,String name,Object value)throws Exception {
+  var f=owner.getDeclaredField(name);f.setAccessible(true);f.set(object,value);
+ }
+ private static void handoff(Player player,InventoryItem item,Unsafe unsafe)throws Exception {
+  var type=Class.forName("net.alexredby.pztoolkitjavapatches.CartTransition$State");
+  var state=unsafe.allocateInstance(type);
+  field(state,type,"item",item);field(state,type,"pickup",true);field(state,type,"rendered",true);
+  field(state,type,"action",123L);field(state,type,"lastRender",System.nanoTime());field(state,type,"updated",System.nanoTime());
+  field(state,type,"world",unsafe.allocateInstance(World.class));
+  var action=(zombie.characters.CharacterTimedActions.BaseAction)unsafe.allocateInstance(zombie.characters.CharacterTimedActions.BaseAction.class);
+  action.chr=player;field(state,type,"actionOwner",action);
+  var states=CartTransition.class.getDeclaredField("states");states.setAccessible(true);
+  ((java.util.Map<IsoPlayer,Object>)states.get(null)).put(player,state);
+  CartTransition.end(player);
+  var pending=CartTransition.class.getDeclaredField("pickupHandoffs");pending.setAccessible(true);
+  var token=((java.util.Map<IsoPlayer,Object>)pending.get(null)).get(player);
+  field(token,token.getClass(),"performed",true);field(token,token.getClass(),"held",item);
  }
  private static final class Instance extends ModelInstance {
   ModelAttachment attachment;
@@ -208,6 +238,58 @@ public final class CartGroundingTest {
     Matrix4f actual=new Matrix4f(data.xfrm).transpose();
     if(!actual.equals(expected,.00001f) || Math.abs(CartGrounding.woodenLowest(actual)-.008f)>.000001f)
      throw new AssertionError("failed IK restored the moving arm cart or lost wheel grounding: "+arm);
+   }
+   // Reproduce the native successful-pickup gap: an authoritative held cart exists,
+   // while ordinary motion is disabled and native attachment data is high/pitched.
+   character.motionDisabled=true;
+   parent.attachment=null;instance.attachment=null;instance.attachmentNameParent=null;instance.attachmentNameSelf=null;
+   instance.parentBoneName="prop";instance.scale=1;
+   var worldMesh=(ModelMesh)unsafe.allocateInstance(ModelMesh.class);
+   var ready=unsafe.allocateInstance(Class.forName("zombie.asset.Asset$PRIVATE"));
+   field(ready,ready.getClass(),"currentState",zombie.asset.Asset.State.READY);
+   field(worldMesh,zombie.asset.Asset.class,"priv",ready);
+   field(mesh,zombie.asset.Asset.class,"priv",ready);
+   var worldModel=(Model)unsafe.allocateInstance(Model.class);field(worldModel,Model.class,"mesh",worldMesh);
+   var worldScript=model("Base","ShoppingCartModel");worldScript.scale=1;
+   worldScript.setModelManagerKey("handoff-shopping-world");
+   var loaded=ModelManager.class.getDeclaredField("modelMap");loaded.setAccessible(true);
+   var loadedModels=(java.util.Map<String,Model>)loaded.get(ModelManager.instance);
+   Model oldWorld=loadedModels.put(worldScript.getModelManagerKey(),worldModel);
+   try {
+    for(String name:new String[]{"WheelbarrowWood","WheelbarrowMetal","ShoppingCartModel"}) {
+     var item=(Cart)unsafe.allocateInstance(Cart.class);item.worldScale=1;
+     item.setModule(name.startsWith("Wheelbarrow")?"SaucedWheelbarrow":"SaucedCarts");
+     item.setType(name.startsWith("Wheelbarrow")?name:"ShoppingCart");item.setStaticModel(name);item.setContainer(character.inventory);
+     character.cart=item;instance.modelScript=model("Base",name);
+     var profile=CartWheelbarrow.forModel(name);
+     Matrix4f held=profile==null?CartShopping.held(new Matrix4f()):profile.held(new Matrix4f());
+     mesh.transform=new Matrix4f(reference).invert().mul(held).transpose();
+     worldMesh.transform=CartShopping.worldModel(new Matrix4f()).transpose();
+     Matrix4f neutral=new Matrix4f(),correction=new Matrix4f();
+     if(!CartGrounding.rigid(data,idle,neutral)) throw new AssertionError("handoff has no native rigid reference");
+     CartGrounding.lowerHandles(neutral,name);
+     if(!(profile==null?CartShopping.align(neutral,CartTransition.model(item),1,correction)
+        :CartGrounding.alignWheelbarrow(neutral,profile,0,0,0,correction)))
+      throw new AssertionError("handoff neutral reference refused: "+name);
+     var raw=new Matrix4f(held).rotateLocalX(1.1f).translateLocal(0,.6f,.4f);
+     data.xfrm.set(raw).transpose();CartGrounding.render(slot);
+     if(!new Matrix4f(data.xfrm).transpose().equals(raw,.00001f))
+      throw new AssertionError("disabled motion without a pickup token rewrote native transform");
+     handoff(character,item,unsafe);
+     if(!CartTransition.pickupHandoff(character) || CartMotionSync.visualEnabled(character))
+      throw new AssertionError("fresh completion did not isolate render bridge from motion");
+     for(int frame=0;frame<3;frame++) {
+      data.xfrm.set(raw).transpose();CartGrounding.render(slot);
+      if(!new Matrix4f(data.xfrm).transpose().equals(neutral,.00003f))
+       throw new AssertionError("completion exposed high/pitched native attachment for "+name+" frame="+frame);
+     }
+     if(character.cart!=item || item.getContainer()!=character.inventory || item.getWorldItem()!=null || !character.motionDisabled)
+      throw new AssertionError("render bridge changed native authority or locomotion");
+     CartTransition.end(character);
+    }
+   } finally {
+    if(oldWorld==null) loadedModels.remove(worldScript.getModelManagerKey());
+    else loadedModels.put(worldScript.getModelManagerKey(),oldWorld);
    }
   } finally {animationModel.set(ModelManager.instance,previousModel);}
  }

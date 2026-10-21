@@ -201,10 +201,15 @@ public final class Main {
         public static void enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
                 @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope) {
             scope = ActionCompletion.begin(action, "perform", Main.COMPLETION_SUPPORTED);
+            if(scope==null && Main.COMPLETION_SUPPORTED && Main.CART_TRANSITION_SUPPORTED
+                && CartTransition.observePickupPerform(action)) scope=ActionCompletion.observeOnly(action,"perform");
         }
         @Patch.OnExit(onThrowable=Throwable.class)
-        public static void exit(@Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
+        public static void exit(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
+                @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
             ActionCompletion.end(scope, failure);
+            if(Main.CART_TRANSITION_SUPPORTED && Main.COMPLETION_SUPPORTED)
+                CartTransition.pickupPerformed(action,scope,failure);
         }
     }
 
@@ -311,8 +316,13 @@ public final class Main {
         public static void exit(@Patch.This EquipPacket packet, @Patch.Argument(0) ByteBufferReader reader,
                                 @Patch.Argument(1) IConnection connection) {
             EquipmentEcho.incomplete = null;
-            if (!GameClient.client || !Main.EQUIPMENT_SUPPORTED || !reader.bb.hasRemaining()) return;
+            if (!GameClient.client || !Main.EQUIPMENT_SUPPORTED) return;
             var player = Accessor.tryGet(packet, "player", (PlayerID)null);
+            if (!reader.bb.hasRemaining()) {
+                if(Main.CART_TRANSITION_SUPPORTED && player!=null)
+                    CartTransition.pickupEquipped(player.getPlayer(),connection);
+                return;
+            }
             if (player != null && player.getPlayer() != null && player.getPlayer().isLocalPlayer())
                 EquipmentEcho.incomplete = packet;
         }
@@ -428,6 +438,7 @@ public final class Main {
     public static class CartHeading {
         @Patch.OnEnter
         public static void enter(@Patch.This zombie.characters.IsoGameCharacter character) {
+            if(Main.CART_TRANSITION_SUPPORTED) CartTransition.prunePickupHandoffs();
             if(Main.CART_SUPPORTED) CartSteeringHooks.heading(character);
         }
         @Patch.OnExit

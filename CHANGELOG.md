@@ -912,6 +912,7 @@ The older README associates medicine indicators with this label, but no separate
 
 - Reset omitted numeric food-stat fields before decoding a reused native item-stat packet. Prevent one item's cooking time, nutrition and other food effects from leaking into the next item in multiplayer; preserve the native wire format, explicit values and poison-detection sentinel.
 
+- **Fixed:** Cart pickup keeps the cart grounded and the hands on its handles while native equipment completion hands over to the ordinary held pose, including repeated native equipment snapshots received by the observer. The short visual handoff does not alter steering, inventory authority or network traffic.
 - **Fixed:** Metal wheelbarrows retain both grips through native sprint-braking poses that previously exceeded the shoulder reach limit. A bounded model-specific clavicle adjustment preserves fixed arm lengths, the handle positions and native gait.
 
 ### 0.1.40

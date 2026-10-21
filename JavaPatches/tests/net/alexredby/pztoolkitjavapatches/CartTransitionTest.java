@@ -4,6 +4,7 @@ import java.lang.reflect.Field;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import sun.misc.Unsafe;
+import zombie.Lua.LuaManager;
 import zombie.characters.IsoPlayer;
 import zombie.characters.CharacterTimedActions.BaseAction;
 import zombie.inventory.InventoryItem;
@@ -37,8 +38,10 @@ public final class CartTransitionTest {
         zombie.core.skinnedmodel.animation.AnimationPlayer animation;
         zombie.characters.NetworkPlayerAI network;
         int protection,modelResets,handWrites,clipPilotWrites;
-        boolean performing,otherFloor,clipPilot,clipPilotAbsent;
+        boolean performing,otherFloor,clipPilot,clipPilotAbsent,receiptInterleave;
         String performingAction;
+        short onlineID;
+        @Override public short getOnlineID(){return onlineID;}
         java.util.Map<zombie.ai.State.Param<?>,Object> nativeParams;
         java.util.Map<String,Boolean> booleanVariables;
         RuntimeException modelError;
@@ -52,12 +55,22 @@ public final class CartTransitionTest {
         @Override public InventoryItem getPrimaryHandItem(){return primary;}
         @Override public InventoryItem getSecondaryHandItem(){return secondary;}
         @Override public ItemContainer getInventory(){return inventory;}
-        @Override public void setPrimaryHandItem(InventoryItem item){handWrites++;primary=item;}
+        @Override public void setPrimaryHandItem(InventoryItem item){
+            handWrites++;primary=item;
+            if(receiptInterleave && item!=null) check(!CartTransition.pickupHandoff(this),"partial native equipment activated a bridge");
+        }
         @Override public void setSecondaryHandItem(InventoryItem item){handWrites++;secondary=item;}
         @Override public boolean isLocalPlayer(){return protection!=1;}
+        zombie.characters.component.NetworkComponent nativeNetworkComponent;
+        @Override public <T extends zombie.characters.ecs.ECSComponent> T tryGetECSComponent(Class<T> type){
+            return type==zombie.characters.component.NetworkComponent.class && nativeNetworkComponent!=null
+                ?type.cast(nativeNetworkComponent):null;
+        }
         @Override public boolean hasAnimationPlayer(){return animation!=null;}
         @Override public zombie.core.skinnedmodel.animation.AnimationPlayer getAnimationPlayer(){return animation;}
         @Override public zombie.characters.NetworkPlayerAI getNetworkCharacterAI(){return network;}
+        @Override public boolean isNpc(){return protection==11;}
+        @Override public boolean isSneaking(){return protection==12;}
         @Override public boolean isDead(){return protection==2;}
         @Override public boolean isAiming(){return protection==3;}
         @Override public boolean hasHitReaction(){return protection==4;}
@@ -104,7 +117,12 @@ public final class CartTransitionTest {
         @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,float value){
             if(variables==null) variables=new java.util.HashMap<>();variables.put(name,value);return null;
         }
+        @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,String value){
+            if("PerformingAction".equals(name)){performingAction=value;return null;}
+            return super.setVariable(name,value);
+        }
         @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,boolean value){
+            if("IsPerformingAnAction".equals(name)){performing=value;return null;}
             if("ToolkitWoodCartClipPilot".equals(name)) {
                 clipPilot=value;clipPilotAbsent=false;clipPilotWrites++;return null;
             }
@@ -1142,13 +1160,400 @@ public final class CartTransitionTest {
             modelField.set(zombie.core.skinnedmodel.ModelManager.instance,previousModel);
         }
     }
+    private static void localPickupPerformReceipt()throws Exception {
+        var oldPlatform=LuaManager.platform;var oldEnv=LuaManager.env;var oldThread=LuaManager.thread;var oldCaller=LuaManager.caller;
+        boolean oldClient=zombie.network.GameClient.client,oldConnected=zombie.network.GameClient.instance.connected;
+        var oldConnection=zombie.network.GameClient.connection;
+        var field=CartTransition.class.getDeclaredField("pickupHandoffs");field.setAccessible(true);
+        var handoffs=(java.util.Map<IsoPlayer,Object>)field.get(null);
+        try {
+            LuaManager.platform=new se.krka.kahlua.j2se.J2SEPlatform();LuaManager.env=LuaManager.platform.newTable();
+            LuaManager.thread=new se.krka.kahlua.vm.KahluaThread(LuaManager.platform,LuaManager.env);
+            LuaManager.thread.debugOwnerThread=Thread.currentThread();
+            LuaManager.caller=new se.krka.kahlua.integration.LuaCaller(new se.krka.kahlua.converter.KahluaConverterManager());
+            var toolkit=LuaManager.platform.newTable();var lifecycle=LuaManager.platform.newTable();
+            lifecycle.rawset("begin",(se.krka.kahlua.vm.JavaFunction)(frame,count)->{frame.push(Boolean.TRUE);return 1;});
+            lifecycle.rawset("finish",(se.krka.kahlua.vm.JavaFunction)(frame,count)->0);
+            toolkit.rawset("ActionQueueLifecycle",lifecycle);LuaManager.env.rawset("PZSurvivorToolkit",toolkit);
+            var connection=allocate(zombie.core.raknet.UdpConnection.class);
+            zombie.network.GameClient.connection=connection;zombie.network.GameClient.instance.connected=true;
+            for(String variant:new String[]{"original","clone","failed","no-hooks","queue-declined","queue-declined-failed","queue-declined-wrong-action","no-receipt","wrong-action","stale",
+                    "later-original","later-partial-original","later-clone-without-receipt","replacement","retired-stack",
+                    "foreign-force-null","foreign-primary","foreign-secondary","foreign-action","foreign-replacement-action","hide-right"}) {
+                zombie.network.GameClient.client=false;
+                var fixture=recovery(true);var player=fixture.player;var source=fixture.cart;
+                zombie.network.GameClient.client=true;
+                source.setID(76123);
+                var action=pendingAction(player,source,"ToolkitWoodCartPickup");
+                action.maxTime=100;action.waitForFinished=true;value(action,"useCustomRemoteTimedActionSync",true);action.loopAction=true;
+                action.forceComplete();
+                check(!action.finished() && action.forceComplete,"forceComplete fixture unexpectedly met finished() predicate");
+                player.getCharacterActions().add(action);player.performing=true;player.performingAction="ToolkitWoodCart";
+                declared(action,BaseAction.class,"animVariables",new java.util.ArrayList<>());
+                zombie.ai.states.PlayerActionsState.instance().enter(player);
+                check(player.isHideWeaponModel(),"native local action did not acquire its normal hidden-weapon state");
+                var state=state(player);value(state,"actionOwner",action);value(state,"connection",connection);
+                value(state,"updated",System.nanoTime());value(state,"lastRender",System.nanoTime());
+                var held=variant.equals("original") || variant.equals("later-original") || variant.equals("later-partial-original")?source:allocate(Cart.class);
+                held.kind=source.kind;held.model=source.model;held.setID(source.getID());
+                var table=action.getTable();table.rawset("Type","ToolkitWoodCartPickup");
+                table.rawset("perform",(se.krka.kahlua.vm.JavaFunction)(frame,count)->{
+                    CartTransition.end(player);
+                    check(handoffs.containsKey(player),"local finish while performing=true did not remember its exact pickup");
+                    check(!CartTransition.pickupHandoff(player),"local token activated before native perform receipt");
+                    switch(variant) {
+                        case "retired-stack" -> player.actions.clear();
+                        case "foreign-force-null" -> player.forceNullOverride=true;
+                        case "hide-right" -> player.setHideEquippedHandR(true);
+                        case "foreign-primary" -> player.overridePrimaryHandModel="Mug";
+                        case "foreign-secondary" -> player.overrideSecondaryHandModel="Mug";
+                        case "foreign-action" -> player.performingAction="OtherAction";
+                        case "foreign-replacement-action" -> {player.actions.clear();player.actions.add(new BaseAction(player));}
+                    }
+                    if(variant.equals("stale")) {
+                        try {value(handoffs.get(player),"deadline",System.nanoTime()-1);} catch(Exception error) {throw new AssertionError(error);}
+                    }
+                    if(!variant.startsWith("later-")) {
+                        source.world=null;held.container=player.inventory;
+                        player.setPrimaryHandItem(held);player.setSecondaryHandItem(held);
+                    }
+                    if(variant.equals("failed") || variant.equals("queue-declined-failed")) throw new IllegalStateException("expected failed cart perform receipt");
+                    return 0;
+                });
+                if(variant.equals("no-hooks")) LuaManager.env.rawset("PZSurvivorToolkit",null);
+                var finishes=new int[1];
+                lifecycle.rawset("begin",(se.krka.kahlua.vm.JavaFunction)(frame,count)->{
+                    frame.push(!variant.startsWith("queue-declined"));return 1;
+                });
+                lifecycle.rawset("finish",(se.krka.kahlua.vm.JavaFunction)(frame,count)->{finishes[0]++;return 0;});
+                if(variant.equals("no-receipt")) {
+                    CartTransition.end(player);source.world=null;held.container=player.inventory;
+                    player.setPrimaryHandItem(held);player.setSecondaryHandItem(held);
+                } else if(variant.equals("wrong-action") || variant.equals("queue-declined-wrong-action")) {
+                    var other=pendingAction(player,source,"OtherAction");
+                    other.loopAction=true;value(other,"useCustomRemoteTimedActionSync",true);
+                    other.getTable().rawset("perform",table.rawget("perform"));other.perform();
+                } else action.perform();
+                LuaManager.env.rawset("PZSurvivorToolkit",toolkit);
+                if(variant.startsWith("later-")) {
+                    source.world=null;held.container=player.inventory;
+                    player.setPrimaryHandItem(held);
+                    if(variant.equals("later-partial-original")) check(!CartTransition.pickupHandoff(player),"partial delayed SP ownership activated/discarded token");
+                    player.setSecondaryHandItem(held);
+                }
+                boolean accepted=CartTransition.pickupHandoff(player);
+                boolean expected=variant.equals("original") || variant.equals("clone") || variant.equals("later-original") || variant.equals("later-partial-original") || variant.equals("replacement") || variant.equals("retired-stack") || variant.equals("no-hooks") || variant.equals("queue-declined");
+                check(accepted==expected,"native false-finished perform proof failed: "+variant);
+                if(variant.equals("no-hooks") || variant.startsWith("queue-declined"))
+                    check(finishes[0]==0,"observer-only cart callback notified Lua queue finish: "+variant);
+                var completionScope=ActionCompletion.class.getDeclaredField("current");completionScope.setAccessible(true);
+                check(((ThreadLocal<?>)completionScope.get(null)).get()==null,"cart observer-only completion scope leaked: "+variant);
+                check(!action.finished() && action.forceComplete && action.waitForFinished && action.currentTime==0,
+                    "presentation proof modified native completion flags/time: "+variant);
+                check(player.handWrites==2,"bridge added hand writes beyond authoritative callback: "+variant);
+                if(variant.equals("replacement")) {
+                    var replacement=allocate(Cart.class);replacement.kind=held.kind;replacement.model=held.model;
+                    replacement.setID(held.getID());replacement.container=player.inventory;
+                    player.primary=player.secondary=replacement;
+                    check(!CartTransition.pickupHandoff(player),"same-ID setter replaced a native-perform-pinned instance");
+                }
+                CartTransition.end(player);
+            }
+        } finally {
+            CartTransition.end(null);zombie.network.GameClient.client=oldClient;
+            zombie.network.GameClient.connection=oldConnection;zombie.network.GameClient.instance.connected=oldConnected;
+            LuaManager.platform=oldPlatform;LuaManager.env=oldEnv;LuaManager.thread=oldThread;LuaManager.caller=oldCaller;
+        }
+    }
+    private static void declared(Object object,Class<?> type,String name,Object value)throws Exception {
+        var f=type.getDeclaredField(name);f.setAccessible(true);f.set(object,value);
+    }
+    private static final class NativeRemoteComponent extends zombie.characters.component.NetworkComponent {
+        Player player;
+        @Override public boolean isRemote(){return true;}
+        @Override public void updateNetworkAI(){}
+        @Override public zombie.characters.NetworkCharacterAI getNetworkAI(){return player.network;}
+    }
+    private static BaseAction nativeCartEnter(Player player) throws Exception {
+        var component=allocate(NativeRemoteComponent.class);component.player=player;player.nativeNetworkComponent=component;
+        var variables=new zombie.network.fields.Variables();variables.get().put("PerformingAction","ToolkitWoodCart");
+        zombie.ai.states.PlayerActionsState.SITONGROUND.set(player,false);
+        zombie.ai.states.PlayerActionsState.VARIABLES.set(player,variables);
+        zombie.ai.states.PlayerActionsState.PRIMARY.set(player,"WheelbarrowWood");
+        zombie.ai.states.PlayerActionsState.SECONDARY.set(player,"");
+        zombie.ai.states.PlayerActionsState.OVERRIDE.set(player,true);
+        zombie.ai.states.PlayerActionsState.instance().enter(player);
+        check(player.isHideWeaponModel() && player.forceNullOverride && player.performing,
+            "native remote action did not acquire its expected hidden-weapon/override lease");
+        return player.network.getAction();
+    }
+    @SuppressWarnings({"unchecked","rawtypes"})
+    private static void parseNativeEquip(Player player,InventoryItem serialized,zombie.core.raknet.UdpConnection connection,boolean incomplete)throws Exception {
+        var bytes=java.nio.ByteBuffer.allocate(8192);
+        var writer=new zombie.core.network.ByteBufferWriter(bytes);
+        writer.putShort(player.getOnlineID());writer.putByte(-1);
+        Class<? extends Enum> status=(Class<? extends Enum>)Class.forName("zombie.network.packets.EquipPacket$HandStatus");
+        writer.putEnum(Enum.valueOf(status,"ItemExist"));serialized.saveWithSize(bytes,false);
+        writer.putByte(0);writer.putEnum(Enum.valueOf(status,"SameItemAsPrimary"));
+        if(incomplete)writer.putByte(99);
+        bytes.flip();var reader=new zombie.core.network.ByteBufferReader(bytes);
+        new zombie.network.packets.EquipPacket().parse(reader,connection);
+    }
+    @SuppressWarnings("unchecked")
+    private static void nativePickupEquipReceipt()throws Exception {
+        zombie.ZomboidFileSystem.instance.setCacheDir(System.getProperty("pz.test.cache"));
+        zombie.ZomboidFileSystem.instance.init();
+        var previousConnection=zombie.network.GameClient.connection;
+        boolean previousClient=zombie.network.GameClient.client,previousConnected=zombie.network.GameClient.instance.connected;
+        var dictionary=zombie.world.WorldDictionary.class.getDeclaredField("data");dictionary.setAccessible(true);
+        var originalDictionary=dictionary.get(null);
+        var data=originalDictionary;
+        if(data==null) {
+            var constructor=zombie.world.DictionaryData.class.getDeclaredConstructor();constructor.setAccessible(true);
+            data=constructor.newInstance();dictionary.set(null,data);
+        }
+        var ids=zombie.world.DictionaryData.class.getDeclaredField("itemIdToInfoMap");ids.setAccessible(true);
+        var registry=(java.util.Map<Short,zombie.world.ItemInfo>)ids.get(data);
+        short registryId=32000;
+        var info=new zombie.world.ItemInfo();
+        declared(info,zombie.world.DictionaryInfo.class,"fullType","SaucedWheelbarrow.WheelbarrowWood");
+        declared(info,zombie.world.DictionaryInfo.class,"isLoaded",true);
+        var oldInfo=registry.put(registryId,info);
+        var manager=zombie.scripting.ScriptManager.instance;
+        var module=manager.moduleMap.get("SaucedWheelbarrow");
+        if(module==null) {module=new zombie.scripting.objects.ScriptModule();module.name="SaucedWheelbarrow";manager.moduleMap.put(module.name,module);manager.moduleList.add(module);}
+        var loadMod=zombie.scripting.ScriptManager.class.getDeclaredField("currentLoadFileMod");loadMod.setAccessible(true);
+        var previousLoadMod=loadMod.get(null);loadMod.set(null,"pz-vanilla");
+        zombie.world.WorldDictionary.StartScriptLoading();
+        var script=new zombie.scripting.objects.Item();script.setModule(module);script.InitLoadPP("WheelbarrowWood");
+        script.Load("WheelbarrowWood","item WheelbarrowWood { ItemType = base:container, DisplayName = Cart, Icon = ToolkitHandoffMissingIcon, Capacity = 10, StaticModel = WheelbarrowWood, }");
+        var oldScript=module.items.getScriptMap().put("WheelbarrowWood",script);
+        script.setRegistry_id(registryId);
+        var serialized=script.InstanceItem(null,false);
+        check(serialized instanceof zombie.inventory.types.InventoryContainer,"native packet fixture did not create a real container");
+        serialized.getModData().rawset("nativeCargoMarker",42.0);serialized.setStaticModel("WheelbarrowWood");
+        var connection=allocate(zombie.core.raknet.UdpConnection.class);
+        try {
+            for(String gate:new String[]{"active","native-replaced","native-replaced-world-cleared","retired","incomplete","foreign-primary","foreign-secondary",
+                    "foreign-forced-null","foreign-action","foreign-native-action","replacement","alternate-model-before","other-actor-before",
+                    "repeat-complete","repeat-incomplete","repeat-id","repeat-model","repeat-connection","repeat-actor","repeat-expired","repeat-action","repeat-pointer"}) {
+                boolean incomplete=gate.equals("incomplete");
+                zombie.network.GameClient.client=false;
+                var fixture=recovery(true);var player=fixture.player;var source=fixture.cart;
+                zombie.network.GameClient.client=true;zombie.network.GameClient.connection=connection;
+                zombie.network.GameClient.instance.connected=true;player.protection=1;
+                source.setID(192837);
+                var state=state(player);var action=allocate(BaseAction.class);action.chr=player;
+                var ai=allocate(zombie.characters.NetworkPlayerAI.class);ai.setAction(action);player.network=ai;
+                value(state,"remote",true);value(state,"actionOwner",action);value(state,"connection",connection);
+                value(state,"updated",System.nanoTime());value(state,"lastRender",System.nanoTime());
+                zombie.network.GameClient.IDToPlayerMap.put(player.getOnlineID(),player);
+                action=nativeCartEnter(player);value(state,"actionOwner",action);
+                if(gate.startsWith("native-replaced")) {
+                    var replacement=nativeCartEnter(player);
+                    check(replacement!=action && replacement.chr==player,"native Stage.Enter did not rebuild BaseAction");
+                    if(gate.equals("native-replaced-world-cleared")) source.world=null;
+                } else if(gate.equals("alternate-model-before")) ai.setOverride(true,"Mug","");
+                else if(gate.equals("other-actor-before")) {
+                    var foreign=allocate(BaseAction.class);foreign.chr=allocate(Player.class);ai.setAction(foreign);
+                }
+                // The action-ended aggregate may precede native equipment. Keep its token
+                // while a draw observes primary assignment before secondary parsing.
+                CartTransition.endRemote(player);player.receiptInterleave=true;
+                switch(gate) {
+                    case "retired" -> ai.setOverride(true,"","");
+                    case "foreign-primary" -> ai.setOverride(true,"Mug","");
+                    case "foreign-secondary" -> ai.setOverride(true,"WheelbarrowWood","Mug");
+                    case "foreign-forced-null" -> {ai.setOverride(true,"","");player.performing=false;}
+                    case "foreign-action" -> player.performingAction="OtherAction";
+                    case "foreign-native-action" -> {var other=allocate(BaseAction.class);other.chr=player;ai.setAction(other);}
+                }
+                CartTransition.prunePickupHandoffs();
+                serialized.setID(source.getID());serialized.setStaticModel("WheelbarrowWood");
+                var registryField=InventoryItem.class.getDeclaredField("registryId");registryField.setAccessible(true);registryField.setShort(serialized,registryId);
+                parseNativeEquip(player,serialized,connection,incomplete);
+                var received=player.primary;
+                check(received instanceof zombie.inventory.types.InventoryContainer && received!=source && received.getID()==source.getID()
+                    && player.secondary==received && received.getContainer()==player.inventory,
+                    "native full packet did not deserialize/bind exact new remote cart");
+                check(Double.valueOf(42).equals(received.getModData().rawget("nativeCargoMarker")),"native packet lost its item payload");
+                CartTransition.endRemote(player);
+                boolean expected=gate.equals("active") || gate.startsWith("native-replaced") || gate.equals("retired") || gate.equals("replacement") || gate.startsWith("repeat-");
+                check(CartTransition.pickupHandoff(player)==expected,"woven native lease/full packet receipt guard failed: "+gate);
+                int nativeWrites=2;
+                if(gate.startsWith("repeat-")) {
+                    var tokensField=CartTransition.class.getDeclaredField("pickupHandoffs");tokensField.setAccessible(true);
+                    var tokens=(java.util.Map<IsoPlayer,Object>)tokensField.get(null);
+                    var token=tokens.get(player);long deadline=(long)value(token,"deadline");
+                    // Native parse completes on the game update thread before its next slot render.
+                    // The first unbound primary/secondary interleave was checked above.
+                    player.receiptInterleave=false;
+                    var target=player;var peer=connection;
+                    switch(gate) {
+                        case "repeat-id" -> serialized.setID(source.getID()+1);
+                        case "repeat-model" -> serialized.setStaticModel("Mug");
+                        case "repeat-connection" -> peer=allocate(zombie.core.raknet.UdpConnection.class);
+                        case "repeat-actor" -> {
+                            target=allocate(Player.class);target.onlineID=1;target.protection=1;target.inventory=allocate(ItemContainer.class);
+                            zombie.network.GameClient.IDToPlayerMap.put(target.getOnlineID(),target);
+                        }
+                        case "repeat-expired" -> {deadline=System.nanoTime()-1;value(token,"deadline",deadline);}
+                        case "repeat-action" -> player.performingAction="OtherAction";
+                        case "repeat-pointer" -> {var other=allocate(BaseAction.class);other.chr=player;ai.setAction(other);}
+                    }
+                    parseNativeEquip(target,serialized,peer,gate.equals("repeat-incomplete"));
+                    if(target==player)nativeWrites+=2;
+                    check((long)value(token,"deadline")==deadline,"repeated complete native receipt extended original deadline");
+                    expected=gate.equals("repeat-complete") || gate.equals("repeat-actor");
+                    if(gate.equals("repeat-complete")) {
+                        check(player.primary!=received && player.primary!=source && player.secondary==player.primary
+                            && player.primary.getID()==source.getID() && player.primary.getContainer()==player.inventory,
+                            "second native complete packet did not supply a distinct exact held clone");
+                        check(tokens.get(player)==token && value(token,"held")==player.primary,
+                            "complete native receipt did not repin the same token to the exact new instance");
+                        check(Double.valueOf(42).equals(player.primary.getModData().rawget("nativeCargoMarker")),"repeated native clone lost cargo payload");
+                    } else if(gate.equals("repeat-incomplete") || gate.equals("repeat-connection")) {
+                        check(value(token,"held")==received && player.primary!=received,
+                            "unproven repeated packet repinned its clone");
+                    } else if(gate.equals("repeat-actor")) {
+                        check(value(token,"held")==received && player.primary==received,"other actor's native receipt changed the pinned instance");
+                        zombie.network.GameClient.IDToPlayerMap.remove(target.getOnlineID(),target);
+                    }
+                    check(CartTransition.pickupHandoff(player)==expected,"repeated native receipt guard failed: "+gate);
+                }
+                if(expected) {
+                    ai.setOverride(false,null,null);player.performing=false;player.performingAction="";
+                    CartTransition.prunePickupHandoffs();
+                    check(CartTransition.pickupHandoff(player),"native action exit discarded exact received cart: "+gate);
+                    if(gate.equals("replacement")) {
+                        var replacement=allocate(Cart.class);replacement.kind=source.kind;replacement.model=source.model;
+                        replacement.setID(source.getID());replacement.container=player.inventory;
+                        player.primary=player.secondary=replacement;
+                        check(!CartTransition.pickupHandoff(player),"same-ID replacement inherited a native equip receipt");
+                    }
+                }
+                check(player.handWrites==nativeWrites,"bridge added authoritative hand writes beyond native packet");
+                check(source.world==(gate.equals("native-replaced-world-cleared")?null:fixture.world) && fixture.world.item==source && source.container==null
+                    && Double.valueOf(42).equals(received.getModData().rawget("nativeCargoMarker")),"render receipt changed source/cargo ownership");
+                CartTransition.end(player);zombie.network.GameClient.IDToPlayerMap.remove(player.getOnlineID(),player);
+            }
+        } finally {
+            if(oldInfo==null) registry.remove(registryId);else registry.put(registryId,oldInfo);
+            dictionary.set(null,originalDictionary);loadMod.set(null,previousLoadMod);
+            if(oldScript==null) module.items.getScriptMap().remove("WheelbarrowWood");else module.items.getScriptMap().put("WheelbarrowWood",oldScript);
+            CartTransition.end(null);zombie.network.GameClient.client=previousClient;
+            zombie.network.GameClient.connection=previousConnection;zombie.network.GameClient.instance.connected=previousConnected;
+        }
+    }
+    @SuppressWarnings("unchecked")
+    private static void pickupCompletionHandoff() throws Exception {
+        boolean previousClient=zombie.network.GameClient.client;
+        var previousConnection=zombie.network.GameClient.connection;
+        boolean previousConnected=zombie.network.GameClient.instance.connected;
+        var connection=allocate(zombie.core.raknet.UdpConnection.class);
+        var map=CartTransition.class.getDeclaredField("pickupHandoffs");map.setAccessible(true);
+        var handoffs=(java.util.Map<IsoPlayer,Object>)map.get(null);
+        try {
+            zombie.network.GameClient.client=true;zombie.network.GameClient.connection=connection;
+            zombie.network.GameClient.instance.connected=true;
+            for(boolean remote:new boolean[]{false,true}) for(String gate:new String[]{"valid","same-id-replacement","foreign-action",
+                "foreign-override","unsafe","npc","sneak","injury","foreign-stack","stale","connection","disconnect","new-generation","expired","unreceipted","receipt-repeat","empty-updates","reset","prune","old-render","render-249ms","old-update","no-render","cancelled","other-native-action"}) {
+                zombie.network.GameClient.client=false;
+                var fixture=recovery(true);var player=fixture.player;var item=fixture.cart;
+                zombie.network.GameClient.client=true;
+                var current=state(player);var action=allocate(BaseAction.class);action.chr=player;
+                value(current,"actionOwner",action);value(current,"connection",connection);
+                value(current,"lastRender",System.nanoTime());value(current,"updated",System.nanoTime());
+                value(current,"remote",remote);player.protection=remote?1:0;
+                var ai=allocate(zombie.characters.NetworkPlayerAI.class);ai.setAction(action);player.network=ai;
+                zombie.network.GameClient.IDToPlayerMap.put(player.getOnlineID(),player);
+                switch(gate) {
+                    case "old-render" -> value(current,"lastRender",System.nanoTime()-301_000_000L);
+                    case "render-249ms" -> value(current,"lastRender",System.nanoTime()-249_000_000L);
+                    case "old-update" -> value(current,"updated",System.nanoTime()-301_000_000L);
+                    case "no-render" -> value(current,"rendered",false);
+                    case "cancelled" -> value(current,"recovering",true);
+                }
+                var nativeHeld=item;
+                if(remote) {
+                    nativeHeld=allocate(Cart.class);nativeHeld.kind=item.kind;nativeHeld.model=item.model;
+                    nativeHeld.setID(item.getID());nativeHeld.container=player.inventory;
+                    player.primary=player.secondary=nativeHeld;
+                    if(!gate.equals("unreceipted")) CartTransition.pickupEquipped(player,connection);
+                } else {
+                    item.world=null;item.container=player.inventory;player.primary=player.secondary=item;
+                }
+                CartTransition.end(player);
+                var token=handoffs.get(player);
+                if(gate.equals("old-render") || gate.equals("old-update") || gate.equals("no-render") || gate.equals("cancelled")) {
+                    check(token==null && !CartTransition.pickupHandoff(player),"stale/unrendered/cancelled pickup created completion bridge: "+gate);
+                    CartTransition.end(player);zombie.network.GameClient.IDToPlayerMap.remove(player.getOnlineID(),player);continue;
+                }
+                check(token!=null,"fresh pickup did not create a bounded completion candidate");
+                if(!remote) {value(token,"performed",true);value(token,"held",item);}
+                long deadline=(long)value(token,"deadline");
+                switch(gate) {
+                    case "same-id-replacement" -> {
+                        var replacement=allocate(Cart.class);replacement.kind=item.kind;replacement.model=item.model;
+                        replacement.setID(item.getID());replacement.container=player.inventory;
+                        player.primary=player.secondary=replacement;
+                    }
+                    case "foreign-action" -> {player.performing=true;player.performingAction="OtherAction";}
+                    case "other-native-action" -> {if(remote) ai.setAction(allocate(BaseAction.class));else player.getCharacterActions().add(allocate(BaseAction.class));}
+                    case "foreign-override" -> player.overridePrimaryHandModel="Mug";
+                    case "unsafe" -> player.protection=4;
+                    case "npc" -> player.protection=11;
+                    case "sneak" -> player.protection=12;
+                    case "injury" -> player.setVariable("WalkInjury",.15f);
+                    case "foreign-stack" -> player.getCharacterActions().add(allocate(BaseAction.class));
+                    case "reset" -> CartTransition.end(player);
+                    case "prune" -> {value(token,"deadline",System.nanoTime()-1);CartTransition.prunePickupHandoffs();check(!handoffs.containsKey(player),"offscreen token survived animation cleanup");}
+                    case "empty-updates" -> {for(int i=0;i<3;i++) CartTransition.endRemote(player);check(handoffs.get(player)==token,"empty action update discarded fresh completion token");}
+                    case "stale", "expired" -> value(token,"deadline",System.nanoTime()-1);
+                    case "connection" -> zombie.network.GameClient.connection=allocate(zombie.core.raknet.UdpConnection.class);
+                    case "disconnect" -> zombie.network.GameClient.instance.connected=false;
+                    case "new-generation" -> {
+                        // A new exact action must not inherit a completed action's receipt or timer.
+                        zombie.network.GameClient.client=false;
+                        var next=recovery(true);zombie.network.GameClient.client=true;
+                        value(current,"action",(long)value(current,"action")+1);
+                        var statesField=CartTransition.class.getDeclaredField("states");statesField.setAccessible(true);
+                        ((java.util.Map<IsoPlayer,Object>)statesField.get(null)).put(player,state(next.player));
+                        CartTransition.end(next.player);
+                    }
+                    case "receipt-repeat" -> {
+                        CartTransition.pickupEquipped(player,connection);
+                        check((long)value(token,"deadline")==deadline,"repeated receipt extended completion deadline");
+                    }
+                }
+                boolean accepted=CartTransition.pickupHandoff(player);
+                boolean expected=gate.equals("valid") || gate.equals("receipt-repeat") || gate.equals("empty-updates") || gate.equals("render-249ms") || !remote && gate.equals("unreceipted")
+                    ;
+                check(accepted==expected,"completion bridge guard failed: "+remote+"/"+gate);
+                if(accepted) {
+                    check(!CartMotionSync.visualEnabled(player),"completion bridge enabled ordinary motion");
+                    check(player.primary==nativeHeld && player.secondary==nativeHeld && nativeHeld.container==player.inventory,
+                        "completion bridge changed exact native hands/inventory");
+                    check(player.handWrites==0 && player.modelResets==0,"completion bridge mutated native hand models");
+                    check((long)value(token,"deadline")==deadline,"render polling renewed completion bridge");
+                } else {
+                    check(!CartTransition.pickupHandoff(player),"invalid completion token resurrected");
+                }
+                zombie.network.GameClient.connection=connection;zombie.network.GameClient.instance.connected=true;
+                CartTransition.end(player);zombie.network.GameClient.IDToPlayerMap.remove(player.getOnlineID(),player);
+            }
+        } finally {
+            CartTransition.end(null);zombie.network.GameClient.client=previousClient;
+            zombie.network.GameClient.connection=previousConnection;zombie.network.GameClient.instance.connected=previousConnected;
+        }
+    }
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartTransitionTest.class.getClassLoader());
         check(Main.CART_SUPPORTED,"installed B42.21 bytecode fixture unsupported");
         check(Main.CART_TRANSITION_SUPPORTED,"installed transition render bytecode unsupported");
-        for(var name:new String[]{"wooden","hidden","place","suppressHeldModel"}) {
+        for(var name:new String[]{"wooden","hidden","place","suppressHeldModel","pickupEquipped","pickupPerformed","prunePickupHandoffs"}) {
             boolean exported=false;
             for(var method:CartTransition.class.getDeclaredMethods()) if(name.equals(method.getName()))
                 exported=java.lang.reflect.Modifier.isPublic(method.getModifiers());
@@ -1160,7 +1565,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();metalDropGeometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();remoteNativeHandModels();remotePickupModelBind();
+        bridge();geometry();metalDropGeometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();remoteNativeHandModels();remotePickupModelBind();pickupCompletionHandoff();nativePickupEquipReceipt();localPickupPerformReceipt();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

@@ -19,8 +19,16 @@ public final class ClearanceProbe {
     private static BufferedWriter output;
     private static BufferedWriter solves;
     private static BufferedWriter cameras;
+    private static BufferedWriter handoffEvents;
+    private static final Object handoffOutputLock=new Object();
     private static long captureSerial;
     private record NativePose(zombie.characters.IsoPlayer player,long wall,float x,float y,float z,float heading,float angle) {}
+    private record Hands(zombie.inventory.InventoryItem item,long changed) {}
+    private static final java.util.WeakHashMap<zombie.characters.IsoPlayer,Hands> hands=new java.util.WeakHashMap<>();
+    private static void rememberHands(zombie.characters.IsoPlayer player,long now) {
+        var item=player.getPrimaryHandItem();var previous=hands.get(player);
+        if(previous==null || previous.item()!=item)hands.put(player,new Hands(item,now));
+    }
     private record ConsumedCamera(zombie.core.skinnedmodel.ModelCamera camera,long wall,float x,float y,float z,float angle,boolean world,boolean vehicle) {}
     private static final class DrawFrame {
         final long id,wall;
@@ -44,6 +52,7 @@ public final class ClearanceProbe {
     public static synchronized void rememberNative(ModelSlotRenderData slot,zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
         nativePoses.remove(slot);drawFrames.remove(slot);
         if(output==null || source==null || !(source.character instanceof zombie.characters.IsoPlayer player))return;
+        rememberHands(player,System.nanoTime());
         float heading=player.getDirectionAngleRadians();
         var animation=player.getAnimationPlayer();
         float angle=animation==null?heading+(float)(Math.PI/2):animation.getRenderedAngle();
@@ -158,6 +167,136 @@ public final class ClearanceProbe {
     private static Object stateField(Object state,String name)throws Exception {
         var field=state.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(state);
     }
+    private static String handoffFields(zombie.characters.IsoPlayer player)throws Exception {
+        synchronized(net.alexredby.pztoolkitjavapatches.CartTransition.class) {
+            var type=net.alexredby.pztoolkitjavapatches.CartTransition.class;
+            var field=type.getDeclaredField("pickupHandoffs");field.setAccessible(true);
+            Object token=((java.util.Map<?,?>)field.get(null)).get(player);
+            var statesField=type.getDeclaredField("states");statesField.setAccessible(true);
+            Object state=((java.util.Map<?,?>)statesField.get(null)).get(player);
+            String flags=",\"handoffPresent\":"+(token!=null)+",\"transitionPresent\":"+(state!=null)
+                +",\"performing\":"+player.getVariableBoolean("IsPerformingAnAction")
+                +",\"performingAction\":"+jsonString(player.getVariableString("PerformingAction"))
+                +",\"nativeActionCount\":"+player.getCharacterActions().size()
+                +",\"forceNullOverride\":"+player.forceNullOverride;
+            if(token==null)return flags;
+            Object source=stateField(token,"source");
+            return flags+",\"handoffPerformed\":"+stateField(token,"performed")
+                +",\"handoffReceipted\":"+stateField(token,"receipted")
+                +",\"handoffHeldExact\":"+(stateField(token,"held")==player.getPrimaryHandItem())
+                +",\"handoffDeadlineMs\":"+(((Long)stateField(token,"deadline")-System.nanoTime())/1_000_000L)
+                +",\"handoffRemote\":"+stateField(source,"remote");
+        }
+    }
+    /** Exact method boundaries; getters/reflection only, never a render or production gateway call. */
+    public static void pickupBoundary(String method,String stage,Object[] args,Throwable thrown) {
+        try {
+            if(handoffEvents==null)return;
+            zombie.characters.IsoPlayer player;
+            Object state=null,scope=null;
+            zombie.characters.CharacterTimedActions.LuaTimedActionNew performed=null;
+            if("pickupPerformed".equals(method)) {
+                performed=(zombie.characters.CharacterTimedActions.LuaTimedActionNew)args[0];
+                if(!(performed.chr instanceof zombie.characters.IsoPlayer actor))return;
+                player=actor;scope=args[1];
+            } else {
+                player=(zombie.characters.IsoPlayer)args[0];
+                if("rememberPickup".equals(method))state=args[1];
+            }
+            if(player==null)return;
+            String row;
+            synchronized(net.alexredby.pztoolkitjavapatches.CartTransition.class) {
+                var type=net.alexredby.pztoolkitjavapatches.CartTransition.class;
+                var field=type.getDeclaredField("pickupHandoffs");field.setAccessible(true);
+                Object token=((java.util.Map<?,?>)field.get(null)).get(player);
+                var statesField=type.getDeclaredField("states");statesField.setAccessible(true);
+                Object current=((java.util.Map<?,?>)statesField.get(null)).get(player);
+                if(state==null)state=current!=null?current:token==null?null:stateField(token,"source");
+                var primary=player.getPrimaryHandItem();var secondary=player.getSecondaryHandItem();
+                var network=player.getNetworkCharacterAI();
+                var networkAction=network==null?null:network.getAction();
+                var actions=player.getCharacterActions();
+                var out=new StringBuilder(3000).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+                    .append(",\"event\":").append(jsonString(method)).append(",\"stage\":").append(jsonString(stage))
+                    .append(",\"id\":").append(player.getOnlineID()).append(",\"local\":").append(player.isLocalPlayer())
+                    .append(",\"methodThrew\":").append(thrown!=null)
+                    .append(",\"scopePresent\":").append(scope!=null)
+                    .append(",\"primary\":").append(primary==null?-1:primary.getID())
+                    .append(",\"secondary\":").append(secondary==null?-1:secondary.getID())
+                    .append(",\"primaryIdentity\":").append(System.identityHashCode(primary))
+                    .append(",\"secondaryExact\":").append(primary!=null && primary==secondary)
+                    .append(",\"primaryOwned\":").append(primary!=null && primary.getContainer()==player.getInventory() && primary.getWorldItem()==null)
+                    .append(",\"overridePrimary\":").append(jsonString(player.overridePrimaryHandModel))
+                    .append(",\"overrideSecondary\":").append(jsonString(player.overrideSecondaryHandModel))
+                    .append(",\"hideWeapon\":").append(player.isHideWeaponModel())
+                    .append(",\"hideHandR\":").append(player.isHideEquippedHandR())
+                    .append(",\"npc\":").append(player.isNpc()).append(",\"sneaking\":").append(player.isSneaking())
+                    .append(",\"walkInjury\":").append(player.getVariableFloat("WalkInjury",0))
+                    .append(",\"unsafe\":").append(player.isDead() || player.isAiming() || player.hasHitReaction()
+                        || player.isKnockedDown() || player.isGettingUp() || player.getVehicle()!=null
+                        || player.isCurrentState(zombie.ai.states.CollideWithWallState.instance())
+                        || player.isGrappling() || player.isBeingGrappled() || player.isRagdollSimulationActive())
+                    .append(",\"client\":").append(zombie.network.GameClient.client)
+                    .append(",\"connected\":").append(zombie.network.GameClient.client && zombie.network.GameClient.connection!=null && zombie.network.GameClient.instance.connected)
+                    .append(",\"onlineExact\":").append(zombie.network.GameClient.IDToPlayerMap.get(player.getOnlineID())==player)
+                    .append(",\"receiptConnectionExact\":").append("pickupEquipped".equals(method) && args[1]==zombie.network.GameClient.connection)
+                    .append(",\"statePresent\":").append(state!=null).append(",\"stateIsCurrent\":").append(state!=null && state==current)
+                    .append(",\"networkActionIdentity\":").append(System.identityHashCode(networkAction))
+                    .append(handoffFields(player));
+                if(scope!=null)out.append(",\"scopeFailed\":").append(stateField(scope,"failed"))
+                    .append(",\"scopeActionExact\":").append(performed!=null && stateField(scope,"action")==performed.getTable())
+                    .append(",\"scopeCallbackExact\":").append(performed!=null && stateField(scope,"callback")==performed.getTable().rawget("perform"));
+                if(state!=null) {
+                    var item=(zombie.inventory.InventoryItem)stateField(state,"item");
+                    var owner=(zombie.characters.CharacterTimedActions.BaseAction)stateField(state,"actionOwner");
+                    var nativeLua=owner instanceof zombie.characters.CharacterTimedActions.LuaTimedActionNew a?a:null;
+                    var table=nativeLua==null?null:nativeLua.getTable();
+                    var model=item==null?null:zombie.scripting.ScriptManager.instance.getModelScript(item.getStaticModel());
+                    var override=player.overridePrimaryHandModel==null?null:zombie.scripting.ScriptManager.instance.getModelScript(player.overridePrimaryHandModel);
+                    long now=System.nanoTime();
+                    out.append(",\"stateIdentity\":").append(System.identityHashCode(state))
+                        .append(",\"sourceID\":").append(item==null?-1:item.getID())
+                        .append(",\"sourceIdentity\":").append(System.identityHashCode(item))
+                        .append(",\"sourceType\":").append(jsonString(item==null?null:item.getFullType()))
+                        .append(",\"sourceStaticModel\":").append(jsonString(item==null?null:item.getStaticModel()))
+                        .append(",\"sourceModelName\":").append(jsonString(model==null?null:model.getName()))
+                        .append(",\"sourceModelModule\":").append(jsonString(model==null || model.getModule()==null?null:model.getModule().name))
+                        .append(",\"sourceOverrideModelExact\":").append(model!=null && model==override)
+                        .append(",\"sourceRemote\":").append(stateField(state,"remote"))
+                        .append(",\"sourcePickup\":").append(stateField(state,"pickup"))
+                        .append(",\"sourceRecovering\":").append(stateField(state,"recovering"))
+                        .append(",\"sourceRendered\":").append(stateField(state,"rendered"))
+                        .append(",\"sourceHandoffRemembered\":").append(stateField(state,"handoffRemembered"))
+                        .append(",\"sourceWorldPresent\":").append(stateField(state,"world")!=null)
+                        .append(",\"sourceRenderAgeMs\":").append((now-(Long)stateField(state,"lastRender"))/1_000_000.0)
+                        .append(",\"sourceUpdateAgeMs\":").append((now-(Long)stateField(state,"updated"))/1_000_000.0)
+                        .append(",\"sourceConnectionExact\":").append(stateField(state,"connection")==zombie.network.GameClient.connection)
+                        .append(",\"ownerPresent\":").append(owner!=null)
+                        .append(",\"ownerIdentity\":").append(System.identityHashCode(owner))
+                        .append(",\"ownerClass\":").append(jsonString(owner==null?null:owner.getClass().getName()))
+                        .append(",\"ownerChrExact\":").append(owner!=null && owner.chr==player)
+                        .append(",\"ownerLocalActionExact\":").append(owner!=null && actions.size()==1 && actions.get(0)==owner)
+                        .append(",\"ownerNetworkExact\":").append(owner!=null && networkAction==owner)
+                        .append(",\"ownerPerformedExact\":").append(owner!=null && performed==owner)
+                        .append(",\"ownerMetaType\":").append(jsonString(nativeLua==null?null:nativeLua.getMetaType()))
+                        .append(",\"ownerTableCharacterExact\":").append(table!=null && table.rawget("character")==player)
+                        .append(",\"ownerTableItemID\":").append(jsonString(table==null?null:String.valueOf(table.rawget("itemId"))));
+                }
+                row=out.append("}\n").toString();
+            }
+            synchronized(handoffOutputLock) {if(handoffEvents!=null){handoffEvents.write(row);handoffEvents.flush();}}
+        } catch(Throwable error) {System.err.println("[CLEARANCE_PROBE] ERROR pickup boundary "+error);error.printStackTrace();}
+    }
+    public static class PickupBoundary {
+        @Advice.OnMethodEnter
+        public static void enter(@Advice.Origin("#m") String method,@Advice.AllArguments Object[] args) {
+            ClearanceProbe.pickupBoundary(method,"enter",args,null);
+        }
+        @Advice.OnMethodExit(onThrowable=Throwable.class)
+        public static void exit(@Advice.Origin("#m") String method,@Advice.AllArguments Object[] args,@Advice.Thrown Throwable thrown) {
+            ClearanceProbe.pickupBoundary(method,"exit",args,thrown);
+        }
+    }
     private static zombie.inventory.InventoryItem transitionItem(zombie.characters.IsoPlayer player)throws Exception {
         // A shopping attachment with empty hands is not identity evidence by itself.
         // Read the exact, already-rendered pickup state owned by this native player.
@@ -177,6 +316,10 @@ public final class ClearanceProbe {
     }
     private static boolean captureDue(zombie.characters.IsoPlayer player,zombie.inventory.InventoryItem item,long now)throws Exception {
         if(now-last>=33_333_333L)return true;
+        // Do not miss a one-slot raw hand attachment during world-to-held handoff.
+        var seen=hands.get(player);
+        if(item!=null && seen!=null && seen.item()==item && now-seen.changed()>=0
+            && now-seen.changed()<=500_000_000L)return true;
         // A remote cancel can expose only ~100ms of active rendering. Capture each
         // original native slot in that bounded action, rather than decimating it.
         synchronized(net.alexredby.pztoolkitjavapatches.CartTransition.class) {
@@ -227,10 +370,17 @@ public final class ClearanceProbe {
             for(var body:slot.modelData) {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
+                int modelCount=0;
+                for(var candidate:slot.modelData)if(candidate.modelInstance!=null
+                    && candidate.modelInstance.parent!=null && candidate.modelInstance.modelScript!=null
+                    && cartModel(candidate.modelInstance.modelScript.getName()))modelCount++;
                 var frame=prepareDraw(slot,body.modelInstance,instance);
                 var row=new StringBuilder(8192).append("{\"wallTimeMillis\":").append(frame.wall)
                     .append(renderFields(slot,frame))
                     .append(",\"id\":").append(((zombie.characters.IsoPlayer)slot.character).getOnlineID()).append(",\"local\":").append(((zombie.characters.IsoPlayer)slot.character).isLocalPlayer()).append(",\"enabled\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled((zombie.characters.IsoPlayer)slot.character)).append(",\"female\":").append(slot.character.isFemale())
+                    .append(",\"visualEnabled\":").append(net.alexredby.pztoolkitjavapatches.CartMotionSync.visualEnabled(player))
+                    .append(",\"cartModelCount\":").append(modelCount)
+                    .append(handoffFields(player))
                     .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
                     .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
                     .append(",\"primary\":").append(frame.preparedPrimary)
@@ -395,21 +545,28 @@ public final class ClearanceProbe {
         if(output!=null){output.close();output=null;}
         if(solves!=null){solves.close();solves=null;}
         if(cameras!=null){cameras.close();cameras=null;}
+        synchronized(handoffOutputLock) {if(handoffEvents!=null){handoffEvents.close();handoffEvents=null;}}
         nativePoses.clear();drawFrames.clear();consumedCamera.remove();
         if("stop".equals(args)){System.out.println("[CLEARANCE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
         directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         Path file=directory.resolve("body-clearance.jsonl");
-        for(String name:new String[]{"body-clearance.jsonl","transition-solve.jsonl","render-camera.jsonl","WheelbarrowWood.bin",
+        for(String name:new String[]{"body-clearance.jsonl","transition-solve.jsonl","render-camera.jsonl","pickup-handoff-events.jsonl","WheelbarrowWood.bin",
             "wood-wheel-mesh-proof.json","wood-wheel-mesh-phase-proof.json","wood-wheel-mesh-error.json"})
             if(Files.exists(directory.resolve(name)))throw new IllegalStateException("Preserve existing clearance output first: "+name);
         output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;
         solves=Files.newBufferedWriter(directory.resolve("transition-solve.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
         cameras=Files.newBufferedWriter(directory.resolve("render-camera.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);captureSerial=0;
+        synchronized(handoffOutputLock) {handoffEvents=Files.newBufferedWriter(directory.resolve("pickup-handoff-events.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);}
         meshProof=phaseMeshProof=meshError=false;firstMeshHash=null;firstMeshPhase=0;
         if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
             .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+            .with(new AgentBuilder.Listener.Adapter() {
+                @Override public void onError(String type,ClassLoader loader,net.bytebuddy.utility.JavaModule module,boolean loaded,Throwable error) {
+                    System.err.println("[CLEARANCE_PROBE] ERROR transform "+type+" "+error);error.printStackTrace();
+                }
+            })
             .type(named("zombie.core.skinnedmodel.model.ModelSlotRenderData"))
             .transform((b,d,l,m,p)->b.visit(Advice.to(NativeCapture.class).on(named("initModel").and(takesArguments(1)))))
             .type(named("zombie.core.opengl.CharacterModelCamera"))
@@ -418,6 +575,8 @@ public final class ClearanceProbe {
             .transform((b,d,l,m,p)->b
                 .visit(Advice.to(ActualDraw.class).on(named("DrawSolid").and(takesArguments(2))))
                 .visit(Advice.to(CameraEnd.class).on(named("CharacterModelCameraEnd").and(takesArguments(0)))))
+            .type(named("net.alexredby.pztoolkitjavapatches.CartTransition"))
+            .transform((b,d,l,m,p)->b.visit(Advice.to(PickupBoundary.class).on(namedOneOf("rememberPickup","pickupPerformed","pickupEquipped"))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding"))
             .transform((b,d,l,m,p)->b.visit(Advice.to(Capture.class).on(named("render"))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartWheelSpin"))

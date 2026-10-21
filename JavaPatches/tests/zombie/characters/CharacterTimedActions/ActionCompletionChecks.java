@@ -43,6 +43,29 @@ public final class ActionCompletionChecks {
         });
         toolkit.rawset("ActionQueueLifecycle", lifecycle); LuaManager.env.rawset("PZSurvivorToolkit", toolkit);
     }
+    static void observerScopes() throws Exception {
+        events.clear();installHooks();
+        LuaTimedActionNew outer=action(true),inner=action(true);
+        ActionCompletion.Scope owned=ActionCompletion.begin(outer,"perform",true);
+        KahluaTable toolkit=(KahluaTable)LuaManager.env.rawget("PZSurvivorToolkit");
+        KahluaTable lifecycle=(KahluaTable)toolkit.rawget("ActionQueueLifecycle");
+        lifecycle.rawset("begin",(JavaFunction)(frame,count)->{events.add("declined:"+frame.get(1));frame.push(Boolean.FALSE);return 1;});
+        inner.table.rawset("perform",(JavaFunction)(frame,count)->{throw new IllegalStateException("expected observed-only failure");});
+        require(ActionCompletion.begin(inner,"perform",true)==null,"declined Lua lifecycle acquired queue ownership");
+        ActionCompletion.Scope observing=ActionCompletion.observeOnly(inner,"perform");
+        inner.perform();
+        require(field(ActionCompletion.Scope.class,"failed").getBoolean(observing),"observer-only native protected failure became success");
+        require(!field(ActionCompletion.Scope.class,"failed").getBoolean(owned),"observer-only failure poisoned outer queue scope");
+        ActionCompletion.end(observing,null);
+        require(((ThreadLocal<?>)field(ActionCompletion.class,"current").get(null)).get()==owned,"observer-only scope failed to restore outer scope");
+        require(events.stream().noneMatch(event->event.startsWith("finish:")),"observer-only scope notified Lua queue finish");
+        ActionCompletion.end(owned,null);clean();
+        require(events.get(events.size()-1).equals("finish:perform:true"),"outer queue callback lost its original finish boundary");
+        events.clear();
+        LuaTimedActionNew foreign=action(true);foreign.perform();clean();
+        require(events.equals(List.of("declined:perform","perform","callback-tail")),"declined unrelated native action acquired a fallback scope");
+        events.clear();installHooks();
+    }
     static void clean() throws Exception {
         require(((ThreadLocal<?>)field(ActionCompletion.class, "current").get(null)).get() == null, "native completion scope leaked");
     }
@@ -95,8 +118,9 @@ public final class ActionCompletionChecks {
         catch (NullPointerException expected) { }
         require(events.equals(List.of("begin:perform", "finish:perform:false")), "native Java exception did not settle failure");
         clean(); events.clear();
+        observerScopes();
         require(ActionCompletion.begin(action(true), "perform", false) == null, "unsupported engine acquired completion scope");
         require(events.isEmpty(), "unsupported engine notified Lua");
-        System.out.println("ACTION_COMPLETION_CHECKS_PASS (original/woven SP/MP callbacks, optional complete, nested protected errors, Java exception, unsupported guard)");
+        System.out.println("ACTION_COMPLETION_CHECKS_PASS (original/woven SP/MP callbacks, optional complete, nested protected errors, Java exception, observer-only failure/isolation, unsupported guard)");
     }
 }

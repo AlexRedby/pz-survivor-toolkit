@@ -34,6 +34,15 @@ public final class ActionCompletion {
         return scope;
     }
 
+    /** Observe an exact native callback without taking ownership of Lua queue completion. */
+    public static Scope observeOnly(LuaTimedActionNew nativeAction, String phase) {
+        KahluaTable action = nativeAction.getTable();
+        if (action == null || action.rawget(phase) == null) return null;
+        Scope scope = new Scope(current.get(), action, action.rawget(phase), null, phase);
+        current.set(scope);
+        return scope;
+    }
+
     public static void observe(Object callback, Object argument, Object[] result) {
         Scope scope = current.get();
         if (scope != null && scope.callback != null && scope.callback == callback && scope.action == argument
@@ -44,7 +53,8 @@ public final class ActionCompletion {
     public static void end(Scope scope, Throwable failure) {
         if (scope == null) return;
         if (scope.previous == null) current.remove(); else current.set(scope.previous);
-        LuaManager.caller.pcall(LuaManager.thread, scope.finish, scope.action, scope.phase,
-            failure == null && !scope.failed);
+        if (scope.finish != null)
+            LuaManager.caller.pcall(LuaManager.thread, scope.finish, scope.action, scope.phase,
+                failure == null && !scope.failed);
     }
 }

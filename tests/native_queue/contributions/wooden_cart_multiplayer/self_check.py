@@ -925,6 +925,8 @@ public final class ModelProbeCheck {
             if(transitionItem.invoke(null,owner)!=cart || !(boolean)capture.invoke(null,cart,"ShoppingCartFullModel"))
                 throw new AssertionError("Exact rendered shopping pickup was not associated");
             var due=probe.getDeclaredMethod("captureDue",zombie.characters.IsoPlayer.class,zombie.inventory.InventoryItem.class,long.class);due.setAccessible(true);
+            var handsField=probe.getDeclaredField("hands");handsField.setAccessible(true);
+            var seenHands=(java.util.Map<?,?>)handsField.get(null);seenHands.clear();
             var last=probe.getDeclaredField("last");last.setAccessible(true);
             long now=System.nanoTime();last.setLong(null,now);
             stateField(pickup,"updated",now);stateField(pickup,"ik",true);stateField(pickup,"progress",.1f);
@@ -958,6 +960,19 @@ public final class ModelProbeCheck {
             owner.primary=null;states.remove(owner);
             if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Missing state bypassed cadence");
             if(!(boolean)due.invoke(null,owner,cart,now+34_000_000L))throw new AssertionError("Ordinary cadence lost");
+            var remember=probe.getDeclaredMethod("rememberHands",zombie.characters.IsoPlayer.class,long.class);remember.setAccessible(true);
+            owner.primary=owner.secondary=cart;remember.invoke(null,owner,now);
+            for(long elapsed:new long[]{0,16_000_000L,250_000_000L,500_000_000L}) {
+                last.setLong(null,now+elapsed);remember.invoke(null,owner,now+elapsed);
+                if(!(boolean)due.invoke(null,owner,cart,now+elapsed))throw new AssertionError("Handoff native slot decimated");
+            }
+            last.setLong(null,now+500_000_001L);
+            if((boolean)due.invoke(null,owner,cart,now+500_000_001L))throw new AssertionError("Handoff window renewed");
+            last.setLong(null,now-1);
+            if((boolean)due.invoke(null,owner,cart,now-1))throw new AssertionError("Future handoff sample accepted");
+            owner.primary=owner.secondary=null;remember.invoke(null,owner,now);last.setLong(null,now);
+            if((boolean)due.invoke(null,owner,cart,now))throw new AssertionError("Missing hands extended handoff capture");
+            seenHands.clear();
             states.put(owner,pickup);stateField(pickup,"pickup",true);stateField(pickup,"updated",System.nanoTime());
             stateField(pickup,"rendered",false);
             if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Unrendered shopping state admitted");
@@ -982,7 +997,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action capture cadence and duplicate slot guard, family/JSON guards)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, family/JSON guards)'
 
 
 def main():

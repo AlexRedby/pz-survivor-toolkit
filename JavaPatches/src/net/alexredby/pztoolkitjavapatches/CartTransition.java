@@ -30,6 +30,20 @@ public final class CartTransition {
     private static final WeakHashMap<IsoPlayer, State> states = new WeakHashMap<>();
     // Native queue/render cleanup can run before the replacement action's first update.
     private static final WeakHashMap<IsoPlayer, State> cancelled = new WeakHashMap<>();
+    private static final WeakHashMap<IsoPlayer, PickupHandoff> pickupHandoffs = new WeakHashMap<>();
+    private static final long PICKUP_HANDOFF_NANOS = 300_000_000L;
+    private static final class PickupHandoff {
+        final State source;
+        final Object connection;
+        final long deadline;
+        final zombie.scripting.objects.ModelScript model;
+        InventoryItem held;
+        boolean receipted, performed;
+        PickupHandoff(State state, Object peer, long now) {
+            source=state;connection=peer;deadline=now+PICKUP_HANDOFF_NANOS;
+            model=CartGrounding.resolvedModel(state.item);
+        }
+    }
     private static final Field CLIP_RETIRING = clipRetiringField();
     private static final double RESTART_BLEND_NANOS = 350_000_000.0;
     // Start behind the handle ends rather than clearing the shafts with a large pelvis-only retreat.
@@ -42,9 +56,11 @@ public final class CartTransition {
 
     private static final class State {
         InventoryItem item;
+        BaseAction actionOwner;
+        Object connection;
         long action;
         boolean remote, remoteWaiting;
-        boolean pickup, ik, rendered, recovering, authored, clipRetired;
+        boolean pickup, ik, rendered, recovering, authored, clipRetired, handoffRemembered;
         float cancelledProgress, nativeHeight, referenceHeight, movementProgress, recoveryReach, recoveryGrip;
         Matrix4f[] recoveryPose;
         Matrix4f recoveryCart;
@@ -168,7 +184,7 @@ public final class CartTransition {
         State state=states.get(player);
         if(state==null || state.recovering || state.item!=item || state.pickup!=pickup) {
             var previous=cancelled.remove(player);
-            end(player);state=new State();state.item=item;state.pickup=pickup;
+            end(player);pickupHandoffs.remove(player);state=new State();state.item=item;state.pickup=pickup;
             state.action=CartActionSync.generation();
             state.authored=authoredClip(player,CLIP_RETIRING!=null);
             if(pickup) {
@@ -191,12 +207,23 @@ public final class CartTransition {
                 state.restartStart=System.nanoTime();
                 state.rendered=previous.rendered;
             }
+            state.connection=GameClient.client?GameClient.connection:null;
+            state.actionOwner=localPickupAction(player,item);
             states.put(player,state);
         }
         state.progress=(float)Math.max(0,Math.min(1,progress));state.updated=System.nanoTime();
         poseVariables(player,state);
         publish(player,state);
         return true;
+    }
+
+    private static BaseAction localPickupAction(IsoPlayer player,InventoryItem item) {
+        var actions=player.getCharacterActions();
+        if(actions.size()!=1 || !(actions.get(0) instanceof LuaTimedActionNew action)
+            || action.chr!=player || !"ToolkitWoodCartPickup".equals(action.getMetaType())) return null;
+        var table=action.getTable();
+        return table!=null && table.rawget("character")==player && table.rawget("itemId") instanceof Number id
+            && id.doubleValue()==item.getID()?action:null;
     }
 
     private static void poseVariables(IsoPlayer player, State state) {
@@ -308,6 +335,10 @@ public final class CartTransition {
         if(!same) {
             endRemote(player);state=new State();state.remote=true;state.item=item;state.action=pose.action();state.pickup=pose.pickup();
             state.world=pose.pickup()?item.getWorldItem():null;
+            state.connection=GameClient.connection;
+            var network=player.getNetworkCharacterAI();
+            state.actionOwner=network==null?null:network.getAction();
+            pickupHandoffs.remove(player);
             states.put(player,state);
         }
         state.placement=pose.placement();
@@ -339,15 +370,180 @@ public final class CartTransition {
                 }
             }
         }
+        refreshPickupAction(player,state,now);
         state.updated=now;
         player.setVariable("ToolkitWoodCartClipPilot",false);
         poseVariables(player,state);
         return true;
     }
 
+    private static boolean bindPickup(IsoPlayer player,PickupHandoff handoff,boolean nativeReceipt) {
+        var item=player.getPrimaryHandItem();
+        if(item==null && player.getSecondaryHandItem()==null) return false;
+        if(item==null || player.getSecondaryHandItem()!=item
+            || item.getID()!=handoff.source.item.getID() || !item.getFullType().equals(handoff.source.item.getFullType())
+            || item.getContainer()!=player.getInventory() || item.getWorldItem()!=null
+            || CartGrounding.resolvedModel(item)!=handoff.model
+            || handoff.receipted && handoff.held!=item && !nativeReceipt) {
+            pickupHandoffs.remove(player);return false;
+        }
+        handoff.held=item;handoff.receipted=true;return true;
+    }
+
+    /** The cart callback still needs error observation when Lua queue management declines it. */
+    public static synchronized boolean observePickupPerform(LuaTimedActionNew action) {
+        if(action==null || !(action.chr instanceof IsoPlayer player) || !player.isLocalPlayer()
+            || !"ToolkitWoodCartPickup".equals(action.getMetaType())) return false;
+        var handoff=pickupHandoffs.get(player);
+        var state=handoff==null?states.get(player):handoff.source;
+        var table=action.getTable();
+        if(state==null || state.remote || state.actionOwner!=action || !supported(state.item)
+            || table==null || table.rawget("character")!=player
+            || !(table.rawget("itemId") instanceof Number id) || id.doubleValue()!=state.item.getID()) return false;
+        long now=System.nanoTime();
+        if(handoff!=null) return handoffValid(player,handoff,now);
+        if(state.handoffRemembered || !state.pickup || state.recovering || !state.rendered || state.world==null
+            || now-state.lastRender>PICKUP_HANDOFF_NANOS || now-state.updated>PICKUP_HANDOFF_NANOS) return false;
+        // This temporary eligibility check neither registers nor renews a handoff deadline.
+        var observer=new PickupHandoff(state,state.connection,now);
+        return observer.model!=null && handoffValid(player,observer,now);
+    }
+
+    /** The native successful perform boundary proves completion even after forceComplete(). */
+    public static synchronized void pickupPerformed(LuaTimedActionNew action,ActionCompletion.Scope scope,Throwable failure) {
+        if(failure!=null || scope==null || scope.failed || !"perform".equals(scope.phase)
+            || scope.action!=action.getTable() || scope.callback==null || scope.callback!=scope.action.rawget("perform")
+            || !(action.chr instanceof IsoPlayer player) || !player.isLocalPlayer()) return;
+        var handoff=pickupHandoffs.get(player);
+        if(handoff==null || handoff.source.remote || handoff.source.actionOwner!=action || handoff.performed
+            || !handoffValid(player,handoff,System.nanoTime())) return;
+        handoff.performed=true;
+        bindPickup(player,handoff,false);
+    }
+
+    /** Only a complete native EquipPacket receipt may bind a subsequently deserialized object. */
+    public static synchronized void pickupEquipped(IsoPlayer player,Object connection) {
+        if(player==null || !CartMotionSync.connected() || connection!=GameClient.connection) return;
+        long now=System.nanoTime();
+        var state=states.get(player);
+        if(state!=null) rememberPickup(player,state,now);
+        var handoff=pickupHandoffs.get(player);
+        if(handoff==null || !handoffValid(player,handoff,now)) return;
+        // Each complete native parse can supply another exact clone for this same
+        // pinned action/cart lease. Its original deadline and all context stay fixed.
+        bindPickup(player,handoff,true);
+    }
+
+    private static void refreshPickupAction(IsoPlayer player,State state,long now) {
+        // Native PlayerActionsState.setParams(Enter) rebuilds BaseAction for the same
+        // accepted cart/generation. Only its fresh active lease may advance the owner;
+        // once remembered, a completion token pins that exact final native object.
+        if(!state.remote || !state.pickup || state.recovering || state.handoffRemembered || !state.rendered
+            || states.get(player)!=state || state.world==null
+            || now-state.lastRender>PICKUP_HANDOFF_NANOS || now-state.updated>PICKUP_HANDOFF_NANOS
+            || !player.getVariableBoolean("IsPerformingAnAction")
+            || !"ToolkitWoodCart".equals(player.getVariableString("PerformingAction"))
+            || !CartGrounding.sameModel(state.item,player.overridePrimaryHandModel)
+            || !emptyRemoteModel(player.overrideSecondaryHandModel)) return;
+        var network=player.getNetworkCharacterAI();
+        var owner=network==null?null:network.getAction();
+        if(owner!=null && owner.getClass()==BaseAction.class && owner.chr==player) state.actionOwner=owner;
+    }
+
+    private static void rememberPickup(IsoPlayer player,State state,long now) {
+        if(state.handoffRemembered || !state.pickup || state.recovering || !state.rendered || state.world==null || state.actionOwner==null
+            || now-state.lastRender>PICKUP_HANDOFF_NANOS || now-state.updated>PICKUP_HANDOFF_NANOS
+            || unsafeState(player) || state.connection!=(GameClient.client?GameClient.connection:null)) return;
+        var previous=pickupHandoffs.get(player);
+        if(previous!=null && previous.source==state) return;
+        refreshPickupAction(player,state,now);
+        var handoff=new PickupHandoff(state,state.connection,now);
+        if(handoff.model!=null && handoffValid(player,handoff,now)) {
+            state.handoffRemembered=true;pickupHandoffs.put(player,handoff);
+        }
+    }
+
+    private static boolean handoffValid(IsoPlayer player,PickupHandoff handoff,long now) {
+        var source=handoff.source;
+        if(now>=handoff.deadline || unsafeState(player) || player.isNpc() || player.isSneaking()
+            || Math.abs(player.getVariableFloat("WalkInjury",0))>=.15f || source.remote==player.isLocalPlayer()
+            || source.connection!=handoff.connection || handoff.connection!=(GameClient.client?GameClient.connection:null)
+            || handoff.connection!=null && !CartMotionSync.connected()
+            || source.remote && GameClient.IDToPlayerMap.get(player.getOnlineID())!=player
+            || source.actionOwner==null || source.actionOwner.chr!=player
+            || player.isHideEquippedHandR()) return false;
+        var current=states.get(player);
+        if(current!=null && current!=source) return false;
+        var actions=player.getCharacterActions();
+        if(!actions.isEmpty() && (actions.size()!=1 || actions.get(0)!=source.actionOwner)) return false;
+        if(source.remote) {
+            var network=player.getNetworkCharacterAI();
+            if(network==null || network.getAction()!=null && network.getAction()!=source.actionOwner) return false;
+        }
+        boolean performing=player.getVariableBoolean("IsPerformingAnAction");
+        if(performing) {
+            if(!"ToolkitWoodCart".equals(player.getVariableString("PerformingAction"))
+                || !emptyRemoteModel(player.overrideSecondaryHandModel)) return false;
+            if(source.remote) {
+                // Native setOverride(true,cart,"") owns forceNullOverride until action exit.
+                // After retirement the exact same native action may already have cleared its strings.
+                return player.getNetworkCharacterAI().getAction()==source.actionOwner
+                    && (CartGrounding.sameModel(source.item,player.overridePrimaryHandModel)
+                        || current==null && emptyRemoteModel(player.overridePrimaryHandModel));
+            }
+            if(player.forceNullOverride || !(source.actionOwner instanceof LuaTimedActionNew action)
+                || !"ToolkitWoodCartPickup".equals(action.getMetaType())) return false;
+            var table=action.getTable();
+            // finish(self) precedes native perform's return. Keep its candidate inert until
+            // that exact successful callback and authoritative held object are both observed.
+            return table!=null && table.rawget("character")==player
+                && table.rawget("itemId") instanceof Number id && id.doubleValue()==source.item.getID()
+                && (emptyRemoteModel(player.overridePrimaryHandModel)
+                    || CartGrounding.sameModel(source.item,player.overridePrimaryHandModel));
+        }
+        return !player.forceNullOverride && emptyRemoteModel(player.overridePrimaryHandModel)
+            && emptyRemoteModel(player.overrideSecondaryHandModel);
+    }
+
+    /** Bounded geometry-only handoff; ordinary motion synchronization continues independently. */
+    static synchronized boolean pickupHandoff(IsoPlayer player) {
+        var handoff=pickupHandoffs.get(player);
+        if(handoff==null) return false;
+        if(!handoffValid(player,handoff,System.nanoTime()) || CartMotionSync.visualEnabled(player)) {
+            pickupHandoffs.remove(player);return false;
+        }
+        // A renderer may observe primary assignment before a complete native receipt.
+        // A local token also waits for its exact successful native perform boundary.
+        if(!handoff.source.remote && !handoff.performed) return false;
+        var item=player.getPrimaryHandItem();
+        if(handoff.held==null) {
+            // SP complete may follow perform. Its original exact world object needs no ID lookup.
+            if(!handoff.source.remote && item==handoff.source.item && player.getSecondaryHandItem()==item
+                && item.getWorldItem()==null && item.getContainer()==player.getInventory()) {
+                if(!bindPickup(player,handoff,false)) return false;
+            } else return false;
+        }
+        if(item!=handoff.held || player.getSecondaryHandItem()!=item || item==null
+            || item.getWorldItem()!=null || item.getContainer()!=player.getInventory()
+            || CartGrounding.resolvedModel(item)!=handoff.model) {
+            pickupHandoffs.remove(player);return false;
+        }
+        return true;
+    }
+
+    /** Animation entry also sweeps offscreen/idle tokens; render visibility never owns their lifetime. */
+    public static synchronized void prunePickupHandoffs() {
+        long now=System.nanoTime();
+        pickupHandoffs.entrySet().removeIf(entry->!handoffValid(entry.getKey(),entry.getValue(),now));
+    }
+
     static synchronized void endRemote(IsoPlayer player) {
         var state=states.get(player);
         if(state!=null && state.remote) end(player);
+        else {
+            var handoff=pickupHandoffs.get(player);
+            if(handoff!=null && !handoffValid(player,handoff,System.nanoTime())) pickupHandoffs.remove(player);
+        }
     }
 
     private static boolean recoveryOwner(IsoPlayer player, State state) {
@@ -496,12 +692,15 @@ public final class CartTransition {
         if(player==null) {
             CartMotionSync.clearAll();CartActionSync.clearAll();CartEmergencyDrop.reset();
             for(var owner:new java.util.ArrayList<>(states.keySet())) end(owner);
-            cancelled.clear();
+            cancelled.clear();pickupHandoffs.clear();
             return;
         }
         if(!preserveCancelled) cancelled.remove(player);
         if(player.isLocalPlayer()) CartActionSync.end(player);
-        var state=states.remove(player);
+        var state=states.get(player);
+        if(state!=null) rememberPickup(player,state,System.nanoTime());
+        else pickupHandoffs.remove(player);
+        states.remove(player);
         if(state!=null) retireAuthored(player,state);
         player.clearVariable("ToolkitWoodCartPoseX");player.clearVariable("ToolkitWoodCartPoseY");
         player.clearVariable("ToolkitWoodCartClipTime");player.clearVariable("ToolkitWoodCartClipPickup");
@@ -519,6 +718,10 @@ public final class CartTransition {
         var state=states.get(player);
         if(state==null) return false;
         if((state.remote?unsafeState(player):protectedState(player)) || System.nanoTime()-state.updated>1_000_000_000L) {
+            end(player);return false;
+        }
+        if(state.remote && state.pickup && !state.recovering
+            && (player.getPrimaryHandItem()!=null || player.getSecondaryHandItem()!=null)) {
             end(player);return false;
         }
         rebindRemoteRecovery(player,state,System.nanoTime());
@@ -628,6 +831,7 @@ public final class CartTransition {
             else CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));
             if(state.world!=null && !state.rendered) state.world.invalidateRenderChunkLevel(256);
             state.rendered=true;
+            state.lastRender=System.nanoTime();
             state.remoteModelBindStart=0;
             return true;
         }
