@@ -651,6 +651,65 @@ actions.command('ActionAck',{index=6,id=42,ok=true});actions.sample(player,'clie
     return 'PASS (three action variants; matching Ack closes phase, old/foreign Ack and final quiet preserved)'
 
 
+def check_action_sampling(lua):
+    client=(HERE/'client.lua').read_text()
+    signature='local function sampleActionPresentation(owner,now,elapsed)'
+    assert client.count(signature)==1 and client.count('  sampleActionPresentation(owner,now,elapsed)')==1
+    helper=signature+client.split(signature,1)[1].split('\nend',1)[0]+'\nend'
+    motion=client.split('  if now-lastSample>=100 then',1)[1].split('\n  end',1)[0]
+    assert 'CART_MP_STATE' in motion and 'actions.sample' not in motion
+    code=r"""
+for _,name in ipairs({'SaucedCarts/ContextMenu','ISUI/ISContextMenu','ISUI/ISInventoryPaneContextMenu','TimedActions/ISTimedActionQueue'}) do package.preload[name]=function() return {} end end
+package.preload.QueueTestSelection=function() return {options={cart_variant='shopping-cart'}} end
+local presentations={}
+package.preload.CartMPJSON=function() return {encode=function(row)
+ if row.active~=nil then local copy={};for key,value in pairs(row) do copy[key]=value end;presentations[#presentations+1]=copy end
+ return '{}'
+end} end
+print=function() end
+sendClientCommand=function() error('Presentation sampling added a network send') end
+local now=1000
+getTimestampMs=function() return now end
+local native={active=true,recovering=false,rendered=true,ik=true,progress=0}
+toolkitWoodCartStatus=function() return native end
+local actions=dofile(SOURCE)
+local user,duration,actionsFinished,lastActionSample='client2',15000,false,0
+HELPER
+local item={getID=function() return 42 end}
+local owner={getPrimaryHandItem=function() return item end,getSecondaryHandItem=function() return item end}
+actions.command('ActionPhase',{index=3,phase='drop-cancel',id=42})
+sampleActionPresentation(owner,now,duration-1);assert(#presentations==0,'Action samples escaped bank start')
+-- Native05 observer pattern: progress .04774 at the second100ms sample,
+-- .15055 at the third, recovery by the fourth. Native ticks remain16ms.
+local coarse={};local lastMotion=0
+for delta=0,400,16 do
+ now=1000+delta
+ native.active=delta<330;native.recovering=delta>=330
+ native.progress=delta<=112 and delta*.04774006456/112 or .04774006456+(delta-112)*(.15054546297-.04774006456)/112
+ if now-lastMotion>=100 then
+  lastMotion=now
+  if native.active and native.progress>.05 then coarse[#coarse+1]={wall=now,progress=native.progress} end
+ end
+ sampleActionPresentation(owner,now,duration+delta)
+end
+assert(#coarse==1,'Regression trace must expose the former100ms sampling gap')
+local active={}
+for _,row in ipairs(presentations) do
+ assert(row.actor=='client2' and row.index==3 and row.id==42 and row.primaryID==42 and row.secondaryID==42)
+ if row.active and row.progress>.05 and row.rendered and row.ik then active[#active+1]=row end
+end
+assert(#active>=5,'Short observer progress crossing lost sufficient presentation rows')
+assert(active[#active].wall-active[1].wall>=50 and active[#active].progress-active[1].progress>.05,'Existing active time/progress coverage lost')
+local count=#presentations
+actions.command('ActionAck',{index=3,id=42,ok=true})
+now=now+32;sampleActionPresentation(owner,now,duration+500);assert(#presentations==count,'Closed phase sampled')
+actions.command('ActionPhase',{index=6,phase='pickup-repeat',id=42})
+actionsFinished=true;now=now+32;sampleActionPresentation(owner,now,duration+550);assert(#presentations==count,'Finished action bank sampled')
+""".replace('SOURCE',json.dumps(str(HERE/'actions.lua'))).replace('HELPER',helper)
+    subprocess.run([lua,'-e',code],check=True,capture_output=True)
+    return 'PASS (short observer progress crossing captured at25ms; motion100ms, phase closure and bank bounds retained; no new sends)'
+
+
 def check_java(game, jdk, patch):
     if game is None and jdk is None and patch is None:
         return 'SKIPPED (supply --game-java-dir, --jdk, --patch-jar)'
@@ -955,6 +1014,7 @@ def main():
         print('Placement:', check_placement(lua))
         print('Capture environment:', check_capture_environment(lua))
         print('Action windows:', check_action_windows(lua))
+        print('Action sampling:', check_action_sampling(lua))
     else:
         print('Lua: SKIPPED (supply --lua or install Lua/LuaJIT)')
     print('Java:', check_java(args.game_java_dir, args.jdk, args.patch_jar))

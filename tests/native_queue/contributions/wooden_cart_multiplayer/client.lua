@@ -44,6 +44,7 @@ local function position(p,x,y,z)
  p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow()
 end
 local prepared,armed,stopped,finishedAt,actionsFinished,padSince,padReady=false,false,false,nil,false,nil,false
+local lastActionSample=0
 local extended=wallSide or config.options and config.options.cart_fast_motion
 local duration=wallSide=='front' and 18000 or wallSide and 29000 or extended and 26000 or 15000
 local steps={{0,0,0,'idle'},{2000,1,0,'walk'},{5000,8,0,'turn'},{8000,0,0,'stop'},{10000,4,2,'reverse'},{12000,0,0,'stop-back'}}
@@ -52,6 +53,13 @@ if extended and not wallSide then
  steps[#steps+1]={18500,0,0,'fast-stop'}
 end
 if wallSide then steps=wallInput.steps(wallSide) end
+local function sampleActionPresentation(owner,now,elapsed)
+ -- Short observer cancels can cross .05 progress between100ms motion samples.
+ -- Read existing presentation status separately throughout the bounded action bank.
+ if actions and not actionsFinished and elapsed>=duration and now-lastActionSample>=25 then
+  lastActionSample=now;actions.sample(owner,user)
+ end
+end
 local function wallSample(p,now,elapsed)
  local item=assert(p:getPrimaryHandItem(),'Wall cart missing');local inventory=p:getInventory():getItems();local count=0
  for i=0,inventory:size()-1 do if inventory:get(i):getID()==item:getID() then count=count+1 end end
@@ -189,8 +197,8 @@ Events.OnTick.Add(function()
    lastSample=now
    for i=0,online:size()-1 do print('[CART_MP_STATE] '..cartMPState(online:get(i))) end
    if wallSide and user=='client1' then wallSample(p,now,elapsed) end
-   if actions and elapsed>=duration then actions.sample(owner,user) end
   end
+  sampleActionPresentation(owner,now,elapsed)
   if elapsed>=duration then
    cartLabDrive(0);cartLabGait(0)
    if actions and not actionsFinished then
