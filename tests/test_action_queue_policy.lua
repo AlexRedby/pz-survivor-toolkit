@@ -34,6 +34,10 @@ f.item=function(kind)
     return item
 end
 local function capacity(container)
+    container.class='ItemContainer'
+    container.getItems=function()
+        return {size=function()return 0 end,get=function()end}
+    end
     container.getCapacityWeight=function(self)return self.load or 0 end
     container.getEffectiveCapacity=function(self)return self.capacity or 50 end
     container.getAcceptItemFunction=function(self)return self.acceptItem end

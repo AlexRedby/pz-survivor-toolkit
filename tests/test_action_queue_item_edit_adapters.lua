@@ -55,6 +55,7 @@ local function setup(changed,foreignMerge,alias,missing)
     instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and
         (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'))end
     local knownItems={}
+    local bag
     local function container(owner)
         local c={class='ItemContainer',owner=owner,temperature=1}
         c.getTemperature=function(self)return self.temperature end
@@ -65,6 +66,12 @@ local function setup(changed,foreignMerge,alias,missing)
         c.getCapacityWeight=function(self)return self.load or 0 end;c.getEffectiveCapacity=function(self)return self.capacity or 50 end;c.getMaxWeight=function()return 50 end
         c.isVehicleSeat=function()return false end;c.contains=function(self,item)return item.container==self end
         c.getItemById=function(self,id)for _,item in ipairs(knownItems)do if item.id==id and item.container==self then return item end end end
+        c.getItems=function(self)
+            local items={}
+            if not self.owner and bag then items[#items+1]=bag end
+            for _,item in ipairs(knownItems)do if item.container==self then items[#items+1]=item end end
+            return {size=function()return #items end,get=function(_,index)return items[index+1]end}
+        end
         c.hasRoomFor=function()return true end;c.isRemoveItemAllowed=function()return true end;c.isItemAllowed=function()return true end
         c.isInside=function()return false end;c.getPutSound=function()end
         c.setDrawDirty=function()end;c.setHasBeenLooted=function()end
@@ -73,7 +80,7 @@ local function setup(changed,foreignMerge,alias,missing)
         return c
     end
     local root=container();f.player.inventory=root
-    local bag=f.item('Base.Bag_Schoolbag');bag.class='InventoryContainer';bag.getContainer=function()return root end
+    bag=f.item('Base.Bag_Schoolbag');bag.class='InventoryContainer';bag.getContainer=function()return root end
     bag.getMaxItemSize=function(self)return self.maxItemSize or 0 end
     local bagInventory=container(bag);bag.getInventory=function()return bagInventory end
     local function item()
@@ -98,6 +105,8 @@ local function setup(changed,foreignMerge,alias,missing)
         value.getHungChange=function(self)return self.hunger end
         value.getHungerChange=function(self)return self.hunger*(self:isCooked()and 1.3 or 1)end
         value.getBaseHunger=function(self)return self.base end
+        value.getActualWeightUnmodded=function(self)return self.actualWeight or 1 end
+        value.getExtraItems=function(self)return self.extras end
         value.hasTag=function(self,tag)return self.tags and self.tags[tag]or false end
         value.heat=1;value.getHeat=function(self)return self.heat end
         value.isCooked=function(self)return self.cooked or false end
@@ -922,6 +931,95 @@ do
     do
         local s=setup('ISEatFoodAction.lua');local food=replacementFood(s,true)
         assert(not s.adapters.food(s.eat(food,.5)),'custom partial food cannot bypass changed native source proof')
+    end
+end
+do
+    local function evolvedFood(s)
+        local food=s.food();food.hunger=-.06;food.base=-.06;food.actualWeight=.5
+        food.haveExtraItems=function()return true end
+        food.extraTypes={'Base.Tomato'}
+        food.extras={size=function()return #food.extraTypes end,get=function(_,index)return food.extraTypes[index+1]end}
+        food.getReplaceOnUse=function()return 'Base.Bowl'end
+        food.getReplaceOnUseFullType=food.getReplaceOnUse
+        local script=food:getScriptItem()
+        script.getReplaceOnUse=food.getReplaceOnUse
+        script.getHungerChange=function()error('evolved weight does not use the base script hunger')end
+        script.getActualWeight=function()error('evolved weight uses live unmodded base weight')end
+        local extra={weight=.2,hunger=-12,kind='base:food'}
+        extra.getItemType=function(self)return self.kind end
+        extra.getHungerChange=function(self)return self.hunger end
+        extra.getActualWeight=function(self)return self.weight end
+        extra.getLuaCreate=function(self)return self.onCreate end
+        extra.getItemConfig=function(self)return self.config end
+        extra.getItemConfigKey=function(self)return self.configKey end
+        extra.hasComponents=function(self)return self.components or false end
+        extra.getReplaceOnUse=function(self)return self.replacement end
+        s.scripts['Base.Tomato']=extra
+        s.scripts['Base.Bowl']={getActualWeight=function()return .5 end}
+        return food,extra
+    end
+    for _,client in ipairs({false,true})do
+    for _,custom in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        local food,extra=evolvedFood(s)
+        food.isCustomWeight=function()return custom end
+        local quarter,another=s.eat(food,.25),s.eat(food,.25)
+        local whole=s.eat(food,1)
+        local returning,pickup=s.transfer(food,s.root,s.bagInventory),s.transfer(food,s.bagInventory,s.root)
+        local function impure()error('inspection must not materialize evolved ingredient prototypes')end
+        food.getWeight,food.getActualWeight,food.getUnequippedWeight,food.getExtraItemsWeight=impure,impure,impure,impure
+        InventoryItemFactory={CreateItem=impure}
+        local function entry(action)return {action=action,edit=assert(s.adapters.food(action))}end
+        assert(s.model.evaluate({entry(quarter),entry(another)}).status=='allowed')
+        assert(s.model.evaluate({entry(whole)}).status=='denied','full evolved consumption cannot activate its bowl replacement')
+        assert(s.model.evaluate({entry(s.eat(food,.5)),entry(s.eat(food,.5))}).status=='denied',
+            'every evolved portion must preserve the strict native tail')
+        s.water.container=s.root
+        local anchor=s.drink();anchor.action={}
+        local q=s.f.queue(anchor,quarter,another,whole)
+        assert(s.policy.evaluateCancel(q,whole).allowed,'pending full evolved consumption can be removed')
+        q=s.f.queue(anchor,quarter,another)
+        assert(s.policy.evaluateMove(q,quarter,another,true).allowed,'safe evolved original portions can reorder without weight reads')
+        assert(s.policy.evaluateCancel(q,quarter).allowed,'safe pending evolved portions can cancel without weight reads')
+        assert(not s.adapters.transfer(returning),
+            'evolved bag transfer inspection must stop before native unequipped weight')
+        food.container=s.bagInventory
+        assert(not s.adapters.transfer(pickup),
+            'evolved pickup remains outside the native transfer proof')
+        food.container=s.root
+        local a,b=s.item(),s.item();a.container=s.root;b.container=s.root
+        local transferA,transferB=s.transfer(a,s.root,s.bagInventory),s.transfer(b,s.root,s.bagInventory)
+        s.root.getCapacityWeight=impure
+        s.bagInventory.getCapacityWeight=function()if food.container==s.bagInventory then impure()end;return 0 end
+        q=s.f.queue(anchor,quarter,transferA,transferB)
+        assert(not s.policy.evaluateMove(q,transferB,transferA,false).allowed,
+            'evolved food receives no new permission in a global transfer capacity prefix')
+        for _,location in ipairs({s.root,s.bagInventory})do
+            food.container=location
+            q=s.f.queue(anchor,transferA,transferB)
+            assert(not s.policy.evaluateMove(q,transferB,transferA,false).allowed,
+                'untouched evolved food in the capacity subtree must stop native load inspection')
+        end
+        food.container=s.root
+        for _,spec in ipairs({{'kind','base:normal'},{'hunger',0},{'hunger',math.huge},{'hunger',0/0},
+            {'weight',-.1},{'weight',3.4028234663852886e38},{'weight',math.huge},{'weight',0/0},
+            {'onCreate','callback'},{'config',{}},{'configKey','custom'},{'components',true},{'replacement','Base.Bowl'}})do
+            local field,value=spec[1],spec[2];local previous=extra[field];extra[field]=value
+            assert(not s.adapters.food(quarter),'unknown evolved ingredient metadata stays protected: '..field)
+            extra[field]=previous
+        end
+        for _,types in ipairs({{}, {'Base.Unknown'}, {'Base.Tomato','Base.Tomato','Base.Tomato','Base.Tomato','Base.Tomato','Base.Tomato','Base.Tomato'}})do
+            food.extraTypes=types;assert(not s.adapters.food(quarter),'unbounded or unresolved extra lists stay protected')
+        end
+        food.extraTypes={'Base.Tomato'}
+        for _,weight in ipairs({.49999,math.huge,0/0})do
+            food.actualWeight=weight;assert(not s.adapters.food(quarter),'evolved live base must be finite and at least its shell')
+        end
+        food.actualWeight=.5
+        assert(s.adapters.food(quarter),'restoring reviewed native ingredient metadata restores pure partial proof')
+        assert(food.hunger==-.06 and food.base==-.06 and food.container==s.root and quarter.percentage==.25,
+            'all evolved inspections preserve captured portions, nutrition and location')
+    end
     end
 end
 do

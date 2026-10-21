@@ -53,7 +53,15 @@ instanceof=function(value,kind)
 end
 local function container(owner)
     local value={class='ItemContainer',owner=owner,items={}}
+    if owner then
+        owner.inventory=value
+        owner.getInventory=function(self)return self.inventory end
+    end
     function value:getContainingItem() return self.owner end
+    function value:getItems()
+        local items=self.items
+        return {size=function()return #items end,get=function(_,index)return items[index+1]end}
+    end
     function value:getParent() return nil end
     function value:getType() return self==inv and 'inventory' or 'bag' end
     function value:contains(item) for _,v in ipairs(self.items) do if v==item then return true end end return false end

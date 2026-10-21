@@ -17,6 +17,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.182
+
+- **Improved:** Pending partial portions of food with reviewed native ingredients can be reordered or cancelled while the original dish survives. Ingredient and empty-container state remain protected; unsupported ingredient creation/configuration stays blocked. Queue inspection avoids native ingredient factories; capacity-dependent transfer edits remain protected while their carried contents include ingredient-based food.
+
 ### 0.1.181
 
 - Reuse measured text-fitting results across UI redraws with bounded storage and automatic invalidation when native fonts change. Preserve exact glyph measurement and Unicode boundaries.

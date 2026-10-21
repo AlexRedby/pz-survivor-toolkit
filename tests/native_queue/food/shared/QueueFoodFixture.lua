@@ -4,23 +4,24 @@ local function finite(value)return type(value)=='number'and value==value and val
 function Fixture.scenario(case)
  local replacement=case=='food-cooking-replacement-move-portions'or case=='food-cooking-replacement-cancel-first-portion'
  local customWeight=case=='food-custom-weight-move-portions'or case=='food-custom-weight-cancel-first-portion'
- local consumption=customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
+ local extraWeight=case=='food-extra-weight-move-portions'or case=='food-extra-weight-cancel-first-portion'
+ local consumption=extraWeight or customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
  return {bag=case=='food-bag-edit-pickup-return',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
    or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion'
-   or case=='food-custom-weight-cancel-first-portion',
+   or case=='food-custom-weight-cancel-first-portion'or case=='food-extra-weight-cancel-first-portion',
   smart=case=='food-smart-move-portions'or case=='food-smart-cancel-first-portion',
   utensil=case=='food-utensil-move-portions'or case=='food-utensil-cancel-first-portion',
   cooked=case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion',
-  replacement=replacement,consumption=consumption,customWeight=customWeight,
+  replacement=replacement,consumption=consumption,customWeight=customWeight,extraWeight=extraWeight,
   cookable=replacement or case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion'
    or case=='food-raw-cookable-move-portions'or case=='food-raw-cookable-cancel-first-portion',
   depletion=case=='food-root-depletion'}
 end
 local function foodType(case)
  local spec=Fixture.scenario(case)
- return spec.consumption and 'Base.CannedPeachesOpen'or spec.replacement and 'Base.BreadSlices'
+ return spec.extraWeight and 'Base.Salad'or spec.consumption and 'Base.CannedPeachesOpen'or spec.replacement and 'Base.BreadSlices'
   or spec.cookable and (spec.cooked and 'Base.ChickenFillet'or 'Base.Cabbage')
   or spec.utensil and 'Base.OatsRaw'or Fixture.foodType
 end
@@ -80,6 +81,15 @@ function Fixture.snapshot(player,ids)
   result.foodWeight=food:getActualWeight()
   result.customWeight,result.extraItems=food:isCustomWeight(),food:haveExtraItems()
  end
+ if Fixture.scenario(ids.case).extraWeight then
+  local extras=food:getExtraItems();result.extraTypes={}
+  for i=0,extras:size()-1 do result.extraTypes[#result.extraTypes+1]=extras:get(i)end
+  result.baseFoodWeight=food:getActualWeightUnmodded()
+  result.extraScriptWeight=ScriptManager.instance:getItem('Base.Tomato'):getActualWeight()
+  result.emptyWeight=ScriptManager.instance:getItem('Base.Bowl'):getActualWeight()
+  result.foodThirstChange=food:getThirstChange()
+  result.extraIngredientCount=count(root,nil,'Base.Tomato')
+ end
  for _,kind in ipairs({'fork','spoon'})do
   local item=state[kind]
   if item then
@@ -133,7 +143,19 @@ function Fixture.prepare(player,case,previous)
   assert(outputs and outputs:size()==1 and outputs:get(0)=='Base.Toast'and food:getCookingTime()==0,
    'native cold bread replacement differs')
  end
- if spec.consumption then
+ if spec.extraWeight then
+  -- Prepare a settled native Salad ingredient state before Host publication.
+  -- This tests eating, not ingredient application or its network producer.
+  local script=assert(ScriptManager.instance:getItem('Base.Tomato'))
+  assert(tostring(script:getItemType())=='base:food'and not script:hasComponents()
+   and not script:getLuaCreate()and not script:getItemConfig()and not script:getItemConfigKey(),
+   'native tomato creation metadata differs')
+  food:setBaseHunger(-.06);food:setHungChange(-.06);food:setThirstChange(-.04)
+  food:addExtraItem('Base.Tomato')
+  assert(food:getReplaceOnUseFullType()=='Base.Bowl'and food:haveExtraItems()
+   and not food:isCustomWeight()and not food:isCookable()and not food:isCooked()
+   and math.abs(food:getActualWeight()-.62)<.00001,'native salad extra weight differs')
+ elseif spec.consumption then
   assert(food:getReplaceOnUseFullType()=='Base.TinCanEmpty'and not food:isCookable()and not food:isCooked()
    and not food:isCustomWeight()and not food:haveExtraItems()and not food:getOnCooked()
    and math.abs(food:getActualWeight()-.8)<.00001,'native partial can replacement differs')
@@ -238,6 +260,12 @@ function Fixture.verify(state)
  if Fixture.scenario(state.case).consumption then
   for _,field in ipairs({'consumptionReplacementType','consumptionReplacementCount','customWeight','extraItems'})do
    if value[field]~=state.ids[field]then return nil,'partial consumption replacement changed: '..field end
+  end
+ end
+ if Fixture.scenario(state.case).extraWeight then
+  if #value.extraTypes~=1 or value.extraTypes[1]~='Base.Tomato'then return nil,'salad ingredient identity changed'end
+  for _,field in ipairs({'baseFoodWeight','extraScriptWeight','emptyWeight','extraIngredientCount'})do
+   if value[field]~=state.ids[field]then return nil,'salad ingredient state changed: '..field end
   end
  end
  if depletion then
