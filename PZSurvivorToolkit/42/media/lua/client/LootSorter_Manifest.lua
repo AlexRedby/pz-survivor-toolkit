@@ -4,6 +4,7 @@ require "ISUI/ISButton"
 require "ISUI/ISTextEntryBox"
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISComboBox"
+require "ISUI/ISRichTextPanel"
 local Client = require "PZSurvivorToolkit/ManifestClient"
 local View = require "PZSurvivorToolkit/ManifestView"
 local Tags = require "PZSurvivorToolkit/ItemTags"
@@ -46,25 +47,70 @@ end
 -- window can take controller focus and d-pad between its focusable rows (see createChildren).
 local ManifestWindow = ISCollapsableWindowJoypad:derive("LSManifestWindow")
 
+-- Rich text owns wrapping; reflow only when the text, width or native font changes.
 function ManifestWindow:layout()
-    local pad, w = 8, self:getWidth()
+    local pad, gap, w = 8, 6, self:getWidth()
+    local manager = getTextManager()
+    local fh = manager:getFontHeight(UIFont.Small)
+    local controlH, headerH = math.max(22, fh + 8), math.max(20, fh + 6)
+    self.fontHeight = fh
+    self.listBox.itemheight = math.max(24, fh + 8)
+    self.locations.itemheight = math.max(40, fh * 2 + 8)
+    self.footer:setWidth(w - pad * 2)
+    self.footer:paginate()
+    local bottom = self:resizeWidgetHeight() + pad
     local y = self:titleBarHeight() + pad
     self.filterEntry:setX(pad); self.filterEntry:setY(y)
-    self.filterEntry:setWidth(w - 188)
+    self.filterEntry:setWidth(w - 188); self.filterEntry:setHeight(controlH)
     self.tagPicker:setX(w - 172); self.tagPicker:setY(y); self.tagPicker:setWidth(164)
-    y = y + 30
+    self.tagPicker:setHeight(controlH)
+    y = y + controlH + gap
     local c = colsFor(w - pad * 2)
     self.btnItem:setX(pad); self.btnItem:setY(y); self.btnItem:setWidth(c.catX)
     self.btnCat:setX(pad + c.catX); self.btnCat:setY(y); self.btnCat:setWidth(CAT_W)
     self.btnCount:setX(pad + c.catX + CAT_W); self.btnCount:setY(y)
     self.btnCount:setWidth(COUNT_W + SCROLLBAR)
-    y = y + 24
+    for _, button in ipairs({self.btnItem, self.btnCat, self.btnCount}) do button:setHeight(headerH) end
+    y = y + headerH + gap
+    -- Keep two item and two location rows at the normal minimum. Extra data stays in the lists.
+    local fixed = y + fh + gap * 3 + self.footer:getHeight() + bottom
+    self.minimumHeight = math.min(getCore():getScreenHeight(),
+        math.max(440, fixed + self.listBox.itemheight * 2 + self.locations.itemheight * 2))
+    if self:getHeight() < self.minimumHeight then self:setHeight(self.minimumHeight) end
+    self.footer:setX(pad)
+    self.footer:setY(self:getHeight() - bottom - self.footer:getHeight())
+    local available = self.footer:getY() - gap * 3 - fh - y
+    local locationsH = math.min(self.locations.itemheight * 3,
+        math.max(self.locations.itemheight * 2, math.floor(available / 3)),
+        available - self.listBox.itemheight)
     self.listBox:setX(pad); self.listBox:setY(y); self.listBox:setWidth(w - pad * 2)
-    self.listBox:setHeight(self:getHeight() - y - 204)
-    y = self.listBox:getY() + self.listBox:getHeight() + 24
-    self.locations:setX(pad); self.locations:setY(y); self.locations:setWidth(w - pad * 2)
-    self.locations:setHeight(self:getHeight() - y - 48)
+    self.listBox:setHeight(available - locationsH)
+    self.locationsHeadingY = y + self.listBox:getHeight() + gap
+    self.locations:setX(pad); self.locations:setY(self.locationsHeadingY + fh + gap)
+    self.locations:setWidth(w - pad * 2); self.locations:setHeight(locationsH)
+    -- Existing entries retain their old per-item heights unless updated after a font change.
+    for _, list in ipairs({self.listBox, self.locations}) do
+        local scrollHeight = 0
+        for _, item in ipairs(list.items) do
+            item.height = list.itemheight
+            scrollHeight = scrollHeight + item.height
+        end
+        list:setScrollHeight(scrollHeight)
+    end
     self.layoutWidth, self.layoutHeight = w, self:getHeight()
+    self.layoutFont = manager:getFontFromEnum(UIFont.Small)
+end
+
+function ManifestWindow:updateFooter()
+    local text = "<RGB:0.8,0.8,0.8> " .. tr("Totals", self.shownCount or 0, self.totalCount or 0)
+        .. " <LINE> <RGB:0.7,0.8,0.8> "
+        .. tr(self.connectionStatus == "error" and "Error" or self.connectionStatus == "loading" and "Loading" or "Shared")
+    local font = getTextManager():getFontFromEnum(UIFont.Small)
+    if self.footer.text ~= text or self.layoutWidth ~= self:getWidth()
+        or self.layoutHeight ~= self:getHeight() or self.layoutFont ~= font then
+        self.footer:setText(text)
+        self:layout()
+    end
 end
 
 function ManifestWindow:createChildren()
@@ -120,8 +166,16 @@ function ManifestWindow:createChildren()
     self.locations.doDrawItem = function(lst, y, item, alt) return win:drawLocation(lst, y, item, alt) end
     self.locations.joypadParent = self
     self:addChild(self.locations)
-    self:layout()
+    self.footer = ISRichTextPanel:new(0, 0, 100, 1)
+    self.footer:initialise(); self.footer:instantiate()
+    self.footer.defaultFont = UIFont.Small
+    self.footer.marginLeft, self.footer.marginRight = 0, 0
+    self.footer.marginTop, self.footer.marginBottom = 0, 0
+    self.footer.background = false
+    self.footer.blockMouseWheel = true
+    self:addChild(self.footer)
     self:rebuild()
+    self:updateFooter()
 end
 
 -- Build the controller focus rows. Deferred (via configJoypadLater) so children are laid out and
@@ -258,7 +312,7 @@ function ManifestWindow:drawLocation(list, y, item)
     list:drawText(count, width - countWidth, y + 2, 1, 1, 1, 1, font)
     local position = tostring(c.x) .. ", " .. tostring(c.y) .. ", " .. tostring(c.z)
     local detail = position .. " | " .. (c.loaded and tr("Checked") or tr("LastKnown")) .. ": " .. ageText(c)
-    list:drawText(fit(font, detail, width - 28), 28, y + 20, .7, .7, .7, 1, font)
+    list:drawText(fit(font, detail, width - 28), 28, y + 4 + getTextManager():getFontHeight(font), .7, .7, .7, 1, font)
     return y + list.itemheight
 end
 
@@ -299,17 +353,13 @@ function ManifestWindow:prerender()
     local ft = string.lower(raw or "")
     if ft ~= self.filterText then self.filterText = ft; self:rebuild() end
     if self.configJoypadLater then self.configJoypadLater = false; self:configJoypad() end
-    if self.layoutWidth ~= self:getWidth() or self.layoutHeight ~= self:getHeight() then self:layout() end
+    self:updateFooter()
     self:updateLocations()
-    self:drawText(tr("Locations"), 10, self.locations:getY() - 20, .8, .8, .8, 1, UIFont.Small)
+    self:drawText(tr("Locations"), 10, self.locationsHeadingY, .8, .8, .8, 1, UIFont.Small)
     if #self.listBox.items == 0 then
         self:drawText(fit(UIFont.Small, tr(self.connectionStatus == "loading" and "Loading" or "Empty"), self:getWidth() - 32),
             16, self.listBox:getY() + 12, .7, .7, .7, 1, UIFont.Small)
     end
-    self:drawText(fit(UIFont.Small, tr("Totals", self.shownCount or 0, self.totalCount or 0), self:getWidth() - 20),
-        10, self:getHeight() - 42, .8, .8, .8, 1, UIFont.Small)
-    self:drawText(fit(UIFont.Small, tr(self.connectionStatus == "error" and "Error" or self.connectionStatus == "loading" and "Loading" or "Shared"), self:getWidth() - 20),
-        10, self:getHeight() - 24, .7, .8, .8, 1, UIFont.Small)
 end
 
 -- render() runs AFTER children draw, so the sort triangle paints on top of the header button
@@ -343,11 +393,12 @@ end
 local function toggleManifest(playerNum)
     if LootSorter._manifestWin then LootSorter._manifestWin:close(); return end
     playerNum = playerNum or 0
-    local w, h = 640, 600
+    local fh = getTextManager():getFontHeight(UIFont.Small)
+    local w, h = math.max(640, fh * 32), math.max(600, fh * 24)
     local core = getCore()
     w, h = math.min(w, core:getScreenWidth()), math.min(h, core:getScreenHeight())
     local win = ManifestWindow:new((core:getScreenWidth() - w) / 2, (core:getScreenHeight() - h) / 2, w, h)
-    win.resizable, win.minimumWidth, win.minimumHeight = true, 480, 440
+    win.resizable, win.minimumWidth, win.minimumHeight = true, math.min(480, core:getScreenWidth()), 440
     win.backgroundColor = {r = .025, g = .025, b = .025, a = .97}
     win.playerNum = playerNum
     win:initialise(); win:addToUIManager(); win:setVisible(true)

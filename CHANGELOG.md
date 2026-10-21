@@ -19,6 +19,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.200
+
+- **Warehouse:** Rechecking unchanged storage sends bounded sample timestamps instead of item lists and preserves the client aggregation, search and sort caches. Real contents, container state and appearance changes still refresh the list.
+
+- **Warehouse:** Keep the complete footer above the window's resize strip, wrap longer status text and size controls and item/location rows for the active font. Resizing reserves room for both scrolling lists.
+
 ### 0.1.199
 
 - **Changed:** Retargeted metal wheelbarrow pickup/setdown to the corrected wrist angle with a closed fist, preserving the grounded approach and accepted body/cart stance.

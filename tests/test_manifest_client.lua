@@ -128,4 +128,71 @@ Client.open(1,function()error('fixture broken UI listener')end)
 Client.open(0,function()healthy=healthy+1 end)
 print=originalPrint
 assert(#logged>0 and logged[1]:find('[PZSurvivorToolkit] Manifest callback:',1,true) and healthy>0)
-print('Manifest client: SP inline, MP pagination, selected player, polling, timeout and world lifecycle passed.')
+-- Real View aggregation/sorts and location references survive multi-page freshness updates.
+setup(true)
+local View = dofile(root .. 'PZSurvivorToolkit/ManifestView.lua')
+local described, rebuilt = 0, 0
+local view = View.new(function(entry)
+    described = described + 1; return entry.ft, '', {}
+end, {label=function(id)return id end})
+Client.open(0,function(payload,status)
+    if status == 'ready' then
+        if view:setPayload(payload) then rebuilt = rebuilt + 1 end
+        view:select('',nil,'count',false)
+    end
+end)
+reply(packets[#packets],'ok',{schema=2,revision=20,containers={
+    {id='a',sampledAt=100,entries={key={key='key',ft='Base.A',n=1}}},
+    {id='b',sampledAt=110,entries={key={key='key',ft='Base.A',n=2}}}}})
+local cached = Client.getState(0).payload
+local rows, order, origin = view.rows, view.sorts['count:desc'], cached.containers.a
+assert(rebuilt==1 and described==1)
+Client.refresh(0)
+reply(packets[#packets],'ok',{schema=2,revision=20,unchanged=true,cursor=77,samples={a=120}})
+assert(cached.containers.a.sampledAt==100 and Client.getState(0).status=='loading', 'partial freshness leaked')
+fire('OnTick')
+assert(packets[#packets].args.cursor==77)
+reply(packets[#packets],'ok',{schema=2,revision=20,unchanged=true,samples={b=130}})
+assert(Client.getState(0).payload==cached and cached.containers.a==origin)
+assert(origin.sampledAt==120 and cached.containers.b.sampledAt==130)
+assert(view.rows==rows and view.sorts['count:desc']==order and rebuilt==1 and described==1,
+    'freshness invalidated aggregation, localization or sort caches')
+local retainedOrigin
+for _, loc in ipairs(rows[1].locations) do if loc.id=='a' then retainedOrigin=loc.container end end
+assert(retainedOrigin==origin and retainedOrigin.sampledAt==120, 'visible location kept a stale sample')
+-- A mutation between freshness pages retries full data on the next tick without a false error.
+Client.refresh(0)
+reply(packets[#packets],'ok',{schema=2,revision=20,unchanged=true,cursor=88,samples={a=200}})
+fire('OnTick'); reply(packets[#packets],'stale')
+assert(Client.getState(0).status=='loading' and origin.sampledAt==120)
+fire('OnTick')
+assert(not packets[#packets].args.revision and not packets[#packets].args.cursor, 'stale freshness did not request full data')
+reply(packets[#packets],'ok',{schema=2,revision=21,containers={
+    {id='a',sampledAt=230,entries={key={key='key',ft='Base.A',n=5}}}}})
+assert(Client.getState(0).status=='ready' and Client.getState(0).payload~=cached)
+assert(rebuilt==2 and described==2 and view.rows[1].n==5 and #view.rows[1].locations==1)
+cached=Client.getState(0).payload
+-- Timeout and closure discard staged timestamps and preserve the last complete cached sample.
+Client.refresh(0)
+reply(packets[#packets],'ok',{schema=2,revision=21,unchanged=true,cursor=99,samples={a=300}})
+fire('OnTick'); clock=clock+16000; fire('OnTick')
+assert(Client.getState(0).status=='error' and cached.containers.a.sampledAt==230)
+Client.refresh(0)
+reply(packets[#packets],'ok',{schema=2,revision=21,unchanged=true,cursor=101,samples={a=400}})
+local count=#packets
+Client.close(0); fire('OnTick')
+assert(#packets==count and cached.containers.a.sampledAt==230)
+Client.open(0)
+reply(packets[#packets],'ok',{schema=2,revision=21,unchanged=true,samples={a=500}})
+assert(cached.containers.a.sampledAt==500 and Client.getState(0).payload==cached)
+Client.refresh(0)
+reply(packets[#packets],'ok',{schema=2,revision=999,unchanged=true,samples={a=600}})
+assert(Client.getState(0).status=='error' and cached.containers.a.sampledAt==500)
+Client.refresh(0)
+reply(packets[#packets],'ok',{schema=2,revision=21,unchanged=true,samples={a='bad'}})
+assert(Client.getState(0).status=='error' and cached.containers.a.sampledAt==500)
+setup(true)
+Client.open(0)
+reply(packets[#packets],'ok',{schema=2,revision=0,unchanged=true,samples={}})
+assert(Client.getState(0).status=='error' and not Client.getState(0).payload, 'freshness without cached data was accepted')
+print('Manifest client: SP/MP pagination, freshness cache identity, stale restart, timeout, close/reopen and world lifecycle passed.')

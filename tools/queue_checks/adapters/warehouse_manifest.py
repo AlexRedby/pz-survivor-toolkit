@@ -162,7 +162,7 @@ def verify(root, selection, catalog):
         return warehouse_persistence.verify(root, selection, catalog)
     root = Path(root)
     roles = ['client1', 'client2'] if selection['kind'] == 'mp' else ['client1']
-    issues, receipts, screenshots = [], {}, []
+    issues, receipts, idle_receipts, screenshots = [], {}, {}, []
     try:
         logs = {role: (root / (role + '-launch.log')).read_text(errors='replace') for role in roles}
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else logs['client1']
@@ -205,12 +205,15 @@ def verify(root, selection, catalog):
             if len(re.findall(re.escape('[STARTUP_TEST] SERVER_READY') + r'(?:\s|$)', authority)) != 1:
                 raise ValueError('Missing/duplicate menu Host readiness')
             sequences = {'server': ['PREPARED', 'AUTHORITY', 'MUTATED', 'AUTHORITY', 'TRANSFER_AUTHORITY', 'AUTHORITY', 'CLEANUP'],
-                         'client1': ['SETUP', 'MENU', 'SNAPSHOT', 'SHOT', 'SNAPSHOT', 'SHOT', 'TRANSFER', 'SNAPSHOT', 'SHOT', 'COMPLETE'],
-                         'client2': ['SETUP', 'MENU', 'SNAPSHOT', 'SHOT', 'SNAPSHOT', 'SHOT', 'SNAPSHOT', 'SHOT', 'COMPLETE']}
+                         'client1': ['SETUP', 'MENU', 'SNAPSHOT', 'SHOT', 'IDLE', 'SNAPSHOT', 'SHOT', 'TRANSFER', 'SNAPSHOT', 'SHOT', 'COMPLETE'],
+                         'client2': ['SETUP', 'MENU', 'SNAPSHOT', 'SHOT', 'IDLE', 'SNAPSHOT', 'SHOT', 'SNAPSHOT', 'SHOT', 'COMPLETE']}
         else:
-            sequences = {'client1': ['SETUP', 'PREPARED', 'MENU', 'SNAPSHOT', 'SHOT', 'AUTHORITY', 'MUTATED',
+            sequences = {'client1': ['SETUP', 'PREPARED', 'MENU', 'SNAPSHOT', 'SHOT', 'IDLE', 'AUTHORITY', 'MUTATED',
                                      'SNAPSHOT', 'SHOT', 'AUTHORITY', 'TRANSFER', 'TRANSFER_AUTHORITY',
                                      'SNAPSHOT', 'SHOT', 'AUTHORITY', 'CLEANUP', 'COMPLETE']}
+        for role in roles:
+            events = sequences[role]
+            sequences[role] = [part for event in events for part in (['LAYOUT', event] if event == 'SNAPSHOT' else [event])]
         for role, events in sequences.items():
             text = authority if role == 'server' else logs[role]
             if re.findall(re.escape(MARKER) + r'([A-Z_]+) ', text) != events:
@@ -222,6 +225,17 @@ def verify(root, selection, catalog):
                 raise ValueError(role + ' native language/feature setup differs')
             if not _exact(_one(text, 'MENU'), {'role': role, 'nativeCallback': True}):
                 raise ValueError(role + ' native Manifest menu callback absent')
+            layouts = _records(text, 'LAYOUT')
+            if len(layouts) != 3:
+                raise ValueError(role + ' default/minimum/enlarged layout evidence missing')
+            for layout, (width, height) in zip(layouts, ((640, 600), (480, 440), (800, 700))):
+                if (set(layout) != {'width', 'height', 'fontHeight', 'footerY', 'footerHeight', 'glyphBottom', 'resizeTop', 'lines'}
+                        or any(not _positive(value) for value in layout.values())
+                        or layout['width'] != width or layout['height'] != height or layout['lines'] < 2
+                        or layout['glyphBottom'] > layout['footerHeight']
+                        or layout['footerY'] + layout['footerHeight'] > layout['resizeTop'] - 8
+                        or layout['resizeTop'] >= layout['height']):
+                    raise ValueError(role + ' native footer is clipped or overlaps the resize strip')
             values = _records(text, 'SNAPSHOT')
             if len(values) != 3:
                 raise ValueError(role + ' snapshot phases missing or duplicated')
@@ -241,8 +255,26 @@ def verify(root, selection, catalog):
                 previous = value['revision']
             if len({value['defaultName'] for value in values}) != 1:
                 raise ValueError(role + ' localized default label changed within one client')
+            idle = _one(text, 'IDLE')
+            identity_keys = ('payloadSame', 'containersSame', 'viewSame', 'rowsSame',
+                             'listItemsSame', 'locationItemsSame', 'sortsSame')
+            if (set(idle) != {'role', 'revision', 'polls', 'pages', 'itemEntries', 'initialSamples', 'samples', *identity_keys}
+                    or idle['role'] != role or type(idle['revision']) is not int or idle['revision'] != values[0]['revision']
+                    or not _exact(idle['polls'], 2) or type(idle['pages']) is not int or idle['pages'] < idle['polls']
+                    or not _exact(idle['itemEntries'], 0) or not _exact(idle['initialSamples'], values[0]['samples'])
+                    or type(idle['samples']) is not list or len(idle['samples']) != 2
+                    or any(idle[key] is not True for key in identity_keys)):
+                raise ValueError(role + ' exact idle revision/pagination/cache evidence differs')
+            previous_samples = idle['initialSamples']
+            for samples in idle['samples']:
+                if (type(samples) is not list or len(samples) != 2
+                        or any(not _positive(stamp) or stamp <= previous_samples[i] or stamp > mutation['changedAt']
+                               for i, stamp in enumerate(samples))):
+                    raise ValueError(role + ' idle samples did not advance before mutation')
+                previous_samples = samples
             names.append(values[0]['defaultName'])
             receipts[role] = values
+            idle_receipts[role] = idle
             if not _exact(_records(text, 'SHOT'), [dict(role=role, phase=phase) for phase in PHASES]):
                 raise ValueError(role + ' screenshot lifecycle differs')
             screenshots += [_shot(root, role, phase) for phase in PHASES]
@@ -256,7 +288,7 @@ def verify(root, selection, catalog):
         issues.append(str(error))
     return {'issues': issues,
             'outcomes': [dict(actor=role, case='snapshot', status='failed' if issues else 'passed', reason='; '.join(issues)) for role in roles],
-            'evidence': {'snapshots': receipts, 'screenshots': screenshots,
+            'evidence': {'snapshots': receipts, 'idle': idle_receipts, 'screenshots': screenshots,
                          'limits': ['Programmatic native menu/transfer, no physical input or WAN claim.',
                                     'Search instrumentation covers synchronous UI world/RPC entrypoints.',
                                     'Screenshots require visual inspection; existence does not certify layout.']}}

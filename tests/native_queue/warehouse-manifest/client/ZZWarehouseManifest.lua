@@ -6,6 +6,7 @@ local JSON = require 'QueueHealthEvents'
 local started, initialized, done, phase, since, nextAt = false, false, false, 'prepare', 0, 0
 local role, packet, state, boxes, win, initialRevision, changedRevision, finished, trace
 local transferGo, transferAction, transferProgress, transferSent
+local idle
 local function emit(event, value) print('[WAREHOUSE_MANIFEST] ' .. event .. ' ' .. JSON.encode(value)) end
 local function standard(event, extra)
  local value = extra or {}; value.event = event; value.suite = 'warehouse-manifest'; value.actor = role
@@ -89,6 +90,25 @@ local function observed(which)
  result.appearance, result.locations, result.nativeItems = true, true, true
  return result
 end
+local function checkLayout()
+ local footer, fh = assert(win.footer, 'Warehouse footer absent'), getTextManager():getFontHeight(UIFont.Small)
+ local bottom = footer:getY() + footer:getHeight()
+ assert(bottom <= win:getHeight() - win:resizeWidgetHeight() - 8, 'Footer overlaps native resize strip')
+ assert(win.locations:getY() + win.locations:getHeight() < footer:getY(), 'Locations overlap footer')
+ assert(win.listBox:getHeight() >= win.listBox.itemheight and win.locations:getHeight() >= win.locations.itemheight,
+  'Resized warehouse loses a scrollable list')
+ local lines, maxBottom = 0, 0
+ for i, text in ipairs(footer.lines) do
+  if text:find('%S') then
+   lines = lines + 1
+   maxBottom = math.max(maxBottom, footer.lineY[i] + getTextManager():getFontHeight(footer.fonts[i] or UIFont.Small))
+  end
+ end
+ assert(lines >= 2 and maxBottom <= footer:getHeight(), 'Native wrapped footer clips its last line')
+ emit('LAYOUT', {width = win:getWidth(), height = win:getHeight(), fontHeight = fh,
+  footerY = footer:getY(), footerHeight = footer:getHeight(), glyphBottom = maxBottom,
+  resizeTop = win:getHeight() - win:resizeWidgetHeight(), lines = lines})
+end
 local function capture(which, result)
  assert(trace.color and trace.text[F.appearance.name] and trace.text['Warehouse fixture B'], 'Native location appearance never rendered')
  for _, point in ipairs(packet.boxes) do
@@ -96,10 +116,97 @@ local function capture(which, result)
   for text in pairs(trace.text) do if text:find(position, 1, true) then drawn = true end end
   assert(drawn, 'Native location coordinates never rendered')
  end
+ checkLayout()
  result.rendered, result.searchLocal = true, searchIsLocal()
  emit('SNAPSHOT', result)
  getCore():TakeFullScreenshot('warehouse-manifest-' .. which .. '.png')
  emit('SHOT', {role = role, phase = which})
+end
+local function keepArray(value)
+ local refs = {}; for i, item in ipairs(value) do refs[i] = item end
+ return {value = value, refs = refs}
+end
+local function sameArray(value, saved, label)
+ assert(value == saved.value and #value == #saved.refs, 'Idle replaced ' .. label)
+ for i, item in ipairs(value) do assert(item == saved.refs[i], 'Idle rebuilt ' .. label) end
+end
+local function stopIdle()
+ if idle and LootSorter.callServer == idle.wrapper then LootSorter.callServer = idle.rpc end
+end
+local function checkIdleIdentity()
+ local payload = Client.getState(0).payload
+ assert(payload == idle.payload and payload.revision == idle.revision, 'Idle replaced payload/revision')
+ assert(payload.containers == idle.containers, 'Idle replaced container map')
+ for id, record in pairs(payload.containers) do assert(record == idle.records[id], 'Idle replaced container') end
+ for id in pairs(idle.records) do assert(payload.containers[id], 'Idle removed container') end
+ assert(win.view == idle.view and win.view.payload == payload, 'Idle replaced View')
+ sameArray(win.view.rows, idle.rows, 'View rows')
+ sameArray(win.listBox.items, idle.items, 'item list')
+ sameArray(win.locations.items, idle.locations, 'location list')
+ assert(win.view.sorts == idle.sorts, 'Idle replaced sort cache')
+ for key, saved in pairs(idle.orders) do sameArray(win.view.sorts[key], saved, 'sort order') end
+ for key in pairs(win.view.sorts) do assert(idle.orders[key], 'Idle rebuilt sort cache') end
+end
+local function startIdle()
+ local payload = assert(Client.getState(0).payload)
+ assert(Client.getState(0).status == 'ready', 'Idle started before initial response completed')
+ idle = {payload = payload, containers = payload.containers, revision = payload.revision, records = {},
+  view = win.view, rows = keepArray(win.view.rows), items = keepArray(win.listBox.items),
+  locations = keepArray(win.locations.items), sorts = win.view.sorts, orders = {},
+  initialSamples = {}, lastSamples = {}, samples = {}, pageSamples = {}, pages = 0, polls = 0, itemEntries = 0,
+  rpc = LootSorter.callServer}
+ for id, record in pairs(payload.containers) do idle.records[id] = record end
+ local warmed = false
+ for key, order in pairs(win.view.sorts) do idle.orders[key] = keepArray(order); warmed = true end
+ assert(warmed, 'Idle has no warmed sort cache')
+ for i, point in ipairs(packet.boxes) do
+  local stamp = assert(payload.containers[point.id].sampledAt)
+  idle.initialSamples[i], idle.lastSamples[i] = stamp, stamp
+ end
+ idle.wrapper = function(name, args, onDone, selected)
+  if name ~= 'manifestPage' then return idle.rpc(name, args, onDone, selected) end
+  return idle.rpc(name, args, function(verdict, detail)
+   -- Observe the real reply and let the normal client/UI callbacks apply it before checking identity.
+   local ok, problem = pcall(function()
+    assert(verdict == 'ok' and type(detail) == 'table' and detail.unchanged == true
+     and detail.revision == idle.revision and type(detail.samples) == 'table', 'Idle received a full/error response')
+    idle.pages = idle.pages + 1
+    for _, part in ipairs(detail.containers or {}) do
+     for _ in pairs(part.entries or {}) do idle.itemEntries = idle.itemEntries + 1 end
+    end
+    assert(idle.itemEntries == 0, 'Idle downloaded item entries')
+    for id, stamp in pairs(detail.samples) do idle.pageSamples[id] = stamp end
+   end)
+   local applied, failure = pcall(onDone, verdict, detail)
+   if ok and applied then
+    ok, problem = pcall(function()
+     checkIdleIdentity()
+     if detail.cursor then return end
+     assert(Client.getState(0).status == 'ready', 'Idle final reply did not complete the poll')
+     local samples = {}
+     for i, point in ipairs(packet.boxes) do
+      local stamp = payload.containers[point.id].sampledAt
+      assert(stamp == idle.pageSamples[point.id] and stamp > idle.lastSamples[i], 'Idle sample age did not advance')
+      samples[i], idle.lastSamples[i] = stamp, stamp
+     end
+     idle.polls = idle.polls + 1; idle.samples[idle.polls], idle.pageSamples = samples, {}
+     if idle.polls == 2 then idle.ready = true; stopIdle() end
+    end)
+   end
+   if not ok or not applied then idle.error = tostring(not applied and failure or problem); stopIdle() end
+  end, selected)
+ end
+ LootSorter.callServer = idle.wrapper
+end
+local function finishIdle()
+ assert(not idle.error, idle.error)
+ if not idle.ready then return false end
+ checkIdleIdentity(); stopIdle()
+ emit('IDLE', {role = role, revision = idle.revision, polls = idle.polls, pages = idle.pages,
+  itemEntries = idle.itemEntries, initialSamples = idle.initialSamples, samples = idle.samples,
+  payloadSame = true, containersSame = true, viewSame = true, rowsSame = true,
+  listItemsSame = true, locationItemsSame = true, sortsSame = true})
+ return true
 end
 Events.OnServerCommand.Add(function(module, command, args)
  if module ~= F.module then return end
@@ -150,10 +257,16 @@ local function tick()
   local result = observed(phase); if not result then return end
   if phase == 'initial' then initialRevision = result.revision
   elseif phase == 'changed' then changedRevision = result.revision end
+  if phase == 'changed' then win:setWidth(win.minimumWidth); win:setHeight(win.minimumHeight)
+  elseif phase == 'transferred' then win:setWidth(800); win:setHeight(700) end
+  win:onResize(); win:updateFooter()
   trace = {text = {}, color = false}; phase = phase .. '-shot'; nextAt = getTimestampMs() + 1200
  elseif phase == 'initial-shot' then
   local result = assert(observed('initial'), 'Initial snapshot changed before native capture')
   capture('initial', result)
+  startIdle(); phase = 'idle'
+ elseif phase == 'idle' then
+  if not finishIdle() then return end
   if isClient() then sendClientCommand(F.module, 'InitialSeen', {})
   else
    emit('AUTHORITY', assert(F.native(boxes, packet, 'initial')))
@@ -207,5 +320,5 @@ Events.OnTick.Add(function()
   assert(getTimestampMs() - since < 180000, 'Timeout phase=' .. phase)
   if initialize() then tick() end
  end)
- if not ok then done = true; print('[WAREHOUSE_MANIFEST] FAIL ' .. tostring(role) .. ' ' .. tostring(problem)) end
+ if not ok then stopIdle(); done = true; print('[WAREHOUSE_MANIFEST] FAIL ' .. tostring(role) .. ' ' .. tostring(problem)) end
 end)

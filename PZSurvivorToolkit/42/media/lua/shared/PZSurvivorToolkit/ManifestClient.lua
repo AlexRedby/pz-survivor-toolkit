@@ -39,16 +39,45 @@ local function sendPage()
     LootSorter.callServer("manifestPage", args, function(verdict, detail)
         if epoch ~= generation or pending ~= request then return end
         inFlight = false
+        if verdict == "stale" and request.samples then
+            -- Content changed while freshness pages were in flight. Keep the visible cache and
+            -- request full data on the next tick, without showing a spurious connection error.
+            pending = {}
+            return
+        end
         if verdict ~= "ok" or type(detail) ~= "table" or detail.schema ~= Model.SCHEMA then
             pending = nil
             finish("error", verdict or "timeout")
             return
         end
         if detail.unchanged then
-            pending = nil
-            finish("ready")
+            if not state.payload or request.payload or detail.revision ~= request.revision
+                or detail.revision ~= state.payload.revision then
+                pending = nil; finish("error", "invalidFreshness"); return
+            end
+            if detail.samples ~= nil and type(detail.samples) ~= "table" then
+                pending = nil; finish("error", "invalidFreshness"); return
+            end
+            request.samples = request.samples or {}
+            for id, sampledAt in pairs(detail.samples or {}) do
+                if type(id) ~= "string" or type(sampledAt) ~= "number" or sampledAt ~= sampledAt
+                    or sampledAt < 0 or sampledAt == math.huge then
+                    pending = nil; finish("error", "invalidFreshness"); return
+                end
+                request.samples[id] = sampledAt
+            end
+            request.cursor = detail.cursor
+            if not detail.cursor then
+                for id, sampledAt in pairs(request.samples) do
+                    local record = state.payload.containers[id]
+                    if record then record.sampledAt = sampledAt end
+                end
+                pending = nil
+                finish("ready")
+            end
             return
         end
+        if request.samples then pending = nil; finish("error", "mixedFreshness"); return end
         request.payload = request.payload or {schema = Model.SCHEMA, revision = detail.revision, containers = {}}
         for _, part in ipairs(detail.containers or {}) do
             local record = request.payload.containers[part.id]

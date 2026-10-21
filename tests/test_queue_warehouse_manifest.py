@@ -44,6 +44,12 @@ class WarehouseManifestTests(unittest.TestCase):
         return dict(phase=adapter.PHASES[index], counts=adapter.COUNTS[index], ids=self.prepared['ids'],
                     addedIds=[] if index == 0 else self.mutated['addedIds'])
 
+    def idle(self, role):
+        return dict(role=role, revision=1, polls=2, pages=2, itemEntries=0,
+                    initialSamples=[1000, 1000], samples=[[1200, 1200], [1400, 1400]],
+                    payloadSame=True, containersSame=True, viewSame=True, rowsSame=True,
+                    listItemsSame=True, locationItemsSame=True, sortsSame=True)
+
     def write(self):
         roles = ['client1', 'client2'] if self.selection['kind'] == 'mp' else ['client1']
         for role in roles:
@@ -57,7 +63,12 @@ class WarehouseManifestTests(unittest.TestCase):
                     rows.append(('TRANSFER', dict(self.transfer, progress=True)))
                     if self.selection['kind'] == 'sp':
                         rows.append(('TRANSFER_AUTHORITY', dict(self.transfer, unique=True)))
+                width, height = ((640, 600), (480, 440), (800, 700))[index]
+                rows.append(('LAYOUT', dict(width=width, height=height, fontHeight=16, footerY=height - 53,
+                                           footerHeight=32, glyphBottom=32, resizeTop=height - 13, lines=2)))
                 rows += [('SNAPSHOT', self.snapshot(role, phase, index)), ('SHOT', dict(role=role, phase=phase))]
+                if index == 0:
+                    rows.append(('IDLE', self.idle(role)))
                 if self.selection['kind'] == 'sp':
                     rows.append(('AUTHORITY', self.authority(index)))
                     if index == 0:
@@ -127,6 +138,16 @@ class WarehouseManifestTests(unittest.TestCase):
         self.assertEqual(self.result()['issues'], [])
         self.assertEqual(len(self.result()['evidence']['screenshots']), 3)
 
+    def test_footer_clipping_and_missing_layout_evidence_fail(self):
+        self.write(); original = copy.deepcopy(self.rows)
+        for key, wrong in [('glyphBottom', 33), ('footerY', 558), ('footerHeight', 60),
+                           ('resizeTop', 550), ('lines', 1), ('fontHeight', True)]:
+            self.rows = copy.deepcopy(original)
+            row = next(value for name, value in self.rows['client1'] if name == 'LAYOUT')
+            row[key] = wrong; self.flush()
+            with self.subTest(key=key):
+                self.assertTrue(self.result()['issues'])
+
     def test_missing_duplicate_reordered_events_and_failure_markers_are_rejected(self):
         self.write(); original = copy.deepcopy(self.rows)
         for role in original:
@@ -167,6 +188,25 @@ class WarehouseManifestTests(unittest.TestCase):
                 value['defaultName'] = 'Nails'
         self.flush(); self.assertTrue(self.result()['issues'])
 
+    def test_idle_requires_two_fresh_polls_without_content_or_cache_invalidation(self):
+        self.write(); original = copy.deepcopy(self.rows)
+        self.assertEqual(set(self.result()['evidence']['idle']), {'client1', 'client2'})
+        for key, wrong in [('role', 'client1'), ('revision', True), ('revision', 2), ('polls', True), ('polls', 1),
+                           ('pages', True), ('pages', 1), ('itemEntries', False), ('itemEntries', 1),
+                           ('initialSamples', [999, 1000]), ('samples', [[1200, 1200]]),
+                           ('samples', [[1000, 1200], [1400, 1400]]),
+                           ('samples', [[1200, 1200], [1400, 1200]]),
+                           ('samples', [[1200, 1200], [2001, 1400]]),
+                           ('samples', [[True, 1200], [1400, 1400]]),
+                           *[(key, False) for key in ('payloadSame', 'containersSame', 'viewSame', 'rowsSame',
+                                                     'listItemsSame', 'locationItemsSame', 'sortsSame')],
+                           ('extra', True)]:
+            self.rows = copy.deepcopy(original)
+            row = next(value for name, value in self.rows['client2'] if name == 'IDLE')
+            row[key] = wrong; self.flush()
+            with self.subTest(key=key, wrong=wrong):
+                self.assertTrue(self.result()['issues'])
+
     def test_missing_server_native_transfer_endpoint_or_wrong_custom_id_fail(self):
         self.write(); original = copy.deepcopy(self.rows)
         for event, changes in [('TRANSFER_AUTHORITY', {'destination': 'client2'}), ('MUTATED', {'customId': 999}),
@@ -194,7 +234,7 @@ class WarehouseManifestTests(unittest.TestCase):
 
 @unittest.skipIf(LuaRuntime is None, 'Lupa is required to execute the native fixture lifecycle')
 class WarehouseManifestLifecycleTests(unittest.TestCase):
-    def fixture(self):
+    def fixture(self, expose_idle=False):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute(r"""
 now, actor, online, live, sends, gods, ghosts = 0, nil, -1, nil, 0, 0, 0
@@ -214,20 +254,92 @@ isClient = function() return true end
 sendClientCommand = function(module, command) assert(command == 'Prepare'); sends = sends + 1 end
 PZSurvivorToolkit = {Settings = {actionQueue = function() return true end}}
 LootSorter = {}
+manifestClient = {}
 Translator = {getLanguage = function() return {name = function() return 'EN' end} end}
 print = function(message) logs[#logs + 1] = message end
 require = function(name)
  if name == 'QueueTestSelection' then return {kind = 'mp', mode = 'toolkit', cases = {'snapshot'}} end
  if name == 'WarehouseManifestFixture' then return {module = 'WarehouseManifestTest'} end
- if name == 'PZSurvivorToolkit/ManifestClient' then return {} end
+ if name == 'PZSurvivorToolkit/ManifestClient' then return manifestClient end
  if name == 'QueueHealthEvents' then return {encode = function(value)
   receipts[#receipts + 1] = value; return 'test-json'
  end} end
  error('Unexpected fixture dependency: ' .. name)
 end
 """)
-        lua.execute((ROOT / 'tests/native_queue/warehouse-manifest/client/ZZWarehouseManifest.lua').read_text())
+        source = (ROOT / 'tests/native_queue/warehouse-manifest/client/ZZWarehouseManifest.lua').read_text()
+        if expose_idle:
+            # Exercise the fixture's actual local observer without opening game UI or changing its exports.
+            source += """
+return {start = function(window, target) win = window; packet = target; role = 'client1'; startIdle() end,
+ finish = finishIdle, stop = stopIdle}
+"""
+            lua.globals().idleHarness = lua.execute(source)
+        else:
+            lua.execute(source)
         return lua
+
+    def idle_fixture(self):
+        lua = self.fixture(expose_idle=True)
+        lua.execute("""
+record = {sampledAt = 10}
+payload = {revision = 7, containers = {box = record}}
+clientState = {payload = payload, status = 'ready'}
+manifestClient.getState = function() return clientState end
+row = {n = 3}
+window = {view = {payload = payload, rows = {row}, sorts = {count = {row}}},
+ listBox = {items = {{item = row}}}, locations = {items = {{item = {container = record}}}}}
+rpcCallbacks = {}
+originalRpc = function(name, args, callback) rpcCallbacks[#rpcCallbacks + 1] = callback end
+LootSorter.callServer = originalRpc
+idleHarness.start(window, {boxes = {{id = 'box'}}})
+function requestIdle()
+ LootSorter.callServer('manifestPage', {revision = 7}, function(verdict, detail)
+  assert(verdict == 'ok')
+  for id, stamp in pairs(detail.samples or {}) do payload.containers[id].sampledAt = stamp end
+ end)
+end
+function replyIdle(stamp)
+ local callback = table.remove(rpcCallbacks, 1)
+ callback('ok', {revision = 7, unchanged = true, samples = {box = stamp}})
+end
+""")
+        return lua
+
+    def test_idle_observer_counts_real_completed_replies_then_restores_rpc(self):
+        lua = self.idle_fixture()
+        lua.execute('requestIdle()')
+        self.assertFalse(lua.eval('idleHarness.finish()'))
+        lua.execute('replyIdle(20)')
+        self.assertFalse(lua.eval('idleHarness.finish()'))
+        self.assertFalse(lua.eval('LootSorter.callServer == originalRpc'))
+        lua.execute('requestIdle(); replyIdle(30)')
+        self.assertTrue(lua.eval('LootSorter.callServer == originalRpc'))
+        self.assertTrue(lua.eval('idleHarness.finish()'))
+        self.assertEqual(lua.eval('receipts[1].polls'), 2)
+        self.assertEqual(lua.eval('receipts[1].pages'), 2)
+        self.assertEqual(lua.eval('receipts[1].itemEntries'), 0)
+        self.assertEqual(lua.eval('receipts[1].samples[2][1]'), 30)
+
+    def test_idle_observer_detects_rebuild_and_restores_rpc_on_error(self):
+        lua = self.idle_fixture()
+        lua.execute('requestIdle(); window.listBox.items = {{item = row}}; replyIdle(20)')
+        self.assertTrue(lua.eval('LootSorter.callServer == originalRpc'))
+        ok, problem = lua.eval('pcall(idleHarness.finish)')
+        self.assertFalse(ok)
+        self.assertIn('Idle replaced item list', problem)
+
+    def test_idle_observer_rejects_stale_timestamp_and_item_entry_download(self):
+        for response, message in (("{revision=7,unchanged=true,samples={box=10}}", 'Idle sample age did not advance'),
+                                  ("{revision=7,unchanged=true,samples={box=20},containers={{entries={nail={n=3}}}}}",
+                                   'Idle downloaded item entries')):
+            with self.subTest(response=response):
+                lua = self.idle_fixture()
+                lua.execute("requestIdle(); table.remove(rpcCallbacks, 1)('ok', " + response + ")")
+                self.assertTrue(lua.eval('LootSorter.callServer == originalRpc'))
+                ok, problem = lua.eval('pcall(idleHarness.finish)')
+                self.assertFalse(ok)
+                self.assertIn(message, problem)
 
     def test_on_game_start_waits_for_native_actor_then_sets_up_once_before_preparing(self):
         lua = self.fixture()

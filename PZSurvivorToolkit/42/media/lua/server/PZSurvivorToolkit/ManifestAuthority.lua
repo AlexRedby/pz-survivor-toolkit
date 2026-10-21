@@ -12,7 +12,19 @@ function Authority.resetRuntime()
 end
 Authority.resetRuntime()
 local function changed(store) store.revision = store.revision + 1 end
-local function add(store, record)
+local function sameFields(a, b, fields)
+    if not a or not b then return a == b end
+    for _, field in ipairs(fields) do if a[field] ~= b[field] then return false end end
+    return true
+end
+local HEADER_FIELDS = {"id", "key", "x", "y", "z", "object", "ci", "kind", "name", "loaded", "legacy"}
+local ICON_FIELDS, COLOR_FIELDS = {"kind", "value"}, {"r", "g", "b", "a"}
+local ENTRY_FIELDS = {"key", "ft", "name", "cat", "mediaId", "mediaIndex", "n"}
+local function sameHeader(a, b)
+    return sameFields(a, b, HEADER_FIELDS) and sameFields(a.icon, b.icon, ICON_FIELDS)
+        and sameFields(a.color, b.color, COLOR_FIELDS)
+end
+local function add(store, record, unchanged)
     if not store.containers[record.id] then store.liveCount = store.liveCount + 1 end
     if not store.positions[record.id] then
         store.order[#store.order + 1] = record.id
@@ -21,7 +33,7 @@ local function add(store, record)
     store.byCoord[record.key] = store.byCoord[record.key] or {}
     store.byCoord[record.key][record.id] = true
     store.containers[record.id] = record
-    changed(store)
+    if not unchanged then changed(store) end
 end
 local function remove(store, id)
     local old = store.containers[id]
@@ -57,7 +69,7 @@ end
 local function beginTile(coord, sq)
     runtime.tile = {key = coord, square = sq, object = 0, ci = 0, found = {}}
 end
-local function scanContainer(tile, obj, container)
+local function scanContainer(store, tile, obj, container)
     local appearance = Appearance.read(obj, tile.ci, nil)
     local record = {id = tile.key .. "/" .. tile.object .. "/" .. tile.ci,
         key = tile.key, x = tile.square:getX(), y = tile.square:getY(), z = tile.square:getZ(),
@@ -67,7 +79,8 @@ local function scanContainer(tile, obj, container)
         color = appearance.color and {r = appearance.color.r, g = appearance.color.g,
             b = appearance.color.b, a = appearance.color.a},
         loaded = true, sampledAt = now(), entries = {}, itemOrder = {}}
-    tile.scan = {container = container, object = obj, items = container:getItems(), index = 0, record = record}
+    tile.scan = {container = container, object = obj, items = container:getItems(), index = 0,
+        record = record, previous = store.containers[record.id], matches = 0}
     tile.scan.size = tile.scan.items:size()
 end
 local function cleanupTile(store, tile)
@@ -165,16 +178,35 @@ function Authority.step(itemBudget, nodeBudget)
                     scan.index, used = scan.index + 1, used + 1
                     if entry then
                         local old = scan.record.entries[entry.key]
-                        if old then old.n = old.n + 1
+                        local previous = scan.previous and scan.previous.entries[entry.key]
+                        -- matches counts fully equal groups in the partial aggregate. A later item
+                        -- may take a group past its old count, so remove that match before adding.
+                        if old then
+                            if previous and old.n == previous.n and sameFields(old, previous, ENTRY_FIELDS) then
+                                scan.matches = scan.matches - 1
+                            end
+                            old.n = old.n + 1
                         else
+                            old = entry
                             scan.record.entries[entry.key] = entry
                             scan.record.itemOrder[#scan.record.itemOrder + 1] = entry.key
+                        end
+                        if previous and old.n == previous.n and sameFields(old, previous, ENTRY_FIELDS) then
+                            scan.matches = scan.matches + 1
                         end
                     end
                 else
                     if Discovery.designated(scan.object, tile.ci) then
                         tile.found[scan.record.id] = true
-                        add(store, scan.record)
+                        -- Compare while sampling, rather than traversing a large aggregate a second
+                        -- time at completion. Cardinality also detects missing and additional keys.
+                        local unchanged = scan.previous and scan.matches == #scan.record.itemOrder
+                            and #scan.previous.itemOrder == #scan.record.itemOrder
+                            and sameHeader(scan.previous, scan.record)
+                        if unchanged then
+                            scan.record.entries, scan.record.itemOrder = scan.previous.entries, scan.previous.itemOrder
+                        end
+                        add(store, scan.record, unchanged)
                     end
                     tile.scan, tile.ci = nil, tile.ci + 1
                 end
@@ -187,7 +219,7 @@ function Authority.step(itemBudget, nodeBudget)
                     if tile.ci >= count then tile.object, tile.ci = tile.object + 1, 0
                     else
                         local container = obj:getContainerByIndex(tile.ci)
-                        if container and Discovery.designated(obj, tile.ci) then scanContainer(tile, obj, container)
+                        if container and Discovery.designated(obj, tile.ci) then scanContainer(store, tile, obj, container)
                         else tile.ci = tile.ci + 1 end
                     end
                 end
@@ -240,13 +272,22 @@ function Authority.requestPage(player, args)
     if args.cursor ~= nil then
         if not session or args.cursor ~= session.token or timestamp > session.expires then return "stale" end
     else
-        if args.revision == store.revision then return "ok", {schema = Model.SCHEMA, revision = store.revision, unchanged = true} end
         runtime.serial = runtime.serial + 1
-        session = {token = runtime.serial, revision = store.revision, index = 1, item = 1, limit = #store.order, order = store.order, legacySeen = {}}
+        session = {token = runtime.serial, revision = store.revision, index = 1, item = 1,
+            unchanged = args.revision == store.revision,
+            limit = #store.order, order = store.order, legacySeen = {}}
         runtime.sessions[player] = session
     end
+    -- Freshness belongs to exactly the cached content revision. Do not date old counts with a
+    -- newer sample after an intervening mutation; the client will restart as a full refresh.
+    if session.unchanged and store.revision ~= session.revision then
+        runtime.sessions[player] = nil
+        return "stale"
+    end
     session.expires = timestamp + 15000
-    local page = {schema = Model.SCHEMA, revision = session.revision, containers = {}}
+    local page = {schema = Model.SCHEMA, revision = session.revision}
+    if session.unchanged then page.unchanged, page.samples = true, {}
+    else page.containers = {} end
     local rows, count, bytes, steps = 0, 0, 0, 0
     while session.index <= session.limit and rows < Model.PAGE_ROWS
         and count < Model.PAGE_CONTAINERS and bytes < Model.PAGE_BYTES and steps < 128 do
@@ -258,6 +299,9 @@ function Authority.requestPage(player, args)
             elseif session.legacySeen[record.key] or store.containers["legacy:" .. record.key] then record = nil end
         end
         if not record then session.index = session.index + 1
+        elseif session.unchanged then
+            page.samples[record.id] = record.sampledAt
+            count, bytes, session.index = count + 1, bytes + #record.id + 32, session.index + 1
         else
             session.record = record -- pin this immutable sample through all of its pages
             local header = Model.header(record)

@@ -166,6 +166,82 @@ assert(total==231 and mediaPassed,'paged ledger lost container/legacy/media reco
 assert(Authority.requestPage(player,{revision=store.revision})=='ok')
 local _,unchanged=Authority.requestPage(player,{revision=store.revision})
 assert(unchanged.unchanged and not unchanged.containers)
+-- Rechecking unchanged contents advances real sample time without changing the data revision.
+local revision = store.revision
+local sampled = store.containers[first.id]
+settle(150)
+assert(store.revision == revision, 'unchanged sampling invalidated the data revision')
+local resampled = store.containers[first.id]
+assert(resampled ~= sampled and resampled.sampledAt > sampled.sampledAt, 'authority must replace immutable samples')
+assert(resampled.entries == sampled.entries and resampled.itemOrder == sampled.itemOrder,
+    'equal samples should reuse the immutable contents and original ordering')
+-- Iterator order is not a change in inventory data.
+items.values[1],items.values[2] = items.values[2],items.values[1]
+settle(150)
+assert(store.revision == revision, 'inventory iteration order changed the data revision')
+items.values[1],items.values[2] = items.values[2],items.values[1]
+settle(150)
+assert(store.revision == revision)
+-- A group can temporarily equal the old count and then exceed it within the same sample.
+local secondItems = c2:getItems().values
+local secondKey = Model.identity('Base.A','Named tool','Food')
+secondItems[#secondItems+1] = secondItems[1]
+settle(150)
+assert(store.revision > revision and store.containers['1,0,0/0/1'].entries[secondKey].n == 2,
+    'temporary count match hid a later duplicate item')
+assert(store.containers['1,0,0/0/0'].entries == resampled.entries, 'unrelated contents were rebuilt')
+secondItems[#secondItems] = nil
+settle(150)
+assert(store.containers['1,0,0/0/1'].entries[secondKey].n == 1, 'decreased count was not published')
+revision = store.revision
+-- Freshness traverses bounded container pages, carries no items and uses authenticated cursors.
+local oldContainers = Model.PAGE_CONTAINERS
+Model.PAGE_CONTAINERS = 1
+local freshPlayer, freshness = {}, {}
+local _, fresh = Authority.requestPage(freshPlayer, {revision=revision})
+local pages = 0
+while fresh do
+    assert(fresh.unchanged and fresh.revision == revision and not fresh.containers, 'idle poll resent items')
+    local count = 0
+    for id, timestamp in pairs(fresh.samples) do
+        count = count + 1
+        assert(not freshness[id] and timestamp == store.containers[id].sampledAt)
+        freshness[id] = timestamp
+    end
+    assert(count <= Model.PAGE_CONTAINERS, 'freshness exceeded its container budget')
+    pages = pages + 1
+    if fresh.cursor then
+        assert(Authority.requestPage(other,{cursor=fresh.cursor}) == 'stale')
+        _,fresh = Authority.requestPage(freshPlayer,{cursor=fresh.cursor})
+    else fresh=nil end
+end
+assert(pages == 3 and freshness[first.id] and freshness['legacy:99,0,0'] == 0)
+-- A metadata mutation invalidates an in-flight freshness stream, never dates stale counts.
+local _, interrupted = Authority.requestPage(freshPlayer, {revision=revision})
+assert(interrupted.cursor)
+obj.appearance.name = 'Renamed pantry'
+settle(150)
+assert(store.revision > revision and store.containers[first.id].name == 'Renamed pantry')
+assert(Authority.requestPage(freshPlayer,{cursor=interrupted.cursor}) == 'stale')
+assert(sampled.name == 'Pantry', 'published sample was changed in place')
+obj.appearance.name = 'Pantry'
+settle(150)
+Model.PAGE_CONTAINERS = oldContainers
+-- Full item pages keep one immutable sample through subsequent unchanged resampling.
+Model.PAGE_ROWS = 1
+local pinnedPlayer, pinned = {}, nil
+local _, part = Authority.requestPage(pinnedPlayer,{})
+while part do
+    for _, record in ipairs(part.containers) do if record.id == first.id then pinned = record end end
+    if pinned then break end
+    _,part = Authority.requestPage(pinnedPlayer,{cursor=assert(part.cursor)})
+end
+assert(pinned and part.cursor)
+settle(150)
+local _, continuation = Authority.requestPage(pinnedPlayer,{cursor=part.cursor})
+assert(continuation.containers[1].id == first.id and continuation.containers[1].sampledAt == pinned.sampledAt,
+    'full pagination changed its pinned sample after a freshness update')
+Model.PAGE_ROWS = oldRows
 -- Any loaded mutation (consumption/replacement, not just transfer hooks) eventually reconciles.
 items.values[1]=item('Base.Replacement','Other')
 settle(150)
