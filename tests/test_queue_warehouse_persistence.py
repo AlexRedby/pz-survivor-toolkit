@@ -142,6 +142,18 @@ class WarehousePersistenceTests(unittest.TestCase):
 
 @unittest.skipIf(LuaRuntime is None, 'Lupa is required to execute the persistence client fixture')
 class WarehousePersistenceClientSamplesTests(unittest.TestCase):
+    def test_authority_fixture_does_not_register_cold_load_on_a_client(self):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute("""
+isServer = function() return false end
+require = function(name)
+ if name == 'QueueTestSelection' then return {cases = {'persist-reload'}} end
+ error('Client must not initialize authority fixture dependency ' .. name)
+end
+Events = setmetatable({}, {__index = function() error('Client must not register authority fixture events') end})
+""")
+        lua.execute((ROOT / 'tests/native_queue/warehouse-manifest/server/ZZWarehouseManifestPersistenceServer.lua').read_text())
+
     def test_loaded_accepts_advancing_samples_but_unloaded_requires_exact_samples_and_age(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute(r"""

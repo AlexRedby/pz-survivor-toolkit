@@ -1,6 +1,7 @@
 local selection = require 'QueueTestSelection'
 local case = selection.cases[1]
 if case ~= 'persist-seed' and case ~= 'persist-reload' then return end
+if not isServer() then return end
 local P = require 'WarehouseManifestPersistence'
 local F = require 'WarehouseManifestFixture'
 local Authority = require 'PZSurvivorToolkit/ManifestAuthority'
