@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.188
+
+- Build inventory category/tag choices when opening their menus instead of classifying every item on each selection restore. Keep the full refresh universe, live instance categories and exact physical-item visibility; selecting a tag or combined rule rebuilds rows once.
+- Skip the detail sorter's selection save/restore when no stack has a sortable prefix of at least two items. Preserve Shift anchors, bounded sorting and native/CleanUI selection semantics.
+
 ### 0.1.187
 
 - **Changed:** Shopping-cart ground actions approach the push bar and use their own standing acquisition/release clip, preserving native cart and cargo ownership.
