@@ -15,6 +15,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.178
+
+- **Fixed:** Wishlist reads already-applied recipe ingredients once when calculating missing alternatives, instead of rebuilding and scanning that list for every possible ingredient type. Exclusive choices, relative amounts, partial-item/fluid caveats and fresh state on reopening are preserved.
+
 ### 0.1.177
 
 - **Fixed:** Quantity transfers index raw proximity-container membership once while preparing a selection and rebuild that index separately on confirmation. Large selections avoid repeated full scans while still checking changed contents, item protections, sources and destinations.

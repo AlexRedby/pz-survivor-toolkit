@@ -138,6 +138,42 @@ alternatives = input({ boards, branch }, 1, { exclusive = true, amounts = { ["Ba
 alternatives.applied = { branch }
 al = C.inputChoices(logic({ alternatives }), alternatives, false)
 check(al[1].amount == 2 and al[2].amount == 3, "exclusive choices receive only their own type's contribution")
+-- Recipes can have hundreds of interchangeable ingredient types. Applied input
+-- reads must scale with the applied list, rather than alternatives * applied.
+for _, count in ipairs({128,512}) do
+    for _, exclusive in ipairs({false,true}) do
+        local choices, applied = {}, {}
+        for index=1,count do choices[index]=item('Base.Alternative'..index) end
+        for index=1,8 do applied[index]=choices[index] end
+        applied[9],applied[10],applied[11]=item('Base.Partial',true),item('Base.ZeroScale'),item('Base.UnknownScale')
+        local many=input(choices,100,{exclusive=exclusive})
+        many.getRelativeScale=function(_,fullType)
+            if fullType=='Base.ZeroScale' then return 0 end
+            if fullType=='Base.UnknownScale' then return nil end
+            assert(fullType~='Base.Partial','partial input queried for whole-item contribution')
+            return 1
+        end
+        local state, reads, visits=logic({many}),0,0
+        state.getSatisfiedInputItems=function()
+            reads=reads+1
+            return {size=function() return #applied end,get=function(_,index)
+                visits=visits+1;return applied[index+1]
+            end}
+        end
+        local result=C.inputChoices(state,many,false)
+        check(#result==count and reads==1 and visits==11,'alternatives repeatedly scanned their applied ingredients')
+        for index,choice in ipairs(result) do
+            local expected=exclusive and (index<=8 and 99 or 100) or 92
+            check(choice.fullType=='Base.Alternative'..index and choice.amount==expected,
+                'exclusive/shared totals, partial items or invalid scales changed missing counts')
+        end
+        applied={}
+        result=C.inputChoices(state,many,false)
+        check(reads==2 and result[1].amount==100,'reopening ingredient choices retained an old applied total')
+        state.getSatisfiedInputItems=function() error('force choices must not inspect applied inventory') end
+        check(C.inputChoices(state,many,true)[1].amount==100,'force choices lost the full requested amount')
+    end
+end
 local useInput = input({ tape }, 20)
 check(C.inputChoices(logic({ useInput }), useInput, false)[1].amount == 1, "20 uses do not become 20 rolls")
 check(C.inputChoices(logic({ useInput }), useInput, false)[1].note == "UI_PZSW_OneUsableItem", "uses caveat shown")
