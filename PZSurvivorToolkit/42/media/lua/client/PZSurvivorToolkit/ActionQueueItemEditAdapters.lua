@@ -190,7 +190,7 @@ local worldStorageTypes={crate=true,shelf=true,shelves=true,metal_shelves=true}
 local function method(value,name)return value and type(value[name])=="function" end
 -- Only adjacent anchored ordinary storage. isExistYet alone can return true
 -- with world sync disabled, even after its parent has left the square.
-function Adapters.worldContainer(container,player)
+local function anchoredWorldContainer(container,player)
     if not instanceof(container,"ItemContainer") then return end
     for _,name in ipairs({"getType","getContainingItem","isExistYet","getAcceptItemFunction","getOnlyAcceptCategory",
         "getVehiclePart","getSourceGrid","getParent"})do if not method(container,name) then return end end
@@ -220,6 +220,41 @@ function Adapters.worldContainer(container,player)
     local count=parent:getContainerCount()
     if not finite(count) or count<1 or count%1~=0 then return end
     for i=0,count-1 do if parent:getContainerByIndex(i)==container then return {container} end end
+end
+-- A world bag has no stable MP ContainerID in B42.21: the packet stores the
+-- outer object's index for the inner inventory (-1), not the owner bag's ID.
+-- SP can prove the physical owner chain without changing native transfers.
+function Adapters.worldContainer(container,player)
+    local chain,seen={},{}
+    while instanceof(container,"ItemContainer") and not seen[container] do
+        seen[container]=true
+        chain[#chain+1]=container
+        if not method(container,"getContainingItem") then return end
+        local owner=container:getContainingItem()
+        if not owner then
+            if anchoredWorldContainer(container,player) then return chain end
+            return
+        end
+        if isClient() or not instanceof(owner,"InventoryContainer")
+            or type(getClassSimpleName)~="function" or getClassSimpleName(owner)~="InventoryContainer" then return end
+        for _,name in ipairs({"getType","isExistYet","getAcceptItemFunction","getOnlyAcceptCategory","getVehiclePart","getParent"}) do
+            if not method(container,name) then return end
+        end
+        local kind=container:getType()
+        if kind=="floor" or kind=="proximityInv" or kind=="twistInv_corpses" or kind=="TradeUI"
+            or not container:isExistYet() or container:getAcceptItemFunction()~=nil
+            or container:getOnlyAcceptCategory()~=nil or container:getVehiclePart() or container:getParent() then return end
+        for _,name in ipairs({"getID","getInventory","getContainer","getWorldItem","getIsCraftingConsumed",
+            "getEquipParent","getAttachedSlot"}) do if not method(owner,name) then return end end
+        local id=owner:getID()
+        if not finite(id) or id%1~=0 or owner:getInventory()~=container or owner:getWorldItem()
+            or owner:getIsCraftingConsumed() or owner:getEquipParent() or owner:getAttachedSlot()>=0
+            or not instanceof(player,"IsoPlayer") or player:isEquipped(owner) then return end
+        local parent=owner:getContainer()
+        if not instanceof(parent,"ItemContainer") or not method(parent,"contains") or not parent:contains(owner)
+            or not method(parent,"getItemById") or parent:getItemById(id)~=owner then return end
+        container=parent
+    end
 end
 function Adapters.worldTransferItem(item,returning)
     -- Native refuses favorite outbound transfers. Cookable food could change
