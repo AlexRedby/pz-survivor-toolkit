@@ -17,6 +17,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.183
+
+- Avoid scanning unrelated queue tails every tick when pruning food, fire, generator and mod-integration records. Share a fresh tracked-action lookup that stops once all tracked actions are found, preserving delayed Tidy restores, fire retries and cleanup after cancellation or world changes.
+
 ### 0.1.182
 
 - **Improved:** Pending partial portions of food with reviewed native ingredients can be reordered or cancelled while the original dish survives. Ingredient and empty-container state remain protected; unsupported ingredient creation/configuration stays blocked. Queue inspection avoids native ingredient factories; capacity-dependent transfer edits remain protected while their carried contents include ingredient-based food.
