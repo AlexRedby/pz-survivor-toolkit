@@ -9,6 +9,7 @@ local Checks=require 'QueueScenarioChecks'
 local Progress=require 'QueueFoodProgress'
 local Queue=require 'PZSurvivorToolkit/ActionQueue'
 local Policy=require 'PZSurvivorToolkit/ActionQueuePolicy'
+local Weights=require 'PZSurvivorToolkit/ActionQueueWeights'
 local Operations=require 'PZSurvivorToolkit/ActionQueueOperations'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
@@ -156,6 +157,19 @@ local function dispatch()
  local player=getPlayer();local current=items();local food,bag=current.food,current.bag:getItemContainer()
  assert(Progress.running(queue().current,anchor),'food needs running native anchor')
  evidence.anchorRunning=true;evidence.untouchedBefore=false
+ if spec.extraWeight then
+  local values={}
+  for _,entry in ipairs({{'food',food},{'bag',bag},{'root',player:getInventory()}})do
+   local name,value=entry[1],entry[2]
+   local upper,lower
+   if name=='food'then upper,lower=Weights.unequipped(value)else upper,lower=Weights.capacity(value,player)end
+   local native=name=='food'and value:getUnequippedWeight()or value:getCapacityWeight()
+   assert(type(upper)=='number'and type(lower)=='number'and lower>=0 and lower<=native and upper>=native
+    and upper-native<.01,'pure weight interval must contain the native '..name..' load')
+   values[name..'Upper'],values[name..'Lower'],values[name..'Native']=upper,lower,native
+  end
+  evidence.weightBounds=values
+ end
  if spec.bag then
   local actions=capture(function()Operations.run(ISInventoryPaneContextMenu.onGrabItems,{food},player:getPlayerNum())end)
   assert(#actions==1,'manual food pickup count differs')
@@ -171,9 +185,14 @@ local function dispatch()
   if config.mode=='toolkit'then
    for _,action in ipairs({pickup,eating,returning})do local contract=Policy.inspect(action);assert(contract and contract.edit,'food edit contract missing')end
    evidence.contractsVerified=true
-   assert(Policy.evaluateMove(queue(),returning,pickup,false).allowed,'return-before-pickup denied')
-   assert(Queue.move(queue(),returning,pickup,false),'return-before-pickup move failed');evidence.reordered=true
-   Checks.unchanged(queue(),{anchor,returning,pickup,eating})
+   if spec.capacity then
+    Checks.deniedMove(queue(),Queue,Policy,returning,pickup,false,'container_capacity')
+    Checks.unchanged(queue(),{anchor,pickup,eating,returning});evidence.capacityDenied=true
+   else
+    assert(Policy.evaluateMove(queue(),returning,pickup,false).allowed,'return-before-pickup denied')
+    assert(Queue.move(queue(),returning,pickup,false),'return-before-pickup move failed');evidence.reordered=true
+    Checks.unchanged(queue(),{anchor,returning,pickup,eating})
+   end
    Checks.deniedMove(queue(),Queue,Policy,pickup,eating,true,'edit_required_state');evidence.moveRejected=true
    Checks.deniedCancel(queue(),Queue,Policy,pickup,'edit_required_state');evidence.cancelRejected=true
   else Checks.unchanged(queue(),{anchor,pickup,eating,returning})end
@@ -294,6 +313,7 @@ Events.OnTick.Add(function()
     reordered=false,waitingCancel=false,moveRejected=false,cancelRejected=false,manualPickup=false,
     untouchedBefore=false,nativeDurationsUnchanged=false,order={}}
    if spec.depletion then evidence.denialReason='not-requested'end
+   if spec.capacity then evidence.capacityDenied=false end
    anchor=ISDrinkFluidAction:new(player,items().anchor,.5);assert(anchor.maxTime==460,'anchor duration differs')
    ISTimedActionQueue.add(anchor);phase='running';since=getTimestampMs();return
   elseif phase=='running'then

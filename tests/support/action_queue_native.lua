@@ -1,6 +1,6 @@
 -- Shared setup for new native-source policy fixtures; native execution/Java state remains explicit per test.
 local native,project
-local itemAdapters,capacityAdapters
+local itemAdapters,capacityAdapters,weights
 local function itemInspector()
     if not itemAdapters then
         if not ISTransferAction then native('shared/TimedActions/ISTransferAction.lua') end
@@ -21,6 +21,10 @@ end
 require = function(module)
     if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
+    if module == 'PZSurvivorToolkit/ActionQueueWeights' then
+        if not weights then weights=project('ActionQueueWeights') end
+        return weights
+    end
     if module == 'PZSurvivorToolkit/ActionQueueItemEditAdapters' then
         return itemInspector()
     end
@@ -53,6 +57,10 @@ project=function(name)
         require=function(module)
             if module=='PZSurvivorToolkit/ActionQueueItemEditAdapters' then
                 return savedRequire(module) or itemInspector()
+            end
+            if module=='PZSurvivorToolkit/ActionQueueWeights' then
+                if not weights then weights=project('ActionQueueWeights') end
+                return savedRequire(module) or weights
             end
             return savedRequire(module)
         end

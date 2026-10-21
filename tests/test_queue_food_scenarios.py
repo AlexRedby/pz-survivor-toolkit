@@ -86,10 +86,23 @@ class FoodScenarioTests(unittest.TestCase):
                     self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                      self.row(recorded, action, scenario, kind, mode)['status'])
 
+    def test_extra_transfers_map_exact_capacity_and_location_edits(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.assertEqual(list(food.EXTRA_TRANSFER_CASES),
+                                 scenarios.select(self.suite, 'success-queued', 'eat-extra-transfers', kind, mode)[0])
+                self.assertEqual([food.EXTRA_BAG_CASE],
+                                 scenarios.select(self.suite, 'move-independent', 'eat-extra-transfers', kind, mode)[0])
+                recorded = self.recorded(kind, mode)
+                self.assertEqual('passed', self.row(recorded, 'eat-extra-transfers', 'success-queued', kind, mode)['status'])
+                for scenario in ('move-independent', 'move-dependent'):
+                    self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                                     self.row(recorded, 'eat-extra-transfers', scenario, kind, mode)['status'])
+
     def test_extra_weight_cases_require_effects_and_actual_queue_edits(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                self.assertEqual(list(food.EXTRA_WEIGHT_CASES),
+                self.assertEqual(list(food.EXTRA_PORTION_CASES),
                                  scenarios.select(self.suite, 'success-queued', 'eat-extra-weight', kind, mode)[0])
                 recorded = self.recorded(kind, mode)
                 self.assertEqual('passed', self.row(recorded, 'eat-extra-weight', 'success-queued', kind, mode)['status'])
