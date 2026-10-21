@@ -129,7 +129,7 @@ public final class CartPickupApproachTest {
             switch(guard) {
                 case 0 -> f.table.getMetatable().rawset("Type","ISWalkToTimedAction");
                 case 1 -> f.table.rawset("character",allocate(Player.class));
-                case 2 -> f.cart.kind="SaucedCarts.ShoppingCart";
+                case 2 -> f.cart.kind="Other.Cart";
                 case 3 -> f.cart.world=null;
                 case 4 -> f.world.item=allocate(Cart.class);
                 case 5 -> f.world.square=null;
@@ -237,7 +237,7 @@ public final class CartPickupApproachTest {
         var field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartPickupApproachTest.class.getClassLoader());
         check(Main.CART_TRANSITION_SUPPORTED && Main.COMPLETION_SUPPORTED,"native cart approach fixture is unsupported");
-        arrival("SaucedWheelbarrow.WheelbarrowWood");arrival("SaucedWheelbarrow.WheelbarrowMetal");scopeAndCleanup();facingCompletion();
+        arrival("SaucedWheelbarrow.WheelbarrowWood");arrival("SaucedWheelbarrow.WheelbarrowMetal");arrival("SaucedCarts.ShoppingCart");scopeAndCleanup();facingCompletion();
         System.out.println("CART_PICKUP_APPROACH_PASS");
     }
 }

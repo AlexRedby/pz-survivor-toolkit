@@ -108,7 +108,7 @@ public final class CartTransitionTest {
             if("ToolkitWoodCartClipPilot".equals(name)) {
                 clipPilot=value;clipPilotAbsent=false;clipPilotWrites++;return null;
             }
-            check("ToolkitWoodCartClipPickup".equals(name) || "ToolkitMetalCartClip".equals(name),
+            check("ToolkitWoodCartClipPickup".equals(name) || "ToolkitMetalCartClip".equals(name) || "ToolkitShoppingCartClip".equals(name),
                 "unexpected boolean presentation variable: "+name);
             if(booleanVariables==null) booleanVariables=new java.util.HashMap<>();booleanVariables.put(name,value);return null;
         }
@@ -239,7 +239,9 @@ public final class CartTransitionTest {
             cart.container=player.inventory;cart.kind="SaucedWheelbarrow.WheelbarrowMetal";
             check(CartTransition.beginDrop(player,cart,11,20,2,0),"metal owned placement refused");
             CartTransition.endDrop();cart.kind="SaucedCarts.ShoppingCart";
-            check(!CartTransition.beginDrop(player,cart,11,20,2,0),"shopping cart acquired wheelbarrow placement");
+            check(CartTransition.beginDrop(player,cart,11,20,2,0),"shopping cart owned placement refused");
+            CartTransition.endDrop();cart.kind="Other.Cart";
+            check(!CartTransition.beginDrop(player,cart,11,20,2,0),"unknown cart accepted");
             cart.kind="SaucedWheelbarrow.WheelbarrowWood";cart.world=allocate(IsoWorldInventoryObject.class);
             check(!CartTransition.beginDrop(player,cart,11,20,2,0),"already-world cart accepted");
             cart.world=null;

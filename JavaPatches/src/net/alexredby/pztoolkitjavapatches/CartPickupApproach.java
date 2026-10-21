@@ -28,7 +28,7 @@ public final class CartPickupApproach {
     private static Vector3f location(LuaTimedActionNew action,PathFindBehavior2 path) {
         if(action==null || path==null || !path.isGoalLocation() || !"ISWalkToTimedActionF".equals(action.getMetaType()))return null;
         var table=action.getTable();
-        if(!(table.rawget("toolkitWoodCartItem") instanceof InventoryItem item) || !CartTransition.wheelbarrow(item)
+        if(!(table.rawget("toolkitWoodCartItem") instanceof InventoryItem item) || !CartTransition.supported(item)
             || item.getWorldItem()==null || item.getWorldItem().getItem()!=item || item.getWorldItem().getSquare()==null
             || !(table.rawget("location") instanceof Vector3f location) || !location.isFinite()
             || location.x!=path.getTargetX() || location.y!=path.getTargetY() || location.z!=path.getTargetZ())return null;
@@ -41,7 +41,7 @@ public final class CartPickupApproach {
         var action=action(player);
         if(action==null || action.isStarted() || !"ToolkitWoodCartPickup".equals(action.getMetaType())
             || world==null || world.getSquare()==null || world.getItem()==null
-            || world.getItem().getWorldItem()!=world || !CartTransition.wheelbarrow(world.getItem())
+            || world.getItem().getWorldItem()!=world || !CartTransition.supported(world.getItem())
             || !(action.getTable().rawget("itemId") instanceof Number id) || id.doubleValue()!=world.getItem().getID()
             || !Float.isFinite(x+y+renderedAngle) || Math.hypot(player.getX()-x,player.getY()-y)>.002
             || Math.abs(player.getZ()-world.getSquare().getZ())>.002

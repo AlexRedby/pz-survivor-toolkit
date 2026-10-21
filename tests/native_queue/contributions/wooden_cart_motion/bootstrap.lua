@@ -9,7 +9,7 @@ if CartLabTick then Events.OnTick.Remove(CartLabTick) end
 if CartLabGate then Events.OnPlayerUpdate.Remove(CartLabGate) end
 local player=getPlayer()
 local expectedCart=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'
-assert(expectedCart=='SaucedWheelbarrow.WheelbarrowWood' or expectedCart=='SaucedWheelbarrow.WheelbarrowMetal','Unsupported bootstrap cart type')
+assert(expectedCart=='SaucedCarts.ShoppingCart' or expectedCart=='SaucedWheelbarrow.WheelbarrowWood' or expectedCart=='SaucedWheelbarrow.WheelbarrowMetal','Unsupported bootstrap cart type')
 -- Capture UI state begin: test-only, no keybind/options files are written.
 require 'ISUI/ISUIHandler'
 assert(config.hideUI==nil or type(config.hideUI)=='boolean','CartMotionConfig.hideUI must be boolean')
@@ -65,7 +65,8 @@ Events.OnTick.Add(CartLabCaptureUITick)
 Events.OnMainMenuEnter.Add(CartLabCaptureUIRestore)
 -- Capture UI state end.
 if config.authoredClip~=nil then player:setVariable('ToolkitWoodCartClipPilot',config.authoredClip) end
-local authoredClip=expectedCart=='SaucedWheelbarrow.WheelbarrowMetal' and 'Toolkit_MetalCart_Pickup' or 'Toolkit_WoodCart_Pickup'
+local clips={['SaucedCarts.ShoppingCart']='Toolkit_ShoppingCart_Pickup',['SaucedWheelbarrow.WheelbarrowMetal']='Toolkit_MetalCart_Pickup'}
+local authoredClip=clips[expectedCart] or 'Toolkit_WoodCart_Pickup'
 if config.authoredClip~=false then assert(cartLabClipInfo(authoredClip)~='missing','Authored cart clip missing: '..authoredClip) end
 player:setGodMod(true);player:setNoClip(false,true)
 local cart=player:getPrimaryHandItem()
@@ -152,7 +153,7 @@ woodReady=function()
   CartTestArea.check(p);cartLabDrive(-1)
   getCore():setAutoZoom(0,false)
   for i=1,12 do getCore():doZoomScroll(0,-1) end
-  getCore():TakeFullScreenshot((config.cartVariant=='metal-wheelbarrow' and 'metal' or 'wood')..'-bootstrap-ready.png')
+  getCore():TakeFullScreenshot((config.cartVariant=='shopping-cart' and 'shopping' or config.cartVariant=='metal-wheelbarrow' and 'metal' or 'wood')..'-bootstrap-ready.png')
   print('[WOOD_PROTOTYPE] BOOTSTRAP_READY side=-.70710678,+.70710678 cartType='..expectedCart)
  end)
  if not ok then cartLabDrive(-1);print('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL '..tostring(err)) end

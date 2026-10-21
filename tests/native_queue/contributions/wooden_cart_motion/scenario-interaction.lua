@@ -84,7 +84,7 @@ local selectionWorld,selectionOn
 local actionSerial,restartCount,cleanupAt=0,0,nil
 local hotkeyAction,hotkeyStarted,hotkeyCode,hotkeyReleaseAt
 local kind=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'
-assert(kind=='SaucedWheelbarrow.WheelbarrowWood' or kind=='SaucedWheelbarrow.WheelbarrowMetal','Unsupported calibrated cart type')
+assert(kind=='SaucedCarts.ShoppingCart' or kind=='SaucedWheelbarrow.WheelbarrowWood' or kind=='SaucedWheelbarrow.WheelbarrowMetal','Unsupported calibrated cart type')
 local function encode(record)
  local out={}
  for key,value in pairs(record) do

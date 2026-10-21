@@ -25,11 +25,14 @@ public final class ClearanceProbe {
     private static Path directory;
     private static final java.util.Set<String> dumpedModels=new java.util.HashSet<>();
     private static boolean supported(String model) {
-        return "WheelbarrowWood".equals(model) || "WheelbarrowMetal".equals(model);
+        return "WheelbarrowWood".equals(model) || "WheelbarrowMetal".equals(model)
+            || model!=null && java.util.Set.of("ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel",
+                "ShoppingCartFlashlightModel","ShoppingCartFlashlightPartialModel","ShoppingCartFlashlightFullModel").contains(model);
     }
     private static boolean supported(InventoryItem item) {
         return item!=null && ("SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType())
-            || "SaucedWheelbarrow.WheelbarrowMetal".equals(item.getFullType()));
+            || "SaucedWheelbarrow.WheelbarrowMetal".equals(item.getFullType())
+            || "SaucedCarts.ShoppingCart".equals(item.getFullType()));
     }
     private static boolean installed;
     private static Field field(String name) {
@@ -324,40 +327,42 @@ public final class ClearanceProbe {
     public static synchronized void mesh(ModelInstanceRenderData data,String source) throws Exception {
         var instance=data==null?null:data.modelInstance;
         if(output==null || directory==null || instance==null || instance.modelScript==null
-            || !"WheelbarrowMetal".equals(instance.modelScript.getName()) || dumpedModels.contains("WheelbarrowMetal"))return;
+            || !supported(instance.modelScript.getName()) || "WheelbarrowWood".equals(instance.modelScript.getName())
+            || dumpedModels.contains(instance.modelScript.getName()))return;
+        String model=instance.modelScript.getName();
         var vb=instance.model.mesh.vb;
         var field=VertexBufferObject.class.getDeclaredField("handle");field.setAccessible(true);
         var handle=(VertexBufferObject.Vbo)field.get(vb);
         var formatField=VertexBufferObject.class.getDeclaredField("vertexFormat");formatField.setAccessible(true);
         int stride=((VertexBufferObject.VertexFormat)formatField.get(vb)).getStride();
-        if(stride!=32)throw new IllegalStateException("Unexpected static metal vertex format: "+stride);
+        if(stride!=32)throw new IllegalStateException("Unexpected static cart vertex format: "+stride);
         int old=org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER_BINDING);
         try {
             org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,handle.vboId);
             int bytes=org.lwjgl.opengl.GL15.glGetBufferParameteri(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,org.lwjgl.opengl.GL15.GL_BUFFER_SIZE);
-            if(bytes<=0 || bytes%stride!=0)throw new IllegalStateException("Unexpected static metal vertex buffer stride/size");
+            if(bytes<=0 || bytes%stride!=0)throw new IllegalStateException("Unexpected static cart vertex buffer stride/size");
             var buffer=org.lwjgl.BufferUtils.createByteBuffer(bytes);
             org.lwjgl.opengl.GL15.glGetBufferSubData(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,0,buffer);
             byte[] raw=new byte[bytes];buffer.get(raw);
-            Files.write(directory.resolve("WheelbarrowMetal.bin"),raw,StandardOpenOption.CREATE_NEW);
+            Files.write(directory.resolve(model+".bin"),raw,StandardOpenOption.CREATE_NEW);
             String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(raw));
-            Files.writeString(directory.resolve("cart-mesh-WheelbarrowMetal.json"),"{\"model\":\"WheelbarrowMetal\",\"source\":"+quoted(source)
+            Files.writeString(directory.resolve("cart-mesh-"+model+".json"),"{\"model\":"+quoted(model)+",\"source\":"+quoted(source)
                 +",\"bytes\":"+bytes+",\"stride\":"+stride+",\"indices\":"+handle.numElements+",\"sha256\":"+quoted(hash)+"}\n",StandardOpenOption.CREATE_NEW);
-            dumpedModels.add("WheelbarrowMetal");
+            dumpedModels.add(model);
         } finally {org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,old);}
     }
     public static class MeshCapture {
         @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
         public static void exit(@Advice.This ModelInstanceRenderData data,@Advice.Thrown Throwable thrown) {
             try{if(thrown==null)ClearanceProbe.mesh(data,"ModelInstanceRenderData.RenderCharacter-exit");}
-            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR metal mesh "+error);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR cart mesh "+error);}
         }
     }
     public static class SplitMeshCapture {
         @Advice.OnMethodExit(suppress=Throwable.class)
         public static void exit(@Advice.Argument(2) ModelInstanceRenderData data,@Advice.Return boolean rendered) {
             try{if(rendered)ClearanceProbe.mesh(data,"CartWheelSpin.render-exit");}
-            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR metal mesh "+error);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR cart mesh "+error);}
         }
     }
 

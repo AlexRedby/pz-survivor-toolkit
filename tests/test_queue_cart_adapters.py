@@ -671,9 +671,29 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
                 self.assertIn("local kind=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'", source)
                 subprocess.run([shutil.which('luajit'), '-e', 'assert(loadfile(' + json.dumps(str(runtime)) + '))'], check=True, capture_output=True)
         self.options.pop('cart_scenes')
-        for variant, case in (('shopping-cart', 'interaction'), ('metal-wheelbarrow', 'impact'), ('metal-wheelbarrow', 'variants')):
+        for variant, case in (('shopping-cart', 'stationary'), ('metal-wheelbarrow', 'impact'), ('metal-wheelbarrow', 'variants')):
             self.options['cart_variant'] = variant; self.selection['cases'] = [case]
-            with self.subTest(variant=variant, case=case), self.assertRaisesRegex(ValueError, 'SP metal cart_variant'):
+            with self.subTest(variant=variant, case=case), self.assertRaisesRegex(ValueError, 'SP .*cart_variant'):
+                carts.validate(self.selection)
+
+    def test_shopping_sp_stages_only_explicit_action_banks_and_model_sources(self):
+        self.options.update(cart_variant='shopping-cart', cart_mesh_fbx={model: self.options['mesh_fbx'] for model in carts.SHOPPING_MODELS})
+        for case in ('interaction', 'repeat'):
+            with self.subTest(case=case):
+                self.output = self.root / ('shopping-' + case); self.output.mkdir(); self.role('client1')
+                self.selection['cases'] = [case]; self.options['cart_scenes'] = carts.scene_names(case)[:1]
+                compiler = self.stage()
+                sources = [value for call in compiler.call_args_list for value in call.args[0] if value.endswith('.java')]
+                self.assertFalse(any(value.endswith('WoodenWheelNativeProbe.java') for value in sources))
+                self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 2)
+                self.assertIn(Path(self.options['mesh_fbx']), carts.sources(ROOT, self.selection))
+                runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE'])
+                self.assertIn('["cartType"]="SaucedCarts.ShoppingCart"', runtime.read_text())
+                subprocess.run([shutil.which('luajit'), '-e', 'assert(loadfile(' + json.dumps(str(runtime)) + '))'], check=True, capture_output=True)
+        self.options.pop('cart_scenes')
+        for meshes in (None, {}, {'WheelbarrowMetal': self.options['mesh_fbx']}, {'ShoppingCartModel': 'relative.fbx'}):
+            self.options['cart_mesh_fbx'] = meshes
+            with self.subTest(meshes=meshes), self.assertRaisesRegex(ValueError, 'cart_mesh_fbx'):
                 carts.validate(self.selection)
 
     def test_metal_capture_checks_actual_model_mesh_and_temporal_grip_without_wood_geometry(self):
@@ -735,13 +755,22 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
                     write_rows('wood-grip-poses.jsonl', rows)
 
     def test_metal_action_capture_rejects_wrong_identity_ownership_ik_and_lifecycle(self):
+        self._assert_variant_action_capture('metal-wheelbarrow')
+
+    def test_shopping_action_capture_requires_actual_fill_meshes_ownership_and_lifecycle(self):
+        self._assert_variant_action_capture('shopping-cart')
+
+    def _assert_variant_action_capture(self, variant):
         import numpy as np
 
-        self.selection['cases'] = ['interaction']; self.options['cart_variant'] = 'metal-wheelbarrow'
+        self.selection['cases'] = ['interaction']; self.options['cart_variant'] = variant
+        shopping = variant == 'shopping-cart'
+        if shopping:
+            self.options['cart_mesh_fbx'] = {model: self.options['mesh_fbx'] for model in carts.SHOPPING_MODELS}
         analyzer = carts._load(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/analyze-interaction.py')
         text, body, grip = analyzer.fixture()
         matrix = [1 if i % 5 == 0 else 0 for i in range(16)]
-        kind = 'SaucedWheelbarrow.WheelbarrowMetal'; cache = self.output / 'client1'
+        kind = carts.VARIANTS[variant]; cache = self.output / 'client1'
         samples, lines, worlds, lifecycle = [], [], [], []
         for line in text.splitlines():
             if '[WOOD_INTERACTION_SAMPLE] ' in line:
@@ -754,7 +783,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         text = '\n'.join(lines)
         for records in (body, grip):
             for row in records:
-                row.update(model='WheelbarrowMetal', female=140000 <= row['wallTimeMillis'] < 156000)
+                row.update(model=('ShoppingCartFullModel' if row['wallTimeMillis'] >= 140000 else 'ShoppingCartModel') if shopping else 'WheelbarrowMetal', female=140000 <= row['wallTimeMillis'] < 156000)
                 row.setdefault('cart', matrix); row.setdefault('bones', {'Bip01_L_Hand': matrix, 'Bip01_R_Hand': matrix})
         for start in (100000, 120000, 140000, 160000):
             for action in ('ToolkitWoodCartPickup', 'ToolkitWoodCartSetdown'):
@@ -764,22 +793,42 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         write('body-clearance.jsonl', body); write('wood-grip-poses.jsonl', grip)
         write('action-lifecycle.jsonl', lifecycle); write('world-cart-poses.jsonl', worlds)
         native = struct.pack('<8f', .01, .02, -.03, 0, 0, 0, 0, 0)
-        (cache / 'WheelbarrowMetal.bin').write_bytes(native)
-        (cache / 'cart-mesh-WheelbarrowMetal.json').write_text(json.dumps(dict(model='WheelbarrowMetal', stride=32,
-            bytes=len(native), sha256=hashlib.sha256(native).hexdigest(), source='CartWheelSpin.render-exit')))
+        for model in ({r['model'] for r in body} if shopping else {'WheelbarrowMetal'}):
+            (cache / (model + '.bin')).write_bytes(native)
+            (cache / ('cart-mesh-' + model + '.json')).write_text(json.dumps(dict(model=model, stride=32,
+                bytes=len(native), sha256=hashlib.sha256(native).hexdigest(), source='CartWheelSpin.render-exit')))
         original_load = carts._load
         def load(path):
             if path.name == 'fbx_mesh.py':
                 return SimpleNamespace(read_nodes=lambda path: [('Objects', [], [('Geometry', [], [('Vertices', [np.array([[.01,.02,.03]])], [])])])])
             return original_load(path)
         with patch.object(carts, '_load', side_effect=load):
-            report = carts._metal_coverage(cache, text, self.selection)
+            report = carts._model_capture_coverage(cache, text, self.selection)
             self.assertEqual(len(report['scenes']), 4)
+            self.assertFalse(report['geometryVerified']); self.assertFalse(report['animationEquivalencePass'])
+            self.assertEqual(len(report['nativeVBOs']), 2 if shopping else 1)
+            if shopping:
+                full_proof = cache / 'cart-mesh-ShoppingCartFullModel.json'
+                original_proof = full_proof.read_text()
+                full_proof.write_text(original_proof.replace('ShoppingCartFullModel', 'ShoppingCartPartialModel'))
+                with self.assertRaisesRegex(ValueError, 'VBO render receipt'):
+                    carts._model_capture_coverage(cache, text, self.selection)
+                full_proof.write_text(original_proof)
+                full_mesh = cache / 'ShoppingCartFullModel.bin'
+                original_mesh = full_mesh.read_bytes()
+                full_mesh.write_bytes(original_mesh + original_mesh)
+                with self.assertRaisesRegex(ValueError, 'VBO render receipt'):
+                    carts._model_capture_coverage(cache, text, self.selection)
+                full_mesh.write_bytes(original_mesh)
+                self.options['cart_mesh_fbx'].pop('ShoppingCartFullModel')
+                with self.assertRaisesRegex(ValueError, 'Missing cart_mesh_fbx'):
+                    carts._model_capture_coverage(cache, text, self.selection)
+                self.options['cart_mesh_fbx']['ShoppingCartFullModel'] = self.options['mesh_fbx']
             self.assertTrue(all(row['ownershipAndCargoVerified'] for row in report['scenes']))
             for change in ('wrong-type', 'held-identity', 'missing-ik', 'missing-native-complete', 'missing-world'):
                 with self.subTest(change=change):
                     changed_text = text
-                    if change == 'wrong-type': changed_text = text.replace(kind, 'SaucedCarts.ShoppingCart')
+                    if change == 'wrong-type': changed_text = text.replace(kind, 'Base.Hammer')
                     elif change == 'held-identity':
                         changed_text = text.replace('"heldID": 1000', '"heldID": 1001')
                     elif change == 'missing-ik': changed_text = text.replace('"ik": true', '"ik": false')

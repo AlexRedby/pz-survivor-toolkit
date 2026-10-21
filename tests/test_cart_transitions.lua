@@ -828,7 +828,7 @@ require=originalRequire
 print("PASS native clipped target cannot queue off-center pickup; exact current stance keeps pickup and independent tail")
 
 -- Run the same exact-item transition through the installed Sauced completion for each model.
-for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"}) do
+for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal", "SaucedCarts.ShoppingCart"}) do
     local state = setup(false, true, true)
     local player, cart = state.p, state.item(kind)
     local target = state.worldFor(cart)
@@ -838,7 +838,7 @@ for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.W
         "wheelbarrow approach must use calibrated handles: " .. kind)
     player.distance = 0; approach:perform()
     local action = state.added[1]
-    assert(action.Type == "ToolkitWoodCartPickup" and action.maxTime == 88 and action.itemId == cart:getID())
+    assert(action.Type == "ToolkitWoodCartPickup" and action.maxTime == (kind == "SaucedCarts.ShoppingCart" and 50 or 88) and action.itemId == cart:getID())
     action:start(); action:update()
     assert(action.override == cart:getStaticModel() and cart.delta == .4 and player.vars.ToolkitWoodCartAction,
         "wheelbarrow presentation lost its own model: " .. kind)
@@ -881,9 +881,9 @@ for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.W
     ISTimedActionQueue.addToQueue(queue, fallback)
     assert(getmetatable(fallback) == ISUnequipAction, "missing bridge promoted a wheelbarrow setdown: " .. kind)
 end
-print("PASS wood and metal use exact calibrated approach, own models, authoritative Sauced pickup, pending-transfer guards and missing-bridge fallback")
+print("PASS wood, metal and shopping use exact calibrated approach, own models, authoritative Sauced pickup, pending-transfer guards and missing-bridge fallback")
 
-for _, kind in ipairs({"SaucedCarts.ShoppingCart", "SaucedWheelbarrow.Wheelbarrow", "Other.WheelbarrowMetal"}) do
+for _, kind in ipairs({"SaucedWheelbarrow.Wheelbarrow", "Other.WheelbarrowMetal"}) do
     local state = setup(false, true, true)
     local player, cart = state.p, state.item(kind)
     state.worldFor(cart); player.distance = 0
@@ -898,4 +898,4 @@ for _, kind in ipairs({"SaucedCarts.ShoppingCart", "SaucedWheelbarrow.Wheelbarro
         "shopping or unknown type adopted wheelbarrow release: " .. kind)
 end
 require = originalRequire
-print("PASS shopping and unknown types retain native pickup, unequip and drop with the wheelbarrow bridge available")
+print("PASS unknown types retain native pickup, unequip and drop with the calibrated cart bridge available")

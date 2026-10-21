@@ -71,6 +71,29 @@ public final class CartTransition {
         return CartWheelbarrow.forItem(item)!=null;
     }
 
+    public static boolean supported(InventoryItem item) {
+        return wheelbarrow(item) || CartShopping.item(item);
+    }
+
+    static float worldScale(InventoryItem item) {return item.worldScale*(wheelbarrow(item)?.85f:1);}
+    private static Matrix4f held(InventoryItem item,Matrix4f out) {
+        var profile=CartWheelbarrow.forItem(item);
+        return profile==null?CartShopping.held(out):profile.held(out);
+    }
+    private static String modelName(InventoryItem item) {
+        var profile=CartWheelbarrow.forItem(item);
+        var script=CartGrounding.resolvedModel(item);
+        return profile!=null?profile.model():script==null?null:script.getName();
+    }
+    private static CartTransitionMath.Progress phase(State state) {
+        return CartShopping.item(state.item)?CartShopping.progress(state.progress,!state.pickup)
+            :CartTransitionMath.progress(state.progress,!state.pickup);
+    }
+    private static boolean blend(InventoryItem item,Matrix4f from,Matrix4f to,Matrix4f model,double weight,Matrix4f out) {
+        return CartShopping.item(item)?CartTransitionMath.blendModel(from,to,model,weight,out)
+            :CartTransitionMath.blend(from,to,weight,out);
+    }
+
     static Matrix4f model(InventoryItem item) {
         var script = ScriptManager.instance.getModelScript(item.getWorldStaticModel());
         if (script == null) return null;
@@ -81,31 +104,31 @@ public final class CartTransition {
         if (attachment != null) ModelInstanceRenderData.makeAttachmentTransform(attachment,result).invert();
         ModelInstanceRenderData.postMultiplyMeshTransform(result,model.mesh);
         result.scale(script.scale);
-        CartWorldSupport.apply(item.getFullType(),result,item.worldScale*.85f);
+        CartWorldSupport.apply(item.getFullType(),result,worldScale(item));
         return result;
     }
 
     static CartTransitionMath.Placement placement(InventoryItem item, IsoWorldInventoryObject world) {
         return new CartTransitionMath.Placement(world.getWorldPosX(),world.getWorldPosY(),world.getWorldPosZ()+.00175f,
-            item.getWorldXRotation(),item.getWorldZRotation(),item.getWorldYRotation(),item.worldScale*.85f);
+            item.getWorldXRotation(),item.getWorldZRotation(),item.getWorldYRotation(),worldScale(item));
     }
 
     @LuaMethod(name="toolkitWoodCartStance", global=true)
     public static KahluaTable stance(IsoPlayer player, IsoWorldInventoryObject world) {
-        if (!Main.CART_TRANSITION_SUPPORTED || world == null || !wheelbarrow(world.getItem())) return null;
+        if (!Main.CART_TRANSITION_SUPPORTED || world == null || !supported(world.getItem())) return null;
         var item=world.getItem();var model=model(item);
-        var profile=CartWheelbarrow.forItem(item);var held=profile.held(new Matrix4f());
+        var profile=CartWheelbarrow.forItem(item);var held=held(item,new Matrix4f());
         if(model==null) return null;
         var ground=new Matrix4f();
         var pose=placement(item,world);
         var left=new Vector3f();var right=new Vector3f();
-        CartGrip.handle(profile.model(),true,left);CartGrip.handle(profile.model(),false,right);
+        CartGrip.handle(modelName(item),true,left);CartGrip.handle(modelName(item),false,right);
         var target=CartTransitionMath.stance(pose,model,held,left,right);
         if(target==null) return null;
         if(!CartTransitionMath.worldToActor(pose,model,target.x(),target.y(),player.getZ(),target.slotAngle(),ground)) return null;
-        var axle=profile.center(new Vector3f());
-        var difference=ground.transformPosition(axle,new Vector3f()).sub(held.transformPosition(axle,new Vector3f()));
-        difference.z+=profile.pickupStanceBack();
+        var axle=profile==null?new Vector3f():profile.center(new Vector3f());
+        var difference=profile==null?new Vector3f():ground.transformPosition(axle,new Vector3f()).sub(held.transformPosition(axle,new Vector3f()));
+        if(profile!=null) difference.z+=profile.pickupStanceBack();
         float c=(float)Math.cos(target.slotAngle()),s=(float)Math.sin(target.slotAngle());
         float x=target.x()-1.5f*(c*difference.x+s*difference.z);
         float y=target.y()+1.5f*(-s*difference.x+c*difference.z);
@@ -139,7 +162,7 @@ public final class CartTransition {
 
     @LuaMethod(name="toolkitWoodCartUpdate", global=true)
     public static synchronized boolean update(IsoPlayer player, InventoryItem item, boolean pickup, double progress) {
-        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !player.isLocalPlayer() || !wheelbarrow(item)
+        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !player.isLocalPlayer() || !supported(item)
             || !Double.isFinite(progress) || player.isDead()) return false;
         State state=states.get(player);
         if(state==null || state.recovering || state.item!=item || state.pickup!=pickup) {
@@ -176,13 +199,14 @@ public final class CartTransition {
     }
 
     private static void poseVariables(IsoPlayer player, State state) {
-        var phase=CartTransitionMath.progress(state.progress,!state.pickup);
+        var phase=phase(state);
         player.setVariable("ToolkitWoodCartPoseX",(float)(phase.lift()+.10*phase.crouch()*(1-phase.lift())));
         player.setVariable("ToolkitWoodCartPoseY",(float)phase.lift());
         if(state.authored) {
             player.setVariable("ToolkitWoodCartClipTime",state.progress);
             player.setVariable("ToolkitWoodCartClipPickup",state.pickup);
             player.setVariable("ToolkitMetalCartClip",CartWheelbarrow.forItem(state.item)==CartWheelbarrow.METAL);
+            player.setVariable("ToolkitShoppingCartClip",CartShopping.item(state.item));
         }
     }
 
@@ -195,7 +219,7 @@ public final class CartTransition {
 
     static boolean retireAuthoredNode(LiveAnimNode node, boolean pickup) {
         String direction=pickup?"Pickup":"Setdown",name=node.getSourceNode().name;
-        if(!("ToolkitWoodCartClip"+direction).equals(name) && !("ToolkitMetalCartClip"+direction).equals(name)) return false;
+        if(!("ToolkitWoodCartClip"+direction).equals(name) && !("ToolkitMetalCartClip"+direction).equals(name) && !("ToolkitShoppingCartClip"+direction).equals(name)) return false;
         try {
             if(CLIP_RETIRING==null) throw new IllegalStateException("Native cart clip retirement unavailable");
             if(CLIP_RETIRING.getBoolean(node)) return false;
@@ -241,7 +265,7 @@ public final class CartTransition {
     private static InventoryItem remoteItem(IsoPlayer player,CartActionSync.Pose pose) {
         if(!pose.pickup()) {
             var item=player.getPrimaryHandItem();
-            return wheelbarrow(item) && item.getID()==pose.cart() && player.getSecondaryHandItem()==item
+            return supported(item) && item.getID()==pose.cart() && player.getSecondaryHandItem()==item
                 && item.getContainer()==player.getInventory() && item.getWorldItem()==null?item:null;
         }
         if(player.getPrimaryHandItem()!=null || player.getSecondaryHandItem()!=null
@@ -250,7 +274,7 @@ public final class CartTransition {
         if(square==null) return null;
         for(var world:square.getWorldObjects()) {
             var item=world.getItem();
-            if(wheelbarrow(item) && item.getID()==pose.cart() && item.getWorldItem()==world
+            if(supported(item) && item.getID()==pose.cart() && item.getWorldItem()==world
                 && Math.abs(world.getWorldPosX()-pose.x())<.03 && Math.abs(world.getWorldPosY()-pose.y())<.03) return item;
         }
         return null;
@@ -457,7 +481,7 @@ public final class CartTransition {
     public static synchronized void setdownPose(IsoPlayer player, InventoryItem item, double x, double y, double z, double rotation) {
         var state=states.get(player);
         if(state!=null && state.item==item && !state.pickup && Double.isFinite(x+y+z+rotation)) {
-            state.placement=new CartTransitionMath.Placement((float)x,(float)y,(float)z+.00175f,0,(float)rotation,0,item.worldScale*.85f);
+            state.placement=new CartTransitionMath.Placement((float)x,(float)y,(float)z+.00175f,0,(float)rotation,0,worldScale(item));
             publish(player,state);
         }
     }
@@ -480,7 +504,7 @@ public final class CartTransition {
         if(state!=null) retireAuthored(player,state);
         player.clearVariable("ToolkitWoodCartPoseX");player.clearVariable("ToolkitWoodCartPoseY");
         player.clearVariable("ToolkitWoodCartClipTime");player.clearVariable("ToolkitWoodCartClipPickup");
-        player.clearVariable("ToolkitMetalCartClip");
+        player.clearVariable("ToolkitMetalCartClip");player.clearVariable("ToolkitShoppingCartClip");
         if(state!=null && state.visualModel!=null && state.visualModel==player.overridePrimaryHandModel) {
             player.overridePrimaryHandModel=null;player.resetEquippedHandsModels();
         }
@@ -509,36 +533,38 @@ public final class CartTransition {
         for(var data:slot.modelData) {
             var instance=data.modelInstance;
             var profile=CartWheelbarrow.forItem(state.item);
-            if(instance.modelScript==null || !profile.model().equals(instance.modelScript.getName())) continue;
+            String modelName=modelName(state.item);
+            if(instance.modelScript==null || !instance.modelScript.getName().equals(modelName)) continue;
             cartModelPresent=true;
             var held=new Matrix4f();var delta=new Matrix4f();
             if(!CartGrounding.rigid(data,clip,held)) continue;
-            CartGrounding.lowerHandles(held,profile.model());
+            CartGrounding.lowerHandles(held,modelName);
             // Follow native gait clearance so ordinary rendering does not shift both handles after recovery.
             // Keep the captured neutral bank/grip policy; changing it needs a separate source-pose blend.
-            float gait=state.movingRecovery && !state.pickup?CartLegPace.woodenGaitShift(player):0;
-            if(!CartGrounding.alignWheelbarrow(held,profile,0,0,gait,delta)) continue;
+            float gait=profile!=null && state.movingRecovery && !state.pickup?CartLegPace.woodenGaitShift(player):0;
+            if(!(profile!=null?CartGrounding.alignWheelbarrow(held,profile,0,0,gait,delta)
+                :CartGrounding.align(held,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,CartGrounding.contact(modelName),0,delta))) continue;
             var model=model(state.item);
             if(model==null) continue;
             if(state.placement==null) state.placement=dropPlacement(slot,held,model,state.item);
             if(state.placement==null) continue;
             var ground=new Matrix4f();
             if(!CartTransitionMath.worldToActor(state.placement,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,ground)) continue;
-            var phase=CartTransitionMath.progress(state.progress,!state.pickup);
+            var phase=phase(state);
             float release=state.movingRecovery?(float)CartTransitionMath.recoveryRelease(state.progress,state.movementProgress,state.authored && state.pickup):1;
             var transform=new Matrix4f();
-            if(!CartTransitionMath.blend(ground,held,phase.lift(),transform)) continue;
-            var axle=profile.center(new Vector3f());
+            if(!blend(state.item,ground,held,model,phase.lift(),transform)) continue;
+            var axle=profile==null?new Vector3f(CartGrounding.contact(modelName)):profile.center(new Vector3f());
             var center=ground.transformPosition(axle,new Vector3f()).lerp(held.transformPosition(axle,new Vector3f()),
                 (float)phase.lift());
             transform.translateLocal(center.sub(transform.transformPosition(axle,new Vector3f())));
             // A cancelled setdown still owns the held cart; carry its return path with the walking actor.
             if(state.movingRecovery && !state.pickup
-                && !CartTransitionMath.blend(held,state.recoveryCart,release,transform)) {end(player);return false;}
+                && !blend(state.item,held,state.recoveryCart,model,release,transform)) {end(player);return false;}
             double restartAge=System.nanoTime()-state.restartStart;
             float restart=state.restartPose==null?0:1-(float)CartTransitionMath.smooth(restartAge/RESTART_BLEND_NANOS);
             float cartRestart=restartCartWeight(profile,state.pickup,restart);
-            if(state.pickup && state.restartPose!=null) {
+            if(profile!=null && state.pickup && state.restartPose!=null) {
                 // Let the hip clear the shafts before lowering the cart after an interrupted pickup.
                 double u=Math.max(0,Math.min(1,restartAge/400_000_000.0));
                 cartRestart=1-(float)CartTransitionMath.smooth(u-.7*u*(1-u));
@@ -548,7 +574,7 @@ public final class CartTransition {
                 if(!CartTransitionMath.worldToActor(state.restartPlacement,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,from))
                     {end(player);return false;}
                 var target=new Matrix4f(transform);
-                if(!CartTransitionMath.blend(target,from,cartRestart,transform)) {end(player);return false;}
+                if(!blend(state.item,target,from,model,cartRestart,transform)) {end(player);return false;}
                 var pivot=from.transformPosition(axle,new Vector3f()).lerp(target.transformPosition(axle,new Vector3f()),1-cartRestart);
                 transform.translateLocal(pivot.sub(transform.transformPosition(axle,new Vector3f())));
             } else {state.restartPose=null;state.restartPlacement=null;}
@@ -568,20 +594,20 @@ public final class CartTransition {
                 state.referenceRotation=reference==null?null:new Quaternionf(reference.rotation());
             }
             // Keep the knee bend and hip hinge in one continuous descent, without an early sink/rebound.
-            float lowering=(float)(-profile.pickupLowering()*phase.balance());
+            float lowering=profile==null?0:(float)(-profile.pickupLowering()*phase.balance());
             // A restarted pickup releases the old grip while its clip begins the approach again.
             float reach=state.pickup?(float)phase.reach():(float)phase.reach()*(1-restart)+state.restartReach*restart;
             float grip=state.pickup?(float)phase.grip():(float)phase.grip()*(1-restart)+state.restartGrip*restart;
-            float clearance=state.authored && state.movingRecovery && state.pickup
+            float clearance=profile!=null && state.authored && state.movingRecovery && state.pickup
                 ?(float)CartTransitionMath.recoveryClearance(state.cancelledProgress,(System.nanoTime()-state.recoveryStart)*1e-9):0;
             state.ik=state.movingRecovery
                 ?CartGrip.movingRecovery(slot,instance.parent,clip,delta,transform,held,state.recoveryPose,release,!state.pickup,
-                    state.recoveryReach,state.recoveryGrip,clearance,profile.model())
+                    state.recoveryReach,state.recoveryGrip,clearance,modelName)
                 :state.authored?CartGrip.authoredTransition(slot,instance.parent,clip,delta,transform,
-                    reach,grip,state.restartPose,restart,profile.model())
+                    reach,grip,state.restartPose,restart,modelName)
                 :CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
                     (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
-                    (float)Math.toRadians(profile.pickupHingeDegrees()*phase.hinge()),baseHeight,baseRotation,profile.model());
+                    (float)Math.toRadians(profile==null?0:profile.pickupHingeDegrees()*phase.hinge()),baseHeight,baseRotation,modelName);
             if(state.recovering && !state.ik) {end(player);return false;}
             if(state.ik && !state.movingRecovery) {
                 state.recoveryPose=CartGrip.capture(instance.parent.animPlayer.getSkinningData(),state.recoveryPose);
@@ -617,7 +643,8 @@ public final class CartTransition {
 
     static CartTransitionMath.Placement dropPlacement(ModelSlotRenderData slot, Matrix4f held, Matrix4f model, InventoryItem item) {
         var profile=CartWheelbarrow.forItem(item);
-        return dropPlacement(held,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,item.worldScale,profile.pickupStanceBack(),profile);
+        return profile==null?shoppingDropPlacement(held,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,item.worldScale)
+            :dropPlacement(held,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,item.worldScale,profile.pickupStanceBack(),profile);
     }
 
     static CartTransitionMath.Placement dropPlacement(Matrix4f held, Matrix4f model, float x, float y, float z, float angle, float scale) {
@@ -645,15 +672,36 @@ public final class CartTransition {
             pose.y()+1.5f*(-s*difference.x+c*difference.z),z+.00175f,0,yaw,0,scale*.85f);
     }
 
+    static CartTransitionMath.Placement shoppingDropPlacement(Matrix4f held,Matrix4f model,float x,float y,float z,float angle,float scale) {
+        var pose=CartTransitionMath.actorToWorldPlacement(held,model,x,y,z,angle);
+        if(pose==null) return null;
+        // Euler decomposition has two yaw branches; keep native world yaw in [0,360).
+        var relative=new Matrix4f().rotationY(angle+(float)Math.PI).mul(held).mul(new Matrix4f(model).invert());
+        float yaw=(float)Math.toDegrees(Math.atan2(-relative.m02(),relative.m00()));
+        yaw=(yaw%360+360)%360;
+        var groundPose=new CartTransitionMath.Placement(pose.x(),pose.y(),z+.00175f,0,yaw,0,scale);
+        var ground=new Matrix4f();
+        if(!CartTransitionMath.worldToActor(groundPose,model,x,y,z,angle,ground)) return null;
+        var left=new Vector3f();var right=new Vector3f();
+        CartGrip.handle("ShoppingCartModel",true,left);CartGrip.handle("ShoppingCartModel",false,right);
+        var center=left.add(right).mul(.5f);
+        var difference=held.transformPosition(center,new Vector3f()).sub(ground.transformPosition(center,new Vector3f()));
+        float c=(float)Math.cos(angle),s=(float)Math.sin(angle);
+        return new CartTransitionMath.Placement(pose.x()-1.5f*(c*difference.x+s*difference.z),
+            pose.y()+1.5f*(-s*difference.x+c*difference.z),z+.00175f,0,yaw,0,scale);
+    }
+
     @LuaMethod(name="toolkitWoodCartDropPose", global=true)
     public static KahluaTable dropPose(IsoPlayer player, InventoryItem item) {
-        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !wheelbarrow(item)) return null;
+        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !supported(item)) return null;
         var model=model(item);
         if(model==null) return null;
         var direction=player.getForwardDirection();
         var profile=CartWheelbarrow.forItem(item);
-        var pose=dropPlacement(profile.held(new Matrix4f()),model,player.getX(),player.getY(),player.getZ(),
-            direction.getDirection()+(float)Math.PI/2,item.worldScale,profile.pickupStanceBack(),profile);
+        var pose=profile==null?shoppingDropPlacement(held(item,new Matrix4f()),model,player.getX(),player.getY(),player.getZ(),
+            direction.getDirection()+(float)Math.PI/2,item.worldScale)
+            :dropPlacement(profile.held(new Matrix4f()),model,player.getX(),player.getY(),player.getZ(),
+                direction.getDirection()+(float)Math.PI/2,item.worldScale,profile.pickupStanceBack(),profile);
         if(pose==null || target(player,pose.x(),pose.y(),player.getZ())==null) return null;
         var result=LuaManager.platform.newTable();
         result.rawset("x",(double)pose.x());result.rawset("y",(double)pose.y());
@@ -667,7 +715,7 @@ public final class CartTransition {
     @LuaMethod(name="toolkitWoodCartDropBegin", global=true)
     public static boolean beginDrop(IsoPlayer player, InventoryItem item, double x, double y, double z, double rotation) {
         drop.remove();
-        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !wheelbarrow(item) || item.getWorldItem()!=null
+        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !supported(item) || item.getWorldItem()!=null
             || item.getContainer()!=player.getInventory() || player.getPrimaryHandItem()!=item
             || player.getSecondaryHandItem()!=item || !Double.isFinite(x+y+z+rotation)
             || Math.hypot(x-player.getX(),y-player.getY())>1.5 || z!=player.getZ() || rotation<0 || rotation>=360) return false;

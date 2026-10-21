@@ -15,7 +15,7 @@ ToolkitWoodCartDrop.Type = "ToolkitWoodCartDrop"
 local function wooden(item)
     if not item then return false end
     local fullType = item:getFullType()
-    return fullType == "SaucedWheelbarrow.WheelbarrowWood"
+    return fullType == "SaucedCarts.ShoppingCart" or fullType == "SaucedWheelbarrow.WheelbarrowWood"
         or fullType == "SaucedWheelbarrow.WheelbarrowMetal"
 end
 local function retire(self)
@@ -62,7 +62,7 @@ local function start(self, pickup)
 end
 
 function ToolkitWoodCartPickup:getDuration()
-    return self.character:isTimedActionInstant() and 1 or 88
+    return self.character:isTimedActionInstant() and 1 or (self:findItem() and self:findItem():getFullType() == "SaucedCarts.ShoppingCart" and 50 or 88)
 end
 function ToolkitWoodCartPickup:start()
     start(self, true)
@@ -131,7 +131,7 @@ end
 
 local function setdown(class, base)
     function class:getDuration()
-        return self.character:isTimedActionInstant() and 1 or 88
+        return self.character:isTimedActionInstant() and 1 or (self.item:getFullType() == "SaucedCarts.ShoppingCart" and 50 or 88)
     end
     function class:start()
         if not isServer() and toolkitWoodCartDropPose then

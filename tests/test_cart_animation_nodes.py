@@ -37,7 +37,7 @@ class CartAnimationNodes(unittest.TestCase):
                          [('Bob_Idle', '0', '0'), ('Bob_IdleLooting_Low', '1', '0'), ('Bob_Cart_Idle', '1', '1')])
 
     def test_authored_interaction_pilot_uses_native_progress_clock_and_reverse(self):
-        for model in ('wood', 'metal'):
+        for model in ('wood', 'metal', 'shopping'):
             for direction, reverse in (('pickup', 'false'), ('setdown', 'true')):
                 with self.subTest(model=model, direction=direction):
                     node = ET.parse(ANIMATIONS / f'actions/toolkit_{model}_cart_clip_{direction}.xml').getroot()
@@ -45,7 +45,8 @@ class CartAnimationNodes(unittest.TestCase):
                         ('PerformingAction', 'STRING', 'ToolkitWoodCart'),
                         ('ToolkitWoodCartClipPilot', 'BOOL', 'true'),
                         ('ToolkitWoodCartClipPickup', 'BOOL', 'true' if direction == 'pickup' else 'false'),
-                        ('ToolkitMetalCartClip', 'BOOL', str(model == 'metal').lower()),
+                        ('ToolkitShoppingCartClip', 'BOOL', str(model == 'shopping').lower()),
+                        *([] if model == 'shopping' else [('ToolkitMetalCartClip', 'BOOL', str(model == 'metal').lower())]),
                     })
                     self.assertEqual(node.findtext('m_Name'), f'Toolkit{model.title()}CartClip{direction.title()}')
                     self.assertEqual(node.findtext('m_AnimName'), f'Toolkit_{model.title()}Cart_Pickup')

@@ -18,5 +18,6 @@
     <m_Conditions><m_Name>ToolkitWoodCartClipPilot</m_Name><m_Type>BOOL</m_Type><m_Value>true</m_Value></m_Conditions>
     <m_Conditions><m_Name>ToolkitWoodCartClipPickup</m_Name><m_Type>BOOL</m_Type><m_Value>false</m_Value></m_Conditions>
     <m_Conditions><m_Name>ToolkitMetalCartClip</m_Name><m_Type>BOOL</m_Type><m_Value>false</m_Value></m_Conditions>
+    <m_Conditions><m_Name>ToolkitShoppingCartClip</m_Name><m_Type>BOOL</m_Type><m_Value>false</m_Value></m_Conditions>
     <m_maxTorsoTwist>0</m_maxTorsoTwist>
 </animNode>

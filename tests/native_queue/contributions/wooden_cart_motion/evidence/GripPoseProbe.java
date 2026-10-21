@@ -28,7 +28,9 @@ public final class GripPoseProbe {
     }
     public static synchronized String before(Matrix4f[] poses,SkinningData actor,String model,boolean female,
                                               Matrix4f delta,Matrix4f cart) {
-        if(output==null || !("WheelbarrowWood".equals(model) || "WheelbarrowMetal".equals(model)))return null;
+        if(output==null || !("WheelbarrowWood".equals(model) || "WheelbarrowMetal".equals(model)
+            || model!=null && java.util.Set.of("ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel",
+                "ShoppingCartFlashlightModel","ShoppingCartFlashlightPartialModel","ShoppingCartFlashlightFullModel").contains(model)))return null;
         try {
             var row=new StringBuilder(4096).append("{\"sequence\":").append(++sequence)
                 .append(",\"time\":").append((System.nanoTime()-start)/1e9)
