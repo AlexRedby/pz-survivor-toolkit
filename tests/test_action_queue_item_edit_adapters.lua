@@ -17,6 +17,7 @@ local function setup(changed,foreignMerge,alias,missing)
     f.native('shared/TimedActions/ISTransferAction.lua');f.native('shared/TimedActions/ISDrinkFluidAction.lua')
     f.native('shared/TimedActions/ISEatFoodAction.lua')
     f.native('shared/RadioCom/ISRadioAction.lua')
+    f.native('client/TimedActions/WalkToTimedAction.lua')
     if alias=='drink-native' then ISDrinkFluidAction.complete=ISDrinkFluidAction.isValid
     elseif alias=='drink-base' then ISDrinkFluidAction.complete=ISBaseTimedAction.perform
     elseif alias=='base' then ISBaseTimedAction.perform=ISBaseTimedAction.stop end
@@ -48,12 +49,14 @@ local function setup(changed,foreignMerge,alias,missing)
     f.player.getBodyDamage=function()return damage end
     f.player.getEmitter=function()return {isPlaying=function()return false end,playSound=function()return 1 end}end
     local square={TreatAsSolidFloor=function()return true end,isSolid=function()return false end,isSolidTrans=function()return false end,
-        getTotalWeightOfItemsOnFloor=function()return 0 end}
+        getTotalWeightOfItemsOnFloor=function()return 0 end,getX=function()return 0 end,getY=function()return 0 end,getZ=function()return 0 end}
     f.player.getCurrentSquare=function()return square end
     ISLogSystem={logAction=function()end};ItemPicker={updateOverlaySprite=function()end}
     local baseInstanceof=instanceof
     instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and
-        (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'or value.class=='InventoryContainer'))end
+        (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='IsoObject'and value.class=='IsoThumpable'
+        or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'or value.class=='InventoryContainer'))end
+    getClassSimpleName=function(value)return value.class end
     local knownItems={}
     local bag
     local function container(owner)
@@ -68,7 +71,7 @@ local function setup(changed,foreignMerge,alias,missing)
         c.getItemById=function(self,id)for _,item in ipairs(knownItems)do if item.id==id and item.container==self then return item end end end
         c.getItems=function(self)
             local items={}
-            if not self.owner and bag then items[#items+1]=bag end
+            if not self.owner and self:isInCharacterInventory() and bag then items[#items+1]=bag end
             for _,item in ipairs(knownItems)do if item.container==self then items[#items+1]=item end end
             return {size=function()return #items end,get=function(_,index)return items[index+1]end}
         end
@@ -206,7 +209,25 @@ local function setup(changed,foreignMerge,alias,missing)
         action.action={stopTimedActionAnim=function()end,setLoopedAction=function()end,setTime=function()end}
         assert(action:isValid());action:perform();action.action=nil
     end
-    return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,
+    local function world()
+        local c=container();local parent={class='IsoObject'}
+        local tile={x=1,y=0,z=0,present=true}
+        tile.getX=function(self)return self.x end;tile.getY=function(self)return self.y end;tile.getZ=function(self)return self.z end
+        tile.getObjects=function(self)return {contains=function(_,value)return self.present and value==parent end}end
+        parent.square,parent.container=tile,c
+        parent.getSquare=function(self)return self.square end
+        parent.getContainerCount=function()return 1 end;parent.getContainerByIndex=function(self)return self.container end
+        for _,name in ipairs({'isDoor','isDoorFrame','isWindowN','isWindowW','isBarricaded','isLocked','isLockedByKey','isLockedByPadlock'})do
+            parent[name]=function(self)return self[name..'Flag']or false end
+        end
+        parent.getLockedByCode=function(self)return self.code or 0 end
+        c.parent,c.square,c.kind=parent,tile,'crate'
+        c.getParent=function(self)return self.parent end;c.getSourceGrid=function(self)return self.square end
+        c.getVehiclePart=function(self)return self.vehiclePart end;c.getType=function(self)return self.kind end
+        c.isInCharacterInventory=function()return false end
+        return c,parent,tile
+    end
+    return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,world=world,
         properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
 end
 do
@@ -1282,5 +1303,65 @@ do
                 'unmodeled selected-tool/container-owner effects retain exact dependency protection: '..mode)
         end
     end
+end
+do
+    for _,client in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        local storage,parent,tile=s.world();local food=s.food();food.container=storage
+        local pickup,eating,returning=s.transfer(food,storage,s.root),s.eat(food,.5),s.transfer(food,s.root,storage)
+        local a,b,c=assert(s.adapters.transfer(pickup)),assert(s.adapters.food(eating)),assert(s.adapters.transfer(returning))
+        assert(s.model.evaluate({{action=returning,edit=c},{action=pickup,edit=a},{action=eating,edit=b}}).status=='allowed')
+        s.water.container=s.root;local anchor=s.drink();anchor.action={}
+        local q=s.f.queue(anchor,pickup,eating,returning)
+        assert(s.policy.evaluateMove(q,returning,pickup,false).allowed,'adjacent ordinary world return can precede its pickup as a no-op')
+        assert(not s.policy.evaluateMove(q,pickup,eating,true).allowed and not s.policy.evaluateCancel(q,pickup).allowed,
+            'world food retains exact root-location pickup prerequisite')
+        assert(s.policy.evaluateCancel(q,returning).allowed,'explicit world return can be cancelled without cancelling the food')
+        local independent=s.item();independent.container=storage
+        local secondPickup=s.transfer(independent,storage,s.root)
+        local separate=s.f.queue(anchor,pickup,secondPickup)
+        assert(s.policy.evaluateMove(separate,secondPickup,pickup,false).allowed,
+            'different exact items sharing the same anchored world container remain independently movable')
+        q=s.f.queue(anchor,pickup,eating,returning)
+        storage.load=49.5
+        local tight=s.policy.evaluateMove(q,returning,pickup,false)
+        assert(not tight.allowed and tight.reason=='container_capacity','world destination cannot spend the future pickup release')
+        storage.load=0
+        -- World and carried cookable transfers must not open a heater path in
+        -- an unrelated global transfer prefix.
+        food.cookable=true
+        assert(not s.adapters.transfer(pickup)and not s.adapters.transfer(returning)and not s.adapters.food(eating))
+        food.container=s.root
+        assert(s.adapters.food(eating)and not s.adapters.transfer(returning),'carried cookable proof does not grant world storage')
+        food.cookable=false;food.container=storage
+        food.isFavorite=function()return true end
+        assert(s.adapters.transfer(pickup)and not s.adapters.transfer(returning),'native favorite outbound refusal is not modeled as success')
+        food.isFavorite=function()return false end
+        for _,kind in ipairs({'floor','proximityInv','twistInv_corpses','TradeUI','stove','microwave','fridge','freezer','clothingrack'})do
+            storage.kind=kind;assert(not s.adapters.worldContainer(storage,s.f.player),'special world storage must remain protected: '..kind)
+        end
+        storage.kind='crate'
+        for _,class in ipairs({'IsoDeadBody','IsoMannequin','IsoStove','IsoWorldInventoryObject','ForeignObject'})do
+            parent.class=class;assert(not s.adapters.worldContainer(storage,s.f.player),'unknown/special parent must stay protected: '..class)
+        end
+        parent.class='IsoThumpable';assert(s.adapters.worldContainer(storage,s.f.player))
+        for _,name in ipairs({'isDoor','isDoorFrame','isWindowN','isWindowW','isBarricaded','isLocked','isLockedByKey','isLockedByPadlock'})do
+            parent[name..'Flag']=true;assert(not s.adapters.worldContainer(storage,s.f.player));parent[name..'Flag']=nil
+        end
+        parent.code=123;assert(not s.adapters.worldContainer(storage,s.f.player));parent.code=nil
+        tile.present=false;assert(not s.adapters.transfer(pickup),'removed parent is rejected even while isExistYet and square pointers survive');tile.present=true
+        storage.square={};assert(not s.adapters.transfer(pickup));storage.square=tile
+        parent.container={};assert(not s.adapters.transfer(pickup));parent.container=storage
+        storage.vehiclePart={};assert(not s.adapters.transfer(pickup));storage.vehiclePart=nil
+        tile.x=5;assert(not s.adapters.transfer(pickup),'distant loaded storage is not adjacent');tile.x=1
+        tile.z=1;assert(not s.adapters.transfer(pickup));tile.z=0
+        storage.getAcceptItemFunction=function()return 'ForeignAccept'end;assert(not s.adapters.transfer(pickup));storage.getAcceptItemFunction=function()end
+        storage.getOnlyAcceptCategory=function()return 'Food'end;assert(not s.adapters.transfer(pickup));storage.getOnlyAcceptCategory=function()end
+        local otherStorage=s.world();assert(not s.adapters.transfer(s.transfer(food,storage,otherStorage)),'world-to-world transfers remain protected')
+        assert(food.container==storage and food.hunger==-.4,'world inspection must not execute or mutate anything')
+        local walk=s.f.action(ISWalkToTimedAction);q=s.f.queue(anchor,pickup,eating,walk,returning)
+        assert(not s.policy.evaluateMove(q,returning,pickup,false).allowed,'world transfer must not cross native walking dependencies')
+    end
+    print('World storage edit contracts: anchored adjacent endpoints, exact pickup/return, capacity, favorite/cookable restrictions, missing objects and movement barriers passed.')
 end
 print('Food edit adapters: original portions, cold cookable state, dormant cooked replacements and surviving ordinary/custom-weight partial use replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')

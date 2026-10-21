@@ -6,8 +6,9 @@ function Fixture.scenario(case)
  local customWeight=case=='food-custom-weight-move-portions'or case=='food-custom-weight-cancel-first-portion'
  local extraBag=case=='food-extra-weight-bag-edit-pickup-return'or case=='food-extra-weight-bag-capacity'
  local extraWeight=extraBag or case=='food-extra-weight-move-portions'or case=='food-extra-weight-cancel-first-portion'
+ local world=case=='food-world-edit-pickup-return'or case=='food-world-tight-capacity'
  local consumption=extraWeight or customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
- return {bag=extraBag or case=='food-bag-edit-pickup-return',capacity=case=='food-extra-weight-bag-capacity',
+ return {bag=extraBag or case=='food-bag-edit-pickup-return',world=world,worldCapacity=case=='food-world-tight-capacity',capacity=case=='food-extra-weight-bag-capacity',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
    or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion'
@@ -36,11 +37,24 @@ local function count(container,id,fullType)
 end
 function Fixture.items(player,ids,allowDeleted)
  local root=player:getInventory();local bag=root:getItemById(ids.bagId)
- local food=root:getItemById(ids.foodId);local anchor=root:getItemById(ids.anchorId)
+ local storage,object
+ if Fixture.scenario(ids.case).world then
+  local square=getCell():getGridSquare(ids.storageX,ids.storageY,ids.storageZ)
+  object=square and square:getObjects():get(ids.storageObjectIndex)
+  if not object or object:getModData().QueueFoodWorld~=ids.foodId or object:getSquare()~=square then return end
+  storage=object:getContainerByIndex(ids.storageContainerIndex)
+  if not storage or storage:getParent()~=object or storage:getSourceGrid()~=square or storage:getType()~='crate'then return end
+ end
+ local food=root:getItemById(ids.foodId)or storage and storage:getItemById(ids.foodId);local anchor=root:getItemById(ids.anchorId)
  if not bag or bag:getFullType()~=Fixture.bagType or bag:getContainer()~=root
   or not food and not(allowDeleted and Fixture.scenario(ids.case).depletion)
   or food and food:getFullType()~=foodType(ids.case) or not anchor or anchor:getFullType()~=Fixture.anchorType then return end
- local result={bag=bag,food=food,anchor=anchor}
+ local result={bag=bag,food=food,anchor=anchor,storage=storage,object=object}
+ if storage then
+  local filler=storage:getItemById(ids.storageFillerId)
+  if not filler or filler:getFullType()~='Base.Nails'or filler:getContainer()~=storage then return end
+  result.worldFiller=filler
+ end
  if Fixture.scenario(ids.case).capacity then
   local filler=root:getItemById(ids.capacityFillerId)
   if not filler or filler:getFullType()~='Base.Nails'or filler:getContainer()~=bag:getItemContainer()then return end
@@ -61,12 +75,25 @@ function Fixture.snapshot(player,ids)
  -- Non-finite values are never accepted for a present food instance.
  if food and(not finite(food:getBaseHunger())or not finite(food:getHungChange()))then return end
  local source=not food and 'deleted'or food:getContainer()==root and 'root'or food:getContainer()==state.bag:getItemContainer()and 'bag'
+  or state.storage and food:getContainer()==state.storage and 'world'
  if not source or anchor:getContainer()~=root then return end
  local result={case=ids.case,bagId=ids.bagId,bagType=state.bag:getFullType(),foodId=ids.foodId,foodType=food and food:getFullType()or ids.foodType,
   baseHunger=food and food:getBaseHunger()or ids.baseHunger,remaining=food and food:getHungChange()or 0,source=source,
   foodCount=count(root,ids.foodId),foodTypeCount=count(root,nil,foodType(ids.case)),deleted=not food,
   anchorId=ids.anchorId,anchorType=anchor:getFullType(),anchorAmount=anchor:getFluidContainer():getAmount(),anchorCount=count(root,ids.anchorId),anchorThirstChange=anchor:getFluidContainer():getProperties():getThirstChange(),
   hunger=player:getStats():get(CharacterStat.HUNGER),thirst=player:getStats():get(CharacterStat.THIRST),bagCount=count(root,ids.bagId)}
+ if state.storage then
+  local storage,object=state.storage,state.object;local square=object:getSquare()
+  result.foodCount=result.foodCount+count(storage,ids.foodId);result.foodTypeCount=result.foodTypeCount+count(storage,nil,foodType(ids.case))
+  result.storageX,result.storageY,result.storageZ=square:getX(),square:getY(),square:getZ()
+  result.storageObjectIndex,result.storageContainerIndex=object:getObjectIndex(),0
+  result.storageType,result.storageCapacity=storage:getType(),storage:getEffectiveCapacity(player)
+  result.storageLoad,result.storageItemCount=storage:getCapacityWeight(),storage:getItems():size()
+  result.storageFoodCount,result.storageFoodWeight=count(storage,ids.foodId),food:getUnequippedWeight()
+  result.storageFillerId,result.storageFillerType=state.worldFiller:getID(),state.worldFiller:getFullType()
+  result.storageFillerCount=count(root,state.worldFiller:getID())+count(storage,state.worldFiller:getID())
+  result.storageFillerWeight=state.worldFiller:getActualWeight()
+ end
  if Fixture.scenario(ids.case).cookable then
   if not food or not finite(food:getHeat())or not finite(root:getTemperature())then return end
   result.cookable,result.cooked=food:isCookable(),food:isCooked()
@@ -123,6 +150,7 @@ function Fixture.prepare(player,case,previous)
   local old=assert(Fixture.items(player,previous.ids,true),'previous fixture identities missing')
   assert(not player:isEquipped(old.bag)and count(root,old.bag:getID())==1,'previous bag equipped/duplicated')
   local cleanup={old.anchor}
+  if old.worldFiller then cleanup[#cleanup+1]=old.worldFiller end
   if old.filler then cleanup[#cleanup+1]=old.filler end
   if old.fork then cleanup[#cleanup+1]=old.fork;cleanup[#cleanup+1]=old.spoon end
   if old.food then cleanup[#cleanup+1]=old.food else
@@ -130,14 +158,31 @@ function Fixture.prepare(player,case,previous)
     and count(root,previous.ids.foodId)==0,'previous missing food was not verified deleted')
   end
   for _,item in ipairs(cleanup)do
-   assert(not player:isEquipped(item)and count(root,item:getID())==1,'previous food fixture changed')
+   assert(not player:isEquipped(item)and count(root,item:getID())+(old.storage and count(old.storage,item:getID())or 0)==1,'previous food fixture changed')
    local source=item:getContainer();source:Remove(item);if isServer()then sendRemoveItemFromContainer(source,item)end
   end
   assert(old.bag:getItemContainer():getItems():isEmpty(),'previous bag has foreign contents')
   root:Remove(old.bag);if isServer()then sendRemoveItemFromContainer(root,old.bag)end
+  if old.object then
+   assert(old.storage:getItems():isEmpty(),'previous world storage has foreign contents')
+   old.object:getSquare():transmitRemoveItemFromSquare(old.object)
+  end
  end
  local spec=Fixture.scenario(case);local bag=assert(root:AddItem(Fixture.bagType))
- local food=assert((spec.bag and bag:getItemContainer()or root):AddItem(foodType(case)))
+ local object,storage
+ if spec.world then
+  local origin=player:getCurrentSquare();local square
+  for _,offset in ipairs({{1,0},{-1,0},{0,1},{0,-1}})do
+   local candidate=getCell():getGridSquare(origin:getX()+offset[1],origin:getY()+offset[2],origin:getZ())
+   if not square and candidate and candidate:canStand()and candidate:isFree(false)and not origin:isBlockedTo(candidate)then square=candidate end
+  end
+  assert(square,'no adjacent clear world-food storage tile')
+  object=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
+  object:setBlockAllTheSquare(true);object:setIsContainer(true)
+  storage=assert(object:getContainer());storage:setType('crate');storage:setCapacity(5);storage:setExplored(true)
+  square:AddSpecialObject(object)
+ end
+ local food=assert((storage or spec.bag and bag:getItemContainer()or root):AddItem(foodType(case)))
  assert(instanceof(food,'Food')and food:getBaseHunger()<-.04 and food:getHungChange()==food:getBaseHunger()
   and not food:getOnEat()and (spec.consumption or not food:getReplaceOnUse())
   and (not food:getRequireInHandOrInventory()or food:getRequireInHandOrInventory():isEmpty())
@@ -180,6 +225,16 @@ function Fixture.prepare(player,case,previous)
     'custom food weight preparation differs')
   end
  end
+ local worldFiller
+ if storage then
+  assert(not food:isCookable()and not food:isCustomWeight()and math.abs(food:getUnequippedWeight()-.2)<.00001,
+   'world fixture requires native noncookable Cereal weight')
+  worldFiller=assert(storage:AddItem('Base.Nails'))
+  local weight=spec.worldCapacity and storage:getEffectiveCapacity(player)-food:getUnequippedWeight()-.1 or .05
+  assert(weight>0 and weight<5,'world-food capacity fixture differs')
+  worldFiller:setActualWeight(weight);worldFiller:setWeight(weight);worldFiller:setCustomWeight(true)
+  object:getModData().QueueFoodWorld=food:getID()
+ end
  local filler
  if spec.capacity then
   local inventory=bag:getItemContainer();local capacity=inventory:getEffectiveCapacity(player)
@@ -212,14 +267,20 @@ function Fixture.prepare(player,case,previous)
  player:getStats():set(CharacterStat.HUNGER,spec.smart and .2 or .8);player:getStats():set(CharacterStat.THIRST,.8)
  player:getBodyDamage():setHealthFromFoodTimer(0);player:getMoodles():Update()
  if isServer()then
-  sendAddItemToContainer(root,bag);if not spec.bag then sendAddItemToContainer(root,food)end;sendAddItemToContainer(root,anchor)
+  sendAddItemToContainer(root,bag);if not spec.bag and not storage then sendAddItemToContainer(root,food)end;sendAddItemToContainer(root,anchor)
+  if object then object:transmitCompleteItemToClients();object:transmitModData()end
   if spec.utensil then sendAddItemToContainer(root,spec.cancel and fork or spoon)end
  end
  local ids={case=case,bagId=bag:getID(),foodId=food:getID(),anchorId=anchor:getID()}
+ if storage then
+  local square=object:getSquare()
+  ids.storageX,ids.storageY,ids.storageZ=square:getX(),square:getY(),square:getZ()
+  ids.storageObjectIndex,ids.storageContainerIndex,ids.storageFillerId=object:getObjectIndex(),0,worldFiller:getID()
+ end
  if filler then ids.capacityFillerId=filler:getID()end
  if spec.utensil then ids.forkId,ids.spoonId=fork:getID(),spoon:getID()end
  local initial=assert(Fixture.snapshot(player,ids));initial.foodTimer=0;initial.foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)
- assert(root:getItemById(food:getID())==food,'prepared original food reference differs from exact root item')
+ assert((storage or root):getItemById(food:getID())==food,'prepared original food reference differs from exact source item')
  return {player=player,case=case,ids=initial,originalFood=food}
 end
 function Fixture.resolve(player,ids)
@@ -295,6 +356,13 @@ function Fixture.verify(state)
   for _,field in ipairs({'capacityFillerId','capacityFillerType','capacityFillerWeight','capacityFillerCount','bagCapacity'})do
    if value[field]~=state.ids[field]then return nil,'tight bag fixture changed: '..field end
   end
+ end
+ if Fixture.scenario(state.case).world then
+  for _,field in ipairs({'storageX','storageY','storageZ','storageObjectIndex','storageContainerIndex','storageType','storageCapacity',
+   'storageFillerId','storageFillerType','storageFillerCount','storageFillerWeight'})do
+   if value[field]~=state.ids[field]then return nil,'world storage changed: '..field end
+  end
+  if math.abs(value.storageFoodWeight-state.ids.storageFoodWeight*.5)>.00001 then return nil,'world food native partial weight differs'end
  end
  if depletion then
   local reason,proof=Fixture.checkDeletion(state,value)

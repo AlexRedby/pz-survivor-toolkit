@@ -86,6 +86,45 @@ class FoodScenarioTests(unittest.TestCase):
                     self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                      self.row(recorded, action, scenario, kind, mode)['status'])
 
+    def test_world_transfers_map_room_move_and_tight_dependency_without_extra_claims(self):
+        action = 'eat-world-transfers'
+        binding = self.suite['scenario_actions'][action]
+        self.assertEqual({'success-queued', 'move-independent', 'move-dependent', 'server-authority'},
+                         set(binding['checks']))
+        for phrase in ('Base.Cereal', 'anchored crate', 'Nails', 'capacity-5', 'root/world', 'native decreasing food weight',
+                       'No nested world containers', 'active cancellation', 'physical input', 'WAN'):
+            self.assertIn(phrase, binding['scope'])
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.assertEqual(list(food.WORLD_CASES),
+                                 scenarios.select(self.suite, 'success-queued', action, kind, mode)[0])
+                self.assertEqual([food.WORLD_CASE],
+                                 scenarios.select(self.suite, 'move-independent', action, kind, mode)[0])
+                for scenario in ('move-dependent', 'server-authority') if kind == 'mp' else ('move-dependent',):
+                    self.assertEqual(list(food.WORLD_CASES),
+                                     scenarios.select(self.suite, scenario, action, kind, mode)[0])
+                recorded = self.recorded(kind, mode)
+                self.assertEqual('passed', self.row(recorded, action, 'success-queued', kind, mode)['status'])
+                self.assertEqual('passed' if kind == 'mp' else 'not-applicable',
+                                 self.row(recorded, action, 'server-authority', kind, mode)['status'])
+                for scenario in ('move-independent', 'move-dependent'):
+                    self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                                     self.row(recorded, action, scenario, kind, mode)['status'])
+                for scenario in ('repeat-same', 'cancel-active', 'cancel-waiting', 'physical-input', 'return-items'):
+                    expected = 'not-applicable' if mode == 'native' and scenario in scenarios.QUEUE_ONLY else 'unimplemented'
+                    self.assertEqual(expected, self.row(recorded, action, scenario, kind, mode)['status'])
+        original = self.recorded()
+        for case in food.WORLD_CASES:
+            changed = copy.deepcopy(original)
+            changed['coverage'] = [row for row in changed['coverage'] if row['case'] != case]
+            self.assertNotEqual('passed', self.row(changed, action, 'success-queued')['status'])
+            self.assertNotEqual('passed', self.row(changed, action, 'move-dependent')['status'])
+            self.assertEqual('passed', self.row(changed, 'eat-transfers', 'success-queued')['status'])
+            self.assertEqual('passed', self.row(changed, 'eat-extra-transfers', 'success-queued')['status'])
+        for other_action, definition in self.suite['scenario_actions'].items():
+            if other_action != action:
+                self.assertFalse(set(food.WORLD_CASES) & {case for cases in definition['checks'].values() for case in cases})
+
     def test_extra_transfers_map_exact_capacity_and_location_edits(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):

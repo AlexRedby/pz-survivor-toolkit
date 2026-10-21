@@ -197,6 +197,7 @@ local function sharedWorldTarget(a, b, context)
     local left, right = inspect and inspect(a, context), inspect and inspect(b, context)
     if left and right then
         if sharedEditResource and sharedEditResource(left, right) then return true end
+        for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
         for target in pairs(left.targets or {}) do if right.targets and right.targets[target] then return target end end
         if left.hands and left.hands == right.hands then return left.hands end
         if (left.equipment and left.equipment == right.hands) or (right.equipment and right.equipment == left.hands) then return left.equipment or right.equipment end
@@ -594,7 +595,11 @@ local function transferResources(action)
     for _, container in pairs({source = action.srcContainer, destination = action.destContainer}) do
         Policy.addContainerResources(result, container)
     end
-    if ItemEditAdapters then result.edit = ItemEditAdapters.transfer(action) end
+    if ItemEditAdapters then
+        result.edit = ItemEditAdapters.transfer(action)
+        if result.edit and (not carriedContainers(action.srcContainer,action.character)
+            or not carriedContainers(action.destContainer,action.character)) then result.positions={[action.character]=true} end
+    end
     return result
 end
 Policy.transferResources = transferResources
@@ -770,7 +775,8 @@ function Policy.installContracts()
     registerNative("ISRadioAction", radioResources)
     for _, name in ipairs({"ISWalkToTimedAction", "ISWalkToTimedActionF", "ISPathFindAction"}) do
         registerNative(name, function(action)
-            local result = resources(action); result.cancelWaiting, result.preparation = false, true; return result
+            local result = resources(action); result.cancelWaiting, result.preparation = false, true
+            result.positions={[action.character]=true}; return result
         end)
     end
     for _, name in ipairs({"ISEquipWeaponAction", "ISEquipHeavyItem", "ISUnequipAction"}) do
@@ -881,7 +887,7 @@ local function emptyResourceMap(value)
     return true
 end
 
-local pairResourceMaps = {"targets", "dynamicInputs", "dynamicInputsByType", "outputTypes"}
+local pairResourceMaps = {"targets", "positions", "dynamicInputs", "dynamicInputsByType", "outputTypes"}
 local spatialFields = {"generator", "charger", "object", "moveProps", "toolkitWorldTarget", "isoObject",
     "toolkitWorldX", "toolkitGeneratorCommand", "toolkitWorldCommand", "stove", "mcwave"}
 local function plainItemFootprint(action, context, connectivity)
@@ -1200,12 +1206,21 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
             local destinationCarried = destinations ~= nil
             -- Active shelf reading may move its world return past a tape pickup. Bound both
             -- endpoints at their current loads, without spending space from future returns.
-            if check.readDemotion then destinations = destinations or fixedWorldContainer(destination) end
+            if check.readDemotion then destinations = destinations or fixedWorldContainer(destination)
+            elseif ItemEditAdapters and ItemEditAdapters.worldContainer then
+                destinations = destinations or ItemEditAdapters.worldContainer(destination,character)
+            end
             if action.character ~= character or (not sourceCarried
-                and not (check.readDemotion and fixedWorldContainer(source)))
+                and not (check.readDemotion and fixedWorldContainer(source))
+                and not (not check.readDemotion and ItemEditAdapters and ItemEditAdapters.worldContainer
+                    and ItemEditAdapters.worldContainer(source,character)))
                 or not destinations then return check.blocker end
+            if not sourceCarried and not destinationCarried and not check.readDemotion then return check.blocker end
             local function add(item)
                 if not instanceof(item, "InventoryItem") or instanceof(item, "InventoryContainer") then return false end
+                if not check.readDemotion and (not sourceCarried or not destinationCarried)
+                    and (not ItemEditAdapters or not ItemEditAdapters.worldTransferItem
+                        or not ItemEditAdapters.worldTransferItem(item,not destinationCarried)) then return false end
                 local id, kind = item:getID(), item:getType()
                 if seen[id] then return true end
                 seen[id] = true

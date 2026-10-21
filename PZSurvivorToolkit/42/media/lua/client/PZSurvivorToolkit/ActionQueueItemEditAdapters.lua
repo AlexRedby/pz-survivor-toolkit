@@ -186,6 +186,48 @@ local function ancestry(container,player)
     end
     return false
 end
+local worldStorageTypes={crate=true,shelf=true,shelves=true,metal_shelves=true}
+local function method(value,name)return value and type(value[name])=="function" end
+-- Only adjacent anchored ordinary storage. isExistYet alone can return true
+-- with world sync disabled, even after its parent has left the square.
+function Adapters.worldContainer(container,player)
+    if not instanceof(container,"ItemContainer") then return end
+    for _,name in ipairs({"getType","getContainingItem","isExistYet","getAcceptItemFunction","getOnlyAcceptCategory",
+        "getVehiclePart","getSourceGrid","getParent"})do if not method(container,name) then return end end
+    if not worldStorageTypes[container:getType()]
+        or container:getContainingItem() or not container:isExistYet()
+        or container:getAcceptItemFunction()~=nil or container:getOnlyAcceptCategory()~=nil
+        or not method(container,"getVehiclePart") or container:getVehiclePart()
+        or not method(container,"getSourceGrid") or type(getClassSimpleName)~="function" then return end
+    local parent=container:getParent()
+    if not instanceof(parent,"IsoObject") then return end
+    local class=getClassSimpleName(parent)
+    if class~="IsoObject" and class~="IsoThumpable" then return end
+    if class=="IsoThumpable" then
+        for _,name in ipairs({"isDoor","isDoorFrame","isWindowN","isWindowW","isBarricaded",
+            "isLocked","isLockedByKey","isLockedByPadlock"}) do
+            if not method(parent,name) or parent[name](parent) then return end
+        end
+        if not method(parent,"getLockedByCode") or parent:getLockedByCode()~=0 then return end
+    end
+    for _,name in ipairs({"getSquare","getContainerCount","getContainerByIndex"})do if not method(parent,name) then return end end
+    local square=parent:getSquare()
+    if not square or container:getSourceGrid()~=square or not method(square,"getObjects")
+        or not square:getObjects():contains(parent) or not instanceof(player,"IsoPlayer") then return end
+    local origin=player:getCurrentSquare()
+    if not origin or origin:getZ()~=square:getZ() or math.abs(origin:getX()-square:getX())>1
+        or math.abs(origin:getY()-square:getY())>1 then return end
+    local count=parent:getContainerCount()
+    if not finite(count) or count<1 or count%1~=0 then return end
+    for i=0,count-1 do if parent:getContainerByIndex(i)==container then return {container} end end
+end
+function Adapters.worldTransferItem(item,returning)
+    -- Native refuses favorite outbound transfers. Cookable food could change
+    -- state in world storage before a later portion; its carried proof is not
+    -- a proof of every world-container temperature path.
+    return instanceof(item,"InventoryItem") and (not returning or not item:isFavorite())
+        and (not instanceof(item,"Food") or not item:isCookable())
+end
 local function itemFacts(item)
     local id=item:getID()
     if not finite(id) or id%1~=0 then return end
@@ -211,7 +253,12 @@ end
 Adapters.weightInspectionSafe=Weights.factoryFree
 function Adapters.transfer(action)
     if not pending(action,transfer) or not leaf(action.item,action.character) or action.srcContainer==action.destContainer
-        or not ancestry(action.srcContainer,action.character) or not ancestry(action.destContainer,action.character) then return end
+        then return end
+    local sourceCarried,destinationCarried=ancestry(action.srcContainer,action.character),ancestry(action.destContainer,action.character)
+    if not sourceCarried and not destinationCarried then return end
+    if not sourceCarried and not Adapters.worldContainer(action.srcContainer,action.character)
+        or not destinationCarried and not Adapters.worldContainer(action.destContainer,action.character) then return end
+    if (not sourceCarried or not destinationCarried) and not Adapters.worldTransferItem(action.item,not destinationCarried) then return end
     local provenWeight
     if not Weights.factoryFree(action.item) then
         provenWeight=Weights.unequipped(action.item)
@@ -328,8 +375,10 @@ end
 function Adapters.food(action)
     if not pending(action,eat) or not instanceof(action.container,"ItemContainer")
         or action.carLighter or action.openFlame or action.fromRelaunch or not leaf(action.item,action.character)
-        or not instanceof(action.item,"Food") or not ancestry(action.item:getContainer(),action.character) then return end
+        or not instanceof(action.item,"Food") then return end
     local item=action.item
+    if not ancestry(item:getContainer(),action.character)
+        and (item:isCookable() or not Adapters.worldContainer(item:getContainer(),action.character)) then return end
     -- Use the constructor's captured reference, never a fresh inventory search.
     -- Native getSecondItem/start select only one of the two remembered utensils.
     local kind=item:getEatType()
