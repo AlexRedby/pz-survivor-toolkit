@@ -434,4 +434,52 @@ do
     OrganizedCategories = previousProvider
     LootSorter.gatherBoxesOrWarn, LootSorter.notify = previousGather, previousNotify
 end
+do
+    local previousGather, previousNotify, previousPlanner = LootSorter.gatherBoxesOrWarn, LootSorter.notify, LootSorter.planTrips
+    local previousDebug, previousLog, previousFill = LootSorter.isDebug, LootSorter.DBG, LootSorter.BOX_FILL_FRACTION
+    local previousFinder = AdjacentFreeTileFinder
+    local debug, capacityReads, weightReads, plans, boxLogs = false, 0, 0, 0, {}
+    local destination = {
+        getEffectiveCapacity = function(_, character)
+            assert(character == player)
+            capacityReads = capacityReads + 1
+            return 10
+        end,
+        getCapacityWeight = function() weightReads = weightReads + 1; return 2 end,
+    }
+    local source = {getItems = function() return list({}) end, isInCharacterInventory = function() return true end}
+    LootSorter.gatherBoxesOrWarn = function()
+        return {{square = square, container = destination, cats = {Food = true}, items = {Apple = true}, dist = 1}}
+    end
+    LootSorter.notify = function() end
+    LootSorter.isDebug = function() return debug end
+    LootSorter.DBG = function(message)
+        assert(not message:find('SORT ERROR:', 1, true), message)
+        if debug and message:find('box[', 1, true) == 1 then boxLogs[#boxLogs + 1] = message end
+    end
+    LootSorter.BOX_FILL_FRACTION = 0.9
+    AdjacentFreeTileFinder = {Find = function(sq, character)
+        assert(sq == square and character == player)
+        return current
+    end}
+    LootSorter.planTrips = function(items, gathered, ...)
+        plans = plans + 1
+        assert(#gathered == 1 and gathered[1].capacity == 9 and gathered[1].used == 2,
+            'lazy diagnostics changed the actual capacity snapshot passed to the planner')
+        return previousPlanner(items, gathered, ...)
+    end
+    LootSorter.sort(source, 0)
+    assert(plans == 1 and capacityReads == 1 and weightReads == 1 and #boxLogs == 0,
+        'release sort performed capacity reads for silent box diagnostics')
+    debug = true
+    capacityReads, weightReads = 0, 0
+    LootSorter.sort(source, 0)
+    assert(plans == 2 and capacityReads == 2 and weightReads == 2 and #boxLogs == 1,
+        'debug sort lost its box diagnostics or the required planner snapshot')
+    assert(boxLogs[1] == 'box[1] cap=10 used=2.0 dist=1 cats=[Food ] items=[Apple ]',
+        'lazy diagnostics changed the debug box output')
+    LootSorter.gatherBoxesOrWarn, LootSorter.notify, LootSorter.planTrips = previousGather, previousNotify, previousPlanner
+    LootSorter.isDebug, LootSorter.DBG, LootSorter.BOX_FILL_FRACTION = previousDebug, previousLog, previousFill
+    AdjacentFreeTileFinder = previousFinder
+end
 print('Quartermaster rules passed: direct item matching/discovery, exact picks, opt-out, clearing, authority, SP persistence, preset conflicts, client refusal/timeout and owned sort preparation.')

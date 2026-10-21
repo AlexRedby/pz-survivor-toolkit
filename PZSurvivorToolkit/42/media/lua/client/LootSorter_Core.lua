@@ -506,13 +506,17 @@ function LootSorter.sort(sourceContainer, playerNum)
             return cap
         end
 
-        for bi, b in ipairs(boxes) do
-            local cs = ""
-            for k in pairs(b.cats) do cs = cs .. k .. " " end
-            local is = ""                                     -- item-NAME designations (b.items), not contents
-            for k in pairs(b.items or {}) do is = is .. k .. " " end
-            LootSorter.DBG(("box[%d] cap=%.0f used=%.1f dist=%d cats=[%s] items=[%s]"):format(
-                bi, effectiveCapacity(b.container), b.container:getCapacityWeight(), b.dist, cs, is))
+        if LootSorter.isDebug() then
+            -- Ordinary boxes sum their contents in getCapacityWeight(); a silent log must not
+            -- repeat that native scan before the actual planner snapshot below.
+            for bi, b in ipairs(boxes) do
+                local cs = ""
+                for k in pairs(b.cats) do cs = cs .. k .. " " end
+                local is = ""                                 -- item-NAME designations (b.items), not contents
+                for k in pairs(b.items or {}) do is = is .. k .. " " end
+                LootSorter.DBG(("box[%d] cap=%.0f used=%.1f dist=%d cats=[%s] items=[%s]"):format(
+                    bi, effectiveCapacity(b.container), b.container:getCapacityWeight(), b.dist, cs, is))
+            end
         end
 
         -- Build plain-data records (engine -> data) for the PURE planner.

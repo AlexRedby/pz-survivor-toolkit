@@ -8,6 +8,7 @@
 --               distance breaking ties)
 --   carriers = { {ref, factor=<num 0..1>, space=<num>}, ... }  (bags-first = lowest factor first)
 --   budget   = <num>  effective-weight room before overburden
+--   Designations are read-only snapshots for this plan; callbacks must not rewrite them.
 --   matches  = optional function(box, item) -> bool : category/tag match; explicit item names still win.
 --   accepts  = optional function(carrierRef, itemRef) -> bool : may this carrier hold this item?
 --              Injected so the pure planner never calls the engine directly -- in-game it wraps
@@ -25,8 +26,6 @@
 --     leftover = { itemRec, ... } }
 
 LootSorter = LootSorter or {}
-
-local function hasAny(t) if t then for _ in pairs(t) do return true end end return false end
 
 -- Priority is a plain number: HIGHER wins, 0 is the default, and negatives push a box below the ones
 -- that never mention it. Absent means 0, so every box designated before this existed and every caller
@@ -53,11 +52,27 @@ local function inPreferenceOrder(boxes)
     return ordered
 end
 
+-- Resolve each requested display name once per plan. Do not enumerate every
+-- designation in large presets when only one item/name is being distributed.
+local function boxesForItemName(index, boxes, name)
+    local candidates = index[name]
+    if not candidates then
+        candidates = {}
+        for _, box in ipairs(boxes) do
+            local names = box.items
+            if names and names[name] then candidates[#candidates + 1] = box end
+        end
+        index[name] = candidates
+    end
+    return candidates
+end
+
 function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, acceptsDestination)
     accepts = accepts or function() return true end
     matches = matches or function(box, item) return item.cat and box.cats and box.cats[item.cat] end
     acceptsDestination = acceptsDestination or function() return true end
     boxes = inPreferenceOrder(boxes)
+    local namedBoxes = {}
     -- 1) assign each item to a same-category box WITH ROOM, cascading to further same-cat boxes.
     -- Only items with a roomy, accepting carrier may reserve destination space.
     -- Otherwise an impossible haul can block later items or force them into overflow boxes.
@@ -79,8 +94,8 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
         if #choices > 0 then
             -- pass 1: a box that names THIS item (by display name) wins over any category box
             if it.name then
-                for _, b in ipairs(boxes) do             -- boxes nearest-first
-                    if b.items and b.items[it.name] and (boxUsed[b] + it.weight) <= b.capacity
+                for _, b in ipairs(boxesForItemName(namedBoxes, boxes, it.name)) do
+                    if (boxUsed[b] + it.weight) <= b.capacity
                         and acceptsDestination(b, it) then
                         dest = b; break
                     end

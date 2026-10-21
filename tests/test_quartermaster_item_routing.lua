@@ -383,4 +383,60 @@ do
     assert(Rules.matcher()(legacy,record),'tag opt-out retained a broken-tool classification')
     enabled=true
 end
+-- Explicit-name lookup must not scan unrelated boxes for every physical item.
+do
+    for _,count in ipairs({100,400,1000}) do
+        local records,boxes,reads,admissions={},{},0,0
+        for index=1,count do records[index]=item('Base.Candy','Food','Shared item') end
+        for index=1,40 do
+            local names={['Unrelated '..index]=true,disabled=false}
+            local target=box(nil,{Food=true})
+            target.capacity=count
+            target.items=nil
+            setmetatable(target,{__index=function(_,field)
+                if field=='items' then reads=reads+1; return names end
+            end})
+            boxes[index]=target
+        end
+        local destinations,plan=checkPlan(records,boxes,{{ref={},space=count,factor=1}},count,nil,
+            function() admissions=admissions+1; return true end)
+        assert(#plan.leftover==0 and reads==40 and admissions==count,
+            'routing repeated unrelated name lookups or cached per-item destination admission')
+        for _,record in ipairs(records) do assert(destinations[record]==boxes[1]) end
+    end
+    local names={['Shared item']=true}
+    for index=1,10000 do names['Unrelated preset name '..index]=true end
+    local target=box(nil,{},names)
+    local designationSet,enumerated=target.items,0
+    local originalPairs=pairs
+    pairs=function(value)
+        local iterator,state,key=originalPairs(value)
+        if value~=designationSet then return iterator,state,key end
+        return function(...)
+            local name,on=iterator(...)
+            if name~=nil then enumerated=enumerated+1 end
+            return name,on
+        end,state,key
+    end
+    local record=item('Base.Candy','Food','Shared item')
+    local destinations=checkPlan({record},{target})
+    pairs=originalPairs
+    assert(destinations[record]==target and enumerated<16,
+        'one item caused enumeration of an unrelated large designation preset')
+    local named,category=box(nil,{}, {['Shared item']=true}),box(nil,{Food=true})
+    named.dist,category.dist=10,1
+    local record=item('Base.Candy','Food','Shared item')
+    local function noCategoryMatch() error('explicit-name routing called category fallback') end
+    local plan=LootSorter.planTrips({record},{category,named},{carrier},100,nil,noCategoryMatch)
+    assert(plan.trips[1].perBox[named][1].item==record,'name index lost explicit precedence')
+    local tied=box(nil,{}, {['Shared item']=true})
+    tied.dist,tied.priority=named.dist,named.priority
+    local destinations=checkPlan({record},{tied,named})
+    assert(destinations[record]==tied,'equal-preference name candidates lost incoming order')
+    destinations=checkPlan({record},{named,tied})
+    assert(destinations[record]==named,'name index retained a previous incoming tie order')
+    named.items={Other=true}
+    local destinations=checkPlan({record},{named,category})
+    assert(destinations[record]==category,'a later plan reused an earlier name index')
+end
 print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, destination admission, capacity/carriers/leftovers and failure safety.')
