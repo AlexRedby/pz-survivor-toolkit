@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.181
+
+- Reuse measured text-fitting results across UI redraws with bounded storage and automatic invalidation when native fonts change. Preserve exact glyph measurement and Unicode boundaries.
+- Use the same fitting mechanism in the storage Manifest, retaining its font and two-dot suffix while keeping Unicode labels inside narrow columns.
+
 ### 0.1.180
 
 - **Improved:** Pending partial food portions with a custom item weight and a native empty-container replacement can be reordered or cancelled when the original food survives every remaining portion. Queue checks preserve native portions and weight, keep required pickups and capacity constraints, and protect evolved ingredients, callbacks and full replacement consumption.
