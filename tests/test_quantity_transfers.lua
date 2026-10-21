@@ -1,5 +1,8 @@
 -- Own selection/dialog state, with actual native transfer callbacks when supplied.
-require = function() end
+local Membership = dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/InventoryMembership.lua')
+require = function(name)
+    if name == 'PZSurvivorToolkit/InventoryMembership' then return Membership end
+end
 local enabled, fill, active, player = true, nil, {}, nil
 PZSurvivorToolkit = {Settings = {quantityTransfers = function() return enabled end}}
 getActivatedMods = function() return {contains = function(_, id) return active[id] end} end
@@ -14,7 +17,12 @@ local function container(owned, kind)
     local c = {values = {}, owned = owned, kind = kind or 'crate'}
     function c:isInCharacterInventory(p) return self.owned and p == player end
     function c:isItemAllowed(item) return not item.forbidden end
-    function c:getItems() return list(self.values) end
+    function c:getItems()
+        if self.rawValues ~= self.values then
+            self.rawValues, self.rawItems = self.values, list(self.values)
+        end
+        return self.rawItems
+    end
     function c:getType() return self.kind end
     return c
 end
@@ -369,5 +377,49 @@ if OCItemStickSource then
     optOut=false
     assert(Protection.allowsAutomatic(pinned), 'server/save opt-out also disables protection')
     print('Transfer selection scope matches the actual OC Stick wrapper.')
+end
+-- A proximity pane exposes real source items through one raw aggregate list.
+-- Its membership is indexed only for the current synchronous enumeration.
+do
+    local previousReachable, previousQueued, previousProvider, previousMove =
+        reachable, queued, OrganizedCategories, ISInventoryPaneContextMenu.onMoveItemsTo
+    OrganizedCategories = {isItemStickingEnabled=function() return true end,
+        isItemStuck=function(value) return value.stuck end}
+    ISInventoryPaneContextMenu.onMoveItemsTo = function(items, dest) enqueue(items, dest) end
+    local function aggregateBatch(count)
+        local actual, aggregate, rows = container(false), container(false), {}
+        for index=1,count do rows[index]=item(20000+index,actual) end
+        aggregate.values=rows
+        local raw, reads, scans = list(rows), 0, 0
+        local get = raw.get
+        raw.get = function(self, index) reads=reads+1; return get(self,index) end
+        raw.contains = function() scans=scans+1; error('aggregate membership must be indexed') end
+        aggregate.getItems = function() return raw end
+        -- A filtered view cannot define raw membership for a selected real item.
+        aggregate.visibleItems = {[rows[1]]=true}
+        rows[2].stuck, rows[3].favorite, rows[4].equipped, rows[5].forbidden, rows[6].heavy = true,true,true,true,true
+        reachable={inv,aggregate}
+        local selection=Q.snapshot(0,rows,inv,true)
+        assert(#selection.items==count-5 and selection.items[#selection.items]==rows[count],
+            'raw aggregate membership must preserve exact selection and all live protections')
+        assert(reads==count and scans==0,
+            'one snapshot must read aggregate members once rather than scan per selected item')
+        reads,queued=0,{}
+        assert(Q.transfer(selection,tostring(#selection.items))==count-5 and #queued==count-5)
+        assert(reads==count and scans==0, 'confirmation must build its own single membership index')
+        -- Change raw contents without changing list identity or count after the dialog opened.
+        local removed=rows[count]
+        rows[count]=item(40000+count,actual)
+        selection.items[1].stuck=true
+        reads,queued=0,{}
+        assert(Q.transfer(selection,tostring(#selection.items))==count-7 and #queued==count-7,
+            'confirmation must see same-count raw replacements and newly stuck items')
+        for _, action in ipairs(queued) do assert(action.item~=removed and action.item~=selection.items[1]) end
+        assert(reads==count and scans==0, 'a later confirmation cannot retain the earlier raw index')
+    end
+    aggregateBatch(256)
+    aggregateBatch(512)
+    reachable,queued,OrganizedCategories,ISInventoryPaneContextMenu.onMoveItemsTo =
+        previousReachable,previousQueued,previousProvider,previousMove
 end
 print('Quantity selection, common budget, native transfers, stale/respawn/reachability and dialogs passed' .. (NativeInventoryContextMenuSource and ' with actual native callbacks.' or '.'))

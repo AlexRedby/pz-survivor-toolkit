@@ -10,7 +10,7 @@ require = function(name)
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
-        or name == "PZSurvivorToolkit/PlantingTags" then
+        or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
     end
     if name == "PZSurvivorToolkit/UIStyle" then
@@ -726,6 +726,9 @@ do
             getSpecificPlayer=function() return player end,getPlayerHotbar=function() end,
             isGamePaused=function() return false end,CleanUI_getTransferMethod=function() return '1' end}, {__index=_G})
         env.require=function(name)
+            if name=='PZSurvivorToolkit/InventoryMembership' then
+                return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
+            end
             if name=='PZSurvivorToolkit/InventoryClasses' then
                 return {panes=function(install) install(paneClass) end,onToggle=function() end}
             end

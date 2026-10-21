@@ -1,5 +1,6 @@
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 local Rows = require "PZSurvivorToolkit/InventoryRows"
+local Membership = require "PZSurvivorToolkit/InventoryMembership"
 local Search = require "PZSurvivorToolkit/InventorySearch"
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
@@ -22,25 +23,11 @@ end
 -- Never retain membership across commands, frames, or nested enumerations.
 local function withTransferMembership(callback, ...)
     local previous = transferMembership
-    transferMembership = {parent = previous}
+    transferMembership = {parent = previous, index = {}}
     local result = pack(pcall(callback, ...))
     transferMembership = previous
     if not result[1] then error(result[2], 0) end
     return unpack(result, 2, result.n)
-end
-
-local function contains(pane, item, membership)
-    local items = pane.inventory:getItems()
-    if not membership then return items:contains(item) end
-    local entry = membership[pane]
-    local count = items:size()
-    if not entry or entry.inventory ~= pane.inventory or entry.items ~= items or entry.count ~= count then
-        entry = {inventory = pane.inventory, items = items, count = count, members = {}}
-        -- UI rows omit hidden items; only the raw container defines membership.
-        for index = 0, count - 1 do entry.members[items:get(index)] = true end
-        membership[pane] = entry
-    end
-    return entry.members[item] == true
 end
 
 local function categoryName(category)
@@ -63,7 +50,8 @@ local function visibleForTransfer(pane, item, membership)
     if not Toolkit.Settings.inventoryFilters() or not pane.toolkitVisibleItems then return true end
     if not pane.toolkitCategory and not tagFilterActive(pane) and not hasSearch(pane) then return true end
     -- Drag/drop calls the destination pane; its filter must not reject incoming items.
-    local fromPane = item:getContainer() == pane.inventory or contains(pane, item, membership or transferMembership)
+    local index = membership or transferMembership and transferMembership.index
+    local fromPane = item:getContainer() == pane.inventory or Membership.contains(index, pane.inventory, item)
     return not fromPane or pane.toolkitVisibleItems[item] == true
 end
 
@@ -287,7 +275,7 @@ local function install(class)
     class.refreshContainer = function(self, ...)
         local membership = transferMembership
         while membership do
-            membership[self] = nil
+            membership.index = {}
             membership = membership.parent
         end
         self.toolkitFilterItems = nil

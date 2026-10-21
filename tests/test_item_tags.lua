@@ -86,6 +86,24 @@ assert(not Tags.matchesRule('FurnitureDoor',assert(Tags.normalizeRule({include={
  'old exact-category exclusion stopped working')
 assert(Tags.matches('FurnitureDoor',{'category:FurnitureDoor'}),'single exact tag filter stopped working')
 
+-- Exclusions share one item-tag lookup, regardless of how many alternatives a
+-- saved rule contains. Retain exact legacy-category matching in that lookup.
+do
+ local tags=Tags.forCategory('foodPerishable_fruit')
+ local excluded={}; for i=1,64 do excluded[i]='category:Absent'..i end
+ local rule={mode='all',include={'food','fruit','category:foodPerishable_fruit'},exclude=excluded}
+ local originalIpairs, traversals=ipairs,0
+ ipairs=function(values)
+  if values==tags then traversals=traversals+1 end
+  return originalIpairs(values)
+ end
+ local accepted=Tags.matchesRule(tags,rule)
+ ipairs=originalIpairs
+ assert(accepted and traversals==1,'tag rule rebuilt item membership for each exclusion')
+ tags[1]='changed'
+ assert(not Tags.matchesRule(tags,rule),'rule matching retained an earlier tag-set cache')
+end
+
 local function scriptItem(fullType, category, doubleClick)
  return {fullType=fullType,category=category,
   getFullName=function(self) return self.fullType end,

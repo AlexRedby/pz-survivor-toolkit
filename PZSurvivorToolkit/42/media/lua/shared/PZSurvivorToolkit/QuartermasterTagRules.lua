@@ -48,19 +48,48 @@ function Rules.forBox(obj, ci, links, presets)
     return rules
 end
 
-function Rules.matches(box, item)
+local function itemState(item)
+    local ref = item.ref
+    local state = {ref = ref}
+    if ref and ref.isBroken and ref:isBroken() then
+        state.tags = Tags.forItem(ref)
+        state.blocked = Tags.matches(state.tags, {"tool"})
+    end
+    return state
+end
+
+local function itemTags(state)
+    if not state.tags then state.tags = Tags.forItem(state.ref) end
+    return state.tags
+end
+
+local function matches(box, item, enabled, state)
     -- Tag/category selections describe usable tools. Explicit item assignments still
     -- take precedence in the planner, so broken tools can be collected separately.
-    local ref = item.ref
-    if Tags.enabled() and ref and ref.isBroken and ref:isBroken()
-        and Tags.matches(Tags.forItem(ref), {"tool"}) then return false end
+    if enabled and state.blocked then return false end
     if item.cat and box.cats and box.cats[item.cat] then return true end
-    if not Tags.enabled() or not box.rules or #box.rules == 0 then return false end
-    local tags = Tags.forItem(item.ref)
+    if not enabled or not box.rules or #box.rules == 0 then return false end
+    local tags = itemTags(state)
     for _, rule in ipairs(box.rules) do
         if Tags.matchesRule(tags, rule) then return true end
     end
     return false
+end
+
+-- Standalone reads remain live. Planning uses one private classification of each
+-- item while testing its alternative destinations; the next plan starts fresh.
+function Rules.matches(box, item)
+    local enabled = Tags.enabled()
+    return matches(box, item, enabled, enabled and itemState(item))
+end
+
+function Rules.matcher()
+    local enabled, states = Tags.enabled(), {}
+    return function(box, item)
+        local state = states[item]
+        if enabled and not state then state = itemState(item); states[item] = state end
+        return matches(box, item, enabled, state)
+    end
 end
 
 Rules.FIELD, Rules.REVISIONS = FIELD, REVISIONS

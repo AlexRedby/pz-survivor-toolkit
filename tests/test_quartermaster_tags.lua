@@ -21,6 +21,9 @@ require = function(name)
             end}
     end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
+    if name == 'PZSurvivorToolkit/InventoryTransferProtection' then
+        return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
+    end
     if name == 'PZSurvivorToolkit/TagVisuals' then
         return {get=function(id) return {r=0.3,g=0.7,b=0.3,texture=id and {id=id} or nil} end}
     end

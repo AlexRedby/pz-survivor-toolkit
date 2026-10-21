@@ -15,6 +15,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.177
+
+- **Fixed:** Quantity transfers index raw proximity-container membership once while preparing a selection and rebuild that index separately on confirmation. Large selections avoid repeated full scans while still checking changed contents, item protections, sources and destinations.
+- **Changed:** Filtered and quantity transfers share one command-scoped membership implementation. Quartermaster classifies each item once per sort plan when considering alternative destinations; later plans and standalone reads remain fresh. Tag rules build one membership set for their include/exclude checks instead of rebuilding it for every exclusion.
+
 ### 0.1.176
 
 - **Fixed:** Filtered bulk transfers and CleanUI transfer previews index raw container membership once per synchronous enumeration instead of scanning the whole container for each candidate. Hidden aggregate items remain excluded, incoming items remain accepted and later commands read fresh contents; native transfer checks are preserved.
