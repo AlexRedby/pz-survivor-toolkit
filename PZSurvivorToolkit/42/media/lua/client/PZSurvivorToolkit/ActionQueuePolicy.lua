@@ -745,16 +745,24 @@ function Policy.installContracts()
         end
     end, {"updateEat", "setOverrideHandModels"})
     registerNative("ISEatFoodAction", function(action)
-        local edit=ItemEditAdapters and ItemEditAdapters.food(action)
+        local edit,fullOutput
+        if ItemEditAdapters then edit,fullOutput=ItemEditAdapters.food(action) end
         if edit then
             local result=resources(action)
             result.edit=edit
             local extraFoodWeight=action.item:haveExtraItems()
-            result.capacityNonIncreasing=not extraFoodWeight
+            result.capacityNonIncreasing=not fullOutput and not extraFoodWeight
                 and not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
             -- Replacement food decreases in weight only while it survives every
             -- portion. A transfer edit can otherwise bypass the food component.
-            result.capacityRequiresEdit=not result.capacityNonIncreasing
+            -- Native full replacement adds its output before removing food;
+            -- Host may temporarily retain both. Do not use the surviving-food
+            -- conditional bypass for any transfer prefix containing this step.
+            result.capacityRequiresEdit=not fullOutput and not result.capacityNonIncreasing
+            if fullOutput then
+                result.outputTypes={[fullOutput]=true}
+                result.capacityReplacement=true
+            end
             result.targets[action.character]=true
             for _,resource in ipairs(edit.resources) do
                 if resource.domain=="item" then
@@ -1269,7 +1277,8 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
         elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
             and not (source=="native.ISFluidEmptyAction" and contract.edit and contract.capacityNonIncreasing==true)
             and not (source == "native.ISEatFoodAction" and contract.edit
-                and (contract.capacityNonIncreasing == true or conditionalCapacity[action]))
+                and (contract.capacityNonIncreasing == true or conditionalCapacity[action]
+                    or removed[action] and contract.capacityReplacement==true))
             and not (check.readDemotion and source == "native.ISRadioAction"
                 and instanceof(action.device, "IsoTelevision"))
             and not (check.readDemotion and source == "native.device-media-insert" and contract.capacityNonIncreasing == true) then

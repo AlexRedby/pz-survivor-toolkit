@@ -6,6 +6,10 @@ import shutil
 
 from . import craft, fluid
 
+FULL_MOVE_CASE = 'food-full-replacement-move-independent'
+FULL_CANCEL_CASE = 'food-full-replacement-cancel-pending'
+FULL_QUARTER_CASE = 'food-full-replacement-after-quarter'
+FULL_CASES = (FULL_MOVE_CASE, FULL_CANCEL_CASE, FULL_QUARTER_CASE)
 MOVE_CASE = 'food-root-move-same-portions'
 CANCEL_CASE = 'food-root-cancel-first-portion'
 BAG_CASE = 'food-bag-edit-pickup-return'
@@ -53,7 +57,7 @@ ALL_COOKABLE_CASES = (*COOKABLE_CASES, WORLD_COOKED_CASE, WORLD_RAW_CAPACITY_CAS
 ALL_REPLACEMENT_CASES = (*REPLACEMENT_CASES, WORLD_REPLACEMENT_CASE)
 ALL_WORLD_CASES = (*WORLD_CASES, *WORLD_BAG_CASES)
 BAG_CASES = (BAG_CASE, *EXTRA_TRANSFER_CASES, *ALL_WORLD_CASES)
-CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES, *REPLACEMENT_CASES, *CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES, *ALL_WORLD_CASES]
+CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES, *REPLACEMENT_CASES, *CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES, *ALL_WORLD_CASES, *FULL_CASES]
 # The full selected installation. Locked EatSmart debug logging leaves native completion unchanged.
 MODS = next(line.split('=', 1)[1].split(';') for line in
             (Path(__file__).resolve().parents[3] / 'SurvivorQoL-selected.ini').read_text().splitlines()
@@ -77,6 +81,8 @@ WORLD_BAG_RECEIPT_KEYS = {'worldBagId', 'worldBagType', 'worldBagCount', 'worldB
                           'worldBagContainerIndex', 'worldBagCapacity', 'worldBagLoad', 'worldBagWeight'}
 WORLD_THERMAL_RECEIPT_KEYS = {'storageTemperature', 'storageCustomTemperature', 'storageFridge',
                               'storageFreezer', 'storageMicrowave', 'storageStove', 'storageTemperatureChanging', 'cookingTime'}
+FULL_RECEIPT_KEYS = {'tailId', 'tailType', 'tailCount', 'tailAmount', 'tailThirstChange', 'fixturePanId',
+                     'pans', 'panCount', 'foodWeight', 'sourceFood', 'sourcePlain', 'consumptionReplacementType'}
 FLAGS = {'emptyStart', 'anchorRunning', 'anchorProgress', 'anchorDuration', 'contractsVerified',
          'reordered', 'waitingCancel', 'moveRejected', 'cancelRejected', 'manualPickup',
          'untouchedBefore', 'nativeDurationsUnchanged', 'order'}
@@ -178,6 +184,14 @@ def definitions():
                 'success-queued': {BAG_CASE: common[BAG_CASE]},
                 'move-dependent': {BAG_CASE: edited[BAG_CASE]},
                 'server-authority': {BAG_CASE: {'effectsVerified': True, 'serverAuthorityVerified': True}}}}}
+    actions['eat-full-replacement'] = {
+        'scope': 'Root Base.PanFriedVegetables2 with original hunger -.10 and weight 1.3 has guaranteed full portion 1 and plain Base.RoastingPan output. Move independent half-water before full, cancel pending full retaining water, or deny full before its same-food quarter. Native controls retain original order. Native food duration 232 and water duration 460 are unchanged. Exact original deletion, retained pre-existing pan IDs, one distinct new normal pan without fluid, both water effects and Host client/server receipts are checked. No cutlery, extras, custom weight, callbacks, transfer prefix, active cancellation or physical input.',
+        'mods': MODS, 'checks': {
+            'success-queued': {case: common[case] for case in FULL_CASES},
+            'move-independent': {FULL_MOVE_CASE: edited[FULL_MOVE_CASE]},
+            'cancel-waiting': {FULL_CANCEL_CASE: edited[FULL_CANCEL_CASE]},
+            'move-dependent': {FULL_QUARTER_CASE: edited[FULL_QUARTER_CASE]},
+            'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in FULL_CASES}}}
     return {'food': {'status': 'ready', 'clients': 1, 'default_mods': MODS, 'scenario_actions': actions,
                      'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp'] if case in WORLD_BAG_CASES else ['sp', 'mp'],
                                     languages=['EN'], modes=['native', 'toolkit']) for case in CASES]}}
@@ -228,6 +242,8 @@ def _authority(text):
 
 
 def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
+    if case in FULL_CASES:
+        return _full_case(case, row, prep, receipt, mode)
     issues = []
     bag, enabled, depletion = case in BAG_CASES, mode == 'toolkit', case == DEPLETION_CASE
     smart, utensil, cookable = case in SMART_CASES, case in UTENSIL_CASES, case in ALL_COOKABLE_CASES
@@ -466,12 +482,13 @@ def verify(root, selection, catalog):
         case_issues = _case(case, row, prep, receipt, selection['kind'], selection['mode'])
         issues.extend(case_issues)
         identity_fields = ['bagId', 'foodId', 'anchorId']
+        if case in FULL_CASES: identity_fields += ['tailId', 'fixturePanId']
         if case in UTENSIL_CASES: identity_fields += ['forkId', 'spoonId']
         if case == EXTRA_CAPACITY_CASE: identity_fields += ['capacityFillerId']
         if case in ALL_WORLD_CASES: identity_fields += ['storageFillerId']
         if case in WORLD_BAG_CASES: identity_fields += ['worldBagId']
         identities += [prep.get(field) for field in identity_fields]
-        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in (*ALL_COOKABLE_CASES, *ALL_REPLACEMENT_CASES) else set()) | (REPLACEMENT_RECEIPT_KEYS if case in ALL_REPLACEMENT_CASES else set()) | (CONSUMPTION_RECEIPT_KEYS if case in (*CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES) else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if case in EXTRA_WEIGHT_CASES else set()) | (CAPACITY_RECEIPT_KEYS if case == EXTRA_CAPACITY_CASE else set()) | (WORLD_RECEIPT_KEYS if case in ALL_WORLD_CASES else set()) | (WORLD_BAG_RECEIPT_KEYS if case in WORLD_BAG_CASES else set()) | (WORLD_THERMAL_RECEIPT_KEYS if case in (*WORLD_THERMAL_CASES, WORLD_BAG_COOKED_CASE) else set()) | {'commands', 'editEvidence', 'client'}}
+        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (FULL_RECEIPT_KEYS if case in FULL_CASES else set()) | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in (*ALL_COOKABLE_CASES, *ALL_REPLACEMENT_CASES) else set()) | (REPLACEMENT_RECEIPT_KEYS if case in ALL_REPLACEMENT_CASES else set()) | (CONSUMPTION_RECEIPT_KEYS if case in (*CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES) else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if case in EXTRA_WEIGHT_CASES else set()) | (CAPACITY_RECEIPT_KEYS if case == EXTRA_CAPACITY_CASE else set()) | (WORLD_RECEIPT_KEYS if case in ALL_WORLD_CASES else set()) | (WORLD_BAG_RECEIPT_KEYS if case in WORLD_BAG_CASES else set()) | (WORLD_THERMAL_RECEIPT_KEYS if case in (*WORLD_THERMAL_CASES, WORLD_BAG_COOKED_CASE) else set()) | {'commands', 'editEvidence', 'client'}}
         outcome.update(effectsVerified=not case_issues, pendingRequestsVerified=not case_issues, pendingEditsVerified=not case_issues and selection['mode'] == 'toolkit',
                        serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
@@ -487,4 +504,97 @@ def verify(root, selection, catalog):
         'Cold Base.BreadSlices keeps ReplaceOnCooked dormant with zero cooking time and unchanged Base.Toast count; no active or hot cooking or callback coverage.',
         'Partial Base.CannedPeachesOpen keeps its original identity and empty-can count; ordinary weight decreases, explicit custom actualWeight stays constant. No full depletion or evolved-ingredient coverage.',
         'Adjacent anchored world crate pickup/half-eat/return checks exact storage identity, filler and combined root/world counts; SP-only Schoolbag ancestry and ancestor capacity are checked separately; native MP ContainerID cannot address the nested bag. No world mutation coverage.',
+        'Root Base.PanFriedVegetables2 full replacement checks exact deletion, one new plain Base.RoastingPan, retained existing pan IDs, two independent water actions and native start/completion order; no full-food transfer prefixes.',
         'No OnEat, smoking, utensil transfers, active eating cancellation or WAN coverage.']}}
+
+
+def _full_case(case, row, prep, receipt, mode):
+    """Full replacement receipts cannot borrow partial-food or client-only evidence."""
+    enabled = mode == 'toolkit'
+    cancelled = enabled and case == FULL_CANCEL_CASE
+    quarter = case == FULL_QUARTER_CASE
+    keys = RECEIPT_KEYS | FULL_RECEIPT_KEYS
+    ids = ['bagId', 'foodId', 'anchorId', 'tailId', 'fixturePanId']
+    expected_prep = dict(case=case, bagType=fluid.BAG_TYPE, bagCount=1,
+                         foodType='Base.PanFriedVegetables2', source='root', foodCount=1, deleted=False,
+                         anchorType='Base.WaterBottle', anchorCount=1, tailType='Base.WaterBottle', tailCount=1,
+                         sourceFood=True, sourcePlain=True, consumptionReplacementType='Base.RoastingPan',
+                         foodTimer=0, foodLevel=0)
+    if (set(prep) != keys | {'foodTimer', 'foodLevel'} or not craft._matches(prep, expected_prep)
+            or not craft._ids([prep.get(key) for key in ids], len(ids))
+            or type(prep.get('foodTypeCount')) is not int or prep['foodTypeCount'] < 1
+            or any(not fluid._close(prep.get(key), value, 1e-5) for key, value in
+                   dict(baseHunger=-.1, remaining=-.1, foodWeight=1.3, anchorAmount=1, tailAmount=1,
+                        anchorThirstChange=-.5, tailThirstChange=-.5, hunger=.8, thirst=.8).items())):
+        return ['Full food preparation identity/provenance differs: ' + case]
+
+    def pans(value):
+        rows = value.get('pans')
+        return (type(rows) is list and type(value.get('panCount')) is int and value['panCount'] == len(rows)
+                and all(type(pan) is dict and set(pan) == {'id', 'weight', 'normal', 'fluid', 'root'}
+                        and craft._matches(pan, dict(normal=True, fluid=False, root=True))
+                        and fluid._close(pan.get('weight'), 1.3, 1e-5) for pan in rows)
+                and craft._ids([pan.get('id') for pan in rows])
+                and [pan['id'] for pan in rows] == sorted(pan['id'] for pan in rows))
+
+    if (not pans(prep) or prep['panCount'] < 1
+            or prep['fixturePanId'] not in [pan['id'] for pan in prep['pans']]
+            or set(pan['id'] for pan in prep['pans']) & {prep[key] for key in ids if key != 'fixturePanId'}):
+        return ['Full food pre-existing pan identities/provenance differ: ' + case]
+    deleted = not cancelled
+    dynamic = {'remaining', 'source', 'foodCount', 'foodTypeCount', 'deleted', 'hunger', 'thirst',
+               'anchorAmount', 'anchorThirstChange', 'tailAmount', 'tailThirstChange', 'pans', 'panCount',
+               'foodWeight', 'sourceFood', 'sourcePlain'}
+    fixed = {key: prep[key] for key in keys - dynamic}
+    fixed.update(source='deleted' if deleted else 'root', foodCount=0 if deleted else 1,
+                 foodTypeCount=prep['foodTypeCount'] - int(deleted), deleted=deleted,
+                 sourceFood=not deleted, sourcePlain=not deleted)
+    if (set(receipt) != keys or not craft._matches(receipt, fixed) or not craft._matches(row, receipt)
+            or type(row.get('client')) is not dict or set(row['client']) != keys
+            or not craft._matches(row['client'], {key: receipt[key] for key in keys - {'hunger', 'thirst'}})
+            or any(not fluid._close(row['client'].get(key), receipt.get(key), .01) for key in ('hunger', 'thirst'))
+            or not fluid._close(receipt.get('remaining'), 0 if deleted else -.1)
+            or not fluid._close(receipt.get('foodWeight'), 0 if deleted else 1.3, 1e-5)
+            or not pans(receipt)):
+        return ['Full food exact original/client/output receipt differs: ' + case]
+    old = {pan['id']: pan for pan in prep['pans']}
+    final = {pan['id']: pan for pan in receipt['pans']}
+    new_ids = set(final) - set(old)
+    if (not set(old) <= set(final) or any(not craft._matches(final[key], pan) for key, pan in old.items())
+            or len(new_ids) != int(deleted) or new_ids & {prep[key] for key in ids}
+            or receipt['panCount'] != prep['panCount'] + int(deleted)):
+        return ['Full food retained/new output identities differ: ' + case]
+    for prefix in ('anchor', 'tail'):
+        amount = receipt.get(prefix + 'Amount')
+        if (not fluid._number(amount) or not .49 <= amount <= .5001
+                or not fluid._close(receipt.get(prefix + 'ThirstChange'), -.5 * amount)):
+            return ['Full food independent clean-water amount/property differs: ' + case]
+    thirst = .8 - .5 * ((1 - receipt['anchorAmount']) + (1 - receipt['tailAmount']))
+    if (not fluid._close(receipt.get('hunger'), .8 if cancelled else .7, .01)
+            or not fluid._close(receipt.get('thirst'), thirst, .01)):
+        return ['Full food hunger/two-water effects differ: ' + case]
+    portions = [.25, 1, .5] if quarter else [1, .5]
+    commands = row.get('commands')
+    if type(commands) is not list or len(commands) != len(portions):
+        return ['Full food native command count differs: ' + case]
+    for index, (command, portion) in enumerate(zip(commands, portions)):
+        tail = index == len(portions) - 1
+        expected = dict(id=prep['tailId' if tail else 'foodId'], portion=portion,
+                        baseHunger=0 if tail else prep['baseHunger'], dispatchRemaining=0 if tail else prep['remaining'],
+                        dispatchSource='root', menuDispatched=not tail, nativeDuration=460 if tail else 232,
+                        progress=not (cancelled and not tail), cancelled=cancelled and not tail, pickupObserved=False)
+        if type(command) is not dict or set(command) != COMMAND_KEYS or not craft._matches(command, expected):
+            return ['Full food native captured portion/progress/duration differs: ' + case]
+    order = [1, 2, 3] if quarter else [2] if cancelled else [2, 1] if enabled and case == FULL_MOVE_CASE else [1, 2]
+    labels = ['anchor'] + [('quarter', 'full', 'tail')[index - 1] if quarter else ('full', 'tail')[index - 1] for index in order]
+    evidence = row.get('editEvidence')
+    expected = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
+                    contractsVerified=enabled, reordered=enabled and case == FULL_MOVE_CASE,
+                    waitingCancel=cancelled, moveRejected=enabled and quarter, cancelRejected=False, manualPickup=False,
+                    untouchedBefore=True, nativeDurationsUnchanged=True, order=order,
+                    startOrder=labels, completionOrder=labels,
+                    denialReason='edit_resource_amount' if enabled and quarter else 'not-requested')
+    if (type(evidence) is not dict or set(evidence) != FLAGS | {'startOrder', 'completionOrder', 'denialReason'}
+            or not craft._matches(evidence, expected) or not craft._matches(row, dict(status='passed', reason=None))):
+        return ['Full food pending edit/native start-completion order differs: ' + case]
+    return []

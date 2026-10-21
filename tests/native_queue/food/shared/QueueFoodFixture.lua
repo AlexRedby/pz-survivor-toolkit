@@ -1,4 +1,7 @@
 -- Ordinary exact-ID food portions. Native Eat uses original base hunger, not remaining fractions.
+local Full
+local function isFull(case)return type(case)=='string'and case:find('food-full-replacement-',1,true)==1 end
+local function full()Full=Full or require 'QueueFoodFull';return Full end
 local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorType='Base.WaterBottle'}
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
 function Fixture.scenario(case)
@@ -14,7 +17,7 @@ function Fixture.scenario(case)
  local world=worldBag or worldCooked or worldRaw or case=='food-world-cooking-replacement-edit-pickup-return'
   or case=='food-world-edit-pickup-return'or case=='food-world-tight-capacity'
  local consumption=extraWeight or customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
- return {bag=extraBag or case=='food-bag-edit-pickup-return',world=world,worldBag=worldBag,worldCapacity=worldRaw or case=='food-world-tight-capacity'or case=='food-world-bag-tight-capacity',capacity=case=='food-extra-weight-bag-capacity',
+ return {full=isFull(case),bag=extraBag or case=='food-bag-edit-pickup-return',world=world,worldBag=worldBag,worldCapacity=worldRaw or case=='food-world-tight-capacity'or case=='food-world-bag-tight-capacity',capacity=case=='food-extra-weight-bag-capacity',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
    or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion'
@@ -29,7 +32,7 @@ function Fixture.scenario(case)
 end
 local function foodType(case)
  local spec=Fixture.scenario(case)
- return spec.extraWeight and 'Base.Salad'or spec.consumption and 'Base.CannedPeachesOpen'or spec.replacement and 'Base.BreadSlices'
+ return spec.full and 'Base.PanFriedVegetables2'or spec.extraWeight and 'Base.Salad'or spec.consumption and 'Base.CannedPeachesOpen'or spec.replacement and 'Base.BreadSlices'
   or spec.cookable and (spec.cooked and 'Base.ChickenFillet'or 'Base.Cabbage')
   or spec.utensil and 'Base.OatsRaw'or Fixture.foodType
 end
@@ -53,7 +56,7 @@ function Fixture.items(player,ids,allowDeleted)
  end
  local food=root:getItemById(ids.foodId)or storage and storage:getItemById(ids.foodId);local anchor=root:getItemById(ids.anchorId)
  if not bag or bag:getFullType()~=Fixture.bagType or bag:getContainer()~=root
-  or not food and not(allowDeleted and Fixture.scenario(ids.case).depletion)
+  or not food and not(allowDeleted and (Fixture.scenario(ids.case).depletion or Fixture.scenario(ids.case).full))
   or food and food:getFullType()~=foodType(ids.case) or not anchor or anchor:getFullType()~=Fixture.anchorType then return end
  local result={bag=bag,food=food,anchor=anchor,storage=storage,object=object}
  if Fixture.scenario(ids.case).worldBag then
@@ -175,6 +178,7 @@ function Fixture.snapshot(player,ids)
    result[kind..'Source'],result[kind..'Condition'],result[kind..'Count']=source,item:getCondition(),count(root,item:getID())
   end
  end
+ if Fixture.scenario(ids.case).full then full().snapshot(player,ids,result,food)end
  return result
 end
 function Fixture.prepare(player,case,previous)
@@ -182,6 +186,7 @@ function Fixture.prepare(player,case,previous)
  -- Disable the isolated process option too, before publishing thirsty actors' water.
  getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
  local root=player:getInventory()
+ if previous and isFull(previous.case)then full().cleanup(previous)end
  if previous then
   assert(previous.player==player and previous.verified,'unverified previous food fixture')
   local old=assert(Fixture.items(player,previous.ids,true),'previous fixture identities missing')
@@ -229,7 +234,7 @@ function Fixture.prepare(player,case,previous)
  local foodStorage=worldBag and worldBag:getItemContainer()or storage
  local food=assert((foodStorage or spec.bag and bag:getItemContainer()or root):AddItem(foodType(case)))
  assert(instanceof(food,'Food')and food:getBaseHunger()<-.04 and food:getHungChange()==food:getBaseHunger()
-  and not food:getOnEat()and (spec.consumption or not food:getReplaceOnUse())
+  and not food:getOnEat()and (spec.full or spec.consumption or not food:getReplaceOnUse())
   and (not food:getRequireInHandOrInventory()or food:getRequireInHandOrInventory():isEmpty())
   and not food:hasTag(ItemTag.SMOKABLE),'fixture must be ordinary unreplaced food')
  if spec.cookable then
@@ -331,6 +336,7 @@ function Fixture.prepare(player,case,previous)
  end
  if filler then ids.capacityFillerId=filler:getID()end
  if spec.utensil then ids.forkId,ids.spoonId=fork:getID(),spoon:getID()end
+ if spec.full then full().prepare(player,food,ids)end
  local initial=assert(Fixture.snapshot(player,ids));initial.foodTimer=0;initial.foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)
  assert((storage or root):getItemById(food:getID())==food,'prepared original food reference differs from exact source item')
  return {player=player,case=case,ids=initial,originalFood=food}
@@ -371,6 +377,7 @@ end
 function Fixture.verify(state)
  local value=Fixture.snapshot(state.player,state.ids)
  if not value then return nil,'food fixture exact identity/endpoint missing'end
+ if isFull(state.case)then return full().verify(state,value)end
  local depletion=Fixture.scenario(state.case).depletion
  if value.foodCount~=(depletion and 0 or 1)or value.bagCount~=1 or value.anchorCount~=1
   or value.foodTypeCount~=state.ids.foodTypeCount-(depletion and 1 or 0)then return nil,'food fixture identity count differs'end

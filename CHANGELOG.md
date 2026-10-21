@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.201
+
+- **Action queue:** Allow independent pending edits for guaranteed full consumption of ordinary root-inventory food that creates one proven plain replacement item. Keep original-item prerequisites, native portions, costs, output creation and Host authority. Unknown factory callbacks/components, state-changing or custom food and transfer-capacity prefixes remain protected.
+
 ### 0.1.200
 
 - **Warehouse:** Rechecking unchanged storage sends bounded sample timestamps instead of item lists and preserves the client aggregation, search and sort caches. Real contents, container state and appearance changes still refresh the list.
