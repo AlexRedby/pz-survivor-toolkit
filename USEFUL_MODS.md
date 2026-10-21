@@ -316,3 +316,13 @@ The author declares 42.15+ support and reports testing on 42.20.4 in SP/MP. Othe
 Adds buildable and dismantlable wall switches, including lighting for player-built rooms, using lightbulbs and grid/generator power. Switches in the same room share their on/off state. Learn the recipe at Electrical 3, or read the added magazine at Electrical 1. Construction requires a screwdriver, electronics scrap, electric wire and screws; the new switch also needs a bulb. Building/dismantling grants Electrical XP, can wear the screwdriver and only partly returns construction materials, so this adds construction/progression behavior alongside convenience.
 
 No required dependencies are listed. The author declares B42.21+ support and reports SP and live-server multiplayer tests. English, French and Russian are listed. As checked on 21 October 2026, recent Workshop reports describe bulb-insertion and grid-power problems, including a switch still needing a generator before the power shutoff; an author update does not establish resolution in this set. B42.21 full-pack SP/Host construction, lighting, dismantling, Toolkit queue/menu integration and second-player synchronization have not been verified. Existing world settings are unchanged by the selected INI.
+
+## 52 Nick's Turn Off Fridges
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3778868211) · Workshop `3778868211` · Mod `NicksTurnOffFridges`
+
+Adds right-click unplug/replug controls for fridges and freezers to stop cooling and avoid unnecessary generator demand. The character walks to the appliance. Optional Auto-Unplug is configured per appliance; manually plugging or unplugging it disables that appliance's auto mode. Existing appliances and settings are not changed by the selected INI.
+
+No required dependencies or special load order are listed. The author declares Build 42 single-player and co-op support and allows adding the mod to existing saves; B42.21 is not separately confirmed. Modded appliances using standard fridge/freezer container types are supported according to the author. Workshop reports mention fridge-light performance and an Open All Containers sprite conflict; neither is verified with this set, and Open All Containers is not selected. Full-pack macOS B42.21 SP/Host cooling, generator demand, reload persistence and synchronization remain unverified.
+
+**Before removing the mod, plug every fridge and freezer back in.** The unplugged state is stored on each appliance. According to the author, removing the mod while it is unplugged leaves it inert, without cooling or power demand, until the mod is restored.
