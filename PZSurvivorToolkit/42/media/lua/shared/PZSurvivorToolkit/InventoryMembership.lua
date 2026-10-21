@@ -2,6 +2,25 @@
 -- dialog confirmation must start with a new one; native action checks stay live.
 local Membership = {}
 
+-- ItemContainer uses identity equality. Resume its native reachable-list search,
+-- keeping the cheap prefix path for a single nearby item and no repeated scans.
+function Membership.containsContainer(index, containers, container)
+    if not index then return containers:contains(container) end
+    local entry, count = index.containerList, containers:size()
+    if not entry or entry.list ~= containers or entry.count ~= count then
+        entry = {list=containers, count=count, offset=0, members={}}
+        index.containerList = entry
+    end
+    if entry.members[container] then return true end
+    while entry.offset < count do
+        local candidate = containers:get(entry.offset)
+        entry.offset = entry.offset + 1
+        entry.members[candidate] = true
+        if candidate == container then return true end
+    end
+    return false
+end
+
 function Membership.contains(index, container, item)
     local items = container:getItems()
     if not index then return items:contains(item) end

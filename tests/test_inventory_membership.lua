@@ -42,4 +42,35 @@ local liveCalls = 0
 root.getItemById = function(_, id) liveCalls = liveCalls + 1; if id == 17 then return direct end end
 assert(Membership.containsId(nil, root, 17) and not Membership.containsId(nil, root, 18))
 assert(liveCalls == 2, 'without an enumeration index, native recursive ID membership stays live')
-print('Inventory membership: direct objects, recursive IDs, nested replacement and one-pass enumeration passed.')
+-- Same vectors use real native container userdata under Kahlua.
+do
+    local first, second = TestReachableContainerA or {}, TestReachableContainerB or {}
+    local values, visited, nativeCalls = {first, second}, 0, 0
+    for i=1,4096 do values[#values+1]={} end
+    local list = {size=function() return #values end,
+        get=function(_,i) visited=visited+1; return values[i+1] end,
+        contains=function(_,value)
+            nativeCalls=nativeCalls+1
+            for _,candidate in ipairs(values) do if candidate==value then return true end end
+            return false
+        end}
+    local scope={}
+    assert(Membership.containsContainer(scope,list,first) and visited==1,
+        'one source near the head must not enumerate unrelated containers')
+    assert(Membership.containsContainer(scope,list,second) and visited==2)
+    assert(Membership.containsContainer(scope,list,first) and visited==2,
+        'repeated reachability must not rescan the prefix')
+    local absent={}
+    assert(not Membership.containsContainer(scope,list,absent) and visited==#values)
+    assert(not Membership.containsContainer(scope,list,absent) and visited==#values)
+    table.remove(values,2)
+    assert(not Membership.containsContainer(scope,list,second), 'count changes must reset the reachable prefix')
+    values[1]=second
+    assert(not Membership.containsContainer({},list,first) and Membership.containsContainer({},list,second),
+        'a later command must see same-count container replacement')
+    local replacement={size=function() return 1 end,get=function() return first end}
+    assert(Membership.containsContainer(scope,replacement,first), 'a replaced container list must reset its index')
+    assert(Membership.containsContainer(nil,list,second) and not Membership.containsContainer(nil,list,first))
+    assert(nativeCalls==2, 'unscoped container lookups must retain native contains')
+end
+print('Inventory membership: direct objects, recursive IDs and reachable containers retain scoped prefix costs and freshness.')

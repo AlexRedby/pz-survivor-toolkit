@@ -295,6 +295,29 @@ do
         available = beforeAvailable
     end
 end
+-- Reachability shares the same prefix discipline as recursive item admission.
+do
+    local getContainers, beforeAvailable = ISInventoryPaneContextMenu.getContainers, available
+    local source, reads=container(),0
+    available={source}
+    for i=1,4096 do available[#available+1]=container() end
+    ISInventoryPaneContextMenu.getContainers=function()
+        local values=list(available)
+        local get=values.get
+        values.get=function(self,index) reads=reads+1; return get(self,index) end
+        return values
+    end
+    local nearby=food({container=source})
+    assert(Bulk.entries(player,{nearby})[1]==nearby and reads==1,
+        'one nearby food should not scan unrelated reachable containers')
+    reads=0
+    local carried=food()
+    assert(Bulk.entries(player,{carried})[1]==carried and reads==0,
+        'main inventory food needs no reachable-container enumeration')
+    available[1]=container()
+    assert(#Bulk.entries(player,{nearby})==0,'later food commands retained removed source reachability')
+    ISInventoryPaneContextMenu.getContainers,available=getContainers,beforeAvailable
+end
 local a, b, unselected = food(), food({container = bag}), food()
 local rows = {{items = {a, a, b}}, a}
 local selected = Bulk.entries(player, rows)

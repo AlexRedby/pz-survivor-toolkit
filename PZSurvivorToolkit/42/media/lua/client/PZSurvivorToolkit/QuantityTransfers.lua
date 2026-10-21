@@ -18,10 +18,18 @@ end
 
 local function eligible(player, item, destination, containers, membership)
     local source = item:getContainer()
-    if not source or source == destination or isForceDropHeavyItem(item)
-        or not destination:isItemAllowed(item) or item:isFavorite()
-        or player:isEquipped(item) then return false end
-    if source:isInCharacterInventory(player) or containers:contains(source) then return true end
+    if not source or source == destination or isForceDropHeavyItem(item) then return false end
+    local acceptCallback = destination.getAcceptItemFunction and destination:getAcceptItemFunction()
+    local allowed = destination:isItemAllowed(item)
+    -- Admission may re-enter getContainers, rewrite its reused list and clear its own callback.
+    -- Invalidate even when admission rejects this item; later items must see the rewrite.
+    local reachableIndex = membership
+    if acceptCallback or destination.getAcceptItemFunction and destination:getAcceptItemFunction() then
+        if membership then membership.containerList = nil end
+        reachableIndex = nil
+    end
+    if not allowed or item:isFavorite() or player:isEquipped(item) then return false end
+    if source:isInCharacterInventory(player) or Membership.containsContainer(reachableIndex, containers, source) then return true end
     -- Proximity views can expose actual items through a virtual container.
     for i = 0, containers:size() - 1 do
         if Membership.contains(membership, containers:get(i), item) then return true end
@@ -55,7 +63,7 @@ function Quantity.transfer(selection, text)
     local containers = ISInventoryPaneContextMenu.getContainers(player)
     local membership = {}
     if not selection.destination:isInCharacterInventory(player)
-        and not containers:contains(selection.destination) then return end
+        and not Membership.containsContainer(membership, containers, selection.destination) then return end
     local items = {}
     for _, item in ipairs(selection.items) do
         if #items >= limit then break end

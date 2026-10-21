@@ -18,6 +18,15 @@ public final class InventoryMembershipChecks {
             environment.rawset("TestInventoryMembership", thread.call(
                     LuaCompiler.loadis(reader, "InventoryMembership.lua", environment), new Object[]{}));
         }
+        var first = new zombie.inventory.ItemContainer();
+        var second = new zombie.inventory.ItemContainer();
+        var nativeContainers = new java.util.ArrayList<zombie.inventory.ItemContainer>();
+        nativeContainers.add(first);
+        if (!nativeContainers.contains(first) || nativeContainers.contains(second)) {
+            throw new AssertionError("Native container membership must use identity");
+        }
+        environment.rawset("TestReachableContainerA", first);
+        environment.rawset("TestReachableContainerB", second);
         try (var reader = Files.newBufferedReader(root.resolve("tests/test_inventory_membership.lua"))) {
             thread.call(LuaCompiler.loadis(reader, "test_inventory_membership.lua", environment), new Object[]{});
         }

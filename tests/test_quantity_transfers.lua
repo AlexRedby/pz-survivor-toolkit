@@ -16,7 +16,11 @@ end
 local function container(owned, kind)
     local c = {values = {}, owned = owned, kind = kind or 'crate'}
     function c:isInCharacterInventory(p) return self.owned and p == player end
-    function c:isItemAllowed(item) return not item.forbidden end
+    function c:isItemAllowed(item)
+        if self.onAccept then self.onAccept(item) end
+        return not item.forbidden
+    end
+    function c:getAcceptItemFunction() return self.acceptFunction end
     function c:getItems()
         if self.rawValues ~= self.values then
             self.rawValues, self.rawItems = self.values, list(self.values)
@@ -421,5 +425,67 @@ do
     aggregateBatch(512)
     reachable,queued,OrganizedCategories,ISInventoryPaneContextMenu.onMoveItemsTo =
         previousReachable,previousQueued,previousProvider,previousMove
+end
+-- A large direct source need not linearly search every reachable container per item.
+do
+    local previousReachable, previousQueued, previousContainers, previousMove =
+        reachable, queued, ISInventoryPaneContextMenu.getContainers, ISInventoryPaneContextMenu.onMoveItemsTo
+    local reads, searches=0,0
+    ISInventoryPaneContextMenu.getContainers=function()
+        local result=list(reachable)
+        local get,contains=result.get,result.contains
+        result.get=function(self,index) reads=reads+1; return get(self,index) end
+        result.contains=function(self,value) searches=searches+1; return contains(self,value) end
+        return result
+    end
+    ISInventoryPaneContextMenu.onMoveItemsTo=function(items,dest) enqueue(items,dest) end
+    for _,count in ipairs({100,400,1000}) do
+        reachable={}
+        for i=1,count do reachable[i]=container(false) end
+        local source,rows=reachable[count],{}
+        for i=1,count do rows[i]=item(60000+i,source) end
+        reads,searches=0,0
+        local selection=Q.snapshot(0,rows,inv,true)
+        assert(#selection.items==count and reads==count and searches==0,
+            'quantity snapshot searched the reachable list once per selected item')
+        reads,searches,queued=0,0,{}
+        assert(Q.transfer(selection,tostring(count))==count and #queued==count and reads==count and searches==0,
+            'confirmation did not share one fresh reachable-list prefix')
+        -- Same list length after the dialog, but the old world source is gone.
+        reachable[count]=container(false)
+        reads,searches,queued=0,0,{}
+        assert(Q.transfer(selection,tostring(count))==0 and #queued==0 and searches==0,
+            'confirmation retained old source reachability')
+    end
+    local source, replacement=container(false),container(false)
+    local first,second,third=item(81001,source),item(81002,source),item(81003,source)
+    reachable={source}
+    inv.acceptFunction='FixtureAccept'
+    inv.onAccept=function(value) if value==second then reachable[1]=replacement end end
+    local selection=Q.snapshot(0,{first,second,third},inv,true)
+    assert(#selection.items==1 and selection.items[1]==first,
+        'a reentrant native accept callback reused stale same-count source reachability')
+    -- Confirmation indexes its world destination before native admission. Its
+    -- callback can clear itself or reject a row while rewriting the same list.
+    for _,reject in ipairs({false,true}) do
+        reachable={source,replacement}
+        local selection=Q.snapshot(0,{first,second,third},replacement,true)
+        assert(#selection.items==3)
+        replacement.acceptFunction='FixtureAccept'
+        replacement.onAccept=function(value)
+            if value==second then
+                reachable[1]=container(false)
+                replacement.acceptFunction,replacement.onAccept=nil,nil
+                value.forbidden=reject
+            end
+        end
+        queued={}
+        assert(Q.transfer(selection,'3')==1 and #queued==1 and queued[1].item==first,
+            'a self-clearing/rejecting accept callback retained a prefix for itself or a later item')
+        second.forbidden=nil
+    end
+    inv.acceptFunction,inv.onAccept=nil,nil
+    reachable,queued,ISInventoryPaneContextMenu.getContainers,ISInventoryPaneContextMenu.onMoveItemsTo=
+        previousReachable,previousQueued,previousContainers,previousMove
 end
 print('Quantity selection, common budget, native transfers, stale/respawn/reachability and dialogs passed' .. (NativeInventoryContextMenuSource and ' with actual native callbacks.' or '.'))

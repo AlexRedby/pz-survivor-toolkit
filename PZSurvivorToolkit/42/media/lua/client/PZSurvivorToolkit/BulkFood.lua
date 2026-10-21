@@ -39,7 +39,7 @@ local function available(player, item, containers, membership)
     local source = item and item:getContainer()
     if not source then return false end
     if membership then
-        return membership.reachable[source] == true
+        return (source == membership.inventory or InventoryMembership.containsContainer(membership, containers, source))
             and InventoryMembership.containsId(membership, source, item:getID())
     end
     -- Dispatch resolves membership and reachability live, after the queued wait.
@@ -251,8 +251,7 @@ end
 local function entries(player, selected, limit)
     local result, used = {}, reserved(player)
     local containers = ISInventoryPaneContextMenu.getContainers(player)
-    local membership = {reachable = {[player:getInventory()] = true}}
-    for i = 0, containers:size() - 1 do membership.reachable[containers:get(i)] = true end
+    local membership = {inventory = player:getInventory()}
     for _, item in ipairs(selected) do
         if not used[item:getID()] and edible(item) and available(player, item, containers, membership) then
             result[#result + 1] = item

@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.191
+
+- Reuse a command-scoped, resumable reachable-container lookup for quantity transfers instead of searching the container list for every selected item. Confirmation starts fresh; custom native admission callbacks invalidate the index and retain live lookup, including callbacks that remove themselves or reject an item.
+- Use the same lazy lookup for bulk food preparation, so a single early source does not enumerate unrelated containers. Native dispatch checks and raw proximity-item membership remain unchanged.
+
 ### 0.1.190
 
 - Compare the action queue's current row projection without allocating replacement rows and batch snapshots on unchanged UI updates. Preserve fresh raw-array edits, task titles, grouping, selection and gesture validation.
