@@ -3,15 +3,17 @@ local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorTy
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
 function Fixture.scenario(case)
  local replacement=case=='food-cooking-replacement-move-portions'or case=='food-cooking-replacement-cancel-first-portion'
- local consumption=case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
+ local customWeight=case=='food-custom-weight-move-portions'or case=='food-custom-weight-cancel-first-portion'
+ local consumption=customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
  return {bag=case=='food-bag-edit-pickup-return',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
-   or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion',
+   or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion'
+   or case=='food-custom-weight-cancel-first-portion',
   smart=case=='food-smart-move-portions'or case=='food-smart-cancel-first-portion',
   utensil=case=='food-utensil-move-portions'or case=='food-utensil-cancel-first-portion',
   cooked=case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion',
-  replacement=replacement,consumption=consumption,
+  replacement=replacement,consumption=consumption,customWeight=customWeight,
   cookable=replacement or case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion'
    or case=='food-raw-cookable-move-portions'or case=='food-raw-cookable-cancel-first-portion',
   depletion=case=='food-root-depletion'}
@@ -135,6 +137,13 @@ function Fixture.prepare(player,case,previous)
   assert(food:getReplaceOnUseFullType()=='Base.TinCanEmpty'and not food:isCookable()and not food:isCooked()
    and not food:isCustomWeight()and not food:haveExtraItems()and not food:getOnCooked()
    and math.abs(food:getActualWeight()-.8)<.00001,'native partial can replacement differs')
+  if spec.customWeight then
+   -- Exercise the native per-item weight branch without evolved ingredients.
+   -- Set fields before publication; no eating callback or timer is replaced.
+   food:setActualWeight(1.1);food:setWeight(1.1);food:setCustomWeight(true)
+   assert(math.abs(food:getActualWeight()-1.1)<.00001 and food:isCustomWeight(),
+    'custom food weight preparation differs')
+  end
  end
  local anchor=assert(root:AddItem(Fixture.anchorType));local fluid=assert(anchor:getFluidContainer())
  fluid:Empty();fluid:addFluid(Fluid.Water,1)

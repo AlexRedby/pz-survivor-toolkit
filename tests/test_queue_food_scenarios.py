@@ -86,6 +86,25 @@ class FoodScenarioTests(unittest.TestCase):
                     self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                      self.row(recorded, action, scenario, kind, mode)['status'])
 
+    def test_custom_weight_cases_have_separate_native_and_toolkit_coverage(self):
+        action = 'eat-custom-weight'
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.assertEqual(list(food.CUSTOM_WEIGHT_CASES),
+                                 scenarios.select(self.suite, 'success-queued', action, kind, mode)[0])
+                recorded = self.recorded(kind, mode)
+                for scenario in ('success-queued', 'repeat-same'):
+                    self.assertEqual('passed', self.row(recorded, action, scenario, kind, mode)['status'])
+                for scenario in ('move-independent', 'cancel-waiting'):
+                    self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                                     self.row(recorded, action, scenario, kind, mode)['status'])
+                recorded['coverage'] = [row for row in recorded['coverage']
+                                        if row['case'] not in food.CUSTOM_WEIGHT_CASES]
+                self.assertNotEqual('passed', self.row(recorded, action, 'success-queued', kind, mode)['status'])
+        for scenario in ('cancel-active', 'physical-input'):
+            with self.assertRaises(ValueError):
+                scenarios.select(self.suite, scenario, action, 'sp', 'toolkit')
+
     def test_smart_scope_and_coverage_remain_separate_from_ordinary_food(self):
         smart = self.suite['scenario_actions']['eat-smart-portions']
         self.assertEqual({'success-queued', 'repeat-same', 'move-independent', 'cancel-waiting', 'server-authority'},
