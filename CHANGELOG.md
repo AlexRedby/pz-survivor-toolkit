@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.186
+
+- Classify ordinary context-menu options once per rebuild instead of repeating callback discovery for defaults and layout snapshots. New rebuilds remain fresh; opaque mod options retain live classification.
+- Narrow duplicate candidates with a per-rebuild metadata index while retaining exact comparison, custom equality and distinct commands. Preserve false-protected mod option tables consistently in live menus and editor previews.
+
 ### 0.1.185
 
 - Prepare food selections with one resumable recursive inventory-ID lookup instead of searching the entire source for each item. Small selections stop at the needed prefix; later clicks and action dispatch recheck live items and reachability.

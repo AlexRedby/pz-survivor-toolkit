@@ -258,6 +258,21 @@ function Rules.classify(option)
     return nil
 end
 
+-- One rebuild owns this cache; opaque mod options retain their live field reads.
+function Rules.newClassifier()
+    local classified = {}
+    return function(option)
+        if type(option) ~= "table" or getmetatable(option) ~= nil then return Rules.classify(option) end
+        local result = classified[option]
+        if not result then
+            local category, key = Rules.classify(option)
+            result = {category, key}
+            classified[option] = result
+        end
+        return result[1], result[2]
+    end
+end
+
 function Rules.isRecipeSearch(menu, option)
     if option.onSelect or not option.subOption or not NC_InventorySearch then return false end
     local child = menu:getSubMenu(option.subOption)
@@ -280,12 +295,13 @@ function Rules.isBuildingSearch(menu, option)
     return true
 end
 
-function Rules.isMore(menu, option)
+function Rules.isMore(menu, option, classify)
     if option.onSelect or option.name ~= getText("ContextMenu_More") or not option.subOption then return false end
     local child = menu:getSubMenu(option.subOption)
     if not child or #child.options == 0 then return false end
+    classify = classify or Rules.classify
     for _, row in ipairs(child.options) do
-        if not row.isDefaultOption and Rules.classify(row) ~= "world"
+        if not row.isDefaultOption and classify(row) ~= "world"
             and not Rules.isRecipeSearch(child, row) and not Rules.isBuildingSearch(child, row) then return false end
     end
     return true
@@ -301,13 +317,14 @@ function Rules.isRecipeSelector(menu, option)
     return true
 end
 
-function Rules.defaults(menu, options, context, visible)
+function Rules.defaults(menu, options, context, visible, classify)
     local defaults = {}
     if menu.parent or (context and context ~= "inventory" and context ~= "loot") then return defaults end
+    classify = classify or Rules.classify
     local cook, input, fluid
     local buildingExact = {}
     for _, option in ipairs(options) do
-        local _, key = Rules.classify(option)
+        local category, key = classify(option)
         if key == "mod:BetterContainers.category" and PZSurvivorToolkit.Settings.itemTags
             and PZSurvivorToolkit.Settings.itemTags() then defaults[option] = "hidden" end
         if Rules.isRecipeSearch(menu, option) then defaults[option] = "world" end
@@ -322,7 +339,7 @@ function Rules.defaults(menu, options, context, visible)
             end
         end
         if PJCK_CookingUI and option.onSelect and option.onSelect == PJCK_CookingUI.OnOpenPanel and visible(option) then cook = option end
-        if Rules.classify(option) == "transfer" and not option.onSelect and option.name == getText("ContextMenu_Fluid") then
+        if category == "transfer" and not option.onSelect and option.name == getText("ContextMenu_Fluid") then
             defaults[option], fluid = "root", true
         end
         local child = option.subOption and menu:getSubMenu(option.subOption)

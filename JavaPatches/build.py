@@ -8,6 +8,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUART
           'net.alexredby.pztoolkitjavapatches.UITextFitChecks': 'UI_TEXT_FIT_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueMembershipChecks': 'QUEUE_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.InventoryMembershipChecks': 'INVENTORY_MEMBERSHIP_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ContextMenuDuplicateChecks': 'CONTEXT_MENU_DUPLICATE_CHECKS_PASS',
           'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
           'zombie.entity.CraftBenchChecks': 'CRAFT_BENCH_CHECKS_PASS',
           'zombie.vehicles.VehicleOwnershipChecks': 'VEHICLE_OWNERSHIP_CHECKS_PASS',

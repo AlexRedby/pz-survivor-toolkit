@@ -669,6 +669,13 @@ menu:prerender();assert(#menu.options==2)
 local preview=Organizer.getLayout('Base.Meta','root','Base.Meta')
 assert(#preview==2,'preview deduplicated opaque mod option tables')
 local source=menu.options[1];assert(source==first and getmetatable(first).__index.notAvailable,'preview mutated native option/metatable')
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextItemType='Base.MetaFalse';menu.toolkitContextKind='inventory'
+local falseA=menu:addOption('False-protected action',nil,opaqueCallback)
+local falseB=menu:addOption('False-protected action',nil,opaqueCallback)
+setmetatable(falseA,{__metatable=false});setmetatable(falseB,{__metatable=false})
+menu:prerender();assert(#menu.options==2,'live must retain false-protected option tables')
+preview=Organizer.getLayout('Base.MetaFalse','root','Base.MetaFalse')
+assert(#preview==2,'preview must retain the same false-protected option tables as live')
 menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextItemType='Base.Inherited';menu.toolkitContextKind='inventory'
 local inheritedOption=setmetatable({}, {__index={name='Inherited action',onSelect=opaqueCallback},__newindex=function() error('foreign inherited option was mutated') end})
 -- The native organizer writes ids, so leave that existing field writable like a real mod option.
@@ -893,3 +900,41 @@ assert(not Organizer.setOverride('label:Read','hidden') and disk.writes==count,'
 disk.faults={}
 assert(Organizer.ensureLoaded() and not Organizer.storageError)
 print('PASS ordinary context menus survive unavailable settings without permitting replacement writes')
+
+-- A raw classification belongs to a pass, not every consumer of the same row.
+do
+ Organizer.reset()
+ menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextKind='inventory'
+ local rules=require 'PZSurvivorToolkit/ContextMenuRules'
+ local original,calls,tracked=rules.classify,0,{}
+ local callback=function() end
+ for i=1,100 do local row=menu:addOption('Unknown '..i,nil,callback);tracked[row]=true end
+ rules.classify=function(row) if tracked[row] then calls=calls+1 end;return original(row) end
+ menu:prerender()
+ assert(calls==100,'ordinary options need one underlying classification per pass, including unknown results')
+ Organizer.restore(menu)
+ calls=0
+ menu:prerender()
+ assert(calls==100,'a later rebuild must classify fresh rather than reuse a previous pass')
+ rules.classify=original
+ Organizer.restore(menu)
+end
+print('PASS per-pass raw classification reuse and fresh later rebuilds')
+
+-- Same-caption actions on different plain targets must retain order without a
+-- quadratic pair walk through their raw option fields.
+do
+ Organizer.reset()
+ menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextKind='inventory'
+ local callback=function() end
+ local tracked,passes={},0
+ for i=1,256 do local row=menu:addOption('Same action',{},callback,i);tracked[row]=true end
+ local original=pairs
+ pairs=function(value) if tracked[value] then passes=passes+1 end;return original(value) end
+ local ok,failure=pcall(function() menu:prerender() end)
+ pairs=original
+ assert(ok,failure)
+ assert(#menu.options==256 and passes<=256*3,'real menu rebuild must avoid quadratic duplicate comparisons')
+ Organizer.restore(menu)
+end
+print('PASS real same-caption rebuild comparison growth')
