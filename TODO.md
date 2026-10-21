@@ -11,7 +11,7 @@
 - [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
 - [ ] Refine the remaining overlap between the stock mitten skin and metal shafts without changing the accepted arm/cart motion. Evaluate the full hand triangles: the finite-shaft palm/thumb/finger anchors pass, but coarse bridge faces still intersect the shaft.
 - [ ] Complete an isolated Host owner/observer run for the metal wheelbarrow with the installed mod set and at least 2048 MiB Java heap per process. Check motion, pickup/setdown, cancellation/retry, exact cart/cargo identity and both clients' presentation; review short recordings. A startup failure is not functional coverage.
-- [ ] After the Host gate, rebase on current main, recheck Toolkit/Java component versions and push the port to main. Keep trimmed Host clips and remove the disposable profile.
+- [ ] Complete the requested cart main delivery: integrate the latest origin/main, keep concurrent work, advance shipped component versions beyond main, run merged cart/build regressions and push normally. Keep the unverified metal/shopping Host checks as separate open tasks; do not infer Host coverage from publication.
 
 # Sport headlight push-button cycle
 
