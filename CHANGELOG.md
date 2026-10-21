@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.193
+
+- Resolve Quartermaster's explicit item-name destination candidates once per requested display name and plan. Preserve priority/distance order, per-item carrier/destination admission, capacity overflow and category/tag fallback without enumerating unrelated preset entries.
+- Skip diagnostic designation strings and the extra native contents-weight scan for each storage box when debug logging is off. Keep the required planner snapshot and enabled debug output unchanged.
+
 ### 0.1.192
 
 - Allow pending queue edits for supported items picked up from or returned to bags inside adjacent ordinary world storage in single-player. Validate every exact owner and destination capacity; retain required pickups, bag-movement and walking dependencies. Host remains protected because B42.21 cannot encode this nested-world endpoint in its item transaction address.
