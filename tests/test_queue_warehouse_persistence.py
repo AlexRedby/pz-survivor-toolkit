@@ -235,4 +235,94 @@ handlers.OnTick()
         self.assertEqual(lua.eval('shots'), 2)
 
 
+@unittest.skipIf(LuaRuntime is None, 'Lupa is required to execute the persistence native menu lifecycle')
+class WarehousePersistenceNativeMenuTests(unittest.TestCase):
+    def fixture(self):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute(r"""
+now, inGame, staleClient, fileFlag, pauseCalls, exitCalls, connects = 1000, true, true, nil, 0, 0, 0
+handlers, logs, receipts = {}, {}, {}
+Events = setmetatable({}, {__index = function(self, key)
+ local event = {Add = function(callback) handlers[key] = callback end}; rawset(self, key, event); return event
+end})
+local player = {getUsername = function() return 'client2' end, getOnlineID = function() return 4 end,
+ isDead = function() return false end, getSquare = function() return {} end,
+ setGodMod = function() end, setGhostMode = function() end}
+getPlayer = function() return player end
+getTimestampMs = function() return now end
+isClient = function() return staleClient end
+isIngameState = function() return inGame end
+getFileReader = function()
+ if not fileFlag then return end
+ return {readLine = function() return fileFlag end, close = function() end}
+end
+getFileWriter = function(name, create, append)
+ assert(name == 'warehouse-manifest-rejoin.txt' and create == true and append == false)
+ return {write = function(_, value) fileFlag = value end, close = function() end}
+end
+getCore = function() return {getKey = function(_, binding) assert(binding == 'MAIN_MENU'); return 77 end} end
+KeybindId, Keyboard = {MAIN_MENU = 'MAIN_MENU'}, {KEY_ESCAPE = 27}
+MainScreen = {instance = {inGame = true, visible = false, isVisible = function(self) return self.visible end}}
+MainScreen.instance.exitOption = {internal = 'EXIT', onMouseDown = function(option, x, y)
+ assert(option == MainScreen.instance.exitOption and MainScreen.instance.visible and pauseCalls == 1)
+ assert(x == 0 and y == 0); exitCalls = exitCalls + 1
+end}
+ToggleEscapeMenu = function(key)
+ assert(key == 77 and inGame and MainScreen.instance.inGame)
+ pauseCalls = pauseCalls + 1; MainScreen.instance.visible = true
+end
+ConnectToServer = {instance = {connect = function(_, screen, title, username, password, ip, localIP, port)
+ assert(screen == MainScreen.instance and username == 'client2' and password == 'smoke-local-only')
+ assert(not inGame and screen.inGame == false and screen.visible)
+ assert(ip == '127.0.0.1' and localIP == '' and port == '17343')
+ connects = connects + 1
+end}}
+PZSurvivorToolkit = {Settings = {actionQueue = function() return true end}}
+LootSorter = {}
+Translator = {getLanguage = function() return {name = function() return 'RU' end} end}
+sendClientCommand = function() end
+print = function(message) logs[#logs + 1] = message end
+require = function(name)
+ if name == 'QueueTestSelection' then return {cases = {'persist-seed'}, kind = 'mp', mode = 'toolkit', port = 17343} end
+ if name == 'WarehouseManifestPersistence' then return {module = 'WarehouseManifestPersistenceTest'} end
+ if name == 'WarehouseManifestFixture' or name == 'PZSurvivorToolkit/ManifestClient' then return {} end
+ if name == 'QueueHealthEvents' then return {encode = function(value) receipts[#receipts + 1] = value; return 'test-json' end} end
+ error('Unexpected menu lifecycle dependency ' .. name)
+end
+""")
+        lua.execute((ROOT / 'tests/native_queue/warehouse-manifest/client/ZZWarehouseManifestPersistence.lua').read_text())
+        lua.execute('handlers.OnGameStart(); handlers.OnTick()')
+        return lua
+
+    def test_native_pause_exit_dispatch_is_deferred_and_stale_client_flag_allows_menu_rejoin(self):
+        lua = self.fixture()
+        lua.execute("handlers.OnServerCommand('WarehouseManifestPersistenceTest', 'Reconnect', {})")
+        self.assertEqual(lua.eval('pauseCalls + exitCalls'), 0, 'Packet callbacks may only request native UI exit')
+        self.assertIsNone(lua.eval('fileFlag'))
+        lua.execute('handlers.OnTickEvenPaused()')
+        self.assertEqual(lua.eval('pauseCalls'), 1)
+        self.assertEqual(lua.eval('exitCalls'), 0, 'Native pause UI must become visible before Exit dispatch')
+        lua.execute('handlers.OnTickEvenPaused()')
+        self.assertEqual(lua.eval('exitCalls'), 1)
+        self.assertEqual(lua.eval('fileFlag'), 'pending')
+        lua.execute('handlers.OnPreUIDraw()')
+        self.assertEqual(lua.eval('connects'), 0, 'In-game native state must block menu reconnect')
+        lua.execute('inGame = false; MainScreen.instance.inGame = false; MainScreen.instance.visible = false; handlers.OnPreUIDraw()')
+        self.assertEqual(lua.eval('connects'), 0, 'An invisible native menu must not initiate a connection')
+        lua.execute('MainScreen.instance.visible = true; handlers.OnMainMenuEnter(); handlers.OnPreUIDraw()')
+        self.assertTrue(lua.eval('staleClient'))
+        self.assertEqual(lua.eval('connects'), 1, 'The stale isClient flag must not block a ready native main menu')
+        self.assertFalse(lua.eval("table.concat(logs, ' '):find('FAIL', 1, true) ~= nil"))
+
+    def test_missing_native_exit_option_fails_without_direct_exit_fallback(self):
+        lua = self.fixture()
+        lua.execute("handlers.OnServerCommand('WarehouseManifestPersistenceTest', 'Reconnect', {}); handlers.OnTickEvenPaused()")
+        lua.execute('MainScreen.instance.exitOption = nil; handlers.OnTickEvenPaused(); handlers.OnTickEvenPaused()')
+        self.assertEqual(lua.eval('exitCalls'), 0)
+        self.assertIsNone(lua.eval('fileFlag'))
+        self.assertEqual(lua.eval('connects'), 0)
+        self.assertIn('Native pause Exit option unavailable', lua.eval('logs[#logs]'))
+        self.assertIn('[WAREHOUSE_PERSIST] FAIL', lua.eval('logs[#logs]'))
+
+
 if __name__ == '__main__': unittest.main()

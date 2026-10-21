@@ -29,6 +29,49 @@ class ViewportEvidenceTests(unittest.TestCase):
                     (root / 'client2-launch.log').write_text(text)
                     self.assertTrue(report.window_size_evidence(root, selection)['issues'])
 
+    def test_declared_native_rejoin_requires_exactly_two_matching_guest_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = {'suite': 'warehouse-manifest', 'cases': ['persist-seed'], 'kind': 'mp',
+                         'mode': 'toolkit', 'clients': 2, 'languages': ['EN', 'RU'],
+                         'options': {'mp_host': True}, 'window_size': [1280, 900]}
+            marker = '[QUEUE_TEST] WINDOW_SIZE width=1280 height=900\n'
+            (root / 'client1-launch.log').write_text(marker)
+            guest = root / 'client2-launch.log'
+            guest.write_text(marker * 2)
+            evidence = report.window_size_evidence(root, selection)
+            self.assertFalse(evidence['issues'])
+            self.assertEqual([[1280, 900], [1280, 900]], evidence['startup_observations']['client2'])
+            self.assertEqual([1280, 900], evidence['observed']['client2'])
+            for count in (0, 1, 3):
+                guest.write_text(marker * count)
+                with self.subTest(count=count):
+                    self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+            wrong = '[QUEUE_TEST] WINDOW_SIZE width=1280 height=720\n'
+            for markers in (marker + wrong, wrong + marker):
+                guest.write_text(markers)
+                with self.subTest(markers=markers):
+                    self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+            guest.write_text(marker * 2)
+            (root / 'client1-launch.log').write_text(marker * 2)
+            self.assertTrue(report.window_size_evidence(root, selection)['issues'], 'owner inherited guest rejoin allowance')
+            (root / 'client1-launch.log').write_text(marker)
+            for changes in ({'cases': ['persist-reload']}, {'cases': ['snapshot']}, {'cases': ['persist-seed', 'snapshot']},
+                            {'suite': 'health'}, {'mode': 'native'}, {'options': {'mp_host': False}},
+                            {'languages': ['RU', 'EN']}):
+                with self.subTest(changes=changes):
+                    self.assertTrue(report.window_size_evidence(root, dict(selection, **changes))['issues'])
+            (root / 'client1-launch.log').write_text(marker * 2)
+            self.assertTrue(report.window_size_evidence(root, dict(selection, kind='sp', clients=1))['issues'])
+
+    def test_adapter_start_count_declaration_cannot_disable_or_misroute_viewport_checks(self):
+        from types import SimpleNamespace
+        selection = {'suite': 'health', 'kind': 'mp', 'window_size': [1280, 900]}
+        for counts in ({'client2': 0}, {'client2': True}, {'server': 2}, {'client3': 2}, []):
+            adapter = SimpleNamespace(window_start_counts=lambda selection: counts)
+            with self.subTest(counts=counts), patch.object(report.adapters, 'get', return_value=adapter):
+                self.assertTrue(report.window_size_evidence(Path('/unused'), selection)['issues'])
+
     def test_legacy_snapshot_does_not_claim_observed_size(self):
         self.assertEqual(report.window_size_evidence(Path('/unused'), {}),
                          {'expected': None, 'observed': {}, 'issues': []})

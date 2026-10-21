@@ -28,6 +28,18 @@ def definitions():
                     'limits': ['Programmatic menu/native transfer callbacks; screenshots need visual review.']}}
 
 
+def window_start_counts(selection):
+    """The seed's native guest rejoin creates exactly one additional game start."""
+    options = selection.get('options', {})
+    if (selection.get('suite') == SUITE and selection.get('cases') == ['persist-seed']
+            and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
+            and type(selection.get('clients')) is int and selection['clients'] == 2
+            and selection.get('languages') == ['EN', 'RU']
+            and isinstance(options, dict) and options.get('mp_host') is True):
+        return {'client2': 2}
+    return {}
+
+
 def validate(selection):
     if selection.get('cases') in (['legacy-seed'], ['legacy-reload']):
         from . import warehouse_legacy

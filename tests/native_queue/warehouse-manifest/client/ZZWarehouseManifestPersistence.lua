@@ -16,6 +16,7 @@ end
 local resuming = flag() == 'pending'
 local started, initialized, done, since, stage, meta, role, target, arrived, phase, win, readyAt
 local reconnecting, finished, sent, setupLogged = false, false, false, resuming
+local exitRequestedAt, exitPhase
 local function emit(event, value) print('[WAREHOUSE_PERSIST] ' .. event .. ' ' .. JSON.encode(value)) end
 local function standard(event, extra)
  local value = extra or {}; value.event, value.suite, value.actor = event, 'warehouse-manifest', role
@@ -50,9 +51,10 @@ local function initialize()
 end
 Events.OnGameStart.Add(function() started, since, initialized = true, getTimestampMs(), false end)
 local function connectAgain()
- if not resuming or reconnecting or isClient() then return end
+ if not resuming or reconnecting or isIngameState() then return end
  if not MainScreen or not MainScreen.instance or not ConnectToServer or not ConnectToServer.instance then return end
- if flag() ~= 'pending' or reconnecting or isClient() then return end
+ if MainScreen.instance.inGame ~= false or not MainScreen.instance:isVisible() then return end
+ if flag() ~= 'pending' then return end
  resuming, reconnecting = true, true
  started, initialized, meta, target, stage, phase, win, arrived, sent = false, false, nil, nil, nil, nil, nil, false, false
  ConnectToServer.instance:connect(MainScreen.instance, 'Warehouse persistence rejoin', 'client2',
@@ -74,12 +76,42 @@ Events.OnServerCommand.Add(function(module, command, args)
   meta.packet, meta.staleIds = args.packet, args.staleIds
  elseif command == 'Reconnect' then
   assert(role == 'client2' and case == 'persist-seed', 'Only seed observer may reconnect')
-  writeFlag('pending'); emit('DISCONNECT', {role = role, onlineID = getPlayer():getOnlineID(), nativeExitToMenu = true})
-  started, initialized, resuming, reconnecting = false, false, true, false
-  win, meta, target, stage, phase = nil, nil, nil, nil, nil
-  getCore():exitToMenu()
+  assert(not exitRequestedAt, 'Duplicate persistence native exit request')
+  exitRequestedAt, exitPhase = getTimestampMs(), 'pause'
  elseif command == 'Done' then finished = true end
 end)
+-- Use the game's pause-menu path, which owns hiding game UI before the disconnect fade.
+-- A packet callback only requests this transition; native UI runs on a later engine tick.
+local function exitTick()
+ if not exitRequestedAt or done then return end
+ local ok, problem = pcall(function()
+  assert(getTimestampMs() - exitRequestedAt < 30000, 'Persistence native pause/exit timeout')
+  local menu = assert(MainScreen and MainScreen.instance, 'Native pause menu unavailable')
+  assert(isIngameState() and menu.inGame == true, 'Native pause exit requested outside the game')
+  if exitPhase == 'pause' then
+   if win then win:close(); win = nil end
+   if not menu:isVisible() then
+    assert(type(ToggleEscapeMenu) == 'function' and KeybindId and Keyboard, 'Native pause binding unavailable')
+    local key = getCore():getKey(KeybindId.MAIN_MENU)
+    if key == 0 then key = Keyboard.KEY_ESCAPE end
+    assert(type(key) == 'number', 'Native pause binding is not a key')
+    ToggleEscapeMenu(key)
+   end
+   exitPhase = 'exit'
+   return
+  end
+  if not menu:isVisible() then return end
+  if isQuitCooldown and isQuitCooldown() then return end
+  local option = assert(menu.exitOption, 'Native pause Exit option unavailable')
+  assert(option.internal == 'EXIT' and type(option.onMouseDown) == 'function', 'Native pause Exit callback unavailable')
+  writeFlag('pending'); emit('DISCONNECT', {role = role, onlineID = getPlayer():getOnlineID(), nativeExitToMenu = true})
+  started, initialized, resuming, reconnecting = false, false, true, false
+  meta, target, stage, phase, exitRequestedAt, exitPhase = nil, nil, nil, nil, nil, nil
+  option.onMouseDown(option, 0, 0)
+ end)
+ if not ok then done = true; print('[WAREHOUSE_PERSIST] FAIL ' .. tostring(role) .. ' ' .. tostring(problem)) end
+end
+Events.OnTickEvenPaused.Add(exitTick)
 local function tick()
  if not initialize() or not meta then return end
  local player = getPlayer()
@@ -115,7 +147,7 @@ local function tick()
  end
 end
 Events.OnTick.Add(function()
- if not started or done or not isIngameState() then return end
+ if not started or done or exitRequestedAt or not isIngameState() then return end
  local ok, problem = pcall(function()
   assert(getTimestampMs() - since < 600000, 'Persistence native client timeout stage=' .. tostring(stage)); tick()
  end)

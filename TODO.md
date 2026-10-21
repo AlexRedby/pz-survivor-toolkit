@@ -132,6 +132,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Warehouse follow-up checks
 
+- [ ] Diagnose text fragments missing after native menu exit/rejoin in the Warehouse header and item/location rows. Compare native draw arguments, absolute bounds and stencil state before/after reset; the direct native button also loses text, while payload labels and counts remain intact. Do not guess a renderer/font fix from screenshots. Reproduction: client2 `warehouse-persist-rejoined.png` and `warehouse-persist-saved.png` in `/private/tmp/pz-warehouse-persist-seed-20261021-03`.
 - [ ] Once the seven missing selected mods are locally available, run the isolated macOS Warehouse SP/Host scenarios with the complete 52-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended and CustomLightSwitch.
 - [ ] Complete the bounded native Host persistence seed/reload and client rejoin checks using sealed disposable worlds; retain exact container/item identities and last-known sample ages.
 - [ ] Recheck the latest main/component versions, integrate the verified feature and push main without changing the installed game or unrelated working copies.
