@@ -19,7 +19,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
-### Unreleased
+### 0.1.197
 
 - **Changed:** Retargeted the metal wheelbarrow pickup and setdown clip to its closer, lower held handles while preserving the grounded approach and shallow crouch.
 
@@ -912,16 +912,16 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### Unreleased
+### 0.1.42
 
 - **Changed:** Metal wheelbarrows sit closer to the body with lower handles, letting the arms hang nearly straight during idle and walking. Fast movement retains measured arm reach and leg clearance, with matching wheel steering and collision distances.
+
+- **Fixed:** Cart pickup keeps the cart grounded and the hands on its handles while native equipment completion hands over to the ordinary held pose, including repeated native equipment snapshots received by the observer. The short visual handoff does not alter steering, inventory authority or network traffic.
+- **Fixed:** Metal wheelbarrows retain both grips through native sprint-braking poses that previously exceeded the shoulder reach limit. A bounded model-specific clavicle adjustment preserves fixed arm lengths, the handle positions and native gait.
 
 ### 0.1.41
 
 - Reset omitted numeric food-stat fields before decoding a reused native item-stat packet. Prevent one item's cooking time, nutrition and other food effects from leaking into the next item in multiplayer; preserve the native wire format, explicit values and poison-detection sentinel.
-
-- **Fixed:** Cart pickup keeps the cart grounded and the hands on its handles while native equipment completion hands over to the ordinary held pose, including repeated native equipment snapshots received by the observer. The short visual handoff does not alter steering, inventory authority or network traffic.
-- **Fixed:** Metal wheelbarrows retain both grips through native sprint-braking poses that previously exceeded the shoulder reach limit. A bounded model-specific clavicle adjustment preserves fixed arm lengths, the handle positions and native gait.
 
 ### 0.1.40
 
