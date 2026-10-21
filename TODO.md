@@ -1,8 +1,8 @@
 # Shopping cart animation port
 
-- [ ] Capture the shopping-cart standing pickup/release candidate and its original baseline in the isolated game; inspect all-wheel support, actual grounded/held mesh size, centered approach, palm/bar contact and final handoff from four angles. The first baseline launches stopped before readiness because AeroSpace did not detect the owned window; they provide no gameplay coverage.
-- [ ] Check shopping-cart cancellation and immediate retry in the live game, including exact cart/cargo ownership, outgoing native clocks and cleanup. Keep the shared analyzer's selected-retry phase coverage gap explicit.
-- [ ] Review shopping-cart Walk/Run/Sprint, stop, reverse and upright axle turns with the standing-action handoff; adapt four-wheel rolling and caster presentation separately from the one-wheel bank profile.
+- [ ] Check the shopping-cart direct-render fallback against the measured atlas ground pose, including the renderer-specific world-Z offset, and cover partial/flashlight mesh variants. Empty/full atlas support is measured; this does not verify the fallback path.
+- [ ] Extend shopping-cart cancellation/retry beyond the two selected restart scenes to moving recovery and the remaining interruption routes. Close the shared analyzer's selected-retry grip-phase coverage gap; exact native lifecycle/ownership and clock evidence do not replace that gate.
+- [ ] Refine shopping-cart four-wheel rolling, caster direction and upright axle turns separately from the one-wheel bank profile. The light-load movement smoke check does not cover the full load/sex/scene matrix or collisions.
 - [ ] Verify Host owner/observer shopping-cart transition presentation, exact ownership/cargo and bounded synchronization before including it in a main delivery. Extend the Host fixture action gate first; current shopping coverage supports SP interaction/repeat captures only.
 
 # Metal wheelbarrow animation port

@@ -943,7 +943,7 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
         if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):

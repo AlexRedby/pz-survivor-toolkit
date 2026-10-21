@@ -154,6 +154,7 @@ public final class Main {
         && supports("zombie/iso/objects/IsoWorldInventoryObject.class", "7be6f2d54525fa587908ce8efa7da5d26cfd3d19bd1cc02911ee12f7649857b3")
         && supports("zombie/iso/fboRenderChunk/FBORenderObjectOutline.class", "175e9ae7b5307a2ddaa02adb006c18e30823dbae626348c8e73d6613173d8471")
         && supports("zombie/core/skinnedmodel/model/ItemModelRenderer.class", "7bca60683441a873571bb4a8e3030de21852916432040a2dcdacc297757fb008")
+        && supports("zombie/core/skinnedmodel/model/WorldItemAtlas$ItemParams.class", "c68663042d7995e201c3fb13c2bf429418fe848aeae6ffcc987d5fc3980a8485")
         && supports("zombie/core/skinnedmodel/model/WorldItemModelDrawer.class", "f9a83f5dbb3a5f897a502e945fb53150aa4cc4fb98c7996f5eb4bd0475d965d2");
 
     public static final boolean COMPLETION_SUPPORTED = supports("zombie/characters/CharacterTimedActions/LuaTimedActionNew.class",
@@ -494,6 +495,22 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.core.skinnedmodel.model.WorldItemAtlas$ItemParams", methodName="init", strictMatch=true)
+    public static class ShoppingWorldAtlas {
+        @Patch.OnExit
+        public static void exit(@Patch.This Object params,
+            @Patch.Argument(0) zombie.inventory.InventoryItem item,
+            @Patch.Argument(1) zombie.core.skinnedmodel.model.Model model,
+            @Patch.Argument(2) zombie.scripting.objects.ModelScript script,
+            @Patch.Argument(3) float scale,@Patch.Argument(4) zombie.core.ImmutableColor tint,
+            @Patch.Argument(5) float hue,@Patch.Argument(6) boolean fluid) {
+            if(Main.CART_TRANSITION_SUPPORTED && item!=null && "SaucedCarts.ShoppingCart".equals(item.getFullType())) {
+                var transform=Accessor.tryGet(params,"transform",(org.joml.Matrix4f)null);
+                if(transform!=null && script!=null) CartWorldSupport.apply(item.getFullType(),transform,script.scale*item.worldScale);
+            }
+        }
+    }
+
     @Patch(className="zombie.core.skinnedmodel.model.ItemModelRenderer", methodName="init")
     public static class WoodenWorldScale {
         @Patch.OnEnter
@@ -504,6 +521,10 @@ public final class Main {
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
             @Patch.Argument(0) zombie.inventory.InventoryItem item,
             @Patch.Argument(7) zombie.scripting.objects.ModelScript script) {
+            if(Main.CART_TRANSITION_SUPPORTED && item!=null && "SaucedCarts.ShoppingCart".equals(item.getFullType())) {
+                var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
+                if(transform!=null && script!=null) CartWorldSupport.apply(item.getFullType(),transform,script.scale*item.worldScale);
+            }
             if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wheelbarrow(item)) {
                 var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
                 if(transform!=null) {

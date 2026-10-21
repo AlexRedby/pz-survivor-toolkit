@@ -248,7 +248,9 @@ public final class CartGrounding {
             float lean=(float)(player.isLocalPlayer()?CartSteeringHooks.lean(player):CartMotionSync.lean(player));
             float pressure=(float)(player.isLocalPlayer()?CartSteeringHooks.clearanceLean(player):CartMotionSync.pressure(player));
             if(rigid
-                && (profile!=null?alignWheelbarrow(transform,profile,lean,pressure,CartLegPace.woodenGaitShift(player),state.delta)
+                && (CartShopping.model(name)?CartShopping.align(transform,CartTransition.model(player.getPrimaryHandItem()),
+                        player.getPrimaryHandItem().worldScale,state.delta)
+                    :profile!=null?alignWheelbarrow(transform,profile,lean,pressure,CartLegPace.woodenGaitShift(player),state.delta)
                     :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                         contact(instance.modelScript.getName()),lean,state.delta))) {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.

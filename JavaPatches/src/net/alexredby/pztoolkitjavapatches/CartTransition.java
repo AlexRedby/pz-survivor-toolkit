@@ -76,9 +76,10 @@ public final class CartTransition {
     }
 
     static float worldScale(InventoryItem item) {return item.worldScale*(wheelbarrow(item)?.85f:1);}
+    static float heightOffset(InventoryItem item) {return wheelbarrow(item)?.00175f:0;}
     private static Matrix4f held(InventoryItem item,Matrix4f out) {
         var profile=CartWheelbarrow.forItem(item);
-        return profile==null?CartShopping.held(out):profile.held(out);
+        return profile==null?CartShopping.held(out,model(item),item.worldScale):profile.held(out);
     }
     private static String modelName(InventoryItem item) {
         var profile=CartWheelbarrow.forItem(item);
@@ -109,7 +110,7 @@ public final class CartTransition {
     }
 
     static CartTransitionMath.Placement placement(InventoryItem item, IsoWorldInventoryObject world) {
-        return new CartTransitionMath.Placement(world.getWorldPosX(),world.getWorldPosY(),world.getWorldPosZ()+.00175f,
+        return new CartTransitionMath.Placement(world.getWorldPosX(),world.getWorldPosY(),world.getWorldPosZ()+heightOffset(item),
             item.getWorldXRotation(),item.getWorldZRotation(),item.getWorldYRotation(),worldScale(item));
     }
 
@@ -118,7 +119,7 @@ public final class CartTransition {
         if (!Main.CART_TRANSITION_SUPPORTED || world == null || !supported(world.getItem())) return null;
         var item=world.getItem();var model=model(item);
         var profile=CartWheelbarrow.forItem(item);var held=held(item,new Matrix4f());
-        if(model==null) return null;
+        if(model==null || held==null) return null;
         var ground=new Matrix4f();
         var pose=placement(item,world);
         var left=new Vector3f();var right=new Vector3f();
@@ -481,7 +482,7 @@ public final class CartTransition {
     public static synchronized void setdownPose(IsoPlayer player, InventoryItem item, double x, double y, double z, double rotation) {
         var state=states.get(player);
         if(state!=null && state.item==item && !state.pickup && Double.isFinite(x+y+z+rotation)) {
-            state.placement=new CartTransitionMath.Placement((float)x,(float)y,(float)z+.00175f,0,(float)rotation,0,worldScale(item));
+            state.placement=new CartTransitionMath.Placement((float)x,(float)y,(float)z+heightOffset(item),0,(float)rotation,0,worldScale(item));
             publish(player,state);
         }
     }
@@ -542,10 +543,10 @@ public final class CartTransition {
             // Follow native gait clearance so ordinary rendering does not shift both handles after recovery.
             // Keep the captured neutral bank/grip policy; changing it needs a separate source-pose blend.
             float gait=profile!=null && state.movingRecovery && !state.pickup?CartLegPace.woodenGaitShift(player):0;
-            if(!(profile!=null?CartGrounding.alignWheelbarrow(held,profile,0,0,gait,delta)
-                :CartGrounding.align(held,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,CartGrounding.contact(modelName),0,delta))) continue;
             var model=model(state.item);
             if(model==null) continue;
+            if(!(profile!=null?CartGrounding.alignWheelbarrow(held,profile,0,0,gait,delta)
+                :CartShopping.align(held,model,state.item.worldScale,delta))) continue;
             if(state.placement==null) state.placement=dropPlacement(slot,held,model,state.item);
             if(state.placement==null) continue;
             var ground=new Matrix4f();
@@ -679,7 +680,7 @@ public final class CartTransition {
         var relative=new Matrix4f().rotationY(angle+(float)Math.PI).mul(held).mul(new Matrix4f(model).invert());
         float yaw=(float)Math.toDegrees(Math.atan2(-relative.m02(),relative.m00()));
         yaw=(yaw%360+360)%360;
-        var groundPose=new CartTransitionMath.Placement(pose.x(),pose.y(),z+.00175f,0,yaw,0,scale);
+        var groundPose=new CartTransitionMath.Placement(pose.x(),pose.y(),z,0,yaw,0,scale);
         var ground=new Matrix4f();
         if(!CartTransitionMath.worldToActor(groundPose,model,x,y,z,angle,ground)) return null;
         var left=new Vector3f();var right=new Vector3f();
@@ -688,7 +689,7 @@ public final class CartTransition {
         var difference=held.transformPosition(center,new Vector3f()).sub(ground.transformPosition(center,new Vector3f()));
         float c=(float)Math.cos(angle),s=(float)Math.sin(angle);
         return new CartTransitionMath.Placement(pose.x()-1.5f*(c*difference.x+s*difference.z),
-            pose.y()+1.5f*(-s*difference.x+c*difference.z),z+.00175f,0,yaw,0,scale);
+            pose.y()+1.5f*(-s*difference.x+c*difference.z),z,0,yaw,0,scale);
     }
 
     @LuaMethod(name="toolkitWoodCartDropPose", global=true)

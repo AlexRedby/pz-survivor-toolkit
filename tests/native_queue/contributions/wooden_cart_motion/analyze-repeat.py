@@ -14,7 +14,8 @@ CASES = tuple(f'{sex}-{load}-{spec}' for sex in ('male', 'female') for load in (
 TYPES = {'pickup': 'ToolkitWoodCartPickup', 'drop': 'ToolkitWoodCartSetdown'}
 ARM_BONES = tuple('Bip01_'+side+'_'+part for side in 'LR' for part in ('UpperArm','Forearm','Hand'))
 CLIPS = {'SaucedWheelbarrow.WheelbarrowWood': 'Toolkit_WoodCart_Pickup',
-         'SaucedWheelbarrow.WheelbarrowMetal': 'Toolkit_MetalCart_Pickup'}
+         'SaucedWheelbarrow.WheelbarrowMetal': 'Toolkit_MetalCart_Pickup',
+         'SaucedCarts.ShoppingCart': 'Toolkit_ShoppingCart_Pickup'}
 CLIP = CLIPS['SaucedWheelbarrow.WheelbarrowWood']
 CLOCK = 'ToolkitWoodCartClipTime'
 

@@ -490,8 +490,11 @@ public final class CartGrip {
         float pressure=(float)Math.abs(Math.atan2(delta.m01(),delta.m00()));
         if(slot.character instanceof IsoPlayer player) pressure=Math.max(pressure,(float)CartSteeringHooks.clearanceLean(player));
         // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed handles.
-        var poses=CartWheelbarrow.forModel(model)!=null?livePoses(actor,bodySkin,body.matrixPalette,delta,false,pressure):poses(clip,actor,delta);
-        if(poses==null || CartWheelbarrow.forModel(model)!=null
+        boolean shopping=CartShopping.model(model);
+        if(shopping) pressure=0;
+        var poses=CartWheelbarrow.forModel(model)!=null || shopping
+            ?livePoses(actor,bodySkin,body.matrixPalette,delta,false,pressure):poses(clip,actor,delta);
+        if(poses==null || (CartWheelbarrow.forModel(model)!=null || shopping)
             && (!referenceThumb(poses,actor,clip,"L") || !referenceThumb(poses,actor,clip,"R"))
             || !grip(poses,actor,model,slot.character.isFemale(),delta,cart,pressure)) return false;
         if(CartWheelbarrow.forModel(model)!=null) {

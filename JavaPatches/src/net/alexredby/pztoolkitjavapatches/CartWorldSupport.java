@@ -3,7 +3,7 @@ package net.alexredby.pztoolkitjavapatches;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
-/** Measured metal tire/feet support for the unheld model, before the native item yaw. */
+/** Measured cart tire/feet support for the unheld model, before the native item yaw. */
 public final class CartWorldSupport {
     // Native VBO 34c9a265...: lowest left/right support-foot vertices.
     private static final Vector3f LEFT=new Vector3f(-8.86394978f,-20.28660011f,37.90950012f);
@@ -16,6 +16,7 @@ public final class CartWorldSupport {
 
     /** laterScale is the scale native code applies after this call; it never scales model translation. */
     public static boolean apply(String type, Matrix4f transform, float laterScale) {
+        if("SaucedCarts.ShoppingCart".equals(type)) return CartShopping.support(transform,laterScale);
         if(!"SaucedWheelbarrow.WheelbarrowMetal".equals(type) || transform==null || !transform.isFinite()
             || !Float.isFinite(laterScale) || laterScale<=0) return false;
         var scale=transform.getScale(new Vector3f());

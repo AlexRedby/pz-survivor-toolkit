@@ -34,6 +34,7 @@ public final class ClearanceProbe {
             || "SaucedWheelbarrow.WheelbarrowMetal".equals(item.getFullType())
             || "SaucedCarts.ShoppingCart".equals(item.getFullType()));
     }
+    private static final ThreadLocal<InventoryItem> atlasItem=new ThreadLocal<>();
     private static boolean installed;
     private static Field field(String name) {
         try {var field=ItemModelRenderer.class.getDeclaredField(name);field.setAccessible(true);return field;}
@@ -186,6 +187,66 @@ public final class ClearanceProbe {
             @Advice.Return ItemModelRenderer.RenderStatus status,@Advice.Thrown Throwable thrown) {
             try{ClearanceProbe.finishWorld(renderer,item,thrown==null?status:null);}
             catch(Throwable error){System.err.println("[CLEARANCE_PROBE] WORLD ERROR "+error);}
+        }
+    }
+
+    // Atlas drawing bypasses ItemModelRenderer.renderMain entirely. Keep the native item
+    // on this call stack and read the texture's own cached ItemParams at its real draw.
+    // Never reconstruct this transform from CartTransition/model scripts under test.
+    public static InventoryItem beginAtlas(InventoryItem item) {
+        var previous=atlasItem.get();
+        if(worldOutput!=null && supported(item) && item.getWorldItem()!=null)atlasItem.set(item);
+        else atlasItem.remove();
+        return previous;
+    }
+    public static void endAtlas(InventoryItem previous) {
+        if(previous==null)atlasItem.remove();else atlasItem.set(previous);
+    }
+    private static Object atlasField(Object object,String name) throws ReflectiveOperationException {
+        var field=object.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(object);
+    }
+    public static synchronized void atlasDraw(WorldItemAtlas.ItemTexture texture,float x,float y,float z,
+                                               float screenX,float screenY,float alpha) throws Exception {
+        var item=atlasItem.get();
+        if(worldOutput==null || item==null || item.getWorldItem()==null)return;
+        if(item.atlasTexture!=texture)throw new IllegalStateException("Atlas draw item/texture identity mismatch");
+        // A submitted texture can still be loading. Its native return gate must be ready.
+        if(!texture.isRenderMainOK())return;
+        var params=atlasField(texture,"itemParams");
+        var transform=new Matrix4f((Matrix4f)atlasField(params,"transform"));
+        var angle=new org.joml.Vector3f((org.joml.Vector3f)atlasField(params,"angle"));
+        var model=(Model)atlasField(params,"model");
+        if(model==null || model.name==null || !transform.isFinite() || Math.abs(transform.determinant())<1e-12f
+            || !angle.isFinite() || !Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)
+            || !Float.isFinite(screenX) || !Float.isFinite(screenY) || !Float.isFinite(alpha))
+            throw new IllegalStateException("Missing or nonfinite native atlas cart draw");
+        var row=new StringBuilder(1024).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+            .append(",\"itemId\":").append(item.getID()).append(",\"cartType\":").append(quoted(item.getFullType()))
+            .append(",\"renderStatus\":\"Ready\",\"source\":\"WorldItemAtlas.ItemTexture.render-exit\"")
+            .append(",\"transformSource\":\"WorldItemAtlas.ItemTexture.itemParams\",\"placementSource\":\"ItemTexture.render-arguments\"")
+            .append(",\"matrixOrder\":\"column-major\",\"nativeModel\":").append(quoted(model.name))
+            .append(",\"x\":").append(x).append(",\"y\":").append(y).append(",\"z\":").append(z)
+            .append(",\"screenX\":").append(screenX).append(",\"screenY\":").append(screenY)
+            .append(",\"angle\":[").append(angle.x).append(',').append(angle.y).append(',').append(angle.z)
+            .append("],\"transform\":");matrix(row,transform);
+        row.append(",\"alpha\":").append(alpha).append("}\n");worldOutput.write(row.toString());worldOutput.flush();
+    }
+    public static class AtlasContextCapture {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static InventoryItem enter(@Advice.Argument(0) InventoryItem item) {
+            return ClearanceProbe.beginAtlas(item);
+        }
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.Enter InventoryItem previous) {ClearanceProbe.endAtlas(previous);}
+    }
+    public static class AtlasDrawCapture {
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.This WorldItemAtlas.ItemTexture texture,
+            @Advice.Argument(0) float x,@Advice.Argument(1) float y,@Advice.Argument(2) float z,
+            @Advice.Argument(3) float screenX,@Advice.Argument(4) float screenY,@Advice.Argument(8) float alpha,
+            @Advice.Thrown Throwable thrown) {
+            try{if(thrown==null)ClearanceProbe.atlasDraw(texture,x,y,z,screenX,screenY,alpha);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ATLAS ERROR "+error);}
         }
     }
 
@@ -404,6 +465,8 @@ public final class ClearanceProbe {
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     .or(named("zombie.core.skinnedmodel.model.ItemModelRenderer"))
+                    .or(named("zombie.core.skinnedmodel.model.WorldItemModelDrawer"))
+                    .or(named("zombie.core.skinnedmodel.model.WorldItemAtlas$ItemTexture"))
                     .or(named("zombie.core.skinnedmodel.model.ModelInstanceRenderData"))
                     .or(named("net.alexredby.pztoolkitjavapatches.CartWheelSpin"))
                     .or(named("zombie.characters.CharacterTimedActions.LuaTimedActionNew"))
@@ -431,6 +494,10 @@ public final class ClearanceProbe {
                         .visit(Advice.to(OutlineModelCapture.class).on(named("initWorldInventoryObject")))
                     :d.getName().equals("zombie.iso.objects.IsoWorldInventoryObject")
                     ?b.visit(Advice.to(WorldSuppressedCapture.class).on(named("render")))
+                    :d.getName().equals("zombie.core.skinnedmodel.model.WorldItemModelDrawer")
+                    ?b.visit(Advice.to(AtlasContextCapture.class).on(named("renderAtlasTexture").and(takesArguments(8))))
+                    :d.getName().equals("zombie.core.skinnedmodel.model.WorldItemAtlas$ItemTexture")
+                    ?b.visit(Advice.to(AtlasDrawCapture.class).on(named("render").and(takesArguments(9))))
                     :b.visit(Advice.to(WorldRenderCapture.class).on(named("renderMain").and(takesArguments(9)))))
                 .installOn(instrumentation);installed=true;}
         } catch(Exception error) {
