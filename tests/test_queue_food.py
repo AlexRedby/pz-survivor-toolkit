@@ -32,11 +32,12 @@ class FoodAdapterTests(unittest.TestCase):
             bag, enabled, depletion = case == food.BAG_CASE, self.selection['mode'] == 'toolkit', case == food.DEPLETION_CASE
             smart, utensil, cookable = case in food.SMART_CASES, case in food.UTENSIL_CASES, case in food.COOKABLE_CASES
             replacement = case in food.REPLACEMENT_CASES
-            consumption = case in food.CONSUMPTION_CASES
+            custom_weight = case in food.CUSTOM_WEIGHT_CASES
+            consumption = custom_weight or case in food.CONSUMPTION_CASES
             thermal = cookable or replacement
             cooked = case in (food.COOKED_MOVE_CASE, food.COOKED_CANCEL_CASE)
             base_hunger = -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
-            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE, food.UTENSIL_CANCEL_CASE, food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE, food.REPLACEMENT_CANCEL_CASE, food.CONSUMPTION_CANCEL_CASE) and enabled
+            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE, food.UTENSIL_CANCEL_CASE, food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE, food.REPLACEMENT_CANCEL_CASE, food.CONSUMPTION_CANCEL_CASE, food.CUSTOM_WEIGHT_CANCEL_CASE) and enabled
             base = 100 + 10 * index
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', bagCount=1,
                         foodId=base + 1, foodType='Base.CannedPeachesOpen' if consumption else 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal',
@@ -51,7 +52,7 @@ class FoodAdapterTests(unittest.TestCase):
                 prep.update(replacementType='Base.Toast', replacementCount=0, cookingTime=0)
             if consumption:
                 prep.update(consumptionReplacementType='Base.TinCanEmpty', consumptionReplacementCount=0,
-                            foodWeight=.8, customWeight=False, extraItems=False)
+                            foodWeight=1.1 if custom_weight else .8, customWeight=custom_weight, extraItems=False)
             if utensil:
                 prep.update(forkId=base + 3, forkType='Base.Fork', forkCount=1,
                             forkSource='bag' if case == food.UTENSIL_MOVE_CASE else 'root',
@@ -65,7 +66,7 @@ class FoodAdapterTests(unittest.TestCase):
                            anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] + prep['baseHunger'] * fraction * (1.3 if cooked else 1),
                            thirst=.55 - (.1 * fraction if cookable and not cooked else 0))
             if consumption:
-                receipt['foodWeight'] = .2 + .6 * (1 - fraction)
+                receipt['foodWeight'] = prep['foodWeight'] if custom_weight else .2 + .6 * (1 - fraction)
             commands = [dict(id=base + 1, portion=portion, baseHunger=prep['baseHunger'], dispatchRemaining=prep['remaining'],
                              dispatchSource=prep['source'], menuDispatched=not bag, nativeDuration=464 if portion == 1 else 232,
                              progress=not (cancel and n == 0), cancelled=cancel and n == 0, pickupObserved=bag)
@@ -82,7 +83,7 @@ class FoodAdapterTests(unittest.TestCase):
                 for command, goal in zip(commands, (15, 5)):
                     command.update(smartGoal=goal, dispatchHunger=prep['hunger'])
             edit = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE),
+                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE, food.CUSTOM_WEIGHT_MOVE_CASE),
                         waitingCancel=cancel, moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag,
                         manualPickup=bag, untouchedBefore=True, nativeDurationsUnchanged=True,
                         order=[1] if bag else [1, 2] if depletion else [2] if cancel else [2, 1] if enabled else [1, 2])
@@ -815,6 +816,37 @@ end
                 rows, raw = self.single(case)
                 rows[1]['commands'][0][field] = 0
                 with self.subTest(case=case, extra_command=field): self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_custom_weight_portions_keep_native_actual_weight_and_output_count(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in food.CUSTOM_WEIGHT_CASES:
+                    self.selection.update(kind=kind, mode=mode)
+                    rows, raw = self.single(case)
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        self.assertEqual([], self.verify((rows, raw))['issues'])
+                        self.assertTrue(raw[0][1]['customWeight'])
+                        self.assertEqual(1.1, raw[1][1]['foodWeight'])
+                        self.assertEqual(0, raw[1][1]['consumptionReplacementCount'])
+                        cancelled = mode == 'toolkit' and case == food.CUSTOM_WEIGHT_CANCEL_CASE
+                        self.assertEqual([2] if cancelled else [2, 1] if mode == 'toolkit' else [1, 2],
+                                         rows[1]['editEvidence']['order'])
+                    # A nominal script weight or a proportionally reduced weight
+                    # would conceal the actual native custom-weight branch.
+                    for field, wrong in (('foodWeight', .35), ('foodWeight', .8), ('foodWeight', float('nan')),
+                                         ('customWeight', False), ('extraItems', True),
+                                         ('consumptionReplacementCount', 1), ('foodId', 999)):
+                        rows, raw = self.single(case)
+                        for record in (rows[1], rows[1]['client'], raw[1][1]):
+                            record[field] = wrong
+                        with self.subTest(kind=kind, mode=mode, case=case, field=field, wrong=wrong):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+                    rows, raw = self.single(case)
+                    rows[1]['client']['foodWeight'] = .8
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+                    if kind == 'mp':
+                        rows, raw = self.single(case)
+                        self.assertTrue(self.verify((rows, raw), wrong_authority=True)['issues'])
 
     def test_cookable_fields_are_only_accepted_for_registered_cookable_cases(self):
         for case in (food.MOVE_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE):

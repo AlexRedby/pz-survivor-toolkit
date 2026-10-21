@@ -17,6 +17,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.180
+
+- **Improved:** Pending partial food portions with a custom item weight and a native empty-container replacement can be reordered or cancelled when the original food survives every remaining portion. Queue checks preserve native portions and weight, keep required pickups and capacity constraints, and protect evolved ingredients, callbacks and full replacement consumption.
+
 ### 0.1.179
 
 - **Fixed:** Wishlist row highlighting reuses unique item types for visible inventory groups instead of rescanning every hidden child on each frame. Mixed stacks, filters and pin projections remain accurate; Wishlist membership still updates immediately, and refreshes invalidate the summaries.

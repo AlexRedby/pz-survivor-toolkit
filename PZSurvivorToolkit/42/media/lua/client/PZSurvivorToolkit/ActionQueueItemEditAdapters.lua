@@ -297,14 +297,23 @@ end
 
 local function partialReplacement(item,script)
     -- Even without creating the empty container, native partial eating uses its
-    -- script weight. Only a decreasing ordinary weight is safe for the existing
-    -- full-current-weight transfer proof; custom/evolved weights need a contract.
-    if item:isCustomWeight() or item:haveExtraItems() then return false end
+    -- script weight. The transfer proof needs a nonincreasing actual weight;
+    -- evolved extras use another formula and may materialize item callbacks.
+    if item:haveExtraItems() then return false end
     local fullType=item:getReplaceOnUseFullType()
     if type(fullType)~="string" or fullType=="" or not ScriptManager or not ScriptManager.instance then return false end
     local output=ScriptManager.instance:getItem(fullType)
     if not output then return false end
-    local hunger,weight,emptyWeight=script:getHungerChange(),script:getActualWeight(),output:getActualWeight()
+    local emptyWeight=output:getActualWeight()
+    if item:isCustomWeight() then
+        -- Without extras, Food.getActualWeight uses InventoryItem.actualWeight.
+        -- Native partial Eat only writes the separate weight field. Keep both
+        -- observed weights finite and above the empty shell's native weight.
+        local weight,actual=item:getWeight(),item:getActualWeight()
+        return finite(weight) and finite(actual) and finite(emptyWeight)
+            and emptyWeight>=0 and emptyWeight<=weight and emptyWeight<=actual
+    end
+    local hunger,weight=script:getHungerChange(),script:getActualWeight()
     return finite(hunger) and hunger<0 and finite(weight) and finite(emptyWeight)
         and emptyWeight>=0 and emptyWeight<=weight
 end
