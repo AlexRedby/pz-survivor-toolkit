@@ -117,13 +117,14 @@ function Sorter.refresh(pane, class, anchor)
     if not Options.enableSort:getValue() then return end
     local maxSort = math.floor(tonumber(Options.maxSort:getValue()) or class.MAX_ITEMS_IN_STACK_TO_RENDER or 50)
     if maxSort < 1 then return end
-    local selected = pane:saveSelection({})
+    local selected
     for _, stack in ipairs(pane.itemslist) do
         local items = stack.items
         if items and #items > 2 and not pane.collapsed[stack.name] and stack.cleanUIFirstActualIndex ~= 1 then
             local compare = sortFunction(items[1])
-            if compare then
-                local count = math.min(#items - 1, maxSort)
+            local count = math.min(#items - 1, maxSort)
+            if compare and count > 1 then
+                selected = selected or pane:saveSelection({})
                 local prefix = {}
                 for index = 1, count do prefix[index] = items[index + 1] end
                 table.sort(prefix, compare)
@@ -136,8 +137,10 @@ function Sorter.refresh(pane, class, anchor)
             end
         end
     end
-    for index in pairs(pane.selected) do pane.selected[index] = nil end
-    pane:restoreSelection(selected)
+    if selected then
+        for index in pairs(pane.selected) do pane.selected[index] = nil end
+        pane:restoreSelection(selected)
+    end
     Rows.restoreAnchor(pane, anchor)
 end
 

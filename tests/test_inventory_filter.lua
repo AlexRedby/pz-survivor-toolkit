@@ -1,4 +1,5 @@
 local pickerOptions, presetMenuOptions
+local tagReads = 0
 require = function(name)
     if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows"
         or name == "PZSurvivorToolkit/InventorySearch" then
@@ -11,7 +12,12 @@ require = function(name)
     end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
         or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership" then
-        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
+        local module = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
+        if name == "PZSurvivorToolkit/ItemTags" then
+            local forItem = module.forItem
+            module.forItem = function(item) tagReads = tagReads + 1; return forItem(item) end
+        end
+        return module
     end
     if name == "PZSurvivorToolkit/UIStyle" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/UIStyle.lua")
@@ -90,7 +96,9 @@ function class:restoreSelection(saved)
         if saved[group.items[1]] then self.selected[row] = group end
     end
 end
+local refreshes = 0
 function class:refreshContainer()
+    refreshes = refreshes + 1
     local saved = self.saved or {}
     self.itemslist, self.selected = {}, {}
     for _, group in ipairs(groups) do self.itemslist[#self.itemslist + 1] = group end
@@ -102,6 +110,7 @@ ISInventoryPane, CleanUI_Clean_ISInventoryPane, CleanUI_Vanilla_ISInventoryPane 
 for name, fn in pairs(class) do CleanUI_Vanilla_ISInventoryPane[name] = fn end
 dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryFilter.lua')
 starts[1]()
+local function categoryChoices(pane) return PZSurvivorToolkit.InventoryFilter.choices(pane, false) end
 local wrapped = class.restoreSelection
 starts[1](); toggles[1]()
 assert(class.restoreSelection == wrapped, 'duplicate wrapper')
@@ -112,12 +121,37 @@ local pane = setmetatable({items = {}, saved = {[hammer] = 'group', [beans] = 'g
     typeHeader = {getIsVisible = function() return true end, getWidth = function() return 140 end,
         getX = function() return 200 end, getY = function() return 0 end}}, {__index = class})
 pane:refreshContainer()
-assert(#pane.itemslist == 4 and #pane.toolkitCategories == 3)
+assert(#pane.itemslist == 4 and #categoryChoices(pane) == 3)
+-- Menu data is not a restore-time dependency, even when item tags are enabled.
+do
+    local categoryReads, originals = 0, {}
+    for _, item in ipairs({hammer, beans, screwdriver, modItem}) do
+        local getter = item.getDisplayCategory
+        originals[item] = getter
+        item.getDisplayCategory = function(value) categoryReads = categoryReads + 1; return getter(value) end
+    end
+    tagsEnabled, tagReads = true, 0
+    pane:refreshContainer()
+    for pass=1,5 do pane:restoreSelection({}) end
+    assert(categoryReads == 0 and tagReads == 0, 'inactive restores still classified inventory for closed menus')
+    local categories, tags = PZSurvivorToolkit.InventoryFilter.choices(pane)
+    assert(#categories == 3 and tags.food and tags.tool and tagReads == 4,
+        'on-demand choices omitted items or classified duplicated group headers')
+    categoryReads, tagReads = 0, 0
+    categoryChoices(pane)
+    assert(categoryReads == 4 and tagReads == 0, 'category-only choices unnecessarily classified tags')
+    pane.toolkitCategory, pane.toolkitTag, tagReads = 'Tool', 'food', 0
+    pane:refreshContainer()
+    assert(#pane.itemslist == 0 and tagReads == 2, 'active tag predicate classified category-rejected items')
+    pane.toolkitCategory, pane.toolkitTag = nil, nil
+    for item, getter in pairs(originals) do item.getDisplayCategory = getter end
+    tagsEnabled = false
+end
 pane.toolkitCategory = 'Tool'
 pane:refreshContainer()
 assert(#pane.itemslist == 2 and pane.itemslist[1].items[1] == hammer)
 assert(pane.selected[1] == groups[2] and not pane.selected[2], 'selection moved onto another item')
-assert(#pane.toolkitCategories == 3, 'category choices reduced by active filter')
+assert(#categoryChoices(pane) == 3, 'category choices reduced by active filter')
 pane.searchMode, pane.searchText = 'name', 'hammer'
 pane:refreshContainer()
 assert(#pane.itemslist == 1)
@@ -202,7 +236,9 @@ assert(tagMenu.options[1].color.g>tagMenu.options[1].color.r,'tag picker missing
 local foodOption
 for _,option in ipairs(tagMenu.options) do if option.arg=='food' then foodOption=option end end
 assert(foodOption,'food tag missing from picker')
+local beforeTag = refreshes
 foodOption.callback(foodOption.target,foodOption.arg)
+assert(refreshes == beforeTag + 1, 'tag selection rebuilt the inventory more than once')
 assert(pane.toolkitTag=='food' and #pane.itemslist==1,'decorated picker changed tag filtering')
 print('Inventory filter checks passed: exact categories, search, empty results, selections, bulk actions and clear.')
 
@@ -237,7 +273,9 @@ assert(combined and combined.checked, 'combined picker entry missing')
 combined.callback(combined.target)
 assert(pickerOptions and #pickerOptions.categories==3 and #pickerOptions.items==4, 'preview lost hidden source items')
 assert(pickerOptions.rule.exclude[1]=='tool', 'existing combined rule not passed to picker')
+local beforeRule = refreshes
 pickerOptions.onApply({mode='all',include={'food'},exclude={}})
+assert(refreshes == beforeRule + 1, 'rule selection rebuilt the inventory more than once')
 assert(pane.toolkitCategory==nil and pane.toolkitTag==nil and #pane.itemslist==1, 'applying combined rule failed')
 enabled=false;pane:prerender()
 assert(#pane.itemslist==4 and not pane.toolkitVisibleItems, 'live filter disable left filtered rows')
@@ -259,7 +297,7 @@ groups[4].cat = 'Electronics'
 pane.toolkitTagRule = {mode='all',include={'food'},exclude={}}
 pane:refreshContainer()
 assert(#pane.itemslist==1, 'second selection restoration changed the active filter')
-assert(#pane.toolkitCategories==3 and #pane.toolkitUnfilteredRows==4,
+assert(#categoryChoices(pane)==3 and #pane.toolkitUnfilteredRows==4,
     'Item Details second selection restoration discarded hidden categories/source rows')
 root=rootMenu()
 for _,option in ipairs(root.options) do if option.name=='UI_PZST_TagRule' then combined=option end end
@@ -271,13 +309,13 @@ assert(available.Electronics and #pickerOptions.items==4,
 pickerOptions.onApply({mode='any',include={'food','electrical'},exclude={}})
 assert(#pane.itemslist==2 and pane.itemslist[2]==groups[4], 'reopened any rule could not include formerly hidden category')
 pickerOptions.onApply({mode='all',include={'food','electrical'},exclude={}})
-assert(#pane.itemslist==0 and #pane.toolkitCategories==3 and #pane.toolkitUnfilteredRows==4,
+assert(#pane.itemslist==0 and #categoryChoices(pane)==3 and #pane.toolkitUnfilteredRows==4,
     'empty results discarded the source universe on repeated selection restoration')
 pickerOptions.onApply({mode='all',include={},exclude={}})
 assert(#pane.itemslist==4, 'clear after repeated selection restoration lost inventory rows')
 -- A true refresh creates a new row table, so current container changes must still be imported.
 groups[4].cat='ModCategory';pane:refreshContainer()
-for _,category in ipairs(pane.toolkitCategories) do assert(category.id~='Electronics','fresh refresh kept stale category choices') end
+for _,category in ipairs(categoryChoices(pane)) do assert(category.id~='Electronics','fresh refresh kept stale category choices') end
 print('Repeated native/Item Details selection restoration preserves the full picker universe.')
 -- A selection restore may reuse rows while filter state changes, without a rebuild.
 pane.toolkitTagRule={mode='all',include={'food'},exclude={}};pane:refreshContainer()
@@ -303,7 +341,7 @@ assert(#pane.itemslist==2, 'reused unfiltered rows ignored re-enabled rule')
 tagsEnabled=false;pane:restoreSelection({})
 assert(#pane.itemslist==4, 'reused rows ignored disabled tags')
 tagsEnabled=true;pane:restoreSelection({})
-assert(#pane.itemslist==2 and #pane.toolkitUnfilteredRows==4 and #pane.toolkitCategories==3,
+assert(#pane.itemslist==2 and #pane.toolkitUnfilteredRows==4 and #categoryChoices(pane)==3,
     'reused rows lost source universe after settings/search/rule changes')
 groups[3].cat='Food';pane:restoreSelection({})
 assert(#pane.itemslist==1 and pane.itemslist[1]==groups[2], 'second restoration ignored updated stack category')
@@ -419,9 +457,9 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             collapseAll={setVisible=noOp},expandAll={setVisible=noOp},updateScrollbars=noOp,
             updateWorldObjectHighlight=noOp,isMouseOver=function() return false end}, {__index=real})
         p:refreshContainer()
-        assert(#p.itemslist==4 and #p.toolkitCategories==4,'real refresh did not retain source categories')
+        assert(#p.itemslist==4 and #env.PZSurvivorToolkit.InventoryFilter.choices(p, false)==4,'real refresh did not retain source categories')
         p.toolkitTagRule={mode='all',include={'food','perishable'},exclude={}};p:refreshContainer()
-        assert(#p.itemslist==2 and #p.toolkitUnfilteredRows==4 and #p.toolkitCategories==4,
+        assert(#p.itemslist==2 and #p.toolkitUnfilteredRows==4 and #env.PZSurvivorToolkit.InventoryFilter.choices(p, false)==4,
             'real native/Item Details refresh lost all rule or source universe')
         p.toolkitTagRule={mode='any',include={'perishable','electrical'},exclude={}};p:restoreSelection({})
         assert(#p.itemslist==3,'real rows ignored changed any rule on second restoration')
@@ -568,8 +606,8 @@ assert(#pane.itemslist==1 and foodRow.items[1]==blue and foodRow.items[2]==blue 
 assert(pane.selected[1]==foodRow and not pane.toolkitVisibleItems[red] and pane.toolkitVisibleItems[blue],
     'exact-category projection lost group selection or retained a hidden item')
 local categorySet={}
-for _,entry in ipairs(pane.toolkitCategories) do categorySet[entry.id]=true end
-assert(categorySet.Tool and categorySet.Food and #pane.toolkitCategories==2,
+for _,entry in ipairs(categoryChoices(pane)) do categorySet[entry.id]=true end
+assert(categorySet.Tool and categorySet.Food and #categoryChoices(pane)==2,
     'category choices omitted a physical child category from the source stack')
 pane.toolkitCategory=nil
 pane.searchMode,pane.searchCategoryText='category','food'
@@ -645,14 +683,14 @@ if OCDisplayOverrideSource then
         return result
     end
     pane:refreshContainer()
-    assert(#pane.toolkitCategories==3 and #pane.itemslist==2 and pane.itemslist~=pane.toolkitFilteredRows,
+    assert(#categoryChoices(pane)==3 and #pane.itemslist==2 and pane.itemslist~=pane.toolkitFilteredRows,
         'Actual OC fixture did not replace the filtered mixed-category row array')
     local firstSplit,secondSplit=pane.itemslist[1],pane.itemslist[2]
     for pass=1,2 do
         pane:restoreSelection({})
         local choices={}
-        for _,entry in ipairs(pane.toolkitCategories) do choices[entry.id]=true end
-        assert(choices.Tool and choices.Food and choices.medicalTreatment and #pane.toolkitCategories==3,
+        for _,entry in ipairs(categoryChoices(pane)) do choices[entry.id]=true end
+        assert(choices.Tool and choices.Food and choices.medicalTreatment and #categoryChoices(pane)==3,
             'Late OC split caused a repeated restore to discard the excluded category universe')
         assert(#pane.itemslist==2 and pane.itemslist[1]==firstSplit and pane.itemslist[2]==secondSplit,
             'Full-universe recovery discarded OC split group identity or order')
@@ -774,8 +812,9 @@ do
     inactivePane.itemslist=noProjection
     live.category='Changed category'
     inactivePane:restoreSelection({})
+    local liveChoices=inactive.env.PZSurvivorToolkit.InventoryFilter.choices(inactivePane, false)
     assert(inactivePane.itemslist==noProjection and inactivePane.toolkitVisibleItems==nil
-        and #inactivePane.toolkitCategories==1 and inactivePane.toolkitCategories[1].id=='Changed category',
+        and #liveChoices==1 and liveChoices[1].id=='Changed category',
         'inactive restoration inspected unused projection rows or cached stale category choices')
     local f=fixture()
     local left,right=f.pages[1],f.pages[2]

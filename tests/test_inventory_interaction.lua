@@ -1,5 +1,6 @@
 require = function(name)
-    if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows" then
+    if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows"
+        or name == "PZSurvivorToolkit/InventorySearch" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
     end
     if name == "PZSurvivorToolkit/TagVisuals" then
@@ -213,12 +214,13 @@ dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/
 dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryInteraction.lua')
 for _, start in ipairs(starts) do start() end
 
-local function item()
-    return {isItem=true, getContainer=function() return playerInventory end}
+local function item(category)
+    return {isItem=true, getContainer=function() return playerInventory end,
+        getDisplayCategory=function() return category or 'Tool' end}
 end
 
 local function pane(class)
-    local a, b = item(), item()
+    local a, b = item('Tool'), item('Food')
     local groups = {{name = 'a', cat = 'Tool', items = {a,a}}, {name = 'b', cat = 'Food', items = {b,b}}}
     local dirty = false
     local inventory = {isDrawDirty = function() return dirty end,

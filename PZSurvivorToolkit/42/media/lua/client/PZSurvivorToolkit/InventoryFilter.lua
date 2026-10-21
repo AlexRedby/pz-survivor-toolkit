@@ -85,12 +85,30 @@ local function filterGroup(group, accepts)
     return copy
 end
 
+-- Menu choices use the complete refresh universe, never its filtered/split rows.
+-- Read live instance metadata on demand; ordinary restores need no menu labels/tags.
+function Filter.choices(pane, includeTags)
+    local categories, tags, result = {}, {}, {}
+    if not Toolkit.Settings.inventoryFilters() then return result, tags end
+    local tagsEnabled = includeTags ~= false and Tags.enabled()
+    for _, item in ipairs(pane.toolkitFilterItems or {}) do
+        local category = item:getDisplayCategory() or item:getCategory()
+        if category then categories[category] = true end
+        if tagsEnabled then
+            for _, id in ipairs(Tags.forItem(item)) do tags[id] = true end
+        end
+    end
+    for category in pairs(categories) do
+        result[#result + 1] = {id = category, name = categoryName(category)}
+    end
+    table.sort(result, function(a, b) return a.name < b.name end)
+    return result, tags
+end
+
 local function applyFilter(pane, selected)
     -- Later selection restores may follow stack/category changes from other mods.
     if pane.itemslist == pane.toolkitFilteredRows then pane.itemslist = pane.toolkitUnfilteredRows end
     pane.toolkitFilteredRows = nil
-    pane.toolkitCategories = {}
-    pane.toolkitTags = {}
     pane.toolkitUnfilteredRows = pane.itemslist
     pane.toolkitVisibleItems = nil
     if not Toolkit.Settings.inventoryFilters() then return end
@@ -105,32 +123,18 @@ local function applyFilter(pane, selected)
         end
         pane.toolkitFilterItems = items
     end
-    local categories, itemTags = {}, {}
-    local tagsEnabled = Tags.enabled()
+    local search = Search.forPane(pane)
+    local filterTags = tagFilterActive(pane)
+    if not pane.toolkitCategory and not filterTags and not search then return end
+    local itemTags = {}
     local function tagsFor(item)
         if not itemTags[item] then itemTags[item] = Tags.forItem(item) end
         return itemTags[item]
     end
-    for _, item in ipairs(pane.toolkitFilterItems) do
-        local category = item:getDisplayCategory() or item:getCategory()
-        if category then categories[category] = true end
-        if tagsEnabled then
-            for _, id in ipairs(tagsFor(item)) do pane.toolkitTags[id] = true end
-        end
-    end
-    local search = Search.forPane(pane)
-    local filterTags = tagFilterActive(pane)
-    local active = pane.toolkitCategory or filterTags or search
-    for category in pairs(categories) do
-        pane.toolkitCategories[#pane.toolkitCategories + 1] = {id = category, name = categoryName(category)}
-    end
-    table.sort(pane.toolkitCategories, function(a, b) return a.name < b.name end)
-    if not active then return end
     local kept, visible, equipped = {}, {}, false
     local rule = filterTags and tagRule(pane)
     local function accepts(item)
-        local category = item:getDisplayCategory() or item:getCategory()
-        return (not pane.toolkitCategory or category == pane.toolkitCategory)
+        return (not pane.toolkitCategory or (item:getDisplayCategory() or item:getCategory()) == pane.toolkitCategory)
             and Search.matches(search, item)
             and (not filterTags or Tags.matchesRule(tagsFor(item), rule))
     end
@@ -164,33 +168,33 @@ local function applyFilter(pane, selected)
     return remappedSelection
 end
 
-local function selectCategory(pane, category)
-    pane.toolkitCategory = category
-    pane.toolkitTag, pane.toolkitTagRule = nil, nil
+local function selectFilter(pane, category, tag, rule)
+    pane.toolkitCategory, pane.toolkitTag, pane.toolkitTagRule = category, tag, rule
     pane.firstSelect = nil
     pane:setYScroll(0)
     pane.smoothScrollTargetY = nil
     pane:refreshContainer()
 end
 
+local function selectCategory(pane, category)
+    selectFilter(pane, category)
+end
+
 local function selectTag(pane, id)
-    selectCategory(pane, nil)
-    pane.toolkitTag = id
-    pane:refreshContainer()
+    selectFilter(pane, nil, id)
 end
 
 local function selectRule(pane, rule)
     local copy = Tags.normalizeRule(rule)
     if not copy then return end
-    selectCategory(pane, nil)
-    pane.toolkitTagRule = Tags.ruleActive(copy) and copy or nil
-    pane:refreshContainer()
+    selectFilter(pane, nil, nil, Tags.ruleActive(copy) and copy or nil)
 end
 
 local function showTagRule(pane)
     pane:refreshContainer()
     local categories, items = {}, {}
-    for _, entry in ipairs(pane.toolkitCategories) do categories[#categories + 1] = entry.id end
+    local choices = Filter.choices(pane, false)
+    for _, entry in ipairs(choices) do categories[#categories + 1] = entry.id end
     for _, item in ipairs(pane.toolkitFilterItems or {}) do items[#items + 1] = item end
     TagRulePicker.open({player=pane.player, owner=pane, rule=tagRule(pane), categories=categories, items=items,
         onApply=function(rule) selectRule(pane, rule) end})
@@ -198,6 +202,7 @@ end
 
 local function showCategories(pane, button)
     pane:refreshContainer()
+    local categories, tags = Filter.choices(pane)
     local menu = ISContextMenu.get(pane.player, button:getAbsoluteX(), button:getAbsoluteY() + button:getHeight())
     local all = menu:addOption(getText("UI_PZSurvivorToolkit_all_categories"), pane, selectCategory)
     menu:setOptionChecked(all, pane.toolkitCategory == nil)
@@ -207,7 +212,7 @@ local function showCategories(pane, button)
         PresetsMenu.add(menu, {owner=pane, player=pane.player, rule=tagRule(pane),
             onApply=function(rule) selectRule(pane, rule) end})
         local entries = {}
-        for id in pairs(pane.toolkitTags) do entries[#entries + 1] = {id = id, label = Tags.label(id)} end
+        for id in pairs(tags) do entries[#entries + 1] = {id = id, label = Tags.label(id)} end
         table.sort(entries, function(a, b) return a.label < b.label end)
         local root = menu:addOption(getText("UI_PZST_Tags"))
         local submenu = ISContextMenu:getNew(menu)
@@ -221,7 +226,7 @@ local function showCategories(pane, button)
         end
         menu:setOptionChecked(all, pane.toolkitCategory == nil and not tagFilterActive(pane))
     end
-    for _, category in ipairs(pane.toolkitCategories) do
+    for _, category in ipairs(categories) do
         local option = menu:addOption(category.name, pane, selectCategory, category.id)
         menu:setOptionChecked(option, pane.toolkitCategory == category.id)
     end

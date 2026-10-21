@@ -169,6 +169,13 @@ local function run(initialEnhanced, lateVanilla)
                 self.bars[#self.bars+1]=fraction; self.bounds[#self.bounds+1]={kind='bar',x=x,width=width}
             end}, {__index=ISInventoryPane})
     end
+    local function selectionCalls(view)
+        local calls={save=0,restore=0}
+        local save,restore=view.saveSelection,view.restoreSelection
+        view.saveSelection=function(self,selected) calls.save=calls.save+1; return save(self,selected) end
+        view.restoreSelection=function(self,selected) calls.restore=calls.restore+1; return restore(self,selected) end
+        return calls
+    end
     local nutritionist = false
     CharacterTrait = {NUTRITIONIST2='Nutritionist2'}
     getPlayer=function() return {hasTrait=function(_,trait) return nutritionist and trait==CharacterTrait.NUTRITIONIST2 end} end
@@ -370,6 +377,39 @@ local function run(initialEnhanced, lateVanilla)
             assert(view.firstSelect==selectionIndex,'Shift-selection anchor did not follow the physical item')
         end
         local low, high=item(20),item(85)
+        -- A refresh can rebuild rows without leaving any prefix for the sorter.
+        -- Keep its current selection untouched, but still project its Shift anchor.
+        for _,reason in ipairs({'collapsed','virtual','unsupported','single','one-item-prefix'}) do
+            local values=reason=='unsupported' and {item(20,'Other'),item(85,'Other')} or {low,high}
+            local idle=pane(values)
+            local group=idle.itemslist[1]
+            local anchor,index=values[2],3
+            if reason=='collapsed' then idle.collapsed.parts=true; anchor,index=group,1
+            elseif reason=='virtual' then group.cleanUIFirstActualIndex=1; group.items=values
+            elseif reason=='single' then group.items={low,low}; anchor,index=low,2
+            elseif reason=='one-item-prefix' then Settings.maxSort:setValue('1') end
+            idle.selected[index]=anchor
+            idle.firstSelect=99
+            local calls=selectionCalls(idle)
+            sorter.refresh(idle,ISInventoryPane,anchor)
+            assert(calls.save==0 and calls.restore==0,reason..' prefix rebuilt selection')
+            assert(idle.selected[index]==anchor and next(idle.selected,index)==nil,
+                reason..' prefix changed the existing selection')
+            assert(idle.firstSelect==index,reason..' prefix lost its Shift anchor')
+            Settings.maxSort:setValue('50')
+        end
+        local ordered=pane({low,high})
+        local otherLow,otherHigh=item(10),item(90)
+        ordered.itemslist[2]={name='other',items={otherLow,otherLow,otherHigh}}
+        ordered.selected[1]=ordered.itemslist[1]
+        ordered.selected[5]=otherLow
+        local calls=selectionCalls(ordered)
+        sorter.refresh(ordered,ISInventoryPane,otherLow)
+        assert(calls.save==1 and calls.restore==1,'multiple sorted prefixes rebuilt selection more than once')
+        assert(ordered.itemslist[1].items[2]==high and ordered.itemslist[2].items[2]==otherHigh,
+            'eligible prefixes were not sorted')
+        assert(ordered.selected[1]==ordered.itemslist[1] and ordered.selected[6]==otherLow and ordered.firstSelect==6,
+            'sorted prefixes did not retain group, physical selection and Shift anchor')
         local view=pane({low,high})
         local stack=view.itemslist[1]
         view.selected[1]=stack

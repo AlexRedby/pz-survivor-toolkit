@@ -32,7 +32,7 @@ end
 
 local function assertUniverse(pane, expected)
     local available={}
-    for _, entry in ipairs(pane.toolkitCategories) do available[entry.id]=true end
+    for _, entry in ipairs(PZSurvivorToolkit.InventoryFilter.choices(pane, false)) do available[entry.id]=true end
     for _,category in ipairs(categories) do
         assert(available[category],'Filter lost a fixture category from the source universe: '..category)
     end
@@ -68,8 +68,9 @@ function F.probe(pane, mode)
     clear(pane)
     local count=pane.inventory:getItems():size()
     local sourceCategories={}
-    for _,entry in ipairs(pane.toolkitCategories) do sourceCategories[entry.id]=true end
-    local sourceCategoryCount=#pane.toolkitCategories
+    local choices=PZSurvivorToolkit.InventoryFilter.choices(pane, false)
+    for _,entry in ipairs(choices) do sourceCategories[entry.id]=true end
+    local sourceCategoryCount=#choices
     local checks={}
     local function check(label, expected, selection)
         render(pane)
