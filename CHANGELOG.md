@@ -1019,6 +1019,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.47
+
+- **Wooden cart clearance:** Fit the held shafts to the current render slot's bilateral leg/source-trouser cage, with a bounded lateral correction and exact calibrated source hashes. Retain native feet/root movement, the outgoing inventory envelope and closed grip; leave unsupported assets and unavailable corridors unchanged. Native verification is pending.
+
 ### 0.1.46
 
 - **Wooden cart equip:** Ground the held model and close its hand grip as soon as the native inventory action exposes the exact cart in both hands. Avoid the initial attachment jump while waiting for the next Lua motion refresh or remote motion pose; retain native action timing, locomotion, network steering gates and the existing outgoing-inventory clearance curve.

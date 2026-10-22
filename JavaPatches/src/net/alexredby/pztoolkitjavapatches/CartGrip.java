@@ -51,7 +51,7 @@ public final class CartGrip {
         return false;
     }
 
-    private static boolean upperBody(SkinningBone bone) {
+    static boolean upperBody(SkinningBone bone) {
         for(;bone!=null;bone=bone.parent) {
             // Native thighs branch from Spine too; keep their entire walking chains live.
             if("Bip01_L_Thigh".equals(bone.name) || "Bip01_R_Thigh".equals(bone.name)) return false;
@@ -526,6 +526,31 @@ public final class CartGrip {
         if(poses==null || (CartWheelbarrow.forModel(model)!=null || shopping)
             && (!referenceThumb(poses,actor,clip,"L") || !referenceThumb(poses,actor,clip,"R"))
             || !grip(poses,actor,model,slot.character.isFemale(),delta,cart,pressure)) return false;
+        if("WheelbarrowWood".equals(model)) {
+            zombie.core.skinnedmodel.model.ModelMesh mesh=null;
+            int carts=0;
+            for(var data:slot.modelData) if(data.modelInstance.parent==owner && data.modelInstance.modelScript!=null
+                && model.equals(data.modelInstance.modelScript.getName()) && data.modelInstance.model!=null) {
+                mesh=data.modelInstance.model.mesh;carts++;
+            }
+            double shift=carts==1?CartLegClearance.shift(slot,owner,mesh,cart,pressure,actor,poses):0;
+            if(Double.isFinite(shift) && shift!=0) {
+                var fitted=new Matrix4f(cart).m30(cart.m30()+(float)shift);
+                // Rebuild from the unchanged native palette: never apply torso/finger adjustments twice.
+                poses=livePoses(actor,bodySkin,body.matrixPalette,delta,false,pressure);
+                boolean valid=CartLegClearance.withinFootprint(fitted) && poses!=null && referenceThumb(poses,actor,clip,"L") && referenceThumb(poses,actor,clip,"R")
+                    && grip(poses,actor,model,slot.character.isFemale(),delta,fitted,pressure)
+                    && CartLegClearance.shift(slot,owner,mesh,fitted,pressure,actor,poses)==0;
+                if(valid) cart.set(fitted);
+                else {
+                    // Recheck after IK because the selected cage includes a few upper-body influences.
+                    // A refused corridor keeps the established cart/grip pose instead of forcing a fit.
+                    poses=livePoses(actor,bodySkin,body.matrixPalette,delta,false,pressure);
+                    if(poses==null || !referenceThumb(poses,actor,clip,"L") || !referenceThumb(poses,actor,clip,"R")
+                        || !grip(poses,actor,model,slot.character.isFemale(),delta,cart,pressure)) return false;
+                }
+            }
+        }
         if(CartWheelbarrow.forModel(model)!=null) {
             float runWeight=CartLegPace.runningWeight(slot.character);
             if(runWeight>0) {

@@ -62,6 +62,18 @@ final class CartFootprint {
             || Line2D.ptSegDistSq(cx,cy,dx,dy,ax,ay)<=.09 || Line2D.ptSegDistSq(cx,cy,dx,dy,bx,by)<=.09;
     }
 
+    /** Read-only source-point check against the same four native-radius segment capsules. */
+    static boolean contains(double forward,double lateral,double front,double reserve) {
+        if(!Double.isFinite(forward+lateral+front+reserve) || front<=NOSE_INSET+TAPER || reserve<0 || reserve>=.3) return false;
+        double length=front-NOSE_INSET,radius=.3-reserve;
+        for(int side=-1;side<=1;side+=2) {
+            double rail=side*RAIL;
+            if(Line2D.ptSegDistSq(0,rail,length-TAPER,rail,forward,lateral)<=radius*radius
+                || Line2D.ptSegDistSq(length-TAPER,rail,length,0,forward,lateral)<=radius*radius) return true;
+        }
+        return false;
+    }
+
     static boolean clear(Query query,double x,double y,double heading,double front) {
         double cos=Math.cos(heading),sin=Math.sin(heading),length=front-NOSE_INSET;
         for(int side=-1;side<=1;side+=2) {

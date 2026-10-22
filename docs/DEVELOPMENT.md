@@ -80,6 +80,21 @@ The replay verifies Blender's evaluated body and actual `Bob_Trousers` mesh agai
 
 Export creates a new curve JSON, generated Java sampler and approximation report. It checks zero endpoints, forward-only bounds and intermediate samples, increasing sampling until the interpolation error is below `2e-6` model units. To propose a runtime change, review both outputs and update `assets/animations/curves/wood_cart_equip_clearance.json` and `JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartEquipClearanceCurve.java` together. `tests/test_cart_clearance_curve.py` checks that they agree. Build and test the candidate through the isolated reproducer; exporting or opening the scene does not install or validate gameplay. The current envelope is a rendered cart-placement correction while inventory Loot retires; it does not replace the pickup clip or native legs.
 
+### Recalibrating the held-leg clearance cage
+
+The held wooden-cart fit reads the native render slot's body and supported trousers palettes. Its generated source cage and shaft decomposition are committed in `CartLegClearanceData.java`; ordinary Java builds need neither Blender nor NumPy. A changed game/Workshop asset hash disables that asset's calibration until it is reviewed and regenerated.
+
+Regeneration requires Python with NumPy, the supported B42.21 game files and the original wooden cart FBX:
+
+```sh
+python3 tools/cart_leg_clearance_profile.py --game "$GAME" --mesh "$CART_FBX" \
+  --output JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartLegClearanceData.java
+python3 tools/cart_leg_clearance_profile.py --game "$GAME" --mesh "$CART_FBX" \
+  --output JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartLegClearanceData.java --check
+```
+
+The generator verifies source identities, skin weights and exact kernel-fan decomposition of the nonconvex closed shaft pieces. Open braces retain their original triangles. The runtime selects the nearest lateral corridor with a 1 mm source-cage margin, rechecks the solved hand pose and refuses a nonzero correction whose calibrated cart vertices leave the existing Walk footprint. Native collision, leg/root motion, packet frequency and the Blender forward envelope remain unchanged. Source-cage regressions and captured matrices do not certify unseen clothing or every GPU-rendered frame; rerun the isolated SP/Host checks after recalibration.
+
 ## Checks and packaging
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests. Choose checks related to the change; the commands below are independent examples, not a mandatory full checklist.
