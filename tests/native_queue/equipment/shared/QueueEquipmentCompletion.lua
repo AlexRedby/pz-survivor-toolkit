@@ -2,7 +2,7 @@ local Completion={}
 function Completion.observe(toolkit,selection)
  local lifecycle,operations=toolkit.ActionQueueLifecycle,toolkit.ActionQueueOperations
  local begin,finish,flush,perform,defer=lifecycle.begin,lifecycle.finish,lifecycle.flush,operations.perform,operations.deferCompletion
- local state,records,counts,restores,proofs
+ local state,records,counts,restores,clothing,proofs
  local settlement,acks=toolkit.ActionQueueSettlement,toolkit.ActionQueueAcknowledgements
  local captureEffect,confirmEffect=settlement.captureEffect,settlement.confirmEffect
  local beginReturn,finishReturn,returnState=settlement.beginReturn,settlement.finishReturn,settlement.returnState
@@ -274,7 +274,10 @@ function Completion.observe(toolkit,selection)
   if grouped() and records and records[action] then return records[action].counts end
   local kind=select(2,toolkit.ActionQueueDefinitions.inspect(action))
   if kind=='compat.tidy-transfers' then return counts end
-  if kind=='compat.tidy-equipment' then return restores end
+  if kind=='compat.tidy-equipment' then
+   if state.id=='tidy-clothing'and action.Type=='ISWearClothing'then return clothing end
+   return restores
+  end
  end
  local function retained(action,record)
   local queue=ISTimedActionQueue.queues[action.character]
@@ -308,7 +311,16 @@ function Completion.observe(toolkit,selection)
     retained(action,record);record.perform=nil;record.complete=nil
    else record={id=id,kind=action.item:getFullType(),native=action.action,token=action.toolkitQueueOperation,counts=counter,cycles=0} end
    record.cycles=record.cycles+1
-   if counter==restores then
+   if counter==clothing then
+    assert(state.id=='tidy-clothing'and action.Type=='ISWearClothing'
+     and action.item:getID()==state.clothingSocks:getID()and action.item:getFullType()=='Base.Socks_Ankle'
+     and action.item:getBodyLocation()==state.clothingLocation and action.item:getContainer()==state.root,
+     'P4 restored unexpected clothing identity/slot/container')
+    local queue=ISTimedActionQueue.queues[action.character]
+    assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared clothing cleanup must remain protected')
+    -- Host can replicate worn state before client perform; observe exact final
+    -- authority after quiescence instead of requiring pre-effect slot absence.
+   elseif counter==restores then
     local primary=action.item:getID()==state.hammer:getID() and action.item:getFullType()==state.hammer:getFullType()
     assert(action.Type=='ISUnequipAction' and state.id=='tidy-empty-hands' and action.item:getID()==state.pickup:getID()
      or primary or action.item:getID()==state.screwdriver:getID() and action.item:getFullType()==state.screwdriver:getFullType(),
@@ -403,6 +415,7 @@ function Completion.observe(toolkit,selection)
   pickupOperations=0
   claimScopes,pickupScopes={},{}
   restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
+  clothing={perform=0,complete=0,flush=0,legacy=0}
  end
  function Completion.settled()
   assert(not groupFailure,groupFailure)
@@ -496,6 +509,13 @@ function Completion.observe(toolkit,selection)
   assert(restores.flush==restores.perform and restores.complete==(selection.kind=='sp' and restores.perform or 0)
    and restores.legacy==0,'P4 equipment completion did not settle')
   return restores
+ end
+ function Completion.clothing()
+  local expected=enabled and getActivatedMods():contains('P4TidyUpMeister')and 1 or 0
+  assert(clothing.perform==expected and clothing.flush==expected
+   and clothing.complete==(selection.kind=='sp'and expected or 0)and clothing.legacy==0,
+   'P4 clothing shared completion phases did not settle exactly once')
+  return clothing
  end
  return Completion
 end

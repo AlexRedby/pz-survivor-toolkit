@@ -39,7 +39,7 @@ function makeItem(kind,dest)
  local i={kind=kind,id=nextID,container=dest,slot=-1}
  function i:getID() return self.id end
  function i:getBodyLocation() if self.kind=='Base.Socks_Ankle' then return 'SOCKS' elseif self.kind=='Base.Belt2' then return 'BELT' end return '' end
- function i:canBeEquipped() return '' end
+ function i:canBeEquipped() end
  function i:getAttachmentType() if self.kind=='Base.HuntingKnife' then return 'Knife' elseif self.kind=='Base.Hammer' then return 'Hammer' end return 'Shovel' end
  function i:getFullType() return self.kind end
  function i:setFavorite(value) self.favorite=value end
@@ -166,3 +166,76 @@ local function runCase(id,favorite)
  print(id..': real native callback composition, native final mutation, policy assertions, cleanup passed')
 end
 runCase('clothing-chain');runCase('hotbar-chain');runCase('belt-knife');runCase('belt-hammer');runCase('belt-knife',true)
+
+-- Unit replay of the new constructor fixture with real native action sources;
+-- this does not substitute for observing P4-generated wear in SP/Host runs.
+do
+ native('shared/TimedActions/ISUnequipAction.lua');native('shared/TimedActions/ISCutHair.lua')
+ local Clothing=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentClothing.lua'))()
+ string.contains=function(value,part)return value:find(part,1,true)~=nil end
+ local visual={hair='Bald',getHairModel=function(self)return self.hair end,getNonAttachedHair=function(self)return self.attached end,
+  setHairModel=function(self,value)self.hair=value end,setNonAttachedHair=function(self,value)self.attached=value end}
+ local styleName='CrewCut'
+ local style={isAttachedHair=function()return false end,getName=function()return styleName end}
+ getHairStylesInstance=function()return {FindMaleStyle=function()return style end}end
+ local player={worn={}}
+ function player:getHumanVisual()return visual end
+ function player:isFemale()return false end
+ function player:setWornItem(location,item)self.worn[location]=item end
+ function player:getWornItem(location)return self.worn[location]end
+ function player:removeWornItem(item)for key,value in pairs(self.worn)do if value==item then self.worn[key]=nil end end end
+ function player:isTimedActionInstant()return false end
+ function player:getPlayerNum()return 0 end
+ function player:getPrimaryHandItem()return self.primary end
+ function player:getSecondaryHandItem()return self.secondary end
+ function player:resetModel()end;function player:resetHairGrowingTime()end
+ getPlayerHotbar=function()return {isItemAttached=function()return false end}end
+ triggerEvent=function()end;sendEquip=function()end;sendHumanVisual=function()end
+ isForceDropHeavyItem=function()return false end
+ local state={id='tidy-clothing',player=player,root=container()}
+ function state.root:getType()return 'inventory'end
+ state.hammer=makeItem('Base.Hammer',state.root);state.screwdriver=makeItem('Base.Screwdriver',state.root)
+ player.primary,player.secondary=state.hammer,state.screwdriver
+ function state.root:getItemById(id)for item in pairs(self.items)do if item:getID()==id then return item end end end
+ Clothing.prepare(state,function(name,kind)state[name]=makeItem(kind,state.root);return state[name]end)
+ assert(visual.hair=='CrewCut','disposable authority must deterministically configure a plain style')
+ assert(Clothing.verify(state,true).id==state.clothingSocks:getID())
+ local queue={queue={}}
+ ISTimedActionQueue={add=function(action)queue.queue[#queue.queue+1]=action end}
+ Clothing.enqueue(state,{run=function(callback)return callback()end})
+ assert(#queue.queue==2 and getmetatable(queue.queue[1])==ISUnequipAction and getmetatable(queue.queue[2])==ISCutHair)
+ assert(queue.queue[1].complete==ISUnequipAction.complete and queue.queue[2].complete==ISCutHair.complete)
+ assert(queue.queue[1]:complete());assert(queue.queue[2]:complete())
+ assert(Clothing.verify(state,false).hairUnchanged,'native producer must preserve the requested plain style')
+ -- Restored-state verification is exact; another same-type pair cannot satisfy it.
+ player:setWornItem(state.clothingLocation,makeItem('Base.Socks_Ankle',state.root))
+ assert(not pcall(Clothing.verify,state,true),'same-type replacement must not pass the exact socks slot check')
+ local sock='Base.Socks_Ankle#'..state.clothingSocks:getID()..'@inventory'
+ local prefix='[P4TidyUpMeister][P0][S17] '
+ Clothing.observeLine(state,prefix:gsub('P0','P1')..'capture worn=[SOCKS='..sock..']')
+ assert(not state.clothingP4,'foreign player marker must not bind clothing source')
+ Clothing.observeLine(state,prefix..'capture worn=[SOCKS='..sock..']')
+ Clothing.observeLine(state,prefix..'add[add] type=ISUnequipAction item='..sock)
+ Clothing.observeLine(state,prefix..'add[add] type=ISCutHair item=nil')
+ Clothing.observeLine(state,prefix..'RESTORE actionTotal=4 trace=[ISReadABook -> ISUnequipAction -> ISCutHair -> ISReadABook] reason=operation:ISReadABook')
+ Clothing.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S18')
+ assert(state.clothingP4.restore and not state.clothingP4.completed,'foreign session completion must not settle clothing')
+ Clothing.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S17')
+ assert(state.clothingP4.completed and not state.clothingP4.problem,'matching source-owned P4 restore evidence must settle')
+ local captured=state.clothingP4;state.clothingP4=nil
+ Clothing.observeLine(state,prefix..'capture worn=[SOCKS=Base.Socks_Ankle#-1@inventory]')
+ assert(not state.clothingP4,'different exact socks identity must not bind P4 capture')
+ Clothing.observeLine(state,prefix..'capture worn=[SOCKS='..sock..']')
+ Clothing.observeLine(state,prefix..'RESTORE actionTotal=2 trace=[ISReadABook] reason=operation:ISReadABook')
+ assert(state.clothingP4.problem,'restore without real native producer evidence must fail proof')
+ state.clothingP4=captured
+ for _,name in ipairs({'Bald','Mohawk','Spike','GreasedBack','Buffont'})do
+  visual.hair=name;visual.attached='PreviousAttachedStyle'
+  Clothing.prepare(state,function(key,kind)state[key]=makeItem(kind,state.root);return state[key]end)
+  assert(visual.hair=='CrewCut'and not visual.attached,'random unsafe starting cosmetics must not make fixture flaky')
+ end
+ styleName='Mohawk'
+ assert(not pcall(Clothing.prepare,state,function(key,kind)state[key]=makeItem(kind,state.root);return state[key]end),
+  'changed/unsafe target style definition must fail closed')
+ print('tidy-clothing: real native constructors/effects, exact socks and unchanged non-consuming hair fixture passed')
+end

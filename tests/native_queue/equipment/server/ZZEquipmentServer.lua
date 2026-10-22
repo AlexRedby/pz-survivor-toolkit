@@ -22,6 +22,7 @@ local function execute(module,command,player,args)
     if item:getContainer()==player:getInventory() then sendAddItemToContainer(player:getInventory(),item) end
    end
    sendClothing(player,session.location,player:getWornItem(session.location));sendEquip(player)
+   if session.id=='tidy-clothing'then sendClothing(player,session.clothingLocation,session.clothingSocks)end
    if session.id=='hotbar-chain' then sendAttachedItem(player,session.hotbarLocation,session.hotbarInitial) end
    reply(player,'Prepared',ids)
    print('[EQUIPMENT_TEST] PREPARED case='..args.case)
@@ -87,6 +88,9 @@ Events.OnTick.Add(function()
    session.verified=true
    if passed and (session.id=='tidy-group' or session.id=='tidy-multigroup') then
     print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))
+   end
+   if passed and session.id=='tidy-clothing'then
+    print('[EQUIPMENT_TEST] CLOTHING_AUTHORITY '..JSON.encode(problem.clothing))
    end
    if passed then
     print('[EQUIPMENT_TEST] AUTHORITY case='..session.id..' inventoryPreserved=true equipmentMatches=true tailCompleted=true')

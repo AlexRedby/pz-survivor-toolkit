@@ -252,6 +252,47 @@ local function instanceUnchanged(target, class)
     return true
 end
 
+local clothingSourceSafe
+local clothingMethods = {"isValid", "update", "start", "stop", "perform", "complete", "isAlreadyEquipped",
+    "getDuration", "stopSound", "isStopOnWalk"}
+local function ordinaryClothingItem(item, character)
+    if not instanceof(item, "Clothing") or not ItemTag or not ItemTag.REPLACE_PRIMARY or not ItemTag.WEARABLE
+        or not ItemBodyLocation or not ItemBodyLocation.HAT or not ItemBodyLocation.FULL_HAT
+        or item:getContainer() ~= character:getInventory() or item:getCategory() ~= "Clothing"
+        or item:canBeEquipped() ~= nil or item:hasTag(ItemTag.WEARABLE)
+        or item:hasTag(ItemTag.REPLACE_PRIMARY) or item:isBroken()
+        or item:getAttachedSlot() ~= -1 or isForceDropHeavyItem(item) then return end
+    local location = item:getBodyLocation()
+    if not location or tostring(location) == "" or location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then return end
+    return location
+end
+local function ordinaryClothing(action)
+    local item, character = action.item, action.character
+    local location = ordinaryClothingItem(item, character)
+    if not location then return end
+    -- Native MP start rebinds from the root by ID. A stale queued proxy must
+    -- not prove a missing, replaced or differently configured live garment.
+    local liveItem = character:getInventory():getItemById(item:getID())
+    if not liveItem or liveItem:getFullType() ~= item:getFullType()
+        or ordinaryClothingItem(liveItem, character) ~= location then return end
+    return location
+end
+local function nativeClothingMethods()
+    if clothingSourceSafe == nil then
+        clothingSourceSafe = Proof.matches("media/lua/shared/TimedActions/ISWearClothing.lua", 1104211581, nil, true)
+    end
+    if not clothingSourceSafe then return false end
+    for _, name in ipairs(clothingMethods) do
+        if not Proof.closure(ISWearClothing[name], "ISWearClothing.lua") then return false end
+    end
+    return true
+end
+local function clothingRestore(action, class)
+    if class ~= ISWearClothing or not nativeClothingMethods() then return end
+    for _, name in ipairs(clothingMethods) do if action[name] ~= class[name] then return end end
+    return ordinaryClothing(action)
+end
+
 local function sourceMatches(action, record, observedItem)
     record = record or records[action]
     if not record or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
@@ -265,6 +306,9 @@ local function sourceMatches(action, record, observedItem)
         or action.alwaysTurnOn ~= record.alwaysTurnOn) then return false end
     if record.class == ISUnequipAction and (action.reason ~= record.reason or action.fromHotbar ~= record.fromHotbar
         or action.hotbar ~= record.hotbar) then return false end
+    if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothing(action) ~= record.clothingLocation
+        or action.fromHotbar ~= record.fromHotbar or action.clothingAction ~= record.clothingAction
+        or action.stopOnWalk ~= record.stopOnWalk or action.stopOnRun ~= record.stopOnRun) then return false end
     for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name] then return false end end
     for name, method in pairs(record.methods) do if action[name] ~= method then return false end end
     for name, method in pairs(action) do
@@ -319,6 +363,7 @@ local function adopt(action)
     local baseline = classes[context.id] and classes[context.id][class]
     if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
+    local clothingLocation = context.id == "P4TidyUpMeister" and clothingRestore(action, class)
     local tidyHandUnequip = context.id == "P4TidyUpMeister" and class == ISUnequipAction and not action.fromHotbar
             and (action.item == action.character:getPrimaryHandItem() or action.item == action.character:getSecondaryHandItem())
             and not action.character:getWornItems():contains(action.item) and not isForceDropHeavyItem(action.item)
@@ -334,7 +379,9 @@ local function adopt(action)
         id = context.id, target = context.target, fields = {}, itemIdentities = {}, owner = context.owner,
         primary = action.primary, twoHands = action.twoHands, alwaysTurnOn = action.alwaysTurnOn,
         reason = action.reason, fromHotbar = action.fromHotbar, hotbar = action.hotbar,
-        tidyHandUnequip = tidyHandUnequip,
+        tidyHandUnequip = tidyHandUnequip, tidyClothingWear = clothingLocation ~= nil and clothingLocation ~= false,
+        clothingLocation = clothingLocation, clothingAction = action.clothingAction,
+        stopOnWalk = action.stopOnWalk, stopOnRun = action.stopOnRun,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction),
         settlement = context.settlement, obligation = Settlement.obligation(context)}
     records[action] = record
@@ -1249,7 +1296,7 @@ local function matchesTidyTransfer(action) return tidyTransfer(action) and match
 local function tidyEquipment(action)
     local record = records[action]
     return record and record.id == "P4TidyUpMeister"
-        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip)
+        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip or record.tidyClothingWear)
 end
 local function matchesTidyEquipment(action) return tidyEquipment(action) and matches(action) end
 local function matchesSelectedChain(action) return not tidyTransfer(action) and not tidyEquipment(action) and matches(action) end
@@ -1263,7 +1310,7 @@ Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-transfers",
     {types = {"ISInventoryTransferAction"}, matches = matchesTidyTransfer, inspect = inspect})
 Operations.registerProducer("compat.tidy-transfers", matchesTidyTransfer, acceptsChild, true)
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-equipment",
-    {types = {"ISEquipWeaponAction", "P4RestoreAction", "ISUnequipAction"}, matches = matchesTidyEquipment, inspect = inspect})
+    {types = {"ISEquipWeaponAction", "P4RestoreAction", "ISUnequipAction", "ISWearClothing"}, matches = matchesTidyEquipment, inspect = inspect})
 Operations.registerProducer("compat.tidy-equipment", matchesTidyEquipment, acceptsChild, true)
 require "LootSorter_CraftMenu"
 Compat.install()

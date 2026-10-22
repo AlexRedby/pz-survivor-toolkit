@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.221
+
+- **Action queue:** Move proven P4 ordinary-clothing restoration onto the shared native completion boundary. Wait for the native wear effect and action removal before advancing, retain required cleanup and independent following actions, and reject stale or changed clothing identities/helpers. Special equipment branches retain their existing fallback.
+
 ### 0.1.220
 
 - **Distribution:** Prepare item tag membership lazily once per plan and reuse the destination search to explain unmatched or unavailable storage. Avoid rebuilding the same tag set for every rule and rescanning all destinations after a failed search. Preserve explicit-item priority, exact-category filters, broken-tool exclusions and live capacity/admission checks; subsequent plans read fresh item tags.

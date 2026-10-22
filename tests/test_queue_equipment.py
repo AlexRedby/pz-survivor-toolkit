@@ -47,6 +47,17 @@ class EquipmentTests(unittest.TestCase):
                     result.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True, walkDistance=0.75)
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
+            if case == 'tidy-clothing':
+                tidy = 'P4TidyUpMeister' in self.selection['mods']
+                effect = dict(id=955, fullType='Base.Socks_Ankle', bodyLocation='base:socks', container='root', worn=tidy,
+                              producer='ISCutHair', producerCompleted=True, hairUnchanged=True, hairStyle='CrewCut',
+                              unrelatedHandsPreserved=True)
+                count = int(enabled and tidy)
+                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=False),
+                              tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
+                                                sourceSession=17 if tidy else False, sourceCompleted=tidy,
+                                                sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
+                                                                      flush=count, legacy=0), unrelatedTailPreserved=True))
             if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
                 count = int(enabled and 'P4TidyUpMeister' in self.selection['mods'])
                 empty = case == 'tidy-empty-hands'
@@ -121,7 +132,45 @@ class EquipmentTests(unittest.TestCase):
             if 'tidy-floor' in self.selection['cases'] and 'P4TidyUpMeister' in self.selection['mods']:
                 with (self.root / 'server-launch.log').open('a') as log:
                     log.write('\n[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true\n')
+            if 'tidy-clothing' in self.selection['cases']:
+                row = next(row for row in self.records() if row.get('id') == 'tidy-clothing')
+                effect = {key: row['outcome']['tidyClothing'][key] for key in equipment.CLOTHING_EFFECT_KEYS}
+                with (self.root / 'server-launch.log').open('a') as log:
+                    log.write('\n[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' + json.dumps(effect) + '\n')
         return equipment.verify(self.root, self.selection, {})
+
+    def test_tidy_clothing_requires_exact_p4_generation_shared_phases_and_conserved_effects(self):
+        self.selection.update(cases=['tidy-clothing'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in equipment.CLOTHING_EFFECT_KEYS | {'nativeGenerated', 'authoritativeRestore', 'unrelatedTailPreserved', 'sourceSession', 'sourceCompleted'}:
+                    rows = self.records(); rows[1]['outcome']['tidyClothing'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                for field in ('perform', 'complete', 'flush', 'legacy'):
+                    for change in (True, -1, '1', 1.0, 2):
+                        rows = self.records(); rows[1]['outcome']['tidyClothing']['sharedCompletion'][field] = change
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, field, change))
+                for field, value in (('id', True), ('fullType', 'Base.Socks_Long'), ('bodyLocation', 'base:hat'),
+                                     ('container', 'worn-bag'), ('worn', False), ('producer', 'ISWearClothing'),
+                                     ('hairStyle', 'Mohawk'), ('nativeGenerated', 0), ('hairUnchanged', False),
+                                     ('unrelatedHandsPreserved', False), ('unrelatedTailPreserved', False)):
+                    rows = self.records(); rows[1]['outcome']['tidyClothing'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (field, value))
+                rows = self.records(); rows[1]['outcome']['clothingCheckpoint']['id'] += 1
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for session in (0, -1, True, '17', None):
+                    rows = self.records(); rows[1]['outcome']['tidyClothing']['sourceSession'] = session
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if '[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' in line)
+                    for replacement in ('', marker + '\n' + marker, marker.replace('955', '956'), marker.replace('"worn": true', '"worn": false')):
+                        server.write_text(original.replace(marker, replacement))
+                        self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
 
     def test_belt_requires_empty_queue_and_exact_effect_checks(self):
         self.selection['cases'] = ['belt-knife', 'belt-hammer']

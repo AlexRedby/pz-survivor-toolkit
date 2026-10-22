@@ -2,6 +2,7 @@ local Fixture={}
 local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
 local Bulk=require 'QueueEquipmentBulk'
+local Clothing=require 'QueueEquipmentClothing'
 local function inventory(player)
  local result={}
  local function scan(container)
@@ -154,6 +155,7 @@ function Fixture.prepare(player,id,ids,options)
   assert(state.removalDelta>2,'native bag reduction must materially affect carried weight')
   assert(not fitsAfterRemoval,'pickup would still fit after native bag removal')
   assert(root:hasRoomFor(player,state.pickup),'pickup must fit again after native hand state restore')
+ elseif id=='tidy-clothing' then Clothing.prepare(state,seed)
  elseif id=='tidy-group' or id=='tidy-multigroup' then
   seed('groupOne','Base.Nails',state.source);seed('groupTwo','Base.Nails',state.source)
   if id=='tidy-multigroup' then
@@ -238,7 +240,14 @@ function Fixture.verify(state,mode,checkpoint)
  local extra={}
  if Bulk.isCase(state.id) then extra=Bulk.verify(state,false,false) end
  if Slots.handles(state.id) then extra=Slots.verify(state,mode) end
- assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,state.expectedWorn)
+ local expectedWorn=state.expectedWorn
+ if state.id=='tidy-clothing' then
+  extra.clothingCheckpoint=Clothing.verify(state,false)
+  extra.clothingItem=state.clothingSocks:getID()
+  expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
+  expectedWorn[state.clothingLocation]=nil
+ end
+ assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
   policyChecked=mode=='toolkit',cancelled=cancelled,capacityBarrier=state.id=='bag-capacity' and mode=='toolkit',
   primary=primary:getID(),secondary=secondary and secondary:getID() or false,bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
@@ -315,7 +324,7 @@ function Fixture.cleanup(state)
 end
 function Fixture.descriptor(state)
  local result={case=state.id,items={},originalWorn={},primary=state.originalPrimary and state.originalPrimary:getID(),
-  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor}
+  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor,clothingHair=state.clothingHair}
  for name,item in pairs(state.items) do result.items[name]=item:getID() end
  for location,item in pairs(state.originalWorn) do
   result.originalWorn[#result.originalWorn+1]={location=tostring(location),id=item:getID(),fullType=item:getFullType()}
@@ -326,6 +335,7 @@ end
 function Fixture.available(player,ids)
  local actual=inventory(player)
  if not originalWorn(player,ids,actual) then return false end
+ if ids.case=='tidy-clothing'and not Clothing.available(player,ids)then return false end
  for name,id in pairs(ids.items) do
   if name~='pickup' or not ids.floor then if not actual[id] then return false end end
  end
@@ -352,6 +362,8 @@ function Fixture.settled(state,mode,checkpoint)
   end
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
+ if state.id=='tidy-clothing' and (player:getWornItem(state.clothingLocation)~=nil
+  or tostring(player:getHumanVisual():getHairModel())~=state.clothingHair)then return false end
  if state.id=='hotbar-chain' or Slots.isBelt(state.id) then
   local item,old=state.hotbarReplacement,state.hotbarInitial
   -- Native attachment and item-field packets use separate channels.

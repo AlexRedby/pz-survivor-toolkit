@@ -7,6 +7,7 @@ local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
 local Postprocess=require 'QueueEquipmentPostprocess'
 local Bulk=require 'QueueEquipmentBulk'
+local Clothing=require 'QueueEquipmentClothing'
 local Checks=require 'QueueScenarioChecks'
 local JSON=require 'QueueHealthEvents'
 local Toolkit=PZSurvivorToolkit
@@ -61,6 +62,10 @@ local function beltTrace(stage,action,value)
   ..' moving='..tostring(state.player:isPlayerMoving())..' pressed='..tostring(state.player:pressedMovement(false))
   ..' x='..state.player:getX()..' y='..state.player:getY()..' slot='..item:getAttachedSlot()..' model='..tostring(item:getAttachedToModel())..' queue='..table.concat(types,','))
 end
+local function watch()
+ Completion.watch(state)
+ Clothing.watch(state.id=='tidy-clothing'and state or nil)
+end
 local function enqueue()
  if Slots.isBelt(state.id) then
   Slots.enqueue(state,{run=run,queue=queue})
@@ -102,6 +107,7 @@ local function enqueue()
    first,state.hammerAction=equip(state.hammer,true,false)
    first,state.screwdriverAction=equip(state.screwdriver,false,false)
   end
+ elseif state.id=='tidy-clothing'then Clothing.enqueue(state,{run=run,queue=queue})
  elseif (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   state.groupPickups={}
   -- Same native borrowing utility as bulk-mixed; P4 owns the actual deferred returns.
@@ -168,6 +174,8 @@ local function controls()
   denied(state.screwdriverAction,state.hammerAction,false,'move_dependent')
   Checks.moveRoundtrip(queue(),API,Policy,state.tailAction,state.pickupAction,false,state.screwdriverAction,true)
   state.independentMoveVerified=true
+ elseif state.id=='tidy-clothing'then
+  assert(queue():indexOf(state.tailAction)~=-1,'clothing constructor fixture lost unrelated tail')
  elseif (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   assert(queue():indexOf(state.tailAction)~=-1 and state.tailAction.toolkitQueueOperation~=state.groupPickups[1].toolkitQueueOperation,
    'borrowed group lost independent native reading tail')
@@ -198,6 +206,7 @@ Events.OnGameStart.Add(function()
   player:setGhostMode(true);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
   if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
   if Selection.kind=='sp' then Fixture.position(player) end
+  for _,id in ipairs(Selection.cases)do if id=='tidy-clothing'then Clothing.install(tidy)end end
   emit({event='setup',cases=Selection.cases,expected=#Selection.cases,language=Selection.language,nativeDurations=true,queueEnabled=not native})
   started=true;since=getTimestampMs()
  end)
@@ -222,6 +231,7 @@ Events.OnTick.Add(function()
    if queue().current==state.slotLast then beltTrace('valid',state.slotLast,state.slotLast:isValid()) end
   end
   if state and Bulk.isCase(state.id) then Bulk.observe(state,queue()) end
+  if state and state.id=='tidy-clothing'then Clothing.observe(state,queue(),Toolkit,tidy)end
   if state and Selection.kind=='mp' then
    local action=queue().current
    local record=action and Toolkit.ActionQueueAcknowledgements.capture(action)
@@ -253,7 +263,7 @@ Events.OnTick.Add(function()
    if not empty() or getPlayer():isPlayerMoving() or (Selection.kind=='sp' and getPlayer():tooDarkToRead()) then return end
    if Selection.kind=='mp' then
     sendClientCommand('EquipmentQueueTest','Prepare',{case=Selection.cases[index]});phase='ready'
-   else state=Fixture.prepare(getPlayer(),Selection.cases[index],nil,Selection.options);Completion.watch(state);enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls' end
+   else state=Fixture.prepare(getPlayer(),Selection.cases[index],nil,Selection.options);watch();enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls' end
   elseif phase=='ready' then
    if not ids or not Fixture.available(getPlayer(),ids) then return end
    assert(ids.case==Selection.cases[index],'wrong authoritative fixture case')
@@ -265,7 +275,7 @@ Events.OnTick.Add(function()
   elseif phase=='positioned' then
    local player=getPlayer()
    if not player:getCurrentSquare() or player:isPlayerMoving() or player:tooDarkToRead() then return end
-   state=Fixture.prepare(player,Selection.cases[index],ids,Selection.options);Completion.watch(state);enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls'
+   state=Fixture.prepare(player,Selection.cases[index],ids,Selection.options);watch();enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls'
   elseif phase=='beltWalk' then
    if queue():indexOf(state.slotLast)~=-1 then return end
    equipmentTestWalk(false);state.walkReleased=true;beltTrace('released',state.slotLast)
@@ -321,6 +331,7 @@ Events.OnTick.Add(function()
   elseif phase=='drain' and empty() and idleUpdates>=6 then
    if Selection.kind=='mp' and not Fixture.transactionsSettled() then return end
    Fixture.refresh(state)
+   if state.id=='tidy-clothing'and not Clothing.settled(state,Toolkit,tidy)then return end
    local passed,problem=pcall(Postprocess.verify,state,Selection.mode,tidy)
    outcome.checkpointEquipmentMatches=outcome.equipmentMatches
    outcome.equipmentMatches=passed
@@ -328,6 +339,7 @@ Events.OnTick.Add(function()
     and getPlayer():getAlreadyReadPages(state.tail:getFullType())==state.tail:getNumberOfPages()
    outcome.postprocessingVerified=passed
    outcome.tidyCompletion=Completion.settled()
+   if state.id=='tidy-clothing'then outcome.tidyClothing=Clothing.evidence(state,Toolkit,tidy,Completion.clothing())end
    if (state.id=='tidy-group' or state.id=='tidy-multigroup') then outcome.tidyGroup=Completion.group() end
    if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
     outcome.restoreVerified=passed;outcome.floorRestoreVerified=state.id=='tidy-floor' and passed and tidy
