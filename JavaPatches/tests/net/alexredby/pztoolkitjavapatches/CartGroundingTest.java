@@ -42,7 +42,9 @@ public final class CartGroundingTest {
  private static final class Player extends IsoPlayer {
   InventoryItem cart;
   ItemContainer inventory;
-  boolean remote,action,motionDisabled;
+  boolean remote,action,motionDisabled,splitHands,aiming,sneaking,dead;
+  String weapon;
+  float injury;
   int resets;
   java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> actions=new java.util.Stack<>();
   zombie.ai.StateMachine machine;
@@ -54,14 +56,15 @@ public final class CartGroundingTest {
    return actions;
   }
   @Override public boolean isNpc() {return false;}
-  @Override public boolean isAiming() {return false;}
-  @Override public boolean isSneaking() {return false;}
-  @Override public float getVariableFloat(String name,float fallback) {return fallback;}
+  @Override public boolean isAiming() {return aiming;}
+  @Override public boolean isSneaking() {return sneaking;}
+  @Override public float getVariableFloat(String name,float fallback) {return "WalkInjury".equals(name)?injury:fallback;}
+  @Override public String getVariableString(String name) {return "Weapon".equals(name)?weapon:null;}
   @Override public void clearVariable(String name) {}
   @Override public boolean getVariableBoolean(String name) {
    return !motionDisabled && "ToolkitCartMotion".equals(name) || action && "IsPerformingAnAction".equals(name);
   }
-  @Override public boolean isDead() {return false;}
+  @Override public boolean isDead() {return dead;}
   @Override public boolean hasHitReaction() {return false;}
   @Override public boolean isKnockedDown() {return false;}
   @Override public boolean isGettingUp() {return false;}
@@ -74,7 +77,7 @@ public final class CartGroundingTest {
   }
   @Override public boolean hasPath() {return false;}
   @Override public InventoryItem getPrimaryHandItem() {return cart;}
-  @Override public InventoryItem getSecondaryHandItem() {return cart;}
+  @Override public InventoryItem getSecondaryHandItem() {return splitHands?null:cart;}
   @Override public ItemContainer getInventory() {return inventory;}
   @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator() {return null;}
  }
@@ -239,6 +242,21 @@ public final class CartGroundingTest {
     if(!actual.equals(expected,.00001f) || Math.abs(CartGrounding.woodenLowest(actual)-.008f)>.000001f)
      throw new AssertionError("failed IK restored the moving arm cart or lost wheel grounding: "+arm);
    }
+   // Inventory equip's first frame already owns both hands/Weapon but Lua has not refreshed motion yet.
+   character.motionDisabled=true;character.weapon="cart";
+   Matrix4f firstExpected=new Matrix4f();
+   if(!CartGrounding.rigid(data,idle,firstExpected))throw new AssertionError("first equip has no rigid reference");
+   CartGrounding.lowerHandles(firstExpected,"WheelbarrowWood");CartGrounding.alignWood(firstExpected,0,0,new Matrix4f());
+   data.xfrm.translation(-.011584065f,.045023113f,-.21670187f).rotateX(.5f).transpose();
+   CartGrounding.render(slot);
+   if(!new Matrix4f(data.xfrm).transpose().equals(firstExpected,.00001f) || CartMotionSync.visualEnabled(character)
+      || !character.motionDisabled || character.cart!=cart || cart.getContainer()!=character.inventory)
+    throw new AssertionError("first inventory equip exposed the native attachment or changed native ownership/motion");
+   character.motionDisabled=false;data.xfrm.translation(.3f,.9f,.1f).rotateX(-.4f).transpose();
+   CartGrounding.render(slot);
+   if(!new Matrix4f(data.xfrm).transpose().equals(firstExpected,.00001f))
+    throw new AssertionError("Lua motion refresh changed the first-frame rigid target");
+   character.weapon=null;
    // Reproduce the native successful-pickup gap: an authoritative held cart exists,
    // while ordinary motion is disabled and native attachment data is high/pitched.
    character.motionDisabled=true;
@@ -292,6 +310,72 @@ public final class CartGroundingTest {
     else loadedModels.put(worldScript.getModelManagerKey(),oldWorld);
    }
   } finally {animationModel.set(ModelManager.instance,previousModel);}
+ }
+ private static void presentationReadiness() throws Exception {
+  var unsafeField=Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
+  var unsafe=(Unsafe)unsafeField.get(null);
+  var player=(Player)unsafe.allocateInstance(Player.class);player.motionDisabled=true;player.weapon="cart";
+  player.inventory=new ItemContainer();
+  var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);player.cart=cart;
+  cart.setModule("SaucedWheelbarrow");cart.setType("WheelbarrowWood");cart.setStaticModel("Base.WheelbarrowWood");
+  cart.setContainer(player.inventory);model("Base","WheelbarrowWood");model("Base","WheelbarrowMetal");
+  if(!CartGrounding.heldPresentationReady(player) || CartMotionSync.visualEnabled(player))
+   throw new AssertionError("first authoritative equip still waits for the Lua motion refresh");
+  player.splitHands=true;
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("one-hand snapshot admitted");
+  player.splitHands=false;player.weapon="";
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("missing native cart Weapon admitted");
+  player.weapon="cart";cart.setStaticModel("Base.WheelbarrowMetal");
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("foreign static model admitted");
+  cart.setStaticModel("Base.WheelbarrowWood");cart.setContainer(new ItemContainer());
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("local foreign-container cart admitted");
+  cart.setContainer(player.inventory);
+  for(String state:new String[]{"aiming","sneaking","dead"}) {
+   field(player,Player.class,state,true);
+   if(CartGrounding.heldPresentationReady(player))throw new AssertionError("unsafe presentation admitted: "+state);
+   field(player,Player.class,state,false);
+  }
+  player.injury=.15f;
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("unsupported injured gait admitted");
+  player.injury=0;player.forceNullOverride=true;
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("native null model override replaced");
+  player.forceNullOverride=false;player.overridePrimaryHandModel="foreign";
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("foreign action model replaced");
+  player.overridePrimaryHandModel=null;player.action=true;
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("unidentified active action admitted");
+  var action=(zombie.characters.CharacterTimedActions.LuaTimedActionNew)unsafe.allocateInstance(zombie.characters.CharacterTimedActions.LuaTimedActionNew.class);
+  action.chr=player;action.setTime(30);action.setCurrentTime(0);
+  field(action,action.getClass(),"started",true);
+  ((zombie.characters.CharacterTimedActions.BaseAction)action).started=true;
+  var table=new se.krka.kahlua.j2se.KahluaTableImpl(new HashMap<>());
+  var metatable=new se.krka.kahlua.j2se.KahluaTableImpl(new HashMap<>());metatable.rawset("Type","ISCartEquipAction");
+  table.setMetatable(metatable);table.rawset("character",player);table.rawset("cartId",(double)cart.getID());
+  field(action,action.getClass(),"table",table);player.getCharacterActions().push(action);
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("unfinished equip admitted");
+  action.setCurrentTime(30);
+  if(!CartGrounding.heldPresentationReady(player))throw new AssertionError("exact finished equip still blocked by native stack lag");
+  table.rawset("cartId",(double)cart.getID()+1);
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("finished foreign-cart equip admitted");
+  table.rawset("cartId",(double)cart.getID());metatable.rawset("Type","ISOtherAction");
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("unrelated finished action admitted");
+  metatable.rawset("Type","ISCartEquipAction");action.forceStop=true;
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("stopped equip admitted");
+  action.forceStop=false;player.getCharacterActions().push(action);
+  if(CartGrounding.heldPresentationReady(player))throw new AssertionError("multi-action stack admitted");
+  player.getCharacterActions().clear();player.action=false;player.remote=true;cart.setContainer(null);player.inventory=null;
+  boolean oldClient=zombie.network.GameClient.client,oldConnected=zombie.network.GameClient.instance.connected;
+  var oldConnection=zombie.network.GameClient.connection;
+  try {
+   zombie.network.GameClient.client=true;zombie.network.GameClient.instance.connected=true;
+   zombie.network.GameClient.connection=(zombie.core.raknet.UdpConnection)unsafe.allocateInstance(zombie.core.raknet.UdpConnection.class);
+   if(!CartGrounding.heldPresentationReady(player) || CartMotionSync.visualEnabled(player))
+    throw new AssertionError("exact remote equipment waited for inventory or a motion packet");
+   zombie.network.GameClient.instance.connected=false;
+   if(CartGrounding.heldPresentationReady(player))throw new AssertionError("disconnected remote admitted");
+  } finally {
+   zombie.network.GameClient.client=oldClient;zombie.network.GameClient.instance.connected=oldConnected;
+   zombie.network.GameClient.connection=oldConnection;
+  }
  }
  private static void capturedContacts() {
   // Actual VBO minima and final matrices captured together in B42.21 before the contact fix.
@@ -493,6 +577,7 @@ public final class CartGroundingTest {
   remoteFillModel();
   nativeExportPose();
   rigidPose();
+  presentationReadiness();
   capturedContacts();
   metalHeldCalibration();metalBankGait();
   Matrix4f wooden=new Matrix4f().set(76.5f,2.8023098e-5f,-2.4333809e-5f,-.0060535767f,

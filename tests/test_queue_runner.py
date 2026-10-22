@@ -182,6 +182,19 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn('Invalid fixture-owned client environment', result['error'])
         self.assertFalse(result['processes'])
 
+    def test_inherited_inventory_probe_flag_is_stripped_from_actual_sp_launch(self):
+        environments = []
+        popen = self.popen
+        def capture(command, **kwargs):
+            if 'env' in kwargs: environments.append(kwargs['env'])
+            return popen(command, **kwargs)
+        self.popen = capture
+        with patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'true'}):
+            result, _ = self.invoke()
+        self.assertEqual('completed', result['status'])
+        self.assertTrue(environments)
+        self.assertTrue(all('PZ_CART_INVENTORY_EQUIP' not in env for env in environments))
+
     def test_basement_hall_cache_environment_requires_exact_suite_and_owned_role_cache(self):
         self.selection.update(mode='toolkit', languages=['EN'],
                               mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'],
@@ -278,7 +291,8 @@ class NativeRunnerTests(unittest.TestCase):
                 environments.append(kwargs['env'])
             return popen(command, **kwargs)
         self.popen = launch
-        result, kills = self.invoke()
+        with patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'true'}):
+            result, kills = self.invoke()
         self.assertEqual('completed', result['status'])
         self.assertEqual(2, len(self.commands))  # display guard + one real Host owner
         command = self.commands[-1]
@@ -288,6 +302,7 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith('-javaagent:') for arg in command))
         self.assertEqual(1, environments[0]['JDK_JAVA_OPTIONS'].count('-javaagent:'))
         self.assertIn(str(self.root / 'client1/zombie-buddy'), environments[0]['JDK_JAVA_OPTIONS'])
+        self.assertNotIn('PZ_CART_INVENTORY_EQUIP', environments[0])
         self.assertEqual({'pid': 555, 'parent_role': 'client1', 'cache': str((self.root / 'client1').resolve()), 'exit_code': 0}, result['processes']['server'])
         self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
         self.assertEqual('[QUEUE_TEST] SERVER_READY\n', (self.root / 'server-launch.log').read_text())
@@ -721,6 +736,51 @@ class NativeRunnerTests(unittest.TestCase):
             (self.root / "client1-launch.log").write_text('[QUEUE_CHECK] {"event":"case","id":"nativeStop"}\n[QUEUE_CHECK] {"event":"complete","failed":0}\n')
         result, _ = self.invoke(sleep=finish)
         self.assertEqual(result["status"], "completed")
+
+
+class InventoryEquipEnvironmentTests(unittest.TestCase):
+    def selection(self):
+        return dict(suite='wooden_cart_multiplayer', kind='mp', cases=['owner_observer_motion'],
+                    options=dict(mp_host=True, cart_inventory_equip=True, cart_variant='wooden-wheelbarrow'))
+
+    def test_explicit_exact_true_reaches_both_selected_host_clients(self):
+        for role in ('client1', 'client2'):
+            with self.subTest(role=role), patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'inherited-unsafe'}):
+                env = runner._fixture_environment(self.selection(), role, Path('/owned/cache'),
+                    {'PZ_CART_INVENTORY_EQUIP': 'true', 'PZ_CART_RUNTIME_FILE': '/owned/runtime.lua'})
+                self.assertEqual(env['PZ_CART_INVENTORY_EQUIP'], 'true')
+                self.assertEqual(env['PZ_CART_RUNTIME_FILE'], '/owned/runtime.lua')
+
+    def test_probe_flag_accepts_only_string_true(self):
+        for value in ('false', 'TRUE', '1', '', '/absolute/path', True, False, 1, None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(self.selection(), 'client1', Path('/owned/cache'), {'PZ_CART_INVENTORY_EQUIP': value})
+
+    def test_probe_flag_rejects_other_suite_kind_case_role_host_or_selection(self):
+        changes = [('suite', 'wooden_cart_motion'), ('kind', 'sp'), ('cases', ['motion']),
+                   ('mp_host', False), ('mp_host', 'true'), ('cart_inventory_equip', False),
+                   ('cart_inventory_equip', 'true'), ('cart_variant', 'shopping-cart')]
+        for name, value in changes:
+            selected = self.selection()
+            (selected['options'] if name in selected['options'] else selected)[name] = value
+            with self.subTest(name=name, value=value), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(selected, 'client1', Path('/owned/cache'), {'PZ_CART_INVENTORY_EQUIP': 'true'})
+        for role in ('server', 'client3'):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(self.selection(), role, Path('/owned/cache'), {'PZ_CART_INVENTORY_EQUIP': 'true'})
+
+    def test_inherited_probe_flag_never_enables_default_mp_or_unstaged_selected_probe(self):
+        for selected in (self.selection(), dict(suite='wooden_cart_multiplayer', kind='mp', cases=['owner_observer_motion'], options={'mp_host': True})):
+            for role in ('server', 'client1', 'client2'):
+                with self.subTest(selected=selected, role=role), patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'true'}):
+                    env = runner._fixture_environment(selected, role, Path('/owned/cache'), {})
+                    self.assertNotIn('PZ_CART_INVENTORY_EQUIP', env)
+
+    def test_probe_flag_does_not_weaken_unknown_and_absolute_path_guards(self):
+        for extra in ({'UNKNOWN_PROBE_ENV': '/owned/path'}, {'JAVA_TOOL_OPTIONS': '/owned/path'},
+                      {'PZ_CART_RUNTIME_FILE': 'relative.lua'}, {'PZ_CART_COMMAND_FILE': True}):
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(self.selection(), 'client1', Path('/owned/cache'), dict(extra, PZ_CART_INVENTORY_EQUIP='true'))
 
 
 if __name__ == "__main__":

@@ -25,7 +25,8 @@ def verify_vehicle(first, selected):
     assert all(r['vehicleState']==state and r['collisionKind']=='vehicle' and r['collisionX']==first['collisionX'] and r['x']>=first['collisionX']-.002 for r in selected), prefix+'collision/pose changed'
 
 
-def analyze(text, lifecycle, scenes=None,entry_contact=False):
+def analyze(text, lifecycle, scenes=None,entry_contact=False, entry_female=False, entry_load='full'):
+    assert type(entry_female) is bool and entry_load in ('empty','full'), 'Invalid entry variant'
     cases=CASES
     if scenes is not None:
         assert scenes and len(set(scenes))==len(scenes) and set(scenes)<=set(CASES), 'Invalid selected approach scenes'
@@ -56,14 +57,20 @@ def analyze(text, lifecycle, scenes=None,entry_contact=False):
         first, queued, terminal, settled = (event[k] for k in ('prepared', 'queued', 'terminal', 'settled'))
         if entry_contact:
             assert name in ('container-equip','wrong-side'), 'Unsupported entry-contact scene'
-            assert all(r.get('entryContactRepro') is True and r.get('female') is False
+            assert all(r.get('entryLoad','full')==entry_load for r in selected), 'Selected entry load differs'
+            assert all(r.get('entryContactRepro') is True and r.get('female') is entry_female
                        and r.get('pantsType')=='Base.Trousers_JeanBaggy'
-                       and str(r.get('pantsModel','')).lower().replace('\\','/').removesuffix('.x')=='skinned/clothes/bob_trousers'
+                       and str(r.get('pantsModel','')).lower().replace('\\','/').removesuffix('.x')=='skinned/clothes/'+('kate' if entry_female else 'bob')+'_trousers'
                        and r.get('pantsID')==first.get('pantsID') for r in selected), 'Missing actual entry-contact outfit proof'
         assert len(rows) >= 30 and rows[0]['elapsed'] <= 100 and rows[-1]['wall'] >= settled['wall']-100, 'Missing approach sample window'
         assert all(0 < b['wall']-a['wall'] <= 250 for a, b in zip(rows, rows[1:])), 'Approach sampling gap'
         assert 650 <= queued['elapsed'] <= 1500 and 0 < terminal['wall']-queued['wall'] < 14000 and settled['wall']-terminal['wall'] >= 1000, 'Unbounded approach/cleanup window'
-        assert first['cargoWeight'] > 0, 'Missing exact fixture cargo'
+        if entry_contact and entry_load=='empty':
+            assert all(r.get('cargoCount')==0 and r['cargoID']==-1 and r['cargoWeight']==0 for r in selected),'Missing exact empty cargo proof'
+        else:
+            assert first['cargoWeight'] > 0, 'Missing exact fixture cargo'
+            if entry_contact:
+                assert all(r.get('cargoCount',1)==1 and r['cargoID']>0 and abs(r.get('cargoCapacity',r['cargoWeight'])-r['cargoWeight'])<.01 for r in selected),'Missing full cargo proof'
         for row in selected:
             assert row['wall']-start == row['elapsed'] and all(row[k] == first[k] for k in ('id', 'cargoID', 'cargoWeight', 'z', 'goalX', 'goalY')), 'Changed cart/cargo/target/level'
             assert all(row[k] in (0, 1) for k in ('inventoryCount', 'worldCount', 'containerCount')), 'Duplicate cart ownership'
@@ -173,11 +180,13 @@ def main():
         parser.add_argument('--'+name, type=Path, required=True)
     parser.add_argument('--scene',action='append')
     parser.add_argument('--entry-contact',action='store_true')
+    parser.add_argument('--entry-female',action='store_true')
+    parser.add_argument('--entry-load',choices=['empty','full'],default='full')
     args = parser.parse_args()
     assert not args.output.exists(), 'Refuse to overwrite approach report'
     try:
         lifecycle = [json.loads(line) for line in (args.profile/'action-lifecycle.jsonl').read_text().splitlines()]
-        result = analyze(args.log.read_text(errors='replace'), lifecycle,scenes=args.scene,entry_contact=args.entry_contact)
+        result = analyze(args.log.read_text(errors='replace'), lifecycle,scenes=args.scene,entry_contact=args.entry_contact,entry_female=args.entry_female,entry_load=args.entry_load)
     except (AssertionError, KeyError, TypeError, ValueError, OSError) as error:
         result = dict(functionalPass=False, approachVerified=False, failures=[str(error)], cases=[])
     args.output.write_text(json.dumps(result, indent=2, allow_nan=False)+'\n')

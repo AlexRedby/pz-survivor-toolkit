@@ -1,4 +1,5 @@
 local config=require 'QueueTestSelection'
+if config.options and config.options.cart_inventory_equip==true then require 'CartMPInventoryEquipClient';return end
 assert(config.disposable==true,'Cart MP requires fresh owned disposable profiles')
 assert(type(config.ffmpeg)=='string' and config.ffmpeg:match('^/'),'Absolute config.ffmpeg required')
 assert(type(config.videoRoot)=='table','Per-role config.videoRoot required')

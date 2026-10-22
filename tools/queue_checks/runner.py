@@ -13,6 +13,33 @@ from .native import font_preload
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
+INHERITED_ENV_EXCLUSIONS = ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'PZ_CART_INVENTORY_EQUIP')
+
+
+def _fixture_environment(selection, role, cache, extra_env):
+    """Admit the exact sealed fixture inputs; inherited opt-in probes stay disabled."""
+    options = selection.get('options', {})
+    allowed_env = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE', 'PZ_CART_TEST_PAD'}
+    if selection['suite'] == 'basement-hall' and selection['kind'] == 'sp' and role == 'client1':
+        allowed_env.add('PZ_BASEMENT_HALL_CACHE')
+    if selection['suite'] == 'vehicle-lights' and role == 'client1':
+        allowed_env.add('PZ_LIGHTS_TEST_CACHE')
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('mp_host') is True
+            and options.get('cart_inventory_equip') is True and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'
+            and role in ('client1', 'client2')):
+        allowed_env.add('PZ_CART_INVENTORY_EQUIP')
+    if (set(extra_env) - allowed_env
+            or any(not isinstance(value, str) or not Path(value).is_absolute()
+                   for name, value in extra_env.items() if name not in ('PZ_CART_TEST_PAD', 'PZ_CART_INVENTORY_EQUIP'))
+            or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')
+            or 'PZ_CART_INVENTORY_EQUIP' in extra_env and extra_env['PZ_CART_INVENTORY_EQUIP'] != 'true'
+            or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)
+            or 'PZ_LIGHTS_TEST_CACHE' in extra_env and extra_env['PZ_LIGHTS_TEST_CACHE'] != str(cache)):
+        raise ValueError('Invalid fixture-owned client environment')
+    environment = {key: value for key, value in os.environ.items() if key not in INHERITED_ENV_EXCLUSIONS}
+    environment.update(extra_env)
+    return environment
 
 
 def stop(process, owned_host_group=False):
@@ -154,23 +181,9 @@ def run(root, resource_wait=300):
                 command = ["launchctl", "asuser", str(os.getuid())] + command
             stream = (root / (role + "-launch.log")).open("w")
             streams.append(stream)
-            environment = {key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")}
+            environment = _fixture_environment(selection, role, cache, config.get('env', {}))
             if hosted and role == 'client1' and loader:
                 environment['JDK_JAVA_OPTIONS'] = coop.loader_options(loader[0])
-            extra_env = config.get('env', {})
-            allowed_env = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE', 'PZ_CART_TEST_PAD'}
-            if selection['suite'] == 'basement-hall' and selection['kind'] == 'sp' and role == 'client1':
-                allowed_env.add('PZ_BASEMENT_HALL_CACHE')
-            if selection['suite'] == 'vehicle-lights' and role == 'client1':
-                allowed_env.add('PZ_LIGHTS_TEST_CACHE')
-            if (set(extra_env) - allowed_env
-                    or any(not isinstance(value, str) or not Path(value).is_absolute()
-                           for name, value in extra_env.items() if name != 'PZ_CART_TEST_PAD')
-                    or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')
-                    or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)
-                    or 'PZ_LIGHTS_TEST_CACHE' in extra_env and extra_env['PZ_LIGHTS_TEST_CACHE'] != str(cache)):
-                raise ValueError('Invalid fixture-owned client environment')
-            environment.update(extra_env)
             process = subprocess.Popen(command, cwd=game, env=environment, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True, start_new_session=True)
             processes[role] = process
             execution["processes"][role] = {"pid": process.pid}
@@ -188,7 +201,7 @@ def run(root, resource_wait=300):
                 subprocess.run([runtime['java'], '--enable-native-access=ALL-UNNAMED', '-cp', spec['classpath'],
                                 spec.get('class', 'AttachWoodenWheelProbe'), str(process.pid), spec['jar'], argument],
                                check=True, stdout=log, stderr=subprocess.STDOUT, timeout=20,
-                               env={key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})
+                               env={key: value for key, value in os.environ.items() if key not in INHERITED_ENV_EXCLUSIONS})
 
         cleaning = False
         def interrupted(signum, frame):

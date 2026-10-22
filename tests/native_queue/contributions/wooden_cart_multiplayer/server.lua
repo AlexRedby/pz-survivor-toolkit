@@ -1,4 +1,5 @@
 local config=require 'QueueTestSelection'
+if config.options and config.options.cart_inventory_equip==true then require 'CartMPInventoryEquipServer';return end
 assert(config.disposable==true,'Cart MP requires fresh owned disposable profiles')
 local J=require 'CartMPJSON'
 local wallSide=config.options and config.options.cart_wall_exit

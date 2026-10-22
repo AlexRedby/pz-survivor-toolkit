@@ -11,6 +11,10 @@ assert(not p:isTimedActionInstant(),'Native durations required')
 assert(type(config.videoRoot)=='string' and config.videoRoot:sub(1,1)=='/' and type(config.ffmpeg)=='string' and config.ffmpeg:sub(1,1)=='/','Absolute video paths required')
 assert(config.entryContactRepro==nil or type(config.entryContactRepro)=='boolean','entryContactRepro must be boolean')
 local entryContactRepro=config.entryContactRepro==true
+local entryFemale=config.entryFemale==true
+local entryLoad=config.entryLoad or 'full'
+assert(type(config.entryFemale)=='nil' or type(config.entryFemale)=='boolean','entryFemale must be boolean')
+assert(entryLoad=='empty' or entryLoad=='full','entryLoad must be empty/full')
 if WoodPrototypeTick then Events.OnTick.Remove(WoodPrototypeTick) end
 local cases={{name='container-equip'},{name='wrong-side'},{name='wall-detour'},
  {name='precise-blocked'},{name='approach-cancel'},{name='approach-target-loss'},{name='approach-tail-success'}}
@@ -29,15 +33,17 @@ local tailX,tailY,startX,startY,removed=nil,nil,0,0,false
 local entryPants,entryPantsModel,preWalkStartedAt,preWalkReleasedAt,preWalkX,preWalkY,preWalkSeen
 -- This opt-in fixture changes presentation/load only, never the public action producer.
 if entryContactRepro then
- p:setFemale(false);p:getDescriptor():setFemale(false);p:clearWornItems()
+ p:setFemale(entryFemale);p:getDescriptor():setFemale(entryFemale);p:clearWornItems()
  p:getHumanVisual():setHairModel('CrewCut');p:getHumanVisual():setBeardModel('')
  for _,name in ipairs({'Base.Tshirt_DefaultTEXTURE_TINT','Base.Trousers_JeanBaggy','Base.Shoes_TrainerTINT'}) do
   local clothing=assert(p:getInventory():AddItem(name),name);p:setWornItem(clothing:getBodyLocation(),clothing)
   if name=='Base.Trousers_JeanBaggy' then entryPants=clothing end
  end
- local definition=assert(entryPants:getClothingItem(),'Baggy jeans clothing definition missing')
- entryPantsModel=assert(definition:getMaleModel(),'Baggy jeans male model missing')
- assert(entryPantsModel:lower():gsub('\\','/'):gsub('%.x$','')=='skinned/clothes/bob_trousers','Baggy jeans no longer use native Bob_Trousers')
+ local visual=assert(entryPants:getVisual(),'Baggy jeans visual missing')
+ assert(visual:getItemType()=='Base.Trousers_JeanBaggy','Wrong baggy-jeans visual')
+ local definition=assert(visual:getClothingItem(),'Baggy jeans clothing definition missing')
+ entryPantsModel=assert(definition:getModel(entryFemale),'Baggy jeans model missing')
+ assert(entryPantsModel:lower():gsub('\\','/'):gsub('%.x$','')=='skinned/clothes/'..(entryFemale and 'kate' or 'bob')..'_trousers','Baggy jeans no longer use calibrated native trousers')
  p:resetModel()
 end
 local function queue() return ISTimedActionQueue.getTimedActionQueue(p).queue end
@@ -78,7 +84,9 @@ end
 -- Native ground placement end.
 local function snapshot(now)
  local contents=item:getInventory():getItems()
- assert(contents:size()==1 and contents:get(0):getID()==cargoID and contents:get(0):getFullType()=='Base.Log'
+ local emptyCargo=entryContactRepro and entryLoad=='empty'
+ assert(emptyCargo and contents:isEmpty() and cargoID==-1 and cargoWeight==0 or not emptyCargo
+  and contents:size()==1 and contents:get(0):getID()==cargoID and contents:get(0):getFullType()=='Base.Log'
   and math.abs(contents:get(0):getActualWeight()-cargoWeight)<.001,'Exact cargo changed')
  local inv,worlds=0,0
  local items=p:getInventory():getItems();for i=0,items:size()-1 do if items:get(i):getID()==item:getID() then assert(items:get(i)==item);inv=inv+1 end end
@@ -90,7 +98,7 @@ local function snapshot(now)
  assert(inv+worlds+nested+(removed and 1 or 0)==1,'Cart ownership duplicated/lost')
  local a,b=p:getPrimaryHandItem(),p:getSecondaryHandItem();local status=toolkitWoodCartStatus(p)
  local current=queue()[1]
- local row={case=cases[index].name,start=since,wall=now,elapsed=now-since,id=item:getID(),cargoID=cargoID,cargoWeight=cargoWeight,
+ local row={case=cases[index].name,start=since,wall=now,elapsed=now-since,id=item:getID(),cargoID=cargoID,cargoWeight=cargoWeight,cargoCount=contents:size(),
   inventoryCount=inv,worldCount=worlds,containerCount=nested,removed=removed,primaryID=a and a:getID() or -1,secondaryID=b and b:getID() or -1,
   x=p:getX(),y=p:getY(),z=p:getZ(),startX=startX,startY=startY,goalX=stance and stance.x or startX,goalY=stance and stance.y or startY,
   nativeTargetX=p:getPathFindBehavior2():getTargetX(),nativeTargetY=p:getPathFindBehavior2():getTargetY(),
@@ -102,9 +110,9 @@ local function snapshot(now)
   active=status.active==true,recovering=status.recovering==true,rendered=status.rendered==true,
   ToolkitWoodCartAction=p:getVariableBoolean('ToolkitWoodCartAction'),route=bag and 'inventory-menu' or 'world-menu'}
  if entryContactRepro then
-  assert(not p:isFemale() and p:getWornItem(entryPants:getBodyLocation())==entryPants,'Entry-contact actor/outfit changed')
-  assert(math.abs(item:getInventory():getCapacityWeight()-item:getInventory():getEffectiveCapacity(p))<.01,'Entry-contact cargo is not full')
-  row.entryContactRepro=true;row.female=false;row.pantsType=entryPants:getFullType();row.pantsID=entryPants:getID();row.pantsModel=entryPantsModel
+  assert(p:isFemale()==entryFemale and p:getWornItem(entryPants:getBodyLocation())==entryPants,'Entry-contact actor/outfit changed')
+  assert(entryLoad=='empty' and item:getInventory():getCapacityWeight()==0 or entryLoad=='full' and math.abs(item:getInventory():getCapacityWeight()-item:getInventory():getEffectiveCapacity(p))<.01,'Entry-contact cargo differs from selected load')
+  row.entryContactRepro=true;row.female=entryFemale;row.entryLoad=entryLoad;row.pantsType=entryPants:getFullType();row.pantsID=entryPants:getID();row.pantsModel=entryPantsModel
   row.cargoCapacity=item:getInventory():getEffectiveCapacity(p)
   row.preWalkStartedAt=preWalkStartedAt or -1;row.preWalkReleasedAt=preWalkReleasedAt or -1;row.preWalkSeen=preWalkSeen==true
   row.preWalkDistance=preWalkX and math.sqrt((p:getX()-preWalkX)^2+(p:getY()-preWalkY)^2) or 0
@@ -151,10 +159,14 @@ local function prepare()
  assert(empty(),'Previous approach left native work');area.clearObstacles(p);area.check(p)
  cartLabDrive(0);cartLabGait(0);p:getStats():reset(CharacterStat.ENDURANCE)
  local held=p:getPrimaryHandItem();if held then p:removeFromHands(held);SaucedCarts.clearCartPose(p);p:getInventory():Remove(held) end
- item=assert(instanceItem('SaucedWheelbarrow.WheelbarrowWood'));local child=assert(item:getInventory():AddItem('Base.Log'))
+ item=assert(instanceItem('SaucedWheelbarrow.WheelbarrowWood'))
  if entryContactRepro then SaucedCarts.applyMultipliers(item) end
- child:setActualWeight(entryContactRepro and item:getInventory():getEffectiveCapacity(p) or 1)
- child:setCustomWeight(true);cargoID,cargoWeight=child:getID(),child:getActualWeight()
+ cargoID,cargoWeight=-1,0
+ if not entryContactRepro or entryLoad=='full' then
+  local child=assert(item:getInventory():AddItem('Base.Log'))
+  child:setActualWeight(entryContactRepro and item:getInventory():getEffectiveCapacity(p) or 1)
+  child:setCustomWeight(true);cargoID,cargoWeight=child:getID(),child:getActualWeight()
+ end
  bag=nil;approach=nil;tail=nil;terminalAt=nil;queuedAt=nil;changed=false;removed=false;sampled=0;stance=nil;tailX=nil;tailY=nil
  preWalkStartedAt=nil;preWalkReleasedAt=nil;preWalkX=nil;preWalkY=nil;preWalkSeen=false
  local name=cases[index].name
@@ -200,7 +212,7 @@ local function tick()
   assert(toolkitVideoStart(config.videoRoot..'/'..name..'-0',config.ffmpeg),'Video start rejected')
   since=getTimestampMs();mode='record';print('[WOOD_BANK] CASE '..name..' attempt=0 wall='..since)
   emit('prepared',since)
-  if entryContactRepro then entryReceipt('outfitAndFullCargo',since) end
+  if entryContactRepro then entryReceipt('outfitAndSelectedCargo',since) end
   return
  end
  local video=toolkitVideoStatus();assert(video.state~='failed','Approach video failed: '..tostring(video.error))

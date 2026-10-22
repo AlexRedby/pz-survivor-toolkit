@@ -1022,7 +1022,8 @@ def main():
     print('Short action capture:', check_short_action_capture())
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
-        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua'):
+        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua',
+                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')

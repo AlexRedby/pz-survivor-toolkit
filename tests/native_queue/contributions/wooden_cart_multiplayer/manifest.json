@@ -21,7 +21,11 @@
     "actions.lua",
     "wall.lua",
     "wall-input.lua",
-    "analyze-wall.py"
+    "analyze-wall.py",
+    "inventory-equip-protocol.lua",
+    "inventory-equip-client.lua",
+    "inventory-equip-server.lua",
+    "analyze-inventory-equip.py"
   ],
   "selection_template": {
     "schema_version": 1,

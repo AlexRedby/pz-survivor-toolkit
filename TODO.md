@@ -69,10 +69,12 @@
 
 ## Inventory-equip clothing clearance
 
-The selected Blender-authored correction keeps the left shaft clear while the outgoing inventory animation retires. Broader verification below remains open; selected male/full SP samples from the available 43-Mod-ID subset do not establish full-pack or every-frame clearance. The accepted straight stance, closed grip, native foot support and action duration remain the target.
+- [ ] Finish SP `container-equip` captures for female/full and male/empty with `cart_entry_contact_repro`, explicit sex/load, native Walk before the public inventory callback and unchanged action duration. The selected male/full and female/empty captures cover the first held frame and one-second tail; retain the exact settled stance, native legs, closed grip and existing Blender-authored outgoing-Loot curve.
+- [ ] Complete the new `cart_inventory_equip` menu-Host bank for female/empty and the male/full control. Require the exact ActionManager owner/transaction server-result receipt, native perform, authoritative unchanged cart/cargo, observer ACK and both finalized recordings. The initial owner/observer grounding pairs are measurable, but the earlier run failed an SP-style completion assertion; the corrected protocol still needs a fresh complete run.
+- [ ] Review adjacent held start/stop and the temporary cart excursion across the remaining variants. Keep the initial attachment correction separate from the Blender clearance envelope and independent direct candidate; do not combine them without evidence.
+- [ ] Close the remaining 2–5 ms native lifecycle-boundary evidence gaps and review the transition in a close native-camera view. Sampled source geometry and Blender replay do not establish every rendered frame, actual garment GPU vertices or full-pack clearance. Keep wrong-side world-approach routing separate.
 
-- [ ] Extend the delivered inventory-equip clearance fix beyond the selected male/full SP reproducer: female/empty, adjacent start/stop and affected Host owner/observer. Preserve the exact settled stance, native leg motion, closed grip and native action duration. Check the temporary cart excursion separately from the pre-existing initial attachment switch; the direct candidate remains an independent comparison, not a combined correction.
-- [ ] Close the remaining 2–5 ms native lifecycle-boundary evidence gaps and obtain a close native-camera view of the transition. Existing sampled geometry and measured Blender replay do not establish every rendered frame or full-pack clearance. Keep wrong-side world-approach routing separate.
+The remaining live runs need sufficient free disk space for the native runner's unchanged copy/runtime reserves. Do not lower those reserves or replace unavailable Host evidence with protocol self-checks.
 
 # Root fix for the action queue
 

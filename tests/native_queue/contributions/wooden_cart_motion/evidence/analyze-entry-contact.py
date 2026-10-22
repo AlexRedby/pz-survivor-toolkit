@@ -103,20 +103,22 @@ def scene_windows(text, lifecycle, missing):
         if not first['wall']<=queued<=event['terminal']['wall']<=end:
             missing.append(dict(scene=key[0], reason='unordered phase bounds'))
         proofs=[first]+records+receipts[key]
-        outfit=bool(proofs) and all(row.get('entryContactRepro') is True and row.get('female') is False
+        female=first.get('female');load=first.get('entryLoad','full')
+        outfit=type(female) is bool and bool(proofs) and all(row.get('entryContactRepro') is True and row.get('female') is female
             and row.get('pantsType')=='Base.Trousers_JeanBaggy'
-            and str(row.get('pantsModel','')).lower().replace('\\','/').removesuffix('.x')=='skinned/clothes/bob_trousers'
+            and str(row.get('pantsModel','')).lower().replace('\\','/').removesuffix('.x')=='skinned/clothes/'+('kate' if female else 'bob')+'_trousers'
             and row.get('pantsID')==first.get('pantsID') for row in proofs)
         if not outfit:
-            missing.append(dict(scene=key[0], reason='missing actual male baggy-jeans model/outfit receipts'))
-        full=bool(proofs) and all(abs(row.get('cargoWeight',-100)-row.get('cargoCapacity',100))<.01 for row in proofs)
-        if not full:
-            missing.append(dict(scene=key[0], reason='missing full-cargo receipt'))
+            missing.append(dict(scene=key[0], reason='missing actual baggy-jeans model/outfit receipts'))
+        full=load=='full' and bool(proofs) and all(abs(row.get('cargoWeight',-100)-row.get('cargoCapacity',100))<.01 for row in proofs)
+        empty=load=='empty' and bool(proofs) and all(row.get('cargoCount')==0 and row.get('cargoID')==-1 and row.get('cargoWeight')==0 for row in proofs)
+        if not (full or empty):
+            missing.append(dict(scene=key[0], reason='missing selected-cargo receipt'))
         if end-event['terminal']['wall']<1000:
             missing.append(dict(scene=key[0], reason='held tail shorter than 1000 ms'))
         scenes.append(dict(name=key[0], start=first['wall'], queued=queued, terminal=event['terminal']['wall'],
             settled=end, item=first['id'], events=event, lifecycle=boundaries, samples=records,
-            sampleTimes=[row['wall'] for row in records], outfitVerified=outfit, fullCargoVerified=full))
+            sampleTimes=[row['wall'] for row in records], outfitVerified=outfit, female=female, load=load, fullCargoVerified=full, selectedCargoVerified=full or empty))
     if not scenes:
         missing.append(dict(reason='no complete approach windows; contacts are bootstrap/setup diagnostics only'))
     return scenes
@@ -164,7 +166,9 @@ def analyze(profile, log, game, mesh_path, *, _geometry=None):
     held=read_rows(profile/'body-clearance.jsonl');tails=read_rows(profile/'action-tail-poses.jsonl')
     worlds=read_rows(profile/'world-cart-poses.jsonl');lifecycle=read_rows(profile/'action-lifecycle.jsonl')
     scenes=scene_windows(log.read_text(),lifecycle,missing)
-    for name,rows in [('body-clearance',held),('full-tail',tails),('world-cart',worlds)]:
+    required_streams=[('body-clearance',held),('full-tail',tails)]
+    if any(scene['name']!='container-equip' for scene in scenes):required_streams.append(('world-cart',worlds))
+    for name,rows in required_streams:
         if not rows: missing.append(dict(reason='missing capture stream', stream=name))
     frames=[];valid_held=[];failed=Counter();world_pair_gaps=[]
 
@@ -173,8 +177,8 @@ def analyze(profile, log, game, mesh_path, *, _geometry=None):
         female=row.get('female')
         if type(female) is not bool:
             failed['invalid sex']+=1;return False
-        if scene and female:
-            failed['scene actor is female']+=1;return False
+        if scene and female is not scene['female']:
+            failed['scene actor sex differs']+=1;return False
         frame=dict(time=stamp,scene=scene['name'] if scene else None,phase=phase,presentation=presentation,
             female=female,outfitVerified=bool(scene and scene['outfitVerified']),
             itemId=scene['item'] if scene else None)
@@ -222,8 +226,8 @@ def analyze(profile, log, game, mesh_path, *, _geometry=None):
             sample_age=stamp-sample['wall']
             if not 0<=sample_age<=100:
                 pair_failures.append(dict(scene=scene['name'],time=stamp,phase=phase,reason='ownership sample gap',gapMs=sample_age));continue
-            if row.get('female') is not False or any(required_bones(models[False,pants])-row.get('bones',{}).keys() for pants in (False,True)):
-                pair_failures.append(dict(scene=scene['name'],time=stamp,phase=phase,reason='missing full native male tail palette'));continue
+            if row.get('female') is not scene['female'] or any(required_bones(models[scene['female'],pants])-row.get('bones',{}).keys() for pants in (False,True)):
+                pair_failures.append(dict(scene=scene['name'],time=stamp,phase=phase,reason='missing full native selected-sex tail palette'));continue
             held_row=nearest(valid_held,held_times,stamp)
             held_ok=held_row is not None and abs(held_row['wallTimeMillis']-stamp)<=PAIR_LIMIT and phase_at(scenes,held_row['wallTimeMillis'])[0] is scene
             world=nearest(visible,visible_times,stamp)
@@ -269,7 +273,7 @@ def analyze(profile, log, game, mesh_path, *, _geometry=None):
                 maxCoverageGapMs=max(gaps,default=None),contactObservations=len(contacts),contactTimes=sorted({frame['time'] for frame in contacts}),
                 pantsContactObservations={side:sum(frame['pants'+side]>0 for frame in rows) for side in 'LR'},
                 lowerBodyContactObservations={side:sum(frame['lowerBody'+side]>0 for frame in rows) for side in 'LR'}))
-        summaries.append(dict(scene=scene['name'],itemId=scene['item'],outfitVerified=scene['outfitVerified'],fullCargoVerified=scene['fullCargoVerified'],nativeLifecycle=scene['lifecycle'],phases=phases))
+        summaries.append(dict(scene=scene['name'],itemId=scene['item'],outfitVerified=scene['outfitVerified'],fullCargoVerified=scene['fullCargoVerified'],selectedCargoVerified=scene['selectedCargoVerified'],female=scene['female'],load=scene['load'],nativeLifecycle=scene['lifecycle'],phases=phases))
     if failed:missing.append(dict(reason='unusable geometry rows',counts=dict(failed)))
     if pair_failures:missing.append(dict(reason='unpaired/missing full-tail observations',count=len(pair_failures)))
     bootstrap_worlds=[row for row in worlds if row.get('renderStatus')=='Ready' and row.get('alpha',0)>0
@@ -286,9 +290,9 @@ def analyze(profile, log, game, mesh_path, *, _geometry=None):
         fullRenderedFramePass=None,scope='Whole native Bob/Kate_Trousers faces and body faces influenced by Pelvis/Spine/Thigh/Calf versus both actual wooden shafts; sampled SP diagnostic.',
         limits=dict(worldPairMaximumMs=PAIR_LIMIT,phaseCoverageMaximumGapMs=COVERAGE_GAP,held='same-slot body/cart matrices; cart item inferred from exact scene receipts',
                     world='nearest exact-item Ready alpha>0 draw; asynchronous sampling, no pose interpolation',
-                    pants='actual male baggy-jeans receipt required for ordinary scene claims; setup pants remain reference geometry',
+                    pants='actual selected-sex baggy-jeans receipt required for ordinary scene claims; setup pants remain reference geometry',
                     allRenderedFrames=False,prePreparedWorldGeometry='not paired without an exact-item scene receipt'),
-        mesh=dict(nativeVboVerified=True,shaftComponents=len(actual.components),malePantsFaces=len(models[False,True][3]),maleLowerBodyFaces=len(faces[False,False])),
+        mesh=dict(nativeVboVerified=True,shaftComponents=len(actual.components),malePantsFaces=len(models[False,True][3]),maleLowerBodyFaces=len(faces[False,False]),femalePantsFaces=len(models[True,True][3]),femaleLowerBodyFaces=len(faces[True,False])),
         streams=dict(held=len(held),tails=len(tails),worlds=len(worlds),worldPairs=len(world_pair_gaps),maxAbsoluteWorldPairGapMs=max(map(abs,world_pair_gaps),default=None)),
         ordinaryContactObservations=len(ordinary),ordinaryContactTimes=sorted({row['time'] for row in ordinary}),
         bootstrapSetupContactObservations=len(setup),bootstrapSetupContactTimes=sorted({row['time'] for row in setup}),
@@ -349,8 +353,8 @@ def self_check():
     try:
         with tempfile.TemporaryDirectory(prefix='cart-entry-contact-self-check-') as directory:
             root=Path(directory);(root/'capture.log').write_text(text)
-            def run(test_tails=tails,test_worlds=worlds,test_lifecycle=lifecycle):
-                for name,rows in [('body-clearance.jsonl',held),('action-tail-poses.jsonl',test_tails),
+            def run(test_tails=tails,test_worlds=worlds,test_lifecycle=lifecycle,test_held=held):
+                for name,rows in [('body-clearance.jsonl',test_held),('action-tail-poses.jsonl',test_tails),
                                   ('world-cart-poses.jsonl',test_worlds),('action-lifecycle.jsonl',test_lifecycle)]:
                     (root/name).write_text(''.join(json.dumps(row)+'\n' for row in rows))
                 return analyze(root,root/'capture.log',root,root/'synthetic.fbx',_geometry=loaded)
@@ -368,6 +372,24 @@ def self_check():
             selected=[frame for frame in hit['frames'] if frame['time']==row['wallTimeMillis']]
             assert any(frame.get('pantsLFaceIndices')==[1] and frame.get('lowerBodyLFaceIndices')==[1] for frame in selected)
             checks.append('whole trousers include calf-only contact')
+            # Inventory equip has no world representation before it reaches the hands.
+            inventory_text=text.replace('wrong-side','container-equip').replace('bob_trousers','kate_trousers')
+            inventory_rows=[]
+            for line in inventory_text.splitlines():
+                marker,encoded=line.split(' ',1);row=json.loads(encoded)
+                row.update(female=True,entryLoad='empty',cargoCount=0,cargoID=-1,cargoWeight=0,
+                           containerCount=int(row['wall']<2600),worldCount=0)
+                inventory_rows.append(marker+' '+json.dumps(row))
+            (root/'capture.log').write_text('\n'.join(inventory_rows))
+            inventory_tails=[dict(row,female=True,cartModel=row['wallTimeMillis']>=2600) for row in tails]
+            inventory_lifecycle=[dict(row,metaType='ISCartEquipAction') for row in lifecycle]
+            inventory_held=[dict(row,female=True) for row in held if row['wallTimeMillis']>=2600]
+            inventory=run(inventory_tails,[],inventory_lifecycle,inventory_held)
+            assert not inventory['missingEvidence'],inventory['missingEvidence']
+            assert inventory['scenes'][0]['female'] is True and inventory['scenes'][0]['load']=='empty'
+            assert inventory['ordinaryContactObservations']==0 and inventory['streams']['worlds']==0
+            checks.append('female empty inventory equip requires no world-cart stream')
+            (root/'capture.log').write_text(text)
             for mode in ('wrong_item','alpha_zero','suppressed_world','missing_palette','sparse_coverage','missing_lifecycle'):
                 test_worlds=copy.deepcopy(worlds);test_tails=copy.deepcopy(tails);test_lifecycle=copy.deepcopy(lifecycle)
                 if mode=='wrong_item':

@@ -12,6 +12,14 @@ The scenario lasts 15 seconds: idle 0–2, walk 2–5, turn 5–8, stop 8–10, 
 
 `cart_wall_exit="front"` selects an 18-second full-load frontal brace bank on the same disposable native Host wall/pad: forward at 1s, release at 6.5s, manual reverse at 7.5s, stop at 10s, restart at 10.8s, final release at 15.5s. It requires version 1, 13-field pose payloads with flag bit 8 and actual `ToolkitCartBrace`/`Toolkit_WoodCartBrace` on owner and observer, planted rendered feet/toes at both contacts, and removal of brace after release/reverse. The existing left/right sliding-wall gates remain unchanged. Observer approach penetration stays visible in the separate footprint diagnostics; a brace result does not close that defect.
 
+## Inventory-menu equip
+
+Select `cart_inventory_equip: true` with `mp_host: true` for a separate wooden-cart bank. `cart_inventory_equip_variant` is one of `female-empty` (default), `female-full`, `male-empty`, or `male-full`; each session captures one exact variant. This bank excludes the motion/action/hotkey/wall banks. It uses real native Walk, the public inventory menu callback and unchanged-duration `ISCartEquipAction`, followed by a held tail. It never equips the fixture cart by assigning the hands.
+
+The server binds the exact cart, cargo, owner and worn outfit. Owner and observer recordings retain native body/model/track samples, initial same-slot grounding pairs, and consumed body/cart draw identities. The owner completion check follows Build42's actual `waitForFinished` protocol: an exact ActionManager owner/transaction result precedes native perform. Its normal `forceComplete` flag is not an SP `finished()` receipt. Missing or mismatched result evidence fails the check. The client Lua `complete` callback is server-only and is not required on the owner.
+
+The adapter stages the three `inventory-equip-*.lua` modules and enables their read-only native probe only for this selected Host bank. `analyze-inventory-equip.py` is invoked by the common report. Complete protocol receipts establish the selected native action and exact server/observer endpoints; clothing clearance, grip, wheel support and visual quality remain separate measurements.
+
 ## Adapter contract
 
 Use the existing common `queue_checks.native.prepare` and `queue_checks.runner.run` unchanged, under their exclusive native lock and existing-process checks. The registered common adapter owns inputs, dependencies, fresh disposable profiles, mod approvals, preparation/fingerprints, process lifecycle, attaching probes before the epoch, artifact capture and cleanup.

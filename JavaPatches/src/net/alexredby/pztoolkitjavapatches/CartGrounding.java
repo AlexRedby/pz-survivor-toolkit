@@ -248,6 +248,36 @@ public final class CartGrounding {
         return inventoryEntryAdvance(weight);
     }
 
+    /** Native equip can expose its hand model before the next Lua motion refresh or network pose. */
+    static boolean heldPresentationReady(IsoPlayer player) {
+        var item=player.getPrimaryHandItem();
+        if(!CartTransition.wooden(item) || !(item instanceof zombie.inventory.types.InventoryContainer)
+            || player.getSecondaryHandItem()!=item || item.getWorldItem()!=null
+            || !"cart".equals(player.getVariableString("Weapon")) || resolvedModel(item)==null
+            || player.isNpc() || player.isDead() || player.isAiming() || player.isSneaking()
+            || player.hasHitReaction() || player.isKnockedDown() || player.isGettingUp()
+            || player.isGrappling() || player.isBeingGrappled() || player.isRagdollSimulationActive()
+            || player.getVehicle()!=null || player.isCurrentState(zombie.ai.states.CollideWithWallState.instance())
+            || Math.abs(player.getVariableFloat("WalkInjury",0))>=.15f
+            || player.getVariableBoolean("ToolkitWoodCartAction") || player.forceNullOverride
+            || player.isHideWeaponModel() || player.isHideEquippedHandR()
+            || player.overridePrimaryHandModel!=null && !player.overridePrimaryHandModel.isEmpty()
+            || player.overrideSecondaryHandModel!=null && !player.overrideSecondaryHandModel.isEmpty()) return false;
+        // Remote equipment packets own the exact hand snapshot; they need not populate that avatar's inventory.
+        if(player.isLocalPlayer()) {
+            if(player.getInventory()==null || item.getContainer()!=player.getInventory()) return false;
+        } else if(!CartMotionSync.connected()) return false;
+        var actions=player.getCharacterActions();
+        if(actions.isEmpty()) return !player.getVariableBoolean("IsPerformingAnAction");
+        if(actions.size()!=1 || !(actions.get(0) instanceof zombie.characters.CharacterTimedActions.LuaTimedActionNew action)
+            || action.chr!=player || !action.isStarted() || !action.finished() || action.forceStop
+            || !"ISCartEquipAction".equals(action.getMetaType())) return false;
+        var table=action.getTable();
+        // The client's Lua complete callback is server-only, so its table.completed is not a receipt.
+        return table!=null && table.rawget("character")==player && table.rawget("cartId") instanceof Number id
+            && id.doubleValue()==item.getID();
+    }
+
     public static void render(ModelSlotRenderData slot) {
         if(Main.CART_TRANSITION_SUPPORTED) CartImpactPose.render(slot);
         CartWheelSpin.prepare(slot,Double.NaN);
@@ -255,7 +285,7 @@ public final class CartGrounding {
         if(CartTransition.render(slot)) return;
         if(!(slot.character instanceof IsoPlayer player)) return;
         boolean handoff=CartTransition.pickupHandoff(player);
-        if(!handoff && !CartMotionSync.visualEnabled(player)) return;
+        if(!handoff && !CartMotionSync.visualEnabled(player) && !heldPresentationReady(player)) return;
         var expected=resolvedModel(player.getPrimaryHandItem());
         if(expected==null) return;
         String name=expected.getName();

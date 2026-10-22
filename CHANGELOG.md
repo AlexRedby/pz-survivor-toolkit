@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Cart equip checks:** Add explicit sex/load variants to the isolated public-menu SP reproducer and a separate native menu-Host owner/observer bank with exact cart/cargo identity and canonical server-result completion. Record bounded same-slot attachment gates without modifying runtime state.
+
 - **Native snapshots:** Prefer independent copy-on-write file clones for mod copies on macOS, with ordinary copying when cloning is unavailable. Preserve file metadata, source/snapshot hash checks and conservative disk reserves; writes to a snapshot remain private to that file.
 
 - **B42 mod sources:** Match the game's major/minor branch selection and version/common metadata precedence. Preserve common content alongside future-only branches, accept compatible patch-suffixed folders and reject legacy root metadata/content. Native snapshots use the same selected branch for their empty engine-required directories; original mod files and full-source locks remain unchanged.
@@ -1014,6 +1016,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.46
+
+- **Wooden cart equip:** Ground the held model and close its hand grip as soon as the native inventory action exposes the exact cart in both hands. Avoid the initial attachment jump while waiting for the next Lua motion refresh or remote motion pose; retain native action timing, locomotion, network steering gates and the existing outgoing-inventory clearance curve.
 
 ### 0.1.45
 

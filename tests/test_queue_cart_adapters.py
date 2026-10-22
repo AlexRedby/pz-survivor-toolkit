@@ -80,6 +80,17 @@ class CartAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'cart_entry_contact_repro'):
             carts.validate(self.selection)
 
+    def test_entry_sex_and_load_options_require_the_scoped_reproducer(self):
+        self.selection['cases']=['approach'];self.options.update(cart_entry_contact_repro=True,cart_scenes=['container-equip'])
+        for female in (False,True):
+            for load in ('empty','full'):
+                self.options.update(cart_entry_female=female,cart_entry_load=load)
+                carts.validate(self.selection)
+        for change in ({'cart_entry_female':'yes'},{'cart_entry_load':'partial'},{'cart_entry_contact_repro':False}):
+            original=dict(self.options);self.options.update(change)
+            with self.subTest(change=change),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
     def test_sp_stage_builds_three_sealed_agents_and_waits_for_owned_probe_gate(self):
         compiler = self.stage()
         self.assertEqual(compiler.call_count, 2)
@@ -647,6 +658,48 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.assertNotIn('server', self.runtime['fixture']['attach'])
         for role in ('client1', 'client2', 'server'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TEST_PAD'], 'false')
+
+    def test_mp_inventory_equip_requires_an_isolated_host_bank_and_stages_it(self):
+        self.options.update(cart_inventory_equip=True, mp_host=True)
+        with self.assertRaisesRegex(ValueError, 'MP boolean'): carts.validate(self.selection)
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        for variant in ('female-empty','female-full','male-empty','male-full'):
+            self.options['cart_inventory_equip_variant']=variant;carts.validate(self.selection)
+        for key,value in [('mp_host',False),('cart_inventory_equip','true'),('cart_variant','metal-wheelbarrow'),
+                          ('cart_actions',True),('cart_fast_motion',True),('cart_wall_exit','left'),
+                          ('cart_hotkey_key',18),('cart_inventory_equip_variant','unknown')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_INVENTORY_EQUIP'],'true')
+        self.assertNotIn('PZ_CART_INVENTORY_EQUIP',self.runtime['roles']['server']['env'])
+        for role in ('client1','client2','server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            for source,target in [('inventory-equip-client.lua','client/CartMPInventoryEquipClient.lua'),
+                                  ('inventory-equip-server.lua','server/CartMPInventoryEquipServer.lua'),
+                                  ('inventory-equip-protocol.lua','shared/CartMPInventoryEquipProtocol.lua')]:
+                self.assertEqual((lua/target).read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer'/source).read_bytes())
+
+    def test_mp_inventory_equip_uses_dedicated_receipts_and_rejects_missing_evidence(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(mp_host=True,cart_inventory_equip=True,cart_inventory_equip_variant='female-empty')
+        self.role('client2')
+        for role in ('client1','client2'):
+            (self.output/role/'console.txt').write_text('[CART_MP] VIDEO_FINAL {}\n{"event":"complete"}\n')
+        seen=[]
+        def analyze(root,selection):
+            seen.append((root,selection));return dict(evidenceComplete=True,scope='selected native Host')
+        with patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',return_value=SimpleNamespace(analyze=analyze)) as loader:
+            result=carts.verify(self.output,self.selection,{})
+        self.assertEqual(loader.call_args.args[0].name,'analyze-inventory-equip.py')
+        self.assertEqual(len(seen),1)
+        self.assertEqual([row['status'] for row in result['outcomes']],['captured','captured'])
+        with patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',return_value=SimpleNamespace(analyze=lambda *args:dict(evidenceComplete=False))):
+            result=carts.verify(self.output,self.selection,{})
+        self.assertTrue(all(row['status']=='failed' for row in result['outcomes']))
+        self.assertFalse(result['outcomes'][0]['outcome']['evidenceComplete'])
 
     def test_mp_wall_exit_requires_host_wooden_isolated_bank(self):
         self.options.update(cart_wall_exit='left', mp_host=True)

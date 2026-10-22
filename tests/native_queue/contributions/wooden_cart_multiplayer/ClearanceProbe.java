@@ -20,6 +20,178 @@ public final class ClearanceProbe {
     private static BufferedWriter solves;
     private static BufferedWriter cameras;
     private static BufferedWriter handoffEvents;
+    private static final boolean INVENTORY_EQUIP="true".equals(System.getenv("PZ_CART_INVENTORY_EQUIP"));
+    private static BufferedWriter inventoryEquip;
+    private static long inventoryFrame,inventorySample,nextInventoryAction;
+    private static final java.util.WeakHashMap<zombie.characters.CharacterTimedActions.LuaTimedActionNew,Long> inventoryActions=new java.util.WeakHashMap<>();
+    private static final java.util.WeakHashMap<zombie.characters.CharacterTimedActions.LuaTimedActionNew,Long> inventoryUpdates=new java.util.WeakHashMap<>();
+    private record InventoryAttachment(zombie.inventory.InventoryItem item,long first) {}
+    private static final java.util.WeakHashMap<zombie.characters.IsoPlayer,InventoryAttachment> inventoryAttachments=new java.util.WeakHashMap<>();
+    private static String inventoryActor(zombie.characters.IsoPlayer owner) {
+        var local=zombie.characters.IsoPlayer.getInstance();
+        if(!INVENTORY_EQUIP || inventoryEquip==null || !zombie.network.GameClient.client || zombie.network.GameServer.server
+            || zombie.network.GameClient.connection==null || !zombie.network.GameClient.instance.connected
+            || owner==null || !"client1".equals(owner.getUsername()) || owner.getOnlineID()<0 || owner.isDead() || owner.getCurrentSquare()==null
+            || local==null || !local.isLocalPlayer() || !("client1".equals(local.getUsername()) || "client2".equals(local.getUsername())))return null;
+        return local.getUsername();
+    }
+    private static long inventoryActionId(zombie.characters.CharacterTimedActions.LuaTimedActionNew action) {
+        return inventoryActions.computeIfAbsent(action,key->++nextInventoryAction);
+    }
+    private static String inventoryPrefix(String kind,zombie.characters.IsoPlayer player,String actor) {
+        return "{\"producer\":\"cart-mp-inventory-equip-native-v1\",\"event\":"+jsonString(kind)
+            +",\"actor\":"+jsonString(actor)+",\"ownerID\":"+player.getOnlineID()+",\"local\":"+player.isLocalPlayer()
+            +",\"female\":"+player.isFemale()+",\"wall\":"+System.currentTimeMillis();
+    }
+    private static String inventoryReadiness(zombie.characters.IsoPlayer player) {
+        var item=player.getPrimaryHandItem();
+        return "{\"visualEnabled\":"+net.alexredby.pztoolkitjavapatches.CartMotionSync.visualEnabled(player)
+            +",\"steeringEnabled\":"+net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled(player)
+            +",\"supportedHeldCart\":"+net.alexredby.pztoolkitjavapatches.CartSteeringHooks.supportedCart(player)
+            +",\"IsPerformingAnAction\":"+player.getVariableBoolean("IsPerformingAnAction")
+            +",\"ToolkitCartMotion\":"+player.getVariableBoolean("ToolkitCartMotion")
+            +",\"Weapon\":"+jsonString(player.getVariableString("Weapon"))
+            +",\"PerformingAction\":"+jsonString(player.getVariableString("PerformingAction"))
+            +",\"ToolkitCartPose\":"+jsonString(player.getVariableString("ToolkitCartPose"))
+            +",\"RightHandMask\":"+jsonString(player.getVariableString("RightHandMask"))
+            +",\"LeftHandMask\":"+jsonString(player.getVariableString("LeftHandMask"))
+            +",\"overridePrimary\":"+jsonString(player.overridePrimaryHandModel)
+            +",\"overrideSecondary\":"+jsonString(player.overrideSecondaryHandModel)
+            +",\"forceNullOverride\":"+player.forceNullOverride+",\"hideWeapon\":"+player.isHideWeaponModel()
+            +",\"inventoryOwnsPrimary\":"+(item!=null && item.getContainer()==player.getInventory())+"}";
+    }
+    private static String inventoryGroundPose(ModelSlotRenderData slot,ModelInstanceRenderData cart) {
+        var player=(zombie.characters.IsoPlayer)slot.character;var item=player.getPrimaryHandItem();
+        var row=new StringBuilder("{\"wall\":").append(System.currentTimeMillis()).append(",\"slotToken\":").append(System.identityHashCode(slot))
+            .append(",\"cartDataToken\":").append(System.identityHashCode(cart)).append(",\"id\":").append(item.getID())
+            .append(",\"primaryID\":").append(item.getID()).append(",\"secondaryID\":").append(player.getSecondaryHandItem()==null?-1:player.getSecondaryHandItem().getID())
+            .append(",\"readiness\":").append(inventoryReadiness(player)).append(",\"cart\":");
+        matrix(row,new Matrix4f(cart.xfrm).transpose());row.append(",\"bones\":{");boolean comma=false;
+        for(var body:slot.modelData)if(body.modelInstance==cart.modelInstance.parent && body.matrixPalette!=null
+            && body.modelInstance.model.tag instanceof SkinningData skin) {
+            for(var entry:skin.boneIndices.entrySet()) {
+                int i=entry.getValue();var buffer=body.matrixPalette.duplicate();buffer.position(i*16);var raw=new org.lwjgl.util.vector.Matrix4f();raw.load(buffer);
+                var pose=PZMath.convertMatrix(raw,new Matrix4f()).transpose().mul(PZMath.convertMatrix(skin.boneOffset.get(i),new Matrix4f()).transpose().invert());
+                if(!pose.isFinite())throw new IllegalStateException("Nonfinite MP attachment pose");
+                if(comma)row.append(',');comma=true;row.append(jsonString(entry.getKey())).append(':');matrix(row,pose);
+            }
+            break;
+        }
+        return row.append("}}").toString();
+    }
+    public static synchronized String inventoryGroundBefore(ModelSlotRenderData slot) {
+        if(!(slot.character instanceof zombie.characters.IsoPlayer player) || inventoryActor(player)==null)return null;
+        var item=player.getPrimaryHandItem();
+        if(item==null || item!=player.getSecondaryHandItem() || !"SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType()))return null;
+        long now=System.nanoTime();var window=inventoryAttachments.get(player);
+        if(window==null || window.item()!=item) {window=new InventoryAttachment(item,now);inventoryAttachments.put(player,window);}
+        if(now-window.first()>750_000_000L)return null;
+        for(var cart:slot.modelData)if(cart.modelInstance!=null && cart.modelInstance.parent!=null
+            && cart.modelInstance.modelScript!=null && "WheelbarrowWood".equals(cart.modelInstance.modelScript.getName()))return inventoryGroundPose(slot,cart);
+        return null;
+    }
+    public static synchronized void inventoryGroundAfter(ModelSlotRenderData slot,String before) throws Exception {
+        if(before==null || !(slot.character instanceof zombie.characters.IsoPlayer player))return;
+        String actor=inventoryActor(player);if(actor==null)return;
+        for(var cart:slot.modelData)if(cart.modelInstance!=null && cart.modelInstance.parent!=null
+            && cart.modelInstance.modelScript!=null && "WheelbarrowWood".equals(cart.modelInstance.modelScript.getName())) {
+            inventoryEquip.write(inventoryPrefix("grounding-pair",player,actor)+",\"before\":"+before+",\"after\":"+inventoryGroundPose(slot,cart)+"}\n");inventoryEquip.flush();return;
+        }
+    }
+    public static class InventoryGrounding {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static String enter(@Advice.Argument(0) ModelSlotRenderData slot) {return ClearanceProbe.inventoryGroundBefore(slot);}
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.Argument(0) ModelSlotRenderData slot,@Advice.Enter String before) throws Exception {ClearanceProbe.inventoryGroundAfter(slot,before);}
+    }
+    public static synchronized void inventoryLifecycle(zombie.characters.CharacterTimedActions.LuaTimedActionNew action,String event,String stage,Throwable thrown) throws Exception {
+        if(!(action.chr instanceof zombie.characters.IsoPlayer player))return;
+        String actor=inventoryActor(player);
+        if(actor==null || !"ISCartEquipAction".equals(action.getMetaType()))return;
+        long now=System.nanoTime();
+        if("update".equals(event)) {
+            // The server-done packet can arrive between enter and exit on the
+            // final update. Never decimate that canonical completion receipt.
+            long previous=inventoryUpdates.getOrDefault(action,0L);if(!action.forceComplete && now-previous<25_000_000L)return;inventoryUpdates.put(action,now);
+        }
+        var table=action.getTable();var cartId=table.rawget("cartId");
+        if(!(cartId instanceof Number id) || id.intValue()<=0)throw new IllegalStateException("Native inventory equip has no exact cartId");
+        var networkPlayer=(zombie.network.fields.character.PlayerID)stateField(action,"playerId");
+        byte transaction=((Number)stateField(action,"transactionId")).byteValue();
+        var networkAction=zombie.core.ActionManager.getAction(transaction,networkPlayer);
+        boolean networkExact=networkAction!=null && networkAction.action==table && "ISCartEquipAction".equals(networkAction.type)
+            && networkPlayer.getID()==player.getOnlineID();
+        boolean networkDone=networkExact && zombie.core.ActionManager.isDone(networkPlayer,transaction);
+        boolean networkRejected=networkExact && zombie.core.ActionManager.isRejected(networkPlayer,transaction);
+        var primary=player.getPrimaryHandItem();var secondary=player.getSecondaryHandItem();
+        var row=new StringBuilder(inventoryPrefix("lifecycle",player,actor)).append(",\"actionId\":").append(inventoryActionId(action))
+            .append(",\"method\":").append(jsonString(event)).append(",\"stage\":").append(jsonString(stage))
+            .append(",\"actionType\":").append(jsonString(action.getMetaType())).append(",\"sourceType\":").append(jsonString((String)table.rawget("sourceType")))
+            .append(",\"id\":").append(id.intValue()).append(",\"time\":").append(action.getCurrentTime()).append(",\"maxTime\":").append(action.maxTime)
+            .append(",\"progress\":").append(action.getJobDelta()).append(",\"finished\":").append(action.finished())
+            .append(",\"waitForFinished\":").append(action.waitForFinished)
+            .append(",\"transactionId\":").append(transaction).append(",\"networkOwnerID\":").append(networkPlayer.getID())
+            .append(",\"networkActionPresent\":").append(networkAction!=null).append(",\"networkActionExact\":").append(networkExact)
+            .append(",\"networkActionType\":").append(jsonString(networkAction==null?null:networkAction.type))
+            .append(",\"networkDone\":").append(networkDone).append(",\"networkRejected\":").append(networkRejected)
+            .append(",\"forceStop\":").append(action.forceStop).append(",\"forceComplete\":").append(action.forceComplete)
+            .append(",\"threw\":").append(thrown!=null).append(",\"primaryID\":").append(primary==null?-1:primary.getID())
+            .append(",\"secondaryID\":").append(secondary==null?-1:secondary.getID()).append("}\n");
+        inventoryEquip.write(row.toString());inventoryEquip.flush();
+    }
+    public static class InventoryLifecycle {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static void enter(@Advice.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,@Advice.Origin("#m") String method) throws Exception {
+            ClearanceProbe.inventoryLifecycle(action,method,"enter",null);
+        }
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,@Advice.Origin("#m") String method,@Advice.Thrown Throwable thrown) throws Exception {
+            ClearanceProbe.inventoryLifecycle(action,method,"exit",thrown);
+        }
+    }
+    private static synchronized void inventorySnapshot(ModelSlotRenderData slot) throws Exception {
+        if(!(slot.character instanceof zombie.characters.IsoPlayer player))return;
+        String actor=inventoryActor(player);long now=System.nanoTime();
+        if(actor==null || now-inventorySample<33_333_333L)return;
+        for(var body:slot.modelData) {
+            var instance=body.modelInstance;
+            if(instance==null || instance.parent!=null || body.matrixPalette==null || !(instance.model.tag instanceof SkinningData skin))continue;
+            var primary=player.getPrimaryHandItem();var secondary=player.getSecondaryHandItem();
+            var row=new StringBuilder(inventoryPrefix("body",player,actor)).append(",\"captureId\":").append(++inventoryFrame)
+                .append(",\"primaryID\":").append(primary==null?-1:primary.getID()).append(",\"secondaryID\":").append(secondary==null?-1:secondary.getID())
+                .append(",\"x\":").append(player.getX()).append(",\"y\":").append(player.getY()).append(",\"z\":").append(player.getZ())
+                .append(",\"moving\":").append(player.isPlayerMoving()).append(",\"nativeActions\":").append(player.getCharacterActions().size())
+                .append(",\"readiness\":").append(inventoryReadiness(player))
+                .append(",\"models\":[");
+            boolean comma=false;
+            for(var data:slot.modelData) {
+                var model=data.modelInstance==null?null:data.modelInstance.model;
+                if(model==null)continue;if(comma)row.append(',');comma=true;
+                row.append(jsonString(model.mesh==null?model.name:model.mesh.fullPath));
+            }
+            row.append("],\"actions\":[");comma=false;
+            for(var current:player.getCharacterActions()) {
+                if(!(current instanceof zombie.characters.CharacterTimedActions.LuaTimedActionNew action))continue;
+                if(comma)row.append(',');comma=true;var id=action.getTable().rawget("cartId");
+                row.append("{\"actionId\":").append(inventoryActionId(action)).append(",\"type\":").append(jsonString(action.getMetaType()))
+                    .append(",\"id\":").append(id instanceof Number number?number.intValue():-1).append(",\"progress\":").append(action.getJobDelta()).append('}');
+            }
+            row.append("],\"bones\":{");comma=false;
+            for(var entry:skin.boneIndices.entrySet()) {
+                int i=entry.getValue();if((i+1)*16>body.matrixPalette.limit())throw new IllegalStateException("Native equip palette bounds");
+                var buffer=body.matrixPalette.duplicate();buffer.position(i*16);var raw=new org.lwjgl.util.vector.Matrix4f();raw.load(buffer);
+                var pose=PZMath.convertMatrix(raw,new Matrix4f()).transpose().mul(PZMath.convertMatrix(skin.boneOffset.get(i),new Matrix4f()).transpose().invert());
+                if(!pose.isFinite())throw new IllegalStateException("Native equip nonfinite pose");
+                if(comma)row.append(',');comma=true;row.append(jsonString(entry.getKey())).append(':');matrix(row,pose);
+            }
+            row.append("},\"tracks\":[");comma=false;
+            for(var track:instance.animPlayer.getMultiTrack().getTracks()) {
+                if(comma)row.append(',');comma=true;row.append("{\"id\":").append(track.getId()).append(",\"name\":").append(jsonString(track.getName()))
+                    .append(",\"time\":").append(track.getCurrentTrackTime()).append(",\"weight\":").append(track.getBlendWeight()).append('}');
+            }
+            row.append("]}\n");inventoryEquip.write(row.toString());inventoryEquip.flush();inventorySample=now;return;
+        }
+    }
     private static final Object handoffOutputLock=new Object();
     private static long captureSerial;
     private record NativePose(zombie.characters.IsoPlayer player,long wall,float x,float y,float z,float heading,float angle) {}
@@ -354,6 +526,7 @@ public final class ClearanceProbe {
         for(int i=0;i<16;i++){if(i>0)row.append(',');row.append(v[i]);}row.append(']');
     }
     public static synchronized void snapshot(ModelSlotRenderData slot) throws Exception {
+        if(INVENTORY_EQUIP)inventorySnapshot(slot);
         if(output==null || !(slot.character instanceof zombie.characters.IsoPlayer player)
             || !nativePoses.containsKey(slot) || drawFrames.containsKey(slot)) return;
         for(var cart:slot.modelData) {
@@ -545,6 +718,8 @@ public final class ClearanceProbe {
         if(output!=null){output.close();output=null;}
         if(solves!=null){solves.close();solves=null;}
         if(cameras!=null){cameras.close();cameras=null;}
+        if(inventoryEquip!=null){inventoryEquip.close();inventoryEquip=null;}
+        inventoryActions.clear();inventoryUpdates.clear();inventoryAttachments.clear();inventorySample=inventoryFrame=nextInventoryAction=0;
         synchronized(handoffOutputLock) {if(handoffEvents!=null){handoffEvents.close();handoffEvents=null;}}
         nativePoses.clear();drawFrames.clear();consumedCamera.remove();
         if("stop".equals(args)){System.out.println("[CLEARANCE_PROBE] stopped");return;}
@@ -558,6 +733,7 @@ public final class ClearanceProbe {
         output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;
         solves=Files.newBufferedWriter(directory.resolve("transition-solve.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
         cameras=Files.newBufferedWriter(directory.resolve("render-camera.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);captureSerial=0;
+        if(INVENTORY_EQUIP)inventoryEquip=Files.newBufferedWriter(directory.resolve("inventory-equip-native.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
         synchronized(handoffOutputLock) {handoffEvents=Files.newBufferedWriter(directory.resolve("pickup-handoff-events.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);}
         meshProof=phaseMeshProof=meshError=false;firstMeshHash=null;firstMeshPhase=0;
         if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
@@ -577,8 +753,11 @@ public final class ClearanceProbe {
                 .visit(Advice.to(CameraEnd.class).on(named("CharacterModelCameraEnd").and(takesArguments(0)))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartTransition"))
             .transform((b,d,l,m,p)->b.visit(Advice.to(PickupBoundary.class).on(namedOneOf("rememberPickup","pickupPerformed","pickupEquipped"))))
+            .type(named("zombie.characters.CharacterTimedActions.LuaTimedActionNew"))
+            .transform((b,d,l,m,p)->INVENTORY_EQUIP?b.visit(Advice.to(InventoryLifecycle.class).on(takesArguments(0).and(namedOneOf("start","update","perform","complete","stop","interruptWaitToStart")))):b)
             .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding"))
-            .transform((b,d,l,m,p)->b.visit(Advice.to(Capture.class).on(named("render"))))
+            .transform((b,d,l,m,p)->b.visit(Advice.to(Capture.class).on(named("render")))
+                .visit(Advice.to(InventoryGrounding.class).on(named("render"))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartWheelSpin"))
             .transform((b,d,l,m,p)->b.visit(Advice.to(Drawing.class).on(named("render"))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartGrip"))

@@ -175,6 +175,12 @@ def validate(selection):
         if options['cart_entry_contact_repro'] and (not isinstance(chosen, list) or not chosen
                 or any(name not in ('container-equip', 'wrong-side') for name in chosen)):
             raise ValueError('cart_entry_contact_repro requires explicit container-equip/wrong-side scenes')
+    for key in ('cart_entry_female','cart_entry_load'):
+        if key in options:
+            if suite != SP or selection['cases'] != ['approach'] or options.get('cart_entry_contact_repro') is not True:
+                raise ValueError(key+' requires the SP entry-contact reproducer')
+            if key=='cart_entry_female' and type(options[key]) is not bool or key=='cart_entry_load' and options[key] not in ('empty','full'):
+                raise ValueError('Invalid '+key)
     cases = SP_CASES if suite == SP else ['owner_observer_motion']
     if len(selection['cases']) != 1 or selection['cases'][0] not in cases or selection['mode'] != 'toolkit':
         raise ValueError('Cart candidates support one capture case in toolkit mode only')
@@ -199,6 +205,18 @@ def validate(selection):
     if 'cart_direct_fast_walk' in options:
         if suite != SP or selection['cases'] != ['sprint'] or type(options['cart_direct_fast_walk']) is not bool:
             raise ValueError('cart_direct_fast_walk requires a boolean in the SP sprint case')
+    if 'cart_inventory_equip' in options:
+        if suite != MP or type(options['cart_inventory_equip']) is not bool:
+            raise ValueError('cart_inventory_equip requires an MP boolean selection')
+        if options['cart_inventory_equip'] and (options.get('mp_host') is not True
+                or options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow'
+                or any(options.get(flag, False) is not False for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'))
+                or 'cart_wall_exit' in options or 'cart_hotkey_key' in options):
+            raise ValueError('cart_inventory_equip requires an isolated wooden-wheelbarrow menu Host bank')
+    if 'cart_inventory_equip_variant' in options:
+        if options.get('cart_inventory_equip') is not True or options['cart_inventory_equip_variant'] not in (
+                'female-empty', 'female-full', 'male-empty', 'male-full'):
+            raise ValueError('cart_inventory_equip_variant requires an enabled bank and exact sex/load variant')
     if 'cart_wall_exit' in options:
         if suite != MP or options.get('mp_host') is not True or options['cart_wall_exit'] not in ('left', 'right', 'front'):
             raise ValueError('cart_wall_exit requires left/right/front in a native MP Host selection')
@@ -353,13 +371,18 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 _write(lua / 'client/QueueCartMPStartup.lua', (project / 'tests/native_queue/startup/client/ZZStartup.lua').read_text())
             for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
                                    ('placement.lua', 'shared/CartMPPlacement.lua'), ('wall.lua', 'shared/CartMPWall.lua'),
-                                   ('wall-input.lua', 'client/CartMPWallInput.lua'), ('json.lua', 'shared/CartMPJSON.lua')]:
+                                   ('wall-input.lua', 'client/CartMPWallInput.lua'), ('json.lua', 'shared/CartMPJSON.lua'),
+                                   ('inventory-equip-client.lua', 'client/CartMPInventoryEquipClient.lua'),
+                                   ('inventory-equip-server.lua', 'server/CartMPInventoryEquipServer.lua'),
+                                   ('inventory-equip-protocol.lua', 'shared/CartMPInventoryEquipProtocol.lua')]:
                 _write(lua / target, (mp / origin).read_text())
         elif role != 'server':
             _write(lua / 'client/QueueCartStartup.lua', (project / 'tests/native_queue/support/QueueCartStartup.lua').read_text())
         runtime_lua = cache / 'Lua/cart-runtime.lua'
         spec['env'] = dict(spec.get('env', {}), PZ_CART_RUNTIME_FILE=str(runtime_lua), PZ_CART_COMMAND_FILE=str(cache / 'Lua/cart-command.txt'))
         spec['env']['PZ_CART_TEST_PAD'] = 'true' if selection['suite'] == SP else 'false'
+        if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_inventory_equip'):
+            spec['env']['PZ_CART_INVENTORY_EQUIP'] = 'true'
         if role == 'server':
             _write(runtime_lua, 'return true\n')
             sandbox = cache / 'Server' / (runtime['server_name'] + '_SandboxVars.lua')
@@ -387,6 +410,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 motion['authoredClip'] = selection['options']['cart_authored_clip']
             if 'cart_entry_contact_repro' in selection.get('options', {}):
                 motion['entryContactRepro'] = selection['options']['cart_entry_contact_repro']
+                motion['entryFemale'] = selection['options'].get('cart_entry_female',False)
+                motion['entryLoad'] = selection['options'].get('cart_entry_load','full')
             if 'cart_scenes' in selection.get('options', {}):
                 motion['scenes'] = selected_scenes(selection)
             if selection['cases'] == ['sprint']:
@@ -1166,6 +1191,8 @@ def verify(root, selection, catalog):
                        '--log', str(logs['client1']), '--output', str(analysis / 'approach.json')]
             if selection.get('options', {}).get('cart_entry_contact_repro'):
                 command.append('--entry-contact')
+                if selection['options'].get('cart_entry_female'): command.append('--entry-female')
+                command += ['--entry-load',selection['options'].get('cart_entry_load','full')]
             if debug:
                 for scene in selected_scenes(selection): command += ['--scene', scene]
             evidence['analyzers'] = {'approach': _run(command, analysis, 'approach')}
@@ -1179,6 +1206,18 @@ def verify(root, selection, catalog):
                  'reason': 'Native approach, ownership and independent-tail receipts verified for the selected scenes',
                  'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                              'functionalPass': True, 'partialCoverage': debug, 'approachVerified': True}}]}
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_inventory_equip'):
+            report = _load(intake / 'analyze-inventory-equip.py').analyze(root, selection)
+            if report.get('evidenceComplete') is not True:
+                raise ValueError('Incomplete menu-Host inventory-equip evidence')
+            _write(analysis / 'mp-inventory-equip.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(inventoryEquip=report, analysis=str(analysis), evidenceComplete=True,
+                            scope=report['scope'])
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': role, 'case': selection['cases'][0], 'status': 'captured',
+                 'reason': 'Native inventory equip and exact authoritative server/observer endpoints verified; visual geometry remains separate',
+                 'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                             'functionalPass': True, 'cartInventoryEquip': True}} for role in roles]}
         if selection['suite'] == MP:
             report = _load(intake / 'analyze.py').analyze(root)
             evidence['comparison'] = report

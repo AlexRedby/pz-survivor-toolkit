@@ -87,6 +87,23 @@ def change_rows(values, callback):
     return '\n'.join(lines),values[1]
 
 
+def entry_fixture(female=False,load='full'):
+    def entry(row):
+        elapsed=row['elapsed']
+        row.update(entryContactRepro=True,female=female,pantsType='Base.Trousers_JeanBaggy',pantsID=42,pantsModel='Skinned/Clothes/'+('Kate' if female else 'Bob')+'_Trousers',entryLoad=load,cargoCount=0 if load=='empty' else 1,cargoCapacity=row['cargoWeight'],
+                   preWalkStartedAt=row['start']+300 if elapsed>=300 else -1,
+                   preWalkReleasedAt=row['start']+650 if elapsed>=650 else -1,
+                   preWalkSeen=elapsed>=650,preWalkDistance=.2*max(0,min(1,(elapsed-300)/350)),
+                   preWalkDrive=int(300<=elapsed<650))
+        row['x']+=row['preWalkDistance']
+        if load=='empty':row.update(cargoID=-1,cargoWeight=0)
+    text,life=change_rows(fixture(),entry)
+    lines=[line for line in text.splitlines() if ('container-equip' in line or line.startswith('[WOOD_BANK] RUN_STARTED'))]
+    lines+=['[CART_APPROACH] CLEANUP_COMPLETE','[WOOD_BANK] ALL_COMPLETE cases=1']
+    text='\n'.join(lines);life=[r for r in life if r['nativeActionId']==0]
+    return text,life
+
+
 class ApproachChecks(unittest.TestCase):
     def test_complete_evidence(self):
         report=analyzer.analyze(*fixture())
@@ -94,18 +111,7 @@ class ApproachChecks(unittest.TestCase):
         self.assertEqual(len(report['cases']),7)
 
     def test_entry_contact_requires_actual_pre_menu_walk_and_outfit(self):
-        def entry(row):
-            elapsed=row['elapsed']
-            row.update(entryContactRepro=True,female=False,pantsType='Base.Trousers_JeanBaggy',pantsID=42,pantsModel='Skinned/Clothes/Bob_Trousers',
-                       preWalkStartedAt=row['start']+300 if elapsed>=300 else -1,
-                       preWalkReleasedAt=row['start']+650 if elapsed>=650 else -1,
-                       preWalkSeen=elapsed>=650,preWalkDistance=.2*max(0,min(1,(elapsed-300)/350)),
-                       preWalkDrive=int(300<=elapsed<650))
-            row['x']+=row['preWalkDistance']
-        text,life=change_rows(fixture(),entry)
-        lines=[line for line in text.splitlines() if ('container-equip' in line or line.startswith('[WOOD_BANK] RUN_STARTED'))]
-        lines+=['[CART_APPROACH] CLEANUP_COMPLETE','[WOOD_BANK] ALL_COMPLETE cases=1']
-        text='\n'.join(lines);life=[r for r in life if r['nativeActionId']==0]
+        text,life=entry_fixture()
         self.assertTrue(analyzer.analyze(text,life,scenes=['container-equip'],entry_contact=True)['functionalPass'])
         for field,value in [('preWalkSeen',False),('preWalkDistance',0),('pantsType','Base.Skirt')]:
             changed=change_rows((text,life),lambda row:row.update({field:value}))
@@ -113,6 +119,27 @@ class ApproachChecks(unittest.TestCase):
                 analyzer.analyze(*changed,scenes=['container-equip'],entry_contact=True)
         with self.assertRaisesRegex(AssertionError,'moved before'):
             analyzer.analyze(text,life,scenes=['container-equip'])
+
+    def test_inventory_entry_variants_require_exact_sex_load_and_native_model(self):
+        for female,load in ((False,'empty'),(True,'full'),(True,'empty')):
+            values=entry_fixture(female,load)
+            with self.subTest(female=female,load=load):
+                self.assertTrue(analyzer.analyze(*values,scenes=['container-equip'],entry_contact=True,
+                                                entry_female=female,entry_load=load)['functionalPass'])
+                wrong_model=change_rows(values,lambda row:row.update(pantsModel='Skinned/Clothes/Unrelated'))
+                with self.assertRaisesRegex(AssertionError,'outfit proof'):
+                    analyzer.analyze(*wrong_model,scenes=['container-equip'],entry_contact=True,entry_female=female,entry_load=load)
+                with self.assertRaises(AssertionError):
+                    analyzer.analyze(*values,scenes=['container-equip'],entry_contact=True,entry_female=not female,entry_load=load)
+                with self.assertRaises(AssertionError):
+                    analyzer.analyze(*values,scenes=['container-equip'],entry_contact=True,entry_female=female,
+                                     entry_load='full' if load=='empty' else 'empty')
+        values=change_rows(entry_fixture(True,'empty'),lambda row:row.update(entryLoad='full'))
+        with self.assertRaisesRegex(AssertionError,'Selected entry load differs'):
+            analyzer.analyze(*values,scenes=['container-equip'],entry_contact=True,entry_female=True,entry_load='empty')
+        values=change_rows(entry_fixture(True,'empty'),lambda row:row.update(cargoCount=1))
+        with self.assertRaisesRegex(AssertionError,'empty cargo'):
+            analyzer.analyze(*values,scenes=['container-equip'],entry_contact=True,entry_female=True,entry_load='empty')
 
     def test_native_completion_must_be_exactly_once(self):
         for mode in ('missing','duplicate','wrong-type'):
