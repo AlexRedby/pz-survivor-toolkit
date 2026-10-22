@@ -2,7 +2,7 @@ local Completion={}
 local function hotbarCase(id)return id=='tidy-hotbar'or id=='tidy-hotbar-holster-left'or id=='tidy-hotbar-holster-right'end
 local function clothingAction(state,action)
  return state.id=='tidy-clothing'and action.Type=='ISWearClothing'
-  or state.id=='tidy-clothing-remove'and action.Type=='ISUnequipAction'
+  or (state.id=='tidy-clothing-remove'or state.id=='tidy-clothing-overlap')and action.Type=='ISUnequipAction'
 end
 function Completion.observe(toolkit,selection)
  local lifecycle,operations=toolkit.ActionQueueLifecycle,toolkit.ActionQueueOperations

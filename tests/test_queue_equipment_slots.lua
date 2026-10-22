@@ -276,6 +276,81 @@ do
  player:setWornItem(state.clothingLocation,makeItem('Base.Socks_Ankle',state.root))
  assert(not pcall(Clothing.verify,state,false),'foreign socks in the slot must not satisfy absence')
  player:setWornItem(state.clothingLocation,nil)
+ -- Native Equip -> ordinary Wear produces the overlap; fixture setup does
+ -- not seed a held+worn dual state. Generated actions below replay only the
+ -- observer contract; real P4 generation and transport belong to SP/Host gates.
+ native('shared/TimedActions/ISEquipWeaponAction.lua')
+ getText=function(value)return value end
+ function player:getInventory()return state.root end
+ function player:getClothingItem_Back()end
+ function player:getCurrentSquare()return {}end
+ function player:setPrimaryHandItem(value)self.primary=value end
+ function player:setSecondaryHandItem(value)self.secondary=value end
+ function player:isEquippedClothing(value)return self.worn[value:getBodyLocation()]==value end
+ function player:getWornItems()return {contains=function(_,value)return player:isEquippedClothing(value)end}end
+ getPlayerInventory=function()return {refreshBackpacks=function()end}end
+ state.id='tidy-clothing-overlap';state.clothingP4=nil;state.clothingRestoreAction=nil;state.clothingRestoreReceipt=nil
+ state.clothingOverlap=nil;state.clothingProducerStarted=nil;state.clothingCleanup=nil;player.worn={};player.secondary=state.screwdriver
+ Clothing.prepare(state,function(key,kind)state[key]=makeItem(kind,state.root);return state[key]end)
+ function state.root:getItemWithID(id)return self:getItemById(id)end
+ for _,item in ipairs({state.hammer,state.screwdriver,state.clothingSocks})do
+  item.isForceDropHeavyItem=function()return false end;item.isRequiresEquippedBothHands=function()return false end
+  item.getCurrentUsesFloat=function()return 1 end;item.canBeActivated=function()return false end
+  item.isActivated=function()return false end;item.getName=item.getFullType
+ end
+ queue.queue={};Clothing.enqueue(state,{run=function(callback)return callback()end})
+ assert(#queue.queue==3 and getmetatable(queue.queue[1])==ISEquipWeaponAction and not queue.queue[1].primary
+  and not queue.queue[1].twoHands and getmetatable(queue.queue[2])==ISWearClothing and getmetatable(queue.queue[3])==ISCutHair)
+ assert(not player:getWornItem(state.clothingLocation)and player.secondary==state.screwdriver)
+ assert(queue.queue[1]:complete());assert(player.secondary==state.clothingSocks and not player:getWornItem(state.clothingLocation))
+ assert(queue.queue[2]:complete());assert(queue.queue[3]:complete())
+ assert(player.secondary==state.clothingSocks and player:getWornItem(state.clothingLocation)==state.clothingSocks)
+ local sockID=state.clothingSocks:getID()
+ local acks={};local ack='completed'
+ toolkit={Settings={actionQueue=function()return true end},
+  ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
+  ActionQueueAcknowledgements={capture=function(action)if queue.current==action then acks[action]=acks[action]or {};return acks[action]end end,
+   observe=function(action,receipt)assert(acks[action]==receipt);return ack end}}
+ -- Empty pre-start current and nil producer are a quiet no-op.
+ local nextProducer=state.clothingProducer;state.clothingProducer=nil;queue.current=nil
+ assert(pcall(Clothing.observe,state,queue,toolkit,true));state.clothingProducer=nextProducer
+ state.clothingProducer.isStarted=function()return true end;queue.current=state.clothingProducer
+ Clothing.observe(state,queue,toolkit,true)
+ assert(state.clothingOverlap.secondary==sockID and state.clothingOverlap.worn==sockID)
+ for _,action in ipairs(queue.queue)do queue.current=action;isClient=function()return true end;Clothing.observe(state,queue,toolkit,true)end
+ isClient=function()return false end
+ sock='Base.Socks_Ankle#'..sockID..'@inventory'
+ Clothing.observeLine(state,prefix..'capture primary='..state.hammer:getFullType()..'#'..state.hammer:getID()..'@inventory secondary='..state.screwdriver:getFullType()..'#'..state.screwdriver:getID()..'@inventory')
+ Clothing.observeLine(state,prefix..'capture worn=[] inventoryCount=5')
+ Clothing.observeLine(state,prefix..'add[add] type=ISEquipWeaponAction item='..sock)
+ Clothing.observeLine(state,prefix..'add[add] type=ISWearClothing item='..sock)
+ Clothing.observeLine(state,prefix..'add[add] type=ISCutHair item=nil')
+ Clothing.observeLine(state,prefix..'RESTORE actionTotal=5 trace=[ISReadABook -> ISEquipWeaponAction -> ISWearClothing -> ISCutHair -> ISReadABook] reason=operation:ISReadABook')
+ assert(state.clothingP4.restore and not state.clothingP4.problem)
+ P4RestoreAction={Type='P4RestoreAction'};P4RestoreAction.__index=P4RestoreAction
+ local equip=ISEquipWeaponAction:new(player,state.screwdriver,50,false,false)
+ local activation=setmetatable({item=state.screwdriver,activated=false},P4RestoreAction)
+ local unequip=ISUnequipAction:new(player,state.clothingSocks,50)
+ queue.queue={activation,equip,unequip};queue.current=nil
+ assert(not pcall(Clothing.observe,state,queue,toolkit,true),'reordered P4 cleanup must fail')
+ queue.queue={equip,activation,unequip};Clothing.observe(state,queue,toolkit,true)
+ assert(state.clothingCleanup[1]==equip and state.clothingCleanup[2]==activation and state.clothingCleanup[3]==unequip)
+ assert(equip:complete());assert(player.secondary==state.screwdriver and player:getWornItem(state.clothingLocation)==state.clothingSocks)
+ assert(unequip:complete());assert(Clothing.verify(state,false).secondary==state.screwdriver:getID())
+ Clothing.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S17')
+ isClient=function()return true end
+ for _,action in ipairs(queue.queue)do queue.current=action;Clothing.observe(state,queue,toolkit,true)end
+ queue.current=nil
+ local function quietReady(expected)
+  local ok,value=pcall(Clothing.settled,state,toolkit,true);assert(ok and value==expected,'clothing overlap readiness must wait quietly')
+ end
+ ack='started';quietReady(false);ack='completed';quietReady(true)
+ player.secondary=state.clothingSocks;quietReady(false);player.secondary=state.screwdriver
+ local hands={perform=2,complete=0,flush=2,legacy=0,equip=1,activation=1,unequip=0}
+ local effect=Clothing.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0},hands)
+ assert(#effect.overlap.cleanup==3 and #effect.overlap.acknowledgements==6 and effect.overlap.sharedHands==hands)
+ isClient=function()return false end
+ print('tidy-clothing-overlap: real native secondary Equip/Wear effects, exact observed overlap, cleanup order and strict Host receipts passed')
  for _,name in ipairs({'Bald','Mohawk','Spike','GreasedBack','Buffont'})do
   visual.hair=name;visual.attached='PreviousAttachedStyle'
   Clothing.prepare(state,function(key,kind)state[key]=makeItem(kind,state.root);return state[key]end)

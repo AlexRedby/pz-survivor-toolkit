@@ -64,17 +64,28 @@ class EquipmentTests(unittest.TestCase):
                                               uiHotbarIdentity=True, unrelatedTailPreserved=True,
                                               sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                     flush=count, legacy=0)))
-            if case in ('tidy-clothing', 'tidy-clothing-remove'):
+            if case in equipment.CLOTHING_CASES:
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
-                effect = dict(id=955, fullType='Base.Socks_Ankle', bodyLocation='base:socks', container='root', worn=not tidy if case == 'tidy-clothing-remove' else tidy,
+                effect = dict(id=955, fullType='Base.Socks_Ankle', bodyLocation='base:socks', container='root', worn=not tidy if case != 'tidy-clothing' else tidy,
                               producer='ISCutHair', producerCompleted=True, hairUnchanged=True, hairStyle='CrewCut',
                               unrelatedHandsPreserved=True)
+                if case == 'tidy-clothing-overlap':
+                    effect.update(primary=950, secondary=951 if tidy else 955, originalSecondary=951)
                 count = int(enabled and tidy)
-                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=case == 'tidy-clothing-remove'),
+                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=case != 'tidy-clothing', **({'secondary': 955} if case == 'tidy-clothing-overlap' else {})),
                               tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                       flush=count, legacy=0), unrelatedTailPreserved=True))
+                if case == 'tidy-clothing-overlap':
+                    cleanup = [dict(kind='ISEquipWeaponAction', id=951), dict(kind='P4RestoreAction', id=951),
+                               dict(kind='ISUnequipAction', id=955)] if tidy else []
+                    actions = [dict(kind='ISEquipWeaponAction', id=955), dict(kind='ISWearClothing', id=955), dict(kind='ISCutHair', id=False)] + cleanup
+                    result['tidyClothing']['overlap'] = dict(
+                        intermediate=dict(primary=950, secondary=955, worn=955, container='root'), cleanup=cleanup,
+                        acknowledgements=[dict(item, state='completed') for item in actions] if self.selection['kind'] == 'mp' else [],
+                        sharedHands=dict(perform=2*count, complete=2*count if self.selection['kind'] == 'sp' else 0,
+                                         flush=2*count, legacy=0, equip=count, activation=count, unequip=0))
             if case in ('tidy-hands', 'tidy-empty-hands'):
                 result.update(rackWholeOperationMoveVerified=enabled, rackCancellationProtected=enabled, independentMoveVerified=enabled)
             if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
@@ -152,9 +163,9 @@ class EquipmentTests(unittest.TestCase):
                 with (self.root / 'server-launch.log').open('a') as log:
                     log.write('\n[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true\n')
             for case in self.selection['cases']:
-                if case in ('tidy-clothing', 'tidy-clothing-remove'):
+                if case in equipment.CLOTHING_CASES:
                     row = next(row for row in self.records() if row.get('id') == case)
-                    effect = {key: row['outcome']['tidyClothing'][key] for key in equipment.CLOTHING_EFFECT_KEYS}
+                    effect = {key: row['outcome']['tidyClothing'][key] for key in equipment.clothing_effect_keys(case)}
                     with (self.root / 'server-launch.log').open('a') as log:
                         log.write('\n[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' + json.dumps(effect) + '\n')
             for case in self.selection['cases']:
@@ -257,6 +268,40 @@ class EquipmentTests(unittest.TestCase):
                     for replacement in ('', marker + '\n' + marker, marker.replace('955', '956'), marker.replace('"worn": false', '"worn": true')):
                         server.write_text(original.replace(marker, replacement))
                         self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
+
+    def test_clothing_overlap_requires_real_transition_order_hands_and_every_native_receipt(self):
+        self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in ('primary', 'secondary', 'originalSecondary', 'overlap'):
+                    rows = self.records(); rows[3]['outcome']['tidyClothing'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                changes = [lambda p: p['intermediate'].update(secondary=951),
+                           lambda p: p['intermediate'].update(worn=False),
+                           lambda p: p['cleanup'].reverse(), lambda p: p['cleanup'].pop(),
+                           lambda p: p['cleanup'][0].update(id=955),
+                           lambda p: p['sharedHands'].update(perform=True),
+                           lambda p: p['sharedHands'].update(complete=99),
+                           lambda p: p['sharedHands'].update(legacy=1)]
+                if kind == 'mp':
+                    changes += [lambda p: p['acknowledgements'].pop(),
+                                lambda p: p['acknowledgements'][4].update(state='canceled'),
+                                lambda p: p['acknowledgements'][2].update(id=0),
+                                lambda p: p['acknowledgements'].reverse()]
+                for change in changes:
+                    rows = self.records(); change(rows[3]['outcome']['tidyClothing']['overlap'])
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                rows = self.records(); rows[3]['outcome']['clothingCheckpoint']['secondary'] = 951
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'originalSecondary' in line)
+                    server.write_text(original.replace(marker, marker.replace('951', '955')))
+                    self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(original)
 
     def test_belt_requires_empty_queue_and_exact_effect_checks(self):

@@ -364,7 +364,7 @@ Events.OnTick.Add(function()
    outcome.postprocessingVerified=passed
    outcome.tidyCompletion=Completion.settled()
    if Hotbar.isCase(state.id)then outcome.tidyHotbar=Hotbar.evidence(state,Toolkit,tidy,Completion.hotbar())end
-   if Clothing.isCase(state.id)then outcome.tidyClothing=Clothing.evidence(state,Toolkit,tidy,Completion.clothing())end
+   if Clothing.isCase(state.id)then outcome.tidyClothing=Clothing.evidence(state,Toolkit,tidy,Completion.clothing(),Clothing.overlap(state)and Completion.restores()or nil)end
    if (state.id=='tidy-group' or state.id=='tidy-multigroup') then outcome.tidyGroup=Completion.group() end
    if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
     outcome.restoreVerified=passed;outcome.floorRestoreVerified=state.id=='tidy-floor' and passed and tidy

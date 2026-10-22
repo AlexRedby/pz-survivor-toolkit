@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.225
+
+- **Action queue:** Support proven P4 cleanup of ordinary clothing that is both held and worn when cleanup is queued. Preserve native hand/worn removal, preceding hand restoration, exact root item identity, required cleanup and independent following actions. Special clothing and changed source methods retain their existing fallback.
+
 ### 0.1.224
 
 - **Action queue:** Move proven P4 hand-to-hotbar returns onto shared native completion. Preserve both authoritative hand removal and native attachment effects, exact root item and existing slot/model, required cleanup and independent following actions. Changed hotbar helpers or metadata and special equipment retain their current fallback.

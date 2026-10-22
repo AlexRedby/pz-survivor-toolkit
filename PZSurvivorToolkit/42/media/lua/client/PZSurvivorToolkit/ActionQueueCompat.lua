@@ -313,11 +313,9 @@ end
 local function ordinaryClothingRemoval(action)
     local location, item = ordinaryClothing(action)
     if not location or item:canBeActivated() or action.item:canBeActivated() then return end
-    -- Worn-only cleanup must not also clear a held item. Check the live root
-    -- identity, including a queued proxy, and retain the hand-only integration.
-    for _, held in ipairs({action.character:getPrimaryHandItem() or false, action.character:getSecondaryHandItem() or false}) do
-        if held and held:getID() == item:getID() then return end
-    end
+    -- Native ordinary-clothing cleanup removes both worn and matching hand
+    -- references. The shared contract owns the character's hands as well as
+    -- this exact root item; earlier P4 hand restoration may already clear them.
     return location
 end
 local function clothingRemoval(action, class)

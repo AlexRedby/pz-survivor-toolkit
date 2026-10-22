@@ -1393,7 +1393,20 @@ do
         captured.armed,captured.restoreWorn=true,true;TidyFixture.sessions[player]=captured
         local owner=tail();local other=mixed and tail()or nil
         worn=removal and {[sock:getBodyLocation()]=sock}or {}
-        if kind=='held'then player.primary=sock end
+        if kind and kind:match('^held') then
+            -- Reach the overlap through native Wear, rather than directly seeding
+            -- a dual worn/held state. Java hands/worn storage remains a double.
+            worn={}
+            if kind=='held-primary' or kind=='held-both' then player.primary=sock end
+            if kind=='held-secondary' or kind=='held-both' or kind=='held-prefix' then player.secondary=sock end
+            assert(ISWearClothing:new(player,sock,50):complete())
+            assert(worn[sock:getBodyLocation()]==sock and (player.primary==sock or player.secondary==sock),
+                'native ordinary Wear did not retain the held clothing overlap')
+            writes=0
+            local other=item(inventory,14803);inventory.values[#inventory.values+1]=other
+            if not player.primary then player.primary=other end
+            if not player.secondary then player.secondary=other end
+        end
         owner:perform();if other then other:perform()end;tickTidy();tickTidy()
         local action=queue.queue[1]
         assert(action and action.Type==(removal and 'ISUnequipAction'or 'ISWearClothing')and action.item==sock,'actual P4 did not generate its exact clothing restore')
@@ -1408,13 +1421,25 @@ do
         return completed(self,action)
     end
     for _,removal in ipairs({false,true})do
+    for _,kind in ipairs(removal and {'plain','held-primary','held-secondary','held-both','held-prefix'} or {'plain'})do
     for _,mode in ipairs({'sp','mp-early','mp-late'})do
         for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
-            local sock,owner,action=restoreClothing(mixed,nil,removal)
+            local sock,owner,action=restoreClothing(mixed,kind,removal)
             local contract,id=definitions.inspect(action)
             assert(contract and id=='compat.tidy-equipment'and contract.items[sock:getID()]
-                and (contract.cancelOperation==false)==mixed,'ordinary clothing restore lacks shared-boundary ownership')
+                and contract.hands==player and (contract.cancelOperation==false)==mixed,'ordinary clothing restore lacks shared-boundary ownership')
             local following=tail();local removed=false;action.action={};queue.current=action
+            local syncs=player.equipSyncs or 0
+            if kind=='held-prefix' then
+                -- The native fixture verifies P4's earlier hand-restoration
+                -- producer. Its hand storage effect must not revoke adoption.
+                player.secondary=item(inventory,14804)
+                inventory.values[#inventory.values+1]=player.secondary
+                assert(select(2,definitions.inspect(action))=='compat.tidy-equipment',
+                    'earlier hand restoration revoked ordinary worn cleanup')
+            end
+            local expectedPrimary=player.primary~=sock and player.primary or nil
+            local expectedSecondary=player.secondary~=sock and player.secondary or nil
             player.getCharacterActions=function()return list(removed and {}or{action.action})end
             isClient=function()return mode~='sp'end
             if cancelled then operations.invalidate(owner.toolkitQueueOperation)end
@@ -1427,8 +1452,12 @@ do
                 assert(writes==0 and (worn[sock:getBodyLocation()]==sock)==removal,'SP clothing effect ran before native complete')
                 assert(lifecycle.begin(action,'complete'));assert(action:complete());lifecycle.finish(action,'complete',true)
             elseif mode=='mp-late'then assert(action:complete())end
-            assert(writes==1 and (worn[sock:getBodyLocation()]==sock)==not removal and sock:getContainer()==inventory,
+            assert(writes==1 and (worn[sock:getBodyLocation()]==sock)==not removal and sock:getContainer()==inventory and inventory:getItemById(sock:getID())==sock,
                 'native clothing effect lost its exact slot/item or ran twice')
+            if removal then
+                assert(player.primary==expectedPrimary and player.secondary==expectedSecondary and player.equipSyncs==syncs+1,
+                    'ordinary worn/held removal suppressed or repeated native hand synchronization')
+            end
             assert(lifecycle.flush(queue)=='waiting','clothing restore ignored native removal')
             removed=true
             assert(lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil,
@@ -1438,7 +1467,8 @@ do
         end end
     end
     end
-    assert(callbacks==24,'ordinary clothing wear/removal boundary missed a single/mixed/cancel/MP-order combination')
+    end
+    assert(callbacks==72,'ordinary clothing wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
     queue.onCompleted=completed
     for _,field in ipairs({'fromHotbar','clothingAction','stopOnWalk','stopOnRun','item','onCompleteFunc','start'})do
         local sock,_,action=restoreClothing(true)
@@ -1486,7 +1516,7 @@ do
         assert(not definitions.inspect(action),'worn removal accepted changed '..field)
         action[field]=original;assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
     end
-    for _,kind in ipairs({'bag','hat','full-hat','primary','wearable','wearable-tag','attached','heavy','broken','activated','held'})do
+    for _,kind in ipairs({'bag','hat','full-hat','primary','wearable','wearable-tag','attached','heavy','broken','activated'})do
         local _,_,action=restoreClothing(true,kind,true)
         assert(select(2,definitions.inspect(action))=='compat.selected-chains','worn removal migration expanded into '..kind)
     end
@@ -1525,10 +1555,12 @@ do
         lateCartProof.unequipConstructors[methods.new],lateCartProof.unequipConstructors[wrapped.new]=true,true
         lateCartProof.unequipLatest=wrapped
         ISUnequipAction.new,ISUnequipAction.complete=wrapped.new,wrapped.complete
+        for _,kind in ipairs({'plain','held-secondary'})do
         for _,mode in ipairs({'sp','mp-early','mp-late'})do
-            local sock,_,action=restoreClothing(true,nil,true)
+            local sock,_,action=restoreClothing(true,kind,true)
             assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','audited non-cart late wrapper lost worn cleanup ownership')
             local following=tail();local removed=false;action.action={};queue.current=action
+            local primary,syncs=player.primary,player.equipSyncs or 0
             player.getCharacterActions=function()return list(removed and {}or{action.action})end
             isClient=function()return mode~='sp'end
             if mode=='mp-early'then action:complete()end
@@ -1537,9 +1569,11 @@ do
             if mode=='sp'then
                 assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
             elseif mode=='mp-late'then action:complete()end
-            assert(writes==1 and not worn[sock:getBodyLocation()]and sock:getContainer()==inventory)
+            assert(writes==1 and not worn[sock:getBodyLocation()]and sock:getContainer()==inventory
+                and player.primary==primary and player.secondary==nil and player.equipSyncs==syncs+1)
             removed=true;assert(lifecycle.flush(queue)=='completed'and queue.current==following)
             isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
+        end
         end
         local _,_,action=restoreClothing(true,nil,true)
         lateCartProof.enabled=false;assert(not definitions.inspect(action),'changed late source proof retained worn removal permissions')

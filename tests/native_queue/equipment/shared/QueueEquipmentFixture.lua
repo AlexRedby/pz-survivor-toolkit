@@ -220,6 +220,7 @@ function Fixture.verify(state,mode,checkpoint)
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
+ if Clothing.overlap(state)then secondary=state.clothingSocks end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,'native final hand identities differ')
  if state.id=='bag-capacity' then
   state.expectedWorn[state.location]=nil
@@ -358,6 +359,7 @@ function Fixture.settled(state,mode,checkpoint)
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
+ if Clothing.overlap(state)then secondary=state.clothingSocks end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
  for _,book in ipairs(checkpoint and {state.front} or {state.front,state.tail}) do if book:getAlreadyReadPages()~=book:getNumberOfPages() then return false end end
  if state.bat and state.bat:getContainer()~=(cancelled and state.source or state.root) then return false end

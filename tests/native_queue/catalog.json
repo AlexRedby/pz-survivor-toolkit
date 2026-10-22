@@ -1063,6 +1063,23 @@
           ]
         },
         {
+          "id": "tidy-clothing-overlap",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
           "id": "tidy-hotbar",
           "producer": "inventory",
           "capability": "effect",

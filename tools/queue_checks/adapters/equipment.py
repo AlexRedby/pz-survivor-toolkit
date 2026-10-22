@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
 HOTBAR_CASES = {
     'tidy-hotbar': dict(fullType='Base.Shotgun', slotType='Back', model='Rifle On Back with Bag', twoHands=True),
     'tidy-hotbar-holster-left': dict(fullType='Base.Pistol', slotType='HolsterLeft', model='Holster Left', twoHands=False),
@@ -15,7 +15,7 @@ HOTBAR_CASES = {
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
@@ -82,6 +82,15 @@ SCENARIO_ACTIONS = {
         'checks': {
             'restore-clothing': {'tidy-clothing-remove': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
             'server-authority': {'tidy-clothing-remove': {'authoritative': True}},
+        },
+    },
+    'tidy-clothing-overlap': {
+        'scope': 'Bounded native secondary Equip socks, ordinary Wear and unchanged CutHair constructors produce the same exact held/worn socks; real P4 restores screwdriver before worn removal. Exact initial/final hands, root, source order, generic native receipts and independent tail; no UI explicit-intent coverage implied.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {'tidy-clothing-overlap': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'restore-hands': {'tidy-clothing-overlap': {'equipmentMatches': True, 'postprocessingVerified': True}},
+            'server-authority': {'tidy-clothing-overlap': {'authoritative': True}},
         },
     },
 }
@@ -286,8 +295,8 @@ def verify(root, selection, catalog):
             issues.extend(_verify_tidy_group(result, selection, multi=row['id'] == 'tidy-multigroup'))
         if row.get('id') in HOTBAR_CASES:
             issues.extend(_verify_tidy_hotbar(result, selection, row['id']))
-        if row.get('id') in ('tidy-clothing', 'tidy-clothing-remove'):
-            issues.extend(_verify_tidy_clothing(result, selection, remove=row['id'] == 'tidy-clothing-remove'))
+        if row.get('id') in CLOTHING_CASES:
+            issues.extend(_verify_tidy_clothing(result, selection, remove=row['id'] != 'tidy-clothing', overlap=row['id'] == 'tidy-clothing-overlap'))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),
                          'reason': row.get('reason'), 'outcome': result})
     ends = [row for row in records if row['event'] == 'complete']
@@ -307,7 +316,7 @@ def verify(root, selection, catalog):
             if type(item) is not int or restores != [(str(item), 'true')]:
                 issues.append('Exact borrowed floor item did not complete native server placement once')
         group_cases = [case for case in selection['cases'] if case in ('tidy-group', 'tidy-multigroup')]
-        clothing_cases = [case for case in selection['cases'] if case in ('tidy-clothing', 'tidy-clothing-remove')]
+        clothing_cases = [case for case in selection['cases'] if case in CLOTHING_CASES]
         if any(case in HOTBAR_CASES for case in selection['cases']):
             import json
             markers = [line.split('[EQUIPMENT_TEST] HOTBAR_AUTHORITY ', 1)[1].strip()
@@ -335,7 +344,7 @@ def verify(root, selection, catalog):
             for case in clothing_cases:
                 value = next((row.get('outcome', {}).get('tidyClothing') for row in cases if row.get('id') == case), {})
                 value = value if isinstance(value, dict) else {}
-                expected.append({key: value.get(key) for key in CLOTHING_EFFECT_KEYS})
+                expected.append({key: value.get(key) for key in clothing_effect_keys(case)})
             try:
                 authority = [json.loads(marker) for marker in markers]
             except (ValueError, TypeError):
@@ -420,17 +429,26 @@ def _verify_tidy_hotbar(result, selection, case):
     return []
 
 
+CLOTHING_CASES = ('tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap')
+CLOTHING_OVERLAP_EFFECT_KEYS = {'primary', 'secondary', 'originalSecondary'}
+
+
+def clothing_effect_keys(case):
+    return CLOTHING_EFFECT_KEYS | (CLOTHING_OVERLAP_EFFECT_KEYS if case == 'tidy-clothing-overlap' else set())
+
+
 CLOTHING_EFFECT_KEYS = {'id', 'fullType', 'bodyLocation', 'container', 'worn', 'producer', 'producerCompleted',
                         'hairUnchanged', 'hairStyle', 'unrelatedHandsPreserved'}
 
 
-def _verify_tidy_clothing(result, selection, remove=False):
+def _verify_tidy_clothing(result, selection, remove=False, overlap=False):
     value, checkpoint = result.get('tidyClothing'), result.get('clothingCheckpoint')
     tidy = 'P4TidyUpMeister' in selection['mods']
-    expected_keys = CLOTHING_EFFECT_KEYS | {'nativeGenerated', 'authoritativeRestore', 'sharedCompletion', 'unrelatedTailPreserved',
+    effect_keys = CLOTHING_EFFECT_KEYS | (CLOTHING_OVERLAP_EFFECT_KEYS if overlap else set())
+    expected_keys = effect_keys | ({'overlap'} if overlap else set()) | {'nativeGenerated', 'authoritativeRestore', 'sharedCompletion', 'unrelatedTailPreserved',
                                            'sourceSession', 'sourceCompleted'}
     if (not isinstance(value, dict) or set(value) != expected_keys
-            or not isinstance(checkpoint, dict) or set(checkpoint) != CLOTHING_EFFECT_KEYS):
+            or not isinstance(checkpoint, dict) or set(checkpoint) != effect_keys):
         return ['P4 clothing exact effect/checkpoint evidence missing']
     expected = dict(fullType='Base.Socks_Ankle', container='root', worn=(not tidy if remove else tidy), producer='ISCutHair', producerCompleted=True,
                     hairUnchanged=True, unrelatedHandsPreserved=True, nativeGenerated=int(tidy),
@@ -444,8 +462,10 @@ def _verify_tidy_clothing(result, selection, remove=False):
     session = value.get('sourceSession')
     if (tidy and (type(session) is not int or session <= 0)) or (not tidy and session is not False):
         return ['P4 clothing source-owned restore session evidence missing']
-    before = {key: value[key] for key in CLOTHING_EFFECT_KEYS}
+    before = {key: value[key] for key in effect_keys}
     before['worn'] = remove
+    if overlap:
+        before['secondary'] = value['id']
     if checkpoint != before or any(type(checkpoint.get(key)) is not type(value) for key, value in before.items()):
         return ['P4 clothing checkpoint differs from the exact restored socks identity']
     count = int(tidy and selection['mode'] == 'toolkit')
@@ -454,6 +474,32 @@ def _verify_tidy_clothing(result, selection, remove=False):
     if (not isinstance(completion, dict) or completion != expected_completion
             or any(type(item) is not int for item in completion.values())):
         return ['P4 clothing shared completion evidence differs']
+    if overlap:
+        primary, secondary = value.get('primary'), value.get('originalSecondary')
+        if (any(type(item) is not int or item == -1 for item in (primary, secondary))
+                or len({primary, secondary, value['id']}) != 3
+                or value.get('secondary') != (secondary if tidy else value['id'])):
+            return ['P4 overlap exact original/final hands differ']
+        proof = value.get('overlap')
+        cleanup = [dict(kind='ISEquipWeaponAction', id=secondary), dict(kind='P4RestoreAction', id=secondary),
+                   dict(kind='ISUnequipAction', id=value['id'])] if tidy else []
+        acknowledgements = [dict(kind='ISEquipWeaponAction', id=value['id']), dict(kind='ISWearClothing', id=value['id']),
+                            dict(kind='ISCutHair', id=False)] + cleanup
+        acknowledgements = [dict(item, state='completed') for item in acknowledgements] if selection['kind'] == 'mp' else []
+        hands = dict(perform=2*count, complete=2*count if selection['kind'] == 'sp' else 0, flush=2*count,
+                     legacy=0, equip=count, activation=count, unequip=0)
+        expected_proof = dict(intermediate=dict(primary=primary, secondary=value['id'], worn=value['id'], container='root'),
+                              cleanup=cleanup, acknowledgements=acknowledgements, sharedHands=hands)
+        def strict_equal(actual, wanted):
+            if type(actual) is not type(wanted):
+                return False
+            if isinstance(wanted, dict):
+                return actual.keys() == wanted.keys() and all(strict_equal(actual[key], item) for key, item in wanted.items())
+            if isinstance(wanted, list):
+                return len(actual) == len(wanted) and all(strict_equal(a, b) for a, b in zip(actual, wanted))
+            return actual == wanted
+        if not strict_equal(proof, expected_proof):
+            return ['P4 overlap transition/cleanup order/native receipts/shared hands evidence differs']
     return []
 
 
