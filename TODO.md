@@ -71,10 +71,11 @@
 
 - [ ] Finish SP `container-equip` captures for female/full and male/empty with `cart_entry_contact_repro`, explicit sex/load, native Walk before the public inventory callback and unchanged action duration. The selected male/full and female/empty captures cover the first held frame and one-second tail; retain the exact settled stance, native legs, closed grip and existing Blender-authored outgoing-Loot curve.
 - [ ] Complete the new `cart_inventory_equip` menu-Host bank for female/empty and the male/full control. Require the exact ActionManager owner/transaction server-result receipt, native perform, authoritative unchanged cart/cargo, observer ACK and both finalized recordings. The initial owner/observer grounding pairs are measurable, but the earlier run failed an SP-style completion assertion; the corrected protocol still needs a fresh complete run.
+- [ ] Reproduce and investigate the Host observer's left-trouser contact during native Walk/CartWalk -> CartIdle after inventory equip. Three unique source-geometry contact times in the earlier failed female/empty capture occur 381–415 ms after the first held pair, after Loot has retired; confirm them in a complete source-verified Host run before changing the correction. Preserve settled stance, closed grip, native legs and the existing owner Loot envelope.
 - [ ] Review adjacent held start/stop and the temporary cart excursion across the remaining variants. Keep the initial attachment correction separate from the Blender clearance envelope and independent direct candidate; do not combine them without evidence.
 - [ ] Close the remaining 2–5 ms native lifecycle-boundary evidence gaps and review the transition in a close native-camera view. Sampled source geometry and Blender replay do not establish every rendered frame, actual garment GPU vertices or full-pack clearance. Keep wrong-side world-approach routing separate.
 
-The remaining live runs need sufficient free disk space for the native runner's unchanged copy/runtime reserves. Do not lower those reserves or replace unavailable Host evidence with protocol self-checks.
+The remaining live runs need successful owned-window discovery by AeroSpace. Current awake-display attempts stop before the fixture; do not use current-desktop fallback to hide this failure or replace unavailable native evidence with protocol self-checks.
 
 # Root fix for the action queue
 
