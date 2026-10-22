@@ -77,7 +77,8 @@ ISTimedActionQueue.clear=function(character)
 end
 ISBaseTimedAction.begin = function(self)
     self.action = {forceComplete = function() end, isStarted = function() return true end,
-        finished = function() return false end, isForceComplete = function() return false end, getJobDelta = function() return 0 end}
+        finished = function() return false end, isForceComplete = function() return false end, getJobDelta = function() return 0 end,
+        stopTimedActionAnim=function()end,setLoopedAction=function()end}
 end
 local function nativeClass(name)
     local class = ISBaseTimedAction:derive(name)
@@ -101,12 +102,22 @@ ISInventoryTransferAction.setAllowMissingItems = function(self, value) self.allo
 ISInventoryTransferAction.setOnComplete = function(self, callback, ...)
     self.onCompleteFunc, self.onCompleteArgs = callback, {...}
 end
-ISInventoryTransferAction.canMergeAction = function() return false end
+local nativeTransferPath=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
+local nativeTransferSource=read(nativeTransferPath)
+assert(loadstring(assert(nativeTransferSource:match('(function ISInventoryTransferAction:canMergeAction.-)\n%-%- This is to support returning')),
+    '@'..nativeTransferPath))()
+local groupedNativePerform=assert(loadstring(assert(nativeTransferSource:match('(function ISInventoryTransferAction:perform%(%).-\nend)'))
+    :gsub('function ISInventoryTransferAction:perform%(%)','return function(self)',1),'@'..nativeTransferPath))()
+ISInventoryTransferAction.transferItem=function(self,value) value.container=self.destContainer end
+for _,name in ipairs({'playTransferCompleteSound','playSourceContainerCloseSound','playDestContainerCloseSound','stopLoopingSound'})do
+    ISInventoryTransferAction[name]=function()end
+end
 ISInventoryTransferAction.stop = function(self) return ISBaseTimedAction.stop(self) end
 ISInventoryTransferAction.getNotFullFloorSquare = function() end
 local nativeFloorHelper=ISInventoryTransferAction.getNotFullFloorSquare
 local transferHelperAdopted=false
 ISInventoryTransferAction.perform = function(self)
+    if self.fixtureNativeGroup then return groupedNativePerform(self) end
     if self.fixtureRebound then self.item=self.fixtureRebound end
     if not self.fixtureDelay then self.item.container = self.destContainer end
     if self.onCompleteFunc then self.onCompleteFunc(unpack(self.onCompleteArgs)) end
@@ -1351,7 +1362,7 @@ local tidyBagOwner=item(inventory,40); tidyBagOwner.class='InventoryContainer'
 local tidyBag={class='ItemContainer',getParent=function() end,getType=function() return 'bag' end,
     getContainingItem=function() return tidyBagOwner end}
 getPlayerLoot=function() return {backpacks={{inventory=tidyBag}}} end
-local function tidyTasks(shared, insertion, queueEnabled)
+local function tidyTasks(shared, insertion, queueEnabled, sameOwner)
     reset(); doNotReequip=false; player.primary=nil
     if queueEnabled~=nil then enabled=queueEnabled end
     local first,second=item(tidyBag,41),item(tidyBag,42)
@@ -1360,7 +1371,8 @@ local function tidyTasks(shared, insertion, queueEnabled)
         firstPickup=ISInventoryTransferAction:new(player,first,tidyBag,inventory); ISTimedActionQueue.add(firstPickup)
         firstRead=ISReadABook:new(player,first); ISTimedActionQueue.add(firstRead)
     end)
-    operations.run(function()
+    local secondOperation=sameOwner and function(callback) return operations.runWith(firstRead.toolkitQueueOperation,callback) end or operations.run
+    secondOperation(function()
         if not shared then secondPickup=ISInventoryTransferAction:new(player,second,tidyBag,inventory); ISTimedActionQueue.add(secondPickup) end
         secondRead=ISReadABook:new(player,shared and first or second); ISTimedActionQueue.add(secondRead)
     end)
@@ -1386,6 +1398,112 @@ local function tidyTasks(shared, insertion, queueEnabled)
 end
 local function findReturn(value)
     for _,action in ipairs(queue.queue) do if action.Type=='ISInventoryTransferAction' and action.item==value then return action end end
+end
+-- Disabling native merge boundaries cannot lend an older source record to another task.
+do
+    local previousRound,previousOnline,previousVehiclePart=round,player.getOnlineID,inventory.getVehiclePart
+    local previousExists,previousLookup=tidyBag.isExistYet,tidyBag.getItemById
+    local actualPolicy
+    round=function(value)return value end
+    player.getOnlineID=function()return 101 end
+    inventory.getVehiclePart=function()end
+    tidyBag.isExistYet=function()return true end
+    for _,mode in ipairs({'same-owner','foreign','foreign-retired','endpoint','callback','removed-not-wiped','wash-foreign'})do
+        local first,second
+        if mode=='wash-foreign'then
+            reset();first=item(bag,27001)
+            local pickup=wash(first);pickup:perform()
+            local washing=queue.queue[1];washing:perform();washing:complete()
+            local returning=queue.queue[1]
+            assert(returning.Type=='ISInventoryTransferAction'and not returning.onCompleteFunc
+                and compat.fixtureRegistries[1][returning].id=='WashFix',
+                'actual Wash callback must enqueue its own merge-compatible native return')
+            second=item(inventory,27002)
+            local native=ISInventoryTransferAction:new(player,second,inventory,bag)
+            native:setAllowMissingItems(true);ISTimedActionQueue.add(native)
+        else first,second=tidyTasks(false,nil,true,mode=='same-owner');tickTidy();tickTidy() end
+        tidyBag.getItemById=function(_,id)
+            for _,value in ipairs({first,second})do if value:getID()==id and value.container==tidyBag then return value end end
+        end
+        local action,child=queue.queue[1],queue.queue[2]
+        assert(action and child and findReturn(first) and findReturn(second),'fixture must queue both native returns')
+        local childItem=child.item
+        local token,childToken=action.toolkitQueueOperation,child.toolkitQueueOperation
+        assert((token==childToken)==(mode=='same-owner'),'fixture must preserve the requested native operation owners: '..mode)
+        for _,value in ipairs({first,second})do
+            value.getWeight=function()return 0.05 end
+            value.getUnequippedWeight=value.getWeight
+            value.setJobDelta=function()end
+            value.getIsCraftingConsumed=function()return false end
+        end
+        for _,value in ipairs({action,child})do
+            value.queueList={{items={value.item},time=10,type=value.item:getFullType()}}
+            value.maxTime,value.fixtureNativeGroup=10,true
+        end
+        local destination,callback=child.destContainer,child.onCompleteFunc
+        if mode=='endpoint'then child.destContainer=inventory
+        elseif mode=='callback'then child.onCompleteFunc=function()end end
+        enabled=false
+        if mode=='same-owner'then
+            -- Native checkQueueList is a no-op for an action outside its queue.
+            -- The observer must stay installed for the following real merges.
+            local rows=queue.queue;queue.queue={};action:checkQueueList();queue.queue=rows
+        end
+        if mode=='foreign-retired'or mode=='wash-foreign'then
+            PZSurvivorToolkit.ActionQueue.updateOperationState(queue);compat.prune()
+            assert(token.toolkitCancelled and not compat.fixtureRegistries[2][player],
+                'disabled queue retirement must precede the mixed native merge')
+        end
+        local wipe=table.wipe
+        if mode=='removed-not-wiped'then table.wipe=function()end end
+        action:checkQueueList()
+        table.wipe=wipe
+        local merged=mode~='endpoint'and mode~='callback'
+        assert((queue:indexOf(child)==-1)==merged,'native merge must respect the '..mode..' barrier')
+        if merged then
+            assert(action.queueList[1].items[2]==childItem and action.toolkitQueueOperation==token,
+                'native merge must retain the exact foreign member and original executor token')
+            assert((next(child)==nil)==(mode~='removed-not-wiped'),'native child wipe proof changed')
+        else child.destContainer,child.onCompleteFunc=destination,callback end
+        enabled=true
+        local contract,id=definitions.inspect(action)
+        local mixed=mode=='foreign'or mode=='foreign-retired'or mode=='wash-foreign'
+        assert((contract==nil)==mixed,'source mixed-owner edit rights survived '..mode..' native merge')
+        if not mixed then assert(id=='compat.tidy-transfers'and contract.interrupt=='audited-stop',
+            'unmerged/same-owner P4 return must retain its audited contract') end
+        local oldPolicy=PZSurvivorToolkit.ActionQueuePolicy
+        local oldBulk=PZSurvivorToolkit.BulkActions
+        PZSurvivorToolkit.BulkActions={isGuardedTransfer=function()return false end}
+        if not actualPolicy then
+            local entries,types={},{}
+            for key,value in pairs(definitions.entries)do entries[key]=value end
+            for key,values in pairs(definitions.behaviorTypes)do
+                types[key]={};for i,value in ipairs(values)do types[key][i]=value end
+            end
+            actualPolicy=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
+            -- Keep this fixture's deliberate native input contracts; exercise
+            -- the real policy decisions without registering a second owner.
+            for key in pairs(definitions.entries)do definitions.entries[key]=entries[key] end
+            for key in pairs(definitions.behaviorTypes)do definitions.behaviorTypes[key]=types[key] end
+        else PZSurvivorToolkit.ActionQueuePolicy=actualPolicy end
+        action:begin();queue.current=action
+        if mixed then
+            assert(actualPolicy.cancelReason(queue,action) and actualPolicy.cancelOperationReason(queue,action),
+                'actual Policy must deny cancellation through an old owner of a merged source return')
+        elseif mode=='same-owner'then
+            assert(not actualPolicy.cancelReason(queue,action) and not actualPolicy.cancelOperationReason(queue,action),
+                'actual Policy must retain same-owner P4 cancellation rights')
+        end
+        PZSurvivorToolkit.ActionQueuePolicy=oldPolicy;PZSurvivorToolkit.BulkActions=oldBulk
+        for _,value in ipairs(queue.queue)do value:begin()end
+        while queue.queue[1]do queue.queue[1]:perform()end
+        tickTidy();tickTidy()
+        assert(first.container==destination and second.container==destination and not TidyFixture.restoring[player]
+            and not TidyFixture.sessions[player],
+            'native grouped P4 effects and cleanup must finish after '..mode..' ownership validation')
+    end
+    round,player.getOnlineID,inventory.getVehiclePart=previousRound,previousOnline,previousVehiclePart
+    tidyBag.isExistYet,tidyBag.getItemById=previousExists,previousLookup
 end
 -- The native boundary owns only audited Tidy transfers, including completion after cancellation.
 do

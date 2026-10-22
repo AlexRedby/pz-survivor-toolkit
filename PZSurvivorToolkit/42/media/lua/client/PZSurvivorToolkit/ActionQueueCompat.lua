@@ -504,6 +504,9 @@ end
 
 local function inspect(action)
     local record = records[action]
+    -- Off-mode native merging may absorb a different operation. Its native
+    -- completion remains valid, but the old exclusive edit contract does not.
+    if record.mixedTransferOwners then return end
     local result = {items = {}, itemTypes = {}, targets = {}, callbacksSafe = true,
         cancelWaiting = true, interrupt = "audited-stop", preparationFinish = true}
     for _, field in ipairs({"item", "primary", "secondary", "baseItem", "usedItem"}) do
@@ -980,7 +983,7 @@ function Compat.install()
             if not ok then classes[id] = {} end
         end
     end
-    if ready.P4TidyUpMeister and transferSourceSafe then
+    if transferSourceSafe then
         local previous=ISInventoryTransferAction.checkQueueList
         local function pickupScope(action)
             return action and sessions[action.character]
@@ -996,17 +999,54 @@ function Compat.install()
                 if pickupGuard(action) then Settlement.departure(session, action) end
             end
             local record = records[action]
+            if record and record.mergeCandidates then
+                local queue = ISTimedActionQueue.queues[action.character]
+                for _,candidate in ipairs(record.mergeCandidates) do
+                    local wiped = true
+                    for _ in pairs(candidate.action) do wiped = false; break end
+                    if wiped and queue and queue:indexOf(candidate.action) == -1 then
+                        for _,group in ipairs(action.queueList or {}) do
+                            for _,item in ipairs(group.items or {}) do
+                                if instanceof(item, "InventoryItem") and item:getID() == candidate.id
+                                    and item:getFullType() == candidate.fullType then
+                                    record.mixedTransferOwners = true
+                                end
+                            end
+                        end
+                    end
+                end
+                record.mergeCandidates = nil
+            end
             if record and record.id == "P4TidyUpMeister" and record.obligation then
                 Settlement.refreshReturn(action, record.obligation)
             end
         end, function(action)
             local record = records[action]
             local session = pickupScope(action)
-            return record and record.id == "P4TidyUpMeister" and record.obligation
-                and Settlement.returnMatches(action, record.obligation)
+            return record and record.class == ISInventoryTransferAction and matches(action, record)
                 or session and Settlement.pickupMatches(session, action)
         end, {
             merging = function(action)
+                local record = records[action]
+                local queue = ISTimedActionQueue.queues[action.character]
+                if record and record.class == ISInventoryTransferAction and not Toolkit.Settings.actionQueue()
+                    and matches(action, record) and queue then
+                    local candidates = {}
+                    -- Capture identity and token before native checkQueueList wipes
+                    -- accepted children. Rejected or merely removed rows grant no proof.
+                    local first = queue:indexOf(action)
+                    for index = first > 0 and first + 1 or 1, first > 0 and #queue.queue or 0 do
+                        local child = queue.queue[index]
+                        if child.Type ~= action.Type or child.srcContainer ~= action.srcContainer
+                            or child.destContainer ~= action.destContainer or child.onCompleteFunc or action.onCompleteFunc
+                            or child.allowMissingItems ~= action.allowMissingItems then break end
+                        if child.toolkitQueueOperation ~= record.token and instanceof(child.item, "InventoryItem") then
+                            candidates[#candidates + 1] = {action = child, id = child.item:getID(),
+                                fullType = child.item:getFullType()}
+                        end
+                    end
+                    record.mergeCandidates = candidates
+                end
                 local session = pickupScope(action)
                 return session and pickupGuard(action) and Settlement.beforePickupMerge(session, action, pickupGuard)
             end,

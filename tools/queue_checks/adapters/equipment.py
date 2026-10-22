@@ -311,12 +311,12 @@ def _verify_tidy_group(result, selection, multi=False):
     total = 4 if multi else 2
     if not isinstance(group, dict) or set(group) != keys:
         return ['Bounded P4 native group evidence missing']
-    expected = dict(nativeGroups=((3 if multi else 1) if enabled else total) if tidy else 0, nativeItems=total if tidy else 0,
+    expected = dict(nativeGroups=(3 if multi else 1) if tidy else 0, nativeItems=total if tidy else 0,
                     obligationGroups=int(tidy and enabled), unrelatedTailPreserved=True)
     if any(type(group.get(k)) is not type(v) or group.get(k) != v for k, v in expected.items()):
         return ['Bounded P4 native group counts or unrelated tail differ']
     sizes = group.get('groupSizes')
-    expected_sizes = (([1, 1, 2] if multi else [2]) if enabled else [1]*total) if tidy else []
+    expected_sizes = ([1, 1, 2] if multi else [2]) if tidy else []
     if sizes != expected_sizes:
         return ['P4 native group layout differs from observed mode']
     if not isinstance(sizes, list) or any(type(size) is not int for size in sizes):
@@ -364,7 +364,7 @@ def _verify_tidy_group(result, selection, multi=False):
         if (sum(item['fullType'] == 'Base.Nails' for item in items) != 2
                 or sum(item['fullType'] == 'Base.Hammer' for item in items) != 2
                 or type(group.get('executorCount')) is not int
-                or group['executorCount'] != ((1 if enabled else total) if tidy else 0)
+                or group['executorCount'] != (1 if tidy else 0)
                 or group.get('sameNativeExecutor') is not True):
             return ['P4 multi-group executor or exact light/heavy members differ']
         attempts = group.get('attempts')

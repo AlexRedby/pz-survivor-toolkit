@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.218
+
+- **Action queue:** Preserve native transfer batching when the queue is disabled, including P4 tool returns and compatible cart transfers. Keep operation ownership isolation while the queue is enabled, native endpoint/callback safeguards and required cleanup after cancellation. Re-enabling the queue does not restore stale exclusive edit rights over adapter transfers that absorbed another operation while it was disabled.
+
 ### 0.1.217
 
 - **Cart animation:** Use a common root frame for the cart locomotion clips and match their ordinary transition times. Preserve native body and leg poses, stride timing and deferred movement while removing movement introduced by incompatible root frames and overlapping blend weights.

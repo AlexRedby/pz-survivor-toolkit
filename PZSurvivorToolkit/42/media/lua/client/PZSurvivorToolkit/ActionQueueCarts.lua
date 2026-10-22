@@ -268,7 +268,8 @@ function Carts.install()
     if filename(network.sendToServer) ~= "Network.lua" then return false end
     local merge = class.canMergeAction
     class.canMergeAction = function(action, other)
-        if other and action.toolkitQueueOperation ~= other.toolkitQueueOperation then return false end
+        if Toolkit.Settings.actionQueue() and other
+            and action.toolkitQueueOperation ~= other.toolkitQueueOperation then return false end
         return merge(action, other)
     end
     for name, value in pairs(class) do methods[name] = value end

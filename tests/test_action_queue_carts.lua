@@ -287,6 +287,54 @@ pickup:perform()
 assert(#moves==2 and moves[1]==nail1:getID() and moves[2]==nail2:getID() and flushes==1 and refreshes==1
     and inv:contains(nail1) and inv:contains(nail2) and inside1:contains(nail3)
     and q.current==separate and q.queue[2]==waiting,'actual SP cart perform consumed the later operation or lost native effects/tail')
+-- Native batching follows the live queue setting, including already queued work.
+do
+    local setting=PZSurvivorToolkit.Settings.actionQueue
+    local enabled=true
+    PZSurvivorToolkit.Settings.actionQueue=function() return enabled end
+    local firstItem,secondItem=item('Base.Nails',inside1),item('Base.Nails',inside1)
+    local first=transfer(firstItem,inside1,inv)
+    local second=transfer(secondItem,inside1,inv)
+    local firstOwner,secondOwner=first.toolkitQueueOperation,second.toolkitQueueOperation
+    local tail=book()
+    local function batch()
+        return ISCartTransferAction.collectBatch(first,{second,tail})
+    end
+    local batchItems,merged=batch()
+    assert(#batchItems==1 and merged==0,'enabled carts must retain different queued operation owners')
+    second.toolkitQueueOperation=firstOwner
+    batchItems,merged=batch()
+    assert(#batchItems==2 and merged==1,'enabled carts must still batch within one operation')
+    second.toolkitQueueOperation=secondOwner
+    enabled=false
+    batchItems,merged=batch()
+    assert(#batchItems==2 and merged==1 and batchItems[1]==firstItem and batchItems[2]==secondItem,
+        'disabled carts must batch compatible queued transfers across operation owners')
+    for _,field in ipairs({'srcContainer','destContainer','onCompleteFunc','allowMissingItems'}) do
+        local previous=second[field]
+        if field=='onCompleteFunc' then second[field]=function() end
+        elseif field=='allowMissingItems' then second[field]=not first[field]
+        else second[field]={} end
+        assert(not nativeMerge(first,second),'upstream fixture must retain '..field..' merge barrier')
+        batchItems,merged=batch()
+        assert(#batchItems==1 and merged==0,'disabled carts bypassed upstream '..field..' merge barrier')
+        second[field]=previous
+    end
+    enabled=true
+    batchItems,merged=batch()
+    assert(#batchItems==1 and merged==0,'re-enabling carts must restore queued operation isolation')
+    enabled=false
+    local moveCount,flushCount,refreshCount=#moves,flushes,refreshes
+    q=f.queue(first,second,tail)
+    first:perform()
+    assert(#moves==moveCount+2 and moves[moveCount+1]==firstItem:getID() and moves[moveCount+2]==secondItem:getID()
+        and inv:contains(firstItem) and inv:contains(secondItem)
+        and flushes==flushCount+1 and refreshes==refreshCount+1 and q.current==tail and #q.queue==1,
+        'disabled SP cart perform lost native batch effects or unrelated reading tail')
+    assert(next(second)==nil and first.toolkitQueueOperation==firstOwner and firstOwner~=secondOwner,
+        'native cart merge must wipe its child without replacing the executor operation owner')
+    PZSurvivorToolkit.Settings.actionQueue=setting
+end
 -- MP sends exact IDs and advances natively; pending actions with no receipt remain protected.
 client=true
 local mp=transfer(nail3,inside1,inv);q=f.queue(mp,waiting);mp:begin()

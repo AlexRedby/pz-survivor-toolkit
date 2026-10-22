@@ -397,7 +397,8 @@ end
 
 local canMerge = ISInventoryTransferAction.canMergeAction
 local function operationCanMerge(action, following)
-    if following and action.toolkitQueueOperation ~= following.toolkitQueueOperation then return false end
+    if PZSurvivorToolkit.Settings.actionQueue() and following
+        and action.toolkitQueueOperation ~= following.toolkitQueueOperation then return false end
     return canMerge(action, following)
 end
 ISInventoryTransferAction.canMergeAction = operationCanMerge

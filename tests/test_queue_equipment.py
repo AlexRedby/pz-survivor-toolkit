@@ -60,8 +60,8 @@ class EquipmentTests(unittest.TestCase):
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
                 multi = case == 'tidy-multigroup'
                 items = [dict(id=i, fullType='Base.Nails' if i < 903 else 'Base.Hammer', container='worn-bag' if tidy else 'root') for i in ((901, 902, 903, 904) if multi else (901, 902))]
-                result['tidyGroup'] = dict(nativeGroups=((3 if multi else 1) if enabled else len(items)) if tidy else 0, nativeItems=len(items) if tidy else 0,
-                                           groupSizes=(([1, 1, 2] if multi else [2]) if enabled else [1]*len(items)) if tidy else [],
+                result['tidyGroup'] = dict(nativeGroups=(3 if multi else 1) if tidy else 0, nativeItems=len(items) if tidy else 0,
+                                           groupSizes=([1, 1, 2] if multi else [2]) if tidy else [],
                                            obligationGroups=int(tidy and enabled), unrelatedTailPreserved=True, items=items,
                                            completedItems=[dict(id=item['id'], fullType=item['fullType'], state='completed') for item in items] if tidy and enabled else [])
                 pickups = [dict(id=item['id'], fullType=item['fullType'], owner=1, shared=False, pickupAttempt=1,
@@ -79,7 +79,7 @@ class EquipmentTests(unittest.TestCase):
                                                  transaction=ordinal if self.selection['kind'] == 'mp' else 0,
                                                  authority='completed' if self.selection['kind'] == 'mp' else 'native',
                                                  items=[dict(id=item['id'], fullType=item['fullType'], state='completed') for item in members]))
-                    result['tidyGroup'].update(executorCount=((1 if enabled else 4) if tidy else 0),
+                    result['tidyGroup'].update(executorCount=(1 if tidy else 0),
                                                sameNativeExecutor=True, attempts=attempts)
             if case == 'floor-pickup':
                 result.update(floorPickup=True, pickupWorldRemoved=True)
@@ -440,7 +440,7 @@ class EquipmentTests(unittest.TestCase):
                     del rows[1]['outcome']['tidyGroup'][field]
                     self.assertTrue(self.verify(self.logs(rows))['issues'], field)
                 rows = self.records()
-                rows[1]['outcome']['tidyGroup']['groupSizes'] = [2, 2] if mode == 'toolkit' else [1, 1, 2]
+                rows[1]['outcome']['tidyGroup']['groupSizes'] = [2, 2] if mode == 'toolkit' else [1, 1, 1, 1]
                 self.assertTrue(self.verify(self.logs(rows))['issues'])
                 if mode == 'native':
                     continue
@@ -571,7 +571,7 @@ local function run(kind,fault)
    if item:getID()==id and item:getContainer()==self then return item end
   end
  end
- local groups={{items={items[3]}},{items={items[1],items[2]}},{items={items[4]}}}
+ local groups={{items={items[3]},time=50},{items={items[1],items[2]},time=5},{items={items[4]},time=50}}
  local present=true
  local player={getCharacterActions=function()return {contains=function()return present end}end}
  local action={character=player,item=items[3],srcContainer=inventory,destContainer=source,action={},toolkitQueueOperation={},queueList=groups}

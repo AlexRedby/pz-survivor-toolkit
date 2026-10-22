@@ -8,7 +8,8 @@ require = function(name)
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
 end
-PZSurvivorToolkit = {}
+local queueEnabled = true
+PZSurvivorToolkit = {Settings = {actionQueue = function() return queueEnabled end}}
 local function derive(self, name)
     local t = {Type = name, derive = derive}
     t.__index = t
@@ -162,6 +163,41 @@ ISInventoryTransferAction.checkQueueList(t1)
 for _ in pairs(t2) do error('merged action was not wiped') end
 assert(#q.queue == 2 and q.queue[2] == t3 and t3.item == item)
 
+-- Disabling the feature restores native coalescing without changing action tokens.
+-- Exercise the native removal/wipe path, then re-enable around the same executor.
+for _, barrier in ipairs({'none', 'source', 'destination', 'callback', 'allowMissing', 'type'}) do
+    reset()
+    local a, b, tail = transfer(), transfer(), action('IndependentTail')
+    a.item = {getWeight=function() return .01 end, getFullType=function() return 'Base.Nails' end}
+    b.item = {getWeight=function() return .01 end, getFullType=function() return 'Base.Nails' end}
+    a.queueList = {{items={a.item},time=10,type='Base.Nails'}}
+    ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(tail)
+    local aToken,bToken = a.toolkitQueueOperation,b.toolkitQueueOperation
+    assert(aToken~=bToken)
+    if barrier=='source' then b.srcContainer={}
+    elseif barrier=='destination' then b.destContainer={}
+    elseif barrier=='callback' then b.onCompleteFunc=function() end
+    elseif barrier=='allowMissing' then b.allowMissingItems=true
+    elseif barrier=='type' then b.Type='OtherAction' end
+    queueEnabled=false
+    assert(a.toolkitQueueOperation==aToken and b.toolkitQueueOperation==bToken)
+    ISInventoryTransferAction.checkQueueList(a)
+    if barrier=='none' then
+        assert(#q.queue==2 and q.queue[2]==tail and #a.queueList==1 and #a.queueList[1].items==2,
+            'off-mode did not preserve native lightweight grouping or independent tail')
+        for _ in pairs(b) do error('off-mode native merge did not wipe accepted child') end
+        queueEnabled=true
+        local c=transfer(); ISTimedActionQueue.add(c)
+        assert(not a:canMergeAction(c),'re-enabling allowed another operation into the existing executor')
+        assert(#a.queueList[1].items==2 and a.toolkitQueueOperation==aToken,
+            're-enabling must not rewrite already merged native groups or executor token')
+    else
+        assert(#q.queue==3 and q.queue[2]==b and b.toolkitQueueOperation==bToken,
+            'off-mode bypassed upstream '..barrier..' barrier')
+    end
+    queueEnabled=true
+end
+
 -- Opted-in continuations are one-shot, preserve token ownership and become opaque until finished.
 reset()
 local asyncToken = {}
@@ -182,11 +218,14 @@ assert(enqueue().toolkitQueueOperation ~= asyncToken, 'async scope restores afte
 local canceledToken = {}
 handle = operations.attachContinuation(canceledToken, player)
 operations.invalidate(canceledToken)
+queueEnabled=false
 operations.runContinuation(handle, function() error('cancelled callback') end)
 assert(not operations.isContinuationPending(canceledToken) and not operations.attachContinuation(canceledToken, player))
 local cleaned = false
 operations.runWith(canceledToken, function() cleaned = true end)
 assert(cleaned, 'native cleanup must not be suppressed by token cancellation')
+queueEnabled=true
+operations.runContinuation(handle, function() error('toggle revived cancelled callback') end)
 
 -- Explicit clear/reset invalidates old callbacks, including additions after a clear inside the callback.
 for _, target in ipairs({q, player}) do

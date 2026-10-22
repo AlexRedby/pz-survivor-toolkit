@@ -181,8 +181,16 @@ function Completion.observe(toolkit,selection)
      local total=0;for _ in pairs(seen) do total=total+1 end
      local multi=state.id=='tidy-multigroup'
      local expectedCount=multi and 4 or 2
-     if total~=(enabled and expectedCount or 1) then return 'native group omitted borrowed item' end
+     if total~=expectedCount then return 'native group omitted borrowed item' end
      groupNative[action]=ids
+     local times={}
+     for _,group in ipairs(groups) do
+      if type(group.time)~='number' or not (group.time>0 or isClient() and group.time==-1) then
+       return 'native group duration missing or shortened'
+      end
+      times[#times+1]=tostring(group.time)
+     end
+     print('[EQUIPMENT_TEST] GROUP_TIMING case='..state.id..' mode='..selection.mode..' times='..table.concat(times,','))
     else
      local original={};for _,values in ipairs(prior) do for _,id in ipairs(values) do original[id]=true end end
      for id in pairs(seen) do if not original[id] then return 'native continuation changed group membership' end end
@@ -191,7 +199,14 @@ function Completion.observe(toolkit,selection)
    local ok,problem=pcall(observe)
    if not ok or problem then groupFailure='P4 return group observation failed: '..tostring(problem) end
    print('[EQUIPMENT_TEST] GROUP_OBSERVED case='..state.id..' mode='..selection.mode..' groups='..tostring(action.queueList and #action.queueList)..' valid='..tostring(ok and not problem))
-  end)
+  end,nil,{begin=function(action)
+   if grouped() and isClient() and action.srcContainer==state.root and action.destContainer==state.source then
+    -- MP queues use -1 until the server supplies a transaction duration. Observe
+    -- it before native perform removes that transaction; do not retime the action.
+    print('[EQUIPMENT_TEST] GROUP_TRANSACTION_TIMING case='..state.id..' mode='..selection.mode
+     ..' transaction='..tostring(action.transactionId)..' duration='..tostring(getItemTransactionDuration(action.transactionId)))
+   end
+  end})
   groupObserverBound=true
  end
  settlement.captureEffect=function(action)
@@ -448,7 +463,7 @@ function Completion.observe(toolkit,selection)
   end
   local multi=state.id=='tidy-multigroup'
   local total=multi and 4 or 2
-  assert(groups==(tidy and (enabled and (multi and 3 or 1) or total) or 0),'P4 native return group count differs')
+  assert(groups==(tidy and (multi and 3 or 1) or 0),'P4 native return group count differs')
   assert(nativeItems==(tidy and total or 0),'P4 native groups omitted exact item')
   table.sort(sizes)
   assert(groupObligations==(tidy and enabled and 1 or 0),'P4 return obligation group count differs')
@@ -467,7 +482,7 @@ function Completion.observe(toolkit,selection)
    'bounded native pickup/return ownership evidence incomplete or active with queue disabled')
   local result={pickupOperations=pickupOperations,pickupItems=pickups,ownershipAtBegin=ownershipAtBegin,ownershipCompleted=ownershipCompleted,nativeGroups=groups,nativeItems=nativeItems,groupSizes=sizes,obligationGroups=groupObligations,completedItems=groupItems,items=items,unrelatedTailPreserved=true}
   if multi then
-   assert(executors==(tidy and (enabled and 1 or 4) or 0),'P4 multi-group changed native executor')
+   assert(executors==(tidy and 1 or 0),'P4 multi-group changed native executor')
    result.executorCount=executors;result.attempts=groupAttempts
    result.sameNativeExecutor=true
   end
