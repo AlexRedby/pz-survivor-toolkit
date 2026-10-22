@@ -8,6 +8,10 @@ Functional changes to the repository components. For current behavior and limits
 
 Version labels come from committed component metadata, including changes made without a version bump. Parallel branches sometimes reused a label; consolidation entries identify the combined behavior. There are no release tags in this history, so these entries do not assert publication dates. Third-party mod selection is documented in the [catalog](USEFUL_MODS.md).
 
+## Development tools
+
+- **B42 mod sources:** Match the game's major/minor branch selection and version/common metadata precedence. Preserve common content alongside future-only branches, accept compatible patch-suffixed folders and reject legacy root metadata/content. Native snapshots use the same selected branch for their empty engine-required directories; original mod files and full-source locks remain unchanged.
+
 ## Selected mod set
 
 - **Added:** Nick's Turn Off Fridges to the B42.21 selection (53 Mod IDs / 50 Workshop items), with appliance unplug/replug controls and optional per-appliance automation. Full-pack SP/Host behavior remains unverified; plug appliances back in before removing the mod.

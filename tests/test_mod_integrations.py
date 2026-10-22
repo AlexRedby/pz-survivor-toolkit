@@ -85,7 +85,7 @@ class ModIntegrations(unittest.TestCase):
                     self.configure(requested=[test])
                 self.lock.unlink()
 
-    def test_effective_source_uses_common_fallback_and_root_only_mods(self):
+    def test_effective_source_uses_common_fallback_and_rejects_root_only_mods(self):
         source = self.nav / 'MonitorConfig.lua'
         relative = source.relative_to(self.root / 'Navigator/42.13')
         common = self.root / 'Navigator/common' / relative
@@ -94,7 +94,8 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual(common, mod_integrations.source_path(self.root / 'Navigator', relative))
         standalone = self.root / 'Standalone' / relative
         self.write(standalone, 'root-only mod')
-        self.assertEqual(standalone, mod_integrations.source_path(self.root / 'Standalone', relative))
+        with self.assertRaisesRegex(ValueError, 'Missing upstream source'):
+            mod_integrations.source_path(self.root / 'Standalone', relative)
 
     def test_owned_quartermaster_is_not_an_upstream_integration(self):
         self.assertNotIn('Quartermaster', mod_integrations.INTEGRATIONS)

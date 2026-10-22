@@ -467,6 +467,20 @@ class NativeSnapshotTests(unittest.TestCase):
             self.assertFalse((target / '42.0').exists())
             self.assertEqual('PZSurvivorToolkit', native._metadata(target / '42/mod.info')['id'])
 
+    def test_common_with_future_branch_gets_only_empty_default_layer_in_snapshot(self):
+        source = self.project / 'Toolkit'
+        (source / '42').rename(source / '42.22')
+        self.mod(source, 'PZSurvivorToolkit', layer='common')
+        initial = native.hashes(source)
+        output = self.prepare()
+        target = output / 'client1/mods/PZSurvivorToolkit'
+        self.assertEqual(initial, native.hashes(source))
+        self.assertEqual(initial, native.hashes(target), 'No content or metadata may be added')
+        self.assertFalse((source / '42.0').exists())
+        self.assertEqual({}, native.hashes(target / '42.0'))
+        for sub in ('AnimSets', 'actiongroups'):
+            self.assertTrue((target / '42.0/media' / sub).is_dir())
+
     def test_saved_world_is_copied_into_fresh_profile_with_silent_settings_and_pinned_source(self):
         seed = self.prepare('seed')
         self.write(seed / 'client1/Saves/Sandbox/QueueHealthSP/map.bin', 'prepared world')

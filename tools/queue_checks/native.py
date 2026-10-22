@@ -10,7 +10,10 @@ import subprocess
 import sys
 import zipfile
 from . import adapters, worlds, pack, admission, report, coop
-from .mod_selection import MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots, mod_layers, mod_info
+from .mod_selection import (
+    MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
+    mod_layers, mod_info, selected_mod_version,
+)
 
 
 def jdk_binary(jdk, name):
@@ -103,7 +106,9 @@ def _locations(project, workshop, identifiers, overrides=None):
         if not mod_layers(root):
             raise ValueError("No compatible 42.21 mod layer: " + identifier)
         info = mod_info(root)
-        if info is None or _metadata(info).get("id") != identifier:
+        if info is None:
+            raise ValueError("Missing B42 version/common mod.info: " + identifier)
+        if _metadata(info).get("id") != identifier:
             raise ValueError("Selected version has a different Mod ID: " + identifier)
         result[identifier] = root
     return result
@@ -296,9 +301,11 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
                 raise RuntimeError("Mod changed while copying snapshot: " + identifier)
             versions = [p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]
             layers = [target, target / 'common', *versions]
-            if not versions and (target / 'common/mod.info').is_file():
-                # B42 still scans its default 42.0 layer when all mod content is common.
-                layers.append(target / '42.0')
+            selected = selected_mod_version(target)
+            if selected not in layers:
+                # B42 still scans its default 42.0 layer when no branch matches,
+                # including common content alongside future-only versions.
+                layers.append(selected)
             for layer in layers:
                 if layer != target or (layer / "media").is_dir():
                     for sub in ("AnimSets", "actiongroups"):
