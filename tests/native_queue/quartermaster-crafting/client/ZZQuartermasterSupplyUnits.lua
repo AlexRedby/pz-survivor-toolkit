@@ -109,7 +109,12 @@ Events.OnTick.Add(function()
    player:teleportTo(point.x+.5,point.y+.5,point.z);request('Prepare');phase='ready';return
   end
   if phase=='ready'then
-   if not packet then return end;object=object or F.resolve(player,packet);if not object then return end
+   if not packet then return end
+   if player:getSquare():getX()~=point.x or player:getSquare():getY()~=point.y then return end
+   object=object or F.resolve(player,packet);if not object then return end
+   -- Teleporting fixture actors does not synchronously rebuild the native loot pane.
+   getPlayerInventory(player:getPlayerNum()):refreshBackpacks();getPlayerLoot(player:getPlayerNum()):refreshBackpacks()
+   if contains(ISInventoryPaneContextMenu.getContainers(player),object:getContainer())then return end
    local tape=object:getContainer():getItems():get(0)
    LootSorter.setBoxItems(object,LootSorter.containerIndex(object,object:getContainer()),{[tape:getDisplayName()]=true})
    designatedAt=designatedAt or getTimestampMs();open(player);phase='ui';return
