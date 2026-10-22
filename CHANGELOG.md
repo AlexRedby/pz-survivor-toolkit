@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.205
+
+- **Action queue:** Use shared deferred settlement ownership for P4's delayed restores. Keep unique returns with their source task and shared cleanup independent of individual cancellation; retire stale queue/player scopes without replaying native effects or overriding confirmed equipment intent. Dynamic input selectors and conflicting pickup identities retain protected shared ownership.
+
 ### 0.1.204
 
 - **Action queue:** Route cancelled-operation returns and existing mask/fitness restoration through one settlement engine. Preserve native effects, exact surviving item IDs, cleanup order and unrelated queued work; reject stale ownership and repeated settlement. Existing adapter permissions and Host completion gates are unchanged.

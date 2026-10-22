@@ -1592,6 +1592,50 @@ for _,insertion in ipairs({'after','direct'}) do
         'shared input introduced by '..insertion..' queue API retains protected shared cleanup')
     firstReturn:perform(); findReturn(secondItem):perform(); tickTidy(); tickTidy()
 end
+-- Retiring adapter history must not disable stock P4's delayed callback. Its
+-- fallback may still return the items, but cannot reuse a departed task owner.
+do
+    local settlement=PZSurvivorToolkit.ActionQueueSettlement
+    local records,sessions=unpack(compat.fixtureRegistries)
+    local function hasEntries(values) for _ in pairs(values) do return true end return false end
+    for _,boundary in ipairs({'dead','reset','menu'}) do
+        local first,second,firstOwner,secondOwner=tidyTasks()
+        compat.prune()
+        local departed=assert(sessions[player])
+        assert(not hasEntries(departed.seen) and hasEntries(departed.tasks),
+            boundary..': delayed P4 regression must outlive all seen source actions')
+        local oldContext=settlement.context(departed)
+        local cleanupOwner=oldContext.token
+        if boundary=='dead' then dead=true
+        elseif boundary=='reset' then queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+        else for _,callback in ipairs(events.OnMainMenuEnter or {})do callback()end end
+        compat.prune()
+        assert(not sessions[player] and not settlement.isLive(oldContext),
+            boundary..': departed P4 history must release its shared settlement')
+        tickTidy();tickTidy()
+        local nativeFirst,nativeSecond=findReturn(first),findReturn(second)
+        assert(nativeFirst and nativeSecond,'stock P4 delayed fallback must remain available after '..boundary)
+        for _,action in ipairs({nativeFirst,nativeSecond})do
+            assert(not records[action] and action.perform==nativeTransferPerform
+                and action.toolkitQueueOperation~=firstOwner and action.toolkitQueueOperation~=secondOwner
+                and action.toolkitQueueOperation~=cleanupOwner,
+                boundary..': native fallback inherited old adopted P4 ownership')
+        end
+        nativeFirst:perform();nativeSecond:perform();tickTidy();tickTidy()
+        assert(first.container==tidyBag and second.container==tidyBag and not TidyFixture.restoring[player],
+            boundary..': retiring adapter ownership changed native fallback effects or cleanup')
+        dead=false
+        local freshFirst,freshSecond,freshOwner,otherOwner=tidyTasks()
+        tickTidy();tickTidy()
+        local freshReturn,otherReturn=findReturn(freshFirst),findReturn(freshSecond)
+        assert(freshReturn and otherReturn and freshReturn.toolkitQueueOperation==freshOwner
+            and otherReturn.toolkitQueueOperation==otherOwner
+            and freshOwner~=firstOwner and freshOwner~=secondOwner and freshOwner~=cleanupOwner
+            and select(2,definitions.inspect(freshReturn))=='compat.tidy-transfers',
+            boundary..': a later same-ID P4 session must retain only its new task owners')
+        freshReturn:perform();otherReturn:perform();tickTidy();tickTidy()
+    end
+end
 firstItem,secondItem,firstToken,secondToken,nativeSession=tidyTasks()
 local nativeClient=isClient
 isClient=function() return true end
