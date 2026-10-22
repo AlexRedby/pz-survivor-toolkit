@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.208
+
+- **Action queue:** Match cancelled-operation returns by item ID, full type and original destination. Skip conflicting pickup/return histories and a different item type under a reused ID; preserve same-identity network replicas, deduplication, other required returns and the unrelated queue tail. Native transfer effects remain unchanged.
+
 ### 0.1.207
 
 - **Compatibility:** Preserve P4 and ordinary transfer integration with the selected Nick's Turn Off Fridges observer. Capture the reviewed wrapper before delayed transfer hooks and compose its original delegate and live helper guards with Better Containers. Report the first provenance rejection in read-only integration diagnostics.

@@ -244,6 +244,57 @@ for _, mode in ipairs({'absent', 'consumed', 'nested', 'unreachable', 'removed-s
         mode .. ': unavailable returns must not recreate resources or discard the independent tail')
 end
 
+-- A generic return needs one unambiguous ID/type/source tuple. Other returns
+-- and the independent tail must survive when one item's history is unsafe.
+for _, conflict in ipairs({'live-type', 'pickup-type', 'pickup-source', 'queued-type', 'queued-source'}) do
+    local s = setup()
+    local old, duplicate = s.item(61, nil), s.item(61, nil)
+    local live, other = s.item(61, s.root), s.item(62, s.root)
+    s.root.items[61], s.root.items[62] = live, other
+    s.token.toolkitPickups = {[old] = s.source, [other] = s.source}
+    local alternative = {isExistYet = function() return true end, reachable = true}
+    local body = s.action()
+    s.queue.queue = {s.current, body, s.tail}
+    if conflict == 'live-type' then live.fullType = 'Base.Other'
+    elseif conflict:match('^pickup') then
+        if conflict == 'pickup-type' then duplicate.fullType = 'Base.Other' end
+        s.token.toolkitPickups[duplicate] = conflict == 'pickup-source' and alternative or s.source
+    else
+        if conflict == 'queued-type' then duplicate.fullType = 'Base.Other' end
+        local nativeReturn = s.action()
+        nativeReturn.Type, nativeReturn.item = 'ISInventoryTransferAction', duplicate
+        nativeReturn.srcContainer = s.root
+        nativeReturn.destContainer = conflict == 'queued-source' and alternative or s.source
+        nativeReturn.allowMissingItems = true
+        table.insert(s.queue.queue, 3, nativeReturn)
+    end
+    assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+    assert(#s.queue.queue == 3 and s.queue.queue[1] == s.current and s.queue.queue[3] == s.tail
+        and s.queue.queue[2].item == other and s.queue.queue[2].destContainer == s.source
+        and s.counts() == 1,
+        conflict .. ': ambiguous or changed-type returns must be skipped without losing a safe return or the tail')
+    assert(live.container == s.root and other.container == s.root,
+        conflict .. ': settlement must not execute either native transfer')
+end
+
+do
+    local s = setup()
+    local old, duplicate, live = s.item(63, nil), s.item(63, nil), s.item(63, s.root)
+    s.root.items[63] = live
+    s.token.toolkitPickups = {[old] = s.source, [duplicate] = s.source}
+    local nativeReturn = s.action()
+    nativeReturn.Type, nativeReturn.item = 'ISInventoryTransferAction', old
+    nativeReturn.srcContainer, nativeReturn.destContainer, nativeReturn.allowMissingItems = s.root, s.source, true
+    s.queue.queue = {s.current, nativeReturn, s.tail}
+    assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+    local returned = s.queue.queue[2]
+    assert(#s.queue.queue == 3 and s.queue.queue[3] == s.tail and returned.item == live
+        and returned.srcContainer == s.root and returned.destContainer == s.source and s.counts() == 1,
+        'duplicate exact tuples must produce one return using the surviving same-ID/same-type proxy')
+    assert(old.container == nil and duplicate.container == nil and live.container == s.root,
+        'deduplication must not revive stale proxies or execute the return')
+end
+
 do
     local s = setup(); local live = s.item(12, s.root); s.root.items[12] = live
     s.token.toolkitPickups = {[live] = s.source}

@@ -218,11 +218,20 @@ function Settlement.finish(queue, request, discard)
     local last = 1
     while token and queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == token do last = last + 1 end
     local returns, cleanup = {}, {}
+    local function rememberReturn(item, destination)
+        local id, fullType = item:getID(), item:getFullType()
+        local previous = returns[id]
+        if previous then
+            if previous.fullType ~= fullType or previous.destination ~= destination then previous.ambiguous = true end
+        else
+            returns[id] = {fullType = fullType, destination = destination, ambiguous = destination == nil}
+        end
+    end
     for i = last, 2, -1 do
         local member = table.remove(queue.queue, i)
         if operations.isTransfer(member) and member.allowMissingItems and member.item
             and member.srcContainer == inventory and member.destContainer ~= inventory then
-            returns[member.item:getID()] = member.destContainer
+            rememberReturn(member.item, member.destContainer)
         end
         local provider = retained(member, current, queue)
         if provider then
@@ -235,7 +244,7 @@ function Settlement.finish(queue, request, discard)
     -- The current effect is already native/authoritative. Only release its owned
     -- bookkeeping; never force-cancel it again or synthesize a compensating effect.
     discard(current, true)
-    for item, source in pairs(type(token) == "table" and token.toolkitPickups or {}) do returns[item:getID()] = source end
+    for item, source in pairs(type(token) == "table" and token.toolkitPickups or {}) do rememberReturn(item, source) end
     local containers = ISInventoryPaneContextMenu.getContainers(queue.character)
     local index = 2
     state.phase = "cleanup"
@@ -244,11 +253,13 @@ function Settlement.finish(queue, request, discard)
         state.obligations[#state.obligations + 1] = obligation
         index = index + 1
     end
-    for id, destination in pairs(returns) do
-        -- Host replication may replace the object. Never return the stale object,
-        -- recreate a consumed item or reclaim an item moved into another container.
-        local item = inventory:getItemById(id)
-        if not ownedPickup(current, id) and item and item:getContainer() == inventory and not item:getIsCraftingConsumed()
+    for id, expected in pairs(returns) do
+        -- Replica replacement must preserve the exact ID/type. Conflicting history
+        -- cannot choose a source by table iteration order or reclaim another item.
+        local destination = expected.destination
+        local item = not expected.ambiguous and inventory:getItemById(id)
+        if not ownedPickup(current, id) and item and item:getID() == id and item:getFullType() == expected.fullType
+            and item:getContainer() == inventory and not item:getIsCraftingConsumed()
             and destination:isExistYet() and (containers:contains(destination)
                 or Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character)) then
             local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
@@ -257,7 +268,7 @@ function Settlement.finish(queue, request, discard)
                 if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
                 action:setAllowMissingItems(true)
                 insert(queue, action, index)
-                state.obligations[#state.obligations + 1] = {kind = "return", itemId = id, destination = destination, action = action}
+                state.obligations[#state.obligations + 1] = {kind = "return", itemId = id, itemType = expected.fullType, destination = destination, action = action}
                 index = index + 1
             end
         end
