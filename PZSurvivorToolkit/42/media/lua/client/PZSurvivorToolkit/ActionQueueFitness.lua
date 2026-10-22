@@ -8,6 +8,7 @@ local Toolkit=PZSurvivorToolkit
 local Fitness={}
 Toolkit.ActionQueueFitness=Fitness
 local Ops,Definitions=Toolkit.ActionQueueOperations,Toolkit.ActionQueueDefinitions
+local Settlement=require 'PZSurvivorToolkit/ActionQueueSettlement'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local records={}
 local native,classes,exercises={},{},{}
@@ -296,6 +297,7 @@ function Fitness.ownsPickupCleanup(action,id)
  local record=validRecord(action)
  return record and record.saved.before and record.saved.item and record.saved.item.id==id
 end
+Settlement.register('fitness',{retain=Fitness.retainCleanup,ownsPickup=Fitness.ownsPickupCleanup})
 function Fitness.canSkip(action)
  local record=validRecord(action)
  if not record or record.started or (action.action and action:isStarted()) then return false end

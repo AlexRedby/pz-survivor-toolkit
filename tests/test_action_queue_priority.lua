@@ -1,5 +1,9 @@
 if not NativeActionRoot then print('Automatic queue priority native checks skipped (pass --native-action-root media/lua).'); return end
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
+        return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
+    end
+end
 local enabled = true
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}, BulkActions = {canFinish = function() return false end}}
 local function derive(self, name)

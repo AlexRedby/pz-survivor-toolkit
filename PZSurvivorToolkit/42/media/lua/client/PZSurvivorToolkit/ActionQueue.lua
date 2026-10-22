@@ -3,6 +3,7 @@ require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISBaseTimedAction"
 require "TimedActions/ISReadABook"
 require "PZSurvivorToolkit/ActionQueueOperations"
+require "PZSurvivorToolkit/ActionQueueSettlement"
 require "PZSurvivorToolkit/ActionQueueLifecycle"
 require "PZSurvivorToolkit/ActionQueueAcknowledgements"
 require "PZSurvivorToolkit/ActionQueueLabels"
@@ -22,7 +23,7 @@ Toolkit.ActionQueue = Queue
 
 local Operations = Toolkit.ActionQueueOperations
 local Batch = Toolkit.ActionQueueBatch
-local returnMarker = {}
+local Settlement = Toolkit.ActionQueueSettlement
 local processPriority
 require "PZSurvivorToolkit/ActionQueuePolicy"
 local Policy = Toolkit.ActionQueuePolicy
@@ -124,50 +125,10 @@ function Queue.cancelOperation(queue, action, expected)
 end
 
 local function finishGroup(queue, request)
-    local current, token = request.action, request.token
-    local last = 1
-    while token and queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == token do last = last + 1 end
-    local returns, cleanup = {}, {}
-    local inventory = queue.character:getInventory()
-    for i = last, 2, -1 do
-        local member = table.remove(queue.queue, i)
-        if Operations.isTransfer(member) and member.allowMissingItems
-            and member.srcContainer == inventory and member.destContainer ~= inventory then
-            returns[member.item:getID()] = member.destContainer
-        end
-        if (Toolkit.BulkFood and Toolkit.BulkFood.retainCleanup(member, current, queue))
-            or (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.retainCleanup(member)) then
-            table.insert(cleanup, 1, member)
-        else
-            member:forceCancel()
-            if craft(member) then Toolkit.ActionQueueCraft.cancelWaiting(member) end
-        end
-    end
-    if craft(current) then Toolkit.ActionQueueCraft.cancelWaiting(current) end
-    for item, source in pairs(type(token) == "table" and token.toolkitPickups or {}) do returns[item:getID()] = source end
-    local containers = ISInventoryPaneContextMenu.getContainers(queue.character)
-    local index = 2
-    for _, action in ipairs(cleanup) do
-        action.toolkitQueueOperation, action.toolkitQueueReturn = {}, returnMarker
-        table.insert(queue.queue, index, action)
-        index = index + 1
-    end
-    for id, destination in pairs(returns) do
-        -- Native MP replication can replace the item object while retaining its ID.
-        local item = inventory:getItemById(id)
-        if not (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.ownsPickupCleanup(current, id))
-            and item and item:getContainer() == inventory and not item:getIsCraftingConsumed()
-            and destination:isExistYet() and (containers:contains(destination) or Policy.isCarriedContainer(destination, queue.character)) then
-            local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
-            if action.Type == "ISInventoryTransferAction" or (not isClient() and Toolkit.ActionQueueCarts and Toolkit.ActionQueueCarts.isTransfer(action)) then
-                if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
-                action:setAllowMissingItems(true)
-                action.toolkitQueueOperation, action.toolkitQueueReturn = {}, returnMarker
-                table.insert(queue.queue, index, action)
-                index = index + 1
-            end
-        end
-    end
+    return Settlement.finish(queue, request, function(member, completed)
+        if not completed then member:forceCancel() end
+        if craft(member) then Toolkit.ActionQueueCraft.cancelWaiting(member) end
+    end)
 end
 
 local completed = ISTimedActionQueue.onCompleted
@@ -293,7 +254,7 @@ ISBaseTimedAction.stop = function(action)
     local world = Toolkit.ActionQueueWorld
     if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
         and ((queue.toolkitGroupCancel and queue.toolkitGroupCancel.action == action)
-            or action.toolkitQueueReturn == returnMarker) then
+            or Settlement.isCleanup(action)) then
         queue.toolkitCancel = action
     end
     if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
