@@ -2,7 +2,34 @@ local Completion={}
 function Completion.observe(toolkit,selection)
  local lifecycle,operations=toolkit.ActionQueueLifecycle,toolkit.ActionQueueOperations
  local begin,finish,flush,perform,defer=lifecycle.begin,lifecycle.finish,lifecycle.flush,operations.perform,operations.deferCompletion
- local state,records,counts,restores
+ local state,records,counts,restores,proofs
+ local settlement,acks=toolkit.ActionQueueSettlement,toolkit.ActionQueueAcknowledgements
+ local captureEffect,confirmEffect=settlement.captureEffect,settlement.confirmEffect
+ settlement.captureEffect=function(action)
+  local proof=captureEffect(action)
+  if state then
+   local required=isClient() and (action.toolkitNativeTransaction~=nil or action.toolkitNativeKind~=nil)
+   proofs[proof]={action=action,receipt=acks.capture(action),required=required}
+   print('[EQUIPMENT_TEST] EFFECT_CAPTURE case='..state.id..' type='..action.Type..' required='..tostring(required)
+    ..' receipt='..tostring(proofs[proof].receipt and proofs[proof].receipt.state))
+  end
+  return proof
+ end
+ settlement.confirmEffect=function(proof,observedEffect)
+  local confirmed=confirmEffect(proof,observedEffect)
+  local record=proofs and proofs[proof]
+  if confirmed and record then
+   assert(observedEffect==true and not record.confirmed,'explicit native effect confirmed twice or without effect')
+   print('[EQUIPMENT_TEST] EFFECT_CONFIRMED case='..state.id..' type='..record.action.Type..' required='..tostring(record.required))
+   record.confirmed=true;counts.explicitConfirmed=counts.explicitConfirmed+1
+   if record.required then
+    assert(record.receipt and acks.observe(record.action,record.receipt)=='completed',
+     'explicit network intent confirmed without its captured authoritative completion')
+    counts.authoritativeIntent=counts.authoritativeIntent+1
+   end
+  end
+  return confirmed
+ end
  local enabled=selection.mode=='toolkit'
  local function observed(action)
   if not state or not action then return end
@@ -99,10 +126,30 @@ function Completion.observe(toolkit,selection)
   end,...)
  end
  function Completion.watch(value)
-  state,records,counts=value,{},{perform=0,complete=0,flush=0,legacy=0}
+  local available,reason,subject=toolkit.ActionQueueTidyIntent.status()
+  print('[EQUIPMENT_TEST] INTENT_STATUS available='..tostring(available)..' reason='..tostring(reason)..' subject='..tostring(subject))
+  local carts=toolkit.ActionQueueCarts
+  if carts then
+   local valid,problem=carts.status()
+   print('[EQUIPMENT_TEST] INTENT_CART_STATUS available='..tostring(valid)..' reason='..tostring(problem))
+  end
+  print('[EQUIPMENT_TEST] INTENT_CART installed='..tostring(toolkit.ActionQueueCompat.isInstalled('SaucedCartsTransfers'))
+   ..' transfer='..tostring(carts and carts.isTransferConstructor(ISInventoryTransferAction.new))
+   ..' unequip='..tostring(carts and carts.isUnequipConstructor(ISUnequipAction.new)))
+  if value.id=='hands-chain' then assert(available,'explicit hand intent integration unavailable: '..tostring(reason)..':'..tostring(subject)) end
+  print('[EQUIPMENT_TEST] INTENT_ADAPTER installed='..tostring(toolkit.ActionQueueCompat.isInstalled('P4TidyUpMeister'))..' sources='..tostring(toolkit.ActionQueueCompat.verifySources('P4TidyUpMeister')))
+  for _,entry in ipairs({{ISInventoryPaneContextMenu,'OnTwoHandsEquip'},{ISInventoryPaneContextMenu,'OnPrimaryWeapon'},
+   {ISInventoryPaneContextMenu,'equipWeapon'},{ISInventoryPane,'getActualItems'}}) do
+   print('[EQUIPMENT_TEST] INTENT_CALLBACK '..entry[2]..' source='..tostring(getFilenameOfClosure(entry[1][entry[2]])))
+  end
+  state,records,proofs,counts=value,{},{},{perform=0,complete=0,flush=0,legacy=0,explicitConfirmed=0,authoritativeIntent=0}
   restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
  end
  function Completion.settled()
+  if state.id=='hands-chain' then
+   assert(counts.explicitConfirmed==3 and counts.authoritativeIntent==(selection.kind=='mp' and 3 or 0),
+    'manual hand chain did not confirm all exact explicit native effects: explicit='..counts.explicitConfirmed..' authoritative='..counts.authoritativeIntent)
+  end
   assert(counts.perform==counts.flush and counts.complete==(selection.kind=='sp' and counts.perform or 0)
    and counts.legacy==0,'Tidy native completion counts did not settle')
   for _,record in pairs(records) do assert(record.flushed,'Tidy transfer never flushed') end

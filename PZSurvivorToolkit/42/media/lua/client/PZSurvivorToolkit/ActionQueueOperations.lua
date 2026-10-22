@@ -46,10 +46,14 @@ function Operations.isTransfer(action)
 end
 
 function Operations.adoptReturnHooks(previous, replacement, guard)
-    if type(guard) ~= "function" or not guard() or ISInventoryTransferAction ~= returnClass then return false end
+    if type(guard) ~= "function" then return false,"missing_guard" end
+    local available,reason=guard()
+    if not available then return false,reason or "guard_changed" end
+    if ISInventoryTransferAction ~= returnClass then return false,"return_class_changed" end
     for _, name in ipairs({"new", "perform"}) do
-        if returnMethods[name] ~= previous[name] or returnClass[name] ~= replacement[name]
-            or type(replacement[name]) ~= "function" then return false end
+        if returnMethods[name] ~= previous[name] then return false,"previous_"..name end
+        if returnClass[name] ~= replacement[name] then return false,"current_"..name end
+        if type(replacement[name]) ~= "function" then return false,"invalid_"..name end
     end
     for _, name in ipairs({"new", "perform"}) do returnMethods[name] = replacement[name] end
     returnHelperGuards[#returnHelperGuards + 1] = guard

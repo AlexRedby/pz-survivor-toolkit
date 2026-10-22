@@ -1,10 +1,11 @@
 -- Shared settlement owns cancellation bookkeeping, never item/equipment effects.
-local function setup()
+local function setup(client)
     local root = {items = {}}
     function root:getItemById(id) return self.items[id] end
-    local player = {getInventory = function() return root end, isDead = function(self) return self.dead == true end}
+    local player = {getInventory = function() return root end, isDead = function(self) return self.dead == true end,
+        getPlayerNum = function() return 0 end, getOnlineID = function() return 101 end}
     local token = {}
-    local current = {character = player, toolkitQueueOperation = token}
+    local current = {character = player, toolkitQueueOperation = token, action = {}}
     local tail = {character = player, toolkitQueueOperation = {}}
     local queue = {character = player, current = current, queue = {current, tail}}
     local source = {exists = true, reachable = true}
@@ -24,7 +25,26 @@ local function setup()
         return {Type = 'ISInventoryTransferAction', character = character, item = item, srcContainer = from, destContainer = to,
             setAllowMissingItems = function(self, value) self.allowMissingItems = value end}
     end}
-    isClient = function() return false end
+    local clock, receive = 100, nil
+    getTimestampMs = function() return clock end
+    getSpecificPlayer = function(slot) if slot == 0 then return player end end
+    Events = {OnServerCommand = {Add = function(callback) receive = callback end}}
+    isClient = function() return client == true end
+    local loaded = {}
+    require = function(name)
+        if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' then
+            if not loaded[name] then
+                loaded[name] = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
+            end
+            return loaded[name]
+        end
+    end
+    local acknowledgements = require('PZSurvivorToolkit/ActionQueueAcknowledgements')
+    local function receipt(action, state, receiptToken, transaction)
+        receive('PZSurvivorToolkitActions', 'State', {protocol = 1, player = 101,
+            transaction = transaction or action.toolkitNativeTransaction, kind = action.toolkitNativeKind,
+            token = receiptToken or '11111111-1111-4111-8111-111111111111', state = state})
+    end
     local settlement = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua'))()
     local function item(id, container)
         local value = {id = id, container = container}
@@ -43,6 +63,8 @@ local function setup()
     end
     return {root = root, player = player, token = token, current = current, tail = tail, queue = queue,
         source = source, item = item, action = action, discard = discard, settlement = settlement,
+        acknowledgements = acknowledgements, receipt = receipt,
+        advance = function(ms) clock = clock + ms end,
         counts = function() return constructions, guards, #discards, releases end}
 end
 
@@ -246,5 +268,130 @@ for _, mode in ipairs({'head', 'owner', 'token'}) do
     local n, _, dropped, released = s.counts()
     assert(n == 0 and dropped == 0 and released == 0 and #s.queue.queue == 3 and not request.settlement,
         mode .. ': stale settlement ownership cannot touch another native operation')
+end
+-- A completion receipt and the observed native effect are independent gates.
+for _, order in ipairs({'receipt-first', 'effect-first'}) do
+    local s = setup(true)
+    local action = s.current
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 7, 'fixture'
+    s.receipt(action, 'started')
+    local proof = s.settlement.captureEffect(action)
+    assert(proof and s.settlement.effectState(proof, false) == 'waiting')
+    s.queue.current, s.queue.queue = nil, {}
+    if order == 'receipt-first' then
+        s.receipt(action, 'completed')
+        assert(s.settlement.effectState(proof, false) == 'waiting'
+            and not s.settlement.confirmEffect(proof, false), 'receipt alone cannot prove the native effect')
+    else
+        assert(s.settlement.effectState(proof, true) == 'waiting'
+            and not s.settlement.confirmEffect(proof, true), 'an observed effect alone cannot prove completion')
+        s.receipt(action, 'completed')
+    end
+    assert(s.settlement.effectState(proof, true) == 'completed'
+        and s.settlement.confirmEffect(proof, true), order .. ': correlated completion must survive leaving the queue')
+    s.receipt(action, 'completed')
+    assert(not s.settlement.confirmEffect(proof, true), 'duplicate receipts cannot grant another confirmation')
+    assert(s.counts() == 0, 'effect correlation cannot construct or replay any native effect')
+end
+
+for _, terminal in ipairs({'canceled', 'rejected'}) do
+    local s = setup(true); local action = s.current
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 8, 'fixture'
+    s.receipt(action, 'started')
+    local proof = s.settlement.captureEffect(action)
+    s.queue.current, s.queue.queue = nil, {}
+    s.receipt(action, terminal)
+    assert(s.settlement.effectState(proof, true) == terminal and not s.settlement.confirmEffect(proof, true),
+        terminal .. ': an inventory effect cannot override the authoritative terminal result')
+end
+
+for _, mutation in ipairs({'native', 'transaction', 'kind', 'character', 'generation', 'queue', 'reset', 'module', 'observe', 'receipt-token', 'receipt-state'}) do
+    local s = setup(true); local action = s.current
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 9, 'fixture'
+    s.receipt(action, 'started')
+    local proof = s.settlement.captureEffect(action)
+    if mutation == 'native' then action.action = {}
+    elseif mutation == 'transaction' then action.toolkitNativeTransaction = 10
+    elseif mutation == 'kind' then action.toolkitNativeKind = 'other'
+    elseif mutation == 'character' then action.character = {}
+    elseif mutation == 'generation' then s.queue.toolkitOperationGeneration = 1
+    elseif mutation == 'queue' then ISTimedActionQueue.queues[s.player] = {character = s.player, queue = {}}
+    elseif mutation == 'reset' then s.acknowledgements.reset(s.queue)
+    elseif mutation == 'observe' then s.acknowledgements.observe = function() return 'completed' end
+    elseif mutation == 'receipt-token' then s.acknowledgements.capture(action).token = '22222222-2222-4222-8222-222222222222'
+    elseif mutation == 'receipt-state' then s.acknowledgements.capture(action).state = 'completed'
+    else PZSurvivorToolkit.ActionQueueAcknowledgements = {capture = s.acknowledgements.capture, observe = s.acknowledgements.observe} end
+    assert(not s.settlement.confirmEffect(proof, true), mutation .. ': changed receipt ancestry must fail closed')
+    s.advance(30001)
+    assert(s.settlement.effectState(proof, true) == 'unavailable'
+        and not s.settlement.confirmEffect(proof, true), mutation .. ': invalid proof cannot wait indefinitely')
+end
+
+do
+    local s = setup(true); local action = s.current
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 11, 'fixture'
+    local proof = s.settlement.captureEffect(action)
+    s.queue.current, s.queue.queue = nil, {}
+    s.receipt(action, 'started'); s.receipt(action, 'completed')
+    assert(not s.settlement.confirmEffect(proof, true), 'a late receipt cannot attach after unproven action left its queue')
+    s.advance(30001)
+    assert(s.settlement.effectState(proof, true) == 'unavailable')
+end
+
+do
+    local s = setup(true); local action = s.current
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 12, 'fixture'
+    s.receipt(action, 'started')
+    local oldProof = s.settlement.captureEffect(action)
+    s.acknowledgements.reset(s.queue)
+    local nextAction = {character = s.player, action = {}, toolkitNativeTransaction = 12, toolkitNativeKind = 'fixture'}
+    s.queue.current, s.queue.queue = nextAction, {nextAction}
+    s.receipt(nextAction, 'started', '22222222-2222-4222-8222-222222222222')
+    local nextProof = s.settlement.captureEffect(nextAction)
+    s.receipt(nextAction, 'completed', '11111111-1111-4111-8111-111111111111')
+    assert(not s.settlement.confirmEffect(oldProof, true) and not s.settlement.confirmEffect(nextProof, true),
+        'reused signed-byte ID cannot consume a stale transaction token')
+    s.receipt(nextAction, 'completed', '22222222-2222-4222-8222-222222222222')
+    assert(s.settlement.confirmEffect(nextProof, true) and not s.settlement.confirmEffect(oldProof, true))
+end
+
+do
+    local s = setup(true); local action = s.current
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 13, 'fixture'
+    local proof = s.settlement.captureEffect(action)
+    assert(s.settlement.effectState(proof, true) == 'waiting')
+    s.receipt(action, 'started')
+    assert(s.settlement.effectState(proof, false) == 'waiting', 'Started can bind only while exact native ownership remains current')
+    s.queue.current, s.queue.queue = nil, {}
+    s.receipt(action, 'completed')
+    assert(s.settlement.confirmEffect(proof, true), 'a boundary preceding Started lost its later correlated completion')
+end
+
+do
+    local s = setup(true); local action = s.current
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 14, 'fixture'
+    s.receipt(action, 'started')
+    local proof = s.settlement.captureEffect(action)
+    s.queue.current, s.queue.queue = nil, {}
+    s.advance(30001)
+    assert(s.settlement.effectState(proof, true) == 'unavailable', 'a missing terminal receipt must expire')
+    s.receipt(action, 'completed')
+    assert(s.settlement.effectState(proof, true) == 'unavailable' and not s.settlement.confirmEffect(proof, true),
+        'a late completed receipt and visible effect cannot revive a proof already retired at timeout')
+end
+
+for _, client in ipairs({false, true}) do
+    local s = setup(client)
+    s.player.queueEnabled = false
+    local missing = s.settlement.captureEffect(s.current)
+    assert(s.settlement.effectState(missing, false) == 'unavailable',
+        'an unmarked native callback cannot wait for an unrelated later effect')
+    local proof = s.settlement.captureEffect(s.current)
+    local copied = {}; for key, value in pairs(proof) do copied[key] = value end
+    assert(not s.settlement.confirmEffect(copied, true), 'a copied public proof cannot mint another effect confirmation')
+    assert(s.settlement.effectState(proof, true) == 'completed' and s.settlement.confirmEffect(proof, true),
+        'explicit native effect proof must remain available with queue management disabled')
+    assert(not s.settlement.confirmEffect(proof, true) and not s.settlement.confirmEffect({}, true),
+        'unmarked proof must also be private and once-only')
 end
 print('Shared settlement: deferred ownership claims/lifetimes, ordered required cleanup, exact-ID returns, no effect replay, duplicate completion, owned props and lost resources passed.')

@@ -7,7 +7,7 @@ Toolkit.ActionQueueCarts = Carts
 local Policy, Operations = Toolkit.ActionQueuePolicy, Toolkit.ActionQueueOperations
 local class, core, network = ISCartTransferAction, SaucedCarts, SaucedCarts.Network
 local constructors, methods, coreMethods = {}, {}, {}
-local latestConstructor, latestPerform, latestTransferItem, installed, trusted
+local latestConstructor, latestPerform, latestTransferItem, installed, trusted, trustFailure
 local compat, approvedPerform, approvePerform = Toolkit.ActionQueueCompat
 local sendToServer
 local involvesCart, isTransfer, capacitySafe
@@ -22,18 +22,28 @@ local function filename(callback)
 end
 
 local function unchanged()
-    if not trusted or Toolkit.ActionQueueCarts ~= Carts or Carts.involvesCart ~= involvesCart
+    if not trusted then return false, trustFailure or "not_installed" end
+    if Toolkit.ActionQueueCarts ~= Carts or Carts.involvesCart ~= involvesCart
         or Carts.isTransfer ~= isTransfer or Carts.capacitySafe ~= capacitySafe
-        or ISCartTransferAction ~= class or SaucedCarts ~= core or core.Network ~= network then return false end
+        or ISCartTransferAction ~= class or SaucedCarts ~= core or core.Network ~= network then return false,"owner_changed" end
     if approvedPerform and (Toolkit.ActionQueueCompat ~= compat or compat.isTransferPerform ~= approvePerform
-        or not approvePerform(approvedPerform)) then return false end
-    for name, value in pairs(methods) do if class[name] ~= value then return false end end
-    for name, value in pairs(coreMethods) do if (core[name] or false) ~= value then return false end end
-    return network.sendToServer == sendToServer
+        or not approvePerform(approvedPerform)) then return false,"container_delegate_changed" end
+    for name, value in pairs(methods) do if class[name] ~= value then return false,"cart_method_changed:"..name end end
+    for name, value in pairs(coreMethods) do if (core[name] or false) ~= value then return false,"cart_helper_changed:"..name end end
+    if network.sendToServer ~= sendToServer then return false,"network_helper_changed" end
+    return true
 end
 local function transferUnchanged()
     return ISInventoryTransferAction.new == latestConstructor and ISInventoryTransferAction.perform == latestPerform
         and ISInventoryTransferAction.transferItem == latestTransferItem
+end
+
+-- Read-only provenance diagnostics; callers still need their action contract.
+function Carts.status()
+    local available,reason=unchanged()
+    if not available then return false,reason end
+    if not transferUnchanged() then return false,"transfer_methods_changed" end
+    return true
 end
 
 function Carts.isTransferConstructor(callback)
@@ -136,6 +146,14 @@ local function installCapacity()
     end)
 end
 
+local function adoptHooks(previous,replacement)
+    local accepted,reason=Policy.adoptTransferHooks(previous,replacement,unchanged)
+    if not accepted then return false,"policy:"..tostring(reason) end
+    accepted,reason=Operations.adoptReturnHooks(previous,replacement,unchanged)
+    if not accepted then return false,"returns:"..tostring(reason) end
+    return true
+end
+
 local function loadHooks(module)
     local event, captured = Events.OnGameStart, false
     local add = event.Add
@@ -145,11 +163,11 @@ local function loadHooks(module)
             local previous = transferMethods()
             callback(...)
             local replacement = transferMethods()
-            if Policy.adoptTransferHooks(previous, replacement, unchanged)
-                and Operations.adoptReturnHooks(previous, replacement, unchanged) then
+            local adopted,reason=adoptHooks(previous,replacement)
+            if adopted then
                 constructors[replacement.new], latestConstructor, latestPerform, latestTransferItem =
                     true, replacement.new, replacement.perform, replacement.transferItem
-            else trusted = false end
+            else trusted=false;trustFailure=trustFailure or "late_hook_rejected:"..module..":"..tostring(reason) end
         end)
     end
     local ok, result = pcall(require, module)
@@ -264,19 +282,26 @@ function Carts.install()
         -- Shared interception can wait for OnGameStart until the native client class exists.
         Events.OnGameStart.Add(function()
             local replacement = transferMethods()
-            if filename(replacement.new) == "CartTransferInterceptor.lua"
+            local valid=filename(replacement.new) == "CartTransferInterceptor.lua"
                 and replacement.perform == previous.perform and type(replacement.transferItem) == "function"
                 and (replacement.transferItem == previous.transferItem
                     or (isClient() and filename(replacement.transferItem) == "CartTransferInterceptor.lua"))
-                and Policy.adoptTransferHooks(previous, replacement, unchanged)
-                and Operations.adoptReturnHooks(previous, replacement, unchanged) then
+            local adopted,reason
+            if valid then adopted,reason=adoptHooks(previous,replacement) end
+            if adopted then
                 constructors[replacement.new], latestConstructor, latestPerform, latestTransferItem =
                     true, replacement.new, replacement.perform, replacement.transferItem
-            else trusted = false end
+            else
+                trusted=false
+                trustFailure=trustFailure or "shared_hook_rejected:"..tostring(reason or
+                    "source_changed:new="..tostring(filename(replacement.new))
+                    ..",perform="..tostring(filename(replacement.perform))..",samePerform="..tostring(replacement.perform==previous.perform)
+                    ..",transferItem="..tostring(filename(replacement.transferItem))..",sameTransferItem="..tostring(replacement.transferItem==previous.transferItem))
+            end
         end)
     end
     if not loadHooks("SaucedCarts/Restrictions/TransferRestrictions")
-        or not loadHooks("SaucedCarts/CartState/VisualUpdateQueue") then trusted = false end
+        or not loadHooks("SaucedCarts/CartState/VisualUpdateQueue") then trusted=false;trustFailure=trustFailure or "hook_registration_missing" end
     installFoodMaskRemoval()
     installCapacity()
     Toolkit.ActionQueueDefinitions.registerBehavior("compat.cart-transfer", {

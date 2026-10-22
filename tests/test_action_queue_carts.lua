@@ -350,7 +350,7 @@ for _,scenario in ipairs(scenarios) do
         approvedPerform=replacement.perform
         local compatPath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
         local query=assert(read(compatPath):match('(function Compat.isTransferPerform%(callback%).-\nend)'))
-        compat=assert(loadstring('local containerTransferPerform,containerHelpersUnchanged=...\nlocal ready={EURY_CONTAINERS=true};local Compat={}\n'
+        compat=assert(loadstring('local reviewedTransferPerform,transferPerformGuard=...\nlocal Compat={}\n'
             ..query..'\nreturn Compat','@'..compatPath))(approvedPerform,guard)
         assert(compat.isTransferPerform(approvedPerform) and not compat.isTransferPerform(function() end),
             'Compat perform query approved a different callback')

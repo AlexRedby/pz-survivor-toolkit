@@ -218,14 +218,21 @@ def verify(root, selection, catalog):
             issues.append('Equipment effects/guards not verified: ' + str(row.get('id')))
         if 'P4TidyUpMeister' in selection['mods']:
             completion = result.get('tidyCompletion')
-            valid = (isinstance(completion, dict) and set(completion) == {'perform', 'complete', 'flush', 'legacy'}
+            valid = (isinstance(completion, dict) and set(completion) == {
+                         'perform', 'complete', 'flush', 'legacy', 'explicitConfirmed', 'authoritativeIntent'}
                      and all(type(value) is int and value >= 0 for value in completion.values()))
             if valid:
                 count = completion['perform']
                 valid = (completion['flush'] == count and completion['legacy'] == 0
                          and completion['complete'] == (count if selection['kind'] == 'sp' else 0)
                          and (selection['mode'] != 'native' or count == 0)
-                         and (selection['mode'] != 'toolkit' or row.get('id') not in TIDY_RETURN_CASES or count > 0))
+                         and (selection['mode'] != 'toolkit' or row.get('id') not in TIDY_RETURN_CASES or count > 0)
+                         and completion['authoritativeIntent'] <= completion['explicitConfirmed'])
+                if row.get('id') == 'hands-chain':
+                    valid = (valid and completion['explicitConfirmed'] == 3
+                             and completion['authoritativeIntent'] == (3 if selection['kind'] == 'mp' else 0))
+                elif row.get('id') in ('tidy-hands', 'tidy-empty-hands'):
+                    valid = valid and completion['explicitConfirmed'] == completion['authoritativeIntent'] == 0
             if not valid:
                 issues.append('Tidy native completion evidence missing or inconsistent: ' + str(row.get('id')))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),

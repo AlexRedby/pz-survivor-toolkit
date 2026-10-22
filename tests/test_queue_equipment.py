@@ -31,7 +31,8 @@ class EquipmentTests(unittest.TestCase):
             if 'P4TidyUpMeister' in self.selection['mods']:
                 count = int(enabled and case in equipment.TIDY_RETURN_CASES)
                 result['tidyCompletion'] = dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
-                                               flush=count, legacy=0)
+                                               flush=count, legacy=0, explicitConfirmed=3 if case == 'hands-chain' else 0,
+                                               authoritativeIntent=3 if case == 'hands-chain' and self.selection['kind'] == 'mp' else 0)
             if case == 'hands-chain':
                 result.update(activeProgress=True, activeProtected=enabled)
             if case == 'waiting-cancel':
@@ -308,8 +309,46 @@ class EquipmentTests(unittest.TestCase):
                     rows = self.records()
                     target = next(row for row in rows if row.get('id') == case)['outcome']
                     count = 0 if mode == 'toolkit' else 1
-                    target['tidyCompletion'] = dict(perform=count, complete=count if kind == 'sp' else 0, flush=count, legacy=0)
+                    target['tidyCompletion'].update(perform=count, complete=count if kind == 'sp' else 0, flush=count, legacy=0)
                     self.assertTrue(self.verify(self.logs(rows))['issues'])
+
+    def test_tidy_explicit_intent_evidence_requires_strict_correlated_counts(self):
+        self.selection.update(cases=['hands-chain', 'clothing-chain', 'tidy-hands', 'tidy-empty-hands'],
+                              mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in ('explicitConfirmed', 'authoritativeIntent'):
+                    for value in (None, True, False, -1, '3', 3.0, {}, []):
+                        rows = self.records()
+                        rows[1]['outcome']['tidyCompletion'][field] = value
+                        with self.subTest(kind=kind, mode=mode, field=field, value=value):
+                            self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    rows = self.records()
+                    del rows[1]['outcome']['tidyCompletion'][field]
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for explicit, authoritative in ((0, 0), (2, 2 if kind == 'mp' else 0),
+                                                 (4, 3 if kind == 'mp' else 0),
+                                                 (3, 2 if kind == 'mp' else 1)):
+                    rows = self.records()
+                    rows[1]['outcome']['tidyCompletion'].update(explicitConfirmed=explicit,
+                                                                authoritativeIntent=authoritative)
+                    with self.subTest(kind=kind, mode=mode, explicit=explicit, authoritative=authoritative):
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for case in ('tidy-hands', 'tidy-empty-hands'):
+                    rows = self.records()
+                    target = next(row for row in rows if row.get('id') == case)['outcome']['tidyCompletion']
+                    target.update(explicitConfirmed=1, authoritativeIntent=0)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                rows = self.records()
+                target = next(row for row in rows if row.get('id') == 'clothing-chain')['outcome']['tidyCompletion']
+                target.update(explicitConfirmed=1, authoritativeIntent=2)
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                # Other scenarios validate the count shape without inventing an expected number of intents.
+                target.update(explicitConfirmed=7, authoritativeIntent=4)
+                self.assertEqual(self.verify(self.logs(rows))['issues'], [])
 
     def test_tidy_observer_rejects_wrong_identity_ownership_early_flush_and_legacy_scope(self):
         lua = shutil.which('luajit') or shutil.which('lua')
@@ -330,6 +369,7 @@ local function run(kind,mode,fault,equipment)
  ISTimedActionQueue={queues={[player]=queue}}
  ISQueueActionsAction={start=function()end}
  isClient=function()return kind=='mp'end
+ Events={OnGameStart={Add=function()end}}
  require=function()end
  PZSurvivorToolkit={Settings={actionQueue=function()return enabled end}}
  local lifecycle=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua')
@@ -339,6 +379,15 @@ local function run(kind,mode,fault,equipment)
  operations.registerProducer('fixture.tidy',function(a)return a==action end,function()return false end,fault~='legacy')
  toolkit.ActionQueueDefinitions={inspect=function()if enabled then return {},equipment and 'compat.tidy-equipment' or 'compat.tidy-transfers'end end}
  toolkit.ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end}
+ -- This timing fixture has no explicit UI intent; added provenance observers must stay unused.
+ toolkit.ActionQueueSettlement={captureEffect=function()error('unexpected explicit effect capture')end,
+  confirmEffect=function()error('unexpected explicit effect confirmation')end}
+ toolkit.ActionQueueAcknowledgements={capture=function()end}
+ toolkit.ActionQueueTidyIntent={status=function()return true end,begin=function()end,finish=function()end}
+ toolkit.ActionQueueCompat={isInstalled=function()return false end,verifySources=function()return false end}
+ ISInventoryPaneContextMenu={OnTwoHandsEquip=function()end,OnPrimaryWeapon=function()end,equipWeapon=function()end}
+ ISInventoryPane={getActualItems=function()end}
+ getFilenameOfClosure=function()return 'fixture' end
  action.Type,action.primary,action.twoHands='ISEquipWeaponAction',true,false
  if fault=='early-flush' then lifecycle.flush=function()return 'completed',action end end
  local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode=mode})

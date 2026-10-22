@@ -40,6 +40,74 @@ local function insert(queue, action, index)
     table.insert(queue.queue, index, action)
 end
 
+-- A local effect is not an authoritative outcome. Marked client actions need
+-- both observations; unmarked native/SP callbacks retain their existing proof.
+local effectMarker = {}
+local function effectProof(handle)
+    if type(handle) ~= "table" then return end
+    local seal = rawget(handle, effectMarker)
+    if type(seal) == "function" then return seal(handle) end
+end
+function Settlement.captureEffect(action)
+    local character = action.character
+    local queue = ISTimedActionQueue.queues[character]
+    local required = isClient() and (action.toolkitNativeTransaction ~= nil or action.toolkitNativeKind ~= nil)
+    local acknowledgements = Toolkit.ActionQueueAcknowledgements
+    local now = type(getTimestampMs) == "function" and getTimestampMs() or nil
+    local handle = {}
+    local proof = {action = action, native = action.action, character = character, queue = queue,
+        generation = queue and (queue.toolkitOperationGeneration or 0), required = required,
+        transaction = action.toolkitNativeTransaction, kind = action.toolkitNativeKind,
+        acknowledgements = acknowledgements, capture = acknowledgements and acknowledgements.capture,
+        observe = acknowledgements and acknowledgements.observe, deadline = now and now + 30000}
+    handle[effectMarker] = function(candidate) if candidate == handle then return proof end end
+    if required and type(proof.capture) == "function" then proof.receipt = proof.capture(action) end
+    return handle
+end
+
+local function effectTerminal(proof, status)
+    proof.terminal = status
+    return status
+end
+
+function Settlement.effectState(handle, observed)
+    local proof = effectProof(handle)
+    if not proof then return "unavailable" end
+    if proof.terminal then return proof.terminal end
+    local character, action, queue = proof.character, proof.action, proof.queue
+    if action.character ~= character or action.action ~= proof.native or not queue
+        or ISTimedActionQueue.queues[character] ~= queue or character:isDead()
+        or (queue.toolkitOperationGeneration or 0) ~= proof.generation
+        or action.toolkitNativeTransaction ~= proof.transaction or action.toolkitNativeKind ~= proof.kind then return effectTerminal(proof, "unavailable") end
+    if proof.confirmed then return "completed" end
+    if not proof.required then
+        return observed == true and "completed" or effectTerminal(proof, "unavailable")
+    end
+    local acknowledgements = proof.acknowledgements
+    if not acknowledgements or Toolkit.ActionQueueAcknowledgements ~= acknowledgements
+        or type(proof.capture) ~= "function" or type(proof.observe) ~= "function"
+        or acknowledgements.capture ~= proof.capture or acknowledgements.observe ~= proof.observe
+        or not proof.deadline or type(getTimestampMs) ~= "function" then return effectTerminal(proof, "unavailable") end
+    -- An early observer may precede Started, but can only bind that exact
+    -- still-current native action. Never replace a receipt after binding it.
+    if not proof.receipt then proof.receipt = proof.capture(action) end
+    if proof.receipt then
+        local state = proof.observe(action, proof.receipt)
+        if state == "canceled" or state == "rejected" then return effectTerminal(proof, state) end
+        if state == nil then return effectTerminal(proof, "unavailable") end
+        if state == "completed" and observed == true then return "completed" end
+    end
+    if getTimestampMs() >= proof.deadline then return effectTerminal(proof, "unavailable") end
+    return "waiting"
+end
+
+function Settlement.confirmEffect(handle, observed)
+    local proof = effectProof(handle)
+    if not proof or proof.confirmed or Settlement.effectState(handle, observed) ~= "completed" then return false end
+    proof.confirmed = true
+    return true
+end
+
 -- A delayed producer may collect several operations before constructing its
 -- native cleanup. These are ownership claims, not proof that an effect ran.
 local deferredMarker, obligationMarker = {}, {}

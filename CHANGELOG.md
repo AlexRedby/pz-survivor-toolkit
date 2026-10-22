@@ -19,6 +19,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.207
+
+- **Compatibility:** Preserve P4 and ordinary transfer integration with the selected Nick's Turn Off Fridges observer. Capture the reviewed wrapper before delayed transfer hooks and compose its original delegate and live helper guards with Better Containers. Report the first provenance rejection in read-only integration diagnostics.
+- **Action queue:** Require the matching Host outcome and exact observed item effect for network-marked explicit P4 equipment and pickup intent, including late replies after native queue advancement. Keep native completion checks for SP and unmarked actions. Delay only idle restoration while a marked result is unresolved, with a bounded timeout. Reject failed, stale and duplicate outcomes; retire earlier intent when its item leaves inventory or is returned before another borrowing episode. Queue-disabled native paths keep the same safeguards without replaying effects.
+
 ### 0.1.206
 
 - **Craft from storage:** Fetch native recipe quantities and remaining uses instead of counting every ingredient as one object. Credit carried and nearby supplies first, preserve per-type scales and exclusive alternatives, reuse partial supplies across the batch, and fetch kept tools once. Native walking, transfers and final craft validation remain in control. Avoid rescanning exhausted ingredients for every craft in large batches, and remove the unused competing craft-count helpers.

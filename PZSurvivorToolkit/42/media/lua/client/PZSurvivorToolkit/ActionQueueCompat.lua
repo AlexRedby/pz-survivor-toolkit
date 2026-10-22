@@ -24,7 +24,7 @@ local worldGeneration = 0
 local installAttempted
 local readFixAttempted
 local transferSourceSafe = true
-local containerTransferPerform
+local reviewedTransferPerform, transferPerformGuard
 local containerHelpersUnchanged
 local washWalkHelper
 local tidyClassUnchanged, tidyActionUnchanged
@@ -56,6 +56,12 @@ local sourceFiles = {
     NeatUI_Equipment = {
         {"client/NeatEquipment/NEQ_Dresser.lua", 859961585},
         {"client/NeatEquipment/NEQ_AttachAction.lua", 3212833623},
+    },
+    NicksTurnOffFridges = {
+        {"shared/TurnOffFridges/TOF_Core.lua", 1091795413},
+        {"shared/TurnOffFridges/TOF_TileProps.lua", 921744374},
+        {"client/TurnOffFridges/TOF_Client.lua", 2838376957},
+        {"client/TurnOffFridges/TOF_Light.lua", 76508066},
     },
     P4TidyUpMeister = {
         {"client/P4TidyUpMeister.lua", 389269229},
@@ -700,7 +706,7 @@ local names = {"ISInventoryTransferAction", "ISWalkToTimedAction", "ISWalkToTime
 
 local function transferMethods()
     local result = {}
-    for _, name in ipairs({"isValid", "start", "perform", "stop"}) do result[name] = ISInventoryTransferAction[name] end
+    for _, name in ipairs({"new", "isValid", "start", "perform", "stop", "transferItem"}) do result[name] = ISInventoryTransferAction[name] end
     return result
 end
 
@@ -735,8 +741,65 @@ local function installContainerTransfers()
         if not policy.adoptTransferMethods(previous, replacement, containerHelpersUnchanged) then return end
         if Operations.adoptReturnMethods then Operations.adoptReturnMethods(previous, replacement, containerHelpersUnchanged) end
     end
-    containerTransferPerform = ISInventoryTransferAction.perform
+    reviewedTransferPerform, transferPerformGuard = ISInventoryTransferAction.perform, containerHelpersUnchanged
     transferSourceSafe, ready.EURY_CONTAINERS = true, true
+end
+
+-- Preserve the selected mod's native delegate order: BC, then the fridge
+-- observer, then delayed cart hooks. Loading it after snapshots loses provenance.
+local function installFridgeTransfers()
+    if not getActivatedMods or not getActivatedMods():contains("NicksTurnOffFridges")
+        or not verified("NicksTurnOffFridges") then return end
+    local policy = Toolkit.ActionQueuePolicy
+    if not policy or type(policy.adoptTransferHooks) ~= "function" then return end
+    local previous, priorGuard = transferMethods(), transferPerformGuard
+    if not Proof.closure(previous.perform, "ISInventoryTransferAction.lua")
+        and not Compat.isTransferPerform(previous.perform) then return end
+    if not pcall(require, "TurnOffFridges/TOF_Client") or not pcall(require, "TurnOffFridges/TOF_Light") then return end
+    local owner, functions = TurnOffFridges, {}
+    if type(owner) ~= "table" or getmetatable(owner) ~= nil then return end
+    for name, callback in pairs(owner) do
+        if type(callback) == "function" then
+            local origin = name == "clearFridgeProperty" and "TOF_TileProps.lua"
+                or name == "autoTick" and "TOF_Client.lua"
+                or (name == "applyLight" or name == "lightReport") and "TOF_Light.lua" or "TOF_Core.lua"
+            if not Proof.closure(callback, origin) then return end
+            functions[name] = callback
+        end
+    end
+    for _, name in ipairs({"clearFridgeProperty", "autoTick", "isFridgeObject", "isAuto", "isUnitEmpty", "isUnplugged", "requestAutoEval", "applyLight"}) do
+        if type(functions[name]) ~= "function" then return end
+    end
+    local module, autoKey, constants = owner.MODULE, owner.AUTO_KEY, {}
+    if module ~= "TurnOffFridges" or autoKey ~= "TOF_auto" then return end
+    local expected = {ON = {fridgeoff = "fridge", freezeroff = "freezer"}, OFF = {fridge = "fridgeoff", freezer = "freezeroff"}}
+    for _, name in ipairs({"ON", "OFF"}) do
+        local map = owner[name]
+        if type(map) ~= "table" or getmetatable(map) ~= nil then return end
+        local values = expected[name]
+        for key, value in pairs(values) do if map[key] ~= value then return end end
+        for key, value in pairs(map) do if values[key] ~= value then return end end
+        constants[name] = {map = map, values = values}
+    end
+    local function helpersUnchanged()
+        if TurnOffFridges ~= owner or getmetatable(owner) ~= nil or owner.MODULE ~= module or owner.AUTO_KEY ~= autoKey
+            or priorGuard and not priorGuard() then return false end
+        for name, callback in pairs(functions) do if owner[name] ~= callback then return false end end
+        for name, captured in pairs(constants) do
+            local map = captured.map
+            if owner[name] ~= map or getmetatable(map) ~= nil then return false end
+            for key, value in pairs(captured.values) do if map[key] ~= value then return false end end
+            for key, value in pairs(map) do if captured.values[key] ~= value then return false end end
+        end
+        return true
+    end
+    local replacement = transferMethods()
+    if not Proof.closure(replacement.perform, "TOF_Client.lua")
+        or replacement.new ~= previous.new or replacement.transferItem ~= previous.transferItem
+        or not policy.adoptTransferHooks(previous, replacement, helpersUnchanged)
+        or not Operations.adoptReturnHooks(previous, replacement, helpersUnchanged) then return end
+    reviewedTransferPerform, transferPerformGuard = replacement.perform, helpersUnchanged
+    ready.NicksTurnOffFridges = true
 end
 
 local function installCartEating()
@@ -771,6 +834,7 @@ function Compat.install()
     installAttempted = true
     installCartEating()
     installContainerTransfers()
+    installFridgeTransfers()
     if getActivatedMods and getActivatedMods():contains("SaucedCarts") and verified("SaucedCarts", sourceFiles.SaucedCartsTransfers) then
         ready.SaucedCartsTransfers = require("PZSurvivorToolkit/ActionQueueCarts").install()
     end
@@ -936,8 +1000,15 @@ function Compat.install()
         local floorGetter = floorPage and floorPage.GetFloorContainer
         if Proof.closure(floorGetter, "ISInventoryPage.lua") then tidyFloorPage, tidyFloorGetter = floorPage, floorGetter end
         tidyActionUnchanged = function(action, sourceOnly)
-            if P4TidyUpMeister~=owner or owner.registerActionPolicy~=actionPolicy or owner.registerWornItemReplacement~=wornPolicy then return false end
-            for class,methods in pairs(classes.P4TidyUpMeister) do if not tidyClassUnchanged(class,class,methods) then return false end end
+            if P4TidyUpMeister~=owner or owner.registerActionPolicy~=actionPolicy or owner.registerWornItemReplacement~=wornPolicy then return false,'owner_changed' end
+            for class,methods in pairs(classes.P4TidyUpMeister) do
+                if not tidyClassUnchanged(class,class,methods) then
+                    for name,method in pairs(methods) do
+                        if class[name]~=method then return false,'class_changed',tostring(class.Type)..'.'..tostring(name) end
+                    end
+                    return false,'class_changed',class.Type
+                end
+            end
             if not action then return true end
             local baseline=classes.P4TidyUpMeister[getmetatable(action)]
             if not baseline then return false end
@@ -989,8 +1060,8 @@ function Compat.isCartCapacitySource()
 end
 
 function Compat.isTransferPerform(callback)
-    return type(callback) == "function" and ready.EURY_CONTAINERS == true and callback == containerTransferPerform
-        and containerHelpersUnchanged()
+    return type(callback) == "function" and callback == reviewedTransferPerform
+        and type(transferPerformGuard) == "function" and transferPerformGuard()
 end
 
 function Compat.isCraftOwner(name, target, action)

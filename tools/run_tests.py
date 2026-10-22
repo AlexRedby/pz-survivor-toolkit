@@ -26,6 +26,7 @@ ACTION_TESTS += ("test_inventory_membership.lua",)
 ACTION_TESTS += ("test_action_queue_settlement.lua",)
 ACTION_TESTS += ("test_context_menu_duplicates.lua",)
 ACTION_TESTS += ("test_quartermaster_deposit.lua",)
+ACTION_TESTS += ("test_action_queue_fridge_compat.lua",)
 EXTRA_TESTS = (
     'test_manifest_authority.lua',
     'test_manifest_model.lua',
@@ -111,6 +112,7 @@ def main() -> None:
     parser.add_argument("--native-vehicles", type=Path, help="vanilla Vehicles.lua for mechanics item-collection checks")
     parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
+    parser.add_argument("--fridge-source", type=Path, help="Nick's Turn Off Fridges active media/lua directory")
     parser.add_argument("--vva-source", type=Path, help="Vanilla Vehicles Animated effective content root containing media/")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--oc-stick-source", type=Path, help="organizedCategories_itemStick.lua for Quantity transfer protection checks")
@@ -147,6 +149,8 @@ def main() -> None:
         configure_game_sources(args)
     except ValueError as error:
         parser.error(str(error))
+    if "test_action_queue_fridge_compat.lua" in requested and not args.fridge_source:
+        parser.error("test_action_queue_fridge_compat requires --fridge-source")
     if "test_quartermaster_craft_ui.lua" in requested and not args.native_action_root:
         parser.error("test_quartermaster_craft_ui requires --game or --native-action-root")
     if "test_quartermaster_deposit.lua" in requested and not args.native_action_root:
@@ -267,6 +271,8 @@ def main() -> None:
             continue
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if name == "test_action_queue_fridge_compat.lua" and args.fridge_source:
+            lua.globals().FridgeSource = str(args.fridge_source.resolve())
         if name == "test_vva_compat.lua" and args.vva_source:
             lua.globals().NativeVVASourceRoot = str(args.vva_source.resolve())
         if args.saucedcarts_source:

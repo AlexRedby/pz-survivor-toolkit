@@ -458,13 +458,17 @@ end
 function Policy.adoptTransferHooks(previous, replacement, guard)
     local snapshot = snapshots[ISInventoryTransferAction]
     local preparation = nativePreparation[ISInventoryTransferAction]
-    if not snapshot or type(guard) ~= "function" or not guard() then return false end
+    if not snapshot then return false,"missing_contract" end
+    if type(guard) ~= "function" then return false,"missing_guard" end
+    local available,reason=guard()
+    if not available then return false,reason or "guard_changed" end
     for _, name in ipairs({"new", "perform"}) do
-        if snapshot.methods[name] ~= previous[name] or ISInventoryTransferAction[name] ~= replacement[name]
-            or type(previous[name]) ~= "function" or type(replacement[name]) ~= "function" then return false end
+        if snapshot.methods[name] ~= previous[name] then return false,"previous_"..name end
+        if ISInventoryTransferAction[name] ~= replacement[name] then return false,"current_"..name end
+        if type(previous[name]) ~= "function" or type(replacement[name]) ~= "function" then return false,"invalid_"..name end
     end
-    if snapshot.helpers.transferItem ~= (previous.transferItem or false)
-        or ISInventoryTransferAction.transferItem ~= replacement.transferItem then return false end
+    if snapshot.helpers.transferItem ~= (previous.transferItem or false) then return false,"previous_transferItem" end
+    if ISInventoryTransferAction.transferItem ~= replacement.transferItem then return false,"current_transferItem" end
     for _, name in ipairs({"new", "perform"}) do snapshot.methods[name] = replacement[name] end
     snapshot.helpers.transferItem = replacement.transferItem or false
     if preparation then preparation.perform = replacement.perform end
