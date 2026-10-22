@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.220
+
+- **Distribution:** Prepare item tag membership lazily once per plan and reuse the destination search to explain unmatched or unavailable storage. Avoid rebuilding the same tag set for every rule and rescanning all destinations after a failed search. Preserve explicit-item priority, exact-category filters, broken-tool exclusions and live capacity/admission checks; subsequent plans read fresh item tags.
+
 ### 0.1.219
 
 - **Action queue:** Describe native firearm racking with exact weapon, ammunition output and equipment dependencies. Unrelated borrowed P4 items no longer become shared merely because the rack action was unknown; current and queued equipment resources remain protected. Active racking stays protected because its effects occur before completion.

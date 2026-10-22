@@ -141,12 +141,26 @@ function Tags.ruleActive(rule)
         and (#rule.include > 0 or #rule.exclude > 0)
 end
 
-function Tags.matchesRule(categoryOrTags, rule)
-    if type(rule) ~= "table" or (rule.mode ~= "all" and rule.mode ~= "any")
-        or type(rule.include) ~= "table" or type(rule.exclude) ~= "table" then return false end
-    local present = tagSet(categoryOrTags)
+local function validRule(rule)
+    return type(rule) == "table" and (rule.mode == "all" or rule.mode == "any")
+        and type(rule.include) == "table" and type(rule.exclude) == "table"
+end
+
+local function matchesRule(present, rule)
     for _, id in ipairs(rule.exclude) do if present[id] then return false end end
     return #rule.include == 0 or matchesSelection(present, rule.include, rule.mode)
+end
+
+function Tags.matchesRule(categoryOrTags, rule)
+    if not validRule(rule) then return false end
+    return matchesRule(tagSet(categoryOrTags), rule)
+end
+
+-- A private snapshot for callers comparing one classification against many rules.
+-- Keep it within the current operation; ordinary matchesRule reads remain live.
+function Tags.ruleMatcher(categoryOrTags)
+    local present = tagSet(categoryOrTags)
+    return function(rule) return validRule(rule) and matchesRule(present, rule) end
 end
 
 return Tags

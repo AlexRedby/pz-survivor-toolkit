@@ -104,6 +104,41 @@ do
  assert(not Tags.matchesRule(tags,rule),'rule matching retained an earlier tag-set cache')
 end
 
+-- Prepared matchers reuse a private membership snapshot across destination rules.
+do
+ local values=Tags.forCategory('FurnitureDoor')
+ local matcher=Tags.ruleMatcher(values)
+ for _,case in ipairs({
+  {{include={'furniture','door'}},true},
+  {{include={'furniture','food'}},false},
+  {{include={'furniture','food'},mode='any'},true},
+  {{include={},mode='any'},true},
+  {{include={'furniture'},exclude={'door'}},false},
+  {{exclude={'food'}},true},
+  {{include={'category:FurnitureDoor'}},true},
+  {{include={'category:furnitureDoor'}},false},
+  {{include={'door'},exclude={'category:FurnitureDoor'}},false},
+ }) do
+  local rule=assert(Tags.normalizeRule(case[1]))
+  assert(matcher(rule)==case[2],'prepared matcher changed rule semantics')
+  assert(matcher(rule)==Tags.matchesRule(values,rule),'prepared and live matchers disagree')
+  assert(Tags.ruleMatcher('FurnitureDoor')(rule)==case[2],'category-string preparation differs from tags')
+ end
+ local exact=assert(Tags.normalizeRule({include={'furniture','category:FurnitureDoor'}}))
+ values[1]='food'
+ values.legacyCategory='Mod.Changed'
+ assert(matcher(exact),'caller mutation changed prepared membership')
+ assert(not Tags.matchesRule(values,exact),'standalone matcher stopped reading live tags')
+ local refreshed=Tags.ruleMatcher(values)
+ assert(not refreshed(exact),'new matcher reused a stale membership snapshot')
+ assert(refreshed(assert(Tags.normalizeRule({include={'food','category:Mod.Changed'}}))),
+  'new matcher ignored current tags or exact-category alias')
+ assert(Tags.ruleMatcher('Mod.Unknown')(assert(Tags.normalizeRule({include={'category:Mod.Unknown'}}))),
+  'prepared matcher lost unknown exact categories')
+ assert(not matcher(nil) and not matcher(false) and not matcher({}) and not matcher({mode='ALL',include={},exclude={}}),
+  'prepared matcher accepted an invalid rule')
+end
+
 local function scriptItem(fullType, category, doubleClick)
  return {fullType=fullType,category=category,
   getFullName=function(self) return self.fullType end,

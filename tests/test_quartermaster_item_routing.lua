@@ -342,14 +342,17 @@ local originalForItem = Tags.forItem
 Tags.forItem = function(ref) if ref == candy.ref then error('routing test failure') end; return originalForItem(ref) end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.forItem = originalForItem
-local originalMatches, matchCalls = Tags.matchesRule, 0
-Tags.matchesRule = function(...)
-    matchCalls = matchCalls + 1
-    if matchCalls == 2 then error('routing test failure') end
-    return originalMatches(...)
+local originalMatcher, matchCalls = Tags.ruleMatcher, 0
+Tags.ruleMatcher = function(...)
+    local match = originalMatcher(...)
+    return function(rule)
+        matchCalls = matchCalls + 1
+        if matchCalls == 2 then error('routing test failure') end
+        return match(rule)
+    end
 end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
-Tags.matchesRule = originalMatches
+Tags.ruleMatcher = originalMatcher
 
 -- A large set of alternative boxes must not reclassify each physical item for
 -- each candidate. A new plan/standalone read still sees repaired or retagged items.
@@ -357,11 +360,26 @@ do
     local records, alternatives = {}, {}
     for index=1,100 do records[index]=item('Base.Candy','Food','Candy '..index) end
     for index=1,40 do alternatives[index]=box(seedRule) end
-    local classify, reads = Tags.forItem, 0
+    local classify, prepare, reads, preparations, evaluations = Tags.forItem, Tags.ruleMatcher, 0, 0, 0
     Tags.forItem=function(ref) reads=reads+1; return classify(ref) end
+    Tags.ruleMatcher=function(tags)
+        preparations=preparations+1
+        local match=prepare(tags)
+        return function(rule) evaluations=evaluations+1; return match(rule) end
+    end
     local _,failed=checkPlan(records,alternatives)
-    Tags.forItem=classify
-    assert(#failed.leftover==100 and reads==100,'routing reclassified items for alternative/full-reason checks')
+    assert(#failed.leftover==100 and failed.leftoverReasons.nomatch==100 and reads==100 and preparations==100,
+        'routing rebuilt item classification/membership for alternative destinations')
+    assert(evaluations==4000,'unsuccessful routing repeated rule evaluations for the refusal reason')
+    reads,preparations=0,0
+    checkPlan({candy},{box(nil,{[candy.cat]=true})})
+    checkPlan({candy},{box(seedRule,{}, {[candy.name]=true})})
+    assert(reads==0 and preparations==0,'direct category/name success eagerly prepared semantic tags')
+    local brokenFood=item('Base.Candy','Food','Broken non-tool')
+    brokenFood.ref.isBroken=function() return true end
+    checkPlan({brokenFood},alternatives)
+    assert(reads==1 and preparations==1,'broken non-tool rebuilt its prepared membership for rules')
+    Tags.forItem,Tags.ruleMatcher=classify,prepare
 
     local state={category='Food',broken=false}
     local record={cat='Food',name='Mutable',weight=1,ref={
@@ -382,6 +400,32 @@ do
     state.broken=true
     assert(Rules.matcher()(legacy,record),'tag opt-out retained a broken-tool classification')
     enabled=true
+end
+-- Refusal reasons come from the completed destination search, including named
+-- destinations whose capacity/admission failed before a category could match.
+do
+    for _,fullBox in ipairs({true,false}) do
+        local named=box(nil,{}, {[candy.name]=true})
+        named.capacity=fullBox and 0 or 100
+        local matched,admitted=0,0
+        local result=LootSorter.planTrips({candy},{named},{carrier},100,nil,function()
+            matched=matched+1; return false
+        end,function()
+            admitted=admitted+1; return false
+        end)
+        assert(#result.leftover==1 and result.leftoverReasons.full==1 and result.leftoverReasons.nomatch==0,
+            'unavailable explicit destination lost its matching designation')
+        assert(matched==1 and admitted==(fullBox and 0 or 1),'refusal changed matching/admission calls')
+    end
+    local fullBox=box(nil,{Food=true}); fullBox.capacity=0
+    local calls=0
+    local result=LootSorter.planTrips({candy},{fullBox},{carrier},100,nil,function()
+        calls=calls+1; return true
+    end,function() error('full destination reached admission') end)
+    assert(calls==1 and result.leftoverReasons.full==1,'full category destination lost its first match')
+    result=LootSorter.planTrips({candy},{fullBox},{{ref={},space=0,factor=1}},100,nil,
+        function() error('uncarryable item reached designation matching') end)
+    assert(result.leftoverReasons.carry==1 and result.leftoverReasons.full==0,'carry lost refusal precedence')
 end
 -- Explicit-name lookup must not scan unrelated boxes for every physical item.
 do
