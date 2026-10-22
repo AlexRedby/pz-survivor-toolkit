@@ -54,6 +54,7 @@ The action queue is enabled on fresh profiles and preserves existing preferences
 | [Selected mod catalog](USEFUL_MODS.md) | Third-party mod IDs, dependencies, settings and known issues. |
 | [Java patches](JavaPatches/README.md) | Engine fixes, server loader and activation checks. |
 | [Development](docs/DEVELOPMENT.md) | Tests, packaging, adapters and diagnostics. |
+| [Blender animation setup](docs/DEVELOPMENT.md#cart-animation-authoring-in-blender) | Prepare an editable scene and native-verified export from a fresh clone. |
 | [Native scenarios](tests/native_queue/README.md) | Isolated game runs and fixture integration. |
 | [Open work](TODO.md) | Remaining tasks and completion gates. |
 

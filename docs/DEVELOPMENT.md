@@ -14,6 +14,48 @@ Agent verification on macOS is sufficient for this project's Windows/macOS gamep
 
 Use the [native runner guide](../tests/native_queue/README.md#commands) for isolated settings/saves and macOS window placement, including AeroSpace and current-desktop fallback.
 
+## Cart animation authoring in Blender
+
+Start from a clone of this repository and install these external prerequisites:
+
+- Python 3.10+ for the launcher; no pip packages are needed for this workflow.
+- Blender 4.5 LTS, including its bundled Python, `bpy` and `mathutils`.
+- JDK 25+ with both `java` and `javac` for the native export check.
+- The supported Project Zomboid B42.21 installation. Its Java directory must contain `projectzomboid.jar`, the native importer libraries, `media/anims_X/Bob/Bob_Idle.x` and `media/models_X/Skinned/{MaleBody,FemaleBody}.x`.
+- For the wooden pickup's cart reference, the installed Steam Workshop item **3689975894**, SaucedWheelbarrow. The required file is `mods/SaucedWheelbarrow/42/media/models_X/weapons/2handed/Wheelbarrow_wood.fbx` inside that item's directory. An existing local copy can be selected with `--cart-fbx`.
+
+All project scripts, native check helpers, presets and editable pose sources are in Git under `tools/`, `tests/` and `assets/animations/`. Blender, the JDK, game files and Workshop models are external installations. The `.blend` scene is generated from those inputs; no pre-existing scene, Codex installation, account configuration or agent investigation files are required.
+
+On macOS the launcher discovers Blender in `~/Applications` or `/Applications`, the standard Steam game path and the installed JDK. From the clone's root, run:
+
+```sh
+python3 tools/cart_blender.py prepare --clip wood_cart_pickup
+python3 tools/cart_blender.py edit build/blender/wood_cart_pickup
+python3 tools/cart_blender.py export build/blender/wood_cart_pickup
+python3 tools/cart_blender.py render build/blender/wood_cart_pickup --frame 20
+```
+
+For nonstandard installations, pass paths when preparing the workspace:
+
+```sh
+python3 tools/cart_blender.py prepare --clip wood_cart_pickup \
+  --blender /path/to/Blender.app --jdk /path/to/jdk-25 \
+  --game /path/to/game-Java \
+  --cart-fbx /path/to/Wheelbarrow_wood.fbx
+```
+
+`--blender` also accepts the Blender executable directly. `--workshop /path/to/steamapps/workshop/content/108600` selects a different Steam library instead of a single FBX. Windows users can use `py -3` in place of `python3` and pass their installed executable/JDK/game paths; verification here was performed on macOS.
+
+Preparation creates `build/blender/wood_cart_pickup` containing `scene.blend`, its configuration and macOS double-click launchers. It never replaces an existing workspace; use `--output` for another version. The wooden pickup preset includes the measured playback duration and a calibrated cart reference. The other supplied source clips are `metal_cart_pickup`, `shopping_cart_pickup`, `wood_cart_brace`, `wood_cart_pivot_left` and `wood_cart_pivot_right`; use `--clip NAME --duration SECONDS` with their actual playback duration. These have a live body without a cart reference. Add `--female` to prepare the native female body.
+
+The body follows pose edits immediately through saved Blender constraints and linear skinning; reopening the scene does not require script auto-run. The editable `CartClip` skeleton is separate from the hidden bind skeleton. The prepared viewport starts in Pose Mode with Auto Key enabled. Space plays the clip; the Dope Sheet edits key timing. Open through the launcher to load the **PZ Cart** sidebar and its **Save + Export to PZ** button. A direct double-click on `.blend` retains the live mesh but does not register the session-only sidebar.
+
+Exports retain added and moved keys and create a new `exports/` snapshot with pose JSON, native `.x`, logs and `report.json`. Native PZ import/FK must reproduce the scene's keys and intermediate frames within the matrix tolerance before the result is reported as passing. Bezier curves or authoring constraints require the sidebar's bake option or `export --bake-fps 60`; the exporter increases sampling up to 240 fps when the native checker detects an approximation error, and fails if that still exceeds the tolerance. The low-level `cart_clip_blender.py export` still defaults to original timestamps; the workspace launcher uses authored key timing.
+
+`build/blender/` contains generated scenes, local absolute paths, imported game/Workshop geometry and export snapshots. It is ignored by Git and excluded from mod packaging. A new clone recreates it with `prepare`; after moving the clone or changing machines, prepare a new workspace rather than copying the old configuration. Preserve any hand-edited scene separately before removing an old workspace. Export does not replace repository animation sources or install anything into the game. The cart is an authoring reference: runtime hand IK, ground adaptation, clothing, interruptions and multiplayer transitions still require PZ checks. Offline verification was performed on macOS with Blender 4.5.9.
+
+Run the fast parser/bridge checks with `python3 -m unittest discover -s tests -p 'test_cart*blender*.py'`. To exercise actual edits, key insertion/retiming, reload and the sidebar's native export, run Blender with `--background --python-exit-code 1 --python tests/blender_cart_edit_check.py -- WORKSPACE`; this creates a separate `verification/` scene and leaves the original scene unchanged.
+
 ## Checks and packaging
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests. Choose checks related to the change; the commands below are independent examples, not a mandatory full checklist.
