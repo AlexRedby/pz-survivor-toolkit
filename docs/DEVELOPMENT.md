@@ -4,6 +4,16 @@
 
 Run commands below from the repository root.
 
+## Versioning
+
+Before pushing changes to main, compare each changed component with the latest main. Changes to shipped code, assets or runtime metadata, including behavior-preserving refactors, require a version newer than main for that component: Toolkit uses [mod.info](../PZSurvivorToolkit/42/mod.info); Java Patches uses the generated metadata in [build.py](../JavaPatches/build.py). One bump can cover the complete set of changes delivered together; individual implementation commits do not each need a bump. Record the delivered changes in [CHANGELOG.md](../CHANGELOG.md) and recheck versions after merging concurrent work. Changes confined to tests, development tools, documentation or agent instructions do not require a mod version bump.
+
+## Verification environment
+
+Agent verification on macOS is sufficient for this project's Windows/macOS gameplay targets. Do not pursue Windows test environments or make Windows verification a routine completion requirement; Windows players check the project there. State the platform actually tested and do not present a macOS check as Windows verification. A separate dedicated-server run is not a required verification target.
+
+Use the [native runner guide](../tests/native_queue/README.md#commands) for isolated settings/saves and macOS window placement, including AeroSpace and current-desktop fallback.
+
 ## Checks and packaging
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests. Choose checks related to the change; the commands below are independent examples, not a mandatory full checklist.
@@ -51,6 +61,8 @@ To run the same checks against your installed game's native Mod Options implemen
 ## Native scenarios
 
 Use the [native runner guide](../tests/native_queue/README.md) for preparation, exclusive GUI ownership, control comparisons, runtime verdicts and coverage. The [contribution index](../tests/native_queue/contributions/README.md) lists registered adapters and their scope. Registration does not establish a native pass; use each run report and coverage matrix.
+
+For selected-mod compatibility, run the relevant native suite with `--mods selected`; isolated Lua tests do not load that set.
 
 ## Regression scenarios
 
