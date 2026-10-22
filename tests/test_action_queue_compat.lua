@@ -17,6 +17,9 @@ local function derive(self, name)
 end
 local craftContainers
 require = function(name)
+    if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
+        return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
+    end
     if name == "PZSurvivorToolkit/ActionQueueMembership" then
         return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
     end
@@ -279,6 +282,9 @@ local Outfit = {
 local Gather = {build = function() return {} end, find = function(_, descriptor) return descriptor.item, 'container', descriptor.item:getContainer() end}
 local loaded = {}
 require = function(module)
+    if module == 'PZSurvivorToolkit/ActionQueueSettlement' then
+        return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
+    end
     if module == "PZSurvivorToolkit/ActionQueueMembership" then
         return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. module .. ".lua"))()
     end

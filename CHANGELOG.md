@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.204
+
+- **Action queue:** Route cancelled-operation returns and existing mask/fitness restoration through one settlement engine. Preserve native effects, exact surviving item IDs, cleanup order and unrelated queued work; reject stale ownership and repeated settlement. Existing adapter permissions and Host completion gates are unchanged.
+
 ### 0.1.203
 
 - **Automatic distribution:** Recheck native capacity and item admission for every actual single-player deposit, including merged items and containers changed after the action started. Skip a confirmed Host transaction rejection without dropping transfers to other containers; preserve native batching, cleanup and ordinary cancellation. Unknown transaction outcomes still stop the haul.

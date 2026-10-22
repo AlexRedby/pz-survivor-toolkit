@@ -11,6 +11,7 @@ local Bulk = {}
 Toolkit.BulkFood = Bulk
 local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
 local InventoryMembership = require "PZSurvivorToolkit/InventoryMembership"
+local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
 local commands, meals, cleanup, removals, openings, waits = {}, {}, {}, {}, {}, {}
 local registries = {commands, meals, cleanup, removals, openings, waits}
 local function portion(value) return value == 1 or value == 0.5 or value == 0.25 end
@@ -188,6 +189,7 @@ function Bulk.retainCleanup(action, current, queue)
     entry.retained = true
     return true
 end
+Settlement.register("bulk-food-mask", {retain = Bulk.retainCleanup})
 
 local function installCleanupContract()
     if not Toolkit.ActionQueuePolicy then return end

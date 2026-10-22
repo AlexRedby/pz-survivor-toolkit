@@ -23,6 +23,7 @@ ACTION_TESTS += ("test_vva_compat.lua",)
 ACTION_TESTS += ("test_manifest_text_fit.lua", "test_manifest_layout.lua", "test_manifest_view.lua", "test_manifest_presentation.lua",)
 ACTION_TESTS += ("test_action_queue_membership.lua",)
 ACTION_TESTS += ("test_inventory_membership.lua",)
+ACTION_TESTS += ("test_action_queue_settlement.lua",)
 ACTION_TESTS += ("test_context_menu_duplicates.lua",)
 ACTION_TESTS += ("test_quartermaster_deposit.lua",)
 EXTRA_TESTS = (

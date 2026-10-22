@@ -1,5 +1,13 @@
 if not NativeActionRoot then print('Fitness queue native contracts SKIP.'); return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+local fixtureRequire=require
+require=function(name)
+    if name=='PZSurvivorToolkit/ActionQueueSettlement' then
+        return PZSurvivorToolkit.ActionQueueSettlement
+            or assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()
+    end
+    return fixtureRequire(name)
+end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -423,10 +431,11 @@ local coreTo=assert(coreSource:find('function Queue.move',coreFrom,true))
 local coreChunk=coreSource:sub(coreFrom,coreTo-1):gsub('local completed = ISTimedActionQueue.onCompleted',
     'local completed = function(queue,action) queue:removeFromQueue(action);queue.current=queue.queue[1] end',1)
 local nativeCompleted=ISTimedActionQueue.onCompleted
-local core=assert(loadstring('local Queue,Toolkit,Policy,Operations = ...\n'..
+local core=assert(loadstring('local Queue,Toolkit,Policy,Operations,Settlement = ...\n'..
     'local craft,live,stoppable=Policy.isCraftAction,Policy.live,Policy.stoppable\n'..
     'local Batch,processPriority,returnMarker=nil,nil,{}\n'..coreChunk..'\nreturn Queue',
-    '@PZSurvivorToolkit/ActionQueue.lua'))({},PZSurvivorToolkit,policy,PZSurvivorToolkit.ActionQueueOperations)
+    '@PZSurvivorToolkit/ActionQueue.lua'))({},PZSurvivorToolkit,policy,PZSurvivorToolkit.ActionQueueOperations,
+        PZSurvivorToolkit.ActionQueueSettlement)
 f.project('ActionQueueLifecycle')
 ISInventoryPaneContextMenu.getContainers=function()return list({})end
 reset()
