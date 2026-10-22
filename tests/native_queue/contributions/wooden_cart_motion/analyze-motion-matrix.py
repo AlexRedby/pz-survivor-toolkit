@@ -169,18 +169,31 @@ def selected_capture(text, expected_scenes=None):
             active = None
     return records, starts
 
-def analyze(text, expected_scenes=None):
+def baggy_outfit(row, female):
+    assert type(row.get('female')) is bool and row['female'] is female, 'Wrong/missing outfit body model'
+    assert row.get('wornCount') == 3, 'Non-deterministic fixture outfit'
+    assert row.get('pantsType') == 'Base.Trousers_JeanBaggy', 'Missing worn baggy jeans'
+    assert type(row.get('pantsID')) is int and row['pantsID'] > 0, 'Missing worn jeans identity'
+    model = row.get('pantsModel')
+    assert isinstance(model, str), 'Missing native trousers model'
+    model = model.lower().replace('\\', '/').removesuffix('.x')
+    assert model == 'skinned/clothes/' + ('kate' if female else 'bob') + '_trousers', 'Wrong native trousers model'
+    return row['pantsID'], model
+
+
+def analyze(text, expected_scenes=None, *, require_baggy_jeans=False):
     captures, starts = selected_capture(text, expected_scenes)
     failures, results, rapid_limitations = [], [], []
     for name, events in captures.items():
         expected = schedule(name)
-        _, load, gait, spec = name.split('-', 3)
+        sex, load, gait, spec = name.split('-', 3)
         start = starts[name]
         position, phase_results, identity = 0, [], None
         previous_end = start
         initial_heading = None
         previous_sample = None
         clock_state = {}
+        outfit_identity, outfit_samples, sample_count = None, 0, 0
         def fail(phase, reason, value=None):
             failures.append(dict(case=name, phase=phase, reason=reason, value=value))
         for index, contract in enumerate(expected, 1):
@@ -217,6 +230,12 @@ def analyze(text, expected_scenes=None):
                 expected_keys = (drive in (1, 5, 8), False, drive == 5, drive == 8, requested == 1, requested == 2)
                 assert tuple(row[k] for k in ('forward','backward','left','right','runKey','sprintKey')) == expected_keys, 'Actual native keys disagree with phase'
                 assert row['skill'] == 10, 'Missing controlled Sprint eligibility'
+                sample_count += 1
+                if require_baggy_jeans or any(key in row for key in ('female','wornCount','pantsType','pantsID','pantsModel')):
+                    current_outfit = baggy_outfit(row, sex == 'female')
+                    outfit_identity = current_outfit if outfit_identity is None else outfit_identity
+                    assert current_outfit == outfit_identity, 'Worn jeans identity changed'
+                    outfit_samples += 1
                 assert type(row.get('cargoIDs')) is str and row['id'] > 0, 'Missing exact cart/cargo identity'
                 current = row['id'], row['cargoIDs'], row['cargoWeight']
                 identity = current if identity is None else identity
@@ -330,10 +349,12 @@ def analyze(text, expected_scenes=None):
             phase_results.append(result)
         assert position == len(events), 'Unexpected telemetry after final phase'
         assert DURATIONS[spec] <= previous_end-start <= DURATIONS[spec]+500, 'Truncated fixed recording window'
-        results.append(dict(case=name, duration=previous_end-start, phases=phase_results))
+        results.append(dict(case=name, duration=previous_end-start, phases=phase_results,
+                            baggyJeansVerified=outfit_samples == sample_count and sample_count > 0))
     return dict(complete=True, caseCount=len(results), fullSceneCount=len(SCENES), matrixComplete=tuple(captures)==SCENES,
                 scope='full-matrix' if expected_scenes is None else 'selected-scenes', expectedScenes=list(captures),
                 inputScheme='relative-keyboard-v1', motionPass=not failures, motionFailures=failures, cases=results,
+                baggyJeansVerified=all(row['baggyJeansVerified'] for row in results),
                 rapidResponsePass=not rapid_limitations, rapidResponseLimitations=rapid_limitations,
                 limit='Measured SP relative keyboard movement with bounded existing steering inertia. Rapid 300ms requested-direction response is reported independently by rapidResponsePass/rapidResponseLimitations. Sampled heading, positions, native gait and controls do not establish grip, wheel support, body/clothing clearance, visual quality, runtime cleanliness or multiplayer correctness.')
 
@@ -346,10 +367,11 @@ def main():
     parser.add_argument('--log',type=Path)
     parser.add_argument('--scenes',type=parse_scenes)
     parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--require-baggy-jeans',action='store_true',help='Require stable live worn-jeans identity and the calibrated native model in every sample')
     args=parser.parse_args()
     assert args.profile.is_dir(), 'Missing capture profile'
     assert not args.output.exists(), 'Refuse to overwrite existing report'
-    result=analyze((args.log or args.profile/'console.txt').read_text(errors='replace'),args.scenes)
+    result=analyze((args.log or args.profile/'console.txt').read_text(errors='replace'),args.scenes,require_baggy_jeans=args.require_baggy_jeans)
     with args.output.open('x') as target:
         json.dump(result,target,indent=2,allow_nan=False);target.write('\n')
     print(json.dumps(result,indent=2,allow_nan=False))

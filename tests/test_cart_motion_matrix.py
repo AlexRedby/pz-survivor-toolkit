@@ -239,6 +239,30 @@ class MotionMatrixTests(unittest.TestCase):
         self.assertFalse(result['matrixComplete'])
         self.assertEqual(result['scope'],'selected-scenes')
 
+    def test_clothing_gate_requires_actual_stable_worn_jeans(self):
+        self.assertFalse(self.analyze()['baggyJeansVerified'])
+        with self.assertRaisesRegex(AssertionError, 'outfit body model'):
+            analyzer.analyze(self.log, SMALL, require_baggy_jeans=True)
+        def dress(row):
+            female=row['case'].startswith('female-')
+            return update(row,female=female,wornCount=3,pantsType='Base.Trousers_JeanBaggy',pantsID=42,
+                          pantsModel='Skinned/Clothes/'+('Kate' if female else 'Bob')+'_Trousers')
+        clothed=transform(self.log,'SAMPLE',lambda r:True,dress)
+        self.assertTrue(analyzer.analyze(clothed,SMALL,require_baggy_jeans=True)['baggyJeansVerified'])
+        for values,reason in ((dict(wornCount=4),'fixture outfit'),
+                              (dict(pantsType='Base.Skirt_Short'),'baggy jeans'),
+                              (dict(pantsModel='Skinned/Clothes/Bob_Trousers'),'trousers model'),
+                              (dict(pantsID=43),'identity changed'),
+                              (dict(female=False),'body model')):
+            with self.subTest(values=values), self.assertRaisesRegex(AssertionError,reason):
+                bad=transform(clothed,'SAMPLE',lambda r:r['case'].startswith('female-') and r['phase']=='straight',
+                              lambda r:update(r,**values))
+                analyzer.analyze(bad,SMALL,require_baggy_jeans=True)
+        missing=transform(clothed,'SAMPLE',lambda r:r['phase']=='straight',
+                          lambda r:{k:v for k,v in r.items() if k not in ('female','wornCount','pantsType','pantsID','pantsModel')})
+        with self.assertRaisesRegex(AssertionError,'outfit body model'):
+            analyzer.analyze(missing,SMALL,require_baggy_jeans=True)
+
     def test_missing_duplicate_reordered_case_boundaries(self):
         for bad in (self.log.replace('[WOOD_BANK] RUN_STARTED',''),self.log.replace('ALL_COMPLETE cases=3','ALL_COMPLETE cases=2'),
                     self.log.replace('[WOOD_BANK] COMPLETE male-empty-walk-arcs','[WOOD_BANK] MISSING male-empty-walk-arcs'),
