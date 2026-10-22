@@ -29,6 +29,11 @@ class FoodAdapterTests(unittest.TestCase):
                      queueEnabled=self.selection['mode'] == 'toolkit', nativeDurations=True)]
         raw = []
         for index, case in enumerate(cases):
+            if case in food.FULL_CASES:
+                from test_queue_food_full_replacement import family_evidence
+                row, authority = family_evidence(case, index, self.selection['mode'])
+                rows.append(row); raw.extend(authority)
+                continue
             bag, enabled, depletion = case in food.BAG_CASES, self.selection['mode'] == 'toolkit', case == food.DEPLETION_CASE
             smart, utensil, cookable = case in food.SMART_CASES, case in food.UTENSIL_CASES, case in food.ALL_COOKABLE_CASES
             replacement = case in food.ALL_REPLACEMENT_CASES
@@ -621,7 +626,8 @@ end
                                  ('hunger', .8), ('thirst', .8), ('source', 'floor'),
                                  ('anchorAmount', .48), ('anchorCount', 0)]:
                 rows, raw = self.single(case)
-                if field=='deleted' and case==food.DEPLETION_CASE: value=False
+                if field=='deleted' and (case==food.DEPLETION_CASE or case in (food.FULL_MOVE_CASE, food.FULL_QUARTER_CASE, food.FLUID_FULL_MOVE_CASE, food.FLUID_FULL_QUARTER_CASE)): value=False
+                if field=='hunger' and case in (food.FULL_CANCEL_CASE, food.FLUID_FULL_CANCEL_CASE): value=.7
                 for record in (rows[1], rows[1]['client'], raw[1][1]): record[field] = value
                 rows[1].update(effectsVerified=True, pendingEditsVerified=True)
                 with self.subTest(case=case, field=field, value=value):

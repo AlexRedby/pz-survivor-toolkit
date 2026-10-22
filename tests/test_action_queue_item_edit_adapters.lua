@@ -1642,6 +1642,212 @@ do
     end
     print('Cold cookable world edits: constant ambient, native outermost, dormant replacements, state/callback barriers and global capacity prefix passed.')
 end
+do
+    local function fullFood(s)
+        local food=s.food();food.base=-.1;food.hunger=-.1
+        food.getFullType=function()return 'Base.PanFriedVegetables2'end
+        food.getReplaceOnUse=function()return 'RoastingPan'end
+        food.getReplaceOnUseFullType=function()return 'Base.RoastingPan'end
+        food.getActualWeight=function()return 1.3 end
+        local script=food:getScriptItem()
+        script.getReplaceOnUse=function()return 'RoastingPan'end
+        script.getHungerChange=function()return -.1 end;script.getActualWeight=function()return 1.3 end
+        local output={}
+        for _,value in ipairs({script,output})do
+            value.getItemType=function(self)return self==script and 'base:food'or 'base:normal'end
+            value.getCount=function(self)return self.count or 1 end
+            value.getObsolete=function(self)return self.obsolete or false end
+            value.getLuaCreate=function(self)return self.onCreate end
+            value.getItemConfig=function(self)return self.config end
+            value.getItemConfigKey=function(self)return self.configKey end
+            value.hasComponents=function(self)return self.components or false end
+        end
+        output.getActualWeight=function(self)return self.weight or 1.3 end
+        output.getReplaceOnUse=function(self)return self.replacement end
+        output.getReplaceOnDeplete=function(self)return self.depletion end
+        s.scripts['Base.RoastingPan']=output
+        return food,script,output
+    end
+    local function entry(s,action)return {action=action,edit=assert(s.adapters.food(action))}end
+    for _,client in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        local food=fullFood(s);local full,quarter=s.eat(food,1),s.eat(food,.25)
+        local edit,output=s.adapters.food(full)
+        assert(edit and output=='Base.RoastingPan','only a proven full replacement declares its output type')
+        local contract=s.policy.inspect(full)
+        assert(contract.edit and contract.outputTypes['Base.RoastingPan']
+            and not contract.capacityNonIncreasing and not contract.capacityRequiresEdit,
+            'full native add-before-remove never inherits the surviving-food capacity bypass')
+        assert(s.model.evaluate({entry(s,quarter),entry(s,full)}).status=='allowed')
+        assert(s.model.evaluate({entry(s,full),entry(s,quarter)}).status=='denied','source food cannot be consumed after full replacement')
+        local removed=entry(s,full);removed.snapshotOnly=true
+        assert(s.model.evaluate({removed,entry(s,quarter)}).status=='allowed','cancelled full eating creates no output or consumption')
+        s.water.container=s.root
+        local head=s.f.action(ISReadABook,{item=s.item()});head.action={}
+        local water=s.drink();local q=s.f.queue(head,full,water)
+        assert(s.policy.evaluateMove(q,water,full,false).allowed,'independent water can move ahead of full eating')
+        assert(s.policy.evaluateCancel(q,full).allowed,'pending full replacement can be cancelled independently')
+        q=s.f.queue(head,quarter,full,water)
+        assert(not s.policy.evaluateMove(q,full,quarter,false).allowed,'full eating cannot invalidate its preceding same-food quarter')
+        local a,b=s.item(),s.item();a.container=s.root;b.container=s.root
+        local ta,tb=s.transfer(a,s.root,s.bagInventory),s.transfer(b,s.root,s.bagInventory)
+        q=s.f.queue(head,full,ta,tb)
+        local decision=s.policy.evaluateMove(q,tb,ta,false)
+        assert(not decision.allowed and decision.reason=='container_capacity',
+            'global transfer prefixes retain transient original-plus-output protection')
+        assert(s.policy.evaluateCancel(q,full).allowed,'removing full eating removes its capacity barrier')
+        local returning=s.transfer(food,s.root,s.bagInventory)
+        q=s.f.queue(head,full,returning)
+        assert(not s.policy.evaluateMove(q,returning,full,false).allowed,'required root food cannot be transferred away before consumption')
+        assert(food.hunger==-.1 and food.base==-.1 and food.container==s.root and full.percentage==1,
+            'inspection never eats food, changes portions or allocates a replacement')
+    end
+    for _,kind in ipairs({'selector','producer','unrelated'})do
+        local s=setup();local food=fullFood(s);local full=s.eat(food,1)
+        local class=ISBaseTimedAction:derive('UnreviewedDishConsumer')
+        local other=s.f.action(class,{})
+        local outputType=kind=='unrelated'and 'Base.OtherDish'or 'Base.RoastingPan'
+        PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.full-food-output',{
+            types={'UnreviewedDishConsumer'},matches=function(value)return value==other end,
+            inspect=function()
+                local result={items={},itemTypes={},targets={},cancelWaiting=true}
+                if kind=='producer'then result.outputTypes={[outputType]=true}
+                else result.dynamicInputs={[outputType]=true}end
+                return result
+            end,
+        })
+        s.water.container=s.root;local head=s.drink();head.action={}
+        local q=s.f.queue(head,full,other)
+        local cancelled=s.policy.evaluateCancel(q,full)
+        local moved=s.policy.evaluateMove(q,full,other,true)
+        if kind=='unrelated'then
+            assert(cancelled.allowed and moved.allowed,'unrelated declared output scope does not block full food edits')
+        else
+            assert(not cancelled.allowed and not moved.allowed,
+                'unknown matching future selector/producer retains output ordering and cancellation protection: '..kind)
+        end
+    end
+    local function fluidOutput(s)
+        local food,script,output=fullFood(s)
+        food.base,food.hunger=-.15,-.15
+        food.getFullType=function()return 'Base.CannedPeachesOpen'end
+        food.getReplaceOnUse=function()return 'TinCanEmpty'end
+        food.getReplaceOnUseFullType=function()return 'Base.TinCanEmpty'end
+        script.getReplaceOnUse=function()return 'TinCanEmpty'end
+        script.getHungerChange=function()return -.15 end
+        food.getActualWeight=function()return .8 end
+        output.weight=.2
+        s.scripts['Base.TinCanEmpty']=output
+        ComponentType={FluidContainer={}}
+        local component={class='FluidContainerScript',capacity=.3}
+        component.getCapacity=function(self)return self.capacity end
+        component.getInitialFluids=function(self)return self.initial end
+        component.getInitialAmount=function()error('inspection must never draw initial-amount RNG')end
+        local list={component}
+        list.size=function(self)return self.count or #self end
+        list.get=function(self,index)return self[index+1]end
+        output.components=true
+        output.getComponentScripts=function()return list end
+        output.getComponentScriptFor=function(_,kind)return kind==ComponentType.FluidContainer and component end
+        return food,script,output,component,list
+    end
+    for _,client in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        local food,script,output,component=fluidOutput(s)
+        local full,quarter=s.eat(food,1),s.eat(food,.25)
+        local previousFactory=InventoryItemFactory
+        InventoryItemFactory={CreateItem=function()error('inspection must not create an output prototype')end}
+        local edit,kind=s.adapters.food(full)
+        assert(edit and kind=='Base.TinCanEmpty','one empty fluid component permits bounded full replacement')
+        assert(s.model.evaluate({entry(s,quarter),entry(s,full)}).status=='allowed')
+        assert(s.model.evaluate({entry(s,full),entry(s,quarter)}).status=='denied')
+        local contract=s.policy.inspect(full)
+        assert(contract.outputTypes['Base.TinCanEmpty']and contract.capacityReplacement
+            and not contract.capacityNonIncreasing and not contract.capacityRequiresEdit,
+            'empty-fluid output preserves exact type dependency and add-before-remove transfer protection')
+        s.water.container=s.root
+        local head=s.f.action(ISReadABook,{item=s.item()});head.action={};local tail=s.drink(.25)
+        local q=s.f.queue(head,full,tail)
+        assert(s.policy.evaluateMove(q,tail,full,false).allowed and s.policy.evaluateCancel(q,full).allowed,
+            'independent waiting drink and full can consumption may move/cancel')
+        component.initial={size=function()return 0 end,get=function()error('an empty list must not be read')end}
+        assert(select(2,s.adapters.food(full))=='Base.TinCanEmpty','an empty native fluid list is also empty initialization')
+        assert(food.hunger==-.15 and full.percentage==1 and component.capacity==.3)
+        InventoryItemFactory=previousFactory
+    end
+    for _,change in ipairs({'two-components','missing-component','wrong-class','subclass','foreign-lookup','initial-fluid','malformed-initial',
+        'zero-capacity','negative-capacity','nan-capacity','infinite-capacity','missing-capacity','missing-initial-getter',
+        'missing-list-getter','missing-type-lookup','missing-size','missing-get','missing-component-type','source-component',
+        'output-callback','output-config','output-config-key','wrong-output-type'})do
+        local s=setup();local food,script,output,component,list=fluidOutput(s);local full=s.eat(food,1)
+        if change=='two-components'then list[2]={class='LuaComponentScript'}
+        elseif change=='missing-component'then list[1]=nil;list.count=1
+        elseif change=='wrong-class'then component.class='EnergyScript'
+        elseif change=='subclass'then component.class='CustomFluidContainerScript'
+        elseif change=='foreign-lookup'then output.getComponentScriptFor=function()return {}end
+        elseif change=='initial-fluid'then component.initial={size=function()return 1 end,get=function()error('initial fluids must not be sampled')end}
+        elseif change=='malformed-initial'then component.initial={}
+        elseif change=='zero-capacity'then component.capacity=0
+        elseif change=='negative-capacity'then component.capacity=-1
+        elseif change=='nan-capacity'then component.capacity=0/0
+        elseif change=='infinite-capacity'then component.capacity=math.huge
+        elseif change=='missing-capacity'then component.getCapacity=nil
+        elseif change=='missing-initial-getter'then component.getInitialFluids=nil
+        elseif change=='missing-list-getter'then output.getComponentScripts=nil
+        elseif change=='missing-type-lookup'then output.getComponentScriptFor=nil
+        elseif change=='missing-size'then list.size=nil
+        elseif change=='missing-get'then list.get=nil
+        elseif change=='missing-component-type'then ComponentType=nil
+        elseif change=='source-component'then script.components=true
+        elseif change=='output-callback'then output.onCreate='custom.callback'
+        elseif change=='output-config'then output.config={}
+        elseif change=='output-config-key'then output.configKey='custom'
+        elseif change=='wrong-output-type'then output.getItemType=function()return 'base:container'end end
+        local edit,kind=s.adapters.food(full)
+        assert(not kind and (not edit or s.model.evaluate({{action=full,edit=edit}}).status~='allowed'),
+            'unproved fluid output stays protected: '..change)
+    end
+    local mutations={
+        {'onCreate','callback'},{'config',{}},{'configKey','custom'},{'components',true},
+        {'count',2},{'count',0},{'count',0/0},{'obsolete',true},
+    }
+    for _,owner in ipairs({'source','output'})do
+        for _,change in ipairs(mutations)do
+            local s=setup();local food,script,output=fullFood(s);local action=s.eat(food,1)
+            local target=owner=='source'and script or output;target[change[1]]=change[2]
+            local _,kind=s.adapters.food(action)
+            assert(not kind,'unreviewed '..owner..' factory metadata remains protected: '..change[1])
+            local edit=s.adapters.food(action)
+            assert(not edit or s.model.evaluate({{action=action,edit=edit}}).status~='allowed')
+        end
+    end
+    for _,change in ipairs({'bag','custom','extra','cookable','subclass','missing-output','output-type','depletion','output-use','metadata',
+        'zero-duration','inf-duration','started','callback','missing-source','captured-container'})do
+        local s=setup();local food,script,output=fullFood(s);local action=s.eat(food,1)
+        if change=='bag'then food.container=s.bagInventory
+        elseif change=='custom'then food.isCustomWeight=function()return true end
+        elseif change=='extra'then food.haveExtraItems=function()return true end
+        elseif change=='cookable'then food.isCookable=function()return true end
+        elseif change=='subclass'then getClassSimpleName=function()return 'CustomFood'end
+        elseif change=='missing-output'then s.scripts['Base.RoastingPan']=nil
+        elseif change=='output-type'then output.getItemType=function()return 'base:container'end
+        elseif change=='depletion'then output.depletion='Base.Other'
+        elseif change=='output-use'then output.replacement='Base.Other'
+        elseif change=='metadata'then script.getReplaceOnUse=function()return 'Other'end
+        elseif change=='zero-duration'then action.maxTime=0
+        elseif change=='inf-duration'then action.maxTime=math.huge
+        elseif change=='started'then action.action={}
+        elseif change=='callback'then food.getOnEat=function()return 'custom.callback'end
+        elseif change=='missing-source'then food.getScriptItem=function()end
+        elseif change=='captured-container'then action.container=s.bagInventory end
+        local _,kind=s.adapters.food(action);assert(not kind,'unproved full replacement stays protected: '..change)
+    end
+    for _,value in ipairs({-1,0/0,math.huge,2})do
+        local s=setup();local food,_,output=fullFood(s);output.weight=value
+        local _,kind=s.adapters.food(s.eat(food,1));assert(not kind,'invalid/heavier shell weight stays protected')
+    end
+    print('Full food replacement: exact depletion, independent pending edits, output provenance and transient-capacity protection passed.')
+end
 print('Food edit adapters: original portions, cold cookable state, dormant cooked replacements and surviving ordinary/custom-weight partial use replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')
 
 -- Emptying uses the native wrapper/constructor, with exact leaf/amount proof.

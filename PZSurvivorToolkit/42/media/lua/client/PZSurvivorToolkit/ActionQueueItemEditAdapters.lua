@@ -529,6 +529,55 @@ local function partialReplacement(item,script)
         and emptyWeight>=0 and emptyWeight<=weight
 end
 
+
+-- Read authored component scripts without constructing a temporary item. In
+-- particular getInitialAmount may draw RNG and is not an emptiness predicate.
+local function emptyFluidOutput(script)
+    if not script:hasComponents() then return true end
+    if not ComponentType or not ComponentType.FluidContainer
+        or not method(script,"getComponentScripts") or not method(script,"getComponentScriptFor") then return false end
+    local components=script:getComponentScripts()
+    if not method(components,"size") or not method(components,"get") or components:size()~=1 then return false end
+    local fluid=components:get(0)
+    if not fluid or type(getClassSimpleName)~="function" or getClassSimpleName(fluid)~="FluidContainerScript"
+        or script:getComponentScriptFor(ComponentType.FluidContainer)~=fluid
+        or not method(fluid,"getInitialFluids") or not method(fluid,"getCapacity") then return false end
+    local initial=fluid:getInitialFluids()
+    if initial~=nil and (not method(initial,"size") or initial:size()~=0) then return false end
+    local capacity=fluid:getCapacity()
+    return finite(capacity) and capacity>0
+end
+
+-- Full consumption allocates a new native item before removing the original.
+-- Prove a plain or empty-fluid factory output without instantiating it.
+local function fullReplacement(action,item,script)
+    if action.percentage~=1 or not finite(action.maxTime) or action.maxTime<=0
+        or item:getContainer()~=action.character:getInventory() or action.container~=action.character:getInventory()
+        or type(getClassSimpleName)~="function" or getClassSimpleName(item)~="Food"
+        or item:haveExtraItems() or item:isCustomWeight() or item:isCookable() then return end
+    local kind=item:getReplaceOnUseFullType()
+    if type(kind)~="string" or not kind:match("^[%w_]+%.[%w_]+$")
+        or not ScriptManager or not ScriptManager.instance then return end
+    local output=ScriptManager.instance:getItem(kind)
+    if not output then return end
+    for _,value in ipairs({script,output}) do
+        for _,name in ipairs({"getItemType","getLuaCreate","getItemConfig","getItemConfigKey","hasComponents",
+            "getCount","getObsolete","getActualWeight","getReplaceOnUse","getReplaceOnDeplete"}) do
+            if not method(value,name) then return end
+        end
+        if value:getLuaCreate() or value:getItemConfig() or value:getItemConfigKey()
+            or value:getCount()~=1 or value:getObsolete()
+            or value:getReplaceOnDeplete() then return end
+    end
+    if script:hasComponents() or not emptyFluidOutput(output) then return end
+    if tostring(script:getItemType())~="base:food" or tostring(output:getItemType())~="base:normal"
+        or not item:getReplaceOnUse() or script:getReplaceOnUse()~=item:getReplaceOnUse()
+        or output:getReplaceOnUse() then return end
+    local sourceWeight,outputWeight=item:getActualWeight(),output:getActualWeight()
+    if not finite(sourceWeight) or not finite(outputWeight) or outputWeight<0 or outputWeight>sourceWeight then return end
+    return kind
+end
+
 function Adapters.food(action)
     if not pending(action,eat) or not instanceof(action.container,"ItemContainer")
         or action.carLighter or action.openFlame or action.fromRelaunch or not leaf(action.item,action.character)
@@ -553,9 +602,10 @@ function Adapters.food(action)
     local script=item:getScriptItem()
     local cookedOutputs=item:getReplaceOnCooked()
     local replacement=script and (script:getReplaceOnUse() or item:getReplaceOnUse())
+    local fullOutput=script and replacement and fullReplacement(action,item,script)
     if not script or script:isCantEat() or script:getOpeningRecipe() or script:getOnBreak()
         or script:getReplaceOnDeplete() or item:haveExtraItems() and not replacement
-        or replacement and not partialReplacement(item,script)
+        or replacement and not fullOutput and not partialReplacement(item,script)
         or item:getOnEat() or item:getOnCooked() or item:getReplaceOnRotten()
         or cookedOutputs and not cookedOutputs:isEmpty() and not item:isCookable()
         or item:getRequireInHandOrInventory() or item:getCustomMenuOption()
@@ -586,10 +636,11 @@ function Adapters.food(action)
     -- the timer bonus. The extra .01 covers the native final-tail rounding.
     local multiplier=item:isCooked() and 33800 or 13000
     actor.effects={{field="foodTimerUpper",delta=multiplier*(debit+0.01+margin)+1},{field="foodTimerUpper",cap=11000}}
-    -- UseAndSync (and thus ReplaceOnUse) only runs after full consumption.
-    -- Prove a surviving tail for every step in the proposed order, not merely
-    -- against the click-time amount. Keep the native .01 tail and float slack.
-    local minimum=replacement and debit+0.01+2*margin or 0
+    -- Partial replacement food must survive every proposed step. Guaranteed
+    -- full consumption instead proves the bounded output and removes all food.
+    -- Keep the native .01 tail and float slack for the surviving-food branch.
+    local minimum=replacement and not fullOutput and debit+0.01+2*margin or 0
+    if fullOutput then effects={{field="foodLower",set=0},{field="foodUpper",set=0}} end
     local resources={
         {domain="item",key=item:getID(),facts=facts,
             requires={{field="location",equal=action.character:getInventory()},{field="foodLower",above=minimum}},effects=effects,
@@ -601,6 +652,6 @@ function Adapters.food(action)
         resources[#resources+1]={domain="item",key=utensil:getID(),facts=utensilFacts,
             requires={{field="location",oneOf={utensilFacts.location,action.character:getInventory()}}},effects={}}
     end
-    return {version=1,complete=true,capacity="external",resources=resources}
+    return {version=1,complete=true,capacity="external",resources=resources},fullOutput
 end
 return Adapters
