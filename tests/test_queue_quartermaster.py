@@ -212,6 +212,39 @@ class QuartermasterCrafting(unittest.TestCase):
                         self.assertEqual(source.read_bytes(), staged.read_bytes())
 
 
+class QuartermasterSupplyUnits(unittest.TestCase):
+    def test_standalone_case_requires_exact_native_uses_and_authority(self):
+        selection = dict(suite=crafting.SUITE, cases=['uses'], kind='mp', mode='toolkit',
+                         clients=1, languages=['EN'], mods=crafting.MODS, options={'mp_host': True})
+        crafting.validate(selection)
+        for change in ({'cases': ['vanilla', 'uses']}, {'options': {}}):
+            with self.assertRaises(ValueError):
+                crafting.validate(dict(selection, **change))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, server = '', ''
+            for index, case in enumerate(('full', 'carried', 'partial'), 1):
+                ids = list(range(index*10, index*10 + (3 if case == 'partial' else 2)))
+                prep = dict(index=index, case=case, ids=ids, source=dict(x=1, y=2, z=0, index=1))
+                expected = [(0, 0), (0, 0), (2, 4)] if case == 'partial' else [(1, 2), (2, 4)]
+                receipt = dict(index=index, case=case, items=[dict(id=item, container=loc, uses=uses)
+                               for item, (loc, uses) in zip(ids, expected)], outputIds=[index*10+5], outputs=1, consumedUses=2)
+                for event, value in [('PREPARED', prep), ('VERIFIED', receipt)]:
+                    server += '[QM_USES] ' + event + ' ' + json.dumps(value) + '\n'
+                client += '[QM_USES] RESULT ' + json.dumps(dict(index=index, case=case, walked=case!='carried',
+                           picked=case!='carried', crafted=True, receipt=receipt)) + '\n'
+            server += '[QM_USES] CLEANUP\n'
+            client += '[QM_USES] CLEANUP\n[QM_USES] COMPLETE\n'
+            (root / 'client1-launch.log').write_text(client)
+            authority = root / 'server-launch.log'
+            authority.write_text(server)
+            self.assertEqual(crafting.verify(root, selection, {})['issues'], [])
+            for invalid in (server.replace('"uses": 2', '"uses": 1'), server.replace('"consumedUses": 2', '"consumedUses": 1'),
+                            server + server, server.replace('[QM_USES] CLEANUP', '[QM_OTHER] CLEANUP')):
+                authority.write_text(invalid)
+                self.assertTrue(crafting.verify(root, selection, {})['issues'])
+
+
 class QuartermasterBackpack(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

@@ -4,10 +4,10 @@ from pathlib import Path
 import re
 import shutil
 
-from . import craft
+from . import craft, quartermaster_supply_units as supply
 
 SUITE = 'quartermaster-crafting'
-CASES = ['vanilla', 'neat']
+CASES = ['vanilla', 'neat', 'uses']
 MODS = craft.MODS + ['organizedCategories_core', 'NeatUI_Framework', 'Neat_Crafting']
 MARKER = '[QM_CRAFT] '
 SHARED_FIXTURES = ('QueueCraftUIFixture.lua', 'QueueCookEvolvedFixture.lua')
@@ -24,6 +24,8 @@ def definitions():
 
 def validate(selection):
     cases = selection.get('cases')
+    if cases and 'uses' in cases and (cases != ['uses'] or (selection.get('kind') == 'mp' and not selection.get('options', {}).get('mp_host'))):
+        raise ValueError('Supply-unit crafting requires standalone uses case and menu Host for multiplayer')
     if (type(cases) is not list or not cases or cases != [case for case in CASES if case in cases]
             or selection.get('kind') not in ('sp', 'mp') or selection.get('mode') != 'toolkit'
             or selection.get('languages') != ['EN'] or type(selection.get('clients', 1)) is not int
@@ -47,10 +49,12 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         target = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua/shared'
         for name in SHARED_FIXTURES:
             shutil.copy2(Path(project) / 'tests/native_queue/craft-ui/shared' / name, target)
-    runtime['fixture']['failure_markers'] = [MARKER + 'FAIL ']
+    runtime['fixture']['failure_markers'] = [(supply.MARKER if selection['cases'] == ['uses'] else MARKER) + 'FAIL ']
 
 
 def complete(selection, role, text):
+    if selection['cases'] == ['uses']:
+        return supply.complete(role, text)
     return role == 'client1' and len(re.findall(re.escape(MARKER) + r'COMPLETE(?:\s|$)', text)) == 1
 
 
@@ -114,6 +118,8 @@ def _case(case, row, prep, receipt):
 
 
 def verify(root, selection, catalog):
+    if selection['cases'] == ['uses']:
+        return supply.verify(root, selection)
     from ..report import events
     root, issues, outcomes = Path(root), [], []
     try:
