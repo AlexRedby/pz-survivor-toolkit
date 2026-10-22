@@ -54,7 +54,9 @@ function LootSorter.craftPlan.plan(inputs, qty, access, boxes)
                         local scale = math.max(1, state.candidate.scale)
                         local take = math.min(need, state.remaining / scale)
                         if take > EPSILON then
-                            steps[#steps + 1] = { state = state, raw = take * scale }
+                            -- Uses are discrete even when alternative amounts give a fractional scale.
+                            steps[#steps + 1] = { state = state,
+                                raw = math.min(state.remaining, math.ceil(take * scale - EPSILON)) }
                             need = need - take
                             if accessible then ordinary = ordinary + take
                             else firstBox = math.min(firstBox, state.box) end

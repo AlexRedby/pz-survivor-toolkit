@@ -62,7 +62,7 @@ function F.resolve(player,packet)
 end
 function F.receipt(player,object,packet,baseline)
  local root,source=pool(player:getInventory()),pool(object:getContainer())
- local expected=packet.index==1 and {{1,2},{2,4}}or packet.index==2 and {{1,2},{2,4}}or {{0,0},{0,0},{2,4}}
+ local expected=packet.index==1 and {{2,2},{2,4}}or packet.index==2 and {{1,2},{2,4}}or {{0,0},{0,0},{2,4}}
  local items={}
  for i,id in ipairs(packet.ids)do
   assert(not(root[id]and source[id]),'duplicate supply identity')

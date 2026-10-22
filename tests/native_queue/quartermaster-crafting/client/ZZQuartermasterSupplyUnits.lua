@@ -9,7 +9,7 @@ local JSON=require 'QueueHealthEvents'
 local index,phase,idle,since=1,'prepare',0,0
 local started,done=false,false
 local packet,object,authority,previous,receipt,point,window,panel,owner,logic,native,designatedAt,retry
-local walked,picked,crafted=false,false,false
+local walked,picked,crafted,returned=false,false,false,false
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(event,value)print('[QM_USES] '..event..' '..JSON.encode(value))end
 local function request(command)
@@ -80,7 +80,13 @@ local function observe(player)
  local current=queue().current
  if current and current.Type=='LootSorterWalkAction'and(math.abs(player:getX()-point.x-.5)>.5 or math.abs(player:getY()-point.y-.5)>.5)then walked=true end
  if current and current.Type=='ISInventoryTransferAction'and current:isStarted()and current:getJobDelta()>0 then
-  assert(current.srcContainer==object:getContainer()and current.destContainer==player:getInventory(),'wrong supply endpoints');picked=true
+  local expected=index==1 and packet.ids[1]or packet.ids[2]
+  assert(current.item and current.item:getID()==expected,'unplanned supply transfer identity')
+  if current.srcContainer==object:getContainer()and current.destContainer==player:getInventory()then picked=true
+  else
+   assert(index==1 and crafted and current.srcContainer==player:getInventory()and current.destContainer==object:getContainer(),
+    'unexpected supply transfer endpoints');returned=true
+  end
  end
  if native and current==native and native:isStarted()and native:getJobDelta()>0 then crafted=true end
 end
@@ -113,15 +119,15 @@ Events.OnTick.Add(function()
    observe(player)
    if idle<10 or #queue().queue>0 or player:hasTimedActions()then return end
    assert(crafted and native and not logic:isCraftActionInProgress(),'supply craft did not settle')
-   assert(walked==(index~=2)and picked==(index~=2),'physical supply haul progress differs')
+   assert(walked==(index~=2)and picked==(index~=2)and returned==(index==1),'physical supply haul/return progress differs')
    request('Verify');phase='receipt';return
   end
   if phase=='receipt'and receipt then
-   emit('RESULT',{index=index,case=F.cases[index],walked=walked,picked=picked,crafted=crafted,receipt=receipt})
+   emit('RESULT',{index=index,case=F.cases[index],walked=walked,picked=picked,crafted=crafted,returned=returned,receipt=receipt})
    LootSorter.craftFromBoxes=false;window:setVisible(false);window:removeFromUIManager()
    if index==3 then phase='undesignate';return end
    index=index+1;packet,object,authority,receipt,native=nil,nil,nil,nil,nil
-   walked,picked,crafted=false,false,false;phase='prepare';return
+   walked,picked,crafted,returned=false,false,false,false;phase='prepare';return
   end
   if phase=='undesignate'then
    if getTimestampMs()-designatedAt<LootSorter.ADD_GRACE_MS+1000 then return end

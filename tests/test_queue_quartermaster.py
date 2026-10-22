@@ -226,13 +226,13 @@ class QuartermasterSupplyUnits(unittest.TestCase):
             for index, case in enumerate(('full', 'carried', 'partial'), 1):
                 ids = list(range(index*10, index*10 + (3 if case == 'partial' else 2)))
                 prep = dict(index=index, case=case, ids=ids, source=dict(x=1, y=2, z=0, index=1))
-                expected = [(0, 0), (0, 0), (2, 4)] if case == 'partial' else [(1, 2), (2, 4)]
+                expected = [(0, 0), (0, 0), (2, 4)] if case == 'partial' else [(2 if case == 'full' else 1, 2), (2, 4)]
                 receipt = dict(index=index, case=case, items=[dict(id=item, container=loc, uses=uses)
                                for item, (loc, uses) in zip(ids, expected)], outputIds=[index*10+5], outputs=1, consumedUses=2)
                 for event, value in [('PREPARED', prep), ('VERIFIED', receipt)]:
                     server += '[QM_USES] ' + event + ' ' + json.dumps(value) + '\n'
                 client += '[QM_USES] RESULT ' + json.dumps(dict(index=index, case=case, walked=case!='carried',
-                           picked=case!='carried', crafted=True, receipt=receipt)) + '\n'
+                           picked=case!='carried', crafted=True, returned=case=='full', receipt=receipt)) + '\n'
             server += '[QM_USES] CLEANUP\n'
             client += '[QM_USES] CLEANUP\n[QM_USES] COMPLETE\n'
             (root / 'client1-launch.log').write_text(client)

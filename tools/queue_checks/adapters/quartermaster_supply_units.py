@@ -49,13 +49,13 @@ def verify(root, selection):
                     or not all(type(value) is int for value in prep['source'].values())
                     or prep['source']['index'] < 0):
                 raise ValueError('Supply preparation identities differ: ' + case)
-            expected = [(0, 0), (0, 0), (2, 4)] if case == 'partial' else [(1, 2), (2, 4)]
+            expected = [(0, 0), (0, 0), (2, 4)] if case == 'partial' else [(2 if case == 'full' else 1, 2), (2, 4)]
             items = [dict(id=item, container=location, uses=uses) for item, (location, uses) in zip(prep['ids'], expected)]
             if (set(receipt) != {'index', 'case', 'items', 'outputIds', 'outputs', 'consumedUses'}
                     or not craft._matches(receipt, dict(index=index, case=case, items=items, outputs=1, consumedUses=2))
                     or not craft._ids(receipt['outputIds'], 1)
                     or not craft._matches(result, dict(index=index, case=case, walked=case != 'carried',
-                                                       picked=case != 'carried', crafted=True, receipt=receipt))):
+                                                       picked=case != 'carried', crafted=True, returned=case == 'full', receipt=receipt))):
                 raise ValueError('Supply remaining uses, exact fetch or native effect differs: ' + case)
             identities += prep['ids'] + receipt['outputIds']
         if not craft._ids(identities):
