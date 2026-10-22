@@ -9,6 +9,9 @@ function Completion.observe(toolkit,selection)
  local returns={}
  local groupNative,groupItems,groupObligations,groupAttempts={}, {},0,{}
  local groupFailure
+ local pickupOwners,pickupRecords,pickupItems,ownershipAtBegin,ownershipCompleted={},{},{},{},{}
+ local pickupOperations=0
+ local claimScopes,pickupScopes={},{}
  local function grouped() return state and (state.id=='tidy-group' or state.id=='tidy-multigroup') end
  local function members()
   return {state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}
@@ -17,6 +20,126 @@ function Completion.observe(toolkit,selection)
   local result={};for _,item in ipairs(members()) do result[item:getID()]=item:getFullType() end;return result
  end
  local enabled=selection.mode=='toolkit'
+ local remember=settlement.remember
+ if remember then
+  settlement.remember=function(scope,action,contract)
+   local accepted=remember(scope,action,contract)
+   if accepted and enabled and grouped() then
+    local captured=claimScopes[scope]
+    if not captured then captured={tasks={},seen={}};claimScopes[scope]=captured end
+    if not captured.seen[action] then
+     captured.seen[action]=true
+     local token=action.toolkitQueueOperation
+     local task=captured.tasks[token]
+     if not task then task={items={},unknown={}};captured.tasks[token]=task end
+     local reason=not contract and 'missing-contract' or contract.knownInputs==false and 'unknown-inputs'
+      or contract.dynamicInputs and 'dynamic-inputs' or contract.dynamicInputsByType and 'dynamic-types'
+     if reason then task.unknown[#task.unknown+1]={kind=tostring(action.Type),reason=reason} end
+     for id in pairs(contract and contract.items or {}) do task.items[id]=tostring(action.Type) end
+     for id in pairs(contract and contract.containerOwners or {}) do task.items[id]=tostring(action.Type) end
+     pickupScopes[action]=scope
+    end
+   end
+   return accepted
+  end
+ end
+ local function expectedShared(item)
+  local captured=claimScopes[item.scope]
+  if not captured or not captured.tasks[item.owner] then return nil,'native pickup omitted accepted task claims' end
+  local shared=false
+  for token,task in pairs(captured.tasks) do
+   if token~=item.owner then
+    if #task.unknown>0 or task.items[item.id] then
+     shared=true
+     local unknown=task.unknown[1]
+     print('[EQUIPMENT_TEST] OWNERSHIP_SHARED id='..item.id..' competingType='..tostring(unknown and unknown.kind or task.items[item.id])
+      ..' reason='..tostring(unknown and unknown.reason or 'exact-item-input'))
+    end
+   end
+  end
+  return shared
+ end
+ local function addPickupMembers(action,record)
+  local groups=action.queueList
+  local members=groups and groups[1] and groups[1].items
+  if type(members)~='table' or #members<1 then return 'native pickup attempt has no members' end
+  for _,item in ipairs(members) do
+   local id=item:getID()
+   if expectedMembers()[id]~=item:getFullType() or pickupItems[id] then return 'native pickup repeated or changed exact member' end
+   if not record.seen[id] then
+    record.seen[id]=true
+    record.active[#record.active+1]={id=id,fullType=item:getFullType(),owner=record.owner,item=item,scope=record.scope,
+     pickupAttempt=record.ordinal,pickupTransaction=record.transaction,pickupAuthority=isClient() and 'completed' or 'native'}
+   end
+  end
+ end
+ local function capturePickup(action,phase)
+  if not enabled or not grouped() or phase~='perform' or not getActivatedMods():contains('P4TidyUpMeister') or action.srcContainer~=state.source or action.destContainer~=state.root then return end
+  local owner=assert(action.toolkitQueueOperation,'native pickup has no original operation')
+  if not pickupOwners[owner] then pickupOperations=pickupOperations+1;pickupOwners[owner]=pickupOperations end
+  assert(pickupOperations==1,'bounded native pickups changed original operation')
+  local record=pickupRecords[action] or {ordinal=0,owner=owner,scope=pickupScopes[action]}
+  assert(record.owner==owner and not record.active,'native pickup changed operation or overlapped attempts')
+  record.ordinal=record.ordinal+1;record.active={};record.seen={}
+  local transaction=action.transactionId
+  if isClient() then
+   assert(type(transaction)=='number' and transaction~=0 and isItemTransactionDone(transaction)==true
+    and isItemTransactionRejected(transaction)==false,'native pickup lacks authoritative inventory transaction')
+  else transaction=0 end
+  record.transaction=transaction
+  local problem=addPickupMembers(action,record);assert(not problem,problem)
+  pickupRecords[action]=record
+ end
+ local function finishPickup(action,phase,succeeded)
+  local record=pickupRecords[action]
+  if not record or phase~='perform' then return end
+  assert(succeeded and record.active,'native pickup did not finish its captured attempt')
+  for _,item in ipairs(record.active) do
+   local live=state.root:getItemById(item.id)
+   assert(live and live:getID()==item.id and live:getFullType()==item.fullType and live:getContainer()==state.root,
+    'native pickup did not apply its exact root inventory effect')
+   pickupItems[item.id]=item
+  end
+  record.active=nil
+ end
+ local function ownership(obligation,phase,partial)
+  local values=settlement.returnOwnership and settlement.returnOwnership(obligation)
+  if type(values)~='table' or #values<1 or not partial and #values~=(state.id=='tidy-multigroup' and 4 or 2) then
+   return nil,'native return ownership omitted members'
+  end
+  local result,seen={},{}
+  for _,value in ipairs(values) do
+   local pickup=pickupItems[value.id]
+   if pickup and pickup.shared==nil then
+    local shared,problem=expectedShared(pickup)
+    if shared==nil then return nil,problem end
+    pickup.shared=shared
+   end
+   if not (pickup and not seen[value.id] and value.fullType==pickup.fullType and (value.state==phase or partial and value.state=='completed')
+    and value.owner==pickup.owner and value.shared==pickup.shared and value.pickupAttempt==pickup.pickupAttempt
+    and value.pickupTransaction==pickup.pickupTransaction and value.pickupAuthority==pickup.pickupAuthority) then
+    return nil,'native return ownership differs id='..tostring(value.id)..' state='..tostring(value.state)..' owner='..tostring(pickup and value.owner==pickup.owner)..' shared='..tostring(value.shared)..'/'..tostring(pickup and pickup.shared)..' attempt='..tostring(value.pickupAttempt)..'/'..tostring(pickup and pickup.pickupAttempt)..' transaction='..tostring(value.pickupTransaction)..'/'..tostring(pickup and pickup.pickupTransaction)..' authority='..tostring(value.pickupAuthority)..'/'..tostring(pickup and pickup.pickupAuthority)
+   end
+   seen[value.id]=true
+   result[#result+1]={id=value.id,fullType=value.fullType,state=value.state,owner=pickupOwners[value.owner],shared=value.shared,
+    pickupAttempt=value.pickupAttempt,pickupTransaction=value.pickupTransaction,pickupAuthority=value.pickupAuthority}
+  end
+  if not partial then for id in pairs(expectedMembers()) do if not seen[id] then return nil,'native return ownership lost exact borrowed member' end end end
+  table.sort(result,function(a,b)return a.id<b.id end)
+  return result
+ end
+ local function rememberOwnership(obligation)
+  local prior={};for _,item in ipairs(ownershipAtBegin) do prior[item.id]=true end
+  local values,problem=ownership(obligation,'active',true)
+  if not values then return problem end
+  for _,item in ipairs(values) do
+   if not prior[item.id] then
+    if item.state~='active' then return 'native return ownership was first observed after its effect' end
+    ownershipAtBegin[#ownershipAtBegin+1]=item
+   end
+  end
+  table.sort(ownershipAtBegin,function(a,b)return a.id<b.id end)
+ end
  local returnItems=settlement.returnItems
  local tidyIntent=toolkit.ActionQueueTidyIntent
  local groupObserver=tidyIntent and tidyIntent.observeTransfers
@@ -24,9 +147,21 @@ function Completion.observe(toolkit,selection)
  if groupObserver then
   -- Subscribe after compatibility preload; protected native helper identity stays intact.
   groupObserver(function(action)
-   if not grouped() or action.srcContainer~=state.root or action.destContainer~=state.source or groupFailure then return end
+   if not grouped() or groupFailure then return end
+   if action.srcContainer==state.source and action.destContainer==state.root then
+    local record=pickupRecords[action]
+    if record and record.active and not isClient() then
+     local ok,problem=pcall(addPickupMembers,action,record)
+     if not ok or problem then groupFailure='P4 pickup group observation failed: '..tostring(problem) end
+    end
+    return
+   end
+   if action.srcContainer~=state.root or action.destContainer~=state.source then return end
    -- Never assert or throw across native merge: Kahlua logs even caught assertions.
    local function observe()
+    for obligation,record in pairs(returns) do if record.action==action then
+     local problem=rememberOwnership(obligation);if problem then return problem end
+    end end
     local groups=action.queueList
     local prior=groupNative[action]
     if type(groups)~='table' or #groups>4 or #groups==0 and not prior then return 'unexpected bounded native group shape' end
@@ -87,20 +222,24 @@ function Completion.observe(toolkit,selection)
  if beginReturn and finishReturn and returnState then
   settlement.beginReturn=function(action,obligation,guard)
    local accepted,reason=beginReturn(action,obligation,guard)
-   if state then
+   local returning=state and action.srcContainer==state.root and action.destContainer==state.source
+   if returning then
     local groups=action.queueList
     print('[EQUIPMENT_TEST] RETURN_CAPTURE accepted='..tostring(accepted)..' reason='..tostring(reason)
      ..' groups='..tostring(groups and #groups)..' items='..tostring(groups and groups[1] and #groups[1].items)
      ..' native='..tostring(action.action~=nil)..' current='..tostring(ISTimedActionQueue.queues[action.character].current==action))
    end
-   if state and accepted then
+   if returning and accepted then
     assert(obligation~=nil and (state.id=='tidy-multigroup' or not returns[obligation]),'duplicate or missing native return obligation')
     local transaction=action.transactionId
     local authoritative=isClient() and type(transaction)=='number' and transaction~=0
      and isItemTransactionDone(transaction)==true and isItemTransactionRejected(transaction)==false
     local record=returns[obligation]
     if record then assert(record.action==action,'P4 obligation changed executor')
-    else record={action=action,authoritative=authoritative,observed=false,accepted=0};returns[obligation]=record end
+    else
+     record={action=action,authoritative=authoritative,observed=false,accepted=0};returns[obligation]=record
+     if grouped() then local problem=rememberOwnership(obligation);if problem then groupFailure=problem;print('[EQUIPMENT_TEST] OWNERSHIP_PROBLEM '..problem) end end
+    end
     record.accepted=record.accepted+1
     record.authoritative=record.authoritative and authoritative
    end
@@ -132,6 +271,7 @@ function Completion.observe(toolkit,selection)
    'Tidy transfer changed its exact item or endpoints')
  end
  lifecycle.begin=function(action,phase)
+  capturePickup(action,phase)
   local active=begin(action,phase)
   local counter=observed(action)
   if not counter then return active end
@@ -187,6 +327,7 @@ function Completion.observe(toolkit,selection)
    assert(record[phase]=='begun' and succeeded,'Tidy completion phase did not finish once')
   end
   finish(action,phase,succeeded)
+  finishPickup(action,phase,succeeded)
   if record then record[phase]='finished';record.counts[phase]=record.counts[phase]+1 end
  end
  lifecycle.flush=function(queue)
@@ -239,6 +380,9 @@ function Completion.observe(toolkit,selection)
   returns={}
   groupNative,groupItems,groupObligations,groupAttempts={},{},0,{}
   groupFailure=nil
+  pickupOwners,pickupRecords,pickupItems,ownershipAtBegin,ownershipCompleted={},{},{},{},{}
+  pickupOperations=0
+  claimScopes,pickupScopes={},{}
   restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
  end
  function Completion.settled()
@@ -258,6 +402,7 @@ function Completion.observe(toolkit,selection)
     if grouped() then groupItems[#groupItems+1]={id=item.id,fullType=item.fullType,state=item.state} end
    end
    if grouped() then
+    local problem;ownershipCompleted,problem=ownership(obligation,'completed');assert(ownershipCompleted,problem)
     local multi=state.id=='tidy-multigroup'
     assert(#items==(multi and 4 or 2),'bounded P4 obligation lost group members');groupObligations=groupObligations+1
     if multi then
@@ -313,7 +458,14 @@ function Completion.observe(toolkit,selection)
   for i,item in ipairs(groupItems) do assert(item.id==expected[i],'P4 completed wrong grouped return ID') end
   local items={}
   for _,id in ipairs(expected) do items[#items+1]={id=id,fullType=expectedMembers()[id],container=tidy and 'worn-bag' or 'root'} end
-  local result={nativeGroups=groups,nativeItems=nativeItems,groupSizes=sizes,obligationGroups=groupObligations,completedItems=groupItems,items=items,unrelatedTailPreserved=true}
+  local pickups={}
+  for _,item in pairs(pickupItems) do pickups[#pickups+1]={id=item.id,fullType=item.fullType,owner=pickupOwners[item.owner],shared=item.shared,
+   pickupAttempt=item.pickupAttempt,pickupTransaction=item.pickupTransaction,pickupAuthority=item.pickupAuthority} end
+  table.sort(pickups,function(a,b)return a.id<b.id end)
+  local count=tidy and enabled and total or 0
+  assert(pickupOperations==(count>0 and 1 or 0) and #pickups==count and #ownershipAtBegin==count and #ownershipCompleted==count,
+   'bounded native pickup/return ownership evidence incomplete or active with queue disabled')
+  local result={pickupOperations=pickupOperations,pickupItems=pickups,ownershipAtBegin=ownershipAtBegin,ownershipCompleted=ownershipCompleted,nativeGroups=groups,nativeItems=nativeItems,groupSizes=sizes,obligationGroups=groupObligations,completedItems=groupItems,items=items,unrelatedTailPreserved=true}
   if multi then
    assert(executors==(tidy and (enabled and 1 or 4) or 0),'P4 multi-group changed native executor')
    result.executorCount=executors;result.attempts=groupAttempts

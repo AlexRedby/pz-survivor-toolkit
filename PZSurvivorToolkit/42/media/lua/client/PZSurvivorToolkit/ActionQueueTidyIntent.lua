@@ -7,6 +7,7 @@ local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mod
 local transfers=setmetatable({}, {__mode='k'})
 local mergeOriginal,mergeObserver
 local mergeListeners={}
+local transferEvent
 local scope, guard, wrappedUI, installed
 local serial=0
 local function pack(...) return {n=select('#',...),...} end
@@ -94,11 +95,11 @@ local function transfer(action)
     return batch
 end
 -- Observe the native merge before table.wipe destroys the child action's identity.
-function Intent.observeTransfers(onMerged, canObserve)
+function Intent.observeTransfers(onMerged, canObserve, callbacks)
     if type(onMerged)=='function' then
         local present=false
         for _,listener in ipairs(mergeListeners) do if listener.callback==onMerged then present=true;break end end
-        if not present then mergeListeners[#mergeListeners+1]={callback=onMerged,canObserve=canObserve} end
+        if not present then mergeListeners[#mergeListeners+1]={callback=onMerged,canObserve=canObserve,events=callbacks} end
     end
     if mergeObserver or type(ISInventoryTransferAction.checkQueueList)~='function' then return end
     mergeOriginal=ISInventoryTransferAction.checkQueueList
@@ -124,6 +125,7 @@ function Intent.observeTransfers(onMerged, canObserve)
                 candidates[#candidates+1]=record
             end
         end
+        transferEvent('merging',action)
         local result=pack(mergeOriginal(action,...))
         -- Observation cannot abort native perform and cause the same transfer to
         -- be retried. Quarantine a failed listener; never revive its proof here.
@@ -150,7 +152,20 @@ end
 function Intent.isQueueObserver(previous,replacement)
     return previous==mergeOriginal and replacement==mergeObserver and replacement~=nil
 end
+transferEvent=function(event,action,...)
+    local observed=false
+    for _,listener in ipairs(mergeListeners) do
+        local callback=listener.events and listener.events[event]
+        if not listener.failed and type(callback)=='function' then
+            local ok,result=pcall(callback,action,...)
+            if not ok then listener.failed=true
+            elseif result==true then observed=true end
+        end
+    end
+    return observed
+end
 function Intent.begin(action,phase)
+    local observing=phase=='perform' and transferEvent('begin',action) or false
     local record=watching[action]
     if phase=='perform' and getmetatable(action)==ISInventoryTransferAction and guard and guard(action)
         and (record or states[action.character] or transfers[action]) then
@@ -163,7 +178,7 @@ function Intent.begin(action,phase)
         end
         return true
     end
-    if not record then return false end
+    if not record then return observing end
     if phase=='perform' and not record.proof then record.proof=Settlement.captureEffect(action) end
     if (phase=='complete' or isClient() and phase=='perform') and not (isClient() and record.started) then
         captureBefore(action,record)
@@ -192,6 +207,7 @@ local function observeEffect(record)
     if record.kind=='equip' and item and item:canBeActivated() then record.activated=item:isActivated() end
 end
 function Intent.finish(action,phase,succeeded)
+    if phase=='perform' then transferEvent('finish',action,succeeded) end
     -- Inventory transfers apply their effects in perform(), including in SP.
     if phase~='complete' and not (phase=='perform' and (isClient() or getmetatable(action)==ISInventoryTransferAction)) then return end
     local player=action.character

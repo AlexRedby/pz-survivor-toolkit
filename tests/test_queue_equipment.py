@@ -64,6 +64,13 @@ class EquipmentTests(unittest.TestCase):
                                            groupSizes=(([1, 1, 2] if multi else [2]) if enabled else [1]*len(items)) if tidy else [],
                                            obligationGroups=int(tidy and enabled), unrelatedTailPreserved=True, items=items,
                                            completedItems=[dict(id=item['id'], fullType=item['fullType'], state='completed') for item in items] if tidy and enabled else [])
+                pickups = [dict(id=item['id'], fullType=item['fullType'], owner=1, shared=False, pickupAttempt=1,
+                                pickupTransaction=31 if self.selection['kind'] == 'mp' else 0,
+                                pickupAuthority='completed' if self.selection['kind'] == 'mp' else 'native')
+                           for item in items] if tidy and enabled else []
+                result['tidyGroup'].update(pickupOperations=int(bool(pickups)), pickupItems=pickups,
+                                           ownershipAtBegin=[dict(item, state='active') for item in pickups],
+                                           ownershipCompleted=[dict(item, state='completed') for item in pickups])
                 if multi:
                     attempts = []
                     if tidy and enabled:
@@ -471,6 +478,71 @@ class EquipmentTests(unittest.TestCase):
                     self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(valid)
 
+    def test_p4_return_ownership_requires_exact_original_confirmed_pickups(self):
+        self.selection.update(cases=['tidy-group', 'tidy-multigroup'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for case in self.selection['cases']:
+                    for field in ('pickupOperations', 'pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
+                        rows = self.records()
+                        group = next(row['outcome']['tidyGroup'] for row in rows if row.get('id') == case)
+                        del group[field]
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, case, field))
+                    if mode == 'native':
+                        for field in ('pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
+                            rows = self.records()
+                            group = next(row['outcome']['tidyGroup'] for row in rows if row.get('id') == case)
+                            group[field] = [dict(id=901, fullType='Base.Nails', owner=1)]
+                            self.assertTrue(self.verify(self.logs(rows))['issues'], (mode, field))
+                        continue
+                    for field in ('pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
+                        for mutation in ('missing', 'duplicate', 'foreign-id', 'type', 'owner', 'bool-owner', 'attempt',
+                                         'bool-attempt', 'transaction', 'authority', 'extra', 'partial', 'shared', 'non-bool-shared'):
+                            rows = self.records()
+                            values = next(row['outcome']['tidyGroup'][field] for row in rows if row.get('id') == case)
+                            if mutation == 'missing': values.pop()
+                            elif mutation == 'duplicate': values[1] = copy.deepcopy(values[0])
+                            elif mutation == 'foreign-id': values[0]['id'] = 999
+                            elif mutation == 'type': values[0]['fullType'] = 'Base.Screwdriver'
+                            elif mutation == 'owner': values[0]['owner'] = 2
+                            elif mutation == 'bool-owner': values[0]['owner'] = True
+                            elif mutation == 'attempt': values[0]['pickupAttempt'] = 0
+                            elif mutation == 'bool-attempt': values[0]['pickupAttempt'] = True
+                            elif mutation == 'transaction': values[0]['pickupTransaction'] = 0 if kind == 'mp' else 3
+                            elif mutation == 'authority': values[0]['pickupAuthority'] = 'waiting'
+                            elif mutation == 'extra': values[0]['executor'] = 1
+                            elif mutation == 'partial': values[0]['state'] = 'unbound'
+                            elif mutation == 'shared': values[0]['shared'] = True
+                            elif mutation == 'non-bool-shared': values[0]['shared'] = 0
+                            self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, case, field, mutation))
+
+    def test_p4_shared_ownership_requires_matching_frozen_pickup_expectation(self):
+        self.selection.update(cases=['tidy-group', 'tidy-multigroup'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            rows = self.records()
+            for row in rows:
+                group = row.get('outcome', {}).get('tidyGroup')
+                if group:
+                    for field in ('pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
+                        for item in group[field]:
+                            item['shared'] = True
+            self.assertEqual(self.verify(self.logs(rows))['issues'], [])
+            for field in ('pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
+                for expected_shared in (False, True):
+                    changed = copy.deepcopy(rows)
+                    for row in changed:
+                        group = row.get('outcome', {}).get('tidyGroup')
+                        if group:
+                            for other in ('pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
+                                for item in group[other]:
+                                    item['shared'] = expected_shared
+                            group[field][0]['shared'] = not expected_shared
+                    self.assertTrue(self.verify(self.logs(changed))['issues'], (kind, field, expected_shared))
+
     def test_p4_multigroup_observer_tracks_native_member_changes_and_one_flush(self):
         lua = shutil.which('luajit') or shutil.which('lua')
         if not lua:
@@ -490,7 +562,14 @@ local function run(kind,fault)
   function value:getID()return self.id end
   function value:getFullType()return self.kind end
   function value:getWeight()return self.id<3 and 0.01 or 1 end
+  function value:getContainer()return self.container end
+  value.container=source
   items[id]=value
+ end
+ function inventory:getItemById(id)
+  for _,item in ipairs(items) do
+   if item:getID()==id and item:getContainer()==self then return item end
+  end
  end
  local groups={{items={items[3]}},{items={items[1],items[2]}},{items={items[4]}}}
  local present=true
@@ -505,7 +584,7 @@ local function run(kind,fault)
  local toolkit=PZSurvivorToolkit
  local lifecycle=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua')
  toolkit.ActionQueueOperations={perform=function()end,deferCompletion=lifecycle.deferCompletion}
- toolkit.ActionQueueDefinitions={inspect=function()return {},'compat.tidy-transfers'end}
+ toolkit.ActionQueueDefinitions={inspect=function(value)if value.srcContainer==inventory then return {},'compat.tidy-transfers' end;return {} end}
  local callback
  toolkit.ActionQueueTidyIntent={status=function()return true end,begin=function()end,finish=function()end,
   observeTransfers=function(value)callback=value end}
@@ -518,15 +597,67 @@ local function run(kind,fault)
  isItemTransactionDone=function()return true end
  isItemTransactionRejected=function()return false end
  local attempts={}
+ local sourceOwner={}
+ local returnMerged=false
  local completed={}
  for _,item in ipairs(items) do completed[#completed+1]={id=item:getID(),fullType=item:getFullType(),state='completed'} end
- toolkit.ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()end,
+ toolkit.ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()end,remember=function()return true end,
   beginReturn=function()return true end,finishReturn=function()return true end,
   returnState=function()return 'completed' end,returnItems=function()return completed end,
-  returnAttempts=function()return attempts end}
+  returnAttempts=function()return attempts end,
+  returnOwnership=function()
+   local values={}
+   for _,item in ipairs(items) do
+    local ordinal=item.id<3 and 1 or item.id-1
+    values[#values+1]={id=item:getID(),fullType=item:getFullType(),owner=sourceOwner,shared=fault=='unknown-sibling',
+     state=#attempts==3 and 'completed' or 'active',pickupAttempt=ordinal,
+     pickupTransaction=kind=='mp' and -120+ordinal or 0,pickupAuthority=kind=='mp' and 'completed' or 'native'}
+   end
+   if kind=='sp' and not returnMerged then values={values[3]} end
+   if fault=='owner' then values[1].owner=action.toolkitQueueOperation end
+   if fault=='partial' then table.remove(values) end
+   if fault=='duplicate' then values[2]=values[1] end
+   if fault=='unbound' then values[1].state='unbound';values[1].owner=nil end
+   if fault=='authority' then values[1].pickupAuthority='waiting' end
+   if fault=='attempt' then values[1].pickupAttempt=9 end
+   if fault=='transaction' then values[1].pickupTransaction=kind=='mp' and 0 or 99 end
+   if fault=='shared' then values[1].shared=true end
+   return values
+  end}
  local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode='toolkit'})
  observer.watch({id='tidy-multigroup',root=inventory,source=source,baseline=items,
   groupOne=items[1],groupTwo=items[2],groupHeavyOne=items[3],groupHeavyTwo=items[4]})
+ -- Observe the source executor independently, with an operation distinct from cleanup.
+ local pickupGroups={{items={items[1],items[2]}},{items={items[3]}},{items={items[4]}}}
+ local pickup={character=player,item=items[1],srcContainer=source,destContainer=inventory,action={},
+  toolkitQueueOperation=sourceOwner,queueList=pickupGroups}
+ queue.current=pickup;queue.queue={pickup}
+ local scope={}
+ toolkit.ActionQueueSettlement.remember(scope,pickup,{knownInputs=true,items={[1]=true,[2]=true,[3]=true,[4]=true}})
+ if fault=='unknown-sibling' or fault=='unknown-sibling-exclusive' then
+  local contract={knownInputs=false,items={}}
+  toolkit.ActionQueueSettlement.remember(scope,{Type='UnknownSibling',toolkitQueueOperation={}},contract)
+  -- Accepted contracts are snapshots; later mutation cannot erase uncertainty.
+  contract.knownInputs=true;contract.items[99]=true
+ elseif fault=='known-nil-sibling' then
+  -- Native item contracts omit knownInputs when their exact resources are known.
+  toolkit.ActionQueueSettlement.remember(scope,{Type='KnownSibling',toolkitQueueOperation={}},{items={[99]=true}})
+ end
+ for ordinal=1,3 do
+  pickup.item=pickupGroups[1].items[1];pickup.transactionId=kind=='mp' and -120+ordinal or 0
+  if fault=='pickup-owner' and ordinal==2 then pickup.toolkitQueueOperation={} end
+  if kind=='sp' and ordinal==1 then pickupGroups[1].items={items[1]} end
+  assert(lifecycle.begin(pickup,'perform'))
+  assert(toolkit.ActionQueueSettlement.beginReturn(pickup,{})) -- Internal pickup handle is not cleanup.
+  if kind=='sp' and ordinal==1 then pickupGroups[1].items={items[1],items[2]};callback(pickup) end
+  assert(lifecycle.deferCompletion(queue,pickup))
+  for _,item in ipairs(pickupGroups[1].items) do item.container=inventory end
+  table.remove(pickupGroups,1)
+  lifecycle.finish(pickup,'perform',true)
+  if kind=='sp' then lifecycle.begin(pickup,'complete');lifecycle.finish(pickup,'complete',true) end
+ end
+ present=false;assert(lifecycle.flush(queue)=='completed');present=true
+ queue.current=action;queue.queue={action}
  callback(action)
  local obligation={}
  for ordinal=1,3 do
@@ -535,6 +666,7 @@ local function run(kind,fault)
   if fault=='native' and ordinal==2 then action.action={} end
   assert(lifecycle.begin(action,'perform'))
   assert(toolkit.ActionQueueSettlement.beginReturn(action,obligation))
+  if ordinal==1 then returnMerged=true;callback(action) end -- SP adds members before effects.
   assert(lifecycle.deferCompletion(queue,action))
   local members={}
   for _,item in ipairs(action.queueList[1].items) do members[#members+1]={id=item:getID(),fullType=item:getFullType(),state='completed'} end
@@ -553,10 +685,17 @@ local function run(kind,fault)
  assert(counts.perform==3 and counts.complete==(kind=='sp' and 3 or 0) and counts.flush==1 and counts.cleanupConfirmed==4)
  assert(group.nativeGroups==3 and group.executorCount==1 and #group.attempts==3)
  assert(group.groupSizes[1]==1 and group.groupSizes[2]==1 and group.groupSizes[3]==2)
+ assert(group.pickupOperations==1 and #group.pickupItems==4 and #group.ownershipAtBegin==4 and #group.ownershipCompleted==4)
 end
 for _,kind in ipairs({'sp','mp'}) do
  run(kind)
+ run(kind,'known-nil-sibling')
+ run(kind,'unknown-sibling')
+ assert(not pcall(run,kind,'unknown-sibling-exclusive'),'unknown sibling was allowed an exclusive native receipt')
  assert(not pcall(run,kind,'native'),'multi-group observer accepted changed native executor')
+ for _,fault in ipairs({'owner','partial','duplicate','unbound','authority','attempt','transaction','shared','pickup-owner'}) do
+  assert(not pcall(run,kind,fault),'multi-group observer accepted foreign/incomplete ownership: '..fault)
+ end
 end
 '''
         target = self.root / 'multigroup-completion-check.lua'

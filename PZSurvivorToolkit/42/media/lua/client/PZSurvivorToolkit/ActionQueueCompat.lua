@@ -106,6 +106,7 @@ function Compat.prune()
             Settlement.close(session)
             sessions[character] = nil
         else
+            Settlement.poll(session)
             -- Delayed Tidy restores still need task/pickup history after the source action leaves the queue.
             for action in pairs(session.seen) do if not queued[action] then session.seen[action] = nil end end
         end
@@ -694,6 +695,7 @@ local function loadSource(id, module, eventName)
                             sessions[character] = nil
                             return TidyIntent.update(character, callback, ...)
                         end
+                        Settlement.poll(record)
                         -- Shared cleanup keeps a separate owner; unique returns may resolve back to their source task.
                         local context = Settlement.context(record)
                         context.id, context.tidySession = id, record
@@ -980,16 +982,46 @@ function Compat.install()
     end
     if ready.P4TidyUpMeister and transferSourceSafe then
         local previous=ISInventoryTransferAction.checkQueueList
+        local function pickupScope(action)
+            return action and sessions[action.character]
+        end
+        local function pickupGuard(action)
+            return getmetatable(action) == ISInventoryTransferAction and tidyActionUnchanged and tidyActionUnchanged(action)
+                and Toolkit.ActionQueuePolicy.isOrdinaryTransfer(action)
+        end
         TidyIntent.observeTransfers(function(action)
+            local session = pickupScope(action)
+            if session then
+                Settlement.refreshPickup(session, action)
+                if pickupGuard(action) then Settlement.departure(session, action) end
+            end
             local record = records[action]
             if record and record.id == "P4TidyUpMeister" and record.obligation then
                 Settlement.refreshReturn(action, record.obligation)
             end
         end, function(action)
             local record = records[action]
+            local session = pickupScope(action)
             return record and record.id == "P4TidyUpMeister" and record.obligation
                 and Settlement.returnMatches(action, record.obligation)
-        end)
+                or session and Settlement.pickupMatches(session, action)
+        end, {
+            merging = function(action)
+                local session = pickupScope(action)
+                return session and pickupGuard(action) and Settlement.beforePickupMerge(session, action, pickupGuard)
+            end,
+            begin = function(action)
+                local session = pickupScope(action)
+                if session and pickupGuard(action) then
+                    Settlement.departure(session, action)
+                    return Settlement.beginPickup(session, action, pickupGuard)
+                end
+            end,
+            finish = function(action, succeeded)
+                local session = pickupScope(action)
+                return session and Settlement.finishPickup(session, action, succeeded)
+            end,
+        })
         local policy=Toolkit.ActionQueuePolicy
         if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end
     end
@@ -1139,6 +1171,11 @@ rememberTidy = function(action)
             if record.seen[action] then return end
             local contract = Toolkit.ActionQueueDefinitions.inspect(action)
             Settlement.remember(record, action, contract)
+            local policy = Toolkit.ActionQueuePolicy
+            if getmetatable(action) == ISInventoryTransferAction and tidyActionUnchanged and tidyActionUnchanged(action)
+                and policy and policy.isOrdinaryTransfer and policy.isOrdinaryTransfer(action) then
+                Settlement.preparePickup(record, action)
+            end
         end
     end
 end

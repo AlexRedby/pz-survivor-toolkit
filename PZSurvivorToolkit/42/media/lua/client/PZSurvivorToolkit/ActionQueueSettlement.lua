@@ -110,7 +110,8 @@ end
 
 -- A delayed producer may collect several operations before constructing its
 -- native cleanup. These are ownership claims, not proof that an effect ran.
-local deferredMarker, obligationMarker, obligationScope, returnMarker = {}, {}, {}, {}
+local deferredMarker, obligationMarker, obligationScope, returnMarker, borrowingMarker = {}, {}, {}, {}, {}
+local pollPickups, bindOwnership, bindPickup, sharedBorrowing
 local itemTransactionDone, itemTransactionRejected = isItemTransactionDone, isItemTransactionRejected
 local function deferred(scope)
     return type(scope) == "table" and scope.marker == deferredMarker
@@ -118,8 +119,11 @@ end
 
 function Settlement.deferred(character, token)
     local queue = ISTimedActionQueue.getTimedActionQueue(character)
-    return {marker = deferredMarker, character = character, token = token, queue = queue,
+    local scope = {marker = deferredMarker, character = character, token = token, queue = queue,
         generation = queue.toolkitOperationGeneration or 0, tasks = {}, seen = {}, mixed = false, phase = "prepare"}
+    local ledger = {candidates = {}, actions = {}, handles = {}, executors = {}, merging = {}}
+    scope[borrowingMarker] = function(candidate) if candidate == scope then return ledger end end
+    return scope
 end
 
 function Settlement.remember(scope, action, contract)
@@ -284,6 +288,8 @@ local function bindMembers(proof, groups)
                 previous = {id = member.id, fullType = member.fullType, group = group.ref}
                 proof.byId[member.id] = previous
                 proof.members[#proof.members + 1] = previous
+                if proof.direction == "pickup" then bindPickup(proof, previous)
+                else bindOwnership(proof, previous) end
             end
             group.members[index] = previous
         end
@@ -300,7 +306,7 @@ local function baseReturnValid(proof)
         and getSpecificPlayer(proof.player) == character and ISTimedActionQueue.queues[character] == queue
         and (queue.toolkitOperationGeneration or 0) == proof.generation
         and action.srcContainer == proof.source and action.destContainer == proof.destination
-        and character:getInventory() == proof.source
+        and character:getInventory() == (proof.direction == "pickup" and proof.destination or proof.source)
         and (not proof.client or isItemTransactionDone == itemTransactionDone
             and isItemTransactionRejected == itemTransactionRejected
             and (not proof.continuing or createItemTransaction == proof.createTransaction
@@ -354,7 +360,14 @@ local function observeAttempt(proof, attempt)
             if not member.completed then
                 local item, sourceItem = proof.destination:getItemById(member.id), proof.source:getItemById(member.id)
                 if sameMember(item, member) and item:getContainer() == proof.destination and not item:getIsCraftingConsumed()
-                    and not (sourceItem and sourceItem:getContainer() == proof.source) then member.completed = true end
+                    and not (sourceItem and sourceItem:getContainer() == proof.source) then
+                    member.completed = true
+                    local candidate = member.borrowed
+                    if proof.direction ~= "pickup" and candidate and not candidate.ambiguous then
+                        member.shared = member.shared or sharedBorrowing(proof.scope, candidate)
+                        candidate.phase = "completed"
+                    end
+                end
             end
             if member.completed then completed = completed + 1 end
         end
@@ -381,8 +394,8 @@ function Settlement.beginReturn(action, obligation, guard)
         if not Settlement.returnMatches(action, obligation) or not groupsMatch(proof.next.groups, groups, false) then return false, "continuation" end
     else
         local seal = type(obligation) == "table" and rawget(obligation, obligationScope)
-        local scope, token
-        if type(seal) == "function" then scope, token = seal(obligation) end
+        local scope, token, direction
+        if type(seal) == "function" then scope, token, direction = seal(obligation) end
         if not scope or obligation.token ~= token or scope.phase == "retired" then return false, "obligation" end
         if type(guard) ~= "function" or not guard(action) then return false, "source" end
         local character, queue = action.character, scope.queue
@@ -390,16 +403,20 @@ function Settlement.beginReturn(action, obligation, guard)
             or (queue.toolkitOperationGeneration or 0) ~= scope.generation
             or queue.current ~= action or queue.queue[1] ~= action or not action.action
             or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "native_scope" end
-        if action.srcContainer ~= character:getInventory() or not action.destContainer or action.destContainer == action.srcContainer
-            or not action.item then return false, "endpoints" end
+        local inventory = character:getInventory()
+        if not action.srcContainer or not action.destContainer or action.destContainer == action.srcContainer or not action.item
+            or direction == "pickup" and action.destContainer ~= inventory
+            or direction ~= "pickup" and action.srcContainer ~= inventory then return false, "endpoints" end
         if not sameMember(action.item, groups[1].members[1]) then return false, "item_identity" end
-        proof = {scope = scope, token = token, obligation = obligation, queue = queue, generation = scope.generation,
+        if direction ~= "pickup" then pollPickups(scope) end
+        proof = {scope = scope, token = token, direction = direction, obligation = obligation, queue = queue, generation = scope.generation,
             action = action, native = action.action, character = character, player = character:getPlayerNum(), online = character:getOnlineID(),
             source = action.srcContainer, destination = action.destContainer, guard = guard, client = isClient(),
             createTransaction = createItemTransaction, removeTransaction = removeItemTransaction,
             members = {}, byId = {}, attempts = {}}
         obligation[returnMarker] = function(candidate) if candidate == obligation then return proof end end
     end
+    if proof.direction ~= "pickup" then pollPickups(proof.scope) end
     if not bindMembers(proof, groups) then proof.sequenceError = true; return false, "item_identity" end
     for _, member in ipairs(groups[1].members) do
         if member.attempt then proof.sequenceError = true; return false, "duplicate_item" end
@@ -421,6 +438,7 @@ function Settlement.refreshReturn(action, obligation)
     if not attempt or proof.action ~= action or attempt.finished or attempt.refreshed
         or not Settlement.returnMatches(action, obligation) then return false end
     attempt.refreshed = true
+    if proof.direction ~= "pickup" then pollPickups(proof.scope) end
     local groups = returnGroups(action, proof.client)
     local expected = proof.client and groupTail(attempt.before) or attempt.before
     -- Native isValid failure may discard the whole unexecuted suffix.
@@ -538,6 +556,234 @@ function Settlement.returnAttempts(obligation)
             transaction = proof.client and attempt.transaction or 0, authority = attempt.authority, items = items}
     end
     return attempts
+end
+
+-- Pickup candidates and activated obligations are separate from enqueue claims.
+-- The sealed ledger survives child-action wipe and source membership pruning.
+local function borrowing(scope)
+    local seal = type(scope) == "table" and rawget(scope, borrowingMarker)
+    return type(seal) == "function" and seal(scope) or nil
+end
+
+local function borrowingLive(scope)
+    return deferred(scope) and scope.phase ~= "retired" and Toolkit.Settings and Toolkit.Settings.actionQueue()
+        and not scope.character:isDead() and ISTimedActionQueue.queues[scope.character] == scope.queue
+        and (scope.queue.toolkitOperationGeneration or 0) == scope.generation
+end
+
+-- The exact native pickup proves its original owner without relying on the
+-- older enqueue-only pickup map. Competing task claims still prevent exclusive
+-- cleanup; this classification grants no operation edit permission.
+sharedBorrowing = function(scope, candidate)
+    if not scope.tasks[candidate.owner] then return true end
+    for token, task in pairs(scope.tasks) do
+        local pickup = task.pickups[candidate.id]
+        if pickup and (pickup.ambiguous or pickup.fullType ~= candidate.fullType
+            or pickup.container ~= candidate.source or token ~= candidate.owner) then return true end
+        if token ~= candidate.owner and (task.unknownInputs or task.items[candidate.id]) then return true end
+    end
+    return false
+end
+
+function Settlement.preparePickup(scope, action)
+    local ledger = borrowing(scope)
+    if not ledger or not borrowingLive(scope) or not action or action.character ~= scope.character
+        or not scope.tasks[action.toolkitQueueOperation] or not action.item
+        or not action.srcContainer or action.srcContainer == scope.character:getInventory()
+        or action.destContainer ~= scope.character:getInventory() or action.item:getContainer() ~= action.srcContainer then return false end
+    if ledger.actions[action] then return false end
+    local id, fullType = action.item:getID(), action.item:getFullType()
+    if type(id) ~= "number" or id % 1 ~= 0 or type(fullType) ~= "string" then return false end
+    pollPickups(scope)
+    local candidate = {id = id, fullType = fullType, source = action.srcContainer, destination = action.destContainer,
+        owner = action.toolkitQueueOperation, phase = "prepare"}
+    -- No outbound proof separates two unresolved borrowing episodes. Never let
+    -- a late old pickup acquire the new episode merely because its ID matches.
+    for _, previous in ipairs(ledger.candidates) do
+        if previous.id == id and previous.phase ~= "completed" then previous.ambiguous, candidate.ambiguous = true, true end
+    end
+    ledger.candidates[#ledger.candidates + 1], ledger.actions[action] = candidate, candidate
+    ledger.executors[action] = {[id] = candidate}
+    return true
+end
+
+bindPickup = function(proof, member)
+    local ledger = borrowing(proof.scope)
+    local mapped = ledger and ledger.executors[proof.action]
+    local candidate = mapped and mapped[member.id]
+    if candidate and candidate.fullType == member.fullType and candidate.source == proof.source
+        and candidate.destination == proof.destination and candidate.phase == "prepare" and not candidate.ambiguous then
+        member.borrowed = candidate
+    end
+end
+
+local function queued(queue, action)
+    for _, value in ipairs(queue.queue) do if value == action then return true end end
+    return false
+end
+
+function Settlement.beforePickupMerge(scope, action, guard)
+    local ledger = borrowing(scope)
+    if not ledger or not borrowingLive(scope) or not ledger.actions[action] or not queued(scope.queue, action)
+        or type(guard) ~= "function" or not guard(action) then return false end
+    local pending, following = {}, false
+    for _, child in ipairs(scope.queue.queue) do
+        if child == action then following = true
+        elseif following then
+            local candidate = ledger.actions[child]
+            if candidate and child.character == scope.character and child.toolkitQueueOperation == candidate.owner
+                and child.srcContainer == candidate.source and child.destContainer == candidate.destination
+                and child.srcContainer == action.srcContainer and child.destContainer == action.destContainer
+                and sameMember(child.item, candidate) and guard(child) then
+                pending[#pending + 1] = {action = child, candidate = candidate}
+            end
+        end
+    end
+    ledger.merging[action] = pending
+    return true
+end
+
+local function wiped(action)
+    for _ in pairs(action) do return false end
+    return true
+end
+
+local function mergedPickups(scope, action, ledger)
+    local pending = ledger.merging[action]
+    ledger.merging[action] = nil
+    if not pending or not borrowingLive(scope) then return end
+    local groups, members = returnGroups(action, true), {}
+    for _, group in ipairs(groups or {}) do
+        for _, member in ipairs(group.members) do members[member.id] = member.fullType end
+    end
+    local mapped = ledger.executors[action]
+    for _, entry in ipairs(pending) do
+        local child, candidate = entry.action, entry.candidate
+        -- The reviewed native merge removes and wipes the actual child. A
+        -- matching item from an unrelated executor is not pickup provenance.
+        if mapped and not queued(scope.queue, child) and wiped(child)
+            and members[candidate.id] == candidate.fullType then mapped[candidate.id] = candidate end
+    end
+end
+
+pollPickups = function(scope)
+    local ledger = borrowing(scope)
+    if not ledger or not borrowingLive(scope) then return end
+    for _, handle in pairs(ledger.handles) do
+        Settlement.returnState(handle)
+        local proof = returnProof(handle)
+        if proof and not proof.invalid then
+            for _, member in ipairs(proof.members) do
+                local candidate = member.borrowed
+                if candidate and candidate.phase == "prepare" and not candidate.ambiguous and member.completed then
+                    local attempt = proof.attempts[member.attempt]
+                    candidate.phase, candidate.attempt = "active", attempt.ordinal
+                    candidate.transaction = proof.client and attempt.transaction or 0
+                    candidate.authority = attempt.authority
+                end
+            end
+        end
+    end
+end
+
+function Settlement.poll(scope) pollPickups(scope) end
+
+-- Any reviewed native departure fences an unconfirmed borrowing episode,
+-- even when the departure itself has no P4 cleanup record.
+function Settlement.departure(scope, action)
+    local ledger = borrowing(scope)
+    if not ledger or not borrowingLive(scope) or action.srcContainer ~= scope.character:getInventory()
+        or action.destContainer == action.srcContainer then return end
+    pollPickups(scope)
+    local groups = returnGroups(action)
+    for _, group in ipairs(groups or {}) do
+        for _, member in ipairs(group.members) do
+            for _, candidate in ipairs(ledger.candidates) do
+                if candidate.id == member.id and candidate.fullType == member.fullType and candidate.phase == "prepare" then
+                    candidate.ambiguous = true
+                end
+            end
+        end
+    end
+end
+
+function Settlement.beginPickup(scope, action, guard)
+    local ledger = borrowing(scope)
+    local candidate = ledger and ledger.actions[action]
+    if not candidate or not borrowingLive(scope) or type(guard) ~= "function" then return false end
+    local handle = ledger.handles[action]
+    if not handle then
+        local owner, source, destination = candidate.owner, candidate.source, candidate.destination
+        if action.toolkitQueueOperation ~= owner or action.srcContainer ~= source or action.destContainer ~= destination
+            or not guard(action) then return false end
+        handle = {token = owner}
+        handle[obligationScope] = function(value) if value == handle then return scope, owner, "pickup" end end
+        ledger.handles[action] = handle
+    end
+    return Settlement.beginReturn(action, handle, function(value)
+        return value == action and action.toolkitQueueOperation == candidate.owner
+            and action.srcContainer == candidate.source and action.destContainer == candidate.destination and guard(value)
+    end)
+end
+
+function Settlement.pickupMatches(scope, action)
+    local ledger = borrowing(scope)
+    local handle = ledger and ledger.handles[action]
+    return handle and borrowingLive(scope) and Settlement.returnMatches(action, handle) or false
+end
+
+function Settlement.refreshPickup(scope, action)
+    local ledger = borrowing(scope)
+    if ledger then mergedPickups(scope, action, ledger) end
+    local handle = ledger and ledger.handles[action]
+    return handle and Settlement.refreshReturn(action, handle) or false
+end
+
+function Settlement.finishPickup(scope, action, succeeded)
+    local ledger = borrowing(scope)
+    local handle = ledger and ledger.handles[action]
+    if not handle then return false end
+    local result = Settlement.finishReturn(handle, succeeded)
+    pollPickups(scope)
+    return result
+end
+
+bindOwnership = function(proof, member)
+    local ledger, found = borrowing(proof.scope)
+    for _, candidate in ipairs(ledger and ledger.candidates or {}) do
+        if candidate.id == member.id and candidate.fullType == member.fullType and not candidate.ambiguous
+            and candidate.phase == "active" and (not candidate.returning or candidate.returning == proof)
+            and candidate.source == proof.destination and candidate.destination == proof.source then
+            if found then return end
+            found = candidate
+        end
+    end
+    member.borrowed = found
+    if found then
+        found.returning = proof
+        member.shared = sharedBorrowing(proof.scope, found)
+    end
+end
+
+-- Value copies describe earned ownership, never a capability to edit or execute.
+function Settlement.returnOwnership(obligation)
+    local proof = returnProof(obligation)
+    if not proof or proof.direction == "pickup" then return end
+    Settlement.returnState(obligation)
+    local result = {}
+    for _, member in ipairs(proof.members) do
+        local candidate = member.borrowed
+        local bound = candidate and not candidate.ambiguous and (member.completed or borrowingLive(proof.scope))
+        local value = {id = member.id, fullType = member.fullType, state = "unbound", shared = true}
+        if bound then
+            value.owner, value.state = candidate.owner, member.completed and "completed" or "active"
+            value.shared = member.shared or not member.completed
+                and sharedBorrowing(proof.scope, candidate)
+            value.pickupAttempt, value.pickupTransaction, value.pickupAuthority = candidate.attempt, candidate.transaction, candidate.authority
+        end
+        result[#result + 1] = value
+    end
+    return result
 end
 
 function Settlement.required(obligation)

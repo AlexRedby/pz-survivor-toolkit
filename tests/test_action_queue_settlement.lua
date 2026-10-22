@@ -1200,4 +1200,311 @@ for _, client in ipairs({false, true}) do
     assert(history[1].state == 'completed' and history[1].items[1].state == 'completed',
         'unexpected advancement must preserve the immutable earned history')
 end
-print('Shared settlement: deferred ownership, exact multi-transaction native return attempts, independent partial effects, historical receipts and no effect replay passed.')
+-- Kahlua exposes pairs but no global next; use its actual available boundary.
+local savedNext = next
+next = nil
+-- Pickup claims are candidates until the exact native attempt earns an effect.
+local function pickupFixture(client, ids)
+    local s = setup(client)
+    s.root.isExistYet = function() return true end
+    s.scope = s.settlement.deferred(s.player, s.token)
+    s.pickups, s.members, s.owners = {}, {}, {}
+    s.guard = function(action, member)
+        return s.guardLive ~= false and action.character == s.player and action.item
+            and (not member or action.item:getID() == member.id and action.item:getFullType() == member.fullType)
+    end
+    for index, id in ipairs(ids or {181}) do
+        local owner, value = index == 1 and s.token or {}, s.item(id, s.source)
+        s.source.items[id] = value
+        local action = {Type = 'ISInventoryTransferAction', character = s.player, toolkitQueueOperation = owner,
+            item = value, srcContainer = s.source, destContainer = s.root, action = {},
+            queueList = {{items = {value}}}, transactionId = 17 + index - 1}
+        owner.toolkitPickups = {[value] = s.source}
+        s.settlement.remember(s.scope, action, {knownInputs = true, items = {[id] = true}})
+        s.settlement.preparePickup(s.scope, action)
+        s.pickups[index], s.members[index], s.owners[index] = action, value, owner
+    end
+    s.pickup = s.pickups[1]
+    s.queue.current, s.queue.queue = s.pickup, {}
+    for _, action in ipairs(s.pickups) do s.queue.queue[#s.queue.queue + 1] = action end
+    s.queue.queue[#s.queue.queue + 1] = s.tail
+    s.mergePickup = function(separateGroup)
+        s.settlement.beforePickupMerge(s.scope, s.pickup, s.guard)
+        if separateGroup then s.pickup.queueList[#s.pickup.queueList + 1] = {items = {s.members[2]}}
+        else s.pickup.queueList[1].items[#s.pickup.queueList[1].items + 1] = s.members[2] end
+        assert(table.remove(s.queue.queue, 2) == s.pickups[2], 'fixture must remove the actual native child')
+        for key in pairs(s.pickups[2]) do s.pickups[2][key] = nil end
+        s.settlement.refreshPickup(s.scope, s.pickup)
+    end
+    s.movePickup = function(index, replacement)
+        local old = s.members[index]
+        local live = replacement or old
+        s.source.items[old:getID()], old.container = nil, nil
+        live.container, s.root.items[old:getID()] = s.root, live
+        return live
+    end
+    s.finishPickup = function(succeeded)
+        s.pickup.queueList, s.pickup.transactionId = {}, 0
+        local result = s.settlement.finishPickup(s.scope, s.pickup, succeeded)
+        s.settlement.poll(s.scope)
+        return result
+    end
+    s.makeReturn = function()
+        local action = {Type = 'ISInventoryTransferAction', character = s.player,
+            toolkitQueueOperation = {}, item = s.members[1], srcContainer = s.root, destContainer = s.source,
+            action = {}, transactionId = 71, queueList = {{items = s.members}}}
+        s.queue.current, s.queue.queue = action, {action, s.tail}
+        s.returnObligation = s.settlement.obligation(s.settlement.context(s.scope))
+        assert(s.returnObligation and s.settlement.beginReturn(action, s.returnObligation, s.guard))
+        s.returnAction = action
+    end
+    s.completeReturn = function()
+        for _, value in ipairs(s.members) do
+            local live = s.root:getItemById(value:getID())
+            if live then live.container, s.root.items[value:getID()], s.source.items[value:getID()] = s.source, nil, live end
+        end
+        s.returnAction.item, s.returnAction.queueList, s.returnAction.transactionId = s.members[#s.members], {}, 0
+        assert(s.settlement.finishReturn(s.returnObligation, true))
+    end
+    return s
+end
+local function assertOwnership(s, expected, owners, shared)
+    local facts = s.settlement.returnOwnership(s.returnObligation)
+    assert(#facts == #s.members, 'ownership diagnostics must retain every observed native member')
+    for index, fact in ipairs(facts) do
+        assert(fact.id == s.members[index]:getID() and fact.fullType == s.members[index]:getFullType()
+            and fact.state == expected[index], 'return ownership lost the exact native member identity/state')
+        assert(fact.owner == owners[index] and fact.shared == (not owners[index] or shared == true),
+            'original pickup owner and shared cleanup classification must remain independent')
+        if owners[index] then
+            assert(fact.pickupAttempt == 1 and fact.pickupTransaction == (isClient() and 17 or 0)
+                and fact.pickupAuthority == (isClient() and 'completed' or 'native'),
+                'owned member must cite its exact earned native pickup attempt')
+        else
+            assert(fact.pickupAttempt == nil and fact.pickupTransaction == nil and fact.pickupAuthority == nil,
+                'unbound member cannot borrow authority from its executor')
+        end
+    end
+    assert(s.counts() == 0 and s.queue.queue[2] == s.tail,
+        'pickup observation cannot construct effects, change native scheduling or consume the tail')
+    return facts
+end
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    assert(s.settlement.pickupMatches(s.scope, s.pickup))
+    s.movePickup(1, s.item(181, nil)); assert(s.finishPickup(true))
+    for action in pairs(s.scope.seen) do s.scope.seen[action] = nil end
+    s.makeReturn(); assertOwnership(s, {'active'}, {s.token})
+    local copied = s.settlement.returnOwnership(s.returnObligation)
+    copied[1].id, copied[1].state, copied[1].owner, copied[1].shared = 999, 'completed', {}, true
+    assertOwnership(s, {'active'}, {s.token})
+    s.completeReturn(); assertOwnership(s, {'completed'}, {s.token})
+end
+-- SP discovers merged membership during perform; Host already merged in start.
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client, {181, 182})
+    if client then s.mergePickup() end
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    if not client then s.mergePickup() end
+    s.movePickup(1); s.movePickup(2, s.item(182, nil)); assert(s.finishPickup(true))
+    s.makeReturn()
+    assert(s.returnAction.toolkitQueueOperation ~= s.owners[1]
+        and s.returnAction.toolkitQueueOperation ~= s.owners[2], 'fixture requires an unrelated executor token')
+    assertOwnership(s, {'active', 'active'}, s.owners)
+    s.completeReturn(); assertOwnership(s, {'completed', 'completed'}, s.owners)
+end
+for _, competing in ipairs({'same-item', 'unknown', 'dynamic'}) do
+    local s = pickupFixture(true)
+    local contract = {knownInputs = true, items = {}}
+    if competing == 'same-item' then contract.items[181] = true
+    elseif competing == 'unknown' then contract.knownInputs = false
+    else contract.dynamicInputs = {['Base.Test'] = true} end
+    s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, contract)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    s.movePickup(1); assert(s.finishPickup(true)); s.makeReturn()
+    assertOwnership(s, {'active'}, {s.token}, true)
+    s.completeReturn(); assertOwnership(s, {'completed'}, {s.token}, true)
+end
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'no-callback', 'failed', 'missing', 'wrong-type', 'source-duplicate', 'expired'}) do
+        local s = pickupFixture(client)
+        assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+        if outcome == 'expired' then s.advance(30001) end
+        if outcome ~= 'missing' then
+            local live = s.movePickup(1, s.item(181, nil))
+            if outcome == 'wrong-type' then live.fullType = 'Base.Other'
+            elseif outcome == 'source-duplicate' then s.source.items[181] = s.item(181, s.source) end
+        end
+        if outcome ~= 'no-callback' then s.finishPickup(outcome ~= 'failed') end
+        s.settlement.poll(s.scope)
+        s.advance(30001); s.settlement.poll(s.scope)
+        s.movePickup(1, s.item(181, nil)); s.settlement.poll(s.scope)
+        s.makeReturn(); assertOwnership(s, {'unbound'}, {})
+    end
+end
+for _, outcome in ipairs({'rejected', 'absent', 'pending'}) do
+    local s = pickupFixture(true)
+    s.transaction.done, s.transaction.rejected = outcome == 'absent', outcome ~= 'pending'
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    s.movePickup(1); s.finishPickup(true)
+    s.transaction.done, s.transaction.rejected = true, false
+    s.settlement.poll(s.scope); s.makeReturn(); assertOwnership(s, {'unbound'}, {})
+end
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    assert(s.finishPickup(true))
+    s.movePickup(1, s.item(181, nil)); s.settlement.poll(s.scope)
+    s.makeReturn(); assertOwnership(s, {'active'}, {s.token})
+end
+-- The exact successful sibling remains earned when another member expires.
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client, {181, 182})
+    if client then s.mergePickup() end
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    if not client then s.mergePickup() end
+    s.movePickup(1); s.finishPickup(true)
+    s.advance(30001); s.settlement.poll(s.scope)
+    s.movePickup(2); s.settlement.poll(s.scope)
+    s.makeReturn(); assertOwnership(s, {'active', 'unbound'}, {s.token})
+end
+for _, boundary in ipairs({'cancel-before-effect', 'cancel-after-effect', 'generation', 'replacement', 'dead', 'closed'}) do
+    local s = pickupFixture(true)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    if boundary == 'cancel-after-effect' then s.movePickup(1); s.finishPickup(true) end
+    if boundary:match('^cancel') then s.token.toolkitCancelled = true
+    elseif boundary == 'generation' then s.queue.toolkitOperationGeneration = 1
+    elseif boundary == 'replacement' then ISTimedActionQueue.queues[s.player] = {character = s.player, queue = {}}
+    elseif boundary == 'dead' then s.player.dead = true
+    else s.settlement.close(s.scope) end
+    if boundary ~= 'cancel-after-effect' then s.movePickup(1); s.finishPickup(true) end
+    s.settlement.poll(s.scope)
+    if boundary:match('^cancel') then
+        s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {knownInputs = true, items = {}})
+        s.makeReturn(); assertOwnership(s, {'active'}, {s.token})
+    else
+        s.player.dead = false; ISTimedActionQueue.queues[s.player] = s.queue
+        s.scope = s.settlement.deferred(s.player, {})
+        s.makeReturn(); assertOwnership(s, {'unbound'}, {})
+    end
+end
+-- Unresolved repeated borrowing cannot select an owner by iteration order.
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client)
+    local second = {Type = 'ISInventoryTransferAction', character = s.player, toolkitQueueOperation = {},
+        item = s.item(181, s.source), srcContainer = s.source, destContainer = s.root,
+        action = {}, transactionId = 18}
+    second.queueList = {{items = {second.item}}}
+    s.settlement.remember(s.scope, second, {knownInputs = true, items = {[181] = true}})
+    s.settlement.preparePickup(s.scope, second)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    s.movePickup(1); s.finishPickup(true)
+    s.makeReturn(); assertOwnership(s, {'unbound'}, {})
+end
+do
+    local s = returnFixture(true)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    local facts = s.settlement.returnOwnership(s.obligation)
+    assert(#facts == 1 and facts[1].id == 81 and facts[1].state == 'unbound' and facts[1].owner == nil)
+    facts[1].owner, facts[1].state, facts[1].pickupAuthority = s.token, 'active', 'completed'
+    s.current.transactionId = 0; s.observeDestination(); assert(s.finishReturn(true))
+    facts = s.settlement.returnOwnership(s.obligation)
+    assert(facts[1].state == 'unbound' and facts[1].owner == nil and s.settlement.returnState(s.obligation) == 'completed',
+        'legacy native return may complete without minting a pickup obligation from copied diagnostics')
+end
+-- Ordered groups on the same executor keep distinct native receipt ordinals.
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client, {181, 182})
+    if client then s.mergePickup(true) end
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    if not client then s.mergePickup(true) end
+    s.movePickup(1)
+    table.remove(s.pickup.queueList, 1)
+    if client then assert(s.settlement.refreshPickup(s.scope, s.pickup)) end
+    s.pickup.item, s.pickup.transactionId = s.members[2], 18
+    assert(s.settlement.finishPickup(s.scope, s.pickup, true))
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    s.movePickup(2); s.pickup.queueList, s.pickup.transactionId = {}, 0
+    assert(s.settlement.finishPickup(s.scope, s.pickup, true))
+    s.settlement.poll(s.scope); s.makeReturn()
+    local facts = s.settlement.returnOwnership(s.returnObligation)
+    assert(#facts == 2 and facts[1].owner == s.owners[1] and facts[2].owner == s.owners[2]
+        and facts[1].state == 'active' and facts[2].state == 'active'
+        and facts[1].pickupAttempt == 1 and facts[2].pickupAttempt == 2
+        and facts[1].pickupTransaction == (client and 17 or 0)
+        and facts[2].pickupTransaction == (client and 18 or 0),
+        'later pickup group must cite its own attempt/transaction without inheriting executor ownership')
+end
+-- An outbound native transfer starts a new borrowing boundary even while an
+-- old successful pickup callback still awaits its exact replicated effect.
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    assert(s.finishPickup(true))
+    local outbound = {character = s.player, srcContainer = s.root, destContainer = s.source,
+        item = s.members[1], queueList = {{items = {s.members[1]}}}}
+    s.settlement.departure(s.scope, outbound)
+    s.movePickup(1, s.item(181, nil))
+    s.settlement.poll(s.scope)
+    s.makeReturn(); assertOwnership(s, {'unbound'}, {})
+end
+-- One activated candidate binds to one native return proof. A concurrent
+-- observer cannot borrow either its live ownership or its later completion.
+for _, client in ipairs({false, true}) do
+    local s = pickupFixture(client)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    s.movePickup(1); assert(s.finishPickup(true))
+    s.makeReturn(); assertOwnership(s, {'active'}, {s.token})
+    local firstAction, firstObligation = s.returnAction, s.returnObligation
+    s.makeReturn(); assertOwnership(s, {'unbound'}, {})
+    local secondObligation = s.returnObligation
+    local first = s.settlement.returnOwnership(firstObligation)
+    assert(first[1].state == 'active' and first[1].owner == s.token,
+        'second observer must not revoke or complete the first exact return proof')
+    s.returnAction, s.returnObligation = firstAction, firstObligation
+    s.queue.current, s.queue.queue = firstAction, {firstAction, s.tail}
+    s.completeReturn(); assertOwnership(s, {'completed'}, {s.token})
+    local second = s.settlement.returnOwnership(secondObligation)
+    assert(#second == 1 and second[1].state == 'unbound' and second[1].owner == nil
+        and second[1].pickupAttempt == nil and second[1].pickupAuthority == nil,
+        'another return proof cannot inherit completion or authority from a shared candidate')
+end
+-- A matching queued candidate cannot lend ownership without an actual merge.
+for _, client in ipairs({false, true}) do
+    for _, preflight in ipairs({false, true}) do
+        local s = pickupFixture(client, {181, 182})
+        if not client then assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard)) end
+        if preflight then s.settlement.beforePickupMerge(s.scope, s.pickup, s.guard) end
+        s.pickup.queueList[1].items[2] = s.members[2]
+        -- Its exact child remains queued and intact despite matching membership.
+        s.settlement.refreshPickup(s.scope, s.pickup)
+        if client then assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard)) end
+        assert(s.queue.queue[2] == s.pickups[2] and s.pickups[2].character == s.player)
+        s.movePickup(1); s.movePickup(2); assert(s.finishPickup(true))
+        s.makeReturn(); assertOwnership(s, {'active', 'unbound'}, {s.token})
+    end
+end
+for _,client in ipairs({false,true}) do
+    local s=pickupFixture(client)
+    assert(s.settlement.beginPickup(s.scope,s.pickup,s.guard))
+    s.movePickup(1);assert(s.finishPickup(true));s.makeReturn();s.completeReturn()
+    assertOwnership(s,{'completed'},{s.token})
+    s.settlement.close(s.scope)
+    assertOwnership(s,{'completed'},{s.token})
+end
+for _,client in ipairs({false,true}) do
+    local s=pickupFixture(client)
+    -- Ordinary producer pickup provenance may be absent from the legacy map.
+    -- The sealed native source action, not that intent map, earns ownership.
+    s.scope.tasks[s.token].pickups={};s.token.toolkitPickups={}
+    s.settlement.remember(s.scope,{character=s.player,toolkitQueueOperation={}},{items={}})
+    assert(s.settlement.owner(s.scope,181,'Base.Test',s.source)==nil)
+    assert(s.settlement.beginPickup(s.scope,s.pickup,s.guard))
+    s.movePickup(1);assert(s.finishPickup(true));s.makeReturn()
+    assertOwnership(s,{'active'},{s.token})
+    s.completeReturn();s.settlement.close(s.scope)
+    assertOwnership(s,{'completed'},{s.token})
+end
+next = savedNext
+print('Shared settlement: effect-bound pickup ownership, exact native attempts and no effect replay passed.')

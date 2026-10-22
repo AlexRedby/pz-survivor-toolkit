@@ -304,7 +304,8 @@ def _verify_tidy_group(result, selection, multi=False):
     group = result.get('tidyGroup')
     tidy = 'P4TidyUpMeister' in selection['mods']
     enabled = selection['mode'] == 'toolkit'
-    keys = {'nativeGroups', 'nativeItems', 'groupSizes', 'obligationGroups', 'completedItems', 'items', 'unrelatedTailPreserved'}
+    keys = {'nativeGroups', 'nativeItems', 'groupSizes', 'obligationGroups', 'completedItems', 'items', 'unrelatedTailPreserved',
+            'pickupOperations', 'pickupItems', 'ownershipAtBegin', 'ownershipCompleted'}
     if multi:
         keys |= {'executorCount', 'attempts', 'sameNativeExecutor'}
     total = 4 if multi else 2
@@ -330,6 +331,35 @@ def _verify_tidy_group(result, selection, multi=False):
     expected_completed = [dict(id=item['id'], fullType=item['fullType'], state='completed') for item in items] if tidy and enabled else []
     if completed != expected_completed or any(type(item.get('id')) is not int for item in completed):
         return ['P4 group per-item completion snapshots missing or inconsistent']
+    pickups = group.get('pickupItems')
+    ownership_count = total if tidy and enabled else 0
+    if (type(group.get('pickupOperations')) is not int or group['pickupOperations'] != int(bool(ownership_count))
+            or not isinstance(pickups, list) or len(pickups) != ownership_count):
+        return ['P4 confirmed pickup ownership evidence missing or active with queue disabled']
+    pickup_keys = {'id', 'fullType', 'owner', 'shared', 'pickupAttempt', 'pickupTransaction', 'pickupAuthority'}
+    for pickup in pickups:
+        if (not isinstance(pickup, dict) or set(pickup) != pickup_keys
+                or type(pickup.get('id')) is not int or type(pickup.get('owner')) is not int or pickup['owner'] != 1
+                or type(pickup.get('shared')) is not bool
+                or type(pickup.get('pickupAttempt')) is not int or pickup['pickupAttempt'] < 1
+                or type(pickup.get('pickupTransaction')) is not int
+                or pickup.get('pickupAuthority') != ('completed' if selection['kind'] == 'mp' else 'native')):
+            return ['P4 original pickup operation or native authority differs']
+        transaction = pickup['pickupTransaction']
+        if ((selection['kind'] == 'mp' and (transaction == 0 or not -128 <= transaction <= 127))
+                or (selection['kind'] == 'sp' and transaction != 0)):
+            return ['P4 original pickup inventory transaction differs']
+    if ([dict(id=item['id'], fullType=item['fullType'], state='completed') for item in pickups] != expected_completed):
+        return ['P4 confirmed pickups omitted, duplicated or changed exact members']
+    for field, phase in (('ownershipAtBegin', 'active'), ('ownershipCompleted', 'completed')):
+        values = group.get(field)
+        expected_ownership = [dict(item, state=phase) for item in pickups]
+        if (not isinstance(values, list) or values != expected_ownership
+                or any(not isinstance(item, dict) or set(item) != pickup_keys | {'state'}
+                       or type(item.get('id')) is not int or type(item.get('owner')) is not int
+                       or type(item.get('pickupAttempt')) is not int or type(item.get('pickupTransaction')) is not int
+                       or type(item.get('shared')) is not bool for item in values)):
+            return ['P4 exact return ownership snapshot missing, partial or foreign: ' + field]
     if multi:
         if (sum(item['fullType'] == 'Base.Nails' for item in items) != 2
                 or sum(item['fullType'] == 'Base.Hammer' for item in items) != 2

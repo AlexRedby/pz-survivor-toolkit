@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.215
+
+- **Action queue:** Bind observed P4 tool returns to the operation that actually borrowed each item. Activate per-item cleanup records only after the native pickup transaction and exact inventory effect are confirmed; preserve separate ownership through merged transfers and reject ambiguous or stale borrowing episodes. Native scheduling and queue edit permissions remain unchanged.
+
 ### 0.1.214
 
 - **Wishlist:** Compare visible-list revisions and live faction access before building periodic multiplayer updates. Unchanged polls no longer copy or deeply compare entries. Keep immediate edit replies, access revocation, background highlighting, storage recovery and disconnected-player cleanup.

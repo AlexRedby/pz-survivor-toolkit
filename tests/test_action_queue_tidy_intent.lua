@@ -1227,6 +1227,33 @@ test('MP observed pickup intent cannot revive after the item leaves root invento
         'late completion revived an old intent after its observed item left root inventory')
 end)
 
+test('transfer lifecycle observers run for automatic pickups without explicit UI intent',function()
+    local h=fixture()
+    local begins,finishes=0,0
+    h.intent.observeTransfers(function() end,nil,{
+        begin=function(action) begins=begins+1;assert(action.item:getContainer()==h.source);return true end,
+        finish=function(action,succeeded) finishes=finishes+1;assert(succeeded and action.item:getContainer()==h.inventory) end,
+    })
+    local item=h.item(h.source)
+    ISTimedActionQueue.add(h.transfer(item,h.inventory));h.drain()
+    assert(begins==1 and finishes==1,'automatic pickup lost the before/after native observation boundary')
+end)
+
+for _,phase in ipairs({'begin','finish'}) do
+    test('failed '..phase..' transfer observer cannot stop native effects or later observers',function()
+        local h=fixture()
+        local broken,healthy=0,0
+        h.intent.observeTransfers(function() end,nil,{[phase]=function() broken=broken+1;error('injected read-only failure') end})
+        h.intent.observeTransfers(function() end,nil,{finish=function() healthy=healthy+1 end})
+        for _=1,2 do
+            local item=h.item(h.source)
+            ISTimedActionQueue.add(h.transfer(item,h.inventory));h.drain()
+            assert(item:getContainer()==h.inventory and #h.queue.queue==0,'observer aborted or replayed native transfer')
+        end
+        assert(broken==1 and healthy==2,'failed observer was not quarantined independently')
+    end)
+end
+
 for _, failure in ipairs(failures) do print("FAIL tidy intent: " .. failure) end
 assert(#failures == 0, tostring(#failures) .. " of " .. checked .. " tidy intent checks failed")
 print("Tidy explicit intent checks passed (" .. checked .. ").")
