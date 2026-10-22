@@ -1,7 +1,3 @@
-# Cart tools and animation delivery
-
-- [ ] Recheck main/version freshness, push normally to main and verify the remote commit; report the remaining animation tasks with scoped evidence.
-
 # Nick's Turn Off Fridges selection
 
 - [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
