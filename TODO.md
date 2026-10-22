@@ -1,8 +1,5 @@
 # Cart tools and animation delivery
 
-- [ ] Commit the selected Blender tooling, measured replay/curve, locomotion assets/runtime and related checks; keep the competing direct-entry candidate isolated.
-- [ ] Integrate current main without losing concurrent project changes, assign component versions newer than main and reconcile changelog/TODO.
-- [ ] Pass focused cart Python/native Java, generated-asset and packaging checks; resolve material release-review findings.
 - [ ] Recheck main/version freshness, push normally to main and verify the remote commit; report the remaining animation tasks with scoped evidence.
 
 # Nick's Turn Off Fridges selection
@@ -70,16 +67,16 @@
 ## Known pose defects
 
 - [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
-- [ ] Remove rendered fore-aft cart jumps during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.
-- [ ] Investigate remaining wide-jeans/handle contact in the original straight pose, nearby poses and the start of the reverse arc, preserving the preferred hand and torso position. Recheck the historical full-load Walk alongside a vehicle at 45 degrees (`male-full-vehicle-yaw45-slide-right`), including setup and the complete handoff. Keep instant-equip fixture contacts separate from the ordinary inventory-menu equip contact reproduced below.
+- [ ] Recheck reported fore-aft cart jumps on the delivered common-root/blend baseline during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping; correct only the remaining reproduced cases. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.
+- [ ] Reproduce remaining reported wide-jeans/handle contact on the delivered baseline in the original straight pose, nearby poses and the start of the reverse arc before changing them, preserving the preferred hand and torso position. Recheck the historical full-load Walk alongside a vehicle at 45 degrees (`male-full-vehicle-yaw45-slide-right`), including setup and the complete handoff. Keep instant-equip fixture contacts separate from the inventory-menu transition corrected below.
 - [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.
 
 ## Inventory-equip clothing clearance
 
-Confirmed in a bounded current macOS B42.21 SP reproduction: after actual inventory-menu equip following native Walk, the left wooden-wheelbarrow handle intersects the worn baggy-jeans mesh 252 ms after native completion. Same-slot native geometry shows two upper-left-thigh faces crossing the shaft surface in one sampled pose, with an interior point robust to numerical-tolerance checks; the gameplay camera hides the small contact. Ordinary ground pickup and its held tail show no sampled contact in this selected run; wrong-side approach contact is a separate routing investigation above. Coverage is the available 43-Mod-ID subset, not the complete selected pack. Desired result: a continuous, contact-free entry with the accepted straight holding pose, closed grip and natural foot support preserved.
+The selected Blender-authored correction keeps the left shaft clear while the outgoing inventory animation retires. Broader verification below remains open; selected male/full SP samples from the available 43-Mod-ID subset do not establish full-pack or every-frame clearance. The accepted straight stance, closed grip, native foot support and action duration remain the target.
 
-- [ ] Extend the Blender-authored inventory-equip clearance candidate beyond the selected male/full SP reproducer: female/empty, adjacent start/stop and affected Host owner/observer. Preserve the exact settled stance, native leg motion, closed grip and native action duration. Check the new temporary cart excursion separately from the pre-existing initial attachment switch; the direct candidate remains an independent comparison, not a combined correction.
-- [ ] Close the remaining 2–5 ms native lifecycle-boundary evidence gaps and obtain a close native-camera view of the transition. Existing sampled geometry and measured Blender replay do not establish every rendered frame or full-pack clearance. Keep wrong-side world-approach routing separate; do not install either candidate without a separate request.
+- [ ] Extend the delivered inventory-equip clearance fix beyond the selected male/full SP reproducer: female/empty, adjacent start/stop and affected Host owner/observer. Preserve the exact settled stance, native leg motion, closed grip and native action duration. Check the temporary cart excursion separately from the pre-existing initial attachment switch; the direct candidate remains an independent comparison, not a combined correction.
+- [ ] Close the remaining 2–5 ms native lifecycle-boundary evidence gaps and obtain a close native-camera view of the transition. Existing sampled geometry and measured Blender replay do not establish every rendered frame or full-pack clearance. Keep wrong-side world-approach routing separate.
 
 # Root fix for the action queue
 
