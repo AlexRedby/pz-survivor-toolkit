@@ -23,6 +23,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.214
+
+- **Wishlist:** Compare visible-list revisions and live faction access before building periodic multiplayer updates. Unchanged polls no longer copy or deeply compare entries. Keep immediate edit replies, access revocation, background highlighting, storage recovery and disconnected-player cleanup.
+
 ### 0.1.213
 
 - **Action queue:** Track P4 return sequences across native groups and item transactions with separate, ordered receipts. Preserve confirmed item results when a later group fails, stops or expires, without applying its outcome to another attempt. Keep historical receipts separate from live queue capabilities and leave edit permissions and native scheduling unchanged.

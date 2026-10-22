@@ -73,6 +73,8 @@ Events.OnTick.Add(session.tick)
     else:
         parts.append("""
 local connecting,advanced=false,false
+local host=QueueTestSelection and QueueTestSelection.kind=='mp' and QueueTestSelection.options and QueueTestSelection.options.mp_host
+if not host then
 Events.OnConnected.Add(function() connecting=true end)
 Events.OnMainMenuEnter.Add(function()
  if connecting or isClient() then return end;connecting=true
@@ -87,6 +89,7 @@ Events.OnPreUIDraw.Add(function()
   MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
  end
 end)
+end
 Events.OnConnectFailed.Add(function(a,b) session.quarantine('connect '..tostring(a)..' '..tostring(b)) end)
 Events.OnDisconnect.Add(function() session.quarantine('disconnect with unknown effects') end)
 Events.OnGameStart.Add(function()

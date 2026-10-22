@@ -98,14 +98,31 @@ local function copyList(list, env)
     return result
 end
 
-function Model.snapshot(store, actor, env)
+local function prepareSnapshot(store, actor)
     local error = initialize(store)
-    if error then return {lists = {}, error = error} end
-    if not text(actor, 128) then return {lists = {}, error = "invalid_actor"} end
+    if error then return error end
+    if not text(actor, 128) then return "invalid_actor" end
     if not store.lists[actor] then
-        if count(store.lists) >= Model.limits.lists then return {lists = {}, error = "limit"} end
+        if count(store.lists) >= Model.limits.lists then return "limit" end
         store.lists[actor] = {id = actor, owner = actor, revision = 0, entries = {}, members = {}}
     end
+end
+-- Access can change without a list edit when either actor leaves a faction.
+-- Only this small projection is needed to detect an unchanged publication.
+function Model.snapshotVersions(store, actor, env)
+    local error = prepareSnapshot(store, actor)
+    if error then return nil, error end
+    local versions = {}
+    for id, list in pairs(store.lists) do
+        if authorized(list, actor, env) then
+            versions[id] = {revision = list.revision, faction = effectiveFaction(list, env)}
+        end
+    end
+    return versions
+end
+function Model.snapshot(store, actor, env)
+    local error = prepareSnapshot(store, actor)
+    if error then return {lists = {}, error = error} end
     local result = {lists = {}}
     for _, list in pairs(store.lists) do
         if authorized(list, actor, env) then result.lists[#result.lists + 1] = copyList(list, env) end

@@ -448,6 +448,126 @@ check("nonempty invalid slots block initialization while empty slots remain unin
     files[path] = ""
     assert(Service.snapshot(p).lists[1].revision == 0)
 end)
+local function probeSnapshots(fn)
+    local model = modules['PZSurvivorWishlist/Model']
+    local originalSnapshot, originalPairs = model.snapshot, pairs
+    local entries, counts = {}, {snapshots = 0, entries = 0}
+    model.snapshot = function(value, ...)
+        counts.snapshots = counts.snapshots + 1
+        for _, list in originalPairs(value.lists or {}) do entries[list.entries] = true end
+        return originalSnapshot(value, ...)
+    end
+    pairs = function(value)
+        if entries[value] then counts.entries = counts.entries + 1 end
+        return originalPairs(value)
+    end
+    local ok, message = pcall(fn, counts)
+    model.snapshot, pairs = originalSnapshot, originalPairs
+    assert(ok, message)
+end
+check("unchanged periodic snapshots skip payload construction and visible entry traversal", function()
+    server, world = true, "/Saves/Multiplayer/compact-refresh"
+    local owner, viewer = player("compact-owner"), player("compact-viewer")
+    assert(not Service.snapshot(owner).error)
+    assert(not Service.request(owner, {action = "add", listId = "compact-owner", revision = 0,
+        fullType = "Base.Hammer", amount = 2}).error)
+    probeSnapshots(function(counts)
+        local payload, ownerStamp = Service.snapshot(owner)
+        local _, viewerStamp = Service.snapshot(viewer)
+        assert(payload.lists[1].entries['Base.Hammer'].amount == 2)
+        counts.snapshots, counts.entries = 0, 0
+        for i = 1, 3 do
+            payload, ownerStamp = Service.snapshot(owner, ownerStamp)
+            assert(payload == nil)
+        end
+        assert(counts.snapshots == 0 and counts.entries == 0,
+            "unchanged refresh constructed a payload or traversed cached entries")
+        assert(not Service.request(owner, {action = "add", listId = "compact-owner", revision = 1,
+            fullType = "Base.Nails", amount = 3}).error)
+        counts.snapshots, counts.entries = 0, 0
+        assert(Service.snapshot(viewer, viewerStamp) == nil,
+            "a hidden private list edit republished an unrelated recipient")
+        assert(counts.snapshots == 0 and counts.entries == 0)
+        payload = Service.snapshot(owner, ownerStamp)
+        assert(payload.lists[1].entries['Base.Nails'].amount == 3)
+    end)
+    server = false
+end)
+check("live faction metadata and explicit or faction revocation invalidate periodic stamps", function()
+    server, world = true, "/Saves/Multiplayer/compact-acl"
+    local owner, member = player("acl-owner"), player("acl-member")
+    factions['acl-owner'], factions['acl-member'] = "Builders", "Builders"
+    Service.snapshot(owner)
+    assert(not Service.request(owner, {action = "share", listId = "acl-owner", revision = 0,
+        members = {"acl-member"}, faction = true}).error)
+    local _, ownerStamp = Service.snapshot(owner)
+    local _, memberStamp = Service.snapshot(member)
+    factions['acl-owner'] = nil
+    local payload
+    payload, memberStamp = Service.snapshot(member, memberStamp)
+    assert(#payload.lists == 2, "explicit membership must survive owner's faction departure")
+    for _, list in ipairs(payload.lists) do assert(list.faction == nil) end
+    payload, ownerStamp = Service.snapshot(owner, ownerStamp)
+    assert(payload.lists[1].faction == nil, "owner's effective faction metadata stayed cached")
+    assert(not Service.request(owner, {action = "share", listId = "acl-owner", revision = 1,
+        members = {}, faction = false}).error)
+    payload, memberStamp = Service.snapshot(member, memberStamp)
+    assert(#payload.lists == 1 and payload.lists[1].id == "acl-member")
+    factions['acl-owner'] = "Builders"
+    assert(not Service.request(owner, {action = "share", listId = "acl-owner", revision = 2,
+        members = {}, faction = true}).error)
+    payload, memberStamp = Service.snapshot(member, memberStamp)
+    assert(#payload.lists == 2)
+    factions['acl-member'] = "Other"
+    payload, memberStamp = Service.snapshot(member, memberStamp)
+    assert(#payload.lists == 1, "recipient faction departure retained a shared list")
+    factions['acl-member'] = "Builders"
+    payload, memberStamp = Service.snapshot(member, memberStamp)
+    assert(#payload.lists == 2)
+    factions['acl-owner'] = nil
+    payload = Service.snapshot(member, memberStamp)
+    assert(#payload.lists == 1, "owner faction departure retained faction access")
+    factions['acl-member'], server = nil, false
+end)
+check("periodic stamps publish save and cache changes even at identical revisions", function()
+    local p = player("")
+    world = "/Saves/Sandbox/compact-context-a"
+    local payload, stamp = Service.snapshot(p)
+    assert(payload.lists[1].revision == 0)
+    world = "/Saves/Sandbox/compact-context-b"
+    payload, stamp = Service.snapshot(p, stamp)
+    assert(payload and payload.lists[1].revision == 0)
+    resets[#resets]()
+    payload, stamp = Service.snapshot(p, stamp)
+    assert(payload and payload.lists[1].revision == 0, "reloaded cache reused an old context's stamp")
+    assert(Service.snapshot(p, stamp) == nil)
+end)
+check("periodic storage errors retry, suppress repeats and publish recovery", function()
+    world, readFailure = "/Saves/Sandbox/compact-retry", "nil"
+    local p, originalReader, attempts = player(""), getFileReader, 0
+    getFileReader = function(...)
+        attempts = attempts + 1
+        return originalReader(...)
+    end
+    local payload, stamp = Service.snapshot(p)
+    assert(payload.error == "storage_read")
+    local previousAttempts = attempts
+    payload, stamp = Service.snapshot(p, stamp)
+    assert(payload == nil and attempts > previousAttempts, "identical errors stopped storage retries")
+    readFailure = false
+    payload, stamp = Service.snapshot(p, stamp)
+    getFileReader = originalReader
+    assert(payload and not payload.error and #payload.lists == 1)
+    assert(Service.snapshot(p, stamp) == nil)
+    local changed
+    payload, changed, stamp = Service.request(p, {action = "remove", listId = "local", revision = 0,
+        fullType = "Base.Hammer", requestId = "missing-entry"})
+    assert(not changed and payload.error == "not_found" and payload.requestId == "missing-entry")
+    payload, stamp = Service.snapshot(p, stamp)
+    assert(payload and not payload.error and not payload.requestId,
+        "transient command error remained in the periodic publication stamp")
+    assert(Service.snapshot(p, stamp) == nil)
+end)
 local function event()
     local result = {}
     result.Add = function(fn) result[#result + 1] = fn end
@@ -534,5 +654,48 @@ check("refresh preserves online rate limits and releases departed players withou
     now = now + 5000
     Events.OnTick.fire()
     assert(#sent == 0, "unchanged online snapshots must remain cached")
+end)
+check("unchanged server refresh skips payloads and keeps the five-second ACL interval", function()
+    factions.owner = "Builders"
+    sent = {}
+    now = now + 4999
+    Events.OnTick.fire()
+    assert(#sent == 0, "ACL refresh ran before five seconds elapsed")
+    now = now + 1
+    Events.OnTick.fire()
+    assert(#sent == 2, "live faction restoration was not checked at five seconds")
+    for _, response in ipairs(sent) do
+        assert(response.player == owner or response.player == friend)
+        assert(not response.args.requestId and not response.args.error)
+    end
+    probeSnapshots(function(counts)
+        -- Discover the actual cached entry tables before checking a periodic read.
+        for _, p in ipairs(online) do Service.snapshot(p) end
+        counts.snapshots, counts.entries = 0, 0
+        sent, now = {}, now + 5000
+        Events.OnTick.fire()
+        assert(#sent == 0 and counts.snapshots == 0 and counts.entries == 0,
+            "unchanged online refresh constructed or traversed full snapshots")
+    end)
+end)
+check("private edits stay targeted and unchanged command replies retain request ids", function()
+    sent = {}
+    command(stranger, {action = "add", listId = "stranger", revision = 0,
+        fullType = "Base.Nails", amount = 2, requestId = "private-edit"})
+    assert(#sent == 1 and sent[1].player == stranger and sent[1].args.requestId == "private-edit")
+    sent = {}
+    command(stranger, {action = "sync", requestId = "same-state-a"})
+    command(stranger, {action = "sync", requestId = "same-state-b"})
+    assert(#sent == 2 and sent[1].args.requestId == "same-state-a" and sent[2].args.requestId == "same-state-b")
+    sent, now = {}, now + 5000
+    Events.OnTick.fire()
+    assert(#sent == 0, "an unchanged command response invalidated periodic state")
+    command(stranger, {action = "remove", listId = "stranger", revision = 1,
+        fullType = "Base.Hammer", requestId = "missing-server-entry"})
+    assert(#sent == 1 and sent[1].args.error == "not_found")
+    sent, now = {}, now + 5000
+    Events.OnTick.fire()
+    assert(#sent == 1 and sent[1].player == stranger and not sent[1].args.error
+        and not sent[1].args.requestId, "periodic refresh did not clear a transient command error")
 end)
 print("Wishlist model/server checks passed: " .. passed)

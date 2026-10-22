@@ -41,6 +41,11 @@ def validate(selection):
         raise ValueError("Choose a unique nonempty preserved scenario subset")
     if suite == "shared-wishlist" and len(cases) > 1 and set(cases) != {"visual", "standalone"}:
         raise ValueError("Wishlist full and reload require separate isolated lifecycles")
+    if suite == "shared-wishlist" and selection.get("options", {}).get("mp_host"):
+        if "reload" in cases:
+            raise ValueError("Wishlist reload requires the separate-server seed lifecycle; menu Host is unsupported")
+        if selection.get("languages") != ["EN", "RU"]:
+            raise ValueError("Wishlist menu Host requires client1 EN and client2 RU")
     if selection["ports"][1] != selection["ports"][0] + 1:
         raise ValueError("Preserved fixtures require an adjacent UDP port")
     case = selection["cases"][0]
@@ -67,6 +72,8 @@ def validate(selection):
 def sources(project, selection):
     source = Path(project) / "tests/native_queue/contributions" / selection["suite"]
     paths = sorted(path for path in source.rglob("*") if path.is_file() and path.suffix in (".py", ".lua", ".json"))
+    if selection["suite"] == "shared-wishlist" and selection.get("options", {}).get("mp_host"):
+        paths.append(Path(project) / "tests/native_queue/startup/client/ZZStartup.lua")
     if selection["suite"] == "shared-wishlist" and selection["cases"] == ["reload"]:
         seed, state = _seed(selection)
         paths.append(Path(project) / "tests/native_queue/support/QueueWishlistRestore.lua")
@@ -102,6 +109,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if selection["suite"] == "shared-wishlist":
             args.append(selection["mods"])
         namespace["prepare"](*args)
+        if selection["suite"] == "shared-wishlist" and selection.get("options", {}).get("mp_host"):
+            # The native runner already stages shared selection and role-local smoke-user.
+            client = cache / "mods/ActionQueueTest/42/media/lua/client"
+            shutil.copy2(Path(project) / "tests/native_queue/startup/client/ZZStartup.lua", client / "ZZStartup.lua")
     if selection["suite"] == "shared-wishlist" and selection["cases"] == ["reload"]:
         seed, state = _seed(selection)
         name = json.loads((seed / "runtime.json").read_text())["server_name"]

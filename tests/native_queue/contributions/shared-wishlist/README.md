@@ -66,6 +66,14 @@ without optional UI mods, also used by visual and reload. All cases support the
 Toolkit queue-off control. Historical standalone evidence predates the merge
 and does not validate the integrated product.
 
+For menu Host, set `options.mp_host=true` with the two EN/RU clients. The adapter
+freezes and stages the common startup bootstrap; client1 owns the native
+CoopServer and client2 joins it. The runner supplies the shared selection and
+role-local `smoke-user.txt`. Only this Host route disables the fixture's older
+connection/character-creation handlers, including composed visual/standalone
+sessions. The ordinary separate-server route keeps its existing handlers.
+Host reload is rejected because its seed/restore lifecycle is not supported.
+
 For persistence through the common runner, finish a successful full/standalone
 run and supply its absolute directory as `options.seed_run` in the JSON passed
 to `--config` for the `reload` case. The adapter requires verified seed evidence,

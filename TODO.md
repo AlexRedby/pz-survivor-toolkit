@@ -137,7 +137,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
+- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
 
 # Inventory infrastructure proposals
 
