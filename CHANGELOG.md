@@ -23,6 +23,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.212
+
+- **Context menu editor:** Capture menu examples, discover actions and prepare editor layouts only while the editor is open. Select newly captured item examples automatically without changing rule scope. Closing the editor releases raw examples and transient previews/layouts while preserving the catalog and saved rules. Ordinary menus keep applying those rules without the extra capture pass.
+
 ### 0.1.211
 
 - **Action queue:** Observe exact per-item results for one native P4 return group, including lightweight transfers merged inside single-player completion. Preserve confirmed partial returns when another item is missing; copied, expired or stale observations cannot invent success. Keep queue edit permissions and multi-transaction cleanup protection unchanged. Isolate a failed transfer observer so it cannot abort or repeat native transfers.

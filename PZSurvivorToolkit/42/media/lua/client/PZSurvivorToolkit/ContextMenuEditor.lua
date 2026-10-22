@@ -167,6 +167,7 @@ function Editor:reload()
         if orderEntry and value.key == orderEntry.key then self.orderList.selected = #self.orderList.items end
     end
     self.lastQuery, self.lastRevision = query, Organizer.revision
+    self.lastCaptureRevision = Organizer.captureRevision
     if selected(self.list) then self:selectEntry(selected(self.list)) end
     self:updateButtons()
 end
@@ -360,7 +361,12 @@ end
 
 function Editor:prerender()
     if not PZSurvivorToolkit.Settings.contextMenus() then self:close(); return end
-    if self.search:getText():lower() ~= self.lastQuery or self.lastRevision ~= Organizer.revision then self:reload() end
+    local captured = self.lastCaptureRevision ~= Organizer.captureRevision
+    if captured then
+        if self.previewID ~= Organizer.lastItemType then self.parentID = "root" end
+        self.previewID = Organizer.lastItemType
+    end
+    if captured or self.search:getText():lower() ~= self.lastQuery or self.lastRevision ~= Organizer.revision then self:reload() end
     self:updateButtons()
     ISCollapsableWindow.prerender(self)
     self:drawText(text("scope"), 12, 34, 0.8, 0.8, 0.8, 1, UIFont.Small)
@@ -379,6 +385,7 @@ function Editor:prerender()
 end
 
 function Editor:close()
+    Organizer.endCapture()
     self.removed = true
     if self.toolkitRulePicker then self.toolkitRulePicker:close() end
     for _, entry in ipairs({self.search, self.profileName, self.groupName}) do entry:unfocus() end
@@ -407,6 +414,7 @@ function Editor.show()
     instance:initialise()
     instance:instantiate()
     instance:addToUIManager()
+    Organizer.beginCapture()
     return instance
 end
 

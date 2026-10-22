@@ -10,13 +10,29 @@ local Organizer = Profile.new(Rules, Tags)
 PZSurvivorToolkit.ContextMenus = Organizer
 local busy = false
 local examples, previews = {}, {}
+local capturing = false
+Organizer.captureRevision = 0
+
+function Organizer.isCapturing() return capturing end
+function Organizer.beginCapture()
+    if capturing then return end
+    capturing = true
+end
+function Organizer.endCapture()
+    if not capturing then return end
+    capturing = false
+    examples, previews = {}, {}
+    Organizer.lastItemType = nil
+    Organizer.clearLayouts()
+end
 
 -- Preview runs the same organizer on copied options, without allocating native UI or invoking callbacks.
 local function copyMenu(source)
     local nodes, menus = {}, {}
+    local player = source.player
     local methods = {}
     function methods:getNew(parent)
-        local node = setmetatable({options = {}, optionPool = {}, parent = parent, player = source.player}, {__index = methods})
+        local node = setmetatable({options = {}, optionPool = {}, parent = parent, player = player}, {__index = methods})
         nodes[#nodes + 1] = node; node.subOptionNums = #nodes
         return node
     end
@@ -67,7 +83,7 @@ local function action(option, pass, defaults, discover)
     local label = tostring(option.name or option.text or "")
     if label == "" then return nil end
     key = key or "label:" .. label:gsub("%s*%(%d+%)$", "")
-    if discover and pass.automatic then Organizer.record(pass.scope, key, label, category) end
+    if discover and pass.automatic and capturing then Organizer.record(pass.scope, key, label, category) end
     local override = not pass.automatic and Organizer.getOverride(key, pass.scope, pass.tagScopes) or nil
     return override or category, override ~= nil, key
 end
@@ -398,16 +414,27 @@ function Organizer.organize(root)
     local tagScopes = Tags.enabled() and Organizer.matchingTagProfiles(root.toolkitContextTagSets or {}) or {}
     root.toolkitContextTagScopes = tagScopes
     local ok, error = pcall(function()
-        if scope ~= "*" then examples[scope] = copyMenu(root); previews[scope] = nil end
-        local pass = runPass(root, true, scope, tagScopes)
-        local layout = snapshot(root, pass)
-        Organizer.captureLayout(scope, layout)
-        if scope ~= "*" then Organizer.captureLayout("*", layout) end
-        if Organizer.hasChanges(scope, tagScopes) then
-            restore(root)
-            pass = runPass(root, false, scope, tagScopes)
+        local customized = Organizer.hasChanges(scope, tagScopes)
+        if capturing then
+            if scope ~= "*" then examples[scope] = copyMenu(root); previews[scope] = nil end
+            local pass = runPass(root, true, scope, tagScopes)
+            local layout = snapshot(root, pass)
+            Organizer.captureLayout(scope, layout)
+            if scope ~= "*" then Organizer.captureLayout("*", layout) end
+            if customized then
+                restore(root)
+                pass = runPass(root, false, scope, tagScopes)
+            end
+            Organizer.captureActualLayout(scope, snapshot(root, pass))
+            if scope ~= "*" then
+                Organizer.lastItemType = scope
+                Organizer.captureRevision = Organizer.captureRevision + 1
+            end
+        else
+            -- Normal play only applies the rules; discovery, copies and editor
+            -- layouts (including the extra automatic pass) belong to editing.
+            runPass(root, not customized, scope, tagScopes)
         end
-        Organizer.captureActualLayout(scope, snapshot(root, pass))
     end)
     busy = false
     if not ok then
@@ -417,6 +444,7 @@ function Organizer.organize(root)
 end
 
 function Organizer.renderPreview(editScope, itemType)
+    if not capturing then return nil end
     local source = examples[itemType]
     if not source then return nil end
     local cached = previews[itemType]
@@ -441,6 +469,7 @@ function Organizer.renderPreview(editScope, itemType)
 end
 
 function Organizer.settingsChanged()
+    if not PZSurvivorToolkit.Settings.contextMenus() then Organizer.endCapture() end
     for player = 0, getNumActivePlayers() - 1 do
         local menu = getPlayerContextMenu(player)
         if menu then
@@ -500,9 +529,11 @@ local function markContext(menu, kind, items)
                     local fullType = item:getFullType()
                     if itemType and itemType ~= fullType then mixed = true end
                     itemType = fullType
-                    local script = item.getScriptItem and item:getScriptItem()
                     local tags = Tags.forItem(item)
-                    Organizer.rememberItem(fullType, script and script:getDisplayName() or fullType, tags)
+                    if capturing then
+                        local script = item.getScriptItem and item:getScriptItem()
+                        Organizer.rememberItem(fullType, script and script:getDisplayName() or fullType, tags)
+                    end
                     tagSets[#tagSets + 1] = tags
                 end
             end
@@ -510,7 +541,7 @@ local function markContext(menu, kind, items)
         menu.toolkitContextTagSets = tagSets
         if Tags.enabled() then menu.toolkitContextTagScopes = Organizer.matchingTagProfiles(tagSets) end
         if itemType and not mixed then
-            menu.toolkitContextItemType, Organizer.lastItemType = itemType, itemType
+            menu.toolkitContextItemType = itemType
         end
     end
     return menu

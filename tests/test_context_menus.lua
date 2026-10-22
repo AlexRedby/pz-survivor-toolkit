@@ -65,6 +65,8 @@ require = function(name)
 end
 local nativeMethods = {prerender=ISContextMenu.prerender, clear=ISContextMenu.clear, addOption=ISContextMenu.addOption, addOptionOnTop=ISContextMenu.addOptionOnTop}
 local Organizer = require 'PZSurvivorToolkit/ContextMenus'
+assert(not Organizer.isCapturing(), 'loading the organizer must not enable editor capture')
+Organizer.beginCapture()
 local function build()
     root = ISContextMenu:new(nil)
     local actions = {}
@@ -127,6 +129,7 @@ loaded['PZSurvivorToolkit/ContextMenus'] = nil
 PZSurvivorToolkit.ContextMenus = nil
 for name, callback in pairs(nativeMethods) do ISContextMenu[name] = callback end
 Organizer = require 'PZSurvivorToolkit/ContextMenus'
+Organizer.beginCapture()
 assert(Organizer.overrides['label:with|pipe\nand%text'] == 'medical')
 assert(Organizer.overrides['callback:ISInventoryPaneContextMenu.onDropItems'] == 'hidden')
 Organizer.reset(); assert(next(Organizer.overrides) == nil)
@@ -938,3 +941,61 @@ do
  Organizer.restore(menu)
 end
 print('PASS real same-caption rebuild comparison growth')
+
+-- Lua weak observations prove ownership of raw samples; this does not measure Java heap use.
+do
+ Organizer.reset()
+ Organizer.endCapture()
+ local sampleType='Base.CaptureLifetimeProbe'
+ local sampleKey='label:Captured selected item'
+ local function sample()
+  local selected={getFullType=function() return sampleType end,getDisplayCategory=function() return 'Tool' end}
+  local observed=setmetatable({selected},{__mode='v'})
+  local native=ISInventoryPaneContextMenu.createMenu(0,true,{selected});root=native
+  native:addOption('Captured selected item',nil,function() end,selected)
+  native:prerender()
+  local rendered=#native.options
+  Organizer.restore(native)
+  native:clear()
+  -- Drop native options and pools too: they legitimately retain callback parameters.
+  native.optionPool={};native.options={};root=nil
+  return observed,rendered
+ end
+ local function collect() collectgarbage('collect');collectgarbage('collect') end
+ local revision=Organizer.captureRevision
+ assert(Organizer.setOverride(sampleKey,'hidden',sampleType))
+ local rules=require 'PZSurvivorToolkit/ContextMenuRules'
+ local classify,calls=rules.classify,0
+ rules.classify=function(option) calls=calls+1;return classify(option) end
+ local closed,rendered=sample();collect()
+ rules.classify=classify
+ assert(rendered==0,'saved item rules must apply with the editor closed')
+ assert(calls==1,'closed customized menus must organize once without an automatic discovery pass')
+ assert(not closed[1] and Organizer.captureRevision==revision and Organizer.lastItemType==nil,
+  'closed editor retained a raw item sample or updated capture state')
+ assert(Organizer.items[sampleType]==nil and Organizer.entries[sampleKey]==nil
+  and Organizer.renderPreview(sampleType,sampleType)==nil,
+  'closed editor discovered a sample or created a preview')
+ Organizer.beginCapture()
+ local open=sample();collect()
+ assert(open[1] and Organizer.lastItemType==sampleType and Organizer.captureRevision>revision,
+  'open editor did not retain the captured raw item sample')
+ assert(Organizer.items[sampleType] and Organizer.renderPreview(sampleType,sampleType),
+  'open editor did not discover its preview example')
+ Organizer.endCapture();collect()
+ assert(not Organizer.isCapturing() and not open[1] and Organizer.lastItemType==nil,
+  'closing capture retained the raw selected item')
+ assert(Organizer.renderPreview(sampleType,sampleType)==nil and next(Organizer.layouts)==nil,
+  'closing capture retained preview/layout state')
+ assert(Organizer.items[sampleType] and Organizer.getOverride(sampleKey,sampleType)=='hidden',
+  'closing capture discarded the item catalog or saved preferences')
+ Organizer.beginCapture()
+ assert(Organizer.renderPreview(sampleType,sampleType)==nil,'reopening resurrected a previous raw sample')
+ revision=Organizer.captureRevision
+ local reopened=sample();collect()
+ assert(reopened[1] and Organizer.captureRevision>revision,'reopened capture did not accept a fresh sample')
+ Organizer.endCapture();collect()
+ assert(not reopened[1],'reopened capture retained its raw sample after closing')
+ Organizer.reset()
+end
+print('PASS editor-only capture, closed-menu rules, raw Lua sample release, preserved catalog/preferences and fresh reopening')

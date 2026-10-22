@@ -57,6 +57,14 @@ require=sharedRequire
 local Tags=sharedRequire('PZSurvivorToolkit/ItemTags')
 local Schema=sharedRequire('PZSurvivorToolkit/ItemTagSchema')
 local Organizer=dofile(client..'ContextMenuProfile.lua').new({groups={'equipment','research'}},Tags)
+-- Keep the real profile model while isolating the editor's capture lifecycle boundary.
+local capturing,beginCalls,endCalls=false,0,0
+Organizer.captureRevision=0
+function Organizer.isCapturing() return capturing end
+function Organizer.beginCapture() capturing=true;beginCalls=beginCalls+1 end
+function Organizer.endCapture()
+    capturing=false;endCalls=endCalls+1;Organizer.lastItemType=nil;Organizer.clearLayouts()
+end
 Organizer.rememberItem('Base.Hammer','Hammer',{'tool'})
 Organizer.rememberItem('Base.Book','Book',{'literature'})
 Organizer.lastItemType='Base.Hammer'
@@ -90,6 +98,7 @@ end
 local Editor=dofile(client..'ContextMenuEditor.lua')
 local editor=Editor.show()
 assert(editor.width==760 and editor.height==540 and editor.added,'small screen size/lifetime')
+assert(Organizer.isCapturing() and beginCalls==1,'successful editor creation did not begin capture exactly once')
 local drawn, measures = {}, 0
 function editor.list:drawText(label) drawn[#drawn+1]=label end
 local manager=getTextManager
@@ -108,6 +117,7 @@ for _,child in ipairs(editor.children) do
 end
 assert(editor.scopeID=='*' and editor.previewID=='Base.Hammer' and #editor.list.items==4,'scope must default to all items independently of preview')
 assert(Editor.show()==editor and editor.raised,'editor duplicated')
+assert(beginCalls==1 and endCalls==0,'raising an existing editor restarted capture')
 local function option(combo,id)
     for index=1,#combo.options do if combo:getOptionData(index)==id then combo.selected=index;return end end
     error('missing option '..tostring(id))
@@ -117,6 +127,18 @@ local function row(list,key)
     error('missing row '..key)
 end
 option(editor.scope,'Base.Hammer');editor:changeScope()
+Organizer.lastItemType='Base.Book';Organizer.captureRevision=Organizer.captureRevision+1
+editor:prerender()
+assert(editor.scopeID=='Base.Hammer' and editor.previewID=='Base.Book'
+    and editor.preview:getOptionData(editor.preview.selected)=='Base.Book',
+    'a fresh captured sample did not select its preview independently of the saved rule scope')
+option(editor.preview,'Base.Hammer');editor:changePreview();editor:prerender()
+assert(editor.previewID=='Base.Hammer','unchanged capture revision overwrote a manually selected preview')
+option(editor.parent,'equipment');editor:changeParent()
+Organizer.lastItemType='Base.Hammer';Organizer.captureRevision=Organizer.captureRevision+1
+editor:prerender()
+assert(editor.parentID=='equipment' and editor.scopeID=='Base.Hammer','fresh same-type sample reset editor navigation or scope')
+option(editor.parent,'root');editor:changeParent()
 editor:selectEntry(row(editor.list,'equip'))
 option(editor.destination,'root');editor:applyEntry()
 assert(Organizer.getOverride('equip','Base.Hammer')=='root' and Organizer.getOverride('equip','Base.Book')==nil,'item rule leaked')
@@ -213,10 +235,20 @@ tagsEnabled=true;editor.profileName:setText('Closing test');editor:createTagProf
 local childPicker=lastPicker
 enabled=false;editor:prerender()
 assert(not editor.added and not Editor.show() and childPicker.closed,'disabled editor or child picker remained open')
+assert(not Organizer.isCapturing() and endCalls==1 and Organizer.lastItemType==nil,
+    'feature-disable close did not release capture')
+assert(Organizer.items['Base.Hammer'] and Organizer.getOverride('equip','*')=='hidden'
+    and Organizer.getTagProfile(toolsProfile),'closing the editor discarded catalog or saved profile preferences')
 print('Context menu editor checks passed: scopes, previews, tag profiles, inheritance, ordering, group CRUD, search and resets.')
 
 enabled=true
 editor=Editor.show()
+assert(Organizer.isCapturing() and beginCalls==2 and editor.previewID==nil,
+    'reopening did not start capture with an empty transient preview')
+Organizer.lastItemType='Base.Book';Organizer.captureRevision=Organizer.captureRevision+1
+editor:prerender()
+assert(editor.previewID=='Base.Book' and editor.preview:getOptionData(editor.preview.selected)=='Base.Book',
+    'reopened editor did not select a fresh captured sample')
 local Storage=sharedModules['PZSurvivorToolkit/ContextMenuProfileStorage']
 local function nextSlot()
  return Storage.load().slot==1 and 'PZSurvivorToolkit_ContextMenus_b.txt' or 'PZSurvivorToolkit_ContextMenus_a.txt'
