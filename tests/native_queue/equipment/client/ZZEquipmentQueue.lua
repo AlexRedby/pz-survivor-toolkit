@@ -102,11 +102,11 @@ local function enqueue()
    first,state.hammerAction=equip(state.hammer,true,false)
    first,state.screwdriverAction=equip(state.screwdriver,false,false)
   end
- elseif state.id=='tidy-group' then
+ elseif (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   state.groupPickups={}
   -- Same native borrowing utility as bulk-mixed; P4 owns the actual deferred returns.
   Ops.run(function()
-   for _,item in ipairs({state.groupOne,state.groupTwo}) do
+   for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do
     local action=ISInventoryTransferUtil.newInventoryTransferAction(state.player,item,state.source,state.root)
     ISTimedActionQueue.add(action);state.groupPickups[#state.groupPickups+1]=action
    end
@@ -156,7 +156,7 @@ local function controls()
   denied(state.screwdriverAction,state.hammerAction,false,'move_dependent')
   Checks.moveRoundtrip(queue(),API,Policy,state.tailAction,state.pickupAction,false,state.screwdriverAction,true)
   state.independentMoveVerified=true
- elseif state.id=='tidy-group' then
+ elseif (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   assert(queue():indexOf(state.tailAction)~=-1 and state.tailAction.toolkitQueueOperation~=state.groupPickups[1].toolkitQueueOperation,
    'borrowed group lost independent native reading tail')
  elseif state.id=='waiting-cancel' then
@@ -316,8 +316,8 @@ Events.OnTick.Add(function()
     and getPlayer():getAlreadyReadPages(state.tail:getFullType())==state.tail:getNumberOfPages()
    outcome.postprocessingVerified=passed
    outcome.tidyCompletion=Completion.settled()
-   if state.id=='tidy-group' then outcome.tidyGroup=Completion.group() end
-   if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or state.id=='tidy-group' then
+   if (state.id=='tidy-group' or state.id=='tidy-multigroup') then outcome.tidyGroup=Completion.group() end
+   if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
     outcome.restoreVerified=passed;outcome.floorRestoreVerified=state.id=='tidy-floor' and passed and tidy
     outcome.restoreCompletion=Completion.restores()
    end

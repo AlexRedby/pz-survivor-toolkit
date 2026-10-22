@@ -385,18 +385,21 @@ local function adopt(action)
             end, ...)
         end
     end
+    local function returnGuard(candidate, member)
+        -- This override is for native observation only. Policy matches still
+        -- requires the original item and keeps its existing edit permissions.
+        return candidate == action and not record.opaque and sourceMatches(action, record, member)
+    end
+    local function returnTransfer(self)
+        return self == action and record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction and record.obligation
+            and self.srcContainer == self.character:getInventory() and self.destContainer and self.destContainer:getType() ~= "floor"
+    end
     local perform = action.perform
     action.perform = function(self, ...)
-        if matches(self, record) then
+        local returning = returnTransfer(self) and Settlement.returnMatches(self, record.obligation)
+        if matches(self, record) or returning then
             return Operations.perform(self, function(...)
-                local observed = record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction
-                    and record.obligation and self.srcContainer == self.character:getInventory()
-                    and self.destContainer and self.destContainer:getType() ~= "floor"
-                    and Settlement.beginReturn(self, record.obligation, function(_, member)
-                        -- Only the return observer may follow native group member changes.
-                        -- Policy matches keeps the original item and its existing edit rights.
-                        return not record.opaque and sourceMatches(self, record, member)
-                    end)
+                local observed = returnTransfer(self) and Settlement.beginReturn(self, record.obligation, returnGuard)
                 if not observed then return scoped(record, perform, ...) end
                 local results = pack(pcall(scoped, record, perform, ...))
                 Settlement.finishReturn(record.obligation, results[1])
@@ -405,6 +408,17 @@ local function adopt(action)
             end, ...)
         end
         return perform(self, ...)
+    end
+    if record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction then
+        local stop = action.stop
+        action.stop = function(self, ...)
+            if returnTransfer(self) and (matches(self, record) or Settlement.returnMatches(self, record.obligation)) then
+                -- Capture before the native delegate removes its item transaction.
+                -- Observation failure must not prevent the original stop call.
+                pcall(Settlement.stopReturn, self, record.obligation, returnGuard)
+            end
+            return stop(self, ...)
+        end
     end
     action.toolkitQueueSafeOnComplete = action.onCompleteFunc
     record.methods = snapshot(action)
@@ -971,6 +985,10 @@ function Compat.install()
             if record and record.id == "P4TidyUpMeister" and record.obligation then
                 Settlement.refreshReturn(action, record.obligation)
             end
+        end, function(action)
+            local record = records[action]
+            return record and record.id == "P4TidyUpMeister" and record.obligation
+                and Settlement.returnMatches(action, record.obligation)
         end)
         local policy=Toolkit.ActionQueuePolicy
         if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end

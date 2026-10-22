@@ -85,7 +85,7 @@ Events.OnTick.Add(function()
    Fixture.refresh(session)
    local passed,problem=pcall(Postprocess.verify,session,Selection.mode,getActivatedMods():contains('P4TidyUpMeister'))
    session.verified=true
-   if passed and session.id=='tidy-group' then
+   if passed and (session.id=='tidy-group' or session.id=='tidy-multigroup') then
     print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))
    end
    if passed then

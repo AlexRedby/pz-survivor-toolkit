@@ -208,161 +208,336 @@ local function returnProof(obligation)
     return type(seal) == "function" and seal(obligation) or nil
 end
 
-local function returnMembers(action)
-    local groups = action.queueList
-    if type(groups) ~= "table" or #groups ~= 1 or type(groups[1]) ~= "table"
-        or type(groups[1].items) ~= "table" then return end
-    local items, members, ids = groups[1].items, {}, {}
-    if #items < 1 or #items > 20 then return end
-    for key in pairs(items) do
-        if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > #items then return end
+local function arraySize(values)
+    if type(values) ~= "table" then return end
+    local size = #values
+    for key in pairs(values) do
+        if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > size then return end
     end
-    for index = 1, #items do
-        local item = items[index]
-        if not item or type(item.getID) ~= "function" or type(item.getFullType) ~= "function" then return end
-        local id, fullType = item:getID(), item:getFullType()
-        if type(id) ~= "number" or id % 1 ~= 0 or ids[id] or type(fullType) ~= "string" then return end
-        ids[id] = true
-        members[#members + 1] = {id = id, fullType = fullType}
-    end
-    return members
+    for index = 1, size do if values[index] == nil then return end end
+    return size
 end
 
-local function returnMember(proof, item)
-    if not item or type(item.getID) ~= "function" or type(item.getFullType) ~= "function" then return end
-    for _, member in ipairs(proof.members) do
-        if item:getID() == member.id and item:getFullType() == member.fullType then return member end
+local function returnGroups(action, empty)
+    local groups, result, ids = action.queueList, {}, {}
+    local size = arraySize(groups)
+    if not size or size == 0 and not empty then return end
+    for index = 1, size do
+        local group = groups[index]
+        local count = type(group) == "table" and arraySize(group.items)
+        if not count or count < 1 or count > 20 then return end
+        local members = {}
+        for memberIndex = 1, count do
+            local item = group.items[memberIndex]
+            if not item or type(item.getID) ~= "function" or type(item.getFullType) ~= "function" then return end
+            local id, fullType = item:getID(), item:getFullType()
+            if type(id) ~= "number" or id % 1 ~= 0 or ids[id] or type(fullType) ~= "string" then return end
+            ids[id] = true
+            members[#members + 1] = {id = id, fullType = fullType}
+        end
+        result[#result + 1] = {ref = group, members = members}
     end
+    return result
 end
 
-function Settlement.beginReturn(action, obligation, guard)
-    local seal = type(obligation) == "table" and rawget(obligation, obligationScope)
-    local scope, token
-    if type(seal) == "function" then scope, token = seal(obligation) end
-    if not scope or obligation.token ~= token or scope.phase == "retired" then return false, "obligation" end
-    if returnProof(obligation) then return false, "duplicate" end
-    if type(guard) ~= "function" or not guard(action) then return false, "source" end
-    local character, queue = action.character, scope.queue
-    local item, destination = action.item, action.destContainer
-    if character ~= scope.character or queue ~= ISTimedActionQueue.queues[character]
-        or (queue.toolkitOperationGeneration or 0) ~= scope.generation
-        or queue.current ~= action or queue.queue[1] ~= action or not action.action
-        or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "native_scope" end
-    if action.srcContainer ~= character:getInventory() or not destination or destination == action.srcContainer
-        or not item then return false, "endpoints" end
-    local members = returnMembers(action)
-    if not members then return false, "group" end
-    -- Host may rebind action.item while the group retains its earlier Java proxy.
-    if members[1].id ~= item:getID() or members[1].fullType ~= item:getFullType() then return false, "item_identity" end
-    local client, transaction, authority = isClient(), action.transactionId, "native"
-    if client then
-        authority = "unavailable"
-        if type(transaction) == "number" and transaction ~= 0 and transaction % 1 == 0
-            and type(itemTransactionDone) == "function" and type(itemTransactionRejected) == "function"
-            and isItemTransactionDone == itemTransactionDone and isItemTransactionRejected == itemTransactionRejected then
-            local done, rejected = itemTransactionDone(transaction), itemTransactionRejected(transaction)
-            -- Both queries are true for a missing native transaction (empty allMatch).
-            if done == true and rejected == false then authority = "completed"
-            elseif done == false and rejected == true then authority = "rejected" end
+local function sameMember(item, member)
+    return item and member and type(item.getID) == "function" and type(item.getFullType) == "function"
+        and item:getID() == member.id and item:getFullType() == member.fullType
+end
+
+local function findMember(members, item)
+    for _, member in ipairs(members or {}) do if sameMember(item, member) then return member end end
+end
+
+local function groupTail(groups)
+    local result = {}
+    for index = 2, #groups do result[#result + 1] = groups[index] end
+    return result
+end
+
+local function groupsMatch(expected, actual, append)
+    if not actual or (append and #actual < #expected or not append and #actual ~= #expected) then return false end
+    for index, group in ipairs(expected) do
+        local other = actual[index]
+        if group.ref ~= other.ref or (append and #other.members < #group.members
+            or not append and #other.members ~= #group.members) then return false end
+        for memberIndex, member in ipairs(group.members) do
+            local value = other.members[memberIndex]
+            if value.id ~= member.id or value.fullType ~= member.fullType then return false end
         end
     end
-    local proof = {scope = scope, token = token, queue = queue, generation = scope.generation, action = action, native = action.action,
-        character = character, player = character:getPlayerNum(), online = character:getOnlineID(), members = members,
-        source = action.srcContainer, destination = destination, guard = guard, client = client,
-        transaction = transaction, authority = authority,
-        deadline = type(getTimestampMs) == "function" and getTimestampMs() + 30000}
-    obligation[returnMarker] = function(candidate) if candidate == obligation then return proof end end
     return true
 end
 
--- SP merges only inside native perform. The existing, source-checked merge
--- observer calls this after that merge, before any member is transferred.
--- These are execution-group facts, not ownership claims for wiped children.
-function Settlement.refreshReturn(action, obligation)
-    local proof = returnProof(obligation)
-    if not proof or proof.action ~= action or proof.client or isClient() or proof.finished or proof.refreshed
-        or proof.queue.current ~= action or proof.queue.queue[1] ~= action
-        or action.action ~= proof.native or not proof.guard(action) then return false end
-    proof.refreshed = true
-    local members = returnMembers(action)
-    if not members or #members < #proof.members then proof.invalid = true; return false end
-    for i, member in ipairs(proof.members) do
-        if members[i].id ~= member.id or members[i].fullType ~= member.fullType then
-            proof.invalid = true; return false
+-- Membership is an execution fact, never ownership of a wiped child action.
+local function bindMembers(proof, groups)
+    for _, group in ipairs(groups) do
+        for _, member in ipairs(group.members) do
+            local previous = proof.byId[member.id]
+            if previous and (previous.fullType ~= member.fullType or previous.group ~= group.ref) then return false end
         end
     end
-    proof.members = members
+    for _, group in ipairs(groups) do
+        for index, member in ipairs(group.members) do
+            local previous = proof.byId[member.id]
+            if not previous then
+                previous = {id = member.id, fullType = member.fullType, group = group.ref}
+                proof.byId[member.id] = previous
+                proof.members[#proof.members + 1] = previous
+            end
+            group.members[index] = previous
+        end
+    end
+    return true
+end
+
+local function baseReturnValid(proof)
+    local action, character, scope, queue = proof.action, proof.character, proof.scope, proof.queue
+    return not proof.invalid and scope.phase ~= "retired" and scope.queue == queue and scope.character == character
+        and scope.generation == proof.generation and proof.obligation.token == proof.token and action.character == character
+        and action.action == proof.native and isClient() == proof.client
+        and not character:isDead() and character:getPlayerNum() == proof.player and character:getOnlineID() == proof.online
+        and getSpecificPlayer(proof.player) == character and ISTimedActionQueue.queues[character] == queue
+        and (queue.toolkitOperationGeneration or 0) == proof.generation
+        and action.srcContainer == proof.source and action.destContainer == proof.destination
+        and character:getInventory() == proof.source
+        and (not proof.client or isItemTransactionDone == itemTransactionDone
+            and isItemTransactionRejected == itemTransactionRejected
+            and (not proof.continuing or createItemTransaction == proof.createTransaction
+                and removeItemTransaction == proof.removeTransaction))
+end
+
+local function guardedMember(proof, members)
+    local member = findMember(members, proof.action.item)
+    return member and proof.guard(proof.action, {id = member.id, fullType = member.fullType})
+end
+
+local function cursorValid(proof)
+    if not baseReturnValid(proof) then return false end
+    local action, attempt = proof.action, proof.active
+    if attempt and not attempt.finished then
+        return guardedMember(proof, attempt.members)
+            and (not proof.client or action.transactionId == attempt.transaction or action.transactionId == 0)
+    end
+    if proof.next then
+        return proof.queue.current == action and proof.queue.queue[1] == action
+            and sameMember(action.item, proof.next.groups[1].members[1])
+            and guardedMember(proof, proof.next.groups[1].members)
+            and (not proof.client or action.transactionId == proof.next.transaction)
+    end
+    return attempt and guardedMember(proof, attempt.members)
+        and (not proof.client or action.transactionId == attempt.transaction or action.transactionId == 0)
+end
+
+local function returnAuthority(client, transaction)
+    if not client then return "native" end
+    if type(transaction) ~= "number" or transaction == 0 or transaction % 1 ~= 0
+        or type(itemTransactionDone) ~= "function" or type(itemTransactionRejected) ~= "function"
+        or isItemTransactionDone ~= itemTransactionDone or isItemTransactionRejected ~= itemTransactionRejected then return "unavailable" end
+    local done, rejected = itemTransactionDone(transaction), itemTransactionRejected(transaction)
+    -- Both predicates are true for an absent transaction (empty allMatch).
+    if done == true and rejected == false then return "completed" end
+    if done == false and rejected == true then return "rejected" end
+    return "unavailable"
+end
+
+local function observeAttempt(proof, attempt)
+    if attempt.terminal then return attempt.terminal end
+    if not attempt.finished then return "waiting" end
+    if attempt.invalid or not attempt.succeeded or attempt.authority == "unavailable" then attempt.terminal = "unavailable"
+    elseif attempt.authority == "rejected" then attempt.terminal = "rejected"
+    elseif not attempt.deadline or type(getTimestampMs) ~= "function" or getTimestampMs() >= attempt.deadline
+        or not proof.destination:isExistYet() then attempt.terminal = "unavailable"
+    else
+        local completed = 0
+        for _, member in ipairs(attempt.members) do
+            if not member.completed then
+                local item, sourceItem = proof.destination:getItemById(member.id), proof.source:getItemById(member.id)
+                if sameMember(item, member) and item:getContainer() == proof.destination and not item:getIsCraftingConsumed()
+                    and not (sourceItem and sourceItem:getContainer() == proof.source) then member.completed = true end
+            end
+            if member.completed then completed = completed + 1 end
+        end
+        if completed == #attempt.members then attempt.terminal = "completed" end
+    end
+    return attempt.terminal or "waiting"
+end
+
+-- This capability is only for observation at the already-owned native cursor.
+-- Ordinary source matching and policy permissions keep their original item.
+function Settlement.returnMatches(action, obligation)
+    local proof = returnProof(obligation)
+    if not proof or proof.action ~= action or proof.stopped or proof.sequenceError or not cursorValid(proof) then return false end
+    local queue = proof.queue
+    return queue.current == action and queue.queue[1] == action
+end
+
+function Settlement.beginReturn(action, obligation, guard)
+    local proof = returnProof(obligation)
+    local groups = returnGroups(action)
+    if not groups then return false, "group" end
+    if proof then
+        if not proof.next or proof.active and not proof.active.finished then return false, "duplicate" end
+        if not Settlement.returnMatches(action, obligation) or not groupsMatch(proof.next.groups, groups, false) then return false, "continuation" end
+    else
+        local seal = type(obligation) == "table" and rawget(obligation, obligationScope)
+        local scope, token
+        if type(seal) == "function" then scope, token = seal(obligation) end
+        if not scope or obligation.token ~= token or scope.phase == "retired" then return false, "obligation" end
+        if type(guard) ~= "function" or not guard(action) then return false, "source" end
+        local character, queue = action.character, scope.queue
+        if character ~= scope.character or queue ~= ISTimedActionQueue.queues[character]
+            or (queue.toolkitOperationGeneration or 0) ~= scope.generation
+            or queue.current ~= action or queue.queue[1] ~= action or not action.action
+            or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "native_scope" end
+        if action.srcContainer ~= character:getInventory() or not action.destContainer or action.destContainer == action.srcContainer
+            or not action.item then return false, "endpoints" end
+        if not sameMember(action.item, groups[1].members[1]) then return false, "item_identity" end
+        proof = {scope = scope, token = token, obligation = obligation, queue = queue, generation = scope.generation,
+            action = action, native = action.action, character = character, player = character:getPlayerNum(), online = character:getOnlineID(),
+            source = action.srcContainer, destination = action.destContainer, guard = guard, client = isClient(),
+            createTransaction = createItemTransaction, removeTransaction = removeItemTransaction,
+            members = {}, byId = {}, attempts = {}}
+        obligation[returnMarker] = function(candidate) if candidate == obligation then return proof end end
+    end
+    if not bindMembers(proof, groups) then proof.sequenceError = true; return false, "item_identity" end
+    for _, member in ipairs(groups[1].members) do
+        if member.attempt then proof.sequenceError = true; return false, "duplicate_item" end
+    end
+    local ordinal = #proof.attempts + 1
+    local transaction = action.transactionId
+    local attempt = {ordinal = ordinal, phase = "perform", members = groups[1].members, before = groups,
+        transaction = transaction, authority = returnAuthority(proof.client, transaction),
+        deadline = type(getTimestampMs) == "function" and getTimestampMs() + 30000}
+    for _, member in ipairs(attempt.members) do member.attempt = ordinal end
+    proof.active, proof.next = attempt, nil
+    proof.attempts[ordinal] = attempt
+    return true
+end
+
+function Settlement.refreshReturn(action, obligation)
+    local proof = returnProof(obligation)
+    local attempt = proof and proof.active
+    if not attempt or proof.action ~= action or attempt.finished or attempt.refreshed
+        or not Settlement.returnMatches(action, obligation) then return false end
+    attempt.refreshed = true
+    local groups = returnGroups(action, proof.client)
+    local expected = proof.client and groupTail(attempt.before) or attempt.before
+    -- Native isValid failure may discard the whole unexecuted suffix.
+    local truncated = proof.client and groups and #groups == 0
+    if not groups or not truncated and not groupsMatch(expected, groups, true) or not bindMembers(proof, groups) then
+        attempt.invalid, proof.sequenceError = true, true; return false
+    end
+    if proof.client then attempt.after = groups
+    else
+        attempt.before, attempt.members = groups, groups[1].members
+        for _, member in ipairs(attempt.members) do member.attempt = attempt.ordinal end
+    end
     return true
 end
 
 function Settlement.finishReturn(obligation, succeeded)
     local proof = returnProof(obligation)
-    if not proof or proof.finished then return false end
-    proof.finished, proof.succeeded = true, succeeded == true
+    local attempt = proof and proof.active
+    if not attempt or attempt.finished then return false end
+    attempt.finished, attempt.succeeded = true, succeeded == true
+    local groups = returnGroups(proof.action, true)
+    local expected = attempt.after or groupTail(attempt.before)
+    local member = findMember(attempt.members, proof.action.item)
+        or groups and groups[1] and groups[1].members[1]
+    if not baseReturnValid(proof) or not member or not sameMember(proof.action.item, member)
+        or not proof.guard(proof.action, {id = member.id, fullType = member.fullType}) then
+        proof.invalid, attempt.invalid = true, true
+    end
+    if not groups or #groups > 0 and not groupsMatch(expected, groups, false)
+        or groups and groups[1] and groups[1].ref == attempt.before[1].ref then
+        proof.sequenceError, attempt.invalid = true, true
+    end
+    -- Capture earned effects before changing the cursor to a later transaction.
+    if not proof.invalid then observeAttempt(proof, attempt) end
+    if attempt.succeeded and groups and #groups > 0 and not proof.invalid and not proof.sequenceError then
+        proof.continuing = true
+        local transaction = proof.action.transactionId
+        if proof.client and (type(transaction) ~= "number" or transaction == 0 or transaction % 1 ~= 0
+            or type(proof.createTransaction) ~= "function" or type(proof.removeTransaction) ~= "function"
+            or createItemTransaction ~= proof.createTransaction or removeItemTransaction ~= proof.removeTransaction) then proof.sequenceError = true end
+        proof.next = {groups = groups, transaction = transaction}
+    else proof.ended = true end
     Settlement.returnState(obligation)
+    return true
+end
+
+-- Observe before native stop retires its transaction. An unconfirmed cancel is
+-- unavailable, never a fabricated server cancellation. Native stop still owns all effects.
+function Settlement.stopReturn(action, obligation, guard)
+    local proof = returnProof(obligation)
+    if proof and proof.active and not proof.active.finished then return false end
+    if proof then Settlement.returnState(obligation) end
+    if not Settlement.beginReturn(action, obligation, guard) then return false end
+    proof = returnProof(obligation)
+    local attempt = proof.active
+    attempt.phase, attempt.finished = "stop", true
+    if proof.client and attempt.authority == "completed" then
+        attempt.succeeded = true
+        observeAttempt(proof, attempt)
+    end
+    attempt.succeeded = false
+    attempt.terminal = attempt.authority == "rejected" and "rejected" or "unavailable"
+    proof.stopped, proof.ended, proof.next = true, true, nil
     return true
 end
 
 function Settlement.returnState(obligation)
     local proof = returnProof(obligation)
     if not proof then return end
-    local action, character, scope = proof.action, proof.character, proof.scope
-    local queue = proof.queue
-    local member = returnMember(proof, action.item)
-    if proof.invalid or scope.phase == "retired" or scope.queue ~= queue or scope.character ~= character
-        or scope.generation ~= proof.generation or obligation.token ~= proof.token or action.character ~= character
-        or action.action ~= proof.native or isClient() ~= proof.client
-        or character:isDead() or character:getPlayerNum() ~= proof.player or character:getOnlineID() ~= proof.online
-        or getSpecificPlayer(proof.player) ~= character or ISTimedActionQueue.queues[character] ~= queue
-        or (queue.toolkitOperationGeneration or 0) ~= proof.generation
-        or action.srcContainer ~= proof.source or action.destContainer ~= proof.destination
-        or character:getInventory() ~= proof.source or not member or not proof.guard(action, {id = member.id, fullType = member.fullType})
-        or proof.client and (isItemTransactionDone ~= itemTransactionDone
-            or isItemTransactionRejected ~= itemTransactionRejected
-            or action.transactionId ~= proof.transaction and action.transactionId ~= 0) then
-        proof.invalid, proof.terminal = true, "unavailable"
+    if not cursorValid(proof) then proof.invalid = true end
+    if proof.invalid then return "unavailable" end
+    local waiting, failed, rejected = false, proof.sequenceError or proof.stopped, false
+    for _, attempt in ipairs(proof.attempts) do
+        local state = observeAttempt(proof, attempt)
+        waiting = waiting or state == "waiting"
+        failed = failed or state == "unavailable"
+        rejected = rejected or state == "rejected"
     end
-    if proof.terminal then return proof.terminal end
-    if not proof.deadline or type(getTimestampMs) ~= "function" or getTimestampMs() >= proof.deadline then
-        proof.terminal = "unavailable"
-        return proof.terminal
-    end
-    if not proof.finished then return "waiting" end
-    if not proof.succeeded or proof.authority == "unavailable" then proof.terminal = "unavailable"
-    elseif proof.authority == "rejected" then proof.terminal = "rejected"
-    -- Continuing groups belong to later native transactions; never apply this
-    -- group's receipt to the rest of the action.
-    elseif action.queueList and #action.queueList > 0 or not proof.destination:isExistYet() then proof.terminal = "unavailable"
-    else
-        local completed = 0
-        for _, expected in ipairs(proof.members) do
-            if not expected.completed then
-                local item = proof.destination:getItemById(expected.id)
-                local sourceItem = proof.source:getItemById(expected.id)
-                if item and item:getID() == expected.id and item:getFullType() == expected.fullType
-                    and item:getContainer() == proof.destination and not item:getIsCraftingConsumed()
-                    and not (sourceItem and sourceItem:getContainer() == proof.source) then expected.completed = true end
-            end
-            if expected.completed then completed = completed + 1 end
-        end
-        if completed == #proof.members then proof.terminal = "completed" end
-    end
-    return proof.terminal or "waiting"
+    if proof.sequenceError then return "unavailable" end
+    if proof.next or not proof.ended then return "waiting" end
+    for _, member in ipairs(proof.members) do if not member.attempt then failed = true end end
+    if waiting then return "waiting" end
+    if rejected then return "rejected" end
+    return failed and "unavailable" or "completed"
 end
 
--- A fresh value snapshot preserves earned partial effects without exposing the
--- private ledger or suggesting that a missing sibling should be replayed.
 function Settlement.returnItems(obligation)
     local state = Settlement.returnState(obligation)
     local proof = returnProof(obligation)
     if not proof then return end
     local items = {}
     for _, member in ipairs(proof.members) do
+        local attempt = member.attempt and proof.attempts[member.attempt]
         items[#items + 1] = {id = member.id, fullType = member.fullType,
-            state = not proof.invalid and member.completed and "completed"
-                or (state == "completed" and "unavailable" or state)}
+            state = proof.invalid and "unavailable" or member.completed and "completed"
+                or attempt and (attempt.terminal or "waiting") or ((proof.ended or proof.sequenceError) and "unavailable" or "waiting")}
     end
     return items
+end
+
+-- Historical receipts are value copies, not live capabilities. They retain
+-- already-earned effects after stop/reset and cannot activate a new obligation.
+function Settlement.returnAttempts(obligation)
+    Settlement.returnState(obligation)
+    local proof = returnProof(obligation)
+    if not proof then return end
+    local attempts = {}
+    for _, attempt in ipairs(proof.attempts) do
+        local state = attempt.terminal or (proof.invalid and "unavailable" or "waiting")
+        local items = {}
+        for _, member in ipairs(attempt.members) do
+            items[#items + 1] = {id = member.id, fullType = member.fullType, state = member.completed and "completed" or state}
+        end
+        attempts[#attempts + 1] = {ordinal = attempt.ordinal, phase = attempt.phase, state = state,
+            transaction = proof.client and attempt.transaction or 0, authority = attempt.authority, items = items}
+    end
+    return attempts
 end
 
 function Settlement.required(obligation)

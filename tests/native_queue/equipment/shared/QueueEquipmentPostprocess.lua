@@ -69,7 +69,7 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or state.id=='tidy-group' then
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   if not tidy then primary,secondary=state.pickup,nil
   elseif state.id=='tidy-empty-hands' then primary,secondary=nil,nil
   else assert(state.hammer:isActivated(),'P4 did not restore torch activation') end
@@ -119,10 +119,10 @@ function Postprocess.verify(state,mode,tidy)
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)
   elseif name=='bat' then
    if state.id=='waiting-cancel' and mode=='toolkit' or tidy and state.id=='hands-chain' then expected=state.source end
-  elseif name=='groupOne' or name=='groupTwo' then expected=tidy and state.source or root
+  elseif name=='groupOne' or name=='groupTwo' or name=='groupHeavyOne' or name=='groupHeavyTwo' then expected=tidy and state.source or root
   elseif name=='content' or name:match('^plank%d+$') then expected=state.source
   elseif name=='clothingA' then expected=tidy and state.source or root
-  elseif name=='pickup' and (state.id=='bag-capacity' or state.id=='tidy-group') then expected=root
+  elseif name=='pickup' and (state.id=='bag-capacity' or (state.id=='tidy-group' or state.id=='tidy-multigroup')) then expected=root
   elseif name=='pickup' and (state.id=='floor-pickup' or state.id=='tidy-floor') then expected=root
   elseif name=='pickup' and (state.id=='tidy-hands' or state.id=='tidy-empty-hands') then expected=tidy and state.source or root
   else assert(rootNames[name],'unknown postprocessing seed '..name) end
@@ -133,8 +133,10 @@ function Postprocess.verify(state,mode,tidy)
  end
  assert(floorRestored==(state.id=='tidy-floor' and tidy),'P4 returned deliberately picked up floor item or lost borrowed floor return')
  local result={postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
- if state.id=='tidy-group' then
-  local ids={state.groupOne:getID(),state.groupTwo:getID()};table.sort(ids)
+ if (state.id=='tidy-group' or state.id=='tidy-multigroup') then
+  local ids={}
+  for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do ids[#ids+1]=item:getID() end
+  table.sort(ids)
   result.groupItems={}
   for _,id in ipairs(ids) do
    result.groupItems[#result.groupItems+1]={id=id,fullType=actual[id]:getFullType(),container=tidy and 'worn-bag' or 'root'}

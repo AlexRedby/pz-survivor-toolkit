@@ -1459,6 +1459,45 @@ do
     assert(select(2,definitions.inspect(transfer))=='compat.selected-chains',
         'unmigrated Wash transfer escaped its existing completion producer')
 end
+-- Observe native stop before the original delegate clears the queue. An
+-- observer failure cannot suppress/repeat that delegate or its native reset.
+do
+    local settlement=PZSurvivorToolkit.ActionQueueSettlement
+    local originalStop,online=settlement.stopReturn,player.getOnlineID
+    local resetQueue=queue.resetQueue
+    local captures,resets=0,0
+    player.getOnlineID=function()return 101 end
+    queue.resetQueue=function(self,...)
+        resets=resets+1
+        return resetQueue(self,...)
+    end
+    for _,failObserver in ipairs({false,true})do
+        local first=tidyTasks()
+        tickTidy();tickTidy()
+        local action=assert(findReturn(first))
+        local record=assert(compat.fixtureRegistries[1][action])
+        action.action={isStarted=function()return true end};action.queueList={{items={first}}};queue.current=action
+        local beforeResets=resets
+        settlement.stopReturn=function(candidate,obligation,guard)
+            assert(candidate==action and queue.current==action and queue.queue[1]==action and guard(candidate),
+                'P4 stop receipt must be captured before native queue reset')
+            captures=captures+1
+            if failObserver then error('fixture observer failure')end
+            return originalStop(candidate,obligation,guard)
+        end
+        action:stop()
+        assert(resets==beforeResets+1 and #queue.queue==0,'native stop delegate must execute exactly once')
+        if not failObserver then
+            local history=settlement.returnAttempts(record.obligation)
+            assert(#history==1 and history[1].phase=='stop' and history[1].state=='unavailable',
+                'unconfirmed native stop cannot mint a completed transfer')
+        end
+    end
+    assert(captures==2)
+    settlement.stopReturn,player.getOnlineID=originalStop,online
+    queue.resetQueue=resetQueue
+    reset()
+end
 -- The actual P4 source may restore ordinary items after approved hooks changed the shared transfer class.
 do
     local methods={new=ISInventoryTransferAction.new,perform=ISInventoryTransferAction.perform,

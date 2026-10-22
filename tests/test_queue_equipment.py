@@ -29,12 +29,12 @@ class EquipmentTests(unittest.TestCase):
             result = dict(inventoryPreserved=True, frontCompleted=True, tailCompleted=True,
                           equipmentMatches=True, nativeDurations=True, postprocessingVerified=True, policyChecked=enabled)
             if 'P4TidyUpMeister' in self.selection['mods']:
-                count = int(enabled and case in equipment.TIDY_RETURN_CASES)
+                count = (3 if case == 'tidy-multigroup' else 1)*int(enabled and case in equipment.TIDY_RETURN_CASES)
                 result['tidyCompletion'] = dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
-                                               flush=count, legacy=0, explicitConfirmed=3 if case == 'hands-chain' else 0,
+                                               flush=int(bool(count)) if case == 'tidy-multigroup' else count, legacy=0, explicitConfirmed=3 if case == 'hands-chain' else 0,
                                                authoritativeIntent=3 if case == 'hands-chain' and self.selection['kind'] == 'mp' else 0,
-                                               cleanupConfirmed=count*(2 if case == 'tidy-group' else 1) if case in equipment.TIDY_RETURN_EXACT_CASES else 0,
-                                               authoritativeCleanup=count*(2 if case == 'tidy-group' else 1) if case in equipment.TIDY_RETURN_EXACT_CASES and self.selection['kind'] == 'mp' else 0)
+                                               cleanupConfirmed=(4*int(enabled) if case == 'tidy-multigroup' else count*(2 if case == 'tidy-group' else 1)) if case in equipment.TIDY_RETURN_EXACT_CASES else 0,
+                                               authoritativeCleanup=(4*int(enabled) if case == 'tidy-multigroup' else count*(2 if case == 'tidy-group' else 1)) if case in equipment.TIDY_RETURN_EXACT_CASES and self.selection['kind'] == 'mp' else 0)
             if case == 'hands-chain':
                 result.update(activeProgress=True, activeProtected=enabled)
             if case == 'waiting-cancel':
@@ -47,7 +47,7 @@ class EquipmentTests(unittest.TestCase):
                     result.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True, walkDistance=0.75)
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
-            if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group'):
+            if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
                 count = int(enabled and 'P4TidyUpMeister' in self.selection['mods'])
                 empty = case == 'tidy-empty-hands'
                 actions = count if empty else 4*count
@@ -56,13 +56,24 @@ class EquipmentTests(unittest.TestCase):
                               restoreCompletion=dict(perform=actions, complete=actions if self.selection['kind'] == 'sp' else 0,
                                                      flush=actions, legacy=0, equip=0 if empty else 2*count,
                                                      activation=0 if empty else 2*count, unequip=count if empty else 0))
-            if case == 'tidy-group':
+            if case in ('tidy-group', 'tidy-multigroup'):
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
-                items = [dict(id=i, fullType='Base.Nails', container='worn-bag' if tidy else 'root') for i in (901, 902)]
-                result['tidyGroup'] = dict(nativeGroups=(1 if enabled else 2) if tidy else 0, nativeItems=2 if tidy else 0,
-                                           groupSizes=([2] if enabled else [1, 1]) if tidy else [],
+                multi = case == 'tidy-multigroup'
+                items = [dict(id=i, fullType='Base.Nails' if i < 903 else 'Base.Hammer', container='worn-bag' if tidy else 'root') for i in ((901, 902, 903, 904) if multi else (901, 902))]
+                result['tidyGroup'] = dict(nativeGroups=((3 if multi else 1) if enabled else len(items)) if tidy else 0, nativeItems=len(items) if tidy else 0,
+                                           groupSizes=(([1, 1, 2] if multi else [2]) if enabled else [1]*len(items)) if tidy else [],
                                            obligationGroups=int(tidy and enabled), unrelatedTailPreserved=True, items=items,
                                            completedItems=[dict(id=item['id'], fullType=item['fullType'], state='completed') for item in items] if tidy and enabled else [])
+                if multi:
+                    attempts = []
+                    if tidy and enabled:
+                        for ordinal, members in enumerate(([items[2]], [items[3]], items[:2]), 1):
+                            attempts.append(dict(ordinal=ordinal, phase='perform', state='completed',
+                                                 transaction=ordinal if self.selection['kind'] == 'mp' else 0,
+                                                 authority='completed' if self.selection['kind'] == 'mp' else 'native',
+                                                 items=[dict(id=item['id'], fullType=item['fullType'], state='completed') for item in members]))
+                    result['tidyGroup'].update(executorCount=((1 if enabled else 4) if tidy else 0),
+                                               sameNativeExecutor=True, attempts=attempts)
             if case == 'floor-pickup':
                 result.update(floorPickup=True, pickupWorldRemoved=True)
             if case.startswith('bulk-'):
@@ -95,10 +106,11 @@ class EquipmentTests(unittest.TestCase):
         (self.root / 'client1-launch.log').write_text(text)
         if self.selection['kind'] == 'mp' and not (self.root / 'server-launch.log').exists():
             (self.root / 'server-launch.log').write_text('[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
-            if 'tidy-group' in self.selection['cases']:
-                with (self.root / 'server-launch.log').open('a') as log:
-                    row = next(row for row in (self.records()) if row.get('id') == 'tidy-group')
-                    log.write('\n[EQUIPMENT_TEST] GROUP_AUTHORITY ' + json.dumps(dict(case='tidy-group', items=row['outcome']['tidyGroup']['items'], tailCompleted=True)) + '\n')
+            for case in self.selection['cases']:
+                if case in ('tidy-group', 'tidy-multigroup'):
+                    with (self.root / 'server-launch.log').open('a') as log:
+                        row = next(row for row in (self.records()) if row.get('id') == case)
+                        log.write('\n[EQUIPMENT_TEST] GROUP_AUTHORITY ' + json.dumps(dict(case=case, items=row['outcome']['tidyGroup']['items'], tailCompleted=True)) + '\n')
             if 'tidy-floor' in self.selection['cases'] and 'P4TidyUpMeister' in self.selection['mods']:
                 with (self.root / 'server-launch.log').open('a') as log:
                     log.write('\n[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true\n')
@@ -408,6 +420,149 @@ class EquipmentTests(unittest.TestCase):
                     server.write_text(valid.replace('GROUP_AUTHORITY', 'GROUP_MISSING'))
                     self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(valid)
+
+    def test_p4_multigroup_requires_three_attempts_one_executor_and_exact_ledger(self):
+        self.selection.update(cases=['tidy-multigroup'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in ('executorCount', 'attempts', 'sameNativeExecutor'):
+                    rows = self.records()
+                    del rows[1]['outcome']['tidyGroup'][field]
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                rows = self.records()
+                rows[1]['outcome']['tidyGroup']['groupSizes'] = [2, 2] if mode == 'toolkit' else [1, 1, 2]
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if mode == 'native':
+                    continue
+                for field, value in (('perform', 1), ('flush', 3), ('cleanupConfirmed', 3), ('complete', 1 if kind == 'sp' else 3)):
+                    rows = self.records()
+                    rows[1]['outcome']['tidyCompletion'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                for mutation in ('missing', 'duplicate-ordinal', 'bool-ordinal', 'wrong-phase', 'waiting', 'authority',
+                                 'transaction', 'duplicate-item', 'missing-item', 'heavy-merged', 'extra-key', 'split-executor'):
+                    rows = self.records()
+                    group = rows[1]['outcome']['tidyGroup']
+                    attempts = group['attempts']
+                    if mutation == 'missing': attempts.pop()
+                    elif mutation == 'duplicate-ordinal': attempts[1]['ordinal'] = 1
+                    elif mutation == 'bool-ordinal': attempts[0]['ordinal'] = True
+                    elif mutation == 'wrong-phase': attempts[1]['phase'] = 'stop'
+                    elif mutation == 'waiting': attempts[1]['state'] = 'waiting'
+                    elif mutation == 'authority': attempts[1]['authority'] = 'unavailable'
+                    elif mutation == 'transaction': attempts[1]['transaction'] = 0 if kind == 'mp' else 1
+                    elif mutation == 'duplicate-item': attempts[1]['items'] = copy.deepcopy(attempts[0]['items'])
+                    elif mutation == 'missing-item': attempts[2]['items'].pop()
+                    elif mutation == 'heavy-merged': attempts[2]['items'][0], attempts[0]['items'][0] = attempts[0]['items'][0], attempts[2]['items'][0]
+                    elif mutation == 'extra-key': attempts[1]['retry'] = True
+                    elif mutation == 'split-executor': group['executorCount'] = 3
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], mutation)
+                if kind == 'mp':
+                    # Native transaction bytes can wrap. The sealed ordinal identifies each attempt.
+                    rows = self.records()
+                    for attempt in rows[1]['outcome']['tidyGroup']['attempts']:
+                        attempt['transaction'] = -127
+                    self.assertEqual(self.verify(self.logs(rows))['issues'], [])
+                    server = self.root / 'server-launch.log'
+                    valid = server.read_text()
+                    server.write_text(valid.replace('GROUP_AUTHORITY', 'GROUP_MISSING'))
+                    self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(valid)
+
+    def test_p4_multigroup_observer_tracks_native_member_changes_and_one_flush(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        script = r'''
+local root=arg[1]
+local function run(kind,fault)
+ require=function()end
+ isClient=function()return kind=='mp'end
+ Events={OnGameStart={Add=function()end}}
+ ISQueueActionsAction={start=function()end}
+ getActivatedMods=function()return {contains=function()return true end}end
+ local inventory,source={},{}
+ local items={}
+ for id=1,4 do
+  local value={id=id,kind=id<3 and 'Base.Nails' or 'Base.Hammer'}
+  function value:getID()return self.id end
+  function value:getFullType()return self.kind end
+  function value:getWeight()return self.id<3 and 0.01 or 1 end
+  items[id]=value
+ end
+ local groups={{items={items[3]}},{items={items[1],items[2]}},{items={items[4]}}}
+ local present=true
+ local player={getCharacterActions=function()return {contains=function()return present end}end}
+ local action={character=player,item=items[3],srcContainer=inventory,destContainer=source,action={},toolkitQueueOperation={},queueList=groups}
+ local native=action.action
+ local queue={character=player,current=action,queue={action},onCompleted=function(self,a)
+  assert(self.current==a);self.current=nil;self.queue={}
+ end}
+ ISTimedActionQueue={queues={[player]=queue}}
+ PZSurvivorToolkit={Settings={actionQueue=function()return true end}}
+ local toolkit=PZSurvivorToolkit
+ local lifecycle=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua')
+ toolkit.ActionQueueOperations={perform=function()end,deferCompletion=lifecycle.deferCompletion}
+ toolkit.ActionQueueDefinitions={inspect=function()return {},'compat.tidy-transfers'end}
+ local callback
+ toolkit.ActionQueueTidyIntent={status=function()return true end,begin=function()end,finish=function()end,
+  observeTransfers=function(value)callback=value end}
+ toolkit.ActionQueueCarts=nil
+ toolkit.ActionQueueCompat={isInstalled=function()return false end,verifySources=function()return false end}
+ toolkit.ActionQueueAcknowledgements={}
+ ISInventoryPaneContextMenu={OnTwoHandsEquip=function()end,OnPrimaryWeapon=function()end,equipWeapon=function()end}
+ ISInventoryPane={getActualItems=function()end}
+ getFilenameOfClosure=function()return 'fixture' end
+ isItemTransactionDone=function()return true end
+ isItemTransactionRejected=function()return false end
+ local attempts={}
+ local completed={}
+ for _,item in ipairs(items) do completed[#completed+1]={id=item:getID(),fullType=item:getFullType(),state='completed'} end
+ toolkit.ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()end,
+  beginReturn=function()return true end,finishReturn=function()return true end,
+  returnState=function()return 'completed' end,returnItems=function()return completed end,
+  returnAttempts=function()return attempts end}
+ local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode='toolkit'})
+ observer.watch({id='tidy-multigroup',root=inventory,source=source,baseline=items,
+  groupOne=items[1],groupTwo=items[2],groupHeavyOne=items[3],groupHeavyTwo=items[4]})
+ callback(action)
+ local obligation={}
+ for ordinal=1,3 do
+  action.item=action.queueList[1].items[1]
+  action.transactionId=kind=='mp' and -127 or 0
+  if fault=='native' and ordinal==2 then action.action={} end
+  assert(lifecycle.begin(action,'perform'))
+  assert(toolkit.ActionQueueSettlement.beginReturn(action,obligation))
+  assert(lifecycle.deferCompletion(queue,action))
+  local members={}
+  for _,item in ipairs(action.queueList[1].items) do members[#members+1]={id=item:getID(),fullType=item:getFullType(),state='completed'} end
+  attempts[#attempts+1]={ordinal=ordinal,phase='perform',state='completed',transaction=action.transactionId,
+   authority=kind=='mp' and 'completed' or 'native',items=members}
+  toolkit.ActionQueueSettlement.finishReturn(obligation,true)
+  lifecycle.finish(action,'perform',true)
+  if kind=='sp' then lifecycle.begin(action,'complete');lifecycle.finish(action,'complete',true) end
+  table.remove(action.queueList,1)
+  callback(action) -- Includes the final empty native queueList; observers cannot throw.
+  assert(lifecycle.flush(queue)=='waiting')
+ end
+ assert(action.action==native)
+ present=false;assert(lifecycle.flush(queue)=='completed')
+ local counts=observer.settled();local group=observer.group()
+ assert(counts.perform==3 and counts.complete==(kind=='sp' and 3 or 0) and counts.flush==1 and counts.cleanupConfirmed==4)
+ assert(group.nativeGroups==3 and group.executorCount==1 and #group.attempts==3)
+ assert(group.groupSizes[1]==1 and group.groupSizes[2]==1 and group.groupSizes[3]==2)
+end
+for _,kind in ipairs({'sp','mp'}) do
+ run(kind)
+ assert(not pcall(run,kind,'native'),'multi-group observer accepted changed native executor')
+end
+'''
+        target = self.root / 'multigroup-completion-check.lua'
+        target.write_text(script)
+        result = subprocess.run([lua, str(target), str(ROOT)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_tidy_observer_rejects_wrong_identity_ownership_early_flush_and_legacy_scope(self):
         lua = shutil.which('luajit') or shutil.which('lua')

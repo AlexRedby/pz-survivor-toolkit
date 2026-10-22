@@ -7,8 +7,15 @@ function Completion.observe(toolkit,selection)
  local captureEffect,confirmEffect=settlement.captureEffect,settlement.confirmEffect
  local beginReturn,finishReturn,returnState=settlement.beginReturn,settlement.finishReturn,settlement.returnState
  local returns={}
- local groupNative,groupItems,groupObligations={}, {},0
+ local groupNative,groupItems,groupObligations,groupAttempts={}, {},0,{}
  local groupFailure
+ local function grouped() return state and (state.id=='tidy-group' or state.id=='tidy-multigroup') end
+ local function members()
+  return {state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}
+ end
+ local function expectedMembers()
+  local result={};for _,item in ipairs(members()) do result[item:getID()]=item:getFullType() end;return result
+ end
  local enabled=selection.mode=='toolkit'
  local returnItems=settlement.returnItems
  local tidyIntent=toolkit.ActionQueueTidyIntent
@@ -17,30 +24,38 @@ function Completion.observe(toolkit,selection)
  if groupObserver then
   -- Subscribe after compatibility preload; protected native helper identity stays intact.
   groupObserver(function(action)
-   if not state or state.id~='tidy-group' or action.srcContainer~=state.root or action.destContainer~=state.source or groupFailure then return end
-   if groupNative[action] then return end
-   local diagnostic='unreadable native group'
-   local ok,problem=pcall(function()
+   if not grouped() or action.srcContainer~=state.root or action.destContainer~=state.source or groupFailure then return end
+   -- Never assert or throw across native merge: Kahlua logs even caught assertions.
+   local function observe()
     local groups=action.queueList
-    local ids,detail={},{}
-    for i=1,math.min(groups and #groups or 0,4) do
-     local group=groups[i];local values={}
-     for j=1,math.min(group.items and #group.items or 0,4) do values[#values+1]=tostring(group.items[j]:getID()) end
-     detail[#detail+1]=tostring(group.items and #group.items)..':'..table.concat(values,',')
+    local prior=groupNative[action]
+    if type(groups)~='table' or #groups>4 or #groups==0 and not prior then return 'unexpected bounded native group shape' end
+    local expected,ids,seen=expectedMembers(),{},{}
+    for _,group in ipairs(groups) do
+     if type(group.items)~='table' or #group.items<1 or #group.items>2 then return 'unexpected native group size' end
+     local values={}
+     for _,item in ipairs(group.items) do
+      local id=item:getID()
+      if seen[id] or expected[id]~=item:getFullType() then return 'unexpected native group member' end
+      if #group.items>1 and item:getWeight()>0.1 then return 'native merged heavy item' end
+      seen[id]=true;values[#values+1]=id
+     end
+     table.sort(values);ids[#ids+1]=values
     end
-    diagnostic='groups='..tostring(groups and #groups)..' members=['..table.concat(detail,';')..']'
-    assert(groups and #groups==1 and #groups[1].items==(enabled and 2 or 1),'unexpected bounded native group shape')
-    local expected={[state.groupOne:getID()]=true,[state.groupTwo:getID()]=true}
-    for _,item in ipairs(groups[1].items) do
-     local id=item:getID()
-     assert(expected[id] and item:getFullType()=='Base.Nails' and item:getWeight()<=0.1,'unexpected native group member')
-     expected[id]=nil;ids[#ids+1]=id
+    if not prior then
+     local total=0;for _ in pairs(seen) do total=total+1 end
+     local multi=state.id=='tidy-multigroup'
+     local expectedCount=multi and 4 or 2
+     if total~=(enabled and expectedCount or 1) then return 'native group omitted borrowed item' end
+     groupNative[action]=ids
+    else
+     local original={};for _,values in ipairs(prior) do for _,id in ipairs(values) do original[id]=true end end
+     for id in pairs(seen) do if not original[id] then return 'native continuation changed group membership' end end
     end
-    if enabled then for _ in pairs(expected) do error('native group omitted borrowed item') end end
-    groupNative[action]=ids
-   end)
-   print('[EQUIPMENT_TEST] GROUP_OBSERVED case=tidy-group mode='..selection.mode..' '..diagnostic..' valid='..tostring(ok))
-   if not ok then groupFailure='P4 return group observation failed: '..tostring(problem)..' '..diagnostic end
+   end
+   local ok,problem=pcall(observe)
+   if not ok or problem then groupFailure='P4 return group observation failed: '..tostring(problem) end
+   print('[EQUIPMENT_TEST] GROUP_OBSERVED case='..state.id..' mode='..selection.mode..' groups='..tostring(action.queueList and #action.queueList)..' valid='..tostring(ok and not problem))
   end)
   groupObserverBound=true
  end
@@ -79,11 +94,15 @@ function Completion.observe(toolkit,selection)
      ..' native='..tostring(action.action~=nil)..' current='..tostring(ISTimedActionQueue.queues[action.character].current==action))
    end
    if state and accepted then
-    assert(obligation~=nil and not returns[obligation],'duplicate or missing native return obligation')
+    assert(obligation~=nil and (state.id=='tidy-multigroup' or not returns[obligation]),'duplicate or missing native return obligation')
     local transaction=action.transactionId
     local authoritative=isClient() and type(transaction)=='number' and transaction~=0
      and isItemTransactionDone(transaction)==true and isItemTransactionRejected(transaction)==false
-    returns[obligation]={action=action,authoritative=authoritative,observed=false}
+    local record=returns[obligation]
+    if record then assert(record.action==action,'P4 obligation changed executor')
+    else record={action=action,authoritative=authoritative,observed=false,accepted=0};returns[obligation]=record end
+    record.accepted=record.accepted+1
+    record.authoritative=record.authoritative and authoritative
    end
    return accepted
   end
@@ -94,7 +113,7 @@ function Completion.observe(toolkit,selection)
  end
  local function observed(action)
   if not state or not action then return end
-  if state.id=='tidy-group' and records and records[action] then return records[action].counts end
+  if grouped() and records and records[action] then return records[action].counts end
   local kind=select(2,toolkit.ActionQueueDefinitions.inspect(action))
   if kind=='compat.tidy-transfers' then return counts end
   if kind=='compat.tidy-equipment' then return restores end
@@ -105,8 +124,8 @@ function Completion.observe(toolkit,selection)
    and action.action==record.native and action.toolkitQueueOperation==record.token,
    'Tidy transfer lost its native parent or operation')
   local id=action.item:getID()
-  local exact=state.id=='tidy-group' and record.counts==counts
-   and (id==state.groupOne:getID() or id==state.groupTwo:getID()) and action.item:getFullType()=='Base.Nails'
+  local exact=grouped() and record.counts==counts
+   and expectedMembers()[id]==action.item:getFullType()
    or id==record.id and action.item:getFullType()==record.kind
   assert(exact
    and (record.counts~=counts or action.srcContainer==state.root and action.destContainer==state.source),
@@ -121,11 +140,15 @@ function Completion.observe(toolkit,selection)
   assert(lifecycle.current(action.character)==action and action.action,'Tidy transfer has no active native scope')
   local record=records[action]
   if phase=='perform' then
-   assert(not record,'duplicate native Tidy perform')
+   assert(not record or state.id=='tidy-multigroup' and record.counts==counts and not record.flushed
+    and record.perform=='finished' and (selection.kind=='mp' or record.complete=='finished'),'duplicate native Tidy perform')
    local id=action.item:getID()
    assert(state.baseline[id] and state.baseline[id]:getFullType()==action.item:getFullType(),
     'Tidy transfer returned an unexpected exact item')
-   record={id=id,kind=action.item:getFullType(),native=action.action,token=action.toolkitQueueOperation,counts=counter}
+   if record then
+    retained(action,record);record.perform=nil;record.complete=nil
+   else record={id=id,kind=action.item:getFullType(),native=action.action,token=action.toolkitQueueOperation,counts=counter,cycles=0} end
+   record.cycles=record.cycles+1
    if counter==restores then
     local primary=action.item:getID()==state.hammer:getID() and action.item:getFullType()==state.hammer:getFullType()
     assert(action.Type=='ISUnequipAction' and state.id=='tidy-empty-hands' and action.item:getID()==state.pickup:getID()
@@ -202,7 +225,7 @@ function Completion.observe(toolkit,selection)
   print('[EQUIPMENT_TEST] INTENT_CART installed='..tostring(toolkit.ActionQueueCompat.isInstalled('SaucedCartsTransfers'))
    ..' transfer='..tostring(carts and carts.isTransferConstructor(ISInventoryTransferAction.new))
    ..' unequip='..tostring(carts and carts.isUnequipConstructor(ISUnequipAction.new)))
-  if value.id=='tidy-group' and getActivatedMods():contains('P4TidyUpMeister') then
+  if (value.id=='tidy-group' or value.id=='tidy-multigroup') and getActivatedMods():contains('P4TidyUpMeister') then
    assert(groupObserverBound,'P4 group native merge observer subscription unavailable')
   end
   if value.id=='hands-chain' then assert(available,'explicit hand intent integration unavailable: '..tostring(reason)..':'..tostring(subject)) end
@@ -214,7 +237,7 @@ function Completion.observe(toolkit,selection)
   state,records,proofs,counts=value,{},{},{perform=0,complete=0,flush=0,legacy=0,explicitConfirmed=0,authoritativeIntent=0,
    cleanupConfirmed=0,authoritativeCleanup=0}
   returns={}
-  groupNative,groupItems,groupObligations={},{},0
+  groupNative,groupItems,groupObligations,groupAttempts={},{},0,{}
   groupFailure=nil
   restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
  end
@@ -232,17 +255,37 @@ function Completion.observe(toolkit,selection)
      'native return item did not complete exact identity once')
     seen[item.id]=true;counts.cleanupConfirmed=counts.cleanupConfirmed+1
     if record.authoritative then counts.authoritativeCleanup=counts.authoritativeCleanup+1 end
-    if state.id=='tidy-group' then groupItems[#groupItems+1]={id=item.id,fullType=item.fullType,state=item.state} end
+    if grouped() then groupItems[#groupItems+1]={id=item.id,fullType=item.fullType,state=item.state} end
    end
-   if state.id=='tidy-group' then
-    assert(#items==2,'bounded P4 obligation lost group members');groupObligations=groupObligations+1
+   if grouped() then
+    local multi=state.id=='tidy-multigroup'
+    assert(#items==(multi and 4 or 2),'bounded P4 obligation lost group members');groupObligations=groupObligations+1
+    if multi then
+     local attempts=assert(settlement.returnAttempts and settlement.returnAttempts(obligation),'P4 attempt history unavailable')
+     assert(record.accepted==3 and #attempts==3,'P4 multi-group attempt history did not cover every perform')
+     local seen={}
+     for ordinal,attempt in ipairs(attempts) do
+      assert(attempt.ordinal==ordinal and attempt.phase=='perform' and attempt.state=='completed'
+       and attempt.authority==(selection.kind=='mp' and 'completed' or 'native'),'P4 attempt completion or ordinal differs')
+      if selection.kind=='mp' then
+       assert(type(attempt.transaction)=='number' and attempt.transaction~=0,
+        'P4 Host attempt lost its captured native transaction')
+      else assert(attempt.transaction==0,'P4 SP attempt acquired a Host transaction') end
+      for _,item in ipairs(attempt.items) do
+       assert(not seen[item.id] and expectedMembers()[item.id]==item.fullType and item.state=='completed','P4 attempt repeated or lost an exact member')
+       seen[item.id]=true
+      end
+      groupAttempts[#groupAttempts+1]=attempt
+     end
+     for id in pairs(expectedMembers()) do assert(seen[id],'P4 attempt ledger omitted exact item') end
+    end
    end
   end
   if state.id=='hands-chain' then
    assert(counts.explicitConfirmed==3 and counts.authoritativeIntent==(selection.kind=='mp' and 3 or 0),
     'manual hand chain did not confirm all exact explicit native effects: explicit='..counts.explicitConfirmed..' authoritative='..counts.authoritativeIntent)
   end
-  assert(counts.perform==counts.flush and counts.complete==(selection.kind=='sp' and counts.perform or 0)
+  assert(counts.perform==counts.flush+(state.id=='tidy-multigroup' and enabled and getActivatedMods():contains('P4TidyUpMeister') and 2 or 0) and counts.complete==(selection.kind=='sp' and counts.perform or 0)
    and counts.legacy==0,'Tidy native completion counts did not settle')
   for _,record in pairs(records) do assert(record.flushed,'Tidy transfer never flushed') end
   return counts
@@ -250,22 +293,33 @@ function Completion.observe(toolkit,selection)
  function Completion.group()
   local tidy=getActivatedMods():contains('P4TidyUpMeister')
   assert(not groupFailure,groupFailure)
-  local groups,nativeItems,seen,sizes=0,0,{},{}
-  for _,ids in pairs(groupNative) do
-   groups=groups+1;sizes[#sizes+1]=#ids
-   for _,id in ipairs(ids) do assert(not seen[id],'P4 native groups repeated exact item');seen[id]=true;nativeItems=nativeItems+1 end
+  local groups,nativeItems,seen,sizes,executors=0,0,{},{},0
+  for _,nativeGroups in pairs(groupNative) do
+   executors=executors+1
+   for _,ids in ipairs(nativeGroups) do
+    groups=groups+1;sizes[#sizes+1]=#ids
+    for _,id in ipairs(ids) do assert(not seen[id],'P4 native groups repeated exact item');seen[id]=true;nativeItems=nativeItems+1 end
+   end
   end
-  assert(groups==(tidy and (enabled and 1 or 2) or 0),'P4 native return group count differs')
-  assert(nativeItems==(tidy and 2 or 0),'P4 native groups omitted exact item')
+  local multi=state.id=='tidy-multigroup'
+  local total=multi and 4 or 2
+  assert(groups==(tidy and (enabled and (multi and 3 or 1) or total) or 0),'P4 native return group count differs')
+  assert(nativeItems==(tidy and total or 0),'P4 native groups omitted exact item')
   table.sort(sizes)
   assert(groupObligations==(tidy and enabled and 1 or 0),'P4 return obligation group count differs')
-  assert(#groupItems==(tidy and enabled and 2 or 0),'P4 per-item completion snapshot incomplete')
+  assert(#groupItems==(tidy and enabled and total or 0),'P4 per-item completion snapshot incomplete')
   table.sort(groupItems,function(a,b)return a.id<b.id end)
-  local expected={state.groupOne:getID(),state.groupTwo:getID()};table.sort(expected)
+  local expected={};for id in pairs(expectedMembers()) do expected[#expected+1]=id end;table.sort(expected)
   for i,item in ipairs(groupItems) do assert(item.id==expected[i],'P4 completed wrong grouped return ID') end
   local items={}
-  for _,id in ipairs(expected) do items[#items+1]={id=id,fullType='Base.Nails',container=tidy and 'worn-bag' or 'root'} end
-  return {nativeGroups=groups,nativeItems=nativeItems,groupSizes=sizes,obligationGroups=groupObligations,completedItems=groupItems,items=items,unrelatedTailPreserved=true}
+  for _,id in ipairs(expected) do items[#items+1]={id=id,fullType=expectedMembers()[id],container=tidy and 'worn-bag' or 'root'} end
+  local result={nativeGroups=groups,nativeItems=nativeItems,groupSizes=sizes,obligationGroups=groupObligations,completedItems=groupItems,items=items,unrelatedTailPreserved=true}
+  if multi then
+   assert(executors==(tidy and (enabled and 1 or 4) or 0),'P4 multi-group changed native executor')
+   result.executorCount=executors;result.attempts=groupAttempts
+   result.sameNativeExecutor=true
+  end
+  return result
  end
  function Completion.restores()
   assert(restores.flush==restores.perform and restores.complete==(selection.kind=='sp' and restores.perform or 0)

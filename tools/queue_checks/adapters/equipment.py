@@ -6,13 +6,13 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup']
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1}
-TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group'}
-TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group'}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1}
+TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
+TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
 
 # Each binding names concrete native cases and their required observed outcomes.
@@ -39,7 +39,7 @@ SCENARIO_ACTIONS = {
         },
     },
     'tidy-hands': {
-        'scope': 'P4 borrowed empty pistol rack, occupied/empty hands, and one two-item lightweight native return group; exact containers and activation. Multiple groups remain unsupported.',
+        'scope': 'P4 borrowed empty pistol rack, occupied/empty hands, and two-item lightweight and four-item light/heavy native return groups; exact containers, repeated native executor attempts and activation.',
         'mods': ['P4TidyUpMeister'],
         'toolkit_only': ['restore-hands', 'return-items'],
         'checks': {
@@ -47,9 +47,10 @@ SCENARIO_ACTIONS = {
             'restore-hands': {'tidy-hands': {'restoreVerified': True}, 'tidy-empty-hands': {'restoreVerified': True}},
             'return-items': {'tidy-hands': {'restoreVerified': True, 'postprocessingVerified': True},
                              'tidy-empty-hands': {'restoreVerified': True, 'postprocessingVerified': True},
-                             'tidy-group': {'postprocessingVerified': True}},
+                             'tidy-group': {'postprocessingVerified': True},
+                             'tidy-multigroup': {'postprocessingVerified': True}},
             'server-authority': {'tidy-hands': {'authoritative': True}, 'tidy-empty-hands': {'authoritative': True},
-                                 'tidy-group': {'authoritative': True}},
+                                 'tidy-group': {'authoritative': True}, 'tidy-multigroup': {'authoritative': True}},
         },
     },
 }
@@ -187,7 +188,7 @@ def verify(root, selection, catalog):
         if row.get('id') in ('clothing-chain', 'hotbar-chain'):
             required['slotsVerified'] = True
             required['clothing' if row['id'] == 'clothing-chain' else 'hotbar'] = True
-        if row.get('id') in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group'):
+        if row.get('id') in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
             required.update(restoreVerified=True, floorRestoreVerified=row['id'] == 'tidy-floor' and 'P4TidyUpMeister' in selection['mods'])
             count = int(selection['mode'] == 'toolkit' and 'P4TidyUpMeister' in selection['mods'])
             empty = row['id'] == 'tidy-empty-hands'
@@ -227,29 +228,29 @@ def verify(root, selection, catalog):
                      and all(type(value) is int and value >= 0 for value in completion.values()))
             if valid:
                 count = completion['perform']
-                valid = (completion['flush'] == count and completion['legacy'] == 0
+                valid = (completion['flush'] == (int(selection['mode'] == 'toolkit') if row.get('id') == 'tidy-multigroup' else count) and completion['legacy'] == 0
                          and completion['complete'] == (count if selection['kind'] == 'sp' else 0)
                          and (selection['mode'] != 'native' or count == 0)
                          and completion['authoritativeIntent'] <= completion['explicitConfirmed']
                          and completion['authoritativeCleanup'] <= completion['cleanupConfirmed'])
                 if row.get('id') in TIDY_RETURN_EXACT_CASES:
-                    cleanup = (2 if row.get('id') == 'tidy-group' else count) if selection['mode'] == 'toolkit' else 0
+                    cleanup = (4 if row.get('id') == 'tidy-multigroup' else 2 if row.get('id') == 'tidy-group' else count) if selection['mode'] == 'toolkit' else 0
                     valid = (valid and completion['cleanupConfirmed'] == cleanup
                              and completion['authoritativeCleanup'] == (cleanup if selection['kind'] == 'mp' else 0))
                 if row.get('id') == 'hands-chain':
                     valid = (valid and completion['explicitConfirmed'] == 3
                              and completion['authoritativeIntent'] == (3 if selection['kind'] == 'mp' else 0))
-                elif row.get('id') in ('tidy-hands', 'tidy-empty-hands', 'tidy-group'):
+                elif row.get('id') in ('tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
                     valid = valid and completion['explicitConfirmed'] == completion['authoritativeIntent'] == 0
-            if row.get('id') == 'tidy-group' and valid:
-                cleanup = 2 if selection['mode'] == 'toolkit' else 0
-                valid = (completion['perform'] == int(selection['mode'] == 'toolkit')
+            if row.get('id') in ('tidy-group', 'tidy-multigroup') and valid:
+                cleanup = (4 if row['id'] == 'tidy-multigroup' else 2) if selection['mode'] == 'toolkit' else 0
+                valid = (completion['perform'] == (3 if row['id'] == 'tidy-multigroup' else 1)*int(selection['mode'] == 'toolkit')
                          and completion['cleanupConfirmed'] == cleanup
                          and completion['authoritativeCleanup'] == (cleanup if selection['kind'] == 'mp' else 0))
             if not valid:
                 issues.append('Tidy native completion evidence missing or inconsistent: ' + str(row.get('id')))
-        if row.get('id') == 'tidy-group':
-            issues.extend(_verify_tidy_group(result, selection))
+        if row.get('id') in ('tidy-group', 'tidy-multigroup'):
+            issues.extend(_verify_tidy_group(result, selection, multi=row['id'] == 'tidy-multigroup'))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),
                          'reason': row.get('reason'), 'outcome': result})
     ends = [row for row in records if row['event'] == 'complete']
@@ -268,17 +269,21 @@ def verify(root, selection, catalog):
             restores = re.findall(r'\[EQUIPMENT_TEST\] FLOOR_RESTORE id=(-?\d+) result=(true|false)(?:\s|$)', server)
             if type(item) is not int or restores != [(str(item), 'true')]:
                 issues.append('Exact borrowed floor item did not complete native server placement once')
-        if 'tidy-group' in selection['cases']:
+        group_cases = [case for case in selection['cases'] if case in ('tidy-group', 'tidy-multigroup')]
+        if group_cases:
             import json
             markers = [line.split('[EQUIPMENT_TEST] GROUP_AUTHORITY ', 1)[1].strip()
                        for line in server.splitlines() if '[EQUIPMENT_TEST] GROUP_AUTHORITY ' in line]
-            group = next((row.get('outcome', {}).get('tidyGroup') for row in cases if row.get('id') == 'tidy-group'), {})
-            group = group if isinstance(group, dict) else {}
+            expected_groups = []
+            for case in group_cases:
+                group = next((row.get('outcome', {}).get('tidyGroup') for row in cases if row.get('id') == case), {})
+                group = group if isinstance(group, dict) else {}
+                expected_groups.append(dict(case=case, items=group.get('items'), tailCompleted=True))
             try:
                 authority = [json.loads(marker) for marker in markers]
             except (ValueError, TypeError):
                 authority = []
-            if authority != [dict(case='tidy-group', items=group.get('items'), tailCompleted=True)]:
+            if authority != expected_groups:
                 issues.append('Exact P4 group server inventory receipt missing or inconsistent')
         checkpoints = re.findall(r'\[EQUIPMENT_TEST\] CHECKPOINT case=([a-z-]+)(?:\s|$)', server)
         if checkpoints != selection['cases']:
@@ -295,32 +300,71 @@ def verify(root, selection, catalog):
             'evidence': {'limits': ['Fresh world, one actual client, inventory callbacks invoked programmatically; WAN and physical input unverified.']}}
 
 
-def _verify_tidy_group(result, selection):
+def _verify_tidy_group(result, selection, multi=False):
     group = result.get('tidyGroup')
     tidy = 'P4TidyUpMeister' in selection['mods']
     enabled = selection['mode'] == 'toolkit'
-    if not isinstance(group, dict) or set(group) != {'nativeGroups', 'nativeItems', 'groupSizes', 'obligationGroups', 'completedItems', 'items', 'unrelatedTailPreserved'}:
+    keys = {'nativeGroups', 'nativeItems', 'groupSizes', 'obligationGroups', 'completedItems', 'items', 'unrelatedTailPreserved'}
+    if multi:
+        keys |= {'executorCount', 'attempts', 'sameNativeExecutor'}
+    total = 4 if multi else 2
+    if not isinstance(group, dict) or set(group) != keys:
         return ['Bounded P4 native group evidence missing']
-    expected = dict(nativeGroups=(1 if enabled else 2) if tidy else 0, nativeItems=2 if tidy else 0,
+    expected = dict(nativeGroups=((3 if multi else 1) if enabled else total) if tidy else 0, nativeItems=total if tidy else 0,
                     obligationGroups=int(tidy and enabled), unrelatedTailPreserved=True)
     if any(type(group.get(k)) is not type(v) or group.get(k) != v for k, v in expected.items()):
         return ['Bounded P4 native group counts or unrelated tail differ']
     sizes = group.get('groupSizes')
-    expected_sizes = ([2] if enabled else [1, 1]) if tidy else []
+    expected_sizes = (([1, 1, 2] if multi else [2]) if enabled else [1]*total) if tidy else []
     if sizes != expected_sizes:
         return ['P4 native group layout differs from observed mode']
     if not isinstance(sizes, list) or any(type(size) is not int for size in sizes):
         return ['P4 native group layout is malformed']
     items, completed = group.get('items'), group.get('completedItems')
-    if (not isinstance(items, list) or len(items) != 2
+    if (not isinstance(items, list) or len(items) != total
             or any(not isinstance(item, dict) or set(item) != {'id', 'fullType', 'container'}
                    or type(item.get('id')) is not int or item['id'] == -1
-                   or item.get('fullType') != 'Base.Nails' or item.get('container') != ('worn-bag' if tidy else 'root') for item in items)
-            or len({item['id'] for item in items}) != 2 or items != sorted(items, key=lambda item: item['id'])):
+                   or item.get('fullType') not in (('Base.Nails', 'Base.Hammer') if multi else ('Base.Nails',)) or item.get('container') != ('worn-bag' if tidy else 'root') for item in items)
+            or len({item['id'] for item in items}) != total or items != sorted(items, key=lambda item: item['id'])):
         return ['P4 group exact item identities or final containers differ']
     expected_completed = [dict(id=item['id'], fullType=item['fullType'], state='completed') for item in items] if tidy and enabled else []
     if completed != expected_completed or any(type(item.get('id')) is not int for item in completed):
         return ['P4 group per-item completion snapshots missing or inconsistent']
+    if multi:
+        if (sum(item['fullType'] == 'Base.Nails' for item in items) != 2
+                or sum(item['fullType'] == 'Base.Hammer' for item in items) != 2
+                or type(group.get('executorCount')) is not int
+                or group['executorCount'] != ((1 if enabled else total) if tidy else 0)
+                or group.get('sameNativeExecutor') is not True):
+            return ['P4 multi-group executor or exact light/heavy members differ']
+        attempts = group.get('attempts')
+        if not isinstance(attempts, list) or len(attempts) != (3 if tidy and enabled else 0):
+            return ['P4 multi-group attempt ledger missing or incomplete']
+        observed, attempt_sizes = [], []
+        for ordinal, attempt in enumerate(attempts, 1):
+            if (not isinstance(attempt, dict) or set(attempt) != {'ordinal', 'phase', 'state', 'transaction', 'authority', 'items'}
+                    or type(attempt.get('ordinal')) is not int or attempt['ordinal'] != ordinal
+                    or attempt.get('phase') != 'perform' or attempt.get('state') != 'completed'
+                    or attempt.get('authority') != ('completed' if selection['kind'] == 'mp' else 'native')
+                    or type(attempt.get('transaction')) is not int):
+                return ['P4 multi-group attempt provenance differs']
+            transaction = attempt['transaction']
+            if ((selection['kind'] == 'mp' and (transaction == 0 or not -128 <= transaction <= 127))
+                    or (selection['kind'] == 'sp' and transaction != 0)):
+                return ['P4 multi-group native transaction attempts differ']
+            members = attempt.get('items')
+            if (not isinstance(members, list) or len(members) not in (1, 2)
+                    or any(not isinstance(item, dict) or set(item) != {'id', 'fullType', 'state'}
+                           or type(item.get('id')) is not int or item.get('state') != 'completed' for item in members)):
+                return ['P4 multi-group attempt items differ']
+            if len(members) == 2 and any(item['fullType'] != 'Base.Nails' for item in members):
+                return ['P4 multi-group merged a heavy native item']
+            if len(members) == 1 and members[0]['fullType'] != 'Base.Hammer':
+                return ['P4 multi-group lightweight native group was split']
+            attempt_sizes.append(len(members));observed.extend(members)
+        if attempts and (sorted(attempt_sizes) != [1, 1, 2]
+                         or sorted(observed, key=lambda item: item['id']) != expected_completed):
+            return ['P4 multi-group ledger omitted or repeated exact IDs']
     return []
 
 

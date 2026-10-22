@@ -31,17 +31,21 @@ local function setup(client)
     getSpecificPlayer = function(slot) if slot == 0 then return player end end
     Events = {OnServerCommand = {Add = function(callback) receive = callback end}}
     isClient = function() return client == true end
-    local transaction = {done = true, rejected = false, calls = 0}
+    local transaction = {done = true, rejected = false, calls = 0, byId = {}}
     isItemTransactionDone = function(id)
         transaction.calls = transaction.calls + 1
         transaction.lastId = id
-        return transaction.done
+        local state = transaction.byId[id] or transaction
+        return state.done
     end
     isItemTransactionRejected = function(id)
         transaction.calls = transaction.calls + 1
         transaction.lastId = id
-        return transaction.rejected
+        local state = transaction.byId[id] or transaction
+        return state.rejected
     end
+    createItemTransaction = function() error('settlement must never create an item transaction') end
+    removeItemTransaction = function() error('settlement must never remove an item transaction') end
     instanceof = function(value, kind) return type(value) == 'table' and value.class == kind end
     local loaded = {}
     require = function(name)
@@ -588,11 +592,11 @@ for _, client in ipairs({false, true}) do
         and not s.settlement.finishReturn(s.obligation, true), 'failed native callback cannot become completed later')
 end
 
-for _, shape in ipairs({'no-groups', 'extra-group', 'no-items', 'duplicate-id', 'conflicting-type', 'oversized', 'sparse', 'interior-hole', 'fractional-id', 'positive-infinity-id', 'negative-infinity-id', 'nan-id', 'different-id', 'different-type', 'no-native', 'foreign-obligation', 'guard'}) do
+for _, shape in ipairs({'no-groups', 'duplicate-across-groups', 'no-items', 'duplicate-id', 'conflicting-type', 'oversized', 'sparse', 'interior-hole', 'fractional-id', 'positive-infinity-id', 'negative-infinity-id', 'nan-id', 'different-id', 'different-type', 'no-native', 'foreign-obligation', 'guard'}) do
     local s = returnFixture(true)
     local action = s.current
     if shape == 'no-groups' then action.queueList = {}
-    elseif shape == 'extra-group' then action.queueList[2] = {items = {s.item(82, s.root)}}
+    elseif shape == 'duplicate-across-groups' then action.queueList[2] = {items = {s.item(81, s.root)}}
     elseif shape == 'no-items' then action.queueList[1].items = {}
     elseif shape == 'duplicate-id' then action.queueList[1].items[2] = s.item(81, s.root)
     elseif shape == 'conflicting-type' then
@@ -901,8 +905,8 @@ do
     assertReturnItems(s, 'unavailable', 'unavailable')
 end
 
-for _, invalid in ipairs({'client', 'finished', 'not-current', 'not-first', 'native', 'guard', 'wrong-first-id', 'wrong-first-type', 'shrink', 'next-group'}) do
-    local s = batchReturnFixture(invalid == 'client', invalid ~= 'shrink')
+for _, invalid in ipairs({'finished', 'not-current', 'not-first', 'native', 'guard', 'wrong-first-id', 'wrong-first-type', 'shrink'}) do
+    local s = batchReturnFixture(false, invalid ~= 'shrink')
     assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
     s.current.queueList[1].items[2] = s.members[2]
     if invalid == 'finished' then s.finishReturn(true)
@@ -914,10 +918,286 @@ for _, invalid in ipairs({'client', 'finished', 'not-current', 'not-first', 'nat
     elseif invalid == 'wrong-first-type' then
         s.current.queueList[1].items[1] = s.item(81, s.root)
         s.current.queueList[1].items[1].fullType = 'Base.Other'
-    elseif invalid == 'shrink' then s.current.queueList[1].items[2] = nil
-    elseif invalid == 'next-group' then s.current.queueList[2] = {items = {s.item(83, s.root)}} end
+    elseif invalid == 'shrink' then s.current.queueList[1].items[2] = nil end
     assert(not s.settlement.refreshReturn(s.current, s.obligation), invalid .. ': unsupported merge cannot expand the captured group')
     assert(s.counts() == 0, 'rejected refresh cannot mutate native effects')
 end
 
-print('Shared settlement: deferred ownership, native group return outcomes, partial exact-ID effects, immutable ancestry and no effect replay passed.')
+-- A native executor can consume several groups while retaining its Lua table
+-- and Java action. Only its exact observed handoff may start a new attempt.
+local function sequenceReturnFixture(client)
+    local s = batchReturnFixture(client)
+    s.members[3] = s.item(83, s.root)
+    s.root.items[83] = s.members[3]
+    s.groups = {s.current.queueList[1], {items = {s.members[3]}}}
+    s.current.queueList[2] = s.groups[2]
+    s.transaction.byId[17] = {done = true, rejected = false}
+    s.transaction.byId[18] = {done = true, rejected = false}
+    s.consume = function(nextTransaction)
+        local consumed = table.remove(s.current.queueList, 1)
+        s.current.item = consumed.items[#consumed.items]
+        local nextGroup = s.current.queueList[1]
+        if nextGroup then s.current.item = nextGroup.items[1] end
+        s.current.transactionId = nextGroup and (nextTransaction or 18) or 0
+        return s.settlement.finishReturn(s.obligation, true)
+    end
+    s.begin = function() return s.settlement.beginReturn(s.current, s.obligation, s.guard) end
+    s.history = function() return s.settlement.returnAttempts(s.obligation) end
+    s.unchanged = function()
+        assert(s.counts() == 0 and s.queue.queue[2] == s.tail,
+            'attempt observation must not construct, transfer, cancel or reorder native work')
+    end
+    return s
+end
+
+for _, client in ipairs({false, true}) do
+    local s = sequenceReturnFixture(client)
+    local native = s.current.action
+    assert(s.begin() and not s.begin())
+    local queries = s.transaction.calls
+    assert(s.settlement.returnMatches(s.current, s.obligation))
+    assert(s.transaction.calls == queries and #s.history() == 1,
+        'matching the bound cursor is a pure observation and cannot capture another attempt')
+    s.move(1); s.move(2)
+    assert(s.consume() and s.settlement.returnState(s.obligation) == 'waiting',
+        'successful first group must await the exact native continuation')
+    assert(s.current.action == native and s.settlement.returnMatches(s.current, s.obligation))
+    assert(s.begin() and not s.begin(), 'same native pointer must permit exactly one next attempt')
+    s.move(3)
+    assert(s.consume() and s.settlement.returnState(s.obligation) == 'completed')
+    local history = s.history()
+    assert(#history == 2 and history[1].ordinal == 1 and history[2].ordinal == 2
+        and history[1].phase == 'perform' and history[2].phase == 'perform'
+        and history[1].state == 'completed' and history[2].state == 'completed'
+        and history[1].transaction == (client and 17 or 0) and history[2].transaction == (client and 18 or 0)
+        and history[1].authority == (client and 'completed' or 'native')
+        and #history[1].items == 2 and #history[2].items == 1
+        and history[1].items[1].id == 81 and history[1].items[2].id == 82 and history[2].items[1].id == 83)
+    assert(client and s.transaction.calls == 4 or not client and s.transaction.calls == 0)
+    assert(not s.settlement.returnMatches(s.tail, s.obligation) and not s.begin())
+    history[1].items[1].id, history[1].items[1].state = 999, 'unavailable'
+    history[1].state, history[2], history[3] = 'rejected', nil, {ordinal = 3}
+    local fresh = s.history()
+    assert(#fresh == 2 and fresh[1].state == 'completed' and fresh[1].items[1].id == 81
+        and fresh[1].items[1].state == 'completed', 'attempt history must expose fresh immutable value copies')
+    local copied = {}; for key, value in pairs(s.obligation) do copied[key] = value end
+    assert(s.settlement.returnAttempts(copied) == nil
+        and not s.settlement.returnMatches(s.current, copied), 'history cannot forge the private observation capability')
+    s.unchanged()
+end
+
+for _, client in ipairs({false, true}) do
+    for _, sibling in ipairs({'timely', 'expired'}) do
+        local s = sequenceReturnFixture(client)
+        assert(s.begin()); s.move(1); assert(s.consume())
+        s.advance(20000)
+        assert(s.begin()); s.move(3); assert(s.consume())
+        if sibling == 'timely' then
+            s.move(2)
+            assert(s.settlement.returnState(s.obligation) == 'completed',
+                'first group replication may settle while a later group has already finished')
+        else
+            s.advance(10001)
+            assert(s.settlement.returnState(s.obligation) == 'unavailable')
+        end
+        local history, items = s.history(), s.settlement.returnItems(s.obligation)
+        assert(history[1].items[1].state == 'completed' and history[2].items[1].state == 'completed'
+            and items[1].state == 'completed' and items[3].state == 'completed')
+        assert(history[1].items[2].state == (sibling == 'timely' and 'completed' or 'unavailable'),
+            'each group deadline must preserve earned siblings and later successful groups')
+        if sibling == 'expired' then
+            s.move(2)
+            assert(s.history()[1].items[2].state == 'unavailable', 'expired old group must not revive from a late effect')
+        end
+        s.unchanged()
+    end
+end
+
+for _, client in ipairs({false, true}) do
+    local s = sequenceReturnFixture(client)
+    assert(s.begin()); s.move(1); s.move(2); assert(s.consume())
+    s.advance(31000)
+    assert(s.begin()); assert(s.consume())
+    assert(s.settlement.returnState(s.obligation) == 'waiting')
+    s.advance(1000); s.move(3)
+    assert(s.settlement.returnState(s.obligation) == 'completed'
+        and s.history()[2].state == 'completed',
+        'later attempt deadline must start at its own perform boundary, after the earlier deadline')
+    s.unchanged()
+end
+
+for _, client in ipairs({false, true}) do
+    local s = sequenceReturnFixture(client)
+    assert(s.begin()); s.move(1); assert(s.consume())
+    assert(s.begin()); s.move(3); assert(s.consume())
+    s.queue.toolkitOperationGeneration = 1
+    assert(s.settlement.returnState(s.obligation) == 'unavailable')
+    s.move(2)
+    local history = s.history()
+    assert(history[1].items[1].state == 'completed' and history[1].items[2].state == 'unavailable'
+        and history[2].items[1].state == 'completed',
+        'stale archival reads must retain earned effects without upgrading later stale replication')
+    for _, member in ipairs(s.settlement.returnItems(s.obligation)) do
+        assert(member.state == 'unavailable', 'archival effects must not grant live queue rights')
+    end
+    s.unchanged()
+end
+
+for _, outcome in ipairs({'rejected', 'absent', 'unconfirmed'}) do
+    local s = sequenceReturnFixture(true)
+    assert(s.begin()); s.move(1); s.move(2); assert(s.consume())
+    s.transaction.byId[18] = {done = outcome == 'absent', rejected = outcome ~= 'unconfirmed'}
+    assert(s.begin()); s.move(3); assert(s.consume())
+    local expected = outcome == 'rejected' and 'rejected' or 'unavailable'
+    assert(s.settlement.returnState(s.obligation) == expected)
+    local history = s.history()
+    assert(history[1].state == 'completed' and history[1].items[1].state == 'completed'
+        and history[1].items[2].state == 'completed' and history[2].state == expected
+        and history[2].items[1].state == expected,
+        outcome .. ': later transaction failure cannot erase earlier exact committed effects')
+    s.transaction.byId[17], s.transaction.byId[18] = {done = false, rejected = true}, {done = true, rejected = false}
+    assert(s.history()[1].state == 'completed' and s.history()[2].state == expected and s.transaction.calls == 4,
+        'finished attempts must never query removed or reused native transaction IDs')
+    s.unchanged()
+end
+
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'completed', 'rejected', 'absent', 'unconfirmed'}) do
+      for _, visible in ipairs({false, true}) do
+        local s = sequenceReturnFixture(client)
+        assert(s.begin()); s.move(1); s.move(2); assert(s.consume())
+        s.transaction.byId[18] = {done = outcome == 'completed' or outcome == 'absent',
+            rejected = outcome == 'rejected' or outcome == 'absent'}
+        -- A committed Host transaction can already have replicated before stop.
+        -- This test moves it explicitly; the observer must never execute it.
+        if visible then s.move(3) end
+        assert(s.settlement.stopReturn(s.current, s.obligation, s.guard))
+        assert(not s.settlement.stopReturn(s.current, s.obligation, s.guard)
+            and not s.begin(), 'stop cannot allocate a duplicate attempt or restart native work')
+        local history = s.history()
+        local stopped = client and outcome == 'rejected' and 'rejected' or 'unavailable'
+        assert(#history == 2 and history[1].phase == 'perform' and history[1].state == 'completed'
+            and history[2].phase == 'stop' and history[2].state == stopped
+            and history[2].items[1].state == (client and visible and outcome == 'completed' and 'completed' or stopped)
+            and s.settlement.returnState(s.obligation) == stopped,
+            outcome .. ': stop records exact authority and earned Host effects without normal completion')
+        local calls = s.transaction.calls
+        s.current.transactionId = 0 -- native stop removes its transaction next
+        s.queue.toolkitOperationGeneration = 1
+        assert(s.settlement.returnState(s.obligation) == 'unavailable'
+            and not s.settlement.returnMatches(s.current, s.obligation))
+        history = s.history()
+        assert(history[1].state == 'completed' and history[1].items[1].state == 'completed'
+            and history[2].phase == 'stop' and s.transaction.calls == calls,
+            'reset may revoke live rights but cannot erase or requery historical attempts')
+        local items = s.settlement.returnItems(s.obligation)
+        for _, member in ipairs(items) do assert(member.state == 'unavailable') end
+        s.unchanged()
+      end
+    end
+end
+
+for _, mutation in ipairs({'group-ref', 'group-members', 'item-id', 'item-type', 'transaction', 'native', 'current',
+    'head', 'generation', 'queue', 'source-guard', 'done-helper', 'rejected-helper', 'create-helper', 'remove-helper'}) do
+    local s = sequenceReturnFixture(true)
+    assert(s.begin()); s.move(1); s.move(2); assert(s.consume())
+    local calls = s.transaction.calls
+    if mutation == 'group-ref' then s.current.queueList[1] = {items = {s.members[3]}}
+    elseif mutation == 'group-members' then s.current.queueList[1].items[2] = s.item(84, s.root)
+    elseif mutation == 'item-id' then s.current.item = s.item(84, s.root)
+    elseif mutation == 'item-type' then s.current.item = s.item(83, s.root); s.current.item.fullType = 'Base.Other'
+    elseif mutation == 'transaction' then s.current.transactionId = 19
+    elseif mutation == 'native' then s.current.action = {}
+    elseif mutation == 'current' then s.queue.current = s.tail
+    elseif mutation == 'head' then s.queue.queue[1] = s.tail
+    elseif mutation == 'generation' then s.queue.toolkitOperationGeneration = 1
+    elseif mutation == 'queue' then ISTimedActionQueue.queues[s.player] = {}
+    elseif mutation == 'source-guard' then s.guardLive = false
+    elseif mutation == 'done-helper' then isItemTransactionDone = function() error('foreign done helper') end
+    elseif mutation == 'rejected-helper' then isItemTransactionRejected = function() error('foreign rejected helper') end
+    elseif mutation == 'create-helper' then createItemTransaction = function() error('foreign create helper') end
+    else removeItemTransaction = function() error('foreign remove helper') end
+    end
+    assert(not s.begin() and s.transaction.calls == calls,
+        mutation .. ': unproven continuation must not allocate or query a new attempt')
+    local history = s.history()
+    assert(#history == 1 and history[1].state == 'completed' and history[1].items[1].state == 'completed',
+        mutation .. ': invalid cursor cannot rewrite already-earned historical effects')
+    assert(s.counts() == 0, mutation .. ': rejected continuation cannot execute native work')
+end
+
+for _, outcome in ipairs({'completed', 'rejected'}) do
+    local s = sequenceReturnFixture(true)
+    assert(s.begin()); s.move(1); s.move(2); assert(s.consume(17))
+    -- Native byte IDs can wrap/reuse while the same executor continues.
+    s.transaction.byId[17] = {done = outcome == 'completed', rejected = outcome == 'rejected'}
+    assert(s.begin()); s.move(3); assert(s.consume())
+    local history = s.history()
+    assert(#history == 2 and history[1].transaction == 17 and history[2].transaction == 17
+        and history[1].state == 'completed' and history[2].state == outcome
+        and s.transaction.calls == 4, 'numeric transaction reuse must bind a fresh ordinal without requerying old authority')
+    s.unchanged()
+end
+
+for _, client in ipairs({false, true}) do
+    local s = sequenceReturnFixture(client)
+    assert(s.begin())
+    local added = s.item(84, s.root)
+    s.root.items[84] = added
+    if client then
+        table.remove(s.current.queueList, 1)
+        s.current.item = s.members[2]
+    end
+    s.groups[2].items[2] = added
+    assert(s.settlement.refreshReturn(s.current, s.obligation), 'native merge may append exact future group members')
+    assert(not s.settlement.refreshReturn(s.current, s.obligation), 'one attempt may accept its native merge only once')
+    s.move(1); s.move(2)
+    if client then
+        s.current.item, s.current.transactionId = s.members[3], 18
+        assert(s.settlement.finishReturn(s.obligation, true))
+    else assert(s.consume()) end
+    assert(s.begin()); s.move(3)
+    s.root.items[84], added.container, s.source.items[84] = nil, s.source, added
+    assert(s.consume() and s.settlement.returnState(s.obligation) == 'completed')
+    local history = s.history()
+    assert(#history[1].items == 2 and #history[2].items == 2 and history[2].items[2].id == 84
+        and history[2].items[2].state == 'completed', 'Host post-consumption merge cannot attach future members to the old receipt')
+    s.unchanged()
+end
+
+for _, client in ipairs({false, true}) do
+    local s = sequenceReturnFixture(client)
+    assert(s.begin())
+    s.members[4] = s.item(84, s.root)
+    s.root.items[84] = s.members[4]
+    if client then
+        table.remove(s.current.queueList, 1)
+        s.current.item = s.members[2]
+    end
+    s.current.queueList[#s.current.queueList + 1] = {items = {s.members[4]}}
+    assert(s.settlement.refreshReturn(s.current, s.obligation), 'native merge may append a whole future group')
+    s.move(1); s.move(2)
+    if client then
+        s.current.item, s.current.transactionId = s.members[3], 18
+        assert(s.settlement.finishReturn(s.obligation, true))
+    else assert(s.consume()) end
+    assert(s.begin()); s.move(3); assert(s.consume(19))
+    assert(s.begin()); s.move(4); assert(s.consume())
+    local history = s.history()
+    assert(s.settlement.returnState(s.obligation) == 'completed' and #history == 3
+        and history[3].items[1].id == 84 and history[3].items[1].state == 'completed',
+        'new future groups require their own callback and authority attempt')
+    s.unchanged()
+end
+
+for _, client in ipairs({false, true}) do
+    local s = sequenceReturnFixture(client)
+    assert(s.begin()); s.move(1); s.move(2); assert(s.consume())
+    s.queue.current, s.queue.queue = s.tail, {s.tail}
+    assert(s.settlement.returnState(s.obligation) == 'unavailable',
+        'a disappeared native continuation must not wait forever or regain a live capability')
+    local history = s.history()
+    assert(history[1].state == 'completed' and history[1].items[1].state == 'completed',
+        'unexpected advancement must preserve the immutable earned history')
+end
+print('Shared settlement: deferred ownership, exact multi-transaction native return attempts, independent partial effects, historical receipts and no effect replay passed.')

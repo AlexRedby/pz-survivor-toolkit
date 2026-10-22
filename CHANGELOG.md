@@ -23,6 +23,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.213
+
+- **Action queue:** Track P4 return sequences across native groups and item transactions with separate, ordered receipts. Preserve confirmed item results when a later group fails, stops or expires, without applying its outcome to another attempt. Keep historical receipts separate from live queue capabilities and leave edit permissions and native scheduling unchanged.
+
 ### 0.1.212
 
 - **Context menu editor:** Capture menu examples, discover actions and prepare editor layouts only while the editor is open. Select newly captured item examples automatically without changing rule scope. Closing the editor releases raw examples and transient previews/layouts while preserving the catalog and saved rules. Ordinary menus keep applying those rules without the extra capture pass.

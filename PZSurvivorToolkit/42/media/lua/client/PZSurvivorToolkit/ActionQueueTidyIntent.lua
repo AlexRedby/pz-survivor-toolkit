@@ -94,21 +94,32 @@ local function transfer(action)
     return batch
 end
 -- Observe the native merge before table.wipe destroys the child action's identity.
-function Intent.observeTransfers(onMerged)
+function Intent.observeTransfers(onMerged, canObserve)
     if type(onMerged)=='function' then
         local present=false
         for _,listener in ipairs(mergeListeners) do if listener.callback==onMerged then present=true;break end end
-        if not present then mergeListeners[#mergeListeners+1]={callback=onMerged} end
+        if not present then mergeListeners[#mergeListeners+1]={callback=onMerged,canObserve=canObserve} end
     end
     if mergeObserver or type(ISInventoryTransferAction.checkQueueList)~='function' then return end
     mergeOriginal=ISInventoryTransferAction.checkQueueList
     mergeObserver=function(action,...)
-        if not guard or not guard(action) then return mergeOriginal(action,...) end
+        local original = guard and guard(action)
+        local observation = original
+        if not observation then
+            for _,listener in ipairs(mergeListeners) do
+                if not listener.failed and type(listener.canObserve)=='function' then
+                    local ok,accepted=pcall(listener.canObserve,action)
+                    if not ok then listener.failed=true
+                    elseif accepted==true then observation=true end
+                end
+            end
+        end
+        if not observation then return mergeOriginal(action,...) end
         local queue=ISTimedActionQueue.getTimedActionQueue(action.character)
         local candidates={}
         for _,child in ipairs(queue.queue) do
             local record=watching[child]
-            if child~=action and record and record.kind=='grab' and guard(child)
+            if original and child~=action and record and record.kind=='grab' and guard(child)
                 and child.srcContainer==action.srcContainer and child.destContainer==action.destContainer then
                 candidates[#candidates+1]=record
             end
@@ -131,7 +142,7 @@ function Intent.observeTransfers(onMerged)
         end
         local batch=transfers[action]
         -- MP calls this again AFTER consuming its group; retain that group's receipt.
-        if batch and batch.attempted and not isClient() then batch.attempted=groupItems(action) end
+        if original and batch and batch.attempted and not isClient() then batch.attempted=groupItems(action) end
         return unpack(result,1,result.n)
     end
     ISInventoryTransferAction.checkQueueList=mergeObserver

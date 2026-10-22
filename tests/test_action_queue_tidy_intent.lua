@@ -12,8 +12,8 @@ local function fixture(client)
     isClient = function() return client == true end
     instanceof = function(value, kind) return kind == "InventoryItem" and type(value) == "table" and value.inventoryItem end
     getTimestampMs = function() return h.now end
-    isItemTransactionDone = function() return true end
-    isItemTransactionRejected = function() return false end
+    isItemTransactionDone = function() return h.txDone ~= false end
+    isItemTransactionRejected = function() return h.txRejected == true end
     Events = {OnMainMenuEnter = {Add = function(callback) h.callbacks[#h.callbacks + 1] = callback end},
         OnServerCommand = {Add = function(callback) h.receive = callback end}}
     PZSurvivorToolkit = {Settings = {actionQueue = function() return h.queueEnabled == true end}}
@@ -143,7 +143,7 @@ local function fixture(client)
         h.receipt(action, 'started')
     end
     h.intent.install(function(action)
-        return h.valid and (not action or acceptedClasses[getmetatable(action)] and not action.changed
+        return h.valid and (not action or (not h.originalOnlyID or action.item:getID()==h.originalOnlyID) and acceptedClasses[getmetatable(action)] and not action.changed
             and not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc
             and not action.retriggerLastAction and not action.onFailFunc and not action.additionalTest)
     end, function(menu,name)
@@ -220,7 +220,7 @@ local function fixture(client)
         ISInventoryPaneContextMenu.onGrabItems({item}, 0)
         h.drain()
     end
-    function h.nativeMerge(onMerged)
+    function h.nativeMerge(onMerged,canObserve)
         assert(NativeActionRoot, 'native source root required')
         local path=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
         local source
@@ -228,7 +228,7 @@ local function fixture(client)
             local file=assert(io.open(path));source=file:read('*a');file:close()
         end
         source=source:gsub('\r','')
-        for _,name in ipairs({'canMergeAction','checkQueueList','perform'}) do
+        for _,name in ipairs({'canMergeAction','checkQueueList','perform','stop'}) do
             local body=assert(source:match('(function ISInventoryTransferAction:'..name..'%b().-\nend)'))
             assert(loadstring(body))()
         end
@@ -240,14 +240,20 @@ local function fixture(client)
             if index~=-1 then table.remove(h.queue.queue,index) end
         end}
         createItemTransaction=function() return 1 end
-        removeItemTransaction=function() end
+        removeItemTransaction=function(id,cancel)
+            h.removed=h.removed or {};h.removed[#h.removed+1]={id=id,cancel=cancel}
+        end
+        ISBaseTimedAction.stop=function()
+            h.queue.queue={};h.queue.current=nil
+            h.queue.toolkitOperationGeneration=(h.queue.toolkitOperationGeneration or 0)+1
+        end
         local noop=function() end
         for _,name in ipairs({'playTransferCompleteSound','resetJobDelta','startActionAnim','playSourceContainerCloseSound',
             'playDestContainerCloseSound','stopLoopingSound'}) do ISInventoryTransferAction[name]=noop end
-        ISInventoryTransferAction.isAlreadyTransferred=function(_,item) return item:getContainer()==h.inventory end
+        ISInventoryTransferAction.isAlreadyTransferred=function(action,item) return item:getContainer()==action.destContainer end
         ISInventoryTransferAction.isValid=function(action) return not action.blocked or not action.blocked[action.item:getID()] end
         ISInventoryTransferAction.transferItem=function(action,item) h.move(item,action.destContainer) end
-        h.intent.observeTransfers(onMerged)
+        h.intent.observeTransfers(onMerged,canObserve)
         function h.prepareNative(action)
             action.action={reset=noop,setTime=noop,stopTimedActionAnim=noop,setLoopedAction=noop,setWaitForFinished=noop}
         end
@@ -778,6 +784,65 @@ test("new queue and main menu invalidate old intent", function()
 end)
 
 if NativeActionRoot then
+    test('native return sequence preserves per-attempt effects across reset, stop and byte reuse',function()
+        for _,client in ipairs({false,true}) do
+            for _,stopNext in ipairs({false,true}) do
+                local h=fixture(client);h.queueEnabled=true
+                h.source.isExistYet=function()return true end
+                h.source.getItemById=function(self,id)return self.items[id]end
+                local obligation,merges=nil,0
+                h.nativeMerge(function(action)
+                    merges=merges+1;h.settlement.refreshReturn(action,obligation)
+                end,function(action)return h.settlement.returnMatches(action,obligation)end)
+                local lightOne,lightTwo=h.item(nil,71,'Base.Nails'),h.item(nil,72,'Base.Nails')
+                local heavyOne,heavyTwo=h.item(nil,73),h.item(nil,74)
+                heavyOne.weight,heavyTwo.weight=1,1
+                local executor=h.transfer(lightOne,h.source)
+                ISTimedActionQueue.add(executor)
+                for _,item in ipairs({lightTwo,heavyOne,heavyTwo})do ISTimedActionQueue.add(h.transfer(item,h.source))end
+                h.prepareNative(executor);h.queue.current=executor;executor.transactionId=1
+                local native=executor.action
+                h.originalOnlyID=lightOne:getID()
+                if client then executor:checkQueueList()end
+                local scope=h.settlement.deferred(h.player,{})
+                obligation=h.settlement.obligation(h.settlement.context(scope))
+                local function guard(action,member)
+                    return h.valid and action==executor and action.item:getID()==(member and member.id or lightOne:getID())
+                end
+                for ordinal=1,3 do
+                    assert(h.settlement.beginReturn(executor,obligation,guard),'native continuation must bind its own attempt')
+                    if client then
+                        for _,item in ipairs(executor.queueList[1].items)do h.move(item,h.source)end
+                    end
+                    h.lifecycle.begin(executor,'perform');executor:perform();h.lifecycle.finish(executor,'perform',true)
+                    assert(executor.action==native and h.settlement.finishReturn(obligation,true))
+                    local history=h.settlement.returnAttempts(obligation)
+                    assert(#history==ordinal and history[ordinal].ordinal==ordinal and history[ordinal].state=='completed')
+                    for _,item in ipairs(history[ordinal].items)do assert(item.state=='completed')end
+                    if ordinal==1 and stopNext then
+                        if client then h.txDone,h.txRejected=false,true end
+                        assert(h.settlement.stopReturn(executor,obligation,guard))
+                        executor:stop()
+                        history=h.settlement.returnAttempts(obligation)
+                        assert(#history==2 and history[1].state=='completed' and history[1].items[1].state=='completed'
+                            and history[2].phase=='stop' and history[2].state==(client and 'rejected' or 'unavailable'))
+                        assert(h.settlement.returnState(obligation)=='unavailable','native reset retires live capabilities')
+                        assert(h.removed[#h.removed].cancel==true,'native stop must retain its transaction cancellation')
+                        break
+                    elseif ordinal<3 then
+                        assert(h.settlement.returnState(obligation)=='waiting' and h.settlement.returnMatches(executor,obligation))
+                    end
+                end
+                if not stopNext then
+                    assert(h.settlement.returnState(obligation)=='completed' and #h.queue.queue==0)
+                    local history=h.settlement.returnAttempts(obligation)
+                    assert(#history==3 and history[2].transaction==history[3].transaction,
+                        'reused native transaction byte must retain separate ordinals')
+                    assert(merges>=(client and 4 or 3),'observation-only continuation must reach native merge listeners')
+                end
+            end
+        end
+    end)
     test('native SP merge and Host group retain exact P4 return members through child wipe',function()
         for _,client in ipairs({false,true}) do
             for _,partial in ipairs({false,true}) do
