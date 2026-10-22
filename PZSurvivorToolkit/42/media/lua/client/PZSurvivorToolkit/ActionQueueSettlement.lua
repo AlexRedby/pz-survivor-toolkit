@@ -120,7 +120,7 @@ end
 function Settlement.deferred(character, token)
     local queue = ISTimedActionQueue.getTimedActionQueue(character)
     local scope = {marker = deferredMarker, character = character, token = token, queue = queue,
-        generation = queue.toolkitOperationGeneration or 0, tasks = {}, seen = {}, mixed = false, phase = "prepare"}
+        generation = queue.toolkitOperationGeneration or 0, tasks = {}, equipmentItems = {}, seen = {}, mixed = false, phase = "prepare"}
     local ledger = {candidates = {}, actions = {}, handles = {}, executors = {}, merging = {}}
     scope[borrowingMarker] = function(candidate) if candidate == scope then return ledger end end
     return scope
@@ -138,7 +138,11 @@ function Settlement.remember(scope, action, contract)
     if not contract or contract.knownInputs == false or contract.dynamicInputs or contract.dynamicInputsByType then
         task.unknownInputs = true
     end
-    for id in pairs(contract and contract.items or {}) do task.items[id] = true end
+    for id in pairs(contract and contract.items or {}) do
+        task.items[id] = true
+        if contract.hands == scope.character then scope.equipmentItems[id] = true end
+    end
+    if contract and contract.equipment == scope.character then task.readsEquipment = true end
     for id in pairs(contract and contract.containerOwners or {}) do task.items[id] = true end
     for item, container in pairs(token.toolkitPickups or {}) do
         local id, fullType = item:getID(), item:getFullType()
@@ -147,6 +151,10 @@ function Settlement.remember(scope, action, contract)
             ambiguous = previous and (previous.ambiguous or previous.container ~= container or previous.fullType ~= fullType) or false}
     end
     return true
+end
+
+local function claimedInput(scope, task, id)
+    return task.unknownInputs or task.items[id] or task.readsEquipment and scope.equipmentItems[id]
 end
 
 function Settlement.owner(scope, id, fullType, destination)
@@ -162,7 +170,7 @@ function Settlement.owner(scope, id, fullType, destination)
     end
     if not owner then return end
     for token, task in pairs(scope.tasks) do
-        if token ~= owner and (task.unknownInputs or task.items[id]) then return end
+        if token ~= owner and claimedInput(scope, task, id) then return end
     end
     return owner
 end
@@ -580,7 +588,7 @@ sharedBorrowing = function(scope, candidate)
         local pickup = task.pickups[candidate.id]
         if pickup and (pickup.ambiguous or pickup.fullType ~= candidate.fullType
             or pickup.container ~= candidate.source or token ~= candidate.owner) then return true end
-        if token ~= candidate.owner and (task.unknownInputs or task.items[candidate.id]) then return true end
+        if token ~= candidate.owner and claimedInput(scope, task, candidate.id) then return true end
     end
     return false
 end

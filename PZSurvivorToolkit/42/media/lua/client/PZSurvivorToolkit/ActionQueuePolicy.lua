@@ -24,6 +24,8 @@ local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
+local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
+local rackResources = Firearms and Firearms.rack
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -795,6 +797,9 @@ function Policy.installContracts()
         if action.moveProps.object then result.targets[action.moveProps.object] = true end
         return result
     end)
+    registerNative("ISRackFirearm", function(action)
+        if Firearms and Toolkit.ActionQueueFirearms == Firearms and Firearms.rack == rackResources then return rackResources(action) end
+    end)
     registerNative("ISInventoryTransferAction", transferResources)
     registerNative("ISRadioAction", radioResources)
     for _, name in ipairs({"ISWalkToTimedAction", "ISWalkToTimedActionF", "ISPathFindAction"}) do
@@ -1548,6 +1553,7 @@ Policy.resumableWorld, Policy.preparationCanFinish = resumableWorld, preparation
 Policy.operationItems = operationItems
 
 function Policy.replaceStop(previous, replacement)
+    if Firearms then Firearms.adoptBase("stop", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("stop", previous, replacement) end
     if ItemEditAdapters then ItemEditAdapters.adoptBase("stop", previous, replacement) end
     for _, snapshot in pairs(snapshots) do
@@ -1561,6 +1567,7 @@ function Policy.replaceStop(previous, replacement)
 end
 
 function Policy.adoptBegin(previous, replacement)
+    if Firearms then Firearms.adoptBase("begin", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("begin", previous, replacement) end
     if ItemEditAdapters then ItemEditAdapters.adoptBase("begin", previous, replacement) end
 end

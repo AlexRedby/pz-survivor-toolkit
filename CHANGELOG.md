@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.219
+
+- **Action queue:** Describe native firearm racking with exact weapon, ammunition output and equipment dependencies. Unrelated borrowed P4 items no longer become shared merely because the rack action was unknown; current and queued equipment resources remain protected. Active racking stays protected because its effects occur before completion.
+
 ### 0.1.218
 
 - **Action queue:** Preserve native transfer batching when the queue is disabled, including P4 tool returns and compatible cart transfers. Keep operation ownership isolation while the queue is enabled, native endpoint/callback safeguards and required cleanup after cancellation. Re-enabling the queue does not restore stale exclusive edit rights over adapter transfers that absorbed another operation while it was disabled.

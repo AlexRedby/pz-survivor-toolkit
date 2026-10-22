@@ -1301,6 +1301,36 @@ for _, client in ipairs({false, true}) do
     assertOwnership(s, {'active'}, {s.token})
     s.completeReturn(); assertOwnership(s, {'completed'}, {s.token})
 end
+-- Equipment readers retain exact current items and the proven queued writers;
+-- unrelated borrowed items stay exclusive. Actor read scopes cannot create effects.
+for _, client in ipairs({false, true}) do
+    for _, mode in ipairs({'unrelated', 'future-gear', 'reader-first', 'other-actor', 'same-owner-reader'}) do
+        local s = pickupFixture(client)
+        local readerOwner = mode=='same-owner-reader' and s.token or {}
+        local reader = {character=s.player,toolkitQueueOperation=readerOwner}
+        local writer = {character=s.player,toolkitQueueOperation=s.token}
+        local readerContract = {items={[999]=true}, equipment=mode=='other-actor' and {} or s.player}
+        local writerContract = {items={[mode=='unrelated' and 998 or 181]=true},hands=s.player}
+        if mode=='reader-first' then
+            s.settlement.remember(s.scope,reader,readerContract)
+            s.settlement.remember(s.scope,writer,writerContract)
+        else
+            s.settlement.remember(s.scope,writer,writerContract)
+            s.settlement.remember(s.scope,reader,readerContract)
+        end
+        -- Mutating an accepted read/write descriptor cannot widen later claims.
+        readerContract.equipment=nil;writerContract.items[777]=true
+        assert(not s.scope.equipmentItems[777])
+        local shared=mode=='future-gear' or mode=='reader-first'
+        assert((s.settlement.owner(s.scope,181,'Base.Test',s.source)==nil)==shared,
+            'legacy cleanup ownership lost equipment read/write scope: '..mode)
+        assert(s.settlement.beginPickup(s.scope,s.pickup,s.guard))
+        s.movePickup(1);assert(s.finishPickup(true));s.makeReturn()
+        assertOwnership(s,{'active'},{s.token},shared)
+        s.completeReturn();assertOwnership(s,{'completed'},{s.token},shared)
+    end
+end
+
 -- SP discovers merged membership during perform; Host already merged in start.
 for _, client in ipairs({false, true}) do
     local s = pickupFixture(client, {181, 182})

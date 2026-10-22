@@ -340,7 +340,7 @@ def _verify_tidy_group(result, selection, multi=False):
     for pickup in pickups:
         if (not isinstance(pickup, dict) or set(pickup) != pickup_keys
                 or type(pickup.get('id')) is not int or type(pickup.get('owner')) is not int or pickup['owner'] != 1
-                or type(pickup.get('shared')) is not bool
+                or type(pickup.get('shared')) is not bool or pickup['shared']
                 or type(pickup.get('pickupAttempt')) is not int or pickup['pickupAttempt'] < 1
                 or type(pickup.get('pickupTransaction')) is not int
                 or pickup.get('pickupAuthority') != ('completed' if selection['kind'] == 'mp' else 'native')):

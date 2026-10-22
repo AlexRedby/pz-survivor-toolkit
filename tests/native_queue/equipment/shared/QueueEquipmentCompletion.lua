@@ -26,7 +26,7 @@ function Completion.observe(toolkit,selection)
    local accepted=remember(scope,action,contract)
    if accepted and enabled and grouped() then
     local captured=claimScopes[scope]
-    if not captured then captured={tasks={},seen={}};claimScopes[scope]=captured end
+    if not captured then captured={tasks={},seen={},equipmentItems={}};claimScopes[scope]=captured end
     if not captured.seen[action] then
      captured.seen[action]=true
      local token=action.toolkitQueueOperation
@@ -35,7 +35,11 @@ function Completion.observe(toolkit,selection)
      local reason=not contract and 'missing-contract' or contract.knownInputs==false and 'unknown-inputs'
       or contract.dynamicInputs and 'dynamic-inputs' or contract.dynamicInputsByType and 'dynamic-types'
      if reason then task.unknown[#task.unknown+1]={kind=tostring(action.Type),reason=reason} end
-     for id in pairs(contract and contract.items or {}) do task.items[id]=tostring(action.Type) end
+     for id in pairs(contract and contract.items or {}) do
+      task.items[id]=tostring(action.Type)
+      if contract.hands==action.character then captured.equipmentItems[id]=true end
+     end
+     if contract and contract.equipment==action.character then task.readsEquipment=true end
      for id in pairs(contract and contract.containerOwners or {}) do task.items[id]=tostring(action.Type) end
      pickupScopes[action]=scope
     end
@@ -49,7 +53,7 @@ function Completion.observe(toolkit,selection)
   local shared=false
   for token,task in pairs(captured.tasks) do
    if token~=item.owner then
-    if #task.unknown>0 or task.items[item.id] then
+    if #task.unknown>0 or task.items[item.id] or task.readsEquipment and captured.equipmentItems[item.id] then
      shared=true
      local unknown=task.unknown[1]
      print('[EQUIPMENT_TEST] OWNERSHIP_SHARED id='..item.id..' competingType='..tostring(unknown and unknown.kind or task.items[item.id])

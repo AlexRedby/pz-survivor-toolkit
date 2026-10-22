@@ -519,7 +519,7 @@ class EquipmentTests(unittest.TestCase):
                             elif mutation == 'non-bool-shared': values[0]['shared'] = 0
                             self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, case, field, mutation))
 
-    def test_p4_shared_ownership_requires_matching_frozen_pickup_expectation(self):
+    def test_p4_unrelated_ownership_requires_exclusive_frozen_pickup_expectation(self):
         self.selection.update(cases=['tidy-group', 'tidy-multigroup'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
         for kind in ('sp', 'mp'):
             self.selection['kind'] = kind
@@ -530,7 +530,7 @@ class EquipmentTests(unittest.TestCase):
                     for field in ('pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
                         for item in group[field]:
                             item['shared'] = True
-            self.assertEqual(self.verify(self.logs(rows))['issues'], [])
+            self.assertTrue(self.verify(self.logs(rows))['issues'], 'unrelated items must not remain shared')
             for field in ('pickupItems', 'ownershipAtBegin', 'ownershipCompleted'):
                 for expected_shared in (False, True):
                     changed = copy.deepcopy(rows)

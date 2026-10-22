@@ -119,6 +119,18 @@ local function enqueue()
    if action.Type=='ISRackFirearm' then state.rackAction=action end
   end
   assert(state.rackAction and state.rackAction.gun==state.pickup,'native group rack callback missing')
+  if not native then
+   for _,name in ipairs({'instanceItem','syncHandWeaponFields','sendAddItemToContainer','emulateAnimEventOnce','getClassSimpleName'}) do
+    print('[EQUIPMENT_TEST] RACK_GLOBAL '..name..' class='..tostring(getClassSimpleName(_G[name])))
+   end
+   local inspected,proof,reason=pcall(Toolkit.ActionQueueFirearms.rack,state.rackAction)
+   print('[EQUIPMENT_TEST] RACK_PROOF ok='..tostring(inspected)..' contract='..tostring(proof~=nil)..' reason='..tostring(reason or (not inspected and proof)))
+   local contract,id=Toolkit.ActionQueueDefinitions.inspect(state.rackAction)
+   assert(contract and id=='native.ISRackFirearm' and contract.knownInputs~=false
+    and contract.items[state.pickup:getID()] and contract.equipment==state.player
+    and contract.outputTypes[state.pickup:getAmmoType():getItemKey()] and contract.cancelOperation==false,
+    'native rack resource contract missing, incomplete or permits active cancellation')
+  end
  elseif Bulk.isCase(state.id) then Bulk.enqueue(state,{run=run,queue=queue})
  elseif state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then
   local before=#queue().queue
