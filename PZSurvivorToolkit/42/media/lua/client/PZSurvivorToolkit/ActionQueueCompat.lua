@@ -388,7 +388,17 @@ local function adopt(action)
     local perform = action.perform
     action.perform = function(self, ...)
         if matches(self, record) then
-            return Operations.perform(self, function(...) return scoped(record, perform, ...) end, ...)
+            return Operations.perform(self, function(...)
+                local observed = record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction
+                    and record.obligation and self.srcContainer == self.character:getInventory()
+                    and self.destContainer and self.destContainer:getType() ~= "floor"
+                    and Settlement.beginReturn(self, record.obligation, function() return matches(self, record) end)
+                if not observed then return scoped(record, perform, ...) end
+                local results = pack(pcall(scoped, record, perform, ...))
+                Settlement.finishReturn(record.obligation, results[1])
+                if not results[1] then error(results[2], 0) end
+                return unpack(results, 2, results.n)
+            end, ...)
         end
         return perform(self, ...)
     end

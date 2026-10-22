@@ -32,7 +32,9 @@ class EquipmentTests(unittest.TestCase):
                 count = int(enabled and case in equipment.TIDY_RETURN_CASES)
                 result['tidyCompletion'] = dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                flush=count, legacy=0, explicitConfirmed=3 if case == 'hands-chain' else 0,
-                                               authoritativeIntent=3 if case == 'hands-chain' and self.selection['kind'] == 'mp' else 0)
+                                               authoritativeIntent=3 if case == 'hands-chain' and self.selection['kind'] == 'mp' else 0,
+                                               cleanupConfirmed=count if case in equipment.TIDY_RETURN_EXACT_CASES else 0,
+                                               authoritativeCleanup=count if case in equipment.TIDY_RETURN_EXACT_CASES and self.selection['kind'] == 'mp' else 0)
             if case == 'hands-chain':
                 result.update(activeProgress=True, activeProtected=enabled)
             if case == 'waiting-cancel':
@@ -288,7 +290,7 @@ class EquipmentTests(unittest.TestCase):
             for mode in ('toolkit', 'native'):
                 self.selection['mode'] = mode
                 self.assertEqual(self.verify(self.logs())['issues'], [])
-                for key in ('perform', 'complete', 'flush', 'legacy'):
+                for key in ('perform', 'complete', 'flush', 'legacy', 'cleanupConfirmed', 'authoritativeCleanup'):
                     for value in (None, True, -1, '1', 1.0):
                         rows = self.records()
                         rows[1]['outcome']['tidyCompletion'][key] = value
@@ -301,7 +303,7 @@ class EquipmentTests(unittest.TestCase):
                 rows = self.records()
                 del rows[1]['outcome']['tidyCompletion']
                 self.assertTrue(self.verify(self.logs(rows))['issues'])
-                for key in ('complete', 'flush', 'legacy'):
+                for key in ('complete', 'flush', 'legacy', 'cleanupConfirmed', 'authoritativeCleanup'):
                     rows = self.records()
                     rows[1]['outcome']['tidyCompletion'][key] += 1
                     self.assertTrue(self.verify(self.logs(rows))['issues'])
@@ -310,7 +312,10 @@ class EquipmentTests(unittest.TestCase):
                     target = next(row for row in rows if row.get('id') == case)['outcome']
                     count = 0 if mode == 'toolkit' else 1
                     target['tidyCompletion'].update(perform=count, complete=count if kind == 'sp' else 0, flush=count, legacy=0)
-                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    if mode == 'native' or case in equipment.TIDY_RETURN_EXACT_CASES:
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    else:
+                        self.assertEqual(self.verify(self.logs(rows))['issues'], [])
 
     def test_tidy_explicit_intent_evidence_requires_strict_correlated_counts(self):
         self.selection.update(cases=['hands-chain', 'clothing-chain', 'tidy-hands', 'tidy-empty-hands'],
@@ -320,7 +325,7 @@ class EquipmentTests(unittest.TestCase):
             for mode in ('native', 'toolkit'):
                 self.selection['mode'] = mode
                 self.assertEqual(self.verify(self.logs())['issues'], [])
-                for field in ('explicitConfirmed', 'authoritativeIntent'):
+                for field in ('explicitConfirmed', 'authoritativeIntent', 'cleanupConfirmed', 'authoritativeCleanup'):
                     for value in (None, True, False, -1, '3', 3.0, {}, []):
                         rows = self.records()
                         rows[1]['outcome']['tidyCompletion'][field] = value
@@ -336,6 +341,14 @@ class EquipmentTests(unittest.TestCase):
                     rows[1]['outcome']['tidyCompletion'].update(explicitConfirmed=explicit,
                                                                 authoritativeIntent=authoritative)
                     with self.subTest(kind=kind, mode=mode, explicit=explicit, authoritative=authoritative):
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
+                expected_cleanup = int(mode == 'toolkit')
+                for confirmed, authoritative in ((expected_cleanup + 1, expected_cleanup if kind == 'mp' else 0),
+                                                 (expected_cleanup, expected_cleanup + 1)):
+                    rows = self.records()
+                    rows[1]['outcome']['tidyCompletion'].update(cleanupConfirmed=confirmed,
+                                                                authoritativeCleanup=authoritative)
+                    with self.subTest(kind=kind, mode=mode, confirmed=confirmed, authoritative=authoritative):
                         self.assertTrue(self.verify(self.logs(rows))['issues'])
                 for case in ('tidy-hands', 'tidy-empty-hands'):
                     rows = self.records()

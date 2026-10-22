@@ -1391,6 +1391,23 @@ end
 do
     local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
     local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
+    local settlement=PZSurvivorToolkit.ActionQueueSettlement
+    local beginReturn,online=settlement.beginReturn,player.getOnlineID
+    local returnAttempts,returnCaptures=0,0
+    local expectedReturn
+    player.getOnlineID=function() return 101 end
+    settlement.beginReturn=function(action,obligation,guard)
+        if action~=expectedReturn then return beginReturn(action,obligation,guard) end
+        local record=compat.fixtureRegistries[1][action]
+        assert(record and record.obligation==obligation and record.settlement,
+            'actual P4 cleanup must retain its minted deferred obligation')
+        assert(action.item:getContainer()==inventory and guard(action),
+            'cleanup observation must run before the native transfer effect')
+        returnAttempts=returnAttempts+1
+        local captured=beginReturn(action,obligation,guard)
+        if captured then returnCaptures=returnCaptures+1 end
+        return captured
+    end
     local callbacks=0
     queue.onCompleted=function(self,action)
         if lifecycle.current(player)==action then
@@ -1409,6 +1426,9 @@ do
                 and action.destContainer==tidyBag and action.toolkitQueueOperation==token,
                 'exact mixed-session return did not select its own completion producer')
             local removed=false;action.action={};queue.current=action
+            -- The transfer double otherwise omits native new()'s singleton list.
+            action.queueList={{items={first}}}
+            expectedReturn=action
             player.getCharacterActions=function()return list(removed and {} or {action.action})end
             isClient=function()return mp end
             assert(lifecycle.begin(action,'perform'))
@@ -1431,6 +1451,9 @@ do
         end
     end
     assert(callbacks==4,'Tidy completion scope checks missed a native path')
+    assert(returnAttempts==4 and returnCaptures==4,
+        'actual adopted P4 cleanup must capture its singleton outcome before every native perform')
+    settlement.beginReturn,player.getOnlineID=beginReturn,online
     queue.onCompleted=completed;player.getCharacterActions=actions;isClient=client
     reset();local transfer=wash(item(bag,141))
     assert(select(2,definitions.inspect(transfer))=='compat.selected-chains',

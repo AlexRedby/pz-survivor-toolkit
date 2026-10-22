@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.210
+
+- **Action queue:** Record confirmed results for supported single-item P4 returns using the native item-transaction outcome captured before its removal and the exact item at its saved destination. Keep observations private and bounded; reject stale, missing, rejected or ambiguous transaction results. This is read-only cleanup accounting: native execution, cancellation, queue advancement and unsupported batches remain unchanged.
+
 ### 0.1.209
 
 - **Smart Deposit:** Reuse a drag-local advisory allocation instead of rescanning all nearby stock every frame. Refresh the hint within 200 ms and invalidate it on selection, target and inventory/UI changes. Drop admission and transfer commands still calculate current routing, capacity and protected-item rules independently.

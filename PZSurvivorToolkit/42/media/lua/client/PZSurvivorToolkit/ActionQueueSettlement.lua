@@ -110,7 +110,8 @@ end
 
 -- A delayed producer may collect several operations before constructing its
 -- native cleanup. These are ownership claims, not proof that an effect ran.
-local deferredMarker, obligationMarker = {}, {}
+local deferredMarker, obligationMarker, obligationScope, returnMarker = {}, {}, {}, {}
+local itemTransactionDone, itemTransactionRejected = isItemTransactionDone, isItemTransactionRejected
 local function deferred(scope)
     return type(scope) == "table" and scope.marker == deferredMarker
 end
@@ -192,8 +193,108 @@ function Settlement.obligation(context)
     if not Settlement.isLive(context) then return end
     context.settlement.phase = "scheduled"
     local scope = context.settlement
-    return {marker = obligationMarker, token = context.token, phase = "cleanup",
-        required = scope.mixed and context.token == scope.restoreToken}
+    local token = context.token
+    local obligation = {marker = obligationMarker, token = token, phase = "cleanup",
+        required = scope.mixed and token == scope.restoreToken}
+    obligation[obligationScope] = function(candidate) if candidate == obligation then return scope, token end end
+    return obligation
+end
+
+-- Native item transfers use their own transaction manager, not the generic
+-- timed-action ACK. Observe its result before perform removes that transaction.
+-- These observations do not grant edit rights or advance/retry native work.
+local function returnProof(obligation)
+    local seal = type(obligation) == "table" and rawget(obligation, returnMarker)
+    return type(seal) == "function" and seal(obligation) or nil
+end
+
+function Settlement.beginReturn(action, obligation, guard)
+    local seal = type(obligation) == "table" and rawget(obligation, obligationScope)
+    local scope, token
+    if type(seal) == "function" then scope, token = seal(obligation) end
+    if not scope or obligation.token ~= token or scope.phase == "retired" then return false, "obligation" end
+    if returnProof(obligation) then return false, "duplicate" end
+    if type(guard) ~= "function" or not guard(action) then return false, "source" end
+    local character, queue = action.character, scope.queue
+    local item, destination, groups = action.item, action.destContainer, action.queueList
+    if character ~= scope.character or queue ~= ISTimedActionQueue.queues[character]
+        or (queue.toolkitOperationGeneration or 0) ~= scope.generation
+        or queue.current ~= action or queue.queue[1] ~= action or not action.action
+        or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "native_scope" end
+    if action.srcContainer ~= character:getInventory() or not destination or destination == action.srcContainer
+        or not item then return false, "endpoints" end
+    if not groups or #groups ~= 1 or not groups[1].items or #groups[1].items ~= 1 then return false, "singleton" end
+    local member = groups[1].items[1]
+    -- Host replication can rebind action.item while its native group retains
+    -- the earlier Java proxy. Inventory identity, not proxy equality, is stable.
+    if not member or type(member.getID) ~= "function" or type(member.getFullType) ~= "function"
+        or member:getID() ~= item:getID() or member:getFullType() ~= item:getFullType() then return false, "item_identity" end
+    local client, transaction, authority = isClient(), action.transactionId, "native"
+    if client then
+        authority = "unavailable"
+        if type(transaction) == "number" and transaction ~= 0 and transaction % 1 == 0
+            and type(itemTransactionDone) == "function" and type(itemTransactionRejected) == "function"
+            and isItemTransactionDone == itemTransactionDone and isItemTransactionRejected == itemTransactionRejected then
+            local done, rejected = itemTransactionDone(transaction), itemTransactionRejected(transaction)
+            -- Both queries are true for a missing native transaction (empty allMatch).
+            if done == true and rejected == false then authority = "completed"
+            elseif done == false and rejected == true then authority = "rejected" end
+        end
+    end
+    local proof = {scope = scope, token = token, queue = queue, generation = scope.generation, action = action, native = action.action,
+        character = character, player = character:getPlayerNum(), online = character:getOnlineID(),
+        id = item:getID(), fullType = item:getFullType(), source = action.srcContainer,
+        destination = destination, guard = guard, client = client, transaction = transaction, authority = authority,
+        deadline = type(getTimestampMs) == "function" and getTimestampMs() + 30000}
+    obligation[returnMarker] = function(candidate) if candidate == obligation then return proof end end
+    return true
+end
+
+function Settlement.finishReturn(obligation, succeeded)
+    local proof = returnProof(obligation)
+    if not proof or proof.finished then return false end
+    proof.finished, proof.succeeded = true, succeeded == true
+    Settlement.returnState(obligation)
+    return true
+end
+
+function Settlement.returnState(obligation)
+    local proof = returnProof(obligation)
+    if not proof then return end
+    local action, character, scope = proof.action, proof.character, proof.scope
+    local queue = proof.queue
+    if scope.phase == "retired" or scope.queue ~= queue or scope.character ~= character
+        or scope.generation ~= proof.generation or obligation.token ~= proof.token or action.character ~= character
+        or action.action ~= proof.native or isClient() ~= proof.client
+        or character:isDead() or character:getPlayerNum() ~= proof.player or character:getOnlineID() ~= proof.online
+        or getSpecificPlayer(proof.player) ~= character or ISTimedActionQueue.queues[character] ~= queue
+        or (queue.toolkitOperationGeneration or 0) ~= proof.generation
+        or action.srcContainer ~= proof.source or action.destContainer ~= proof.destination
+        or character:getInventory() ~= proof.source or not action.item
+        or action.item:getID() ~= proof.id or action.item:getFullType() ~= proof.fullType
+        or not proof.guard(action) or proof.client and (isItemTransactionDone ~= itemTransactionDone
+            or isItemTransactionRejected ~= itemTransactionRejected
+            or action.transactionId ~= proof.transaction and action.transactionId ~= 0) then
+        proof.terminal = "unavailable"
+    end
+    if proof.terminal then return proof.terminal end
+    if not proof.deadline or type(getTimestampMs) ~= "function" or getTimestampMs() >= proof.deadline then
+        proof.terminal = "unavailable"
+        return proof.terminal
+    end
+    if not proof.finished then return "waiting" end
+    if not proof.succeeded or proof.authority == "unavailable" then proof.terminal = "unavailable"
+    elseif proof.authority == "rejected" then proof.terminal = "rejected"
+    elseif action.queueList and #action.queueList > 0 or not proof.destination:isExistYet() then proof.terminal = "unavailable"
+    else
+        local item = proof.destination:getItemById(proof.id)
+        local sourceItem = proof.source:getItemById(proof.id)
+        if item and item:getID() == proof.id and item:getFullType() == proof.fullType
+            and item:getContainer() == proof.destination and not item:getIsCraftingConsumed()
+            and not (sourceItem and sourceItem:getContainer() == proof.source) then proof.terminal = "completed"
+        end
+    end
+    return proof.terminal or "waiting"
 end
 
 function Settlement.required(obligation)

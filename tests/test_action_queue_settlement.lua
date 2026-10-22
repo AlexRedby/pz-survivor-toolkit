@@ -8,8 +8,9 @@ local function setup(client)
     local current = {character = player, toolkitQueueOperation = token, action = {}}
     local tail = {character = player, toolkitQueueOperation = {}}
     local queue = {character = player, current = current, queue = {current, tail}}
-    local source = {exists = true, reachable = true}
+    local source = {exists = true, reachable = true, items = {}}
     function source:isExistYet() return self.exists end
+    function source:getItemById(id) return self.items[id] end
     local constructions, guards, discards, releases = 0, 0, {}, 0
     PZSurvivorToolkit = {
         Settings = {actionQueue = function() return player.queueEnabled ~= false end},
@@ -30,6 +31,18 @@ local function setup(client)
     getSpecificPlayer = function(slot) if slot == 0 then return player end end
     Events = {OnServerCommand = {Add = function(callback) receive = callback end}}
     isClient = function() return client == true end
+    local transaction = {done = true, rejected = false, calls = 0}
+    isItemTransactionDone = function(id)
+        transaction.calls = transaction.calls + 1
+        transaction.lastId = id
+        return transaction.done
+    end
+    isItemTransactionRejected = function(id)
+        transaction.calls = transaction.calls + 1
+        transaction.lastId = id
+        return transaction.rejected
+    end
+    instanceof = function(value, kind) return type(value) == 'table' and value.class == kind end
     local loaded = {}
     require = function(name)
         if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' then
@@ -47,7 +60,7 @@ local function setup(client)
     end
     local settlement = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua'))()
     local function item(id, container)
-        local value = {id = id, container = container}
+        local value = {id = id, container = container, class = 'InventoryItem'}
         function value:getID() return self.id end
         function value:getFullType() return self.fullType or 'Base.Test' end
         function value:getContainer() return self.container end
@@ -63,7 +76,7 @@ local function setup(client)
     end
     return {root = root, player = player, token = token, current = current, tail = tail, queue = queue,
         source = source, item = item, action = action, discard = discard, settlement = settlement,
-        acknowledgements = acknowledgements, receipt = receipt,
+        acknowledgements = acknowledgements, receipt = receipt, transaction = transaction,
         advance = function(ms) clock = clock + ms end,
         counts = function() return constructions, guards, #discards, releases end}
 end
@@ -445,4 +458,237 @@ for _, client in ipairs({false, true}) do
     assert(not s.settlement.confirmEffect(proof, true) and not s.settlement.confirmEffect({}, true),
         'unmarked proof must also be private and once-only')
 end
-print('Shared settlement: deferred ownership claims/lifetimes, ordered required cleanup, exact-ID returns, no effect replay, duplicate completion, owned props and lost resources passed.')
+-- Native inventory transfers use their own item transaction protocol. Observe
+-- the singleton outcome before perform removes it; never execute that payload.
+local function returnFixture(client)
+    local s = setup(client)
+    local value = s.item(81, s.root)
+    s.root.items[81] = value
+    local scope = s.settlement.deferred(s.player, s.token)
+    s.returnScope = scope
+    s.settlement.remember(scope, s.current, {knownInputs = true, items = {[81] = true}})
+    s.obligation = s.settlement.obligation(s.settlement.context(scope))
+    local action = s.current
+    action.Type, action.item = 'ISInventoryTransferAction', value
+    action.srcContainer, action.destContainer = s.root, s.source
+    action.transactionId, action.queueList = 17, {{items = {value}}}
+    s.guardLive = true
+    s.guard = function() return s.guardLive end
+    s.finishReturn = function(succeeded)
+        action.queueList = {} -- the native singleton perform consumed its batch
+        return s.settlement.finishReturn(s.obligation, succeeded)
+    end
+    s.observeDestination = function(replacement)
+        local observed = replacement or value
+        s.root.items[81] = nil
+        value.container = nil
+        observed.container = s.source
+        s.source.items[81] = observed
+        return observed
+    end
+    return s
+end
+
+for _, client in ipairs({false, true}) do
+    for _, timing in ipairs({'late-effect', 'late-finish', 'effect-at-finish'}) do
+        local s = returnFixture(client)
+        assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+        s.current.transactionId = 0
+        if timing == 'late-effect' then
+            assert(s.finishReturn(true))
+            s.advance(30001)
+            s.observeDestination()
+        elseif timing == 'late-finish' then
+            s.advance(30001)
+            s.observeDestination()
+            assert(s.finishReturn(true))
+        else
+            s.observeDestination()
+            assert(s.finishReturn(true))
+            s.advance(30001)
+        end
+        -- No polling occurs between capture and this first explicit late read.
+        local expected = timing == 'effect-at-finish' and 'completed' or 'unavailable'
+        assert(s.settlement.returnState(s.obligation) == expected,
+            timing .. ': observation deadline must expire without polling while preserving effect earned at native finish')
+        assert(s.counts() == 0 and s.queue.queue[2] == s.tail,
+            timing .. ': timeout observation cannot change native effects or unrelated queue work')
+    end
+end
+
+for _, client in ipairs({false, true}) do
+    for _, order in ipairs({'effect-first', 'finish-first'}) do
+        local s = returnFixture(client)
+        local settlement, action, obligation = s.settlement, s.current, s.obligation
+        assert(settlement.returnState(obligation) == nil and not settlement.finishReturn(obligation, true),
+            'an uncaptured obligation has no native outcome')
+        assert(settlement.beginReturn(action, obligation, s.guard))
+        assert(not settlement.beginReturn(action, obligation, s.guard), 'duplicate begin cannot replace the captured transaction')
+        assert(settlement.returnState(obligation) == 'waiting')
+        local copied = {}; for key, value in pairs(obligation) do copied[key] = value end
+        assert(settlement.returnState(copied) == nil and not settlement.finishReturn(copied, true),
+            'a copied obligation cannot observe or finish the exact native return')
+        action.transactionId = 0 -- native perform retires its original transaction
+        if order == 'effect-first' then
+            s.observeDestination()
+            assert(settlement.returnState(obligation) == 'waiting', 'visible effect still needs its completed callback')
+        end
+        assert(s.finishReturn(true))
+        assert(not settlement.finishReturn(obligation, true), 'duplicate finish cannot mint another completion')
+        if order == 'finish-first' then
+            assert(settlement.returnState(obligation) == 'waiting', 'callback success still needs the exact inventory effect')
+            -- A client replica may have a new Java proxy for the same identity.
+            s.observeDestination(s.item(81, nil))
+        end
+        s.queue.current, s.queue.queue = s.tail, {s.tail}
+        assert(settlement.returnState(obligation) == 'completed'
+            and settlement.returnState(obligation) == 'completed', order .. ': exact completion must remain readable after native advancement')
+        assert(s.counts() == 0 and #s.queue.queue == 1 and s.queue.queue[1] == s.tail,
+            'return observation cannot construct effects or advance/discard unrelated work')
+        assert(client and s.transaction.calls == 2 or not client and s.transaction.calls == 0,
+            'capture transaction predicates exactly once, only for client transfers')
+    end
+end
+
+-- A native group may retain the older Java proxy after Host rebinds action.item.
+for _, client in ipairs({false, true}) do
+    local s = returnFixture(client)
+    s.current.queueList[1].items[1] = s.item(81, nil)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard),
+        'same-ID/same-type native group proxy must retain its return observation')
+    s.current.transactionId = 0
+    s.observeDestination()
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed'
+        and s.counts() == 0, 'proxy replacement must preserve exact effects without executing a transfer')
+end
+
+for _, outcome in ipairs({'rejected', 'absent', 'unconfirmed'}) do
+    local s = returnFixture(true)
+    s.transaction.done = outcome == 'absent'
+    s.transaction.rejected = outcome ~= 'unconfirmed'
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.transactionId = 0
+    assert(s.finishReturn(true))
+    s.observeDestination()
+    local expected = outcome == 'rejected' and 'rejected' or 'unavailable'
+    assert(s.settlement.returnState(s.obligation) == expected,
+        outcome .. ': callback and destination replica cannot invent native transaction success')
+    s.transaction.done, s.transaction.rejected = true, false
+    assert(s.settlement.returnState(s.obligation) == expected and s.transaction.calls == 2,
+        outcome .. ': later helper values cannot revive a retired transaction')
+    assert(s.counts() == 0 and s.queue.queue[2] == s.tail)
+end
+
+for _, client in ipairs({false, true}) do
+    local s = returnFixture(client)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    assert(s.finishReturn(false))
+    s.observeDestination()
+    assert(s.settlement.returnState(s.obligation) == 'unavailable'
+        and not s.settlement.finishReturn(s.obligation, true), 'failed native callback cannot become completed later')
+end
+
+for _, shape in ipairs({'no-groups', 'extra-group', 'no-items', 'extra-item', 'different-id', 'different-type', 'no-native', 'foreign-obligation', 'guard'}) do
+    local s = returnFixture(true)
+    local action = s.current
+    if shape == 'no-groups' then action.queueList = {}
+    elseif shape == 'extra-group' then action.queueList[2] = {items = {s.item(82, s.root)}}
+    elseif shape == 'no-items' then action.queueList[1].items = {}
+    elseif shape == 'extra-item' then action.queueList[1].items[2] = s.item(82, s.root)
+    elseif shape == 'different-id' then action.queueList[1].items[1] = s.item(82, s.root)
+    elseif shape == 'different-type' then
+        local member = s.item(81, s.root); member.fullType = 'Base.Other'
+        action.queueList[1].items[1] = member
+    elseif shape == 'no-native' then action.action = nil
+    elseif shape == 'foreign-obligation' then s.obligation = {phase = 'cleanup', token = s.token}
+    else s.guardLive = false end
+    assert(not s.settlement.beginReturn(action, s.obligation, s.guard)
+        and s.settlement.returnState(s.obligation) == nil, shape .. ': unsupported returns must not acquire an observation')
+    assert(s.transaction.calls == 0 and s.counts() == 0, shape .. ': unsupported capture must not touch transaction/effects')
+end
+
+for _, transaction in ipairs({0, 1.5, '17', false}) do
+    local s = returnFixture(true)
+    s.current.transactionId = transaction
+    local captured = s.settlement.beginReturn(s.current, s.obligation, s.guard)
+    if captured then
+        s.finishReturn(true); s.observeDestination()
+        assert(s.settlement.returnState(s.obligation) == 'unavailable')
+    else assert(s.settlement.returnState(s.obligation) == nil) end
+    assert(s.transaction.calls == 0, 'invalid transaction IDs must not query native predicates')
+end
+
+for _, mode in ipairs({'missing', 'wrong-id', 'wrong-type', 'wrong-container', 'source-duplicate', 'consumed'}) do
+    local s = returnFixture(true)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    assert(s.finishReturn(true))
+    local observed = s.item(81, s.source)
+    s.root.items[81] = nil
+    if mode ~= 'missing' then s.source.items[81] = observed end
+    if mode == 'wrong-id' then observed.id = 82
+    elseif mode == 'wrong-type' then observed.fullType = 'Base.Other'
+    elseif mode == 'wrong-container' then observed.container = {}
+    elseif mode == 'source-duplicate' then s.root.items[81] = s.item(81, s.root)
+    elseif mode == 'consumed' then observed.consumed = true end
+    assert(s.settlement.returnState(s.obligation) ~= 'completed', mode .. ': exact destination and removal proof are both required')
+    s.advance(30001)
+    assert(s.settlement.returnState(s.obligation) == 'unavailable', mode .. ': missing exact effect must expire')
+    s.observeDestination()
+    assert(s.settlement.returnState(s.obligation) == 'unavailable', mode .. ': an expired observation cannot revive')
+end
+
+for _, afterCompleted in ipairs({false, true}) do
+    for _, mutation in ipairs({'native', 'character', 'online', 'slot', 'local-player', 'queue', 'generation', 'dead',
+        'src', 'dest', 'root-replacement', 'item-id', 'item-type', 'transaction', 'done-helper', 'rejected-helper', 'source-guard', 'closed'}) do
+        local s = returnFixture(true)
+        local action = s.current
+        assert(s.settlement.beginReturn(action, s.obligation, s.guard))
+        assert(s.finishReturn(true))
+        if afterCompleted then
+            s.observeDestination()
+            assert(s.settlement.returnState(s.obligation) == 'completed')
+        end
+        if mutation == 'native' then action.action = {}
+        elseif mutation == 'character' then action.character = {}
+        elseif mutation == 'online' then s.player.getOnlineID = function() return 102 end
+        elseif mutation == 'slot' then s.player.getPlayerNum = function() return 1 end
+        elseif mutation == 'local-player' then getSpecificPlayer = function() return {} end
+        elseif mutation == 'queue' then ISTimedActionQueue.queues[s.player] = {}
+        elseif mutation == 'generation' then s.queue.toolkitOperationGeneration = 1
+        elseif mutation == 'dead' then s.player.dead = true
+        elseif mutation == 'src' then action.srcContainer = {}
+        elseif mutation == 'dest' then action.destContainer = {}
+        elseif mutation == 'root-replacement' then s.player.getInventory = function() return {} end
+        elseif mutation == 'item-id' then action.item.id = 82
+        elseif mutation == 'item-type' then action.item.fullType = 'Base.Other'
+        elseif mutation == 'transaction' then action.transactionId = 18
+        elseif mutation == 'done-helper' then isItemTransactionDone = function() return true end
+        elseif mutation == 'rejected-helper' then isItemTransactionRejected = function() return false end
+        elseif mutation == 'closed' then s.settlement.close(s.returnScope)
+        else s.guardLive = false end
+        assert(s.settlement.returnState(s.obligation) == 'unavailable', mutation .. ': stale ancestry must fail even after completed was observed')
+        assert(s.counts() == 0 and s.queue.queue[2] == s.tail, mutation .. ': invalidation must preserve unrelated work')
+    end
+end
+
+do
+    local s = returnFixture(true)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    -- A remaining group means native reset for another transaction; this proof
+    -- cannot silently claim that whole action's work completed.
+    assert(s.settlement.finishReturn(s.obligation, true))
+    s.observeDestination()
+    assert(s.settlement.returnState(s.obligation) == 'unavailable', 'a continuing native batch is not a completed singleton return')
+    s.current.queueList = {}
+    assert(s.settlement.returnState(s.obligation) == 'unavailable', 'clearing a later batch cannot revive an unsupported completion')
+end
+
+do
+    local s = returnFixture(false)
+    isItemTransactionDone, isItemTransactionRejected = nil, nil
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    assert(s.finishReturn(true))
+    s.observeDestination()
+    assert(s.settlement.returnState(s.obligation) == 'completed', 'SP return observation must not require client transaction helpers')
+end
+print('Shared settlement: deferred ownership, native singleton return outcome/effect correlation, immutable ancestry, exact-ID returns and no effect replay passed.')

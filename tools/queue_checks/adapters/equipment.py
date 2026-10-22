@@ -12,6 +12,7 @@ CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', '
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
 RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands'}
+TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands'}
 
 
 # Each binding names concrete native cases and their required observed outcomes.
@@ -219,15 +220,20 @@ def verify(root, selection, catalog):
         if 'P4TidyUpMeister' in selection['mods']:
             completion = result.get('tidyCompletion')
             valid = (isinstance(completion, dict) and set(completion) == {
-                         'perform', 'complete', 'flush', 'legacy', 'explicitConfirmed', 'authoritativeIntent'}
+                         'perform', 'complete', 'flush', 'legacy', 'explicitConfirmed', 'authoritativeIntent',
+                         'cleanupConfirmed', 'authoritativeCleanup'}
                      and all(type(value) is int and value >= 0 for value in completion.values()))
             if valid:
                 count = completion['perform']
                 valid = (completion['flush'] == count and completion['legacy'] == 0
                          and completion['complete'] == (count if selection['kind'] == 'sp' else 0)
                          and (selection['mode'] != 'native' or count == 0)
-                         and (selection['mode'] != 'toolkit' or row.get('id') not in TIDY_RETURN_CASES or count > 0)
-                         and completion['authoritativeIntent'] <= completion['explicitConfirmed'])
+                         and completion['authoritativeIntent'] <= completion['explicitConfirmed']
+                         and completion['authoritativeCleanup'] <= completion['cleanupConfirmed'])
+                if row.get('id') in TIDY_RETURN_EXACT_CASES:
+                    cleanup = count if selection['mode'] == 'toolkit' else 0
+                    valid = (valid and completion['cleanupConfirmed'] == cleanup
+                             and completion['authoritativeCleanup'] == (cleanup if selection['kind'] == 'mp' else 0))
                 if row.get('id') == 'hands-chain':
                     valid = (valid and completion['explicitConfirmed'] == 3
                              and completion['authoritativeIntent'] == (3 if selection['kind'] == 'mp' else 0))

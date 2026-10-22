@@ -5,6 +5,8 @@ function Completion.observe(toolkit,selection)
  local state,records,counts,restores,proofs
  local settlement,acks=toolkit.ActionQueueSettlement,toolkit.ActionQueueAcknowledgements
  local captureEffect,confirmEffect=settlement.captureEffect,settlement.confirmEffect
+ local beginReturn,finishReturn,returnState=settlement.beginReturn,settlement.finishReturn,settlement.returnState
+ local returns={}
  settlement.captureEffect=function(action)
   local proof=captureEffect(action)
   if state then
@@ -29,6 +31,29 @@ function Completion.observe(toolkit,selection)
    end
   end
   return confirmed
+ end
+ if beginReturn and finishReturn and returnState then
+  settlement.beginReturn=function(action,obligation,guard)
+   local accepted,reason=beginReturn(action,obligation,guard)
+   if state then
+    local groups=action.queueList
+    print('[EQUIPMENT_TEST] RETURN_CAPTURE accepted='..tostring(accepted)..' reason='..tostring(reason)
+     ..' groups='..tostring(groups and #groups)..' items='..tostring(groups and groups[1] and #groups[1].items)
+     ..' native='..tostring(action.action~=nil)..' current='..tostring(ISTimedActionQueue.queues[action.character].current==action))
+   end
+   if state and accepted then
+    assert(obligation~=nil and not returns[obligation],'duplicate or missing native return obligation')
+    local transaction=action.transactionId
+    local authoritative=isClient() and type(transaction)=='number' and transaction~=0
+     and isItemTransactionDone(transaction)==true and isItemTransactionRejected(transaction)==false
+    returns[obligation]={action=action,authoritative=authoritative,observed=false}
+   end
+   return accepted
+  end
+  settlement.finishReturn=function(obligation,succeeded)
+   local finished=finishReturn(obligation,succeeded)
+   return finished
+  end
  end
  local enabled=selection.mode=='toolkit'
  local function observed(action)
@@ -142,10 +167,17 @@ function Completion.observe(toolkit,selection)
    {ISInventoryPaneContextMenu,'equipWeapon'},{ISInventoryPane,'getActualItems'}}) do
    print('[EQUIPMENT_TEST] INTENT_CALLBACK '..entry[2]..' source='..tostring(getFilenameOfClosure(entry[1][entry[2]])))
   end
-  state,records,proofs,counts=value,{},{},{perform=0,complete=0,flush=0,legacy=0,explicitConfirmed=0,authoritativeIntent=0}
+  state,records,proofs,counts=value,{},{},{perform=0,complete=0,flush=0,legacy=0,explicitConfirmed=0,authoritativeIntent=0,
+   cleanupConfirmed=0,authoritativeCleanup=0}
+  returns={}
   restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
  end
  function Completion.settled()
+  for obligation,record in pairs(returns) do
+   assert(not record.observed and returnState(obligation)=='completed','native return obligation did not complete exactly once')
+   record.observed=true;counts.cleanupConfirmed=counts.cleanupConfirmed+1
+   if record.authoritative then counts.authoritativeCleanup=counts.authoritativeCleanup+1 end
+  end
   if state.id=='hands-chain' then
    assert(counts.explicitConfirmed==3 and counts.authoritativeIntent==(selection.kind=='mp' and 3 or 0),
     'manual hand chain did not confirm all exact explicit native effects: explicit='..counts.explicitConfirmed..' authoritative='..counts.authoritativeIntent)
