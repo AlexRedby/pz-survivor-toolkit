@@ -3,15 +3,14 @@ import contextlib
 import io
 import os
 from pathlib import Path
-import runpy
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-BUILD = Path(__file__).resolve().parents[1] / 'build.py'
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from JavaPatches import build
 
 
 class BuildPaths(unittest.TestCase):
@@ -19,8 +18,6 @@ class BuildPaths(unittest.TestCase):
         self.cache = tempfile.TemporaryDirectory()
         self.addCleanup(self.cache.cleanup)
         self.root = Path(self.cache.name).resolve()
-        self.script = self.root / 'build.py'
-        shutil.copyfile(BUILD, self.script)
         self.sentinel = self.root / 'build/classes/keep.txt'
         self.sentinel.parent.mkdir(parents=True)
         self.sentinel.write_text('previous build')
@@ -65,11 +62,11 @@ class BuildPaths(unittest.TestCase):
         stderr = io.StringIO()
         with patch.object(sys, 'platform', platform), patch.object(Path, 'home', return_value=self.root), \
              patch.dict(os.environ, {'ProgramFiles(x86)': str(self.root / 'program files'), 'JAVA_HOME': str(self.root / 'jdk')}), \
-             patch.object(sys, 'argv', [str(self.script), *args]), \
+             patch.object(build, 'ROOT', self.root), \
              patch('subprocess.run', side_effect=run) as mocked, \
              contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
             try:
-                runpy.run_path(str(self.script), run_name='__main__')
+                build.main(args)
             except SystemExit as error:
                 return error.code, stderr.getvalue(), mocked.call_args_list
         return 0, stderr.getvalue(), mocked.call_args_list
@@ -105,7 +102,11 @@ class BuildPaths(unittest.TestCase):
                 metadata = (self.root / 'build/PZToolkitJavaPatches/42/mod.info').read_text()
                 self.assertIn('name=Toolkit Java Patches (Experimental)\n', metadata)
                 self.assertIn('id=PZToolkitJavaPatches\n', metadata)
-                self.assertIn('version=0.1.30\n', metadata)
+                self.assertIn('version=' + build.MOD_INFO['version'] + '\n', metadata)
+                self.assertRegex(build.MOD_INFO['version'], r'^\d+\.\d+\.\d+$')
+                self.assertIn('versionMin=42.21\n', metadata)
+                self.assertIn('versionMax=42.21\n', metadata)
+                self.assertIn('require=\\ZombieBuddy\n', metadata)
                 self.assertIn('javaPkgName=net.alexredby.pztoolkitjavapatches\n', metadata)
                 self.assertIn('javaJarFile=media/java/PZToolkitJavaPatches.jar\n', metadata)
                 self.assertNotIn('javaPreload=true\n', metadata)
