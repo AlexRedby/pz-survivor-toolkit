@@ -1,8 +1,8 @@
 local Completion={}
 local function hotbarCase(id)return id=='tidy-hotbar'or id=='tidy-hotbar-holster-left'or id=='tidy-hotbar-holster-right'end
 local function clothingAction(state,action)
- return state.id=='tidy-clothing'and action.Type=='ISWearClothing'
-  or (state.id=='tidy-clothing-remove'or state.id=='tidy-clothing-overlap')and action.Type=='ISUnequipAction'
+ return state.clothingItem and (state.id=='tidy-clothing'and action.Type=='ISWearClothing'
+  or state.id~='tidy-clothing'and action.Type=='ISUnequipAction')
 end
 function Completion.observe(toolkit,selection)
  local lifecycle,operations=toolkit.ActionQueueLifecycle,toolkit.ActionQueueOperations
@@ -341,7 +341,7 @@ function Completion.observe(toolkit,selection)
     assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared hotbar cleanup must remain protected')
    elseif counter==clothing then
     assert(clothingAction(state,action)
-     and action.item:getID()==state.clothingSocks:getID()and action.item:getFullType()=='Base.Socks_Ankle'
+     and action.item:getID()==state.clothingItem:getID()and action.item:getFullType()==state.clothingItem:getFullType()
      and action.item:getBodyLocation()==state.clothingLocation and action.item:getContainer()==state.root,
      'P4 restored unexpected clothing identity/slot/container')
     local queue=ISTimedActionQueue.queues[action.character]

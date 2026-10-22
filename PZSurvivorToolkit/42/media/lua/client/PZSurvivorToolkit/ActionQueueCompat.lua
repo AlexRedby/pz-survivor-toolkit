@@ -255,7 +255,7 @@ end
 local clothingSourceSafe
 local clothingMethods = {"isValid", "update", "start", "stop", "perform", "complete", "isAlreadyEquipped",
     "getDuration", "stopSound", "isStopOnWalk"}
-local function ordinaryClothingItem(item, character)
+local function ordinaryClothingItem(item, character, allowHeadwear)
     if not instanceof(item, "Clothing") or not ItemTag or not ItemTag.REPLACE_PRIMARY or not ItemTag.WEARABLE
         or not ItemBodyLocation or not ItemBodyLocation.HAT or not ItemBodyLocation.FULL_HAT
         or item:getContainer() ~= character:getInventory() or item:getCategory() ~= "Clothing"
@@ -263,19 +263,76 @@ local function ordinaryClothingItem(item, character)
         or item:hasTag(ItemTag.REPLACE_PRIMARY) or item:isBroken()
         or item:getAttachedSlot() ~= -1 or isForceDropHeavyItem(item) then return end
     local location = item:getBodyLocation()
-    if not location or tostring(location) == "" or location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then return end
+    if not location or tostring(location) == "" then return end
+    if location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then
+        if not allowHeadwear then return end
+        -- Java setWornItem also flattens Mohawk when newItem is nil.
+        local visual = character:getHumanVisual()
+        local hair = visual and visual:getHairModel()
+        if not hair or type(hair.contains) ~= "function" or hair:contains("Mohawk") then return end
+    end
     return location
 end
-local function ordinaryClothing(action)
+local function ordinaryClothing(action, allowHeadwear)
     local item, character = action.item, action.character
-    local location = ordinaryClothingItem(item, character)
+    local location = ordinaryClothingItem(item, character, allowHeadwear)
     if not location then return end
     -- Native MP start rebinds from the root by ID. A stale queued proxy must
     -- not prove a missing, replaced or differently configured live garment.
     local liveItem = character:getInventory():getItemById(item:getID())
     if not liveItem or liveItem:getFullType() ~= item:getFullType()
-        or ordinaryClothingItem(liveItem, character) ~= location then return end
+        or ordinaryClothingItem(liveItem, character, allowHeadwear) ~= location then return end
     return location, liveItem
+end
+-- Java WornItems removes exclusive slots even when setting a slot to nil.
+-- Only an empty slot or the exact garment has bounded effects here; displaced
+-- clothing and multi-item locations need their own resource/output contract.
+local function clothingWornState(action, location)
+    local character, item = action.character, action.item
+    local group = character.getBodyLocationGroup and character:getBodyLocationGroup()
+    if not group or not group.getLocation or not group.isMultiItem or not group.isExclusive
+        or not group:getLocation(location) or group:isMultiItem(location) ~= false then return end
+    local worn, exact = character:getWornItems(), false
+    if not worn or not worn.size or not worn.get then return end
+    for i = 0, worn:size() - 1 do
+        local entry = worn:get(i)
+        local otherLocation, other = entry:getLocation(), entry:getItem()
+        if not other then return end
+        if otherLocation ~= location and other:getID() == item:getID() then return end
+        if otherLocation == location then
+            if exact or not other or other:getID() ~= item:getID() or other:getFullType() ~= item:getFullType() then return end
+            exact = other
+        elseif group:isExclusive(location, otherLocation) ~= false then return end
+    end
+    return true, exact
+end
+local function ordinaryClothingWear(action)
+    local location, liveItem = ordinaryClothing(action)
+    if not location then return end
+    local safe, worn = clothingWornState(action, location)
+    -- Wear's native early return uses object identity, not ID/type. A distinct
+    -- same-ID worn proxy would be a replacement with extra capacity effects.
+    if safe and (not worn or (worn == action.item and worn == liveItem)) then return location end
+end
+local function nonnegativeFinite(value)
+    return type(value) == "number" and value >= 0 and value < math.huge
+end
+local function clothingRemovalCapacity(action, liveItem, stillWorn)
+    local inventory = action.character:getInventory()
+    if not inventory.getCapacityWeight or not inventory.getEffectiveCapacity or not inventory.isItemAllowed then return false end
+    local current, capacity = inventory:getCapacityWeight(), inventory:getEffectiveCapacity(action.character)
+    if not nonnegativeFinite(current) or not nonnegativeFinite(capacity) then return false end
+    local weight = 0
+    for _, item in ipairs({action.item, liveItem, stillWorn or liveItem}) do
+        if inventory:isItemAllowed(item) ~= true then return false end
+        local value = item.getUnequippedWeight and item:getUnequippedWeight()
+        if not nonnegativeFinite(value) then return false end
+        weight = math.max(weight, value)
+    end
+    -- setWornItem checks capacity after releasing worn weight, then adds the
+    -- same item's full unequipped weight again. Never credit a pending release.
+    -- Once authority removed the slot, one remaining reserve preserves this bound.
+    return current + (stillWorn and 2 or 1) * weight + 0.01 <= capacity
 end
 local function nativeClothingMethods()
     if clothingSourceSafe == nil then
@@ -290,7 +347,7 @@ end
 local function clothingRestore(action, class)
     if class ~= ISWearClothing or not nativeClothingMethods() then return end
     for _, name in ipairs(clothingMethods) do if action[name] ~= class[name] then return end end
-    return ordinaryClothing(action)
+    return ordinaryClothingWear(action)
 end
 
 local unequipSourceSafe
@@ -311,8 +368,10 @@ local function nativeUnequipMethods(action)
     return true
 end
 local function ordinaryClothingRemoval(action)
-    local location, item = ordinaryClothing(action)
+    local location, item = ordinaryClothing(action, true)
     if not location or item:canBeActivated() or action.item:canBeActivated() then return end
+    local safe, stillWorn = clothingWornState(action, location)
+    if not safe or not clothingRemovalCapacity(action, item, stillWorn) then return end
     -- Native ordinary-clothing cleanup removes both worn and matching hand
     -- references. The shared contract owns the character's hands as well as
     -- this exact root item; earlier P4 hand restoration may already clear them.
@@ -415,7 +474,7 @@ local function sourceMatches(action, record, observedItem)
     if (record.tidyClothingUnequip or record.tidyHotbarUnequip) and (not nativeUnequipMethods(action)
         or action.clothingAction ~= record.clothingAction or action.stopOnWalk ~= record.stopOnWalk
         or action.stopOnRun ~= record.stopOnRun or action.animSpeed ~= record.animSpeed) then return false end
-    if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothing(action) ~= record.clothingLocation
+    if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothingWear(action) ~= record.clothingLocation
         or action.fromHotbar ~= record.fromHotbar or action.clothingAction ~= record.clothingAction
         or action.stopOnWalk ~= record.stopOnWalk or action.stopOnRun ~= record.stopOnRun) then return false end
     for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name] then return false end end

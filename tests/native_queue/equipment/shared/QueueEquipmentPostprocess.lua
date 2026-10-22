@@ -71,7 +71,7 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
- if Clothing.overlap(state)and not tidy then secondary=state.clothingSocks end
+ if Clothing.overlap(state)and not tidy then secondary=state.clothingItem end
  if Hotbar.isCase(state.id)then primary,secondary=not tidy and state.pickup or nil,not tidy and Hotbar.secondary(state)or nil;Hotbar.verify(state,tidy)end
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   if not tidy then primary,secondary=state.pickup,nil
@@ -118,12 +118,12 @@ function Postprocess.verify(state,mode,tidy)
  local expectedWorn=state.expectedWorn
  if Clothing.isCase(state.id)then
   expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
-  expectedWorn[state.clothingLocation]=Clothing.finalWorn(state,tidy)and state.clothingSocks or nil
+  expectedWorn[state.clothingLocation]=Clothing.finalWorn(state,tidy)and state.clothingItem or nil
  end
  sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,clothingSocks=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
+  clothingB=true,clothingItem=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)

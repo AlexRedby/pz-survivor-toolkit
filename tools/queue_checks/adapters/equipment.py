@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
 HOTBAR_CASES = {
     'tidy-hotbar': dict(fullType='Base.Shotgun', slotType='Back', model='Rifle On Back with Bag', twoHands=True),
     'tidy-hotbar-holster-left': dict(fullType='Base.Pistol', slotType='HolsterLeft', model='Holster Left', twoHands=False),
@@ -15,7 +15,7 @@ HOTBAR_CASES = {
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
@@ -91,6 +91,15 @@ SCENARIO_ACTIONS = {
             'restore-clothing': {'tidy-clothing-overlap': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
             'restore-hands': {'tidy-clothing-overlap': {'equipmentMatches': True, 'postprocessingVerified': True}},
             'server-authority': {'tidy-clothing-overlap': {'authoritative': True}},
+        },
+    },
+    'tidy-headwear-remove': {
+        'scope': 'One authority-owned disposable scene preparation removes conflicting starter headwear to root before the baseline. Native Wear and unchanged plain CutHair constructors then temporarily wear vanilla Beany/HAT and BoxingRed/FULL_HAT in that declared scene; real P4 generates removal. Exact item/root/slot/hair/hands and independent tail; conservative capacity excludes native drop. Headwear Wear restoration and Mohawk are outside this gate.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}
+                                 for case in ('tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove')},
         },
     },
 }
@@ -296,7 +305,7 @@ def verify(root, selection, catalog):
         if row.get('id') in HOTBAR_CASES:
             issues.extend(_verify_tidy_hotbar(result, selection, row['id']))
         if row.get('id') in CLOTHING_CASES:
-            issues.extend(_verify_tidy_clothing(result, selection, remove=row['id'] != 'tidy-clothing', overlap=row['id'] == 'tidy-clothing-overlap'))
+            issues.extend(_verify_tidy_clothing(result, selection, remove=row['id'] != 'tidy-clothing', overlap=row['id'] == 'tidy-clothing-overlap', case=row['id']))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),
                          'reason': row.get('reason'), 'outcome': result})
     ends = [row for row in records if row['event'] == 'complete']
@@ -379,8 +388,37 @@ def verify(root, selection, catalog):
         expected_counts = {case: 0 if case == 'waiting-cancel' and selection['mode'] == 'toolkit' else RECEIPTS[case] for case in selection['cases']}
         if any(sum(case == entry[0] for entry in captures) != count for case, count in expected_counts.items()) or len({entry[2] for entry in captures}) != len(captures) or any(entry[0] not in expected_counts for entry in captures):
             issues.append('Equipment acknowledgement captures missing or duplicated')
+    scene_issues, scene = _verify_scene(server if selection['kind'] == 'mp' else text, selection)
+    issues.extend(scene_issues)
     return {'issues': issues, 'outcomes': outcomes,
-            'evidence': {'limits': ['Fresh world, one actual client, inventory callbacks invoked programmatically; WAN and physical input unverified.']}}
+            'evidence': {'sceneSetup': scene, 'limits': ['Fresh world, one actual client, inventory callbacks invoked programmatically; WAN and physical input unverified.']}}
+
+
+def _verify_scene(text, selection):
+    import json
+    markers = [line.split('[EQUIPMENT_TEST] SCENE_HEADWEAR ', 1)[1].strip()
+               for line in text.splitlines() if '[EQUIPMENT_TEST] SCENE_HEADWEAR ' in line]
+    needed = any(CLOTHING_SPECS.get(case, {}).get('headwear') for case in selection['cases'])
+    if not needed:
+        return (['Unexpected headwear scene preparation'] if markers else []), None
+    try:
+        proof = json.loads(markers[0]) if len(markers) == 1 else None
+    except (ValueError, TypeError):
+        proof = None
+    valid = (isinstance(proof, dict) and set(proof) == {'prepared', 'authority', 'rootRetained', 'normalizedItems'}
+             and proof['prepared'] is True and proof['rootRetained'] is True
+             and proof['authority'] == ('server' if selection['kind'] == 'mp' else 'sp')
+             and isinstance(proof['normalizedItems'], list))
+    previous = None
+    for item in proof['normalizedItems'] if valid else []:
+        if (not isinstance(item, dict) or set(item) != {'id', 'fullType', 'location'}
+                or type(item['id']) is not int or item['id'] == -1
+                or (previous is not None and item['id'] <= previous)
+                or any(type(item[key]) is not str or not item[key] for key in ('fullType', 'location'))):
+            valid = False
+            break
+        previous = item['id']
+    return ([] if valid else ['Authority-owned headwear scene preparation/root retention proof missing or inconsistent']), proof
 
 
 HOTBAR_EFFECT_KEYS = {'case', 'providerItem', 'providerType', 'providerLocation', 'providerWorn', 'id', 'fullType', 'container', 'slotIndex', 'slotType', 'model', 'attached', 'primary', 'secondary',
@@ -429,7 +467,14 @@ def _verify_tidy_hotbar(result, selection, case):
     return []
 
 
-CLOTHING_CASES = ('tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap')
+CLOTHING_SPECS = {
+    'tidy-clothing': dict(fullType='Base.Socks_Ankle', location='base:socks'),
+    'tidy-clothing-remove': dict(fullType='Base.Socks_Ankle', location='base:socks'),
+    'tidy-clothing-overlap': dict(fullType='Base.Socks_Ankle', location='base:socks'),
+    'tidy-headwear-hat-remove': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True),
+    'tidy-headwear-full-hat-remove': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True),
+}
+CLOTHING_CASES = tuple(CLOTHING_SPECS)
 CLOTHING_OVERLAP_EFFECT_KEYS = {'primary', 'secondary', 'originalSecondary'}
 
 
@@ -441,22 +486,24 @@ CLOTHING_EFFECT_KEYS = {'id', 'fullType', 'bodyLocation', 'container', 'worn', '
                         'hairUnchanged', 'hairStyle', 'unrelatedHandsPreserved'}
 
 
-def _verify_tidy_clothing(result, selection, remove=False, overlap=False):
+def _verify_tidy_clothing(result, selection, remove=False, overlap=False, case='tidy-clothing'):
+    spec = CLOTHING_SPECS[case]
+    headwear = spec.get('headwear', False)
     value, checkpoint = result.get('tidyClothing'), result.get('clothingCheckpoint')
     tidy = 'P4TidyUpMeister' in selection['mods']
     effect_keys = CLOTHING_EFFECT_KEYS | (CLOTHING_OVERLAP_EFFECT_KEYS if overlap else set())
-    expected_keys = effect_keys | ({'overlap'} if overlap else set()) | {'nativeGenerated', 'authoritativeRestore', 'sharedCompletion', 'unrelatedTailPreserved',
+    expected_keys = effect_keys | ({'headwearSetup'} if headwear else set()) | ({'overlap'} if overlap else set()) | {'nativeGenerated', 'authoritativeRestore', 'sharedCompletion', 'unrelatedTailPreserved',
                                            'sourceSession', 'sourceCompleted'}
     if (not isinstance(value, dict) or set(value) != expected_keys
             or not isinstance(checkpoint, dict) or set(checkpoint) != effect_keys):
         return ['P4 clothing exact effect/checkpoint evidence missing']
-    expected = dict(fullType='Base.Socks_Ankle', container='root', worn=(not tidy if remove else tidy), producer='ISCutHair', producerCompleted=True,
+    expected = dict(fullType=spec['fullType'], container='root', worn=(not tidy if remove else tidy), producer='ISCutHair', producerCompleted=True,
                     hairUnchanged=True, unrelatedHandsPreserved=True, nativeGenerated=int(tidy),
                     authoritativeRestore=tidy and selection['kind'] == 'mp', unrelatedTailPreserved=True, sourceCompleted=tidy)
     if (any(type(value.get(key)) is not type(wanted) or value.get(key) != wanted for key, wanted in expected.items())
             or type(value.get('id')) is not int or value['id'] == -1
             or type(result.get('clothingItem')) is not int or result.get('clothingItem') != value['id']
-            or value.get('bodyLocation') != 'base:socks' or not isinstance(value.get('hairStyle'), str) or not value['hairStyle']
+            or value.get('bodyLocation') != spec['location'] or not isinstance(value.get('hairStyle'), str) or not value['hairStyle']
             or any(name in value['hairStyle'] for name in ('Bald', 'Mohawk', 'Spike', 'Greased', 'Buffont'))):
         return ['P4 clothing exact socks/producer/hands evidence differs']
     session = value.get('sourceSession')
@@ -474,6 +521,11 @@ def _verify_tidy_clothing(result, selection, remove=False, overlap=False):
     if (not isinstance(completion, dict) or completion != expected_completion
             or any(type(item) is not int for item in completion.values())):
         return ['P4 clothing shared completion evidence differs']
+    if headwear:
+        setup = value.get('headwearSetup')
+        if (not isinstance(setup, dict) or setup != dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
+                or any(type(item) is not bool for item in setup.values())):
+            return ['P4 headwear empty slots/native capacity setup evidence missing']
     if overlap:
         primary, secondary = value.get('primary'), value.get('originalSecondary')
         if (any(type(item) is not int or item == -1 for item in (primary, secondary))

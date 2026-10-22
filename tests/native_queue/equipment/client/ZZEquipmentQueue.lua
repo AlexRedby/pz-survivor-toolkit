@@ -3,6 +3,7 @@ if cartSelection.cases[1]=='cart-pickup' then return end
 require 'PZSurvivorToolkit/ActionQueuePanel'
 local Selection=require 'QueueEquipmentSelection'
 local Fixture=require 'QueueEquipmentFixture'
+local Scene=require 'QueueEquipmentScene'
 local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
 local Postprocess=require 'QueueEquipmentPostprocess'
@@ -214,7 +215,11 @@ Events.OnGameStart.Add(function()
   assert(not player:isTimedActionInstant(),'native equipment duration required')
   player:setGhostMode(true);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
   if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
-  if Selection.kind=='sp' then Fixture.position(player) end
+  if Selection.kind=='sp' then
+   Fixture.position(player)
+   local proof=Scene.prepare(player,Selection.cases)
+   if proof then print('[EQUIPMENT_TEST] SCENE_HEADWEAR '..JSON.encode(proof))end
+  end
   for _,id in ipairs(Selection.cases)do
    if Clothing.isCase(id)then Clothing.install(tidy)end
    if Hotbar.isCase(id)then Hotbar.install(tidy)end
@@ -279,6 +284,7 @@ Events.OnTick.Add(function()
    else state=Fixture.prepare(getPlayer(),Selection.cases[index],nil,Selection.options);watch();enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls' end
   elseif phase=='ready' then
    if not ids or not Fixture.available(getPlayer(),ids) then return end
+   if Scene.needed(Selection.cases)and not Scene.available(getPlayer(),ids.sceneSetup)then return end
    assert(ids.case==Selection.cases[index],'wrong authoritative fixture case')
    local player=getPlayer()
    if math.abs(player:getX()-ids.spawn.x)>0.1 or math.abs(player:getY()-ids.spawn.y)>0.1 or player:getZ()~=ids.spawn.z then

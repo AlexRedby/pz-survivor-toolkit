@@ -3,6 +3,20 @@ local function load(name)
  return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/'..name..'.lua'))()
 end
 local modules={QueueEquipmentSlots=load('QueueEquipmentSlots'),QueueEquipmentFloor=load('QueueEquipmentFloor'),QueueEquipmentBulk=load('QueueEquipmentBulk'),QueueEquipmentClothing=load('QueueEquipmentClothing'),QueueEquipmentHotbar=load('QueueEquipmentHotbar')}
+-- Generic consumers call these predicates for every equipment case; only
+-- configuration consumers may assert that their state belongs to Clothing.
+for _,id in ipairs({'hands-chain','hotbar-chain','tidy-hotbar','not-a-case'})do
+ local clothing=modules.QueueEquipmentClothing
+ assert(not clothing.isCase(id))
+ for _,name in ipairs({'overlap','removes','headwear'})do
+  local ok,value=pcall(clothing[name],{id=id})
+  assert(ok and value==false,'non-clothing predicate raised or matched '..id..' '..name)
+ end
+ assert(not pcall(clothing.spec,{id=id}),'unknown clothing configuration must remain strict')
+end
+for _,name in ipairs({'overlap','removes','headwear'})do
+ assert(modules.QueueEquipmentClothing[name]({})==false,'missing case ID must not match a clothing predicate')
+end
 require=function(name) return assert(modules[name],name) end
 local Fixture=load('QueueEquipmentFixture')
 local function book(pages)
@@ -313,3 +327,80 @@ do
  assert(scan(client.root)[3]==actual[3],'failed conservation check must not delete an unrelated belt')
 end
 print('Equipment authority worn baseline checks passed: pre-Prepared clothing snapshots, exact restoration and invalid descriptors.')
+
+-- Load the real scene helper. The Java double keeps removeWornItem(false)
+-- inventory-neutral and models native exclusive-slot removal.
+do
+ local Scene=load('QueueEquipmentScene')
+ ItemBodyLocation={HAT='base:hat',FULL_HAT='base:fullhat'}
+ local group={isExclusive=function(_,target,location)
+  return target=='base:fullhat'and(location=='base:eyes'or location=='base:hat')
+   or location=='base:fullhat'and(target=='base:eyes'or target=='base:hat')
+ end}
+ local calls,sync={},{}
+ local function actor()
+  local root={items={}}
+  function root:getItems()return {size=function()return #self.items end,get=function(_,i)return self.items[i+1]end}end
+  function root:getItemById(id)for _,item in ipairs(self.items)do if item.id==id then return item end end end
+  local player={root=root,worn={}}
+  function player:getInventory()return self.root end
+  function player:getWornItem(location)return self.worn[location]end
+  function player:getWornItems()
+   local entries={};for location,item in pairs(self.worn)do
+    local loc,value=location,item
+    entries[#entries+1]={getLocation=function()return loc end,getItem=function()return value end}
+   end
+   return {size=function()return #entries end,get=function(_,i)return entries[i+1]end,
+    getBodyLocationGroup=function()return group end,
+    contains=function(_,item)for _,value in pairs(self.worn)do if item==value then return true end end;return false end}
+  end
+  function player:removeWornItem(item,drop)
+   assert(drop==false,'scene must explicitly disable the native capacity/drop branch')
+   calls[#calls+1]={player=self,item=item}
+   local target;for location,value in pairs(self.worn)do if value==item then target=location end end
+   assert(target)
+   for location in pairs(self.worn)do if target==location or group:isExclusive(target,location)then self.worn[location]=nil end end
+  end
+  local function item(id,kind,location)
+   local value={id=id,kind=kind,getID=function(self)return self.id end,
+    getFullType=function(self)return self.kind end,getContainer=function()return root end}
+   root.items[#root.items+1]=value;if location then player.worn[location]=value end;return value
+  end
+  local glasses=item(1666075715,'Base.Glasses_Cosmetic_Normal','base:eyes')
+  local shirt=item(12,'Base.Shirt_FormalWhite','base:shirt')
+  return player,glasses,shirt,item
+ end
+ isClient,isServer=function()return false end,function()return true end
+ sendClothing=function(player,location,item)assert(item==nil);sync[#sync+1]={player=player,location=location}end
+ local player,glasses,shirt,add=actor()
+ assert(not Scene.needed({'unknown','hands-chain','tidy-clothing'}))
+ assert(Scene.prepare(player,{'unknown','hands-chain'})==nil and #calls==0)
+ local proof=Scene.prepare(player,{'tidy-clothing','tidy-headwear-hat-remove','tidy-headwear-full-hat-remove'})
+ assert(proof.prepared and proof.rootRetained and proof.authority=='server'and #proof.normalizedItems==1)
+ local record=proof.normalizedItems[1]
+ assert(record.id==glasses.id and record.fullType==glasses.kind and record.location=='base:eyes')
+ assert(#calls==1 and calls[1].item==glasses and #sync==1 and sync[1].location=='base:eyes')
+ assert(#player.root.items==2 and player.root:getItemById(glasses.id)==glasses
+  and player:getWornItem('base:eyes')==nil and player:getWornItem('base:shirt')==shirt)
+ assert(Scene.available(player,proof),'declared baseline should become ready with exact retained glasses')
+ local temporary=add(34,'Base.Hat_BoxingRed','base:fullhat')
+ assert(Scene.prepare(player,{'tidy-headwear-full-hat-remove'})==proof and #calls==1
+  and player:getWornItem('base:fullhat')==temporary,'scene must not normalize between tested actions')
+ assert(not Scene.available(player,proof),'readiness must quietly wait for native clothing replication')
+ player.worn['base:fullhat']=nil
+ isClient,isServer=function()return true end,function()return false end
+ local client,clientGlasses=actor()
+ assert(not Scene.available(client,proof)and client:getWornItem('base:eyes')==clientGlasses and #calls==1)
+ assert(not pcall(Scene.prepare,client,{'tidy-headwear-hat-remove'})and #calls==1,'client cannot own scene edits')
+ assert(Scene.prepare(client,{'unknown','hands-chain'})==nil and #calls==1)
+ client.worn['base:eyes']=nil
+ assert(Scene.available(client,proof),'client should adopt the authoritative scene after SyncClothing')
+ glasses.kind='Base.Hammer'
+ assert(not Scene.available(player,proof)and not pcall(Scene.proof,player),'same-ID changed type must fail conservation')
+ glasses.kind='Base.Glasses_Cosmetic_Normal';table.remove(player.root.items,1)
+ assert(not Scene.available(player,proof)and not pcall(Scene.proof,player),'lost starter item must fail conservation')
+ isClient,isServer=function()return false end,function()return false end
+ local sp=actor();local spProof=Scene.prepare(sp,{'tidy-headwear-full-hat-remove'})
+ assert(spProof.authority=='sp'and Scene.available(sp,spProof)and #sync==1,'SP scene must not send a server clothing packet')
+end
+print('Equipment scene checks passed: real helper, starter glasses, root identity, once-only preparation and authority-owned SyncClothing.')

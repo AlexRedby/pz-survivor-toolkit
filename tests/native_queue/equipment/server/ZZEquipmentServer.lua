@@ -2,6 +2,7 @@ local cartSelection=require 'QueueTestSelection'
 if cartSelection.cases[1]=='cart-pickup' then return end
 if not isServer() then return end
 local Fixture=require 'QueueEquipmentFixture'
+local Scene=require 'QueueEquipmentScene'
 local Clothing=require 'QueueEquipmentClothing'
 local Hotbar=require 'QueueEquipmentHotbar'
 local Selection=require 'QueueTestSelection'
@@ -16,9 +17,14 @@ local function execute(module,command,player,args)
   if command=='Prepare' then
    assert(not session and not pending and Selection.cases[verified+1]==args.case,'out-of-order equipment prepare')
    player:setGhostMode(true)
-   if verified==0 then Fixture.position(player) end
+   if verified==0 then
+    Fixture.position(player)
+    local proof=Scene.prepare(player,Selection.cases)
+    if proof then print('[EQUIPMENT_TEST] SCENE_HEADWEAR '..JSON.encode(proof))end
+   end
    session=Fixture.prepare(player,args.case,nil,Selection.options)
    local ids=Fixture.descriptor(session)
+   ids.sceneSetup=Scene.proof(player)
    ids.spawn={x=player:getX(),y=player:getY(),z=player:getZ()}
    for _,item in ipairs(session.owned) do
     if item:getContainer()==player:getInventory() then sendAddItemToContainer(player:getInventory(),item) end

@@ -66,7 +66,8 @@ class EquipmentTests(unittest.TestCase):
                                                                     flush=count, legacy=0)))
             if case in equipment.CLOTHING_CASES:
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
-                effect = dict(id=955, fullType='Base.Socks_Ankle', bodyLocation='base:socks', container='root', worn=not tidy if case != 'tidy-clothing' else tidy,
+                spec = equipment.CLOTHING_SPECS[case]
+                effect = dict(id=955, fullType=spec['fullType'], bodyLocation=spec['location'], container='root', worn=not tidy if case != 'tidy-clothing' else tidy,
                               producer='ISCutHair', producerCompleted=True, hairUnchanged=True, hairStyle='CrewCut',
                               unrelatedHandsPreserved=True)
                 if case == 'tidy-clothing-overlap':
@@ -77,6 +78,8 @@ class EquipmentTests(unittest.TestCase):
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                       flush=count, legacy=0), unrelatedTailPreserved=True))
+                if spec.get('headwear'):
+                    result['tidyClothing']['headwearSetup'] = dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
                 if case == 'tidy-clothing-overlap':
                     cleanup = [dict(kind='ISEquipWeaponAction', id=951), dict(kind='P4RestoreAction', id=951),
                                dict(kind='ISUnequipAction', id=955)] if tidy else []
@@ -139,6 +142,13 @@ class EquipmentTests(unittest.TestCase):
         rows.append({'event': 'complete', 'cases': cases, 'expected': len(cases), 'performed': len(cases), 'skipped': 0, 'failed': 0})
         return [dict(row, suite='equipment', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1') for row in rows]
 
+    def scene_marker(self):
+        if not any(equipment.CLOTHING_SPECS.get(case, {}).get('headwear') for case in self.selection['cases']):
+            return ''
+        return '[EQUIPMENT_TEST] SCENE_HEADWEAR ' + json.dumps(dict(
+            prepared=True, authority='server' if self.selection['kind'] == 'mp' else 'sp', rootRetained=True,
+            normalizedItems=[dict(id=900, fullType='Base.Glasses_Cosmetic_Normal', location='base:eyes')])) + '\n'
+
     def logs(self, records=None):
         captures=[]
         if self.selection['kind'] == 'mp':
@@ -146,14 +156,14 @@ class EquipmentTests(unittest.TestCase):
                 count=0 if case == 'waiting-cancel' and self.selection['mode'] == 'toolkit' else equipment.RECEIPTS[case]
                 for _ in range(count):
                     captures.append('[EQUIPMENT_TEST] CAPTURE case=' + case + ' kind=ISEquipWeaponAction token=00000000-0000-0000-0000-' + str(len(captures)+1).zfill(12))
-        return '\n'.join(captures + ['[QUEUE_CHECK] ' + json.dumps(row) for row in (records or self.records())]
+        return (self.scene_marker() if self.selection['kind'] == 'sp' else '') + '\n'.join(captures + ['[QUEUE_CHECK] ' + json.dumps(row) for row in (records or self.records())]
                          + ['[EQUIPMENT_TEST] RECEIPT case=' + case for case in self.selection['cases']]
                          + ['[EQUIPMENT_TEST] COMPLETE'])
 
     def verify(self, text):
         (self.root / 'client1-launch.log').write_text(text)
         if self.selection['kind'] == 'mp' and not (self.root / 'server-launch.log').exists():
-            (self.root / 'server-launch.log').write_text('[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
+            (self.root / 'server-launch.log').write_text(self.scene_marker() + '[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
             for case in self.selection['cases']:
                 if case in ('tidy-group', 'tidy-multigroup'):
                     with (self.root / 'server-launch.log').open('a') as log:
@@ -303,6 +313,67 @@ class EquipmentTests(unittest.TestCase):
                     server.write_text(original.replace(marker, marker.replace('951', '955')))
                     self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(original)
+
+    def test_headwear_requires_configured_type_slot_setup_and_exact_server_correlation(self):
+        self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for case in ('tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove'):
+                    def target(rows):
+                        return next(row['outcome']['tidyClothing'] for row in rows if row.get('id') == case)
+                    for field, value in (('fullType', 'Base.Socks_Ankle'), ('bodyLocation', 'base:socks'), ('worn', True),
+                                         ('hairStyle', 'MohawkFlat'), ('sourceCompleted', False), ('nativeGenerated', 2)):
+                        rows = self.records(); target(rows)[field] = value
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field))
+                    for field in ('emptyExclusiveSlots', 'capacityBeforeRemoval'):
+                        for changed in (False, 1, None):
+                            rows = self.records(); target(rows)['headwearSetup'][field] = changed
+                            self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field, changed))
+                    rows = self.records(); target(rows).pop('headwearSetup')
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'Hat_Beany' in line)
+                    server.write_text(original.replace(marker, marker.replace('Hat_Beany', 'Hat_BoxingRed')))
+                    self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
+
+    def test_headwear_scene_requires_single_authority_root_conservation_proof(self):
+        self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            text = self.logs()
+            self.assertEqual(self.verify(text)['issues'], [])
+            path = self.root / ('server-launch.log' if kind == 'mp' else 'client1-launch.log')
+            original = path.read_text()
+            marker = self.scene_marker().strip()
+            proof = json.loads(marker.split('SCENE_HEADWEAR ', 1)[1])
+            invalid = [None, dict(proof, authority='client'), dict(proof, rootRetained=1),
+                       dict(proof, prepared=False), dict(proof, extra=True),
+                       dict(proof, normalizedItems=proof['normalizedItems'] * 2)]
+            for field, value in (('id', True), ('id', -1), ('fullType', ''), ('location', ''), ('extra', True)):
+                changed = copy.deepcopy(proof); changed['normalizedItems'][0][field] = value; invalid.append(changed)
+            for changed in invalid:
+                replacement = '' if changed is None else '[EQUIPMENT_TEST] SCENE_HEADWEAR ' + json.dumps(changed)
+                altered = original.replace(marker, replacement)
+                if kind == 'mp':
+                    path.write_text(altered); result = self.verify(text)
+                else:
+                    result = self.verify(altered)
+                self.assertTrue(result['issues'], (kind, changed))
+            duplicated = original.replace(marker, marker + '\n' + marker)
+            if kind == 'mp':
+                path.write_text(duplicated); result = self.verify(text)
+            else:
+                result = self.verify(duplicated)
+            self.assertTrue(result['issues'])
+            path.write_text(original)
+        self.selection['cases'] = ['hands-chain']
+        self.assertEqual(equipment._verify_scene('', self.selection), ([], None))
+        self.assertTrue(equipment._verify_scene(self.scene_marker() + marker, self.selection)[0])
 
     def test_belt_requires_empty_queue_and_exact_effect_checks(self):
         self.selection['cases'] = ['belt-knife', 'belt-hammer']
@@ -1016,7 +1087,7 @@ local function run(kind,mode,fault,equipment)
  local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode=mode})
  observer.watch({id=hotbar and 'tidy-hotbar'or clothing and (equipment=='clothing-remove'and 'tidy-clothing-remove'or 'tidy-clothing')or nil,
   root=inventory,source=source,baseline={[7]=item},hammer={getID=item.getID,getFullType=item.getFullType},
-  clothingSocks=clothing and item or nil,clothingLocation='base:socks',pickup=hotbar and item or nil,hotbarDetached=true,
+  clothingItem=clothing and item or nil,clothingLocation='base:socks',pickup=hotbar and item or nil,hotbarDetached=true,
   hotbarIndex=1,hotbarType='Back',hotbarLocation='Rifle On Back with Bag',hotbarRestoreAction=hotbar and action or nil,hotbarTwoHands=hotbar})
  if equipment and not clothing and not hotbar then action.item={getID=item.getID,getFullType=item.getFullType} end
  if not enabled then

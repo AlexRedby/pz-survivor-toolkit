@@ -220,7 +220,7 @@ function Fixture.verify(state,mode,checkpoint)
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
- if Clothing.overlap(state)then secondary=state.clothingSocks end
+ if Clothing.overlap(state)then secondary=state.clothingItem end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,'native final hand identities differ')
  if state.id=='bag-capacity' then
   state.expectedWorn[state.location]=nil
@@ -247,9 +247,9 @@ function Fixture.verify(state,mode,checkpoint)
  local expectedWorn=state.expectedWorn
  if Clothing.isCase(state.id) then
   extra.clothingCheckpoint=Clothing.verify(state,Clothing.removes(state))
-  extra.clothingItem=state.clothingSocks:getID()
+  extra.clothingItem=state.clothingItem:getID()
   expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
-  expectedWorn[state.clothingLocation]=Clothing.removes(state)and state.clothingSocks or nil
+  expectedWorn[state.clothingLocation]=Clothing.removes(state)and state.clothingItem or nil
  end
  assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
@@ -359,7 +359,7 @@ function Fixture.settled(state,mode,checkpoint)
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
- if Clothing.overlap(state)then secondary=state.clothingSocks end
+ if Clothing.overlap(state)then secondary=state.clothingItem end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
  for _,book in ipairs(checkpoint and {state.front} or {state.front,state.tail}) do if book:getAlreadyReadPages()~=book:getNumberOfPages() then return false end end
  if state.bat and state.bat:getContainer()~=(cancelled and state.source or state.root) then return false end
@@ -373,7 +373,7 @@ function Fixture.settled(state,mode,checkpoint)
   end
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
- if Clothing.isCase(state.id) and (player:getWornItem(state.clothingLocation)~=(Clothing.removes(state)and state.clothingSocks or nil)
+ if Clothing.isCase(state.id) and (player:getWornItem(state.clothingLocation)~=(Clothing.removes(state)and state.clothingItem or nil)
   or tostring(player:getHumanVisual():getHairModel())~=state.clothingHair)then return false end
  if state.id=='hotbar-chain' or Slots.isBelt(state.id) then
   local item,old=state.hotbarReplacement,state.hotbarInitial
