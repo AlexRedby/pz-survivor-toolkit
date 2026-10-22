@@ -1,9 +1,10 @@
 local Checks=require 'QueueScenarioChecks'
 local Queue=require 'PZSurvivorToolkit/ActionQueue'
 local Policy=require 'PZSurvivorToolkit/ActionQueuePolicy'
+local Fixture=require 'QueueFoodFull'
 local Full={}
 function Full.dispatch(player,ids,case,mode,q,anchor,eat,commands,observed,evidence)
- local quarter=case=='food-full-replacement-after-quarter'and eat(.25,true)or nil
+ local quarter=Fixture.kind(case)=='after-quarter'and eat(.25,true)or nil
  local full=eat(1,true);observed[#observed].label='full'
  if quarter then observed[1].label='quarter'end
  local tailItem=assert(player:getInventory():getItemById(ids.tailId))
@@ -19,7 +20,7 @@ function Full.dispatch(player,ids,case,mode,q,anchor,eat,commands,observed,evide
   if quarter then
    Checks.deniedMove(q,Queue,Policy,full,quarter,false,'edit_resource_amount')
    Checks.unchanged(q,{anchor,quarter,full,tail});evidence.moveRejected=true;evidence.denialReason='edit_resource_amount'
-  elseif case=='food-full-replacement-cancel-pending'then
+  elseif Fixture.kind(case)=='cancel-pending'then
    Checks.waitingCancel(q,Queue,Policy,full,{full},{anchor,tail});commands[1].cancelled=true;evidence.waitingCancel=true
   else
    assert(Policy.evaluateMove(q,tail,full,false).allowed,'independent water cannot precede full food')

@@ -1,6 +1,6 @@
 -- Ordinary exact-ID food portions. Native Eat uses original base hunger, not remaining fractions.
 local Full
-local function isFull(case)return type(case)=='string'and case:find('food-full-replacement-',1,true)==1 end
+local function isFull(case)return type(case)=='string'and (case:find('food-full-replacement-',1,true)==1 or case:find('food-full-fluid-replacement-',1,true)==1)end
 local function full()Full=Full or require 'QueueFoodFull';return Full end
 local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorType='Base.WaterBottle'}
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
@@ -32,7 +32,7 @@ function Fixture.scenario(case)
 end
 local function foodType(case)
  local spec=Fixture.scenario(case)
- return spec.full and 'Base.PanFriedVegetables2'or spec.extraWeight and 'Base.Salad'or spec.consumption and 'Base.CannedPeachesOpen'or spec.replacement and 'Base.BreadSlices'
+ return spec.full and full().spec(case).foodType or spec.extraWeight and 'Base.Salad'or spec.consumption and 'Base.CannedPeachesOpen'or spec.replacement and 'Base.BreadSlices'
   or spec.cookable and (spec.cooked and 'Base.ChickenFillet'or 'Base.Cabbage')
   or spec.utensil and 'Base.OatsRaw'or Fixture.foodType
 end

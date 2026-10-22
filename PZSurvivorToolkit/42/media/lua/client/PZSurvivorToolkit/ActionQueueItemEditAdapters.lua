@@ -530,8 +530,26 @@ local function partialReplacement(item,script)
 end
 
 
+-- Read authored component scripts without constructing a temporary item. In
+-- particular getInitialAmount may draw RNG and is not an emptiness predicate.
+local function emptyFluidOutput(script)
+    if not script:hasComponents() then return true end
+    if not ComponentType or not ComponentType.FluidContainer
+        or not method(script,"getComponentScripts") or not method(script,"getComponentScriptFor") then return false end
+    local components=script:getComponentScripts()
+    if not method(components,"size") or not method(components,"get") or components:size()~=1 then return false end
+    local fluid=components:get(0)
+    if not fluid or type(getClassSimpleName)~="function" or getClassSimpleName(fluid)~="FluidContainerScript"
+        or script:getComponentScriptFor(ComponentType.FluidContainer)~=fluid
+        or not method(fluid,"getInitialFluids") or not method(fluid,"getCapacity") then return false end
+    local initial=fluid:getInitialFluids()
+    if initial~=nil and (not method(initial,"size") or initial:size()~=0) then return false end
+    local capacity=fluid:getCapacity()
+    return finite(capacity) and capacity>0
+end
+
 -- Full consumption allocates a new native item before removing the original.
--- Prove only a plain factory output, never instantiate it during inspection.
+-- Prove a plain or empty-fluid factory output without instantiating it.
 local function fullReplacement(action,item,script)
     if action.percentage~=1 or not finite(action.maxTime) or action.maxTime<=0
         or item:getContainer()~=action.character:getInventory() or action.container~=action.character:getInventory()
@@ -548,9 +566,10 @@ local function fullReplacement(action,item,script)
             if not method(value,name) then return end
         end
         if value:getLuaCreate() or value:getItemConfig() or value:getItemConfigKey()
-            or value:hasComponents() or value:getCount()~=1 or value:getObsolete()
+            or value:getCount()~=1 or value:getObsolete()
             or value:getReplaceOnDeplete() then return end
     end
+    if script:hasComponents() or not emptyFluidOutput(output) then return end
     if tostring(script:getItemType())~="base:food" or tostring(output:getItemType())~="base:normal"
         or not item:getReplaceOnUse() or script:getReplaceOnUse()~=item:getReplaceOnUse()
         or output:getReplaceOnUse() then return end

@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.202
+
+- **Action queue:** Extend pending full-food replacement edits to normal output items with exactly one proven empty native FluidContainer. Inspect authored components without creating items or sampling initial-amount RNG; keep source identity, output dependencies, native effects and the transfer-capacity barrier.
+
 ### 0.1.201
 
 - **Action queue:** Allow independent pending edits for guaranteed full consumption of ordinary root-inventory food that creates one proven plain replacement item. Keep original-item prerequisites, native portions, costs, output creation and Host authority. Unknown factory callbacks/components, state-changing or custom food and transfer-capacity prefixes remain protected.

@@ -626,8 +626,8 @@ end
                                  ('hunger', .8), ('thirst', .8), ('source', 'floor'),
                                  ('anchorAmount', .48), ('anchorCount', 0)]:
                 rows, raw = self.single(case)
-                if field=='deleted' and (case==food.DEPLETION_CASE or case in (food.FULL_MOVE_CASE, food.FULL_QUARTER_CASE)): value=False
-                if field=='hunger' and case==food.FULL_CANCEL_CASE: value=.7
+                if field=='deleted' and (case==food.DEPLETION_CASE or case in (food.FULL_MOVE_CASE, food.FULL_QUARTER_CASE, food.FLUID_FULL_MOVE_CASE, food.FLUID_FULL_QUARTER_CASE)): value=False
+                if field=='hunger' and case in (food.FULL_CANCEL_CASE, food.FLUID_FULL_CANCEL_CASE): value=.7
                 for record in (rows[1], rows[1]['client'], raw[1][1]): record[field] = value
                 rows[1].update(effectsVerified=True, pendingEditsVerified=True)
                 with self.subTest(case=case, field=field, value=value):

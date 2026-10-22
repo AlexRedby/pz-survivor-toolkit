@@ -1727,6 +1727,86 @@ do
                 'unknown matching future selector/producer retains output ordering and cancellation protection: '..kind)
         end
     end
+    local function fluidOutput(s)
+        local food,script,output=fullFood(s)
+        food.base,food.hunger=-.15,-.15
+        food.getFullType=function()return 'Base.CannedPeachesOpen'end
+        food.getReplaceOnUse=function()return 'TinCanEmpty'end
+        food.getReplaceOnUseFullType=function()return 'Base.TinCanEmpty'end
+        script.getReplaceOnUse=function()return 'TinCanEmpty'end
+        script.getHungerChange=function()return -.15 end
+        food.getActualWeight=function()return .8 end
+        output.weight=.2
+        s.scripts['Base.TinCanEmpty']=output
+        ComponentType={FluidContainer={}}
+        local component={class='FluidContainerScript',capacity=.3}
+        component.getCapacity=function(self)return self.capacity end
+        component.getInitialFluids=function(self)return self.initial end
+        component.getInitialAmount=function()error('inspection must never draw initial-amount RNG')end
+        local list={component}
+        list.size=function(self)return self.count or #self end
+        list.get=function(self,index)return self[index+1]end
+        output.components=true
+        output.getComponentScripts=function()return list end
+        output.getComponentScriptFor=function(_,kind)return kind==ComponentType.FluidContainer and component end
+        return food,script,output,component,list
+    end
+    for _,client in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        local food,script,output,component=fluidOutput(s)
+        local full,quarter=s.eat(food,1),s.eat(food,.25)
+        local previousFactory=InventoryItemFactory
+        InventoryItemFactory={CreateItem=function()error('inspection must not create an output prototype')end}
+        local edit,kind=s.adapters.food(full)
+        assert(edit and kind=='Base.TinCanEmpty','one empty fluid component permits bounded full replacement')
+        assert(s.model.evaluate({entry(s,quarter),entry(s,full)}).status=='allowed')
+        assert(s.model.evaluate({entry(s,full),entry(s,quarter)}).status=='denied')
+        local contract=s.policy.inspect(full)
+        assert(contract.outputTypes['Base.TinCanEmpty']and contract.capacityReplacement
+            and not contract.capacityNonIncreasing and not contract.capacityRequiresEdit,
+            'empty-fluid output preserves exact type dependency and add-before-remove transfer protection')
+        s.water.container=s.root
+        local head=s.f.action(ISReadABook,{item=s.item()});head.action={};local tail=s.drink(.25)
+        local q=s.f.queue(head,full,tail)
+        assert(s.policy.evaluateMove(q,tail,full,false).allowed and s.policy.evaluateCancel(q,full).allowed,
+            'independent waiting drink and full can consumption may move/cancel')
+        component.initial={size=function()return 0 end,get=function()error('an empty list must not be read')end}
+        assert(select(2,s.adapters.food(full))=='Base.TinCanEmpty','an empty native fluid list is also empty initialization')
+        assert(food.hunger==-.15 and full.percentage==1 and component.capacity==.3)
+        InventoryItemFactory=previousFactory
+    end
+    for _,change in ipairs({'two-components','missing-component','wrong-class','subclass','foreign-lookup','initial-fluid','malformed-initial',
+        'zero-capacity','negative-capacity','nan-capacity','infinite-capacity','missing-capacity','missing-initial-getter',
+        'missing-list-getter','missing-type-lookup','missing-size','missing-get','missing-component-type','source-component',
+        'output-callback','output-config','output-config-key','wrong-output-type'})do
+        local s=setup();local food,script,output,component,list=fluidOutput(s);local full=s.eat(food,1)
+        if change=='two-components'then list[2]={class='LuaComponentScript'}
+        elseif change=='missing-component'then list[1]=nil;list.count=1
+        elseif change=='wrong-class'then component.class='EnergyScript'
+        elseif change=='subclass'then component.class='CustomFluidContainerScript'
+        elseif change=='foreign-lookup'then output.getComponentScriptFor=function()return {}end
+        elseif change=='initial-fluid'then component.initial={size=function()return 1 end,get=function()error('initial fluids must not be sampled')end}
+        elseif change=='malformed-initial'then component.initial={}
+        elseif change=='zero-capacity'then component.capacity=0
+        elseif change=='negative-capacity'then component.capacity=-1
+        elseif change=='nan-capacity'then component.capacity=0/0
+        elseif change=='infinite-capacity'then component.capacity=math.huge
+        elseif change=='missing-capacity'then component.getCapacity=nil
+        elseif change=='missing-initial-getter'then component.getInitialFluids=nil
+        elseif change=='missing-list-getter'then output.getComponentScripts=nil
+        elseif change=='missing-type-lookup'then output.getComponentScriptFor=nil
+        elseif change=='missing-size'then list.size=nil
+        elseif change=='missing-get'then list.get=nil
+        elseif change=='missing-component-type'then ComponentType=nil
+        elseif change=='source-component'then script.components=true
+        elseif change=='output-callback'then output.onCreate='custom.callback'
+        elseif change=='output-config'then output.config={}
+        elseif change=='output-config-key'then output.configKey='custom'
+        elseif change=='wrong-output-type'then output.getItemType=function()return 'base:container'end end
+        local edit,kind=s.adapters.food(full)
+        assert(not kind and (not edit or s.model.evaluate({{action=full,edit=edit}}).status~='allowed'),
+            'unproved fluid output stays protected: '..change)
+    end
     local mutations={
         {'onCreate','callback'},{'config',{}},{'configKey','custom'},{'components',true},
         {'count',2},{'count',0},{'count',0/0},{'obsolete',true},
