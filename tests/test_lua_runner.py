@@ -19,7 +19,7 @@ class LuaRunner(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.names = set(run_tests.TAG_TESTS) | set(run_tests.ACTION_TESTS) | set(run_tests.EXTRA_TESTS)
+        self.names = set(run_tests.discover_tests(run_tests.ROOT))
         self.names.add("test_wishlist_model.lua")
         for name in self.names:
             path = self.root / "tests" / name
@@ -33,6 +33,7 @@ class LuaRunner(unittest.TestCase):
             path = self.root / "PZSurvivorToolkit/42/media/lua/shared/Translate" / language
             path.mkdir(parents=True)
             (path / "UI.json").write_text("{}")
+        self.owned_root = str(self.root / "PZSurvivorToolkit/42/media/lua")
         self.executions = []
         self.output = io.StringIO()
 
@@ -68,14 +69,13 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual([name for name, _ in self.executions],
                          ["test_tv_controls.lua", "test_wishlist_model.lua"])
 
-    def test_new_extra_registration_is_executed_without_a_second_dispatch_entry(self):
+    def test_new_top_level_check_is_discovered_and_executed_without_registration(self):
         name = "test_new_extra.lua"
         (self.root / "tests" / name).write_text(name)
-        with patch.object(run_tests, "EXTRA_TESTS", (*run_tests.EXTRA_TESTS, name)):
-            self.invoke("--test", name)
-        self.assertEqual(self.executions, [(name, {"ProjectRoot": str(self.root)})])
+        self.invoke("--test", name)
+        self.assertEqual(self.executions, [(name, {"ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root})])
 
-    def test_default_keeps_all_groups_and_reconnect_variants(self):
+    def test_default_keeps_all_checks_and_reconnect_variants(self):
         self.invoke()
         names = [name for name, _ in self.executions]
         conditional = {"test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
@@ -92,7 +92,8 @@ class LuaRunner(unittest.TestCase):
         self.invoke("--test", "test_tv_controls", "--tv-source", str(source),
                     "--native-mod-options", "/nonexistent/unrelated-options.lua")
         self.assertEqual(self.executions, [("test_tv_controls.lua",
-                         {"ProjectRoot": str(self.root), "TVSource": "upstream TV",
+                         {"ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root,
+                          "TVSource": "upstream TV",
                           "NativeTVWindowSource": "native window"})])
 
     def test_unrelated_source_paths_do_not_block_any_test_group(self):
@@ -162,7 +163,7 @@ class LuaRunner(unittest.TestCase):
         self.executions.clear()
         self.invoke("--test", "test_quartermaster_craft_ui", "--native-action-root", "/native")
         self.assertEqual(self.executions, [("test_quartermaster_craft_ui.lua",
-                         {"ProjectRoot": str(self.root), "NativePZLuaRoot": "/native",
+                         {"ProjectRoot": str(self.root), "NativePZLuaRoot": "/native", "NativeActionRoot": "/native",
                           "NativeQuartermasterLuaRoot": str(self.root / "PZSurvivorToolkit/42/media/lua")})])
 
     def test_quartermaster_checks_use_owned_sources_without_external_options(self):
@@ -261,6 +262,47 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual('MonitorConfig.lua', variables['NativeNavigatorConfig'])
         self.assertEqual('MonitorRender.lua', variables['NativeNavigatorRender'])
         self.assertEqual('NavigatorMonitorDrag.lua', variables['NativeNavigatorDrag'])
+
+    def test_discovery_does_not_admit_nested_native_scenarios_or_helper_files(self):
+        for name in ("helper.lua", "native_queue/test_scenario.lua", "native_tags/check_unregistered.lua"):
+            path = self.root / "tests" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("must not execute")
+        (self.root / "tests/test_directory.lua").mkdir()
+        self.invoke("--list")
+        self.assertEqual(set(self.output.getvalue().splitlines()), self.names)
+        self.assertEqual(self.executions, [])
+
+    def test_fire_variants_are_isolated_and_keep_the_same_source_paths(self):
+        self.invoke("--test", "test_action_queue_fire", "--native-action-root", "/native",
+                    "--wishlist-workshop-root", "/workshop", "--saucedcarts-source", "/carts")
+        flags = ["FireTestBCPreinstalled", "FireTestBCForeignPredecessor", "FireTestQMBeforeBC",
+                 "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
+        self.assertEqual(len(self.executions), 7)
+        for index, (name, variables) in enumerate(self.executions):
+            with self.subTest(index=index):
+                self.assertEqual(name, "test_action_queue_fire.lua")
+                self.assertEqual(variables["NativeActionRoot"], "/native")
+                self.assertEqual(variables["NativeWishlistWorkshopRoot"], "/workshop")
+                self.assertEqual(variables["SaucedCartsSource"], "/carts")
+                self.assertEqual(variables["NativeQuartermasterLuaRoot"], self.owned_root)
+                self.assertEqual({flag for flag in flags if variables.get(flag)},
+                                 set() if index == 0 else {flags[index - 1]})
+        self.executions.clear()
+        self.invoke("--test", "test_action_queue_fire", "--native-action-root", "/native")
+        self.assertEqual(len(self.executions), 1)
+
+    def test_common_source_paths_are_available_to_new_checks_without_new_dispatch(self):
+        name = "test_new_paths.lua"
+        (self.root / "tests" / name).write_text(name)
+        self.invoke("--test", name, "--native-action-root", "/native",
+                    "--wishlist-game-root", "/game", "--wishlist-workshop-root", "/workshop",
+                    "--saucedcarts-source", "/carts")
+        self.assertEqual(self.executions, [(name, {
+            "ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root,
+            "NativeActionRoot": "/native", "NativeWishlistGameRoot": "/game",
+            "NativeWishlistWorkshopRoot": "/workshop", "SaucedCartsSource": "/carts",
+        })])
 
     def test_profile_listing_needs_no_lua_execution(self):
         self.invoke('--list-integrations')

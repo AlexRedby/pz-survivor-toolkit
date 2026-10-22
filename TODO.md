@@ -108,6 +108,8 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
+- [ ] Queue chat: repair the native-source `test_action_queue_batch_controller` fixture initialization. On B42.21, `python3 tools/run_tests.py --game "$PZ_GAME" --test test_action_queue_batch_controller` fails at fixture line 377 through `ISHandcraftAction.stop` and `ActionQueue.lua:257` with `Settlement` nil; the pre-consolidation runner reproduces the same failure. Gate: the focused native-source check passes without weakening its native stop/cleanup assertions.
+
 - [ ] Extend the common scenario contracts beyond equipment, verified food/fluid cases and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
