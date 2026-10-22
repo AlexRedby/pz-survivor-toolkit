@@ -1021,7 +1021,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.47
 
-- **Wooden cart clearance:** Fit the held shafts to the current render slot's bilateral leg/source-trouser cage, with a bounded lateral correction and exact calibrated source hashes. Retain native feet/root movement, the outgoing inventory envelope and closed grip; leave unsupported assets and unavailable corridors unchanged. Native verification is pending.
+- **Wooden cart clearance:** Fit the held shafts to the current render slot's bilateral leg/source-trouser cage, with a bounded lateral correction and exact calibrated source hashes. Retain native feet/root movement, the outgoing inventory envelope and closed grip; leave unsupported assets and unavailable corridors unchanged. Selected macOS B42.21 SP/Host inventory and held-motion captures are clean, with no measured source-cage contacts; complete rendered-frame, GPU garment and broader-variant coverage remain open.
 
 ### 0.1.46
 
