@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Native snapshots:** Prefer independent copy-on-write file clones for mod copies on macOS, with ordinary copying when cloning is unavailable. Preserve file metadata, source/snapshot hash checks and conservative disk reserves; writes to a snapshot remain private to that file.
+
 - **B42 mod sources:** Match the game's major/minor branch selection and version/common metadata precedence. Preserve common content alongside future-only branches, accept compatible patch-suffixed folders and reject legacy root metadata/content. Native snapshots use the same selected branch for their empty engine-required directories; original mod files and full-source locks remain unchanged.
 
 ## Selected mod set

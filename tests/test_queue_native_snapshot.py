@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import native, worlds, pack, runner, admission, report
+from queue_checks import native, worlds, pack, runner, admission, report, snapshot_copy
 
 
 class NativeSnapshotTests(unittest.TestCase):
@@ -367,6 +367,38 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(original, "changed after preparation")
         self.assertNotEqual(source[str(original)], native.sha256(original))
         self.assertNotEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_mod_snapshot_copies_are_sealed_and_isolated_between_source_and_peers(self):
+        cloned = []
+
+        def clone(source, target, flags):
+            source, target = Path(os.fsdecode(source)), Path(os.fsdecode(target))
+            cloned.append((source, target))
+            shutil.copyfile(source, target)
+            return 0
+
+        with patch.object(snapshot_copy, '_CLONEFILE', side_effect=clone):
+            output = self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])
+        original = self.project / 'Toolkit/42/media/lua/shared/test.lua'
+        relative = 'mods/PZSurvivorToolkit/42/media/lua/shared/test.lua'
+        copies = [output / role / relative for role in ('server', 'client1', 'client2')]
+        payload = original.read_bytes()
+        for copied in copies:
+            self.assertIn((original, copied), cloned)
+            self.assertEqual(payload, copied.read_bytes())
+            self.assertFalse(os.path.samefile(original, copied))
+        self.assertEqual(len(copies), len({(path.stat().st_dev, path.stat().st_ino) for path in copies}))
+        self.assertEqual([], report.verify_manifest(output, 'snapshot-hashes.json'))
+        self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+        copies[0].write_bytes(b'changed server snapshot')
+        self.assertEqual(payload, original.read_bytes())
+        self.assertEqual(payload, copies[1].read_bytes())
+        self.assertEqual(payload, copies[2].read_bytes())
+        self.assertTrue(any(str(copies[0].relative_to(output)) in issue for issue in
+                            report.verify_manifest(output, 'snapshot-hashes.json')))
+        original.write_bytes(b'changed source after preparation')
+        self.assertEqual(payload, copies[1].read_bytes())
+        self.assertEqual(payload, copies[2].read_bytes())
 
     def test_live_game_tree_membership_and_contents_are_checked(self):
         output = self.prepare()

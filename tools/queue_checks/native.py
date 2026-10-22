@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from . import adapters, worlds, pack, admission, report, coop
+from . import adapters, worlds, pack, admission, report, coop, snapshot_copy
 from .mod_selection import (
     MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
     mod_layers, mod_info, selected_mod_version,
@@ -275,7 +275,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
     roles = adapters.roles(selection)
-    # copytree materializes logical file sizes, including sparse files; allow allocation/metadata overhead.
+    # Budget for ordinary-copy fallback and later private writes to clones;
+    # allow allocation/metadata overhead, including sparse-file materialization.
     def copy_size(paths):
         return sum(((path.stat().st_size + 4095) // 4096 + 1) * 4096 for path in paths)
 
@@ -295,7 +296,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             (cache / directory).mkdir(parents=True)
         for identifier, source in locations.items():
             target = cache / "mods" / identifier
-            shutil.copytree(source, target)
+            shutil.copytree(source, target, copy_function=snapshot_copy.copy_file)
             expected = next(row["files"] for row in manifest if row["id"] == identifier)
             if hashes(target) != expected:
                 raise RuntimeError("Mod changed while copying snapshot: " + identifier)
