@@ -138,4 +138,4 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Automatic storage transfers
 
-- [ ] Propose an authoritative fix for native Host light-item batch capacity: B42.21 validates each requested item before registering the whole batch, so their combined weight and concurrent reservations can overfill the destination. Local aggregate checks cannot guarantee server capacity. Preserve native batching; agree the server-side change separately from DepositAction's local validity/rejection fix.
+- [ ] Await user decision on native Host batch admission: include earlier items from the same Request in native capacity reservations through a scoped, nonexecuting shadow prefix. Preserve native batching and existing per-item rules; reject the whole batch before effects when it does not fit. Prove capacity, item-size/admission, carried/vehicle endpoints, competing requests and unchanged accepted transfers before shipping. Do not introduce prefix-only success or a second transfer protocol. The proposal addresses Request admission, not arbitrary scripts adding items after acceptance.
