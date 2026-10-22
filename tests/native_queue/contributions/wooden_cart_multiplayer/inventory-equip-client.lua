@@ -13,7 +13,7 @@ assert(user=='client1' or user=='client2','Unknown inventory-equip role')
 local directory=assert(config.videoRoot[user]);assert(directory:match('^/'),'Absolute role video root required')
 local spec,epoch,action,video,ack,tailAt=nil,nil,nil,false,false,nil
 local started,prepared,armed,done,observed=false,false,false,false,false
-local phase,lastReady,lastSample,since,menuAt,walkX,walkY='setup',0,0,nil,nil,nil,nil
+local phase,lastReady,lastSample,lastPending,since,menuAt,walkX,walkY='setup',0,0,0,nil,nil,nil,nil
 local function emit(event,row)
  row=row or {};row.producer=P.producer;row.actor=user;row.event=event;row.wall=getTimestampMs()
  print('[CART_MP_INVENTORY_EQUIP] '..J.encode(row))
@@ -32,6 +32,15 @@ end
 local function owner()
  local online=getOnlinePlayers();for i=0,online:size()-1 do local p=online:get(i);if p:getUsername()=='client1' and p:getOnlineID()==spec.ownerID then return p end end
 end
+local function outfit(p)
+ local pants=p:getWornItem(ItemBodyLocation.PANTS);local visual=pants and pants:getVisual()
+ local clothing=visual and visual:getClothingItem();local model=clothing and clothing:getModel(p:isFemale())
+ return {female=p:isFemale(),pantsType=pants and pants:getFullType() or '',
+  pantsModel=model and model:lower():gsub('\\','/'):gsub('%.x$','') or '',wornCount=p:getWornItems():size()}
+end
+local function pending(stage,reason,now)
+ if now-lastPending>=1000 then lastPending=now;emit('pending',{phase=stage,reason=reason,id=spec.id,ownerID=spec.ownerID}) end
+end
 local function inspect(p)
  local a,b=p:getPrimaryHandItem(),p:getSecondaryHandItem();local cart,count=nil,0
  if user=='client1' then
@@ -48,13 +57,13 @@ local function inspect(p)
   local sq=assert(getCell():getGridSquare(x,y,p:getZ()),'Inventory-equip capture pad unloaded')
   local objects=sq:getWorldObjects();for i=0,objects:size()-1 do local item=objects:get(i):getItem();if item and item:getID()==spec.id then worlds=worlds+1 end end
  end end
- local pants=p:getWornItem(ItemBodyLocation.PANTS);local model=pants and pants:getVisual() and pants:getVisual():getClothingItem():getModel(p:isFemale())
+ local worn=outfit(p)
  return {producer=P.producer,actor=user,phase=phase,wall=getTimestampMs(),id=spec.id,ownerID=p:getOnlineID(),variant=c.name,female=p:isFemale(),cartType=cart and cart:getFullType() or '',
   itemAvailable=cart~=nil,cargoIDs=table.concat(ids,'|'),cargoCount=cargoCount,cargoWeight=weight,
   inventoryScope=user=='client2' and 'remote-hand-snapshot' or 'owner-inventory',inventoryCount=user=='client1' and count or nil,
   primaryID=a and a:getID() or -1,secondaryID=b and b:getID() or -1,handSameItem=a~=nil and a==b,
   worldCount=worlds,worldAttached=cart and cart:getWorldItem()~=nil or false,luaActions=#queue(p),nativeActions=p:getCharacterActions():size(),hasPath=p:hasPath(),
-  pantsType=pants and pants:getFullType() or '',pantsModel=model and model:lower():gsub('\\','/'):gsub('%.x$','') or '',wornCount=p:getWornItems():size(),
+  pantsType=worn.pantsType,pantsModel=worn.pantsModel,wornCount=worn.wornCount,
   x=p:getX(),y=p:getY(),z=p:getZ(),moving=p:isPlayerMoving(),running=p:isRunning(),sprinting=p:isSprinting(),nativeState=cartMPState(p)}
 end
 local function findPush(context)
@@ -136,6 +145,8 @@ Events.OnTick.Add(function()
   local target=owner();if not target then return end
   if user=='client2' then cartMPCamera(target) end
   if not epoch then
+   local ready,reason=P.outfitReady(outfit(target),spec)
+   if not ready then pending('pre-start-outfit',reason,now);return end
    if now-lastReady>1000 then lastReady=now;send('Armed',{id=spec.id,ownerID=spec.ownerID});armed=true end;return
   end
   cartMPHideUI()
@@ -174,10 +185,11 @@ Events.OnTick.Add(function()
    send('Check',row);phase='await-tail';emit('native-finished',row)
   end
   if phase=='settled-tail' and tailAt then
-   local row=inspect(target);local ready=pcall(P.settled,row,spec,user)
-   if user=='client2' and ready and not observed then observed=true;send('Observation',row);emit('observer',row) end
+   local row=inspect(target);local ready,reason=P.settledReady(row,spec,user)
+   if not ready then pending('settled-tail',reason,now) end
+   if user=='client2' and ready and not observed then P.settled(row,spec,user);observed=true;send('Observation',row);emit('observer',row) end
    if ack and now-tailAt>=2200 then
-    assert(ready,'Tail endpoint lost exact cart/outfit');assert(toolkitVideoStop(),'Inventory-equip video stop rejected');phase='video-flush'
+    P.settled(row,spec,user);assert(toolkitVideoStop(),'Inventory-equip video stop rejected');phase='video-flush'
    end
   elseif phase=='video-flush' then
    local status=toolkitVideoStatus();assert(status.state~='failed',status.error);if status.state~='completed' then return end

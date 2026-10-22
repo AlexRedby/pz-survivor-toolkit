@@ -5,6 +5,7 @@ local J=require 'CartMPJSON'
 local P=require 'CartMPInventoryEquipProtocol'
 local c=P.variant(config.options.cart_inventory_equip_variant or 'female-empty')
 local players,armed,finished={},{},{}
+local visualResent=false
 local spec,origin,epoch,phase,pending,observed,ack,last,since,pendingSince=nil,nil,nil,'setup',false,false,false,0,nil,nil
 local function emit(event,row)
  row=row or {};if row.actor and row.actor~='server' then row.receivedActor=row.actor end
@@ -71,6 +72,11 @@ Events.OnClientCommand.Add(function(module,command,p,args)
    row.minX=origin.minX;row.minY=origin.minY;row.size=origin.size;row.margin=origin.margin
    p:teleportTo(math.floor(row.x),math.floor(row.y),row.z)
    sendServerCommand(p,module,'Setup',row)
+   if not visualResent and players.client1 and players.client2 then
+    -- The first native clothing broadcast can precede the observer's connection.
+    -- Resend the exact authoritative setup once both owned recipients exist.
+    syncVisuals(players.client1);sendHumanVisual(players.client1);visualResent=true
+   end
   elseif command=='Armed' then
    assert(spec and args.id==spec.id and args.ownerID==spec.ownerID,'Arming wrong cart/owner')
    armed[user]=true
@@ -103,10 +109,11 @@ Events.OnTick.Add(function()
   if not epoch or now<epoch or now-last<100 or ack then return end;last=now
   local row=state(players.client1);P.match(row,spec,'server');emit('sample',row)
   if pending and observed then
-   local valid=pcall(P.settled,row,spec,'server')
+   local valid=P.settledReady(row,spec,'server')
    if not valid then pendingSince=nil;return end
    pendingSince=pendingSince or now
    if now-pendingSince>=200 then
+    P.settled(row,spec,'server')
     ack=true;row.ok=true;row.holdMs=now-pendingSince;emit('ack',row);broadcast('Ack',row)
    end
   end

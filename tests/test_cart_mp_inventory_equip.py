@@ -316,6 +316,163 @@ assert(#receipts==1 and receipts[1].duration==1)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
+    def test_both_clients_wait_for_native_outfit_before_arming(self):
+        script = r'''
+local protocol=dofile(%s)
+local nativeAssert=assert
+for _,role in ipairs({'client1','client2'}) do
+ local now,armed,falseAsserts,visuals=0,0,0,0
+ local handlers={}
+ assert=function(value,message) if not value then falseAsserts=falseAsserts+1 end;return nativeAssert(value,message) end
+ Events=setmetatable({}, {__index=function(_,name) return {Add=function(fn) handlers[name]=fn end} end})
+ local noOp=function() end
+ local pants={getFullType=function() return 'Base.Trousers_JeanBaggy' end,getBodyLocation=function() return 'Pants' end}
+ function pants:getVisual() return {getClothingItem=function()
+  if now<23000 then return nil end
+  return {getModel=function() return now<24000 and 'Skinned/Clothes/Bob_Trousers.x' or 'Skinned/Clothes/Kate_Trousers.x' end}
+ end} end
+ local clothes={[11]={getBodyLocation=function() return 'Shirt' end},[12]=pants,[13]={getBodyLocation=function() return 'Shoes' end}}
+ local function player(name,id)
+  local p={name=name,id=id,worn=0,female=false}
+  function p:getUsername() return self.name end
+  function p:getOnlineID() return self.id end
+  function p:isFemale() if role=='client2' and self.id==7 then return now>=10000 end;return self.female end
+  function p:setFemale(value) self.female=value end
+  function p:getDescriptor() return {setFemale=noOp} end
+  function p:getHumanVisual() return {setHairModel=noOp,setBeardModel=noOp} end
+  function p:clearWornItems() self.worn=0 end
+  function p:setWornItem() self.worn=self.worn+1 end
+  function p:getWornItems() return {size=function() return role=='client2' and self.id==7 and (now>=22000 and 3 or 0) or self.worn end} end
+  function p:getWornItem() if role=='client2' and self.id==7 and now<22000 then return nil end;return pants end
+  function p:getInventory() return {getItemById=function(_,id) return id==42 and {} or clothes[id] end} end
+  function p:getCharacterActions() return {isEmpty=function() return true end} end
+  function p:hasPath() return false end
+  function p:getPrimaryHandItem() return nil end
+  function p:getSecondaryHandItem() return nil end
+  for _,name in ipairs({'setGodMod','setGhostMode','setAutoDrink','resetModel','teleportTo','setX','setY','setZ',
+   'setNextX','setNextY','setLastX','setLastY','setLastZ','ensureOnTile','setCurrentSquareFromPosition','setMovingSquareNow'}) do p[name]=noOp end
+  return p
+ end
+ local wearer=player('client1',7);local localPlayer=role=='client1' and wearer or player('client2',8)
+ local selection={disposable=true,kind='mp',ffmpeg='/owned/ffmpeg',videoRoot={client1='/owned/client1',client2='/owned/client2'},
+  options={cart_inventory_equip=true,mp_host=true,cart_inventory_equip_variant='female-empty'}}
+ function require(name)
+  if name=='QueueTestSelection' then return selection end
+  if name=='CartMPInventoryEquipProtocol' then return protocol end
+  if name=='CartMPJSON' then return {encode=function() return '{}' end} end
+  if name=='TimedActions/ISTimedActionQueue' then ISTimedActionQueue={getTimedActionQueue=function() return {queue={}} end} end
+  return {}
+ end
+ function getFileReader() return {readLine=function() return role end,close=noOp} end
+ function getPlayer() return localPlayer end
+ function getOnlinePlayers() return {size=function() return 1 end,get=function() return wearer end} end
+ function getTimestampMs() return now end
+ function getCore() return {setOptionPauseOnFocusloss=noOp,setOptionAutoDrink=noOp} end
+ function sendClientCommand(module,command,args)
+  nativeAssert(module=='CartMPInventoryEquip')
+  if command=='Armed' then nativeAssert(now>=24000,'Armed before the actual native model arrived');armed=armed+1 end
+ end
+ function sendVisual(p) nativeAssert(role=='client1' and p==wearer);visuals=visuals+1 end
+ cartLabDrive=noOp;cartLabGait=noOp;cartLabPoseHeading=noOp
+ ItemBodyLocation={PANTS='Pants'}
+ function cartMPZoom(observer) return observer and 1 or .25 end
+ function cartMPCamera(p) nativeAssert(p==wearer) end
+ nativeAssert(assert(loadfile(%s))())
+ handlers.OnGameStart()
+ handlers.OnServerCommand('CartMPInventoryEquip','Setup',{producer=protocol.producer,id=42,ownerID=7,variant='female-empty',
+  female=true,cartType=protocol.cartType,clothes={11,12,13},x=10.5,y=20.5,z=0,minX=0,minY=0,size=64,margin=2})
+ for time=50,23950,50 do now=time;handlers.OnTick() end
+ nativeAssert(armed==0 and falseAsserts==0,'Pending remote outfit asserted or armed prematurely')
+ now=24000;handlers.OnTick();nativeAssert(armed==1 and falseAsserts==0,'Expected native outfit did not release start gate')
+ now=24500;handlers.OnTick();nativeAssert(armed==1,'Readiness emitted an unbounded Armed burst')
+ nativeAssert(visuals==(role=='client1' and 1 or 0),'Observer forced a visual state')
+end
+assert=nativeAssert
+''' % (json.dumps(str(HERE / 'inventory-equip-protocol.lua')), json.dumps(str(HERE / 'inventory-equip-client.lua')))
+        result = subprocess.run([shutil.which('luajit'), '-'], input=script, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
+    def test_readiness_poll_is_nonthrowing_but_final_outfit_and_ack_identity_are_strict(self):
+        script = r'''
+local P=dofile(%s)
+local check=assert;local failedAsserts=0
+assert=function(value,message) if not value then failedAsserts=failedAsserts+1 end;return check(value,message) end
+local spec={id=42,ownerID=7,variant='female-empty',female=true,cargoIDs='',cargoCount=0,cargoWeight=0}
+local row={producer=P.producer,actor='client2',id=42,ownerID=7,variant='female-empty',female=true,cartType=P.cartType,
+ cargoIDs='',cargoCount=0,cargoWeight=0,worldCount=0,worldAttached=false,inventoryScope='remote-hand-snapshot',
+ phase='settled-tail',primaryID=42,secondaryID=42,handSameItem=true,nativeActions=0,luaActions=0,hasPath=false,
+ pantsType='',wornCount=0,pantsModel=''}
+for i=1,1500 do
+ local ready,reason=P.outfitReady(row,spec);check(not ready and reason:match('^outfit:'))
+ ready,reason=P.settledReady(row,spec,'client2');check(not ready and reason:match('^outfit:'))
+end
+check(failedAsserts==0,'Pending polling invoked assert')
+local ok,reason=pcall(P.settled,row,spec,'client2');check(not ok and reason:find('outfit:',1,true),'Final wrong outfit accepted')
+row.pantsType='Base.Trousers_JeanBaggy';row.wornCount=3;row.pantsModel='skinned/clothes/kate_trousers'
+check(P.settledReady(row,spec,'client2') and P.settled(row,spec,'client2'))
+row.ownerID=8
+local ready,pending=P.settledReady(row,spec,'client2');check(not ready and pending:match('^identity:'))
+ok,reason=pcall(P.settled,row,spec,'client2');check(not ok and reason:find('authoritative identity',1,true))
+row.actor='server';row.ownerID=7;row.inventoryScope='owner-inventory';row.inventoryCount=1;row.luaActions=nil;row.queueScope='native-server-only'
+check(P.settled(row,spec,'server'))
+row.ownerID=8;ok,reason=pcall(P.settled,row,spec,'server');check(not ok and reason:find('authoritative identity',1,true),'Wrong authoritative Ack owner accepted')
+row.ownerID=7;row.pantsModel='skinned/clothes/bob_trousers'
+ok,reason=pcall(P.settled,row,spec,'server');check(not ok and reason:find('outfit:',1,true),'Wrong authoritative Ack outfit accepted')
+check(not P.outfitReady(nil,spec) and not P.settledReady(nil,spec,'client2'),'Missing readiness snapshot accepted')
+assert=check
+''' % json.dumps(str(HERE / 'inventory-equip-protocol.lua'))
+        result = subprocess.run([shutil.which('luajit'), '-'], input=script, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
+    def test_server_resends_native_visuals_once_after_both_roles_receive_setup(self):
+        script = r'''
+local P=dofile(%s)
+local noOp=function() end
+for _,order in ipairs({{'client1','client2'},{'client2','client1'}}) do
+ local handlers,setup={},{};local clothing,human=0,0
+ Events=setmetatable({}, {__index=function(_,name) return {Add=function(fn) handlers[name]=fn end} end})
+ function require(name)
+  if name=='QueueTestSelection' then return {disposable=true,kind='mp',options={mp_host=true,cart_inventory_equip=true}} end
+  if name=='CartMPInventoryEquipProtocol' then return P end
+  if name=='CartMPJSON' then return {encode=function() return '{}' end} end
+  error('Unexpected server dependency '..name)
+ end
+ local players={}
+ for _,name in ipairs({'client1','client2'}) do
+  players[name]={getUsername=function() return name end,getCurrentSquare=function() return {} end,teleportTo=noOp}
+ end
+ function getTimestampMs() return 1000 end
+ function sendServerCommand(player,module,command)
+  assert(module=='CartMPInventoryEquip' and command=='Setup');setup[player:getUsername()]=true
+ end
+ function syncVisuals(player) assert(player==players.client1 and setup.client1 and setup.client2);clothing=clothing+1 end
+ function sendHumanVisual(player) assert(player==players.client1 and setup.client1 and setup.client2);human=human+1 end
+ assert(assert(loadfile(%s))())
+ local function setUpvalue(name,value)
+  for i=1,100 do
+   local key=debug.getupvalue(handlers.OnClientCommand,i);if not key then break end
+   if key==name then debug.setupvalue(handlers.OnClientCommand,i,value);return end
+  end
+  error('Missing server fixture upvalue '..name)
+ end
+ -- Authoritative setup creation is independent; seed its exact completed spec,
+ -- then exercise the real Ready handler in both connection orders and retries.
+ setUpvalue('spec',{id=42,ownerID=7})
+ setUpvalue('origin',{x=10,y=20,z=0,minX=0,minY=0,size=64,margin=2})
+ handlers.OnClientCommand('CartMPInventoryEquip','Ready',players[order[1]],{})
+ assert(clothing==0 and human==0,'Visual resend preceded the observer connection')
+ handlers.OnClientCommand('CartMPInventoryEquip','Ready',players[order[2]],{})
+ assert(clothing==1 and human==1,'Both-recipient native clothing resend missing')
+ for i=1,10 do for _,name in ipairs(order) do handlers.OnClientCommand('CartMPInventoryEquip','Ready',players[name],{}) end end
+ assert(clothing==1 and human==1,'Ready retries repeatedly resent native visuals')
+end
+''' % (json.dumps(str(HERE / 'inventory-equip-protocol.lua')), json.dumps(str(HERE / 'inventory-equip-server.lua')))
+        result = subprocess.run([shutil.which('luajit'), '-'], input=script, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
     def test_actual_lua_protocol_enforces_empty_cargo_and_observer_scope(self):
         script = '''
 local P=dofile(%s)

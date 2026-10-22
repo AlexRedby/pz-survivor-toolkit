@@ -69,6 +69,7 @@
 
 ## Inventory-equip clothing clearance
 
+- [ ] Gate the MP fixture start on the exact synchronized outfit for both roles before walking/equipping. Pending remote visual synchronization must wait without repeatedly throwing native Lua assertions; preserve hard failure for wrong authoritative identity and unsettled final endpoints. Cover delayed/malformed outfit receipts and rerun the invalid female control.
 - [ ] Gate the held-fit correction on complete current male/full owner/observer inventory captures with residual Walk/CartWalk and close framing, clear female/empty Host and related SP controls, then held start/stop/turn/reverse and pickup handoffs. Measure native render cost and foot/grip/whole-cart footprint consequences while preserving exact cart/cargo IDs and native completion. Source-cage validation does not establish every outfit, GPU garment or all rendered frames.
 - [ ] Review adjacent held start/stop and the temporary cart excursion across the remaining variants. Keep the initial attachment correction separate from the Blender clearance envelope and independent direct candidate; do not combine them without evidence.
 - [ ] Close the remaining 2–5 ms native lifecycle-boundary evidence gaps and review the transition in a close Host-observer native-camera view. Sampled source geometry and Blender replay do not establish every rendered frame, actual garment GPU vertices or full-pack clearance. Keep wrong-side world-approach routing separate.

@@ -5,28 +5,43 @@ local variants={['female-empty']={female=true,load='empty'},['female-full']={fem
 function M.variant(name)
  local value=assert(variants[name],'Unknown cart_inventory_equip_variant');return {name=name,female=value.female,load=value.load}
 end
-function M.match(row,spec,actor)
- assert(type(row)=='table' and row.producer==M.producer and row.actor==actor,'Wrong inventory-equip producer/actor')
- assert(row.id==spec.id and row.ownerID==spec.ownerID and row.variant==spec.variant and row.female==spec.female,
-  'Inventory-equip authoritative identity/sex differs')
- assert(row.cartType==M.cartType and row.cargoIDs==spec.cargoIDs and row.cargoCount==spec.cargoCount
-  and type(row.cargoWeight)=='number' and math.abs(row.cargoWeight-spec.cargoWeight)<.001,'Inventory-equip cargo changed')
- assert(row.worldCount==0 and row.worldAttached==false,'Inventory-equip cart entered world')
+local function matchReason(row,spec,actor)
+ if type(row)~='table' or type(spec)~='table' or row.producer~=M.producer or row.actor~=actor then
+  return 'identity: Wrong inventory-equip producer/actor' end
+ if row.id~=spec.id or row.ownerID~=spec.ownerID or row.variant~=spec.variant or row.female~=spec.female then
+  return 'identity: Inventory-equip authoritative identity/sex differs' end
+ if row.cartType~=M.cartType or row.cargoIDs~=spec.cargoIDs or row.cargoCount~=spec.cargoCount
+  or type(row.cargoWeight)~='number' or type(spec.cargoWeight)~='number'
+  or not (math.abs(row.cargoWeight-spec.cargoWeight)<.001) then return 'cargo: Inventory-equip cargo changed' end
+ if row.worldCount~=0 or row.worldAttached~=false then return 'world: Inventory-equip cart entered world' end
  if actor=='client2' then
-  assert(row.inventoryCount==nil and row.inventoryScope=='remote-hand-snapshot','Observer claimed authoritative inventory')
- else assert(row.inventoryScope=='owner-inventory' and row.inventoryCount==1,'Exact owner inventory identity lost') end
+  if row.inventoryCount~=nil or row.inventoryScope~='remote-hand-snapshot' then return 'inventory: Observer claimed authoritative inventory' end
+ elseif row.inventoryScope~='owner-inventory' or row.inventoryCount~=1 then return 'inventory: Exact owner inventory identity lost' end
+end
+function M.match(row,spec,actor)
+ local reason=matchReason(row,spec,actor);assert(not reason,reason);return true
+end
+-- Poll actual worn state without using an assertion as a normal loading signal.
+function M.outfitReady(row,spec)
+ if type(row)~='table' or type(spec)~='table' or type(spec.female)~='boolean' then return false,'outfit: Native outfit snapshot unavailable' end
+ if row.female~=spec.female then return false,'outfit: Native wearer sex pending' end
+ if row.wornCount~=3 then return false,'outfit: Native three-clothing outfit pending' end
+ if row.pantsType~='Base.Trousers_JeanBaggy' then return false,'outfit: Native JeanBaggy trousers pending' end
+ if row.pantsModel~='skinned/clothes/'..(spec.female and 'kate' or 'bob')..'_trousers' then return false,'outfit: Native trousers model pending' end
  return true
 end
+function M.settledReady(row,spec,actor)
+ local reason=matchReason(row,spec,actor);if reason then return false,reason end
+ if row.phase~='settled-tail' or row.primaryID~=spec.id or row.secondaryID~=spec.id or row.handSameItem~=true then
+  return false,'endpoint: Inventory-equip exact held endpoint missing' end
+ if row.nativeActions~=0 or row.hasPath~=false then return false,'actions: Inventory-equip native action/path did not terminate' end
+ if actor=='server' then
+  if row.luaActions~=nil or row.queueScope~='native-server-only' then return false,'queue: Server must expose native-only queue scope' end
+ elseif row.luaActions~=0 then return false,'queue: Inventory-equip Lua queue did not terminate' end
+ return M.outfitReady(row,spec)
+end
 function M.settled(row,spec,actor)
- M.match(row,spec,actor)
- assert(row.phase=='settled-tail' and row.primaryID==spec.id and row.secondaryID==spec.id and row.handSameItem==true,
-  'Inventory-equip exact held endpoint missing')
- assert(row.nativeActions==0 and row.hasPath==false,'Inventory-equip native action/path did not terminate')
- if actor=='server' then assert(row.luaActions==nil and row.queueScope=='native-server-only','Server must expose native-only queue scope')
- else assert(row.luaActions==0,'Inventory-equip Lua queue did not terminate') end
- assert(row.pantsType=='Base.Trousers_JeanBaggy' and row.wornCount==3
-  and row.pantsModel=='skinned/clothes/'..(spec.female and 'kate' or 'bob')..'_trousers','Native outfit model differs')
- return true
+ local ready,reason=M.settledReady(row,spec,actor);assert(ready,reason);return true
 end
 function M.nativeTerminal(row)
  -- updateInternal clears forceComplete after perform and queue removal, before
