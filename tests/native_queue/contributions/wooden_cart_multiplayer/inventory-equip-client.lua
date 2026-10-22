@@ -73,10 +73,20 @@ local function menu(p,now)
  send('Begin',{id=spec.id});phase='menu-equip';menuAt=now
  option.onSelect(option.target,option.param1,option.param2,option.param3,option.param4,option.param5,option.param6,option.param7,option.param8,option.param9,option.param10)
  assert(#queue(p)==1,'Inventory menu must queue exactly one action');action=queue(p)[1]
- assert(action.Type=='ISCartEquipAction' and action.cartId==spec.id and action.character==p and action.sourceType=='inventory'
-  and action.maxTime==30 and action:getDuration()==30,'Menu did not create exact native-duration ISCartEquipAction')
- emit('queued',{id=spec.id,ownerID=spec.ownerID,phase=phase,actionType=action.Type,sourceType=action.sourceType,duration=action:getDuration(),maxTime=action.maxTime,
-  menuSource='OnFillInventoryObjectContextMenu',walkDistance=math.sqrt((p:getX()-walkX)^2+(p:getY()-walkY)^2)})
+ -- ISBaseTimedAction.create replaces Lua maxTime with the stock floating-point
+ -- adjustment; LuaTimedActionNew converts it to its actual integer duration.
+ local queued={id=spec.id,ownerID=spec.ownerID,phase=phase,actionType=action.Type,cartId=action.cartId,characterExact=action.character==p,
+  sourceType=action.sourceType,duration=action:getDuration(),luaMaxTime=action.maxTime,nativeMaxTime=action.action and action.action:getTime() or -1,
+  menuSource='OnFillInventoryObjectContextMenu',walkDistance=math.sqrt((p:getX()-walkX)^2+(p:getY()-walkY)^2)}
+ emit('queued-probe',queued)
+ assert(queued.actionType=='ISCartEquipAction','Menu queued wrong action type')
+ assert(queued.cartId==spec.id and queued.characterExact,'Menu queued wrong cart/character identity')
+ assert(queued.sourceType=='inventory','Menu queued wrong equip source')
+ assert(queued.duration==30,'Menu changed native equip getDuration')
+ assert(queued.nativeMaxTime==30,'Menu changed actual native equip duration')
+ assert(type(queued.luaMaxTime)=='number' and queued.luaMaxTime==queued.luaMaxTime and math.abs(queued.luaMaxTime)<math.huge,
+  'Menu queued malformed adjusted Lua duration')
+ queued.maxTime=queued.nativeMaxTime;queued.maxTimeScope='native-action';emit('queued',queued)
 end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='CartMPInventoryEquip' then return end
@@ -150,10 +160,15 @@ Events.OnTick.Add(function()
    emit('sample',row)
   end
   if user=='client1' and phase=='menu-equip' and action and terminal(p) then
-   assert(now-menuAt>=200 and action.action,'Native menu equip had no native lifecycle')
-   local row=inspect(p);row.phase='settled-tail';P.settled(row,spec,user)
-   row.actionType=action.Type;row.duration=action:getDuration();row.nativeFinished=action.action:finished()
-   row.nativeForceComplete=action.action:isForceComplete();row.nativeTime=action.action:getCurrentTime();row.nativeProgress=action.action:getJobDelta()
+   local row=inspect(p);row.phase='settled-tail';row.actionType=action.Type;row.duration=action:getDuration()
+   row.nativeActionPresent=action.action~=nil;row.elapsed=now-menuAt
+   if action.action then
+    row.nativeFinished=action.action:finished();row.nativeForceComplete=action.action:isForceComplete()
+    row.nativeTime=action.action:getCurrentTime();row.nativeProgress=action.action:getJobDelta();row.nativeMaxTime=action.action:getTime()
+   end
+   emit('terminal-probe',row)
+   assert(row.elapsed>=200 and row.nativeActionPresent,'Native menu equip had no native lifecycle')
+   P.settled(row,spec,user)
    P.nativeTerminal(row)
    send('Check',row);phase='await-tail';emit('native-finished',row)
   end

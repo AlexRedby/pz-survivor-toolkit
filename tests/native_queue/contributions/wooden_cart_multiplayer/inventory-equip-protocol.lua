@@ -29,11 +29,13 @@ function M.settled(row,spec,actor)
  return true
 end
 function M.nativeTerminal(row)
- -- B42 MP waits for the server transaction and canonically force-completes it.
- -- BaseAction.finished() remains false while waitForFinished is true.
- assert(row.actionType=='ISCartEquipAction' and row.duration==30 and type(row.nativeFinished)=='boolean'
-  and row.nativeForceComplete==true and type(row.nativeTime)=='number' and row.nativeTime>=30
-  and row.nativeProgress==1,'Native MP equip has not reached authoritative terminal progress')
+ -- updateInternal clears forceComplete after perform and queue removal, before
+ -- Lua OnTick. Exact canonical force-completion is checked in the native trace.
+ assert(row.actionType=='ISCartEquipAction','Terminal equip action type changed')
+ assert(row.duration==30 and row.nativeMaxTime==30,'Terminal equip duration changed')
+ assert(type(row.nativeFinished)=='boolean' and type(row.nativeForceComplete)=='boolean','Terminal native flags missing')
+ assert(type(row.nativeTime)=='number' and row.nativeTime>=30,'Terminal native time below equip duration')
+ assert(row.nativeProgress==1,'Terminal native progress is incomplete')
  return true
 end
 return M

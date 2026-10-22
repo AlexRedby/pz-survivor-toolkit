@@ -33,9 +33,12 @@ def fixture():
     rows = {role: [receipt(role, 'start', 100, epoch=1000, id=42, ownerID=7)] for role in ('server', 'client1', 'client2')}
     rows['server'].insert(0, receipt('server', 'spec', 50, **spec))
     rows['client1'].append(receipt('client1', 'queued', 3100, id=42, ownerID=7, actionType='ISCartEquipAction',
-                                    sourceType='inventory', menuSource='OnFillInventoryObjectContextMenu', duration=30, maxTime=30, walkDistance=.5))
+                                    sourceType='inventory', menuSource='OnFillInventoryObjectContextMenu', duration=30, maxTime=30,
+                                    nativeMaxTime=30, luaMaxTime=30.003, maxTimeScope='native-action', cartId=42, characterExact=True, walkDistance=.5))
     check = endpoint('client1', 3650);check.update(actor='server', event='owner-check', receivedActor='client1', nativeFinished=False,
-                                                 nativeForceComplete=True, nativeProgress=1, nativeTime=36)
+                                                 nativeForceComplete=False, nativeProgress=1, nativeTime=36, nativeMaxTime=30,
+                                                 nativeActionPresent=True, elapsed=550, actionType='ISCartEquipAction', duration=30)
+    rows['client1'].append(dict(check, actor='client1', event='terminal-probe', wall=3649))
     observed = endpoint('client2', 3900);observed.update(actor='server', event='observer', receivedActor='client2')
     ack = endpoint('server', 4000);ack.update(event='ack', ok=True, holdMs=200)
     rows['server'].extend([check, observed, ack])
@@ -82,6 +85,7 @@ def fixture():
         native['client1'].append(dict(producer=native_producer, actor='client1', ownerID=7, female=True, local_=True, event='lifecycle',
                                       wall=wall, actionId=5, method=method, stage=stage, id=42, actionType='ISCartEquipAction',
                                       sourceType='inventory', maxTime=30, threw=False, forceComplete=wall>=3600, forceStop=False, progress=progress, finished=finished,
+                                      luaMaxTime=30.003, luaCharacterExact=True,
                                       time=36 if wall>=3600 else progress*30, waitForFinished=wall!=3120, transactionId=3, networkOwnerID=7,
                                       networkActionPresent=not(method=='perform' and stage=='exit'), networkActionExact=not(method=='perform' and stage=='exit'),
                                       networkActionType='ISCartEquipAction', networkDone=wall>=3600 and not(method=='perform' and stage=='exit'), networkRejected=False))
@@ -107,6 +111,17 @@ class InventoryEquipEvidenceTests(unittest.TestCase):
     def test_wrong_receipt_producer_is_rejected(self):
         data = fixture();data[0]['client2'][0]['producer'] = 'cart-motion-mp'
         with self.assertRaisesRegex(ValueError, 'producer'): analyze(data)
+
+    def test_raw_lua_adjustment_does_not_replace_exact_native_duration(self):
+        data = fixture()
+        self.assertTrue(analyze(data)['evidenceComplete'])
+        queued = next(row for row in data[0]['client1'] if row['event'] == 'queued')
+        queued['nativeMaxTime'] = 1
+        with self.assertRaisesRegex(ValueError, 'native Walk'): analyze(data)
+
+    def test_missing_adjusted_lua_native_diagnostics_is_rejected(self):
+        data = fixture();next(row for row in data[1]['client1'] if row['event'] == 'lifecycle').pop('luaMaxTime')
+        with self.assertRaisesRegex(ValueError, 'exact non-rejected'): analyze(data)
 
     def test_wrong_native_producer_is_rejected(self):
         data = fixture();data[1]['client2'][0]['producer'] = 'sp-native'
@@ -156,6 +171,17 @@ class InventoryEquipEvidenceTests(unittest.TestCase):
         data = fixture();next(row for row in data[1]['client1'] if row.get('method') == 'update' and row.get('stage') == 'enter')['forceComplete'] = True
         with self.assertRaisesRegex(ValueError, 'before canonical'): analyze(data)
 
+    def test_post_queue_force_flag_clear_does_not_weaken_canonical_boundary(self):
+        data = fixture()
+        self.assertTrue(analyze(data)['evidenceComplete'])
+        canonical = next(row for row in data[1]['client1'] if row.get('method') == 'update' and row.get('stage') == 'exit')
+        canonical['forceComplete'] = False
+        with self.assertRaisesRegex(ValueError, 'server-done'): analyze(data)
+
+    def test_terminal_probe_must_precede_and_match_server_receipt(self):
+        data = fixture();probe = next(row for row in data[0]['client1'] if row['event'] == 'terminal-probe');probe['nativeTime'] = 0
+        with self.assertRaisesRegex(ValueError, 'terminal diagnostic'): analyze(data)
+
     def test_same_slot_grounding_pair_identity_is_required(self):
         data = fixture();next(row for row in data[1]['client2'] if row['event'] == 'grounding-pair')['after']['cartDataToken'] = 21
         with self.assertRaisesRegex(ValueError, 'source slot'): analyze(data)
@@ -174,6 +200,73 @@ class InventoryEquipEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'consumed body/cart'): analyze(data)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
+    def test_real_menu_callback_uses_native_duration_after_stock_lua_adjustment(self):
+        game = Path.home() / 'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java'
+        native = game / 'media/lua/shared/TimedActions/ISBaseTimedAction.lua'
+        if not native.is_file(): self.skipTest('Native ISBaseTimedAction.lua required')
+        stock = native.read_text()
+        adjustment = 'function ISBaseTimedAction:adjustMaxTime(maxTime)' + stock.split('function ISBaseTimedAction:adjustMaxTime(maxTime)', 1)[1].split('function ISBaseTimedAction:setActionAnim', 1)[0]
+        source = (HERE / 'inventory-equip-client.lua').read_text()
+        menu = 'local function findPush(context)' + source.split('local function findPush(context)', 1)[1].split('Events.OnServerCommand.Add', 1)[0]
+        setup = '''
+local P=dofile(%s)
+local spec={id=42,ownerID=7,variant='female-empty',female=true,cargoIDs='',cargoCount=0,cargoWeight=0}
+local user='client1';local walkX,walkY=0,0;local phase,menuAt,action
+local q,receipts={},{}
+local function queue() return q end
+local function terminal() return #q==0 end
+local p={}
+local cart={}
+function p:isTimedActionInstant() return false end
+function p:getPlayerNum() return 0 end
+function p:getX() return 1 end
+function p:getY() return 1 end
+function p:getInventory() return {getItemById=function(_,id) assert(id==42);return cart end} end
+function p:getMoodles() return {getMoodleLevel=function() return 0 end} end
+function p:getBodyDamage() return {getBodyPart=function() return {getPain=function() return 0 end} end} end
+function p:getTimedActionTimeModifier() return 1.0001 end
+MoodleType={UNHAPPY=1,DRUNK=2};BodyPartType={Hand_L=0,ForeArm_R=0,ToIndex=function() return 0 end,FromIndex=function(i) return i end}
+ISBaseTimedAction={}
+local function inspect()
+ return {producer=P.producer,actor=user,id=42,ownerID=7,variant='female-empty',female=true,cartType=P.cartType,
+  cargoIDs='',cargoCount=0,cargoWeight=0,worldCount=0,worldAttached=false,inventoryScope='owner-inventory',inventoryCount=1,primaryID=-1,secondaryID=-1}
+end
+local function emit(event,row)
+ local copy={event=event};for k,v in pairs(row) do copy[k]=v end;receipts[#receipts+1]=copy
+end
+local function send(command,args) assert(command=='Begin' and args.id==42) end
+local context={options={},hideAndChildren=function(self) self.closed=true end}
+ISContextMenu={get=function(num,x,y) assert(num==0);context.closed=false;return context end}
+function getText() return 'Push Cart' end
+local candidateDuration,nativeTime=30,30
+local callbackCount=0
+function triggerEvent(name,num,ctx,items)
+ assert(name=='OnFillInventoryObjectContextMenu' and num==0 and ctx==context and items[1]==cart)
+ ctx.options={{name='Push Cart',target=items,param1=num,param2=cart,onSelect=function(target,player,item)
+  assert(context.closed and target==items and player==0 and item==cart);callbackCount=callbackCount+1
+  local a={Type='ISCartEquipAction',cartId=42,character=p,sourceType='inventory',maxTime=30,getDuration=function() return candidateDuration end}
+  a.maxTime=ISBaseTimedAction.adjustMaxTime(a,a.maxTime)
+  a.action={getTime=function() return nativeTime end};q={a}
+ end}}
+end
+''' % json.dumps(str(HERE / 'inventory-equip-protocol.lua'))
+        checks = '''
+menu(p,3000)
+assert(callbackCount==1 and #receipts==2 and receipts[1].event=='queued-probe' and receipts[2].event=='queued')
+assert(math.abs(receipts[1].luaMaxTime-30.003)<.000001 and receipts[1].nativeMaxTime==30)
+assert(receipts[2].maxTime==30 and receipts[2].maxTimeScope=='native-action' and action.maxTime==receipts[1].luaMaxTime)
+q={};receipts={};nativeTime=1
+local ok,error=pcall(menu,p,3100);assert(not ok and error:find('actual native equip duration',1,true))
+assert(#receipts==1 and receipts[1].event=='queued-probe' and receipts[1].nativeMaxTime==1)
+q={};receipts={};nativeTime=30;candidateDuration=1
+ok,error=pcall(menu,p,3200);assert(not ok and error:find('getDuration',1,true))
+assert(#receipts==1 and receipts[1].duration==1)
+'''
+        result = subprocess.run([shutil.which('luajit'), '-'], input=setup + adjustment + '\n' + menu + '\n' + checks,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
     def test_actual_lua_protocol_enforces_empty_cargo_and_observer_scope(self):
         script = '''
 local P=dofile(%s)
@@ -189,11 +282,13 @@ row.ownerID=8;assert(not pcall(P.settled,row,spec,'client2'));row.ownerID=7
 row.producer='other';assert(not pcall(P.settled,row,spec,'client2'))
 for _,name in ipairs({'female-empty','female-full','male-empty','male-full'}) do assert(P.variant(name).name==name) end
 assert(not pcall(P.variant,'all'))
-local finished={actionType='ISCartEquipAction',duration=30,nativeFinished=false,nativeForceComplete=true,nativeTime=36,nativeProgress=1}
+local finished={actionType='ISCartEquipAction',duration=30,nativeFinished=false,nativeForceComplete=true,nativeTime=36,nativeProgress=1,nativeMaxTime=30}
 assert(P.nativeTerminal(finished)) -- finished() stays false during the canonical MP waitForFinished lifecycle
 finished.nativeProgress=.9;assert(not pcall(P.nativeTerminal,finished));finished.nativeProgress=1
 finished.nativeTime=10;assert(not pcall(P.nativeTerminal,finished));finished.nativeTime=36
-finished.nativeForceComplete=false;assert(not pcall(P.nativeTerminal,finished))
+finished.nativeForceComplete=false;assert(P.nativeTerminal(finished)) -- updateInternal clears this flag after perform and native queue removal
+finished.nativeForceComplete=nil;assert(not pcall(P.nativeTerminal,finished));finished.nativeForceComplete=false
+finished.nativeMaxTime=1;assert(not pcall(P.nativeTerminal,finished))
 ''' % json.dumps(str(HERE / 'inventory-equip-protocol.lua'))
         result = subprocess.run([shutil.which('luajit'), '-'], input=script, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

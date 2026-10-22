@@ -125,15 +125,27 @@ def analyze_data(logs, native, poses, cameras, variant='female-empty'):
     require(queued.get('id') == spec['id'] and queued.get('ownerID') == spec['ownerID']
             and queued.get('actionType') == 'ISCartEquipAction' and queued.get('sourceType') == 'inventory'
             and queued.get('menuSource') == 'OnFillInventoryObjectContextMenu'
-            and queued.get('duration') == queued.get('maxTime') == 30
+            and queued.get('duration') == queued.get('maxTime') == queued.get('nativeMaxTime') == 30
+            and queued.get('maxTimeScope') == 'native-action' and number(queued.get('luaMaxTime'))
+            and queued.get('cartId') == spec['id'] and queued.get('characterExact') is True
             and number(queued.get('walkDistance')) and queued['walkDistance'] >= .25
             and epoch + 2000 <= queued['wall'] <= epoch + 4000, 'Missing real inventory menu equip after native Walk')
     owner_check = one(rows['server'], 'owner-check', 'server')
-    require(owner_check.get('receivedActor') == 'client1' and type(owner_check.get('nativeFinished')) is bool
-            and owner_check.get('nativeForceComplete') is True and owner_check.get('nativeProgress') == 1
+    require(owner_check.get('receivedActor') == 'client1' and owner_check.get('actionType') == 'ISCartEquipAction'
+            and owner_check.get('duration') == 30 and type(owner_check.get('nativeFinished')) is bool
+            and type(owner_check.get('nativeForceComplete')) is bool and owner_check.get('nativeProgress') == 1
+            and owner_check.get('nativeMaxTime') == 30
             and number(owner_check.get('nativeTime')) and owner_check['nativeTime'] >= 30,
             'Server did not receive owner native completion')
     identity(owner_check, spec, 'client1')
+    terminal_probe = one(rows['client1'], 'terminal-probe', 'client1')
+    identity(terminal_probe, spec, 'client1')
+    require(terminal_probe.get('nativeActionPresent') is True
+            and number(terminal_probe.get('elapsed')) and terminal_probe['elapsed'] >= 200
+            and terminal_probe['wall'] <= owner_check['wall']
+            and all(terminal_probe.get(key) == owner_check.get(key) for key in
+                    ('nativeFinished', 'nativeForceComplete', 'nativeTime', 'nativeProgress', 'nativeMaxTime')),
+            'Owner terminal diagnostic does not match server completion receipt')
     observer = one(rows['server'], 'observer', 'server')
     require(observer.get('receivedActor') == 'client2', 'Server lacks observer receipt')
     identity(observer, spec, 'client2')
@@ -159,6 +171,7 @@ def analyze_data(logs, native, poses, cameras, variant='female-empty'):
     for row in lifecycle:
         require(row.get('id') == spec['id'] and row.get('actionType') == 'ISCartEquipAction'
                 and row.get('sourceType') == 'inventory' and row.get('maxTime') == 30
+                and number(row.get('luaMaxTime')) and row.get('luaCharacterExact') is True
                 and row.get('threw') is False and row.get('forceStop') is False and row.get('networkRejected') is False,
                 'Native lifecycle does not bind exact non-rejected inventory action')
         require(row.get('method') not in ('stop', 'interruptWaitToStart'), 'Native menu equip cancelled')

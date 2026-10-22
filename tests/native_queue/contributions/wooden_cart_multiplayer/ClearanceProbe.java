@@ -128,6 +128,8 @@ public final class ClearanceProbe {
             .append(",\"method\":").append(jsonString(event)).append(",\"stage\":").append(jsonString(stage))
             .append(",\"actionType\":").append(jsonString(action.getMetaType())).append(",\"sourceType\":").append(jsonString((String)table.rawget("sourceType")))
             .append(",\"id\":").append(id.intValue()).append(",\"time\":").append(action.getCurrentTime()).append(",\"maxTime\":").append(action.maxTime)
+            .append(",\"luaMaxTime\":").append(table.rawget("maxTime") instanceof Number number && Double.isFinite(number.doubleValue())?number:"null")
+            .append(",\"luaCharacterExact\":").append(table.rawget("character")==player)
             .append(",\"progress\":").append(action.getJobDelta()).append(",\"finished\":").append(action.finished())
             .append(",\"waitForFinished\":").append(action.waitForFinished)
             .append(",\"transactionId\":").append(transaction).append(",\"networkOwnerID\":").append(networkPlayer.getID())
