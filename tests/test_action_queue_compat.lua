@@ -237,7 +237,7 @@ ISInventoryPage.refreshBackpacks=nativeFloorRefresh
 getFilenameOfClosure=function(callback)
     if callback==nativeFloorGetter then return 'ISInventoryPage.lua' end
     local source=debug and debug.getinfo(callback,'S').source
-    if source and (source:match('/PJCK_Config%.lua$') or source:match('/ISWearClothing%.lua$') or source:match('/ISUnequipAction%.lua$')) then return source end
+    if source and (source:match('/PJCK_Config%.lua$') or source:match('/ISWearClothing%.lua$') or source:match('/ISUnequipAction%.lua$') or source:match('/ISHotbar%.lua$') or source:match('/ISPlayerData%.lua$')) then return source end
     if previousOrigin then return previousOrigin(callback) end
 end
 ISInventoryPage.floorContainer={{class='ItemContainer',getType=function()return 'floor'end,
@@ -1555,6 +1555,159 @@ do
         lateCartProof.unequipLatest=nil
     end
     reset();player.getWornItems,player.getWornItem,player.setWornItem,player.getHumanVisual,player.removeWornItem=getWorn,getWornItem,setWorn,visual,removeWorn
+end
+
+-- P4 fromHotbar cleanup retains both native animation/perform attachment and
+-- authoritative hand removal. Java visuals and network delivery are doubles.
+do
+    local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
+    local oldGetter,oldDataGetter,oldData,oldBar=getPlayerHotbar,getPlayerData,ISPlayerData,ISHotbar
+    local oldAttached,oldSetAttached,oldSetVariable,oldVariable,oldReport=player.getAttachedItem,player.setAttachedItem,player.SetVariable,player.setVariable,player.reportEvent
+    ISHotbar={};ISHotbar.__index=ISHotbar
+    local hotbarSource=read(NativeActionRoot..'/client/Hotbar/ISHotbar.lua')
+    for _,name in ipairs({'isItemAttached','setAttachAnim'})do
+        assert(loadstring(assert(hotbarSource:match('(function ISHotbar:'..name..'%([^\n]*\n.-\nend)')),'@media/lua/client/Hotbar/ISHotbar.lua'))()
+    end
+    local dataSource=read(NativeActionRoot..'/client/ISUI/PlayerData/ISPlayerData.lua')
+    for _,name in ipairs({'getPlayerData','getPlayerHotbar'})do
+        assert(loadstring(assert(dataSource:match('(function '..name..'%([^\n]*\n.-\nend)')),'@media/lua/client/ISUI/PlayerData/ISPlayerData.lua'))()
+    end
+    local attached,writes,bar={},0
+    player.getAttachedItem=function(_,location)return attached[location]end
+    player.setAttachedItem=function(_,location,value)attached[location]=value;writes=writes+1 end
+    player.SetVariable=function(self,name,value)self[name]=value end
+    player.setVariable=player.SetVariable;player.reportEvent=function()end
+    local function restoreHotbar(mixed,slot,kind)
+        reset();attached={};writes=0;player.primary,player.secondary=nil,nil
+        local weapon=item(inventory,14810);weapon.class='HandWeapon';inventory.values={weapon}
+        weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=1,'Back','Rifle Back with Bag'
+        weapon.getAttachedSlotType=function(self)return self.attachedKind end
+        weapon.getAttachedToModel=function(self)return self.attachedModel end
+        weapon.getAttachmentType=function(self)return self.attachment or 'Rifle'end
+        weapon.getUnequipSound=function()end;weapon.setJobType=function()end
+        local definition={type='Back',name='Back',animset='back',attachments={Rifle='Rifle Back'}}
+        bar=setmetatable({chr=player,availableSlot={{slotType='Back',def=definition}},
+            attachedItems={weapon},replacements={Rifle='Rifle Back with Bag'}},ISHotbar)
+        ISPlayerData={{playerHotbar=bar}}
+        if kind=='heavy'then weapon.fixtureHeavy=true
+        elseif kind=='activated'then weapon.activatable=true
+        elseif kind=='broken'then weapon.broken=true
+        elseif kind=='slot'then bar.availableSlot={}
+        elseif kind=='duplicate'then bar.availableSlot[2]={slotType='Back',def=definition}end
+        local captured=TidyFixture.captureSession(player)
+        captured.armed,captured.restoreHands=true,true;TidyFixture.sessions[player]=captured
+        local owner=tail();local other=mixed and tail()or nil
+        if slot~='secondary'then player.primary=weapon end
+        if slot=='secondary'or slot=='both'then player.secondary=weapon end
+        local getWorn=player.getWornItems
+        if kind=='worn'then player.getWornItems=function()return {size=function()return 0 end,contains=function(_,value)return value==weapon end}end end
+        owner:perform();if other then other:perform()end;tickTidy();tickTidy()
+        player.getWornItems=getWorn
+        local action=queue.queue[1]
+        assert(action and action.Type=='ISUnequipAction'and action.item==weapon and action.fromHotbar==true,
+            'actual P4 did not create the exact hand-to-hotbar restore')
+        assert(#queue.queue==1,'P4 created duplicate hotbar cleanup for two held hands')
+        return weapon,owner,action
+    end
+    local callbacks=0
+    queue.onCompleted=function(self,action)
+        if lifecycle.current(player)==action then
+            assert(not operations.deferCompletion(self,action),'hotbar cleanup acquired a legacy completion scope')
+            callbacks=callbacks+1
+        end
+        return completed(self,action)
+    end
+    local function completeCase(mode,mixed,cancelled,slot)
+        local weapon,owner,action=restoreHotbar(mixed,slot)
+        local contract,kind=definitions.inspect(action)
+        assert(contract and kind=='compat.tidy-equipment'and contract.items[weapon:getID()]
+            and (contract.cancelOperation==false)==mixed,'hotbar cleanup lacks shared native ownership')
+        local following=tail();local removed=false;local syncs=player.equipSyncs or 0
+        action.action={setOverrideHandModelsObject=function()end,setActionAnim=function()end}
+        queue.current=action;player.getCharacterActions=function()return list(removed and {}or{action.action})end
+        isClient=function()return mode~='sp'end
+        if cancelled then operations.invalidate(owner.toolkitQueueOperation)end
+        -- Native start uses the real hotbar animation helper. attachConnect is
+        -- a visual effect; complete separately applies authoritative hand state.
+        action:start();assert(player.AttachAnim=='back')
+        action:animEvent('attachConnect',nil)
+        assert(writes==1 and attached[weapon:getAttachedToModel()]==weapon)
+        if mode=='mp-early'then action:complete()end
+        assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+        assert(queue.queue[1]==action and queue.queue[2]==following and lifecycle.flush(queue)=='waiting')
+        if mode=='sp'then
+            assert(player.primary==weapon or player.secondary==weapon,'SP hand effect ran before native complete')
+            assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+        elseif mode=='mp-late'then action:complete()end
+        assert(player.primary==nil and player.secondary==nil and player.equipSyncs==syncs+1,
+            'hotbar native hand effect was lost or duplicated')
+        assert(writes==2 and attached[weapon:getAttachedToModel()]==weapon and weapon:getContainer()==inventory
+            and weapon:getAttachedSlot()==1 and weapon:getAttachedSlotType()=='Back'
+            and bar.attachedItems[1]==weapon,'hotbar animation/perform metadata or exact root item changed')
+        assert(lifecycle.flush(queue)=='waiting');removed=true
+        assert(lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil)
+        isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
+        assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
+    end
+    for _,mode in ipairs({'sp','mp-early','mp-late'})do
+        for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
+            for _,slot in ipairs({'primary','secondary','both'})do completeCase(mode,mixed,cancelled,slot)end
+        end end
+    end
+    assert(callbacks==36,'hotbar cleanup missed hand/owner/cancel/effect-order combinations')
+    queue.onCompleted=completed
+    for _,kind in ipairs({'heavy','activated','broken','slot','duplicate','worn'})do
+        local _,_,action=restoreHotbar(true,'primary',kind)
+        assert(select(2,definitions.inspect(action))=='compat.selected-chains','hotbar cleanup migration expanded into '..kind)
+    end
+    for _,field in ipairs({'reason','fromHotbar','hotbar','clothingAction','stopOnWalk','stopOnRun','animSpeed','onCompleteFunc','animEvent'})do
+        local _,_,action=restoreHotbar(true,'primary');local original=action[field]
+        action[field]=(field=='onCompleteFunc'or field=='animEvent')and function()end or field=='reason'and 'drop'or not original
+        assert(not definitions.inspect(action),'hotbar restore accepted changed '..field)
+        action[field]=original;assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+    end
+    for _,change in ipairs({'index','kind','model','attachment','root','missing','occupied','slot-def','animset','mapping','duplicate','activated','icon-index'})do
+        local weapon,_,action=restoreHotbar(true,'primary')
+        if change=='index'then weapon.attachedSlot=2
+        elseif change=='kind'then weapon.attachedKind='SmallBeltLeft'
+        elseif change=='model'then weapon.attachedModel='other'
+        elseif change=='attachment'then weapon.attachment='Knife'
+        elseif change=='root'then weapon.container={}
+        elseif change=='missing'then inventory.values={}
+        elseif change=='occupied'then attached[weapon.attachedModel]=item(inventory,14811)
+        elseif change=='slot-def'then bar.availableSlot[1].def={type='Back',name='Back',animset='back',attachments={Rifle='Rifle Back'}}
+        elseif change=='animset'then bar.availableSlot[1].def.animset='belt left'
+        elseif change=='mapping'then bar.replacements.Rifle='other'
+        elseif change=='duplicate'then bar.availableSlot[2]=bar.availableSlot[1]
+        elseif change=='activated'then weapon.activatable=true
+        elseif change=='icon-index'then bar.attachedItems={[1]=item(inventory,14811),[2]=weapon}end
+        assert(not definitions.inspect(action),'hotbar restore accepted changed '..change)
+    end
+    for _,change in ipairs({'getter','data','animate','attached','instance'})do
+        local _,_,action=restoreHotbar(true,'primary')
+        local getter,data,animate,check=getPlayerHotbar,getPlayerData,ISHotbar.setAttachAnim,ISHotbar.isItemAttached
+        if change=='getter'then getPlayerHotbar=function()return bar end
+        elseif change=='data'then getPlayerData=function()return ISPlayerData[1]end
+        elseif change=='animate'then ISHotbar.setAttachAnim=function()end
+        elseif change=='attached'then ISHotbar.isItemAttached=function()return true end
+        else bar.setAttachAnim=function()end end
+        assert(not definitions.inspect(action),'hotbar cleanup accepted changed helper '..change)
+        getPlayerHotbar,getPlayerData,ISHotbar.setAttachAnim,ISHotbar.isItemAttached=getter,data,animate,check
+    end
+    do
+        reset();local methods={new=ISUnequipAction.new,complete=ISUnequipAction.complete}
+        local wrapped={new=function(...)return methods.new(...)end,complete=function(...)return methods.complete(...)end}
+        lateCartProof.unequipConstructors[methods.new],lateCartProof.unequipConstructors[wrapped.new]=true,true
+        lateCartProof.unequipLatest=wrapped;ISUnequipAction.new,ISUnequipAction.complete=wrapped.new,wrapped.complete
+        for _,mode in ipairs({'sp','mp-early','mp-late'})do completeCase(mode,true,false,'both')end
+        local _,_,action=restoreHotbar(true,'primary')
+        local proof=lateCartProof.isNonCartItem;lateCartProof.isNonCartItem=function()return true end
+        assert(not definitions.inspect(action),'hotbar restore accepted a foreign late item helper');lateCartProof.isNonCartItem=proof
+        reset();ISUnequipAction.new,ISUnequipAction.complete=methods.new,methods.complete;lateCartProof.unequipLatest=nil
+    end
+    reset();getPlayerHotbar,getPlayerData,ISPlayerData,ISHotbar=oldGetter,oldDataGetter,oldData,oldBar
+    player.getAttachedItem,player.setAttachedItem,player.SetVariable,player.setVariable,player.reportEvent=oldAttached,oldSetAttached,oldSetVariable,oldVariable,oldReport
 end
 
 -- Exact fixture native actions supply the same known-input contracts the native Policy installs.

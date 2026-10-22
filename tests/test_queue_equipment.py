@@ -47,6 +47,18 @@ class EquipmentTests(unittest.TestCase):
                     result.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True, walkDistance=0.75)
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
+            if case == 'tidy-hotbar':
+                tidy = 'P4TidyUpMeister' in self.selection['mods']
+                effect = dict(id=956, fullType='Base.Shotgun', container='root', slotIndex=1, slotType='Back', model='Rifle On Back with Bag',
+                              attached=tidy, primary=False if tidy else 956, secondary=False if tidy else 956, worn=False, producer='onRackGun',
+                              producerCompleted=True, ammoUnchanged=True, unrelatedAttachmentsPreserved=True)
+                count = int(enabled and tidy)
+                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956, secondary=956),
+                              tidyHotbar=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
+                                              sourceSession=18 if tidy else False, sourceCompleted=tidy, attachConnectObserved=tidy,
+                                              uiHotbarIdentity=True, unrelatedTailPreserved=True,
+                                              sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
+                                                                    flush=count, legacy=0)))
             if case in ('tidy-clothing', 'tidy-clothing-remove'):
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
                 effect = dict(id=955, fullType='Base.Socks_Ankle', bodyLocation='base:socks', container='root', worn=not tidy if case == 'tidy-clothing-remove' else tidy,
@@ -58,6 +70,8 @@ class EquipmentTests(unittest.TestCase):
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                       flush=count, legacy=0), unrelatedTailPreserved=True))
+            if case in ('tidy-hands', 'tidy-empty-hands'):
+                result.update(rackWholeOperationMoveVerified=enabled, rackCancellationProtected=enabled, independentMoveVerified=enabled)
             if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
                 count = int(enabled and 'P4TidyUpMeister' in self.selection['mods'])
                 empty = case == 'tidy-empty-hands'
@@ -138,7 +152,45 @@ class EquipmentTests(unittest.TestCase):
                     effect = {key: row['outcome']['tidyClothing'][key] for key in equipment.CLOTHING_EFFECT_KEYS}
                     with (self.root / 'server-launch.log').open('a') as log:
                         log.write('\n[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' + json.dumps(effect) + '\n')
+            if 'tidy-hotbar' in self.selection['cases']:
+                row = next(row for row in self.records() if row.get('id') == 'tidy-hotbar')
+                effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.HOTBAR_EFFECT_KEYS}
+                with (self.root / 'server-launch.log').open('a') as log:
+                    log.write('\n[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(effect) + '\n')
         return equipment.verify(self.root, self.selection, {})
+
+    def test_tidy_hotbar_requires_exact_native_effect_session_phases_and_completed_host_receipt(self):
+        self.selection.update(cases=['tidy-hotbar'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in equipment.HOTBAR_EFFECT_KEYS | {'nativeGenerated', 'sourceSession', 'sourceCompleted', 'attachConnectObserved',
+                                                            'uiHotbarIdentity', 'authoritativeRestore', 'unrelatedTailPreserved'}:
+                    rows = self.records(); rows[1]['outcome']['tidyHotbar'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                for field, value in (('id', True), ('slotIndex', True), ('slotIndex', 2), ('slotType', 'SmallBeltLeft'),
+                                     ('model', 'Rifle On Back'), ('fullType', 'Base.Pistol'), ('container', 'worn-bag'),
+                                     ('primary', 956), ('secondary', 956), ('worn', True), ('attached', False),
+                                     ('producer', 'ISAttachItemHotbar'), ('nativeGenerated', 0), ('sourceSession', 0),
+                                     ('sourceCompleted', False), ('attachConnectObserved', False), ('uiHotbarIdentity', False)):
+                    rows = self.records(); rows[1]['outcome']['tidyHotbar'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, field, value))
+                for field in ('perform', 'complete', 'flush', 'legacy'):
+                    rows = self.records(); rows[1]['outcome']['tidyHotbar']['sharedCompletion'][field] += 1
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                rows = self.records(); rows[1]['outcome']['hotbarCheckpoint']['attached'] = True
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    rows = self.records(); rows[1]['outcome']['receiptStates'] = ['canceled']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' in line)
+                    for replacement in ('', marker + '\n' + marker, marker.replace('956', '957'), marker.replace('"attached": true', '"attached": false')):
+                        server.write_text(original.replace(marker, replacement))
+                        self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
 
     def test_tidy_clothing_requires_exact_p4_generation_shared_phases_and_conserved_effects(self):
         self.selection.update(cases=['tidy-clothing'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
@@ -329,6 +381,78 @@ class EquipmentTests(unittest.TestCase):
             self.assertEqual((layer / 'media/java/EquipmentTransferProbe.jar').read_bytes(), probe.read_bytes())
             self.assertIn('javaPkgName=net.alexredby.equipmentprobe', (layer / 'mod.info').read_text())
         self.assertIn(ROOT / 'tests/native_queue/equipment/java/Main.java', equipment.sources(ROOT, self.selection))
+
+    def test_composite_rack_control_replays_real_move_and_rejects_split_or_incomplete_roundtrip(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        script = r'''
+local root=arg[1]
+local function read(path)local f=assert(io.open(root..'/'..path));local s=f:read('*a');f:close();return s end
+local function excerpt(source,first,last)
+ local start=assert(source:find(first,1,true));local finish=assert(source:find(last,start+#first,true))
+ assert(loadstring(source:sub(start,finish-1)))()
+end
+local checks=dofile(root..'/tests/native_queue/support/QueueScenarioChecks.lua')
+require=function(name)assert(name=='QueueScenarioChecks');return checks end
+local rackControls=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentRack.lua')
+Operations={};excerpt(read('PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'),
+ 'function Operations.bounds(queue, action)','local canMerge =')
+Queue={};Toolkit={}
+excerpt(read('PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'),
+ 'function Queue.move(queue, action, target, after)','local function clearStop(queue)')
+local function run(id,fault)
+ local token={};local front={toolkitQueueOperation={},action={}};local tail={toolkitQueueOperation={}}
+ local pickup={toolkitQueueOperation=token};local equip={toolkitQueueOperation=token};local rack={toolkitQueueOperation=token}
+ local player={};local item={getID=function()return 7 end,getAmmoType=function()return {getItemKey=function()return 'Base.Bullets9mm'end}end}
+ local state={id=id,player=player,pickup=item,frontAction=front,tailAction=tail,pickupAction=pickup,rackEquipAction=equip,rackAction=rack}
+ local queue={queue={front,pickup,equip,rack,tail},current=front}
+ function queue:indexOf(action)for i,value in ipairs(self.queue)do if value==action then return i end end;return -1 end
+ Policy={record=function()end,editUnchanged=function()return true end,
+  evaluateCancel=function()return {allowed=fault=='cancel-permitted',reason='operation_dependent'}end}
+ function Policy.evaluateMove(q,action,target,after)
+  local first,last=Operations.bounds(q,action);local targetFirst,targetLast=Operations.bounds(q,target)
+  if fault=='split'then first,last=q:indexOf(action),q:indexOf(action)end
+  local to=after and targetLast+1 or targetFirst;if first<to then to=to-(last-first+1)end
+  return {allowed=fault~='stale-denial',reason='move_dependent',first=first,last=last,to=to,snapshot={}}
+ end
+ local moves=0
+ local api={cancelOperation=function()return false,'operation_dependent'end}
+ function api.move(...)
+  moves=moves+1
+  if fault=='incomplete-restore'and moves==2 then return true end
+  local ok=Queue.move(...)
+  if fault=='current'then queue.current=tail end
+  if fault=='ownership'then equip.toolkitQueueOperation={}end
+  if fault=='internal-order'then queue.queue[4],queue.queue[5]=queue.queue[5],queue.queue[4]end
+  return ok
+ end
+ local definitions={inspect=function()return {knownInputs=true,items={[7]=true},equipment=player,
+  outputTypes={['Base.Bullets9mm']=true},cancelOperation=fault=='unsafe-contract'},'native.ISRackFirearm'end}
+ rackControls.controls(state,{queue=function()return queue end,api=api,policy=Policy,operations=Operations,definitions=definitions})
+ assert(moves==2 and state.rackWholeOperationMoveVerified and state.rackCancellationProtected and state.independentMoveVerified)
+ checks.unchanged(queue,{front,pickup,equip,rack,tail})
+end
+for _,id in ipairs({'tidy-hands','tidy-empty-hands'})do
+ run(id)
+ for _,fault in ipairs({'split','incomplete-restore','internal-order','current','ownership','stale-denial','cancel-permitted','unsafe-contract'})do
+  assert(not pcall(run,id,fault),'fixture accepted unsafe/incomplete composite proof '..fault)
+ end
+end
+'''
+        target = self.root / 'rack-controls.lua'
+        target.write_text(script)
+        result = subprocess.run([lua, str(target), str(ROOT)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rack_controls_require_verified_whole_operation_move_and_preserved_cancellation_guard(self):
+        self.selection['cases'] = ['tidy-hands', 'tidy-empty-hands']
+        self.assertEqual(self.verify(self.logs())['issues'], [])
+        for field in ('rackWholeOperationMoveVerified', 'rackCancellationProtected', 'independentMoveVerified'):
+            for index in (1, 2):
+                for value in (False, None, 1):
+                    rows = self.records(); rows[index]['outcome'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (field, index, value))
 
     def test_missing_effect_or_policy_proof_fails(self):
         records = self.records()
@@ -822,6 +946,16 @@ local function run(kind,mode,fault,equipment)
  getFilenameOfClosure=function()return 'fixture' end
  action.Type,action.primary,action.twoHands='ISEquipWeaponAction',true,false
  local clothing=equipment=='clothing-remove' or equipment=='clothing-wear'
+ local hotbar=equipment=='hotbar'
+ if hotbar then
+  action.Type='ISUnequipAction';action.fromHotbar=true
+  item.getFullType=function()return 'Base.Shotgun'end;item.getContainer=function()return inventory end
+  item.getAttachedSlot=function()return 1 end;item.getAttachedSlotType=function()return 'Back'end
+  item.getAttachedToModel=function()return 'Rifle On Back with Bag'end
+  player.getAttachedItems=function()return {getItem=function()return fault~='attach-connect'and item or nil end}end
+  player.getPrimaryHandItem=function()return kind=='mp'and nil or item end
+  player.getSecondaryHandItem=function()return kind=='mp'and nil or item end
+ end
  if clothing then
   action.Type=equipment=='clothing-remove'and 'ISUnequipAction'or 'ISWearClothing'
   item.getFullType=function()return 'Base.Socks_Ankle'end
@@ -829,10 +963,11 @@ local function run(kind,mode,fault,equipment)
  end
  if fault=='early-flush' then lifecycle.flush=function()return 'completed',action end end
  local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode=mode})
- observer.watch({id=clothing and (equipment=='clothing-remove'and 'tidy-clothing-remove'or 'tidy-clothing')or nil,
+ observer.watch({id=hotbar and 'tidy-hotbar'or clothing and (equipment=='clothing-remove'and 'tidy-clothing-remove'or 'tidy-clothing')or nil,
   root=inventory,source=source,baseline={[7]=item},hammer={getID=item.getID,getFullType=item.getFullType},
-  clothingSocks=clothing and item or nil,clothingLocation='base:socks'})
- if equipment and not clothing then action.item={getID=item.getID,getFullType=item.getFullType} end
+  clothingSocks=clothing and item or nil,clothingLocation='base:socks',pickup=hotbar and item or nil,hotbarDetached=true,
+  hotbarIndex=1,hotbarType='Back',hotbarLocation='Rifle On Back with Bag',hotbarRestoreAction=hotbar and action or nil})
+ if equipment and not clothing and not hotbar then action.item={getID=item.getID,getFullType=item.getFullType} end
  if not enabled then
   lifecycle.begin(action,'perform');lifecycle.finish(action,'perform',true)
   local counts=observer.settled();assert(counts.perform==0 and counts.complete==0 and counts.flush==0);return
@@ -856,12 +991,12 @@ local function run(kind,mode,fault,equipment)
  if fault~='early-flush' then assert(lifecycle.flush(queue)=='waiting');present=false end
  assert(lifecycle.flush(queue)=='completed')
  assert(lifecycle.flush(queue)==nil)
- local counts=clothing and observer.clothing()or equipment and observer.restores() or observer.settled()
+ local counts=hotbar and observer.hotbar()or clothing and observer.clothing()or equipment and observer.restores() or observer.settled()
  assert(counts.perform==1 and counts.complete==(kind=='sp' and 1 or 0) and counts.flush==1 and counts.legacy==0)
 end
 for _,kind in ipairs({'sp','mp'})do
  for _,mode in ipairs({'native','toolkit'})do
-  run(kind,mode);run(kind,mode,nil,true);run(kind,mode,nil,'clothing-wear');run(kind,mode,nil,'clothing-remove')
+  run(kind,mode);run(kind,mode,nil,true);run(kind,mode,nil,'clothing-wear');run(kind,mode,nil,'clothing-remove');run(kind,mode,nil,'hotbar')
  end
  for _,fault in ipairs({'id','endpoint','token','handle','parent','failed','duplicate-perform','legacy','early-flush','unflushed'})do
   local ok=pcall(run,kind,'toolkit',fault);assert(not ok,'observer accepted '..kind..' '..fault)
@@ -869,6 +1004,8 @@ for _,kind in ipairs({'sp','mp'})do
 end
 assert(not pcall(run,'mp','toolkit','host-complete'))
 assert(not pcall(run,'mp','toolkit','host-complete','clothing-remove'))
+assert(not pcall(run,'mp','toolkit','host-complete','hotbar'))
+assert(not pcall(run,'sp','toolkit','attach-connect','hotbar'))
 '''
         target = self.root / 'completion-check.lua'
         target.write_text(script)

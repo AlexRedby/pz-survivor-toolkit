@@ -286,3 +286,160 @@ do
   'changed/unsafe target style definition must fail closed')
  print('tidy-clothing: real native constructors/effects, exact socks and unchanged non-consuming hair fixture passed')
 end
+
+-- Real native fromHotbar constructors and unequip effects; P4's generated
+-- queue/authority are still observed only by the separate SP/Host scenario.
+do
+ native('shared/TimedActions/ISEquipWeaponAction.lua');native('shared/TimedActions/ISRackFirearm.lua')
+ local baseSource=read('shared/TimedActions/ISBaseTimedAction.lua')
+ excerpt(baseSource,'function ISBaseTimedAction:create()','function ISBaseTimedAction:begin()')
+ excerpt(baseSource,'function ISBaseTimedAction:adjustMaxTime(maxTime)','function ISBaseTimedAction:setActionAnim(')
+ MoodleType={UNHAPPY='unhappy',DRUNK='drunk'}
+ local createdTime
+ LuaTimedActionNew={new=function(action,character)createdTime=action.maxTime;return {}end}
+ excerpt(context,'ISInventoryPaneContextMenu.onRackGun = function','ISInventoryPaneContextMenu.onLoadBulletsIntoFirearm = function')
+ excerpt(context,'ISInventoryPaneContextMenu.equipWeapon = function','ISInventoryPaneContextMenu.onInformationItems = function')
+ excerpt(read('client/Hotbar/ISHotbar.lua'),'function ISHotbar:isItemAttached(item)','function ISHotbar:attachItem (')
+ local Hotbar=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentHotbar.lua'))()
+ isClient=function()return false end;isServer=function()return false end
+ getText=function(text)return text end
+ ISBaseTimedAction.setOverrideHandModels=function()end
+ local player={primary=nil,secondary=nil,attached={}}
+ function player:getPlayerNum()return 0 end
+ function player:isTimedActionInstant()return false end
+ function player:getMoodles()return {getMoodleLevel=function()return 0 end}end
+ function player:getTimedActionTimeModifier()return 1.2 end
+ function player:getPrimaryHandItem()return self.primary end
+ function player:getSecondaryHandItem()return self.secondary end
+ function player:setPrimaryHandItem(item)self.primary=item end
+ function player:setSecondaryHandItem(item)self.secondary=item end
+ function player:setAttachedItem(location,item)self.attached[location]=item end
+ function player:removeAttachedItem(item)for location,value in pairs(self.attached)do if value==item then self.attached[location]=nil end end end
+ function player:removeWornItem()end
+ function player:getWornItems()return {contains=function()return false end}end
+ function player:getAttachedItems()
+  local entries={};for loc,item in pairs(self.attached)do
+   local location,value=loc,item;entries[#entries+1]={getLocation=function()return location end,getItem=function()return value end}
+  end
+  local values=list(entries);values.getItem=function(_,location)return self.attached[location]end;return values
+ end
+ local state={id='tidy-hotbar',player=player,root=container()}
+ function player:getInventory()return state.root end
+ function state.root:getType()return 'inventory'end
+ function state.root:getItemById(id)for item in pairs(self.items)do if item:getID()==id then return item end end end
+ function state.root:setDrawDirty()end
+ local hotbar={chr=player,availableSlot={{def={type='Back',name='Back',attachments={Rifle='Rifle On Back'}}}},replacements={Rifle='Rifle On Back with Bag'}}
+ setmetatable(hotbar,{__index=ISHotbar})
+ function hotbar:refresh()end
+ function hotbar:reloadIcons()
+  self.attachedItems={};for item in pairs(state.root.items)do if item:getAttachedSlot()>-1 then self.attachedItems[item:getAttachedSlot()]=item end end
+ end
+ getPlayerHotbar=function()return hotbar end;getSpecificPlayer=function()return player end
+ Hotbar.prepare(state,function(name,kind)
+  local item=makeItem(kind,state.root);state[name]=item
+  function item:getAttachmentType()return 'Rifle'end
+  function item:canBeActivated()return false end;function item:isForceDropHeavyItem()return false end
+  function item:getCurrentAmmoCount()return 0 end;function item:isRoundChambered()return false end
+  function item:isRequiresEquippedBothHands()return true end;function item:isTwoHandWeapon()return true end
+  function item:getName()return 'Shotgun'end;function item:getUnequipSound()end
+  function item:getWorldItem()end
+  function item:IsClothing()return false end
+  return item
+ end)
+ local queue={queue={{Type='ISReadABook'}}}
+ ISTimedActionQueue={add=function(action)queue.queue[#queue.queue+1]=action end}
+ ISInventoryPaneContextMenu.transferIfNeeded=function(_,item)assert(item:getContainer()==state.root)end
+ Hotbar.enqueue(state,{queue=function()return queue end,run=function(fn,...)return fn(...)end})
+ assert(#queue.queue==3 and state.hotbarEquip.twoHands and state.hotbarEquip.fromHotbar and state.rackAction.gun==state.pickup)
+ state.hotbarEquip:setOverrideHandModels(nil,nil)
+ player:removeAttachedItem(state.pickup);player.primary,player.secondary=state.pickup,state.pickup
+ assert(not Hotbar.verify(state,false,true).attached)
+ local prefix='[P4TidyUpMeister][P0][S21] '
+ local trace='ISReadABook -> ISEquipWeaponAction -> ISRackFirearm -> ISReadABook'
+ local function source(state,omit)
+  Hotbar.observeLine(state,prefix..'capture primary=nil secondary=nil')
+  Hotbar.observeLine(state,prefix..'capture worn=[] inventoryCount=4')
+  if omit~='equip'then Hotbar.observeLine(state,prefix..'add[add] type=ISEquipWeaponAction item=Base.Shotgun#'..state.pickup:getID()..'@inventory')end
+  if omit~='producer'then Hotbar.observeLine(state,prefix..'add[add] type=ISRackFirearm item=nil')end
+  if omit~='finish'then Hotbar.observeLine(state,prefix..'finish armed=true cancelled=false prep=true transfer=false operation=true dismantle=nil restoreHands=true restoreWorn=false queueRestoreOnCancel=nil actionTotal=4 transferCount=0 counts=[ISEquipWeaponAction=1, ISRackFirearm=1, ISReadABook=2] trace=['..trace..']')end
+  Hotbar.observeLine(state,prefix..'RESTORE actionTotal=4 trace=['..trace..'] reason=operation:ISReadABook')
+ end
+ for _,omit in ipairs({'equip','producer','finish'})do state.hotbarP4=nil;source(state,omit);assert(state.hotbarP4.problem,'incomplete native source proof accepted '..omit)end
+ state.hotbarP4=nil;source(state)
+ assert(state.hotbarP4.restore and not state.hotbarP4.problem)
+ Hotbar.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S22')
+ assert(not state.hotbarP4.completed,'foreign completion must not settle')
+ local cleanup=ISUnequipAction:new(player,state.pickup,50)
+ assert(cleanup.fromHotbar and cleanup.maxTime==50 and cleanup.maxTimeInit==50 and cleanup.animEvent==ISUnequipAction.animEvent)
+ local nativeCreate,nativeAdjust=cleanup.create,cleanup.adjustMaxTime
+ cleanup:create()
+ assert(cleanup.maxTime==60 and cleanup.maxTimeInit==50 and createdTime==60,
+  'real native create/adjustMaxTime must apply the 1.2 modifier without changing constructor duration')
+ assert(cleanup.create==nativeCreate and cleanup.adjustMaxTime==nativeAdjust,'native timing methods changed')
+ queue.queue={cleanup};queue.current=cleanup
+ local ack='started'
+ local toolkit={Settings={actionQueue=function()return true end},ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
+  ActionQueueAcknowledgements={capture=function()return {}end,observe=function()return ack end}}
+ Hotbar.observe(state,queue,toolkit,true)
+ assert(state.hotbarRestoreDuration==60,'observer must retain the native adjusted duration')
+ local originalTime,originalInit=cleanup.maxTime,cleanup.maxTimeInit
+ for _,value in ipairs({1,0,-1,math.huge,0/0})do
+  cleanup.maxTime=value
+  local ok,problem=pcall(Hotbar.observe,state,queue,toolkit,true)
+  assert(not ok and tostring(problem):find('maxTime=',1,true),'invalid effective duration must fail with detailed diagnostics')
+ end
+ cleanup.maxTime=originalTime;cleanup.maxTimeInit=1
+ assert(not pcall(Hotbar.observe,state,queue,toolkit,true),'changed constructor duration must fail')
+ cleanup.maxTimeInit=originalInit
+ for _,name in ipairs({'create','adjustMaxTime'})do
+  local original=cleanup[name];cleanup[name]=function()error('foreign timing method')end
+  assert(not pcall(Hotbar.observe,state,queue,toolkit,true),'foreign native timing method must fail '..name)
+  cleanup[name]=original
+ end
+ Hotbar.observe(state,queue,toolkit,true)
+ assert(not state.hotbarAttachConnect,'cleanup adoption alone must not prove attachConnect')
+ cleanup:animEvent('attachConnect')
+ Hotbar.observe(state,queue,toolkit,true)
+ assert(not state.hotbarAttachConnect,'polling must not claim pre-perform attachment evidence')
+ assert(player:getAttachedItems():getItem(state.hotbarLocation)==state.pickup)
+ state.hotbarAttachConnect=true -- lifecycle.begin observes this before native perform in the scenario
+ cleanup:perform();assert(cleanup:complete());assert(not player.primary and not player.secondary)
+ assert(Hotbar.verify(state,true).attached)
+ state.hotbarProducerStarted=true
+ Hotbar.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S21')
+ isClient=function()return true end
+ Hotbar.observe(state,queue,toolkit,true)
+ assert(not Hotbar.settled(state,toolkit,true),'started receipt must not settle native hand mutation')
+ ack='canceled';assert(not Hotbar.settled(state,toolkit,true),'canceled receipt must not settle native hand mutation')
+ ack='completed';assert(Hotbar.settled(state,toolkit,true))
+ -- Readiness must never call assert, including successful checks before a
+ -- later delayed field/receipt. Vanilla logs assertions even through pcall.
+ local originalAssert=assert
+ local function quietReady(expected)
+  local calls=0
+  assert=function(...)calls=calls+1;return originalAssert(...)end
+  local ready=Hotbar.settled(state,toolkit,true)
+  assert=originalAssert
+  assert(calls==0,'hotbar readiness invoked assert while waiting/settled')
+  assert(ready==expected,'hotbar readiness accepted partial state or rejected final state')
+ end
+ quietReady(true)
+ state.root.items[state.pickup]=nil;quietReady(false);state.root.items[state.pickup]=true
+ local getType=state.pickup.getFullType
+ state.pickup.getFullType=function()return 'Base.Pistol'end;quietReady(false);state.pickup.getFullType=getType
+ state.pickup:setAttachedSlot(-1);quietReady(false);state.pickup:setAttachedSlot(state.hotbarIndex)
+ state.pickup:setAttachedSlotType(nil);quietReady(false);state.pickup:setAttachedSlotType(state.hotbarType)
+ state.pickup:setAttachedToModel(nil);quietReady(false);state.pickup:setAttachedToModel(state.hotbarLocation)
+ player.primary=state.pickup;quietReady(false);player.primary=nil
+ player.secondary=state.pickup;quietReady(false);player.secondary=nil
+ player:removeAttachedItem(state.pickup);quietReady(false);player:setAttachedItem(state.hotbarLocation,state.pickup)
+ hotbar.attachedItems[state.hotbarIndex]=nil;quietReady(false);hotbar.attachedItems[state.hotbarIndex]=state.pickup
+ state.hotbarP4.completed=nil;quietReady(false);state.hotbarP4.completed=true
+ local receipt=state.hotbarRestoreReceipt;state.hotbarRestoreReceipt=nil;quietReady(false);state.hotbarRestoreReceipt=receipt
+ ack='started';quietReady(false);ack='canceled';quietReady(false);ack='completed';quietReady(true)
+ assert(Hotbar.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0}).nativeGenerated==1)
+ state.pickup:setAttachedToModel('Rifle On Back');assert(not pcall(Hotbar.verify,state,true),'wrong model must fail')
+ state.pickup:setAttachedToModel(state.hotbarLocation)
+ Hotbar.release(state);assert(state.pickup:getAttachedSlot()==-1 and next(player.attached)==nil)
+ print('tidy-hotbar: native constructors/attachConnect/hand effects, exact source proof and strict Host receipts passed')
+end

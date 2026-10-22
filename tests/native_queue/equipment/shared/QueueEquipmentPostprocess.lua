@@ -1,6 +1,7 @@
 local Postprocess={}
 local Bulk=require 'QueueEquipmentBulk'
 local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local function isBelt(id) return id=='belt-knife' or id=='belt-hammer' end
 local function same(item,expected)
  return item==nil and expected==nil or item~=nil and expected~=nil
@@ -70,6 +71,7 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
+ if Hotbar.isCase(state.id)then primary,secondary=not tidy and state.pickup or nil,not tidy and state.pickup or nil;Hotbar.verify(state,tidy)end
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   if not tidy then primary,secondary=state.pickup,nil
   elseif state.id=='tidy-empty-hands' then primary,secondary=nil,nil
@@ -92,6 +94,7 @@ function Postprocess.verify(state,mode,tidy)
   expectedAttached[location]=item
  end
  if (state.id=='hotbar-chain' or isBelt(state.id)) then expectedAttached[state.hotbarLocation]=state.hotbarReplacement end
+ if Hotbar.isCase(state.id)and tidy then expectedAttached[state.hotbarLocation]=state.pickup end
  local actualAttached={};local attachments=player:getAttachedItems()
  for i=0,attachments:size()-1 do local entry=attachments:get(i);actualAttached[tostring(entry:getLocation())]=entry:getItem() end
  if tidy and (state.id=='hotbar-chain' or isBelt(state.id)) then
@@ -128,6 +131,7 @@ function Postprocess.verify(state,mode,tidy)
   elseif name=='groupOne' or name=='groupTwo' or name=='groupHeavyOne' or name=='groupHeavyTwo' then expected=tidy and state.source or root
   elseif name=='content' or name:match('^plank%d+$') then expected=state.source
   elseif name=='clothingA' then expected=tidy and state.source or root
+  elseif name=='pickup'and Hotbar.isCase(state.id)then expected=root
   elseif name=='pickup' and (state.id=='bag-capacity' or (state.id=='tidy-group' or state.id=='tidy-multigroup')) then expected=root
   elseif name=='pickup' and (state.id=='floor-pickup' or state.id=='tidy-floor') then expected=root
   elseif name=='pickup' and (state.id=='tidy-hands' or state.id=='tidy-empty-hands') then expected=tidy and state.source or root
@@ -139,6 +143,7 @@ function Postprocess.verify(state,mode,tidy)
  end
  assert(floorRestored==(state.id=='tidy-floor' and tidy),'P4 returned deliberately picked up floor item or lost borrowed floor return')
  local result={postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
+ if Hotbar.isCase(state.id)then result.hotbar=Hotbar.verify(state,tidy)end
  if Clothing.isCase(state.id)then result.clothing=Clothing.verify(state,Clothing.finalWorn(state,tidy))end
  if (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   local ids={}

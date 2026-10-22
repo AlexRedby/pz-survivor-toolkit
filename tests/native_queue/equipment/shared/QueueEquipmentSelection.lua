@@ -7,7 +7,7 @@ if type(config.cases)=='table' and config.cases[1]=='cart-pickup' then
  assert(config.kind=='mp' and #config.cases==1,'cart-pickup requires standalone MP equipment selection')
  return {cases=config.cases,mode=config.mode,kind=config.kind,language=config.languages[1]}
 end
-local canonical={'hands-chain','waiting-cancel','bag-capacity','clothing-chain','hotbar-chain','belt-knife','belt-hammer','floor-pickup','bulk-pickup','bulk-waiting-cancel','bulk-mixed','tidy-hands','tidy-floor','tidy-empty-hands','tidy-group','tidy-multigroup','tidy-clothing','tidy-clothing-remove'}
+local canonical={'hands-chain','waiting-cancel','bag-capacity','clothing-chain','hotbar-chain','belt-knife','belt-hammer','floor-pickup','bulk-pickup','bulk-waiting-cancel','bulk-mixed','tidy-hands','tidy-floor','tidy-empty-hands','tidy-group','tidy-multigroup','tidy-clothing','tidy-clothing-remove','tidy-hotbar'}
 local known,selected,seen={},{},{}
 for _,id in ipairs(canonical) do known[id]=true end
 assert(type(config.cases)=='table' and #config.cases>0,'equipment cases missing')

@@ -6,11 +6,11 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-hotbar']
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-hotbar': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
@@ -41,9 +41,11 @@ SCENARIO_ACTIONS = {
     'tidy-hands': {
         'scope': 'P4 borrowed empty pistol rack, occupied/empty hands, and two-item lightweight and four-item light/heavy native return groups; exact containers, repeated native executor attempts and activation.',
         'mods': ['P4TidyUpMeister'],
-        'toolkit_only': ['restore-hands', 'return-items'],
+        'toolkit_only': ['restore-hands', 'return-items', 'move-independent'],
         'checks': {
             'success-queued': {'tidy-hands': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'move-independent': {'tidy-hands': {'rackWholeOperationMoveVerified': True, 'rackCancellationProtected': True},
+                                 'tidy-empty-hands': {'rackWholeOperationMoveVerified': True, 'rackCancellationProtected': True}},
             'restore-hands': {'tidy-hands': {'restoreVerified': True}, 'tidy-empty-hands': {'restoreVerified': True}},
             'return-items': {'tidy-hands': {'restoreVerified': True, 'postprocessingVerified': True},
                              'tidy-empty-hands': {'restoreVerified': True, 'postprocessingVerified': True},
@@ -51,6 +53,14 @@ SCENARIO_ACTIONS = {
                              'tidy-multigroup': {'postprocessingVerified': True}},
             'server-authority': {'tidy-hands': {'authoritative': True}, 'tidy-empty-hands': {'authoritative': True},
                                  'tidy-group': {'authoritative': True}, 'tidy-multigroup': {'authoritative': True}},
+        },
+    },
+    'tidy-hotbar': {
+        'scope': 'Native onRackGun on an initially attached empty Shotgun with empty hands; P4 generates one fromHotbar Unequip back to the exact Back slot. Native attachConnect/model, UI icon, root/worn/hands conservation and independent reading tail.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-hotbar': {'tidy-hotbar': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'server-authority': {'tidy-hotbar': {'authoritative': True}},
         },
     },
     'tidy-clothing': {
@@ -204,6 +214,8 @@ def verify(root, selection, catalog):
         if row.get('id') in ('clothing-chain', 'hotbar-chain'):
             required['slotsVerified'] = True
             required['clothing' if row['id'] == 'clothing-chain' else 'hotbar'] = True
+        if row.get('id') in ('tidy-hands', 'tidy-empty-hands') and selection['mode'] == 'toolkit':
+            required.update(rackWholeOperationMoveVerified=True, rackCancellationProtected=True, independentMoveVerified=True)
         if row.get('id') in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
             required.update(restoreVerified=True, floorRestoreVerified=row['id'] == 'tidy-floor' and 'P4TidyUpMeister' in selection['mods'])
             count = int(selection['mode'] == 'toolkit' and 'P4TidyUpMeister' in selection['mods'])
@@ -267,6 +279,8 @@ def verify(root, selection, catalog):
                 issues.append('Tidy native completion evidence missing or inconsistent: ' + str(row.get('id')))
         if row.get('id') in ('tidy-group', 'tidy-multigroup'):
             issues.extend(_verify_tidy_group(result, selection, multi=row['id'] == 'tidy-multigroup'))
+        if row.get('id') == 'tidy-hotbar':
+            issues.extend(_verify_tidy_hotbar(result, selection))
         if row.get('id') in ('tidy-clothing', 'tidy-clothing-remove'):
             issues.extend(_verify_tidy_clothing(result, selection, remove=row['id'] == 'tidy-clothing-remove'))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),
@@ -289,6 +303,19 @@ def verify(root, selection, catalog):
                 issues.append('Exact borrowed floor item did not complete native server placement once')
         group_cases = [case for case in selection['cases'] if case in ('tidy-group', 'tidy-multigroup')]
         clothing_cases = [case for case in selection['cases'] if case in ('tidy-clothing', 'tidy-clothing-remove')]
+        if 'tidy-hotbar' in selection['cases']:
+            import json
+            markers = [line.split('[EQUIPMENT_TEST] HOTBAR_AUTHORITY ', 1)[1].strip()
+                       for line in server.splitlines() if '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' in line]
+            value = next((row.get('outcome', {}).get('tidyHotbar') for row in cases if row.get('id') == 'tidy-hotbar'), {})
+            value = value if isinstance(value, dict) else {}
+            expected = {key: value.get(key) for key in HOTBAR_EFFECT_KEYS}
+            try:
+                authority = [json.loads(marker) for marker in markers]
+            except (ValueError, TypeError):
+                authority = []
+            if (authority != [expected] or any(type(authority[0].get(key)) is not type(wanted) for key, wanted in expected.items())):
+                issues.append('Exact P4 hotbar server attachment/root/worn/hands receipt missing or inconsistent')
         if clothing_cases:
             import json
             markers = [line.split('[EQUIPMENT_TEST] CLOTHING_AUTHORITY ', 1)[1].strip()
@@ -334,6 +361,43 @@ def verify(root, selection, catalog):
             issues.append('Equipment acknowledgement captures missing or duplicated')
     return {'issues': issues, 'outcomes': outcomes,
             'evidence': {'limits': ['Fresh world, one actual client, inventory callbacks invoked programmatically; WAN and physical input unverified.']}}
+
+
+HOTBAR_EFFECT_KEYS = {'id', 'fullType', 'container', 'slotIndex', 'slotType', 'model', 'attached', 'primary', 'secondary',
+                      'worn', 'producer', 'producerCompleted', 'ammoUnchanged', 'unrelatedAttachmentsPreserved'}
+
+
+def _verify_tidy_hotbar(result, selection):
+    value, checkpoint = result.get('tidyHotbar'), result.get('hotbarCheckpoint')
+    tidy = 'P4TidyUpMeister' in selection['mods']
+    keys = HOTBAR_EFFECT_KEYS | {'nativeGenerated', 'authoritativeRestore', 'sourceSession', 'sourceCompleted',
+                                'attachConnectObserved', 'uiHotbarIdentity', 'sharedCompletion', 'unrelatedTailPreserved'}
+    if (not isinstance(value, dict) or set(value) != keys
+            or not isinstance(checkpoint, dict) or set(checkpoint) != HOTBAR_EFFECT_KEYS):
+        return ['P4 hotbar exact effect/checkpoint evidence missing']
+    expected = dict(fullType='Base.Shotgun', container='root', slotIndex=1, slotType='Back', model='Rifle On Back with Bag',
+                    attached=tidy, primary=False if tidy else value.get('id'), secondary=False if tidy else value.get('id'), worn=False,
+                    producer='onRackGun', producerCompleted=True, ammoUnchanged=True, unrelatedAttachmentsPreserved=True,
+                    nativeGenerated=int(tidy), authoritativeRestore=tidy and selection['kind'] == 'mp', sourceCompleted=tidy,
+                    attachConnectObserved=tidy, uiHotbarIdentity=True, unrelatedTailPreserved=True)
+    if (type(value.get('id')) is not int or value['id'] == -1 or type(result.get('hotbarItem')) is not int
+            or result['hotbarItem'] != value['id']
+            or any(type(value.get(key)) is not type(wanted) or value.get(key) != wanted for key, wanted in expected.items())):
+        return ['P4 hotbar exact native slot/model/root/hands effect differs']
+    session = value.get('sourceSession')
+    if (tidy and (type(session) is not int or session <= 0)) or (not tidy and session is not False):
+        return ['P4 hotbar source-owned native rack session missing']
+    before = {key: value[key] for key in HOTBAR_EFFECT_KEYS}
+    before.update(attached=False, primary=value['id'], secondary=value['id'])
+    if checkpoint != before or any(type(checkpoint.get(key)) is not type(wanted) for key, wanted in before.items()):
+        return ['P4 hotbar detached/held checkpoint differs from exact restored identity']
+    count = int(tidy and selection['mode'] == 'toolkit')
+    expected_completion = dict(perform=count, complete=count if selection['kind'] == 'sp' else 0, flush=count, legacy=0)
+    completion = value.get('sharedCompletion')
+    if (not isinstance(completion, dict) or completion != expected_completion
+            or any(type(item) is not int for item in completion.values())):
+        return ['P4 hotbar shared completion evidence differs']
+    return []
 
 
 CLOTHING_EFFECT_KEYS = {'id', 'fullType', 'bodyLocation', 'container', 'worn', 'producer', 'producerCompleted',

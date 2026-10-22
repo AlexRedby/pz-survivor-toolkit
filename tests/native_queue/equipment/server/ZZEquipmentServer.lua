@@ -3,6 +3,7 @@ if cartSelection.cases[1]=='cart-pickup' then return end
 if not isServer() then return end
 local Fixture=require 'QueueEquipmentFixture'
 local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local Selection=require 'QueueTestSelection'
 local Postprocess=require 'QueueEquipmentPostprocess'
 local JSON=require 'QueueHealthEvents'
@@ -25,6 +26,7 @@ local function execute(module,command,player,args)
    sendClothing(player,session.location,player:getWornItem(session.location));sendEquip(player)
    if Clothing.isCase(session.id)then sendClothing(player,session.clothingLocation,player:getWornItem(session.clothingLocation))end
    if session.id=='hotbar-chain' then sendAttachedItem(player,session.hotbarLocation,session.hotbarInitial) end
+   if Hotbar.isCase(session.id)then sendAttachedItem(player,session.hotbarLocation,session.pickup)end
    reply(player,'Prepared',ids)
    print('[EQUIPMENT_TEST] PREPARED case='..args.case)
   elseif command=='Checkpoint' or command=='Verify' then
@@ -89,6 +91,9 @@ Events.OnTick.Add(function()
    session.verified=true
    if passed and (session.id=='tidy-group' or session.id=='tidy-multigroup') then
     print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))
+   end
+   if passed and Hotbar.isCase(session.id)then
+    print('[EQUIPMENT_TEST] HOTBAR_AUTHORITY '..JSON.encode(problem.hotbar))
    end
    if passed and Clothing.isCase(session.id)then
     print('[EQUIPMENT_TEST] CLOTHING_AUTHORITY '..JSON.encode(problem.clothing))

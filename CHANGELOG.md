@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.224
+
+- **Action queue:** Move proven P4 hand-to-hotbar returns onto shared native completion. Preserve both authoritative hand removal and native attachment effects, exact root item and existing slot/model, required cleanup and independent following actions. Changed hotbar helpers or metadata and special equipment retain their current fallback.
+
 ### 0.1.223
 
 - **Craft plans:** Reuse a script-structure catalog and prepare only the selected recipe's possible prerequisite chain and existing material overrides. Recalculating or confirming a plan no longer rereads unrelated recipes or checks their character/workbench availability. Keep all material and tool alternatives, fresh stock and eligibility checks, independent preview choices and native step validation. Reset the catalog at game boundaries and script reloads.
