@@ -200,6 +200,55 @@ class InventoryEquipEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'consumed body/cart'): analyze(data)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
+    def test_native_autoload_unselected_inventory_modules_have_no_dependencies_or_handlers(self):
+        for name in ('inventory-equip-client.lua','inventory-equip-server.lua'):
+            script=r'''local selected,registrations,dependencies=nil,0,0
+Events=setmetatable({}, {__index=function() return {Add=function() registrations=registrations+1 end} end})
+function require(name)
+ if name=='QueueTestSelection' then return selected end
+ dependencies=dependencies+1;error('UNEXPECTED_DEPENDENCY '..name)
+end
+local path=%s
+for _,options in ipairs({false,{}, {cart_inventory_equip=false}, {cart_inventory_equip='true'}, {cart_inventory_equip=1}}) do
+ selected=options==false and {} or {options=options}
+ assert(pcall(assert(loadfile(path))), 'Unselected native autoload required fixture APIs')
+ assert(registrations==0 and dependencies==0,'Unselected module registered handlers or loaded dependencies')
+end
+-- Ordinary SP/MP selections must return before even the menu Host assertions.
+for _,kind in ipairs({'sp','mp'}) do
+ selected={kind=kind,disposable=false,options={mp_host=false,cart_inventory_equip=false}}
+ assert(pcall(assert(loadfile(path))))
+end
+''' % json.dumps(str(HERE/name))
+            result=subprocess.run([shutil.which('luajit'),'-'],input=script,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,name+'\n'+result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
+    def test_selected_inventory_modules_keep_the_disposable_mp_menu_host_gate(self):
+        for name in ('inventory-equip-client.lua','inventory-equip-server.lua'):
+            script=r'''local selected
+function require(name)
+ if name=='QueueTestSelection' then return selected end
+ error('SELECTED_DEPENDENCY')
+end
+local path=%s
+for _,config in ipairs({
+ {disposable=false,kind='mp',options={mp_host=true,cart_inventory_equip=true}},
+ {disposable=true,kind='sp',options={mp_host=true,cart_inventory_equip=true}},
+ {disposable=true,kind='mp',options={mp_host=false,cart_inventory_equip=true}}
+}) do
+ selected=config
+ local ok,message=pcall(assert(loadfile(path)))
+ assert(not ok and tostring(message):find('Fresh disposable menu Host required',1,true),'Selected gate weakened')
+end
+selected={disposable=true,kind='mp',options={mp_host=true,cart_inventory_equip=true},ffmpeg='/owned/ffmpeg'}
+local ok,message=pcall(assert(loadfile(path)))
+assert(not ok and tostring(message):find('SELECTED_DEPENDENCY',1,true),'Selected module stopped before its dependencies')
+''' % json.dumps(str(HERE/name))
+            result=subprocess.run([shutil.which('luajit'),'-'],input=script,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,name+'\n'+result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
     def test_real_menu_callback_uses_native_duration_after_stock_lua_adjustment(self):
         game = Path.home() / 'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java'
         native = game / 'media/lua/shared/TimedActions/ISBaseTimedAction.lua'

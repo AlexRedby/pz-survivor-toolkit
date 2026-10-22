@@ -783,5 +783,33 @@ class InventoryEquipEnvironmentTests(unittest.TestCase):
                 runner._fixture_environment(self.selection(), 'client1', Path('/owned/cache'), dict(extra, PZ_CART_INVENTORY_EQUIP='true'))
 
 
+class CartTimelineEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],options=dict(cart_timeline=True))
+
+    def test_selected_trace_reaches_exact_roles_for_host_or_ordinary_mp(self):
+        for host in (False,True):
+            selection=self.selected();selection['options']['mp_host']=host
+            for role in ('server','client1','client2'):
+                env=runner._fixture_environment(selection,role,Path('/owned/cache'),{'PZ_CART_TIMELINE':'true'})
+                self.assertEqual(env['PZ_CART_TIMELINE'],'true')
+
+    def test_unselected_inherited_flag_is_removed(self):
+        for selected in (self.selected(),dict(suite='health',kind='sp',options={})):
+            with patch.dict(runner.os.environ,{'PZ_CART_TIMELINE':'true'}):
+                self.assertNotIn('PZ_CART_TIMELINE',runner._fixture_environment(selected,'client1',Path('/owned/cache'),{}))
+
+    def test_exact_true_flag_and_selected_context_are_required(self):
+        for value in ('false','TRUE','1','',True,False,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaisesRegex(ValueError,'fixture-owned'):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_TIMELINE':value})
+        for field,value in (('suite','wooden_cart_motion'),('kind','sp'),('cases',['other']),('cart_timeline',False),('cart_timeline','true')):
+            selection=self.selected();(selection['options'] if field=='cart_timeline' else selection)[field]=value
+            with self.subTest(field=field,value=value),self.assertRaisesRegex(ValueError,'fixture-owned'):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{'PZ_CART_TIMELINE':'true'})
+        with self.assertRaisesRegex(ValueError,'fixture-owned'):
+            runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),{'PZ_CART_TIMELINE':'true'})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -658,6 +658,32 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.assertNotIn('server', self.runtime['fixture']['attach'])
         for role in ('client1', 'client2', 'server'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TEST_PAD'], 'false')
+            self.assertNotIn('PZ_CART_TIMELINE', self.runtime['roles'][role]['env'])
+            lua = self.output / role / 'mods/ActionQueueTest/42/media/lua'
+            self.assertFalse(any(lua.rglob('*InventoryEquip*.lua')))
+
+    def test_mp_timeline_requires_explicit_boolean_and_enables_all_owned_roles(self):
+        self.options['cart_timeline']=True
+        with self.assertRaisesRegex(ValueError,'MP boolean'): carts.validate(self.selection)
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options['cart_timeline']='true'
+        with self.assertRaisesRegex(ValueError,'MP boolean'): carts.validate(self.selection)
+        self.options['cart_timeline']=True
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TIMELINE'],'true')
+        self.assertIn(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/analyze-timeline.py',
+                      carts.sources(ROOT,self.selection))
+
+    def test_mp_inventory_equip_explicit_false_does_not_stage_autoloading_modules(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(mp_host=True,cart_inventory_equip=False)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertFalse(any(lua.rglob('*InventoryEquip*.lua')))
+            self.assertTrue((lua/'client/ZZCartMP.lua').is_file())
+            self.assertTrue((lua/'server/ZZCartMP_Server.lua').is_file())
 
     def test_mp_inventory_equip_requires_an_isolated_host_bank_and_stages_it(self):
         self.options.update(cart_inventory_equip=True, mp_host=True)

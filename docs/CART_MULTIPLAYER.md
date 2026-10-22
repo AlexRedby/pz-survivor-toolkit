@@ -21,6 +21,18 @@
 
 Порядок TCP здесь не обсуждается: фактическая доставка идёт через RakNet/UDP с надёжностью и упорядочением. Потеря раннего сообщения может задерживать последующие сообщения этого канала; размер такой задержки в текущем Host пока не измерен. Замена на Lua commands не является готовым улучшением: native `ClientCommand` использует reliable unordered delivery, а текущий receiver не отбрасывает старые serial.
 
+## Результат первого baseline
+
+На macOS B42.21 выполнены новые изолированные menu Host проверки с доступными 43 Mod ID и неизменённым Java JAR `7ae3ec60…` (0.1.46): inventory male/full и 26-секундное движение с Walk/Run/Sprint, поворотами, остановками и reverse. Native lifecycle, source/snapshot provenance и логи проверены; это выбранные сценарии, а не полная матрица совместимости.
+
+Близкая камера вновь зафиксировала четыре observer draw с контактом после inventory equip; у владельца контактов нет. Проверка простого следования Spine на свежих позах показала, что его недостаточно: конфигурация Thigh/Calf меняется независимо от бокового смещения Spine. Коррекция пока не внедрена. Следующий кандидат должен учитывать двусторонний коридор ног и ручек, сохранять нейтральную стойку и не перемещать native ноги.
+
+Человеческий remote путь вызывает `Prediction.update()`, а `updateLerp()` относится к отдельной animal-ветке. Исходного времени native движения по-прежнему нет. Практический безопасный fallback для текущей коррекции: использовать одну фактическую native render-позу тела, тележки, рук и камеры без дополнительной задержки тележки и без изменения root-motion catch-up. Это не доказательство готовности source-time playback.
+
+В новом trace измерены исходные timestamps TimeSync и applied offset. В выбранном inventory запуске получены обмены с RTT 15.11 и 11.81 мс, без отставания applied offset от midpoint в этих обменах. Offset-интервал `[s-t1,s-t0]` условен для одного exchange; между exchange нет доказанной границы дрейфа. Признак синхронизации и порог 10 мс в native фильтре не дают гарантии точности 10 мс.
+
+В motion baseline первое получение уникального состояния наблюдателем имеет p95 около 42.10 мс по оценкам native server clock. Возраст всех наблюдений имеет p95 около 858.90 мс: сервер также повторно отправляет ранее опубликованное raw value. Эти метрики разделены, cached repeats не выдаются за задержку новой публикации. Полный возраст изображения не измерен.
+
 ## Трафик: что известно и чего ещё нет
 
 Native сериализация motion занимает `23 + длина ASCII payload` байт; action — `29 + длина payload`. Дополнительно есть три байта заголовка engine packet, UDP/RakNet framing и возможные повторы доставки. Parser caps 240/300 символов — ограничения входа, не обычный размер пакета.
@@ -28,6 +40,8 @@ Native сериализация motion занимает `23 + длина ASCII p
 В сохранённой fast-motion Host-сцене `host08` счётчик владельца вырос на 104 записи и 8845 сериализованных байт за 25.434 секунды: около 4.09 записей/с и 348 байт/с. Выборочно наблюдаемые motion payload имели 54–67 ASCII байт. Это исторический ориентир: JAR сцены `1376d0b6…` отличается от текущего `7ae3ec60…`. Это также счётчик `VariableSync.write`, а не фактический расход сети. Он не учитывает входящий трафик, заголовки, повторы и стоимость всех получателей.
 
 Приблизительная модель серверной стоимости: `средний размер * частота * число relevant соединений`, плюс доставка и повторы. Для нескольких видимых тележек считаются все потоки. Среднее по долгому idle нельзя использовать как бюджет активного манёвра.
+
+Новый matched baseline 0.1.46: в 26-секундном motion окне владелец имеет 109 serialized writes / 9255 байт (355.96 байт/с), сервер 154 writes / 12942 байт (497.77 байт/с). Серверные записи включают 109 уникальных identities и 45 повторных; адресат каждой записи пока не записан, поэтому повторы и fan-out не разделяются. Native actualBytes server -> observer составляют около 76.5 кбайт/с за 25.514 секунды реально покрытого интервала, включая прочие native данные; 350/135 мс по краям исключены. Наблюдаемый resend delta равен 0 в этом localhost запуске. Это не cart-only wire budget и не проверка WAN/loss.
 
 Начальное предложение бюджета: сохранить обычный потолок 10 Гц и heartbeat 1 Гц; целиться в текущие байт/с на сопоставимом манёвре. Допуск до 10% для необходимых timing/identity metadata — предложение для проверки, не измеренный результат и не повод повысить частоту. Отдельно ограничить burst редких событий и совокупный motion/action трафик. Если формат не помещается, сначала подобрать представление полей на реальных traces, сохраняя точность и диапазоны.
 
@@ -81,7 +95,7 @@ Native оборудование, cargo, ActionManager transaction и игров�
 
 ## Проверка и порядок внедрения
 
-Использовать [существующий Host fixture](../tests/native_queue/contributions/wooden_cart_multiplayer/README.md), `ClearanceProbe`, consumed body/cart/camera receipts, `CartMotionSyncTest` / `CartActionSyncTest`, Blender replay и native geometry checks. Текущий `MPMain.methods` считает только serialized writes; добавить измерения возраста и owned-endpoint wire traffic. Готового cart delay/loss playback harness в просмотренных этих файлах нет.
+Использовать [существующий Host fixture](../tests/native_queue/contributions/wooden_cart_multiplayer/README.md), `ClearanceProbe`, consumed body/cart/camera receipts, `CartMotionSyncTest` / `CartActionSyncTest`, Blender replay и native geometry checks. Opt-in `cart_timeline` уже пишет publication/native/render traces, отдельные first-delivery и repeated-value ages, TimeSync exchanges и native per-connection actualBytes/resend counters. Полный IP/UDP wire scope, точный recipient fan-out и общий source presentation time остаются открыты. Готового cart delay/loss playback harness в просмотренных этих файлах нет.
 
 1. Baseline и native-time alignment spike. До результата не выбирать размер буфера и не переписывать транспорт.
 2. Воспроизводимый observer inventory-equip defect и безопасная presentation correction при прежней частоте. Сохранить положительный контроль residual Walk/CartWalk и исходные записи.

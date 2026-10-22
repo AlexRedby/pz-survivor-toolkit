@@ -1,4 +1,5 @@
 local config=require 'QueueTestSelection'
+if type(config.options)~='table' or config.options.cart_inventory_equip~=true then return end
 assert(config.disposable==true and config.kind=='mp' and config.options.mp_host==true,'Fresh disposable menu Host required')
 assert(type(config.ffmpeg)=='string' and config.ffmpeg:match('^/'),'Absolute FFmpeg required')
 require 'SaucedCarts/ContextMenu'

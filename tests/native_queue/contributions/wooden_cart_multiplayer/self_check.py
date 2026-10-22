@@ -717,7 +717,7 @@ def check_java(game, jdk, patch):
     javac = jdk / 'bin' / ('javac.exe' if os.name == 'nt' else 'javac')
     version = subprocess.run([str(javac), '-version'], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout
     assert int(re.search(r'javac (\d+)', version)[1]) >= 25
-    jars = [game / 'projectzomboid.jar', game / 'ZombieBuddy.jar', patch]
+    jars = [(game / 'projectzomboid.jar').resolve(), (game / 'ZombieBuddy.jar').resolve(), patch.resolve()]
     assert all(p.is_file() for p in jars), 'Missing explicit compile JAR'
     base = (HERE.parent / 'wooden_cart_motion/Main.java').read_text()
     anchor = '    public static void main(String[] args)'
@@ -777,6 +777,32 @@ public final class ModelProbeCheck {
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var main=Class.forName("net.alexredby.cartlab.Main");
+        var timelinePose=main.getMethod("timelinePose",String.class,String.class);
+        if(!((String)timelinePose.invoke(null,"ToolkitCartPose","1,42,3,0,0,0,1,0,0,0,0,0,0")).contains("\"serial\":3")
+            || !((String)timelinePose.invoke(null,"ToolkitCartActionPose","1,9,42,11,0,0,0,1,2,0,0,0,0,1")).contains("\"actionGeneration\":11")
+            || !((String)timelinePose.invoke(null,"ToolkitCartPose","2,42,3")).contains("shapeError")
+            || timelinePose.invoke(null,"OtherVariable","anything")!=null)throw new AssertionError("Timeline identity/shape guard");
+        // Verify hook names/signatures and actual installed B42 API; no native
+        // socket or game startup is needed for these reflection checks.
+        zombie.characters.IsoGameCharacter.class.getDeclaredMethod("setVariable",String.class,String.class);
+        for(String method:new String[]{"parse","processClient","processServer","write"}) {
+            boolean found=false;
+            for(var candidate:zombie.network.packets.VariableSyncPacket.class.getDeclaredMethods())if(candidate.getName().equals(method))found=true;
+            if(!found)throw new AssertionError("Missing VariableSync hook "+method);
+        }
+        zombie.network.fields.character.Prediction.class.getDeclaredMethod("update");
+        zombie.characters.IsoPlayer.class.getDeclaredMethod("updateRemotePlayer");
+        zombie.GameTime.class.getDeclaredMethod("getServerTimeShiftIsSet");
+        zombie.iso.PlayerCamera.class.getDeclaredMethod("update");
+        for(String name:new String[]{"rightClickX","rightClickY","rightClickTargetX","rightClickTargetY"})
+            if(zombie.iso.PlayerCamera.class.getDeclaredField(name).getType()!=float.class)throw new AssertionError("Native camera pan field changed");
+        zombie.GameTime.class.getDeclaredMethod("syncServerTime",long.class,long.class,long.class);
+        if(zombie.GameTime.class.getDeclaredField("serverTimeShift").getType()!=long.class)throw new AssertionError("Native clock shift changed");
+        zombie.network.packets.service.TimeSyncPacket.class.getDeclaredMethod("processClient",zombie.core.raknet.UdpConnection.class);
+        zombie.core.raknet.UdpConnection.class.getDeclaredMethod("getStatistics");
+        zombie.core.raknet.RakNetPeerInterface.class.getDeclaredMethod("GetNetStatistics",long.class);
+        for(String field:new String[]{"totalActualBytesSent","totalActualBytesReceived","totalUserMessageBytesResent","bytesInResendBuffer","messagesInResendBuffer"})
+            if(zombie.core.znet.ZNetStatistics.class.getDeclaredField(field).getType()!=long.class)throw new AssertionError("Counter changed "+field);
         var host=main.getDeclaredMethod("padHost");
         if((boolean)host.invoke(null))throw new AssertionError("Non-server pad mutation permission");
         var fresh=zombie.network.GameServer.class.getDeclaredField("worldExistedAtStartup");fresh.setAccessible(true);
@@ -997,7 +1023,58 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, family/JSON guards)'
+        timeline_check=root/'TimelineNativeCheck.java'
+        timeline_check.write_text(r'''
+public final class TimelineNativeCheck {
+    public static class Owner extends zombie.characters.IsoPlayer {
+        Owner(){super(null,null,0,0,0);}
+        @Override public String getUsername(){return "client1";}
+        @Override public short getOnlineID(){return 7;}
+        @Override public boolean isLocalPlayer(){return true;}
+    }
+    public static void main(String[] args)throws Exception {
+        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
+        for(String name:new String[]{"zombie.characters.IsoGameCharacter","zombie.network.packets.VariableSyncPacket",
+            "zombie.network.packets.character.PlayerPacket","zombie.network.fields.character.Prediction",
+            "net.alexredby.pztoolkitjavapatches.CartMotionSync","zombie.network.packets.service.TimeSyncPacket","zombie.GameTime","zombie.iso.PlayerCamera"})Class.forName(name);
+        var field=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);
+        var unsafe=(sun.misc.Unsafe)field.get(null);var owner=(Owner)unsafe.allocateInstance(Owner.class);
+        var pan=(zombie.iso.PlayerCamera)unsafe.allocateInstance(zombie.iso.PlayerCamera.class);
+        pan.offX=10;pan.offY=20;pan.rightClickX=30;pan.rightClickY=40;
+        if(pan.getOffX()!=40 || pan.getOffY()!=60)throw new AssertionError("Native pan offsets not consumed");
+        zombie.network.GameServer.server=true;
+        zombie.ZomboidFileSystem.instance.setCacheDir(java.nio.file.Path.of(System.getenv("PZ_CART_RUNTIME_FILE")).getParent().getParent().toString());
+        String raw="1,42,3,0,0,0,1,0,0,0,0,0,0";
+        net.alexredby.cartlab.Main.timelineVariable(owner,"publish","ToolkitCartPose",raw);
+        var packet=new zombie.network.packets.VariableSyncPacket();
+        packet.key="ToolkitCartPose";packet.value=raw;packet.varType=zombie.network.packets.VariableSyncPacket.VariableType.String;
+        packet.player.setID((short)7);
+        field=zombie.network.fields.character.PlayerID.class.getDeclaredField("player");field.setAccessible(true);field.set(packet.player,owner);
+        packet.write(new zombie.core.network.ByteBufferWriter(java.nio.ByteBuffer.allocate(1024)));
+        net.alexredby.cartlab.Main.timelineStop();
+        net.alexredby.cartlab.Main.timelineVariable(owner,"publish","ToolkitCartPose",raw); // Stop suppresses later diagnostics.
+        field=net.alexredby.cartlab.Main.class.getDeclaredField("timelineThread");field.setAccessible(true);
+        var thread=(Thread)field.get(null);thread.join(2000);
+        if(thread.isAlive())throw new AssertionError("Timeline writer failed to drain");
+        System.out.println("TIMELINE_NATIVE_PASS");
+    }
+}
+''')
+        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),str(timeline_check)],check=True)
+        lab=root/'CartLab.jar'
+        subprocess.run([str(jdk/'bin/jar'),'--create','--file',str(lab),'-C',str(root),'net/alexredby/cartlab'],check=True)
+        (root/'Lua').mkdir()
+        result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1,patches_jar='+str(lab)+':net.alexredby.cartlab',
+            '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'TimelineNativeCheck'],
+            cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
+            capture_output=True,text=True,timeout=90)
+        assert result.returncode==0,result.stdout+'\n'+result.stderr
+        assert 'TIMELINE_NATIVE_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+        rows=[json.loads(line) for line in (root/'cart-timeline-server.jsonl').read_text().splitlines()]
+        assert [row['event'] for row in rows]==['publish','variable-write','trace-end'],rows
+        assert [row['seq'] for row in rows]==[1,2,3] and all(row['clockReady'] and row['serverNs']>0 for row in rows)
+        assert rows[0]['cartID']==42 and rows[1]['serial']==3 and rows[1]['serializedBytes']>0
+    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
 
 
 def main():

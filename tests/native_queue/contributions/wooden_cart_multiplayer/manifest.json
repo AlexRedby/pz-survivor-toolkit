@@ -25,7 +25,9 @@
     "inventory-equip-protocol.lua",
     "inventory-equip-client.lua",
     "inventory-equip-server.lua",
-    "analyze-inventory-equip.py"
+    "analyze-inventory-equip.py",
+    "analyze-timeline.py",
+    "analyze-entry-contact.py"
   ],
   "selection_template": {
     "schema_version": 1,

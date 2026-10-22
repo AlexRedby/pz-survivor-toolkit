@@ -196,7 +196,25 @@ public final class ClearanceProbe {
     }
     private static final Object handoffOutputLock=new Object();
     private static long captureSerial;
-    private record NativePose(zombie.characters.IsoPlayer player,long wall,float x,float y,float z,float heading,float angle) {}
+    private static final boolean TIMELINE="true".equals(System.getenv("PZ_CART_TIMELINE"));
+    private static Method timelineBridge;
+    // Main is installed by CartLab on server and both clients. Resolve once at
+    // attachment; the probe is compiled independently from the composed Main.
+    private static void timelineFrame(String event,ModelSlotRenderData slot,DrawFrame frame,String part) {
+        if(!TIMELINE || timelineBridge==null)return;
+        try {
+            String shared=",\"captureId\":"+frame.id+",\"slotToken\":"+System.identityHashCode(slot)
+                +",\"preparedPrimary\":"+frame.preparedPrimary+",\"preparedSecondary\":"+frame.preparedSecondary
+                +",\"nativeMonoNs\":"+frame.nativePose.mono+",\"nativeServerNs\":"+frame.nativePose.server
+                +",\"nativeClockReady\":"+frame.nativePose.ready+",\"part\":"+jsonString(part);
+            var owner=frame.nativePose.player;
+            var main=timelineBridge.getDeclaringClass();
+            var pose=main.getMethod("timelinePose",String.class,String.class);
+            for(String[] state:new String[][]{{"ToolkitCartPose",frame.motion},{"ToolkitCartActionPose",frame.action}})
+                timelineBridge.invoke(null,event,owner,shared+(String)pose.invoke(null,state[0],state[1]));
+        } catch(Throwable error){System.err.println("[CART_TIMELINE] ERROR render bridge "+error);}
+    }
+    private record NativePose(zombie.characters.IsoPlayer player,long wall,long mono,long server,boolean ready,float x,float y,float z,float heading,float angle) {}
     private record Hands(zombie.inventory.InventoryItem item,long changed) {}
     private static final java.util.WeakHashMap<zombie.characters.IsoPlayer,Hands> hands=new java.util.WeakHashMap<>();
     private static void rememberHands(zombie.characters.IsoPlayer player,long now) {
@@ -210,10 +228,12 @@ public final class ClearanceProbe {
         // Ownership at preparation belongs to this frozen body/cart slot.
         final int preparedPrimary,preparedSecondary;
         final ModelInstance body,cart;
+        final String motion,action;
         boolean bodyDrawn,cartDrawn;
         DrawFrame(long id,long wall,NativePose pose,ModelInstance body,ModelInstance cart) {
             this.id=id;this.wall=wall;this.nativePose=pose;this.body=body;this.cart=cart;
             var primary=pose.player.getPrimaryHandItem();var secondary=pose.player.getSecondaryHandItem();
+            motion=TIMELINE?pose.player.getVariableString("ToolkitCartPose"):null;action=TIMELINE?pose.player.getVariableString("ToolkitCartActionPose"):null;
             preparedPrimary=primary==null?-1:primary.getID();preparedSecondary=secondary==null?-1:secondary.getID();
         }
     }
@@ -230,13 +250,13 @@ public final class ClearanceProbe {
         float heading=player.getDirectionAngleRadians();
         var animation=player.getAnimationPlayer();
         float angle=animation==null?heading+(float)(Math.PI/2):animation.getRenderedAngle();
-        nativePoses.put(slot,new NativePose(player,System.currentTimeMillis(),player.getX(),player.getY(),player.getZ(),heading,angle));
+        nativePoses.put(slot,new NativePose(player,System.currentTimeMillis(),System.nanoTime(),zombie.GameTime.getServerTime(),zombie.GameTime.getServerTimeShiftIsSet(),player.getX(),player.getY(),player.getZ(),heading,angle));
     }
     private static DrawFrame prepareDraw(ModelSlotRenderData slot,ModelInstance body,ModelInstance cart) {
         var pose=nativePoses.get(slot);
         if(pose==null || slot.character!=pose.player)throw new IllegalStateException("Missing original native slot pose");
         var frame=new DrawFrame(++captureSerial,System.currentTimeMillis(),pose,body,cart);
-        drawFrames.put(slot,frame);return frame;
+        drawFrames.put(slot,frame);timelineFrame("capture-prepared",slot,frame,"both");return frame;
     }
     private static String renderFields(ModelSlotRenderData slot,DrawFrame frame) throws Exception {
         var nativePose=frame.nativePose;
@@ -286,6 +306,7 @@ public final class ClearanceProbe {
             .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
             .append(",\"squareDepth\":").append(slot.squareDepth).append(",\"depthBias\":").append(data.depthBias).append("}\n");
         cameras.write(row.toString());cameras.flush();
+        timelineFrame("draw-consumed",slot,frame,body?"body":"cart");
         if(body)frame.bodyDrawn=true;else frame.cartDrawn=true;
     }
     public static class NativeCapture {
@@ -724,8 +745,12 @@ public final class ClearanceProbe {
         inventoryActions.clear();inventoryUpdates.clear();inventoryAttachments.clear();inventorySample=inventoryFrame=nextInventoryAction=0;
         synchronized(handoffOutputLock) {if(handoffEvents!=null){handoffEvents.close();handoffEvents=null;}}
         nativePoses.clear();drawFrames.clear();consumedCamera.remove();
-        if("stop".equals(args)){System.out.println("[CLEARANCE_PROBE] stopped");return;}
+        if("stop".equals(args)){
+            if(TIMELINE && timelineBridge!=null)timelineBridge.getDeclaringClass().getMethod("timelineStop").invoke(null);
+            System.out.println("[CLEARANCE_PROBE] stopped");return;
+        }
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
+        if(TIMELINE)timelineBridge=Class.forName("net.alexredby.cartlab.Main").getMethod("timelineEvent",String.class,zombie.characters.IsoPlayer.class,String.class);
         directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         Path file=directory.resolve("body-clearance.jsonl");

@@ -20,6 +20,22 @@ The server binds the exact cart, cargo, owner and worn outfit. Owner and observe
 
 The adapter stages the three `inventory-equip-*.lua` modules and enables their read-only native probe only for this selected Host bank. `analyze-inventory-equip.py` is invoked by the common report. Complete protocol receipts establish the selected native action and exact server/observer endpoints; clothing clearance, grip, wheel support and visual quality remain separate measurements.
 
+## Timing and transport baseline
+
+Set `cart_timeline: true` explicitly in an MP resource JSON to enable the test-only trace on the owned clients and server. Omission keeps it disabled. Inventory modules are staged and register handlers only when `cart_inventory_equip` is exactly `true`; an ordinary motion bank does not start the inventory bank. With both options selected, the observer keeps its native camera character and uses native pan offsets and a close zoom to frame the owner.
+
+The trace follows owner publication, native VariableSync parse/process/relay/write, PlayerPacket write/parse, the human `Prediction.update()` path, animation update, frozen capture IDs and consumed body/cart draws. Human remote movement does not use the animal-only `Prediction.updateLerp` path. The writer is asynchronous and bounded to 8192 queued rows and 64 MiB; missing sequences, writer errors and a missing final trailer invalidate the trace. Early TimeSync observations have a separate bounded 256-entry pending queue with explicit drop counts and connection identities.
+
+Clients write `cart-timeline.jsonl`. A menu Host server shares the owner's cache and writes `client1/cart-timeline-server.jsonl`; the ordinary server fixture writes `server/cart-timeline-server.jsonl`. The analyzer reads the location from the frozen selection. Each native TimeSync exchange records the original client send, server reply preparation and client processing timestamps, plus the applied clock shift before/after. Its conditional offset interval is specific to that exchange. Native readiness and the 10 ms filter-correction threshold do not establish clock accuracy at arbitrary later events.
+
+For each `GameTime.syncServerTime(t0,s,t1)` exchange, the conditional server-minus-client offset interval is `[s-t1,s-t0]`. It assumes an echoed request on the same connection/process epoch, causal ordering and constant relative clock offset/rate during the exchange. RTT includes queues and processing. Pending observations retain their original observation time and are bound later to the exact owner; startup coverage and drift between exchanges remain unknown. The probe sends no extra synchronization requests.
+
+`firstDeliveryPublicationAgeMs` measures one observation per exact publication identity and stage. `allObservationPublicationAgeMs` also includes cached repeated values; its percentiles must not be interpreted as new-packet latency. Publication age observed at a draw is the age of the frozen variable, not the complete native image/prediction age. Native PlayerPacket has no source timestamp or unique sample sequence, so the trace does not prove an owner-time playback bridge.
+
+Serialized cart writes and native per-connection actualBytes/resend counters are separate measurements. The latter include all traffic on that owned connection; IP/UDP header coverage is unverified. For ordinary motion, the report selects the canonical 15/26-second epoch window and uses only counter samples actually inside it, reporting uncovered edges without extrapolation. Recipient identities are not recorded, so repeated server writes and recipient fan-out are not distinguished. Inventory has its own action window and is not assigned the motion window.
+
+`analyze-entry-contact.py` adds a read-only inventory-equip source-geometry check against explicit local game and wooden-cart assets. It requires exact outfit/mesh and consumed-draw provenance. It reports contacts and native leg/attachment measurements separately from protocol completion; source skinning is not GPU garment or all-rendered-frame certification. The game assets and capture profiles are supplied locally, while every analysis source is tracked in this repository.
+
 ## Adapter contract
 
 Use the existing common `queue_checks.native.prepare` and `queue_checks.runner.run` unchanged, under their exclusive native lock and existing-process checks. The registered common adapter owns inputs, dependencies, fresh disposable profiles, mod approvals, preparation/fingerprints, process lifecycle, attaching probes before the epoch, artifact capture and cleanup.
@@ -60,9 +76,14 @@ python3 tests/native_queue/contributions/wooden_cart_multiplayer/self_check.py \
   --game-java-dir "$PZ_GAME_JAVA_DIR" --jdk "$JAVA_HOME" --patch-jar "$PZ_PATCH_JAR"
 python3 tests/native_queue/contributions/wooden_cart_multiplayer/analyze.py \
   --profile "$PZ_CAPTURE_DIR" --output "$PZ_ANALYSIS_DIR/cart-mp-comparison.json"
+python3 tests/native_queue/contributions/wooden_cart_multiplayer/analyze-timeline.py \
+  --profile "$PZ_CAPTURE_DIR" --output "$PZ_ANALYSIS_DIR/cart-mp-timeline.json"
+python3 tests/native_queue/contributions/wooden_cart_multiplayer/analyze-entry-contact.py \
+  --profile "$PZ_CAPTURE_DIR" --game "$PZ_GAME_JAVA_DIR" --mesh "$PZ_WOOD_FBX" \
+  > "$PZ_ANALYSIS_DIR/cart-entry-contact.json"
 ```
 
-The self-check never launches the game. Lua syntax needs Lua/LuaJIT or `--lua`; compilation needs all three explicit dependency arguments. Omitted checks print SKIPPED. Temporary synthetic logs and class files are removed afterward.
+Source-geometry analysis requires NumPy. Timeline analysis uses the Python standard library. The self-check never launches the game. Lua syntax needs Lua/LuaJIT or `--lua`; compilation needs all three explicit dependency arguments. Omitted checks print SKIPPED. Temporary synthetic logs and class files are removed afterward.
 
 Current fixture path guards accept POSIX absolute paths only, matching the current common launcher. Windows drive/UNC paths are not ported.
 

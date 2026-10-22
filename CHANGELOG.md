@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Cart multiplayer diagnostics:** Add opt-in publication/native-prediction/render timing, qualified native clock exchanges and per-connection transport counters. Separate first delivery from cached repeats, report active motion payload costs and preserve exact body/cart draw identities. Isolate inventory-equip fixtures from ordinary motion and add a portable source-geometry analyzer.
+
 - **Cart equip checks:** Add explicit sex/load variants to the isolated public-menu SP reproducer and a separate native menu-Host owner/observer bank with exact cart/cargo identity and canonical server-result completion. Record bounded same-slot attachment gates without modifying runtime state.
 
 - **Native snapshots:** Prefer independent copy-on-write file clones for mod copies on macOS, with ordinary copying when cloning is unavailable. Preserve file metadata, source/snapshot hash checks and conservative disk reserves; writes to a snapshot remain private to that file.

@@ -198,7 +198,7 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
@@ -375,12 +375,16 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                    ('inventory-equip-client.lua', 'client/CartMPInventoryEquipClient.lua'),
                                    ('inventory-equip-server.lua', 'server/CartMPInventoryEquipServer.lua'),
                                    ('inventory-equip-protocol.lua', 'shared/CartMPInventoryEquipProtocol.lua')]:
+                if origin.startswith('inventory-equip-') and selection.get('options', {}).get('cart_inventory_equip') is not True:
+                    continue
                 _write(lua / target, (mp / origin).read_text())
         elif role != 'server':
             _write(lua / 'client/QueueCartStartup.lua', (project / 'tests/native_queue/support/QueueCartStartup.lua').read_text())
         runtime_lua = cache / 'Lua/cart-runtime.lua'
         spec['env'] = dict(spec.get('env', {}), PZ_CART_RUNTIME_FILE=str(runtime_lua), PZ_CART_COMMAND_FILE=str(cache / 'Lua/cart-command.txt'))
         spec['env']['PZ_CART_TEST_PAD'] = 'true' if selection['suite'] == SP else 'false'
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_timeline'):
+            spec['env']['PZ_CART_TIMELINE'] = 'true'
         if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_inventory_equip'):
             spec['env']['PZ_CART_INVENTORY_EQUIP'] = 'true'
         if role == 'server':
@@ -1131,7 +1135,7 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR', '[CART_TIMELINE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
         if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):
@@ -1206,6 +1210,10 @@ def verify(root, selection, catalog):
                  'reason': 'Native approach, ownership and independent-tail receipts verified for the selected scenes',
                  'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                              'functionalPass': True, 'partialCoverage': debug, 'approachVerified': True}}]}
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_timeline'):
+            timeline = _load(intake / 'analyze-timeline.py').analyze(root)
+            _write(analysis / 'mp-timeline.json', json.dumps(timeline, indent=2, allow_nan=False))
+            evidence['timeline'] = timeline
         if selection['suite'] == MP and selection.get('options', {}).get('cart_inventory_equip'):
             report = _load(intake / 'analyze-inventory-equip.py').analyze(root, selection)
             if report.get('evidenceComplete') is not True:
