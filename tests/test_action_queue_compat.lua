@@ -1573,12 +1573,26 @@ do
     for _,name in ipairs({'getPlayerData','getPlayerHotbar'})do
         assert(loadstring(assert(dataSource:match('(function '..name..'%([^\n]*\n.-\nend)')),'@media/lua/client/ISUI/PlayerData/ISPlayerData.lua'))()
     end
+    local slotEnvironment={ISHotbarAttachDefinition={},table=table}
+    local slotDefinitions=assert(loadstring(read(NativeActionRoot..'/client/Hotbar/ISHotbarAttachDefinition.lua'),
+        '@media/lua/client/Hotbar/ISHotbarAttachDefinition.lua'))
+    setfenv(slotDefinitions,slotEnvironment);slotDefinitions()
+    local function nativeSlot(kind)
+        for _,definition in ipairs(slotEnvironment.ISHotbarAttachDefinition)do
+            if definition.type==kind then
+                local copy={type=definition.type,name=definition.name,animset=definition.animset,attachments={}}
+                for attachment,model in pairs(definition.attachments)do copy.attachments[attachment]=model end
+                return {slotType=kind,def=copy}
+            end
+        end
+        error('native hotbar slot missing: '..kind)
+    end
     local attached,writes,bar={},0
     player.getAttachedItem=function(_,location)return attached[location]end
     player.setAttachedItem=function(_,location,value)attached[location]=value;writes=writes+1 end
     player.SetVariable=function(self,name,value)self[name]=value end
     player.setVariable=player.SetVariable;player.reportEvent=function()end
-    local function restoreHotbar(mixed,slot,kind)
+    local function restoreHotbar(mixed,slot,kind,variant)
         reset();attached={};writes=0;player.primary,player.secondary=nil,nil
         local weapon=item(inventory,14810);weapon.class='HandWeapon';inventory.values={weapon}
         weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=1,'Back','Rifle Back with Bag'
@@ -1589,6 +1603,17 @@ do
         local definition={type='Back',name='Back',animset='back',attachments={Rifle='Rifle Back'}}
         bar=setmetatable({chr=player,availableSlot={{slotType='Back',def=definition}},
             attachedItems={weapon},replacements={Rifle='Rifle Back with Bag'}},ISHotbar)
+        if variant=='HolsterLeft'or variant=='HolsterRight'then
+            -- Both native slots share the display name Holster but have distinct
+            -- types/models/animations. The item must retain the exact slot.
+            bar.availableSlot={nativeSlot('Back'),nativeSlot('HolsterLeft'),nativeSlot('HolsterRight')}
+            local index=variant=='HolsterLeft'and 2 or 3
+            local expected=bar.availableSlot[index].def
+            weapon.attachment='Holster'
+            weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=index,variant,expected.attachments.Holster
+            bar.attachedItems={[index]=weapon}
+            assert(expected.name=='Holster'and weapon.attachedModel=='Holster '..(index==2 and 'Left'or 'Right'))
+        end
         ISPlayerData={{playerHotbar=bar}}
         if kind=='heavy'then weapon.fixtureHeavy=true
         elseif kind=='activated'then weapon.activatable=true
@@ -1618,8 +1643,10 @@ do
         end
         return completed(self,action)
     end
-    local function completeCase(mode,mixed,cancelled,slot)
-        local weapon,owner,action=restoreHotbar(mixed,slot)
+    local function completeCase(mode,mixed,cancelled,slot,variant)
+        local weapon,owner,action=restoreHotbar(mixed,slot,nil,variant)
+        local index,slotType=weapon:getAttachedSlot(),weapon:getAttachedSlotType()
+        local animation=bar.availableSlot[index].def.animset
         local contract,kind=definitions.inspect(action)
         assert(contract and kind=='compat.tidy-equipment'and contract.items[weapon:getID()]
             and (contract.cancelOperation==false)==mixed,'hotbar cleanup lacks shared native ownership')
@@ -1630,7 +1657,7 @@ do
         if cancelled then operations.invalidate(owner.toolkitQueueOperation)end
         -- Native start uses the real hotbar animation helper. attachConnect is
         -- a visual effect; complete separately applies authoritative hand state.
-        action:start();assert(player.AttachAnim=='back')
+        action:start();assert(player.AttachAnim==animation)
         action:animEvent('attachConnect',nil)
         assert(writes==1 and attached[weapon:getAttachedToModel()]==weapon)
         if mode=='mp-early'then action:complete()end
@@ -1643,20 +1670,37 @@ do
         assert(player.primary==nil and player.secondary==nil and player.equipSyncs==syncs+1,
             'hotbar native hand effect was lost or duplicated')
         assert(writes==2 and attached[weapon:getAttachedToModel()]==weapon and weapon:getContainer()==inventory
-            and weapon:getAttachedSlot()==1 and weapon:getAttachedSlotType()=='Back'
-            and bar.attachedItems[1]==weapon,'hotbar animation/perform metadata or exact root item changed')
+            and weapon:getAttachedSlot()==index and weapon:getAttachedSlotType()==slotType
+            and bar.attachedItems[index]==weapon,'hotbar animation/perform metadata or exact root item changed')
         assert(lifecycle.flush(queue)=='waiting');removed=true
         assert(lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil)
         isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
         assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
     end
-    for _,mode in ipairs({'sp','mp-early','mp-late'})do
-        for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
-            for _,slot in ipairs({'primary','secondary','both'})do completeCase(mode,mixed,cancelled,slot)end
-        end end
+    for _,variant in ipairs({'Back','HolsterLeft','HolsterRight'})do
+        for _,mode in ipairs({'sp','mp-early','mp-late'})do
+            for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
+                for _,slot in ipairs({'primary','secondary','both'})do completeCase(mode,mixed,cancelled,slot,variant)end
+            end end
+        end
     end
-    assert(callbacks==36,'hotbar cleanup missed hand/owner/cancel/effect-order combinations')
+    assert(callbacks==108,'hotbar cleanup missed slot/hand/owner/cancel/effect-order combinations')
     queue.onCompleted=completed
+    for _,variant in ipairs({'HolsterLeft','HolsterRight'})do
+        for _,change in ipairs({'other-slot','other-definition','duplicate-type','icon-other-slot','removed-slot'})do
+            local weapon,_,action=restoreHotbar(true,'primary',nil,variant)
+            local index=weapon:getAttachedSlot();local other=index==2 and 3 or 2
+            if change=='other-slot'then
+                local definition=bar.availableSlot[other].def
+                weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=other,definition.type,definition.attachments.Holster
+                bar.attachedItems={[other]=weapon}
+            elseif change=='other-definition'then bar.availableSlot[index]=bar.availableSlot[other]
+            elseif change=='duplicate-type'then bar.availableSlot[other]=bar.availableSlot[index]
+            elseif change=='icon-other-slot'then bar.attachedItems={[other]=weapon}
+            elseif change=='removed-slot'then table.remove(bar.availableSlot,index)end
+            assert(not definitions.inspect(action),'holster restore accepted changed '..variant..' '..change)
+        end
+    end
     for _,kind in ipairs({'heavy','activated','broken','slot','duplicate','worn'})do
         local _,_,action=restoreHotbar(true,'primary',kind)
         assert(select(2,definitions.inspect(action))=='compat.selected-chains','hotbar cleanup migration expanded into '..kind)
@@ -1700,7 +1744,9 @@ do
         local wrapped={new=function(...)return methods.new(...)end,complete=function(...)return methods.complete(...)end}
         lateCartProof.unequipConstructors[methods.new],lateCartProof.unequipConstructors[wrapped.new]=true,true
         lateCartProof.unequipLatest=wrapped;ISUnequipAction.new,ISUnequipAction.complete=wrapped.new,wrapped.complete
-        for _,mode in ipairs({'sp','mp-early','mp-late'})do completeCase(mode,true,false,'both')end
+        for _,variant in ipairs({'Back','HolsterLeft','HolsterRight'})do
+            for _,mode in ipairs({'sp','mp-early','mp-late'})do completeCase(mode,true,false,'both',variant)end
+        end
         local _,_,action=restoreHotbar(true,'primary')
         local proof=lateCartProof.isNonCartItem;lateCartProof.isNonCartItem=function()return true end
         assert(not definitions.inspect(action),'hotbar restore accepted a foreign late item helper');lateCartProof.isNonCartItem=proof

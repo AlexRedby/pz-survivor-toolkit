@@ -71,7 +71,7 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
- if Hotbar.isCase(state.id)then primary,secondary=not tidy and state.pickup or nil,not tidy and state.pickup or nil;Hotbar.verify(state,tidy)end
+ if Hotbar.isCase(state.id)then primary,secondary=not tidy and state.pickup or nil,not tidy and Hotbar.secondary(state)or nil;Hotbar.verify(state,tidy)end
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   if not tidy then primary,secondary=state.pickup,nil
   elseif state.id=='tidy-empty-hands' then primary,secondary=nil,nil
@@ -122,7 +122,7 @@ function Postprocess.verify(state,mode,tidy)
  sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,clothingSocks=true,hotbarInitial=true,hotbarReplacement=true,belt=true}
+  clothingB=true,clothingSocks=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)

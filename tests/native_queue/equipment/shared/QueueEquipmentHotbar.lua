@@ -1,5 +1,11 @@
 local Hotbar={}
-function Hotbar.isCase(id)return id=='tidy-hotbar'end
+local cases={
+ ['tidy-hotbar']={item='Base.Shotgun',attachment='Rifle',index=1,kind='Back',baseModel='Rifle On Back',model='Rifle On Back with Bag',twoHands=true},
+ ['tidy-hotbar-holster-left']={item='Base.Pistol',attachment='Holster',kind='HolsterLeft',model='Holster Left',twoHands=false,provider=true},
+ ['tidy-hotbar-holster-right']={item='Base.Pistol',attachment='Holster',kind='HolsterRight',model='Holster Right',twoHands=false,provider=true},
+}
+function Hotbar.isCase(id)return cases[id]~=nil end
+function Hotbar.secondary(state)return cases[state.id].twoHands and state.pickup or nil end
 local watched,installed
 function Hotbar.watch(state)watched=state end
 function Hotbar.observeLine(state,line)
@@ -18,7 +24,10 @@ function Hotbar.observeLine(state,line)
   proof={session=session};state.hotbarP4=proof
  end
  if not proof or proof.session~=session then return end
- if message:match('^capture worn=%[.-%] inventoryCount=%d+$')then proof.worn=true end
+ if message:match('^capture worn=%[.-%] inventoryCount=%d+$')then
+  local provider=state.holster
+  proof.worn=not provider or message:find(tostring(state.holsterLocation)..'='..provider:getFullType()..'#'..provider:getID()..'@'..state.root:getType(),1,true)~=nil
+ end
  local item=state.pickup:getFullType()..'#'..state.pickup:getID()..'@'..state.root:getType()
  if message:find('^add%[%w+%] type=ISEquipWeaponAction item=')and message:find(item,1,true)then proof.equip=true end
  if message:find('^add%[%w+%] type=ISRackFirearm item=nil$')then proof.producer=true end
@@ -45,13 +54,31 @@ function Hotbar.install(withP4)
  end
  installed=true
 end
+function Hotbar.configure(state,index)
+ local spec=cases[state.id]
+ assert(type(index)=='number'and index%1==0 and index>=1 and (spec.provider and index>1 or not spec.provider and index==1),'invalid native hotbar index')
+ for _,other in pairs(state.originalAttached)do assert(other:getAttachedSlot()~=index,'native hotbar slot already occupied')end
+ state.hotbarIndex=index
+ local item=state.pickup
+ state.player:setAttachedItem(state.hotbarLocation,item)
+ item:setAttachedSlot(index);item:setAttachedSlotType(state.hotbarType);item:setAttachedToModel(state.hotbarLocation)
+end
 function Hotbar.prepare(state,seed)
- seed('pickup','Base.Shotgun')
- local player,item=state.player,state.pickup
- assert(item:getAttachmentType()=='Rifle' and not item:canBeActivated()and not isForceDropHeavyItem(item)
+ local spec=assert(cases[state.id],'unknown hotbar fixture case')
+ local player=state.player
+ if spec.provider then
+  seed('belt','Base.Belt2');player:setWornItem(state.belt:getBodyLocation(),state.belt)
+  seed('holster','Base.HolsterDouble');state.holsterLocation=state.holster:getBodyLocation()
+  player:setWornItem(state.holsterLocation,state.holster)
+  assert(tostring(state.holsterLocation)=='base:beltextra','native double holster location differs')
+ end
+ seed('pickup',spec.item)
+ local item=state.pickup
+ state.hotbarTwoHands=spec.twoHands
+ assert(item:getAttachmentType()==spec.attachment and not item:canBeActivated()and not isForceDropHeavyItem(item)
   and not player:getWornItems():contains(item)and item:getCurrentAmmoCount()==0 and not item:isRoundChambered(),
-  'ordinary nonactivated nonworn nonheavy empty Rifle fixture required')
- state.hotbarIndex,state.hotbarType,state.hotbarLocation=1,'Back','Rifle On Back with Bag'
+  'ordinary nonactivated nonworn nonheavy empty firearm fixture required')
+ state.hotbarIndex,state.hotbarType,state.hotbarLocation=spec.index,spec.kind,spec.model
  state.originalAttached={}
  local entries=player:getAttachedItems()
  for i=0,entries:size()-1 do
@@ -63,14 +90,20 @@ function Hotbar.prepare(state,seed)
   end
  end
  player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil)
- player:setAttachedItem(state.hotbarLocation,item)
- item:setAttachedSlot(state.hotbarIndex);item:setAttachedSlotType(state.hotbarType);item:setAttachedToModel(state.hotbarLocation)
- if not isServer()then
-  local hotbar=assert(getPlayerHotbar(player:getPlayerNum()));hotbar:refresh();hotbar:reloadIcons()
-  local slot=assert(hotbar.availableSlot[state.hotbarIndex],'native Back slot missing')
-  assert(slot.def.type==state.hotbarType and slot.def.attachments.Rifle=='Rifle On Back'
-   and hotbar.replacements and hotbar.replacements.Rifle==state.hotbarLocation
-   and hotbar.attachedItems[state.hotbarIndex]==item,'native Rifle Back definition/replacement/icon differs')
+ if isServer()then
+  -- Only the client owns native saved hotbar ordering. Holsters are configured
+  -- by its setup handshake before any timed actions are enqueued.
+  if not spec.provider then Hotbar.configure(state,spec.index)end
+ else
+  local hotbar=assert(getPlayerHotbar(player:getPlayerNum()));hotbar:refresh()
+  local index=hotbar:getThisSlotIndex(state.hotbarType)
+  assert(index and (spec.provider or index==1),'native hotbar slot index missing')
+  Hotbar.configure(state,index);hotbar:reloadIcons()
+  local slot=assert(hotbar.availableSlot[state.hotbarIndex],'native hotbar slot missing')
+  assert(slot.def.type==state.hotbarType and slot.slotType==state.hotbarType
+   and slot.def.attachments[spec.attachment]==(spec.baseModel or spec.model)
+   and (not spec.baseModel or hotbar.replacements and hotbar.replacements[spec.attachment]==state.hotbarLocation)
+   and hotbar.attachedItems[state.hotbarIndex]==item,'native hotbar definition/replacement/index/icon differs')
  end
 end
 function Hotbar.enqueue(state,helpers)
@@ -78,7 +111,7 @@ function Hotbar.enqueue(state,helpers)
  helpers.run(ISInventoryPaneContextMenu.onRackGun,state.player,state.pickup)
  assert(#queue.queue==before+2,'native root hotbar rack must enqueue only equip and rack')
  local equip,rack=queue.queue[before+1],queue.queue[before+2]
- assert(equip.Type=='ISEquipWeaponAction'and equip.item==state.pickup and equip.primary and equip.twoHands
+ assert(equip.Type=='ISEquipWeaponAction'and equip.item==state.pickup and equip.primary and equip.twoHands==state.hotbarTwoHands
   and equip.fromHotbar and equip.hotbar==getPlayerHotbar(state.player:getPlayerNum())and equip.maxTimeInit==50
   and type(equip.maxTime)=='number'and equip.maxTime>1 and equip.maxTime<math.huge
   and equip.create==ISBaseTimedAction.create and equip.adjustMaxTime==ISBaseTimedAction.adjustMaxTime
@@ -88,7 +121,7 @@ function Hotbar.enqueue(state,helpers)
 end
 function Hotbar.observe(state,queue,toolkit,tidy)
  local current=queue.current
- if current==state.rackAction and current:isStarted()then state.hotbarProducerStarted=true end
+ if current and current==state.rackAction and current:isStarted()then state.hotbarProducerStarted=true end
  for _,action in ipairs(queue.queue)do
   if getmetatable(action)==ISUnequipAction and action.item and action.item:getID()==state.pickup:getID()then
    local nativeHotbar=action.hotbar==getPlayerHotbar(state.player:getPlayerNum())
@@ -120,13 +153,14 @@ function Hotbar.observe(state,queue,toolkit,tidy)
 end
 function Hotbar.verify(state,restored,checkpoint)
  local player,item=state.player,state.pickup
+ local spec=cases[state.id]
  local live=assert(state.root:getItemById(item:getID()),'exact hotbar identity missing from root')
- assert(live==item and item:getFullType()=='Base.Shotgun'and item:getContainer()==state.root,'hotbar ID/type/root changed')
+ assert(live==item and item:getFullType()==spec.item and item:getContainer()==state.root,'hotbar ID/type/root changed')
  assert(item:getAttachedSlot()==state.hotbarIndex and item:getAttachedSlotType()==state.hotbarType
   and item:getAttachedToModel()==state.hotbarLocation,'hotbar original metadata changed')
  assert(not player:getWornItems():contains(item)and not item:canBeActivated()and not isForceDropHeavyItem(item)
   and item:getCurrentAmmoCount()==0 and not item:isRoundChambered(),'hotbar ordinary item/ammunition changed')
- assert(player:getPrimaryHandItem()==(not restored and item or nil)and player:getSecondaryHandItem()==(not restored and item or nil),'hotbar final empty/held hands differ')
+ assert(player:getPrimaryHandItem()==(not restored and item or nil)and player:getSecondaryHandItem()==(not restored and Hotbar.secondary(state)or nil),'hotbar final empty/held hands differ')
  local entries=player:getAttachedItems();local seen={}
  for i=0,entries:size()-1 do
   local entry=entries:get(i);local location=tostring(entry:getLocation());local actual=entry:getItem()
@@ -140,22 +174,29 @@ function Hotbar.verify(state,restored,checkpoint)
   local hotbar=assert(getPlayerHotbar(player:getPlayerNum()));hotbar:reloadIcons()
   assert(hotbar.attachedItems[state.hotbarIndex]==item,'native hotbar icon identity changed')
  end
+ if spec.provider then
+  assert(state.holster:getFullType()=='Base.HolsterDouble'and state.holster:getContainer()==state.root
+   and player:getWornItem(state.holsterLocation)==state.holster,'exact worn holster provider changed')
+ end
  if checkpoint then state.hotbarDetached=true end
- return {id=item:getID(),fullType=item:getFullType(),container='root',slotIndex=state.hotbarIndex,slotType=state.hotbarType,
-  model=state.hotbarLocation,attached=restored,primary=not restored and item:getID()or false,secondary=not restored and item:getID()or false,worn=false,
+ return {case=state.id,providerItem=state.holster and state.holster:getID()or false,
+  providerType=state.holster and state.holster:getFullType()or false,providerLocation=state.holster and tostring(state.holsterLocation)or false,
+  providerWorn=spec.provider==true,id=item:getID(),fullType=item:getFullType(),container='root',slotIndex=state.hotbarIndex,slotType=state.hotbarType,
+  model=state.hotbarLocation,attached=restored,primary=not restored and item:getID()or false,secondary=not restored and spec.twoHands and item:getID()or false,worn=false,
   producer='onRackGun',producerCompleted=true,ammoUnchanged=true,unrelatedAttachmentsPreserved=true}
 end
 function Hotbar.settled(state,toolkit,tidy)
  -- This is a per-tick readiness probe. Vanilla assert logs even inside pcall;
  -- defer assert-based verification until the replicated state is ready.
  local player,root,item=state.player,state.root,state.pickup
- if not player or not root or not item or player:getInventory()~=root then return false end
+ local spec=cases[state.id]
+ if not spec or not player or not root or not item or player:getInventory()~=root then return false end
  local live=root:getItemById(item:getID())
- if live~=item or item:getFullType()~='Base.Shotgun'or item:getContainer()~=root then return false end
+ if live~=item or item:getFullType()~=spec.item or item:getContainer()~=root then return false end
  if item:getAttachedSlot()~=state.hotbarIndex or item:getAttachedSlotType()~=state.hotbarType
   or item:getAttachedToModel()~=state.hotbarLocation then return false end
  local held=not tidy and item or nil
- if player:getPrimaryHandItem()~=held or player:getSecondaryHandItem()~=held then return false end
+ if player:getPrimaryHandItem()~=held or player:getSecondaryHandItem()~=(not tidy and Hotbar.secondary(state)or nil) then return false end
  if player:getWornItems():contains(item)or item:canBeActivated()or isForceDropHeavyItem(item)
   or item:getCurrentAmmoCount()~=0 or item:isRoundChambered()then return false end
  local entries,seen=player:getAttachedItems(),{}
@@ -171,6 +212,8 @@ function Hotbar.settled(state,toolkit,tidy)
   local hotbar=getPlayerHotbar(player:getPlayerNum())
   if not hotbar or not hotbar.attachedItems or hotbar.attachedItems[state.hotbarIndex]~=item then return false end
  end
+ if spec.provider and(not state.holster or state.holster:getFullType()~='Base.HolsterDouble'
+  or state.holster:getContainer()~=root or player:getWornItem(state.holsterLocation)~=state.holster)then return false end
  if tidy then
   local source=state.hotbarP4
   if not state.hotbarRestoreAction or not state.hotbarAttachConnect or not source or not source.restore

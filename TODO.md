@@ -108,8 +108,6 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
-- [ ] Queue chat: repair the native-source `test_action_queue_batch_controller` fixture initialization. On B42.21, `python3 tools/run_tests.py --game "$PZ_GAME" --test test_action_queue_batch_controller` fails at fixture line 377 through `ISHandcraftAction.stop` and `ActionQueue.lua:257` with `Settlement` nil; the pre-consolidation runner reproduces the same failure. Gate: the focused native-source check passes without weakening its native stop/cleanup assertions.
-
 - [ ] Extend the common scenario contracts beyond equipment, verified food/fluid cases and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
@@ -129,7 +127,7 @@ Gate for each adapter: primary success; same/different targets; pending cancella
 
 These families need contract/coverage audits. Missing verification or continued use of legacy completion does not by itself mean their native actions fail.
 
-- [ ] TidyUpMeister: migrate held/worn clothing overlaps, special-clothing, remaining hotbar item/slot variants beyond the empty Back-slot Shotgun, and heavy-item restores only after their SP/Host lifecycle gates. Separately define safe edit contracts for mixed-session floor returns and unknown/dynamic entry points; these remain protected. Preserve required shared cleanup on cancellation.
+- [ ] TidyUpMeister: migrate held/worn clothing overlaps, special-clothing, remaining hotbar item/slot/hand-state variants beyond the verified empty Back-slot Shotgun and empty left/right DoubleHolster Pistol cases, and heavy-item restores only after their SP/Host lifecycle gates. Separately define safe edit contracts for mixed-session floor returns and unknown/dynamic entry points; these remain protected. Preserve required shared cleanup on cancellation.
 - [ ] Deferred food/fluid expansion: revisit only for a concrete bug or explicit request. Remaining variants include hot/state-changing items, custom callbacks, consumption replacements outside the bounded proof for plain and empty-fluid outputs, ingredient states outside the bounded native-food proof and other fluid actions. Preserve protective edit limits until a separate contract is proven.
 - [ ] Packaged food: check the remaining opening recipes, including random contents and mod callbacks. Keep their standard commands until a separate contract exists; queue support is limited to verified `OpenCannedFood` and `OpenCannedFood2`.
 - [ ] Farming and animals: inventory the specific actions still missing verified edit contracts, then cover target identity, plant/animal state, shared consumables and tools.

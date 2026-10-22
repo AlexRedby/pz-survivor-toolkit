@@ -1,4 +1,5 @@
 local Completion={}
+local function hotbarCase(id)return id=='tidy-hotbar'or id=='tidy-hotbar-holster-left'or id=='tidy-hotbar-holster-right'end
 local function clothingAction(state,action)
  return state.id=='tidy-clothing'and action.Type=='ISWearClothing'
   or state.id=='tidy-clothing-remove'and action.Type=='ISUnequipAction'
@@ -280,7 +281,7 @@ function Completion.observe(toolkit,selection)
   if kind=='compat.tidy-transfers' then return counts end
   if kind=='compat.tidy-equipment' then
    if clothingAction(state,action)then return clothing end
-   if state.id=='tidy-hotbar'and action.Type=='ISUnequipAction'then return hotbar end
+   if hotbarCase(state.id)and action.Type=='ISUnequipAction'then return hotbar end
    return restores
   end
  end
@@ -298,7 +299,7 @@ function Completion.observe(toolkit,selection)
    'Tidy transfer changed its exact item or endpoints')
  end
  lifecycle.begin=function(action,phase)
-  if state and state.id=='tidy-hotbar'and action==state.hotbarRestoreAction and phase=='perform'then
+  if state and hotbarCase(state.id)and action==state.hotbarRestoreAction and phase=='perform'then
    -- Sample before native perform in both queue modes. After the detached
    -- checkpoint, only the real attachConnect event can have attached the model.
    assert(state.hotbarDetached and action.fromHotbar and action.item==state.pickup
@@ -334,7 +335,7 @@ function Completion.observe(toolkit,selection)
     state.hotbarAttachConnect=true
     local held=action.character:getPrimaryHandItem()
     local other=action.character:getSecondaryHandItem()
-    assert((held==action.item and other==action.item or selection.kind=='mp'and not held and not other),
+    assert((held==action.item and other==(state.hotbarTwoHands and action.item or nil) or selection.kind=='mp'and not held and not other),
      'P4 hotbar cleanup removed wrong temporary hands')
     local queue=ISTimedActionQueue.queues[action.character]
     assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared hotbar cleanup must remain protected')

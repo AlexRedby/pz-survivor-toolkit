@@ -47,13 +47,18 @@ class EquipmentTests(unittest.TestCase):
                     result.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True, walkDistance=0.75)
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
-            if case == 'tidy-hotbar':
+            if case in equipment.HOTBAR_CASES:
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
-                effect = dict(id=956, fullType='Base.Shotgun', container='root', slotIndex=1, slotType='Back', model='Rifle On Back with Bag',
-                              attached=tidy, primary=False if tidy else 956, secondary=False if tidy else 956, worn=False, producer='onRackGun',
+                spec = equipment.HOTBAR_CASES[case]
+                provider = not spec['twoHands']
+                effect = dict(case=case, providerItem=957 if provider else False, providerType='Base.HolsterDouble' if provider else False,
+                              providerLocation='base:beltextra' if provider else False, providerWorn=provider,
+                              id=956, fullType=spec['fullType'], container='root', slotIndex=(7 if case.endswith('left') else 8) if provider else 1,
+                              slotType=spec['slotType'], model=spec['model'],
+                              attached=tidy, primary=False if tidy else 956, secondary=956 if not tidy and spec['twoHands'] else False, worn=False, producer='onRackGun',
                               producerCompleted=True, ammoUnchanged=True, unrelatedAttachmentsPreserved=True)
                 count = int(enabled and tidy)
-                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956, secondary=956),
+                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956, secondary=956 if spec['twoHands'] else False),
                               tidyHotbar=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                               sourceSession=18 if tidy else False, sourceCompleted=tidy, attachConnectObserved=tidy,
                                               uiHotbarIdentity=True, unrelatedTailPreserved=True,
@@ -152,11 +157,12 @@ class EquipmentTests(unittest.TestCase):
                     effect = {key: row['outcome']['tidyClothing'][key] for key in equipment.CLOTHING_EFFECT_KEYS}
                     with (self.root / 'server-launch.log').open('a') as log:
                         log.write('\n[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' + json.dumps(effect) + '\n')
-            if 'tidy-hotbar' in self.selection['cases']:
-                row = next(row for row in self.records() if row.get('id') == 'tidy-hotbar')
-                effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.HOTBAR_EFFECT_KEYS}
-                with (self.root / 'server-launch.log').open('a') as log:
-                    log.write('\n[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(effect) + '\n')
+            for case in self.selection['cases']:
+                if case in equipment.HOTBAR_CASES:
+                    row = next(row for row in self.records() if row.get('id') == case)
+                    effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.HOTBAR_EFFECT_KEYS}
+                    with (self.root / 'server-launch.log').open('a') as log:
+                        log.write('\n[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(effect) + '\n')
         return equipment.verify(self.root, self.selection, {})
 
     def test_tidy_hotbar_requires_exact_native_effect_session_phases_and_completed_host_receipt(self):
@@ -966,7 +972,7 @@ local function run(kind,mode,fault,equipment)
  observer.watch({id=hotbar and 'tidy-hotbar'or clothing and (equipment=='clothing-remove'and 'tidy-clothing-remove'or 'tidy-clothing')or nil,
   root=inventory,source=source,baseline={[7]=item},hammer={getID=item.getID,getFullType=item.getFullType},
   clothingSocks=clothing and item or nil,clothingLocation='base:socks',pickup=hotbar and item or nil,hotbarDetached=true,
-  hotbarIndex=1,hotbarType='Back',hotbarLocation='Rifle On Back with Bag',hotbarRestoreAction=hotbar and action or nil})
+  hotbarIndex=1,hotbarType='Back',hotbarLocation='Rifle On Back with Bag',hotbarRestoreAction=hotbar and action or nil,hotbarTwoHands=hotbar})
  if equipment and not clothing and not hotbar then action.item={getID=item.getID,getFullType=item.getFullType} end
  if not enabled then
   lifecycle.begin(action,'perform');lifecycle.finish(action,'perform',true)

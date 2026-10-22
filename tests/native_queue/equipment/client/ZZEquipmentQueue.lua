@@ -20,6 +20,7 @@ local option=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('
 option:setValue(not native)
 local started,done=false,false
 local ids,receipt,checkpoint,cleaned,outcome=nil,nil,nil,false,nil
+local hotbarConfigured=nil
 local idleUpdates=0
 local tidy=getActivatedMods():contains('P4TidyUpMeister')
 local index,performed,failures,since,heartbeat=1,0,0,0,0
@@ -203,7 +204,7 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='EquipmentQueueTest' then return end
  assert(args.ok~=false,args.error)
- if command=='Prepared' then ids=args elseif command=='Checkpointed' then checkpoint=args elseif command=='Verified' then receipt=args elseif command=='Cleaned' then cleaned=true end
+ if command=='Prepared' then ids=args elseif command=='Checkpointed' then checkpoint=args elseif command=='Verified' then receipt=args elseif command=='Cleaned' then cleaned=true elseif command=='HotbarConfigured'then hotbarConfigured=args end
 end)
 Events.OnGameStart.Add(function()
  local ok,problem=pcall(function()
@@ -287,7 +288,17 @@ Events.OnTick.Add(function()
   elseif phase=='positioned' then
    local player=getPlayer()
    if not player:getCurrentSquare() or player:isPlayerMoving() or player:tooDarkToRead() then return end
-   state=Fixture.prepare(player,Selection.cases[index],ids,Selection.options);watch();enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls'
+   state=Fixture.prepare(player,Selection.cases[index],ids,Selection.options)
+   if state.holster then
+    sendClientCommand('EquipmentQueueTest','ConfigureHotbar',{case=state.id,item=state.pickup:getID(),slotIndex=state.hotbarIndex})
+    phase='configureHotbar';return
+   end
+   watch();enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls'
+  elseif phase=='configureHotbar'then
+   if not hotbarConfigured then return end
+   assert(hotbarConfigured.case==state.id and hotbarConfigured.item==state.pickup:getID()
+    and hotbarConfigured.slotIndex==state.hotbarIndex,'authoritative native hotbar setup differs')
+   watch();enqueue();phase='controls'
   elseif phase=='beltWalk' then
    if queue():indexOf(state.slotLast)~=-1 then return end
    equipmentTestWalk(false);state.walkReleased=true;beltTrace('released',state.slotLast)
@@ -388,7 +399,7 @@ Events.OnTick.Add(function()
    outcome.dependentMoveRejected=state.dependentMoveRejected==true
    emit({event='case',id=state.id,status=state.postproblem and 'failed' or 'passed',reason=state.postproblem,outcome=outcome})
    print('[EQUIPMENT_TEST] RECEIPT case='..state.id)
-   index=index+1;since=now;phase='prepare';state=nil;ids=nil;receipt=nil;checkpoint=nil;cleaned=false;outcome=nil;idleUpdates=0
+   index=index+1;since=now;phase='prepare';state=nil;ids=nil;receipt=nil;checkpoint=nil;hotbarConfigured=nil;cleaned=false;outcome=nil;idleUpdates=0
    if index>#Selection.cases then complete() end
   end
  end)

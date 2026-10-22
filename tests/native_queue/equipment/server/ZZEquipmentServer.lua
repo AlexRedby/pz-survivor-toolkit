@@ -26,9 +26,18 @@ local function execute(module,command,player,args)
    sendClothing(player,session.location,player:getWornItem(session.location));sendEquip(player)
    if Clothing.isCase(session.id)then sendClothing(player,session.clothingLocation,player:getWornItem(session.clothingLocation))end
    if session.id=='hotbar-chain' then sendAttachedItem(player,session.hotbarLocation,session.hotbarInitial) end
-   if Hotbar.isCase(session.id)then sendAttachedItem(player,session.hotbarLocation,session.pickup)end
+   if Hotbar.isCase(session.id)then
+    if session.holster then sendClothing(player,session.holsterLocation,session.holster)end
+    if session.hotbarIndex then sendAttachedItem(player,session.hotbarLocation,session.pickup)end
+   end
    reply(player,'Prepared',ids)
    print('[EQUIPMENT_TEST] PREPARED case='..args.case)
+  elseif command=='ConfigureHotbar'then
+   assert(session and session.id==args.case and session.holster and not session.hotbarConfigured and not pending
+    and args.item==session.pickup:getID(),'invalid native holster setup request')
+   Hotbar.configure(session,args.slotIndex);session.hotbarConfigured=true
+   sendAttachedItem(player,session.hotbarLocation,session.pickup)
+   reply(player,'HotbarConfigured',{case=session.id,item=session.pickup:getID(),slotIndex=session.hotbarIndex,ok=true})
   elseif command=='Checkpoint' or command=='Verify' then
    assert(session and session.id==args.case and not pending,'out-of-order equipment verify')
    assert(command=='Checkpoint' or session.checkpointed,'missing equipment checkpoint')
