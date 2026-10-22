@@ -27,7 +27,7 @@ local transferSourceSafe = true
 local reviewedTransferPerform, transferPerformGuard
 local containerHelpersUnchanged
 local washWalkHelper
-local tidyClassUnchanged, tidyActionUnchanged
+local tidyClassUnchanged, tidyActionUnchanged, tidyUnequipVariant
 local tidyFloorPage, tidyFloorGetter
 local tidyFloorValid
 -- Queued actions only; prune explicitly because Kahlua ignores weak-key modes.
@@ -275,7 +275,7 @@ local function ordinaryClothing(action)
     local liveItem = character:getInventory():getItemById(item:getID())
     if not liveItem or liveItem:getFullType() ~= item:getFullType()
         or ordinaryClothingItem(liveItem, character) ~= location then return end
-    return location
+    return location, liveItem
 end
 local function nativeClothingMethods()
     if clothingSourceSafe == nil then
@@ -293,6 +293,42 @@ local function clothingRestore(action, class)
     return ordinaryClothing(action)
 end
 
+local clothingRemovalSourceSafe
+local unequipMethods = {"new", "isValid", "update", "start", "stop", "animEvent", "perform", "complete"}
+local function nativeClothingRemoval(action)
+    if clothingRemovalSourceSafe == nil then
+        clothingRemovalSourceSafe = Proof.matches("media/lua/shared/TimedActions/ISUnequipAction.lua", 2851923231, nil, true)
+    end
+    if not clothingRemovalSourceSafe or not nativeClothingMethods() then return false end
+    local variant
+    for _, name in ipairs(unequipMethods) do
+        if not Proof.closure(ISUnequipAction[name], "ISUnequipAction.lua") then
+            if name ~= "new" and name ~= "complete" then return false end
+            if variant == nil then variant = tidyUnequipVariant and tidyUnequipVariant(action) or false end
+            if not variant then return false end
+        end
+    end
+    return true
+end
+local function ordinaryClothingRemoval(action)
+    local location, item = ordinaryClothing(action)
+    if not location or item:canBeActivated() or action.item:canBeActivated() then return end
+    -- Worn-only cleanup must not also clear a held item. Check the live root
+    -- identity, including a queued proxy, and retain the hand-only integration.
+    for _, held in ipairs({action.character:getPrimaryHandItem() or false, action.character:getSecondaryHandItem() or false}) do
+        if held and held:getID() == item:getID() then return end
+    end
+    return location
+end
+local function clothingRemoval(action, class)
+    if class ~= ISUnequipAction or action.fromHotbar or action.reason ~= nil or not nativeClothingRemoval(action) then return end
+    for _, name in ipairs(unequipMethods) do if action[name] ~= class[name] then return end end
+    local location = ordinaryClothingRemoval(action)
+    local worn = location and action.character:getWornItem(location)
+    if not worn or worn:getID() ~= action.item:getID() or worn:getFullType() ~= action.item:getFullType() then return end
+    return location
+end
+
 local function sourceMatches(action, record, observedItem)
     record = record or records[action]
     if not record or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
@@ -306,6 +342,9 @@ local function sourceMatches(action, record, observedItem)
         or action.alwaysTurnOn ~= record.alwaysTurnOn) then return false end
     if record.class == ISUnequipAction and (action.reason ~= record.reason or action.fromHotbar ~= record.fromHotbar
         or action.hotbar ~= record.hotbar) then return false end
+    if record.tidyClothingUnequip and (not nativeClothingRemoval(action) or ordinaryClothingRemoval(action) ~= record.clothingLocation
+        or action.clothingAction ~= record.clothingAction or action.stopOnWalk ~= record.stopOnWalk
+        or action.stopOnRun ~= record.stopOnRun or action.animSpeed ~= record.animSpeed) then return false end
     if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothing(action) ~= record.clothingLocation
         or action.fromHotbar ~= record.fromHotbar or action.clothingAction ~= record.clothingAction
         or action.stopOnWalk ~= record.stopOnWalk or action.stopOnRun ~= record.stopOnRun) then return false end
@@ -364,11 +403,12 @@ local function adopt(action)
     if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
     local clothingLocation = context.id == "P4TidyUpMeister" and clothingRestore(action, class)
+    local removalLocation = context.id == "P4TidyUpMeister" and clothingRemoval(action, class)
     local tidyHandUnequip = context.id == "P4TidyUpMeister" and class == ISUnequipAction and not action.fromHotbar
             and (action.item == action.character:getPrimaryHandItem() or action.item == action.character:getSecondaryHandItem())
             and not action.character:getWornItems():contains(action.item) and not isForceDropHeavyItem(action.item)
     if context.id == "P4TidyUpMeister" and class == ISUnequipAction and not classUnchanged(class, baseline)
-        and (not tidyHandUnequip or not tidyClassUnchanged(action, class, baseline)) then return end
+        and (not (tidyHandUnequip or removalLocation) or not tidyClassUnchanged(action, class, baseline)) then return end
     context = tidyRestoreContext(context, action)
     if context.id == "P4TidyUpMeister" and not live(context) then return false end
     Operations.adopt(action, context.token)
@@ -380,7 +420,8 @@ local function adopt(action)
         primary = action.primary, twoHands = action.twoHands, alwaysTurnOn = action.alwaysTurnOn,
         reason = action.reason, fromHotbar = action.fromHotbar, hotbar = action.hotbar,
         tidyHandUnequip = tidyHandUnequip, tidyClothingWear = clothingLocation ~= nil and clothingLocation ~= false,
-        clothingLocation = clothingLocation, clothingAction = action.clothingAction,
+        tidyClothingUnequip = removalLocation ~= nil and removalLocation ~= false,
+        clothingLocation = clothingLocation or removalLocation, clothingAction = action.clothingAction, animSpeed = action.animSpeed,
         stopOnWalk = action.stopOnWalk, stopOnRun = action.stopOnRun,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction),
         settlement = context.settlement, obligation = Settlement.obligation(context)}
@@ -1133,6 +1174,17 @@ function Compat.install()
         local transfer=carts and carts.isTransferConstructor
         local unequip=carts and carts.isUnequipConstructor
         local nonCart=carts and carts.isNonCartUnequip
+        local nonCartItem=carts and carts.isNonCartItem
+        tidyUnequipVariant = function(action)
+            if not carts or Toolkit.ActionQueueCarts ~= carts or carts.isUnequipConstructor ~= unequip
+                or carts.isNonCartUnequip ~= nonCart or carts.isNonCartItem ~= nonCartItem
+                or type(nonCartItem) ~= "function" or not unequip(ISUnequipAction.new) then return false end
+            local record = records[action]
+            -- Before adoption use the full native instance matcher. Afterwards
+            -- Compat owns perform/stop wrappers; sourceMatches validates those
+            -- exact saved methods while the Carts guard still proves the class.
+            return record and record.tidyClothingUnequip and nonCartItem(action.item) or nonCart(action)
+        end
         tidyClassUnchanged = function(target,class,methods)
             if classUnchanged(target,methods) then return true end
             if not carts or Toolkit.ActionQueueCarts~=carts or carts.isTransferConstructor~=transfer
@@ -1296,7 +1348,7 @@ local function matchesTidyTransfer(action) return tidyTransfer(action) and match
 local function tidyEquipment(action)
     local record = records[action]
     return record and record.id == "P4TidyUpMeister"
-        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip or record.tidyClothingWear)
+        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip or record.tidyClothingWear or record.tidyClothingUnequip)
 end
 local function matchesTidyEquipment(action) return tidyEquipment(action) and matches(action) end
 local function matchesSelectedChain(action) return not tidyTransfer(action) and not tidyEquipment(action) and matches(action) end

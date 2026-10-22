@@ -64,7 +64,7 @@ local function beltTrace(stage,action,value)
 end
 local function watch()
  Completion.watch(state)
- Clothing.watch(state.id=='tidy-clothing'and state or nil)
+ Clothing.watch(Clothing.isCase(state.id)and state or nil)
 end
 local function enqueue()
  if Slots.isBelt(state.id) then
@@ -107,7 +107,7 @@ local function enqueue()
    first,state.hammerAction=equip(state.hammer,true,false)
    first,state.screwdriverAction=equip(state.screwdriver,false,false)
   end
- elseif state.id=='tidy-clothing'then Clothing.enqueue(state,{run=run,queue=queue})
+ elseif Clothing.isCase(state.id)then Clothing.enqueue(state,{run=run,queue=queue})
  elseif (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   state.groupPickups={}
   -- Same native borrowing utility as bulk-mixed; P4 owns the actual deferred returns.
@@ -174,7 +174,7 @@ local function controls()
   denied(state.screwdriverAction,state.hammerAction,false,'move_dependent')
   Checks.moveRoundtrip(queue(),API,Policy,state.tailAction,state.pickupAction,false,state.screwdriverAction,true)
   state.independentMoveVerified=true
- elseif state.id=='tidy-clothing'then
+ elseif Clothing.isCase(state.id)then
   assert(queue():indexOf(state.tailAction)~=-1,'clothing constructor fixture lost unrelated tail')
  elseif (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   assert(queue():indexOf(state.tailAction)~=-1 and state.tailAction.toolkitQueueOperation~=state.groupPickups[1].toolkitQueueOperation,
@@ -206,7 +206,7 @@ Events.OnGameStart.Add(function()
   player:setGhostMode(true);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
   if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
   if Selection.kind=='sp' then Fixture.position(player) end
-  for _,id in ipairs(Selection.cases)do if id=='tidy-clothing'then Clothing.install(tidy)end end
+  for _,id in ipairs(Selection.cases)do if Clothing.isCase(id)then Clothing.install(tidy)end end
   emit({event='setup',cases=Selection.cases,expected=#Selection.cases,language=Selection.language,nativeDurations=true,queueEnabled=not native})
   started=true;since=getTimestampMs()
  end)
@@ -231,7 +231,7 @@ Events.OnTick.Add(function()
    if queue().current==state.slotLast then beltTrace('valid',state.slotLast,state.slotLast:isValid()) end
   end
   if state and Bulk.isCase(state.id) then Bulk.observe(state,queue()) end
-  if state and state.id=='tidy-clothing'then Clothing.observe(state,queue(),Toolkit,tidy)end
+  if state and Clothing.isCase(state.id)then Clothing.observe(state,queue(),Toolkit,tidy)end
   if state and Selection.kind=='mp' then
    local action=queue().current
    local record=action and Toolkit.ActionQueueAcknowledgements.capture(action)
@@ -331,7 +331,7 @@ Events.OnTick.Add(function()
   elseif phase=='drain' and empty() and idleUpdates>=6 then
    if Selection.kind=='mp' and not Fixture.transactionsSettled() then return end
    Fixture.refresh(state)
-   if state.id=='tidy-clothing'and not Clothing.settled(state,Toolkit,tidy)then return end
+   if Clothing.isCase(state.id)and not Clothing.settled(state,Toolkit,tidy)then return end
    local passed,problem=pcall(Postprocess.verify,state,Selection.mode,tidy)
    outcome.checkpointEquipmentMatches=outcome.equipmentMatches
    outcome.equipmentMatches=passed
@@ -339,7 +339,7 @@ Events.OnTick.Add(function()
     and getPlayer():getAlreadyReadPages(state.tail:getFullType())==state.tail:getNumberOfPages()
    outcome.postprocessingVerified=passed
    outcome.tidyCompletion=Completion.settled()
-   if state.id=='tidy-clothing'then outcome.tidyClothing=Clothing.evidence(state,Toolkit,tidy,Completion.clothing())end
+   if Clothing.isCase(state.id)then outcome.tidyClothing=Clothing.evidence(state,Toolkit,tidy,Completion.clothing())end
    if (state.id=='tidy-group' or state.id=='tidy-multigroup') then outcome.tidyGroup=Completion.group() end
    if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
     outcome.restoreVerified=passed;outcome.floorRestoreVerified=state.id=='tidy-floor' and passed and tidy

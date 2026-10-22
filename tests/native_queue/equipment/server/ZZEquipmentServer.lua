@@ -2,6 +2,7 @@ local cartSelection=require 'QueueTestSelection'
 if cartSelection.cases[1]=='cart-pickup' then return end
 if not isServer() then return end
 local Fixture=require 'QueueEquipmentFixture'
+local Clothing=require 'QueueEquipmentClothing'
 local Selection=require 'QueueTestSelection'
 local Postprocess=require 'QueueEquipmentPostprocess'
 local JSON=require 'QueueHealthEvents'
@@ -22,7 +23,7 @@ local function execute(module,command,player,args)
     if item:getContainer()==player:getInventory() then sendAddItemToContainer(player:getInventory(),item) end
    end
    sendClothing(player,session.location,player:getWornItem(session.location));sendEquip(player)
-   if session.id=='tidy-clothing'then sendClothing(player,session.clothingLocation,session.clothingSocks)end
+   if Clothing.isCase(session.id)then sendClothing(player,session.clothingLocation,player:getWornItem(session.clothingLocation))end
    if session.id=='hotbar-chain' then sendAttachedItem(player,session.hotbarLocation,session.hotbarInitial) end
    reply(player,'Prepared',ids)
    print('[EQUIPMENT_TEST] PREPARED case='..args.case)
@@ -89,7 +90,7 @@ Events.OnTick.Add(function()
    if passed and (session.id=='tidy-group' or session.id=='tidy-multigroup') then
     print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))
    end
-   if passed and session.id=='tidy-clothing'then
+   if passed and Clothing.isCase(session.id)then
     print('[EQUIPMENT_TEST] CLOTHING_AUTHORITY '..JSON.encode(problem.clothing))
    end
    if passed then

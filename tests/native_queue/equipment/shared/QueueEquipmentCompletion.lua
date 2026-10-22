@@ -1,4 +1,8 @@
 local Completion={}
+local function clothingAction(state,action)
+ return state.id=='tidy-clothing'and action.Type=='ISWearClothing'
+  or state.id=='tidy-clothing-remove'and action.Type=='ISUnequipAction'
+end
 function Completion.observe(toolkit,selection)
  local lifecycle,operations=toolkit.ActionQueueLifecycle,toolkit.ActionQueueOperations
  local begin,finish,flush,perform,defer=lifecycle.begin,lifecycle.finish,lifecycle.flush,operations.perform,operations.deferCompletion
@@ -275,7 +279,7 @@ function Completion.observe(toolkit,selection)
   local kind=select(2,toolkit.ActionQueueDefinitions.inspect(action))
   if kind=='compat.tidy-transfers' then return counts end
   if kind=='compat.tidy-equipment' then
-   if state.id=='tidy-clothing'and action.Type=='ISWearClothing'then return clothing end
+   if clothingAction(state,action)then return clothing end
    return restores
   end
  end
@@ -312,7 +316,7 @@ function Completion.observe(toolkit,selection)
    else record={id=id,kind=action.item:getFullType(),native=action.action,token=action.toolkitQueueOperation,counts=counter,cycles=0} end
    record.cycles=record.cycles+1
    if counter==clothing then
-    assert(state.id=='tidy-clothing'and action.Type=='ISWearClothing'
+    assert(clothingAction(state,action)
      and action.item:getID()==state.clothingSocks:getID()and action.item:getFullType()=='Base.Socks_Ankle'
      and action.item:getBodyLocation()==state.clothingLocation and action.item:getContainer()==state.root,
      'P4 restored unexpected clothing identity/slot/container')

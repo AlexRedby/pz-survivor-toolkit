@@ -1,4 +1,8 @@
 local Clothing={}
+function Clothing.isCase(id)return id=='tidy-clothing'or id=='tidy-clothing-remove'end
+function Clothing.removes(state)return state.id=='tidy-clothing-remove'end
+function Clothing.restoreType(state)return Clothing.removes(state)and 'ISUnequipAction'or 'ISWearClothing'end
+function Clothing.finalWorn(state,tidy)return Clothing.removes(state)and not tidy or not Clothing.removes(state)and tidy end
 local watched,installed
 function Clothing.watch(state)watched=state end
 function Clothing.observeLine(state,line)
@@ -14,15 +18,21 @@ function Clothing.observeLine(state,line)
  session=tonumber(session)
  if not session or session<=0 then return end
  local sock='Base.Socks_Ankle#'..state.clothingSocks:getID()..'@'..state.root:getType()
- if message:find('^capture worn=%[')and message:find(tostring(state.clothingLocation)..'='..sock,1,true)then
+ local worn=message:match('^capture worn=%[(.-)%] inventoryCount=%d+$')
+ local capture=worn and (Clothing.removes(state)and not worn:find(tostring(state.clothingLocation)..'=',1,true)
+  or not Clothing.removes(state)and worn:find(tostring(state.clothingLocation)..'='..sock,1,true))
+ if capture then
   if proof then proof.problem='duplicate P4 clothing capture';return end
   proof={session=session};state.clothingP4=proof
  end
  if not proof or proof.session~=session then return end
- if message:find('^add%[%w+%] type=ISUnequipAction item=')and message:find(sock,1,true)then proof.unequip=true end
+ local first=Clothing.removes(state)and 'ISWearClothing'or 'ISUnequipAction'
+ if message:find('^add%[%w+%] type='..first..' item=')and message:find(sock,1,true)then proof.clothing=true end
  if message:find('^add%[%w+%] type=ISCutHair item=nil$')then proof.producer=true end
  if message:find('^RESTORE actionTotal=')then
-  if proof.restore or not proof.unequip or not proof.producer then proof.problem='P4 restore missing native clothing producer evidence' end
+  local trace=message:match(' trace=%[(.-)%] reason=')
+  if proof.restore or not proof.clothing or not proof.producer or not trace
+   or not trace:find(first..' -> ISCutHair',1,true)then proof.problem='P4 restore missing native clothing producer evidence' end
   proof.restore=true
  end
 end
@@ -43,7 +53,8 @@ function Clothing.prepare(state,seed)
  state.clothingLocation=item:getBodyLocation()
  assert(item:getCategory()=='Clothing' and item:canBeEquipped()==nil and state.clothingLocation
   and not item:hasTag(ItemTag.WEARABLE)and not item:hasTag(ItemTag.REPLACE_PRIMARY),'ordinary socks fixture required')
- state.player:setWornItem(state.clothingLocation,item)
+ if Clothing.removes(state)then state.player:setWornItem(state.clothingLocation,nil)
+ else state.player:setWornItem(state.clothingLocation,item)end
  local visual=state.player:getHumanVisual()
  state.clothingHair=state.ids and assert(state.ids.clothingHair,'authoritative clothing hair style missing')
   or (state.player:isFemale()and 'Bob'or 'CrewCut')
@@ -69,24 +80,26 @@ function Clothing.available(player,ids)
 end
 function Clothing.enqueue(state,helpers)
  require 'TimedActions/ISCutHair'
- -- This is an explicit native-constructor fixture, not a natural menu flow that
- -- removes socks. Genuine native actions temporarily unequip the socks and cut
- -- the unchanged plain hair style. P4's public queue observer sees ISCutHair and
- -- arms restoreWorn; only P4 itself may construct the eventual ISWearClothing.
+ -- Explicit native constructors exercise P4's public queue observer, rather
+ -- than UI explicit-equip intent. The unchanged haircut arms restoreWorn.
+ -- Only P4 constructs the eventual wear/unequip cleanup action.
+ local remove=Clothing.removes(state)
  helpers.run(function()
-  state.clothingUnequip=ISUnequipAction:new(state.player,state.clothingSocks,50)
-  ISTimedActionQueue.add(state.clothingUnequip)
+  local class=remove and ISWearClothing or ISUnequipAction
+  state.clothingFirst=class:new(state.player,state.clothingSocks,50)
+  ISTimedActionQueue.add(state.clothingFirst)
   state.clothingProducer=ISCutHair:new(state.player,state.clothingHair,nil,100)
   ISTimedActionQueue.add(state.clothingProducer)
  end)
- assert(state.clothingUnequip.maxTime==50 and state.clothingProducer.maxTime==100
+ assert(state.clothingFirst.maxTime==50 and state.clothingProducer.maxTime==100
   and state.clothingProducer.complete==ISCutHair.complete,'native constructor durations/effects changed')
 end
 function Clothing.observe(state,queue,toolkit,tidy)
  local current=queue.current
  if current==state.clothingProducer and current:isStarted()then state.clothingProducerStarted=true end
  for _,action in ipairs(queue.queue)do
-  if getmetatable(action)==ISWearClothing and action.Type=='ISWearClothing'and action.item
+  local class=Clothing.removes(state)and ISUnequipAction or ISWearClothing
+  if getmetatable(action)==class and action.Type==Clothing.restoreType(state)and action.item
     and action.item:getID()==state.clothingSocks:getID()then
    assert(tidy and action~=state.clothingProducer,'unexpected non-P4 clothing restoration')
    local source=state.clothingP4
@@ -105,7 +118,7 @@ function Clothing.observe(state,queue,toolkit,tidy)
 end
 function Clothing.evidence(state,toolkit,tidy,completion)
  assert(state.clothingProducerStarted,'native haircut producer was never observed running')
- local result=Clothing.verify(state,tidy)
+ local result=Clothing.verify(state,Clothing.finalWorn(state,tidy))
  result.nativeGenerated=state.clothingRestoreAction and 1 or 0
  assert(result.nativeGenerated==(tidy and 1 or 0),'P4 did not generate exactly one socks restore')
  if tidy and isClient()then
@@ -126,7 +139,8 @@ end
 function Clothing.settled(state,toolkit,tidy)
  local live=state.root:getItemById(state.clothingSocks:getID())
  if not live or live:getFullType()~='Base.Socks_Ankle'or live:getContainer()~=state.root then return false end
- if (state.player:getWornItem(state.clothingLocation)==live)~=tidy then return false end
+ local worn=state.player:getWornItem(state.clothingLocation)
+ if Clothing.finalWorn(state,tidy)then if worn~=live then return false end elseif worn~=nil then return false end
  if tidy then
   if not state.clothingRestoreAction then return false end
   local source=state.clothingP4
@@ -140,7 +154,8 @@ function Clothing.verify(state,restored)
  local player,item=state.player,state.clothingSocks
  local live=assert(state.root:getItemById(item:getID()),'exact socks identity missing from root')
  assert(live:getFullType()=='Base.Socks_Ankle' and live:getContainer()==state.root,'socks type/container changed')
- assert((player:getWornItem(state.clothingLocation)==live)==restored,'exact socks worn slot differs')
+ assert(restored and player:getWornItem(state.clothingLocation)==live
+  or not restored and player:getWornItem(state.clothingLocation)==nil,'exact socks worn slot differs')
  assert(tostring(player:getHumanVisual():getHairModel())==state.clothingHair,'native haircut changed the requested existing style')
  assert(player:getPrimaryHandItem()==state.hammer and player:getSecondaryHandItem()==state.screwdriver,
   'clothing restoration changed unrelated hands')

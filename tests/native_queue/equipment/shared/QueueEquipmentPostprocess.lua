@@ -112,9 +112,9 @@ function Postprocess.verify(state,mode,tidy)
  local actualWorn={};local values=player:getWornItems()
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);actualWorn[values:getLocation(item)]=item end
  local expectedWorn=state.expectedWorn
- if state.id=='tidy-clothing' and not tidy then
+ if Clothing.isCase(state.id)then
   expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
-  expectedWorn[state.clothingLocation]=nil
+  expectedWorn[state.clothingLocation]=Clothing.finalWorn(state,tidy)and state.clothingSocks or nil
  end
  sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
@@ -139,7 +139,7 @@ function Postprocess.verify(state,mode,tidy)
  end
  assert(floorRestored==(state.id=='tidy-floor' and tidy),'P4 returned deliberately picked up floor item or lost borrowed floor return')
  local result={postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
- if state.id=='tidy-clothing'then result.clothing=Clothing.verify(state,tidy)end
+ if Clothing.isCase(state.id)then result.clothing=Clothing.verify(state,Clothing.finalWorn(state,tidy))end
  if (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   local ids={}
   for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do ids[#ids+1]=item:getID() end

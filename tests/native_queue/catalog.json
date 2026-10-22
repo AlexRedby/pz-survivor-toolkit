@@ -1044,6 +1044,23 @@
             "native",
             "toolkit"
           ]
+        },
+        {
+          "id": "tidy-clothing-remove",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
         }
       ]
     }

@@ -155,7 +155,7 @@ function Fixture.prepare(player,id,ids,options)
   assert(state.removalDelta>2,'native bag reduction must materially affect carried weight')
   assert(not fitsAfterRemoval,'pickup would still fit after native bag removal')
   assert(root:hasRoomFor(player,state.pickup),'pickup must fit again after native hand state restore')
- elseif id=='tidy-clothing' then Clothing.prepare(state,seed)
+ elseif Clothing.isCase(id) then Clothing.prepare(state,seed)
  elseif id=='tidy-group' or id=='tidy-multigroup' then
   seed('groupOne','Base.Nails',state.source);seed('groupTwo','Base.Nails',state.source)
   if id=='tidy-multigroup' then
@@ -241,11 +241,11 @@ function Fixture.verify(state,mode,checkpoint)
  if Bulk.isCase(state.id) then extra=Bulk.verify(state,false,false) end
  if Slots.handles(state.id) then extra=Slots.verify(state,mode) end
  local expectedWorn=state.expectedWorn
- if state.id=='tidy-clothing' then
-  extra.clothingCheckpoint=Clothing.verify(state,false)
+ if Clothing.isCase(state.id) then
+  extra.clothingCheckpoint=Clothing.verify(state,Clothing.removes(state))
   extra.clothingItem=state.clothingSocks:getID()
   expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
-  expectedWorn[state.clothingLocation]=nil
+  expectedWorn[state.clothingLocation]=Clothing.removes(state)and state.clothingSocks or nil
  end
  assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
@@ -335,7 +335,7 @@ end
 function Fixture.available(player,ids)
  local actual=inventory(player)
  if not originalWorn(player,ids,actual) then return false end
- if ids.case=='tidy-clothing'and not Clothing.available(player,ids)then return false end
+ if Clothing.isCase(ids.case)and not Clothing.available(player,ids)then return false end
  for name,id in pairs(ids.items) do
   if name~='pickup' or not ids.floor then if not actual[id] then return false end end
  end
@@ -362,7 +362,7 @@ function Fixture.settled(state,mode,checkpoint)
   end
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
- if state.id=='tidy-clothing' and (player:getWornItem(state.clothingLocation)~=nil
+ if Clothing.isCase(state.id) and (player:getWornItem(state.clothingLocation)~=(Clothing.removes(state)and state.clothingSocks or nil)
   or tostring(player:getHumanVisual():getHairModel())~=state.clothingHair)then return false end
  if state.id=='hotbar-chain' or Slots.isBelt(state.id) then
   local item,old=state.hotbarReplacement,state.hotbarInitial

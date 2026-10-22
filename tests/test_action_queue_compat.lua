@@ -164,9 +164,7 @@ ISEquipWeaponAction.complete=function(action)
     return true
 end
 local unequipSource=read(NativeActionRoot..'/shared/TimedActions/ISUnequipAction.lua')
-for _,name in ipairs({'new','perform','complete'})do
-    assert(loadstring(assert(unequipSource:match('(function ISUnequipAction:'..name..'%([^\n]*\n.-\nend)'))))()
-end
+assert(loadstring(unequipSource,'@media/lua/shared/TimedActions/ISUnequipAction.lua'))()
 ISWearClothing.isStopOnWalk=function()return false end
 getPlayerHotbar=function()return nil end
 ItemTag={WEARABLE='wearable',REPLACE_PRIMARY='replace-primary'}
@@ -239,7 +237,7 @@ ISInventoryPage.refreshBackpacks=nativeFloorRefresh
 getFilenameOfClosure=function(callback)
     if callback==nativeFloorGetter then return 'ISInventoryPage.lua' end
     local source=debug and debug.getinfo(callback,'S').source
-    if source and (source:match('/PJCK_Config%.lua$') or source:match('/ISWearClothing%.lua$')) then return source end
+    if source and (source:match('/PJCK_Config%.lua$') or source:match('/ISWearClothing%.lua$') or source:match('/ISUnequipAction%.lua$')) then return source end
     if previousOrigin then return previousOrigin(callback) end
 end
 ISInventoryPage.floorContainer={{class='ItemContainer',getType=function()return 'floor'end,
@@ -376,7 +374,11 @@ function lateCartProof.isUnequipConstructor(callback)
     return lateCartProof.enabled and lateCartProof.unequipConstructors[callback]==true and latest
         and ISUnequipAction.new==latest.new and ISUnequipAction.complete==latest.complete
 end
-lateCartProof.isNonCartUnequip=function(action)return not action.item.fixtureCart end
+lateCartProof.isNonCartItem=function(value)return not value.fixtureCart end
+lateCartProof.isNonCartUnequip=function(action)
+    return lateCartProof.isNonCartItem(action.item) and action.perform==ISUnequipAction.perform
+        and action.complete==ISUnequipAction.complete and action.stop==ISUnequipAction.stop
+end
 lateCartProof.isReturn=function()return false end
 lateCartProof.isTransfer=function()return false end
 PZSurvivorToolkit.ActionQueueCarts=lateCartProof
@@ -1217,7 +1219,7 @@ do
     tickTidy();tickTidy()
 end
 
--- Empty-hand Tidy cleanup shares the native boundary; clothing/attachments keep their existing fallback.
+-- Empty-hand Tidy cleanup shares the native boundary; held/worn overlaps and attachments retain fallback.
 do
     local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
     local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
@@ -1355,7 +1357,7 @@ end
 do
     local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
     local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
-    local getWorn,getWornItem,setWorn,visual=player.getWornItems,player.getWornItem,player.setWornItem,player.getHumanVisual
+    local getWorn,getWornItem,setWorn,visual,removeWorn=player.getWornItems,player.getWornItem,player.setWornItem,player.getHumanVisual,player.removeWornItem
     local worn,writes={},0
     player.getWornItems=function()
         local entries={}
@@ -1369,8 +1371,11 @@ do
     end
     player.getWornItem=function(_,location)return worn[location]end
     player.setWornItem=function(_,location,value)worn[location]=value;writes=writes+1 end
+    player.removeWornItem=function(_,item)
+        for location,value in pairs(worn)do if value==item then worn[location]=nil;writes=writes+1 end end
+    end
     player.getHumanVisual=function()return {getHairModel=function()return {contains=function()return false end}end}end
-    local function restoreClothing(mixed,kind)
+    local function restoreClothing(mixed,kind,removal)
         reset();worn={};writes=0;player.primary,player.secondary=nil,nil
         local sock=item(inventory,14801);sock.class='Clothing';inventory.values={sock}
         if kind=='bag'then sock.class='InventoryContainer';sock.equippedAt='Back'
@@ -1381,14 +1386,17 @@ do
         elseif kind=='wearable-tag'then sock.hasTag=function(_,tag)return tag==ItemTag.WEARABLE end
         elseif kind=='attached'then sock.attachedSlot=1
         elseif kind=='heavy'then sock.fixtureHeavy=true
-        elseif kind=='broken'then sock.broken=true end
-        worn[sock:getBodyLocation()]=sock
+        elseif kind=='broken'then sock.broken=true
+        elseif kind=='activated'then sock.activatable=true;sock.activated=true end
+        if not removal then worn[sock:getBodyLocation()]=sock end
         local captured=TidyFixture.captureSession(player)
         captured.armed,captured.restoreWorn=true,true;TidyFixture.sessions[player]=captured
         local owner=tail();local other=mixed and tail()or nil
-        worn={};owner:perform();if other then other:perform()end;tickTidy();tickTidy()
+        worn=removal and {[sock:getBodyLocation()]=sock}or {}
+        if kind=='held'then player.primary=sock end
+        owner:perform();if other then other:perform()end;tickTidy();tickTidy()
         local action=queue.queue[1]
-        assert(action and action.Type=='ISWearClothing'and action.item==sock,'actual P4 did not generate its exact captured clothing restore')
+        assert(action and action.Type==(removal and 'ISUnequipAction'or 'ISWearClothing')and action.item==sock,'actual P4 did not generate its exact clothing restore')
         return sock,owner,action
     end
     local callbacks=0
@@ -1399,9 +1407,10 @@ do
         end
         return completed(self,action)
     end
+    for _,removal in ipairs({false,true})do
     for _,mode in ipairs({'sp','mp-early','mp-late'})do
         for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
-            local sock,owner,action=restoreClothing(mixed)
+            local sock,owner,action=restoreClothing(mixed,nil,removal)
             local contract,id=definitions.inspect(action)
             assert(contract and id=='compat.tidy-equipment'and contract.items[sock:getID()]
                 and (contract.cancelOperation==false)==mixed,'ordinary clothing restore lacks shared-boundary ownership')
@@ -1415,10 +1424,10 @@ do
                 'clothing perform advanced before native removal or lost its independent tail')
             assert(lifecycle.flush(queue)=='waiting')
             if mode=='sp'then
-                assert(writes==0,'SP wear effect ran before native complete')
+                assert(writes==0 and (worn[sock:getBodyLocation()]==sock)==removal,'SP clothing effect ran before native complete')
                 assert(lifecycle.begin(action,'complete'));assert(action:complete());lifecycle.finish(action,'complete',true)
             elseif mode=='mp-late'then assert(action:complete())end
-            assert(writes==1 and worn[sock:getBodyLocation()]==sock and sock:getContainer()==inventory,
+            assert(writes==1 and (worn[sock:getBodyLocation()]==sock)==not removal and sock:getContainer()==inventory,
                 'native clothing effect lost its exact slot/item or ran twice')
             assert(lifecycle.flush(queue)=='waiting','clothing restore ignored native removal')
             removed=true
@@ -1428,7 +1437,8 @@ do
             assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
         end end
     end
-    assert(callbacks==12,'ordinary clothing boundary missed a single/mixed/cancel/MP-order combination')
+    end
+    assert(callbacks==24,'ordinary clothing wear/removal boundary missed a single/mixed/cancel/MP-order combination')
     queue.onCompleted=completed
     for _,field in ipairs({'fromHotbar','clothingAction','stopOnWalk','stopOnRun','item','onCompleteFunc','start'})do
         local sock,_,action=restoreClothing(true)
@@ -1469,7 +1479,82 @@ do
         local _,_,action=restoreClothing(true,kind)
         assert(select(2,definitions.inspect(action))=='compat.selected-chains','clothing migration expanded into '..kind)
     end
-    reset();player.getWornItems,player.getWornItem,player.setWornItem,player.getHumanVisual=getWorn,getWornItem,setWorn,visual
+    for _,field in ipairs({'reason','fromHotbar','hotbar','clothingAction','stopOnWalk','stopOnRun','animSpeed','onCompleteFunc','animEvent'})do
+        local _,_,action=restoreClothing(true,nil,true)
+        local original=action[field]
+        action[field]=(field=='onCompleteFunc'or field=='animEvent')and function()end or field=='reason'and 'drop'or not original
+        assert(not definitions.inspect(action),'worn removal accepted changed '..field)
+        action[field]=original;assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+    end
+    for _,kind in ipairs({'bag','hat','full-hat','primary','wearable','wearable-tag','attached','heavy','broken','activated','held'})do
+        local _,_,action=restoreClothing(true,kind,true)
+        assert(select(2,definitions.inspect(action))=='compat.selected-chains','worn removal migration expanded into '..kind)
+    end
+    for _,field in ipairs({'location','container','activatable','attachedSlot','broken'})do
+        local sock,_,action=restoreClothing(true,nil,true)
+        if field=='location'then sock.location=ItemBodyLocation.HANDS
+        elseif field=='container'then sock.container={}
+        elseif field=='activatable'then sock.activatable=true
+        elseif field=='attachedSlot'then sock.attachedSlot=1
+        else sock.broken=true end
+        assert(not definitions.inspect(action),'worn removal accepted changed item '..field)
+    end
+    do
+        local sock,_,action=restoreClothing(true,nil,true)
+        inventory.values={}
+        assert(not definitions.inspect(action),'missing live worn ID retained removal proof')
+        local replica=item(inventory,sock:getID());replica.class='Clothing';inventory.values={replica}
+        assert(definitions.inspect(action),'same-ID/type/slot root replica should preserve removal proof')
+        replica.location=ItemBodyLocation.HANDS
+        assert(not definitions.inspect(action),'live worn slot mismatch retained queued proxy proof')
+        replica.location=nil;replica.getFullType=function()return 'Base.OtherClothing'end
+        assert(not definitions.inspect(action),'live worn type mismatch retained queued proxy proof')
+        replica.getFullType=sock.getFullType;sock.activatable=true
+        assert(not definitions.inspect(action),'activatable queued proxy retained a plain removal proof')
+    end
+    for _,name in ipairs({'animEvent','complete','perform','start','update'})do
+        local _,_,action=restoreClothing(true,nil,true);local original=ISUnequipAction[name]
+        ISUnequipAction[name]=function()error('foreign unequip helper must not run')end
+        assert(not definitions.inspect(action),'worn removal accepted changed native helper '..name)
+        ISUnequipAction[name]=original
+    end
+    do
+        reset()
+        local methods={new=ISUnequipAction.new,complete=ISUnequipAction.complete}
+        local wrapped={new=function(...)return methods.new(...)end,complete=function(...)return methods.complete(...)end}
+        lateCartProof.unequipConstructors[methods.new],lateCartProof.unequipConstructors[wrapped.new]=true,true
+        lateCartProof.unequipLatest=wrapped
+        ISUnequipAction.new,ISUnequipAction.complete=wrapped.new,wrapped.complete
+        for _,mode in ipairs({'sp','mp-early','mp-late'})do
+            local sock,_,action=restoreClothing(true,nil,true)
+            assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','audited non-cart late wrapper lost worn cleanup ownership')
+            local following=tail();local removed=false;action.action={};queue.current=action
+            player.getCharacterActions=function()return list(removed and {}or{action.action})end
+            isClient=function()return mode~='sp'end
+            if mode=='mp-early'then action:complete()end
+            assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+            assert(lifecycle.flush(queue)=='waiting'and queue.queue[2]==following)
+            if mode=='sp'then
+                assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+            elseif mode=='mp-late'then action:complete()end
+            assert(writes==1 and not worn[sock:getBodyLocation()]and sock:getContainer()==inventory)
+            removed=true;assert(lifecycle.flush(queue)=='completed'and queue.current==following)
+            isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
+        end
+        local _,_,action=restoreClothing(true,nil,true)
+        lateCartProof.enabled=false;assert(not definitions.inspect(action),'changed late source proof retained worn removal permissions')
+        lateCartProof.enabled=true
+        local originalItemProof=lateCartProof.isNonCartItem
+        lateCartProof.isNonCartItem=function()return true end
+        assert(not definitions.inspect(action),'foreign item proof retained adopted clothing wrapper permissions')
+        lateCartProof.isNonCartItem=originalItemProof
+        local ownedPerform=action.perform;action.perform=function()end
+        assert(not definitions.inspect(action),'foreign instance perform borrowed the adopted wrapper exception')
+        action.perform=ownedPerform;assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+        reset();ISUnequipAction.new,ISUnequipAction.complete=methods.new,methods.complete
+        lateCartProof.unequipLatest=nil
+    end
+    reset();player.getWornItems,player.getWornItem,player.setWornItem,player.getHumanVisual,player.removeWornItem=getWorn,getWornItem,setWorn,visual,removeWorn
 end
 
 -- Exact fixture native actions supply the same known-input contracts the native Policy installs.

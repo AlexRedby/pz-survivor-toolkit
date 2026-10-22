@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.222
+
+- **Action queue:** Move proven P4 removal of temporarily worn ordinary clothing onto shared native completion. Preserve exact item/root/slot identity, native server effects and required cleanup before continuing independent actions. Held clothing, activation, special equipment, hotbar and heavy-item drops retain their existing fallback.
+
 ### 0.1.221
 
 - **Action queue:** Move proven P4 ordinary-clothing restoration onto the shared native completion boundary. Wait for the native wear effect and action removal before advancing, retain required cleanup and independent following actions, and reject stale or changed clothing identities/helpers. Special equipment branches retain their existing fallback.
