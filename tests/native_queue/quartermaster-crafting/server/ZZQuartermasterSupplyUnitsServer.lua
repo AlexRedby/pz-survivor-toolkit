@@ -17,7 +17,7 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   else
    assert(command=='Cleanup'and previous and index==4,'unexpected supply cleanup')
    F.cleanup(previous,true);previous=nil
-   print('[QM_USES] CLEANUP');sendServerCommand(player,module,'Cleaned',{})
+   print('[QM_USES] CLEANUP');sendServerCommand(player,module,'Cleaned',{cleaned=true})
   end
  end)
  if not ok then print('[QM_USES] FAIL server '..tostring(problem));sendServerCommand(player,module,'Failed',{error=tostring(problem)})end

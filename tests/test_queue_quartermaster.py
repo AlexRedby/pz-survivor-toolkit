@@ -238,7 +238,9 @@ class QuartermasterSupplyUnits(unittest.TestCase):
             (root / 'client1-launch.log').write_text(client)
             authority = root / 'server-launch.log'
             authority.write_text(server)
-            self.assertEqual(crafting.verify(root, selection, {})['issues'], [])
+            report = crafting.verify(root, selection, {})
+            self.assertEqual(report['issues'], [])
+            self.assertIsInstance(report['outcomes'][0]['outcome'], dict)
             for invalid in (server.replace('"uses": 2', '"uses": 1'), server.replace('"consumedUses": 2', '"consumedUses": 1'),
                             server + server, server.replace('[QM_USES] CLEANUP', '[QM_OTHER] CLEANUP')):
                 authority.write_text(invalid)

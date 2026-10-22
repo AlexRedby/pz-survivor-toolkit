@@ -135,11 +135,10 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse and automatic-deposit SP/Host scenarios and Host batch-admission case with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
+- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse and automatic-deposit SP/Host scenarios Host batch-admission and Quartermaster recipe-unit SP/Host cases with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
 
 # Inventory infrastructure proposals
 
-- [ ] Implement approved Quartermaster recipe-unit fetch planning, using native per-type quantities and remaining uses while preserving ordinary-first sources, favorites, kept tools, exact identity, routing and post-haul native validation. Remove unused competing craft-count helpers if redundant.
-- [ ] Pass focused full/partial/count/per-type/multi-craft source and planner regressions, then isolated macOS SP/menu Host checks for exact fetched identities, remaining uses, native craft effects and already-carried supplies. Preserve current vanilla/Neat UI handoffs.
+- [ ] Finish the isolated macOS menu Host recipe-unit check with clean fixture cleanup and a valid report: full remote, sufficient carried and partial supplies must preserve exact identities and native craft effects. The corresponding SP scenario and focused planner/UI regressions passed.
 - [ ] Update Toolkit version/changelog, remove completed steps, integrate concurrent main and push after the recipe-unit gates pass.
 - [ ] Remove the discarded details-selection mapping at the known native/CleanUI restore boundary after agreeing the integration: InventoryFilter invokes upstream restore, then InventoryRows wipes its result and maps the final rows again. Retain external mod hooks, final row ordering and unknown/icon-mode fallback; prove render-capped expanded stacks and selection/Shift-anchor correctness before removing the first pass.

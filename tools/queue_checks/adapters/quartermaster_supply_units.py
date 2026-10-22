@@ -60,7 +60,7 @@ def verify(root, selection):
             identities += prep['ids'] + receipt['outputIds']
         if not craft._ids(identities):
             raise ValueError('Supply fixture identities overlap')
-        outcomes.append(dict(actor='client1', case='uses', status='passed', outcome=results))
+        outcomes.append(dict(actor='client1', case='uses', status='passed', outcome=dict(scenarios=results)))
     except (OSError, ValueError, KeyError, TypeError) as error:
         issues.append(str(error))
         outcomes = [dict(actor='client1', case='uses', status='failed', reason=str(error))]

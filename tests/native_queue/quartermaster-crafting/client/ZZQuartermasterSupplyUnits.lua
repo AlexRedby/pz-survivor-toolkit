@@ -21,7 +21,7 @@ local function request(command)
 end
 Events.OnServerCommand.Add(function(module,command,value)
  if module~='QuartermasterSupplyTest'then return end
- assert(command~='Failed',value.error)
+ if command=='Failed'then error(value and value.error or 'supply server request failed')end
  if command=='Prepared'then packet=value elseif command=='Verified'then receipt=value elseif command=='Cleaned'then phase='cleaned'end
 end)
 local function contains(containers,source)
