@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.216
+
+- **Settings:** Update only affected consumers after Mod Options commits all controls. Shortcut and unrelated option changes no longer clear ground highlights or refresh inventory, media windows and context menus. Preserve immediate ground-disable cleanup on pause, Wishlist ground settings, tag-dependent menus and live feature switches.
+
 ### 0.1.215
 
 - **Action queue:** Bind observed P4 tool returns to the operation that actually borrowed each item. Activate per-item cleanup records only after the native pickup transaction and exact inventory effect are confirmed; preserve separate ownership through merged transfers and reject ambiguous or stale borrowing episodes. Native scheduling and queue edit permissions remain unchanged.

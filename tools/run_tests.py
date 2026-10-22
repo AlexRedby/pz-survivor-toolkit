@@ -239,6 +239,8 @@ def main() -> None:
                 lua.globals().NativeBCPageCustomizerSource = (args.bc_filter_source.parent.parent / 'Customize/Customize_ISInventoryPage.lua').read_text(encoding='utf-8')
         if name in ("test_highlighter.lua", "test_item_details.lua") and args.native_mod_options:
             lua.globals().NativeModOptionsSource = args.native_mod_options.read_text(encoding="utf-8")
+        if name == "test_highlighter.lua" and args.native_action_root:
+            lua.globals().NativeMainOptionsSource = (args.native_action_root / "client/OptionScreens/MainOptions.lua").read_text(encoding="utf-8")
         if name in ("test_saucedcarts_compat.lua", "test_cart_transitions.lua") and args.native_action_root:
             lua.globals().NativeActionRoot = str(args.native_action_root)
         if name in ("test_saucedcarts_compat.lua", "test_cart_spawns.lua", "test_cart_transitions.lua", "test_cart_impact_release.lua") and args.saucedcarts_source:
