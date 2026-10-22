@@ -1,17 +1,25 @@
--- One plan must drive partial-drop feedback and the actual native transfers.
+-- One allocator drives partial-drop feedback and fresh native transfer admission.
 local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/'
 local gate = root .. 'client/000ToolkitBCSmartDepositCompatibility.lua'
 local function list(values)
     return {size = function() return #values end, get = function(_, i) return values[i + 1] end}
 end
 local function setup(active, native)
-    local w = {loads = {}, queued = {}, backpacks = {}, corpseOnly = false, delegated = {}}
+    local w = {loads = {}, queued = {}, backpacks = {}, corpseOnly = false, delegated = {}, now = 1000}
+    getTimestampMs = function() return w.now end
+    Events = {}
+    for _, name in ipairs({'OnContainerUpdate', 'OnRefreshInventoryWindowContainers'}) do
+        local callbacks = {}
+        Events[name] = {Add = function(callback) callbacks[#callbacks + 1] = callback end}
+        Events[name].fire = function(...) for _, callback in ipairs(callbacks) do callback(...) end end
+    end
     PZSurvivorToolkit, OrganizedCategories = {}, nil
     ISMouseDrag = {}
     instanceof = function(value, class) return value and value.class == class end
     w.player = {getCurrentSquare = function() return {} end, getVehicle = function() end}
-    getSpecificPlayer = function(number) assert(number == 0); return w.player end
-    getPlayerLoot = function(number) assert(number == 0); return {backpacks = w.backpacks} end
+    w.players = {[0] = w.player, [1] = {getCurrentSquare = function() return {} end, getVehicle = function() end}}
+    getSpecificPlayer = function(number) return assert(w.players[number]) end
+    getPlayerLoot = function(number) assert(w.players[number]); return {backpacks = w.backpacks} end
     getActivatedMods = function() return {contains = function(_, id) return active and id == 'EURY_CONTAINERS' end} end
     CleanUI_RegisterInventoryUiToggleCallback = function(callback) w.toggle = callback end
     function w.container(kind, free, parent)
@@ -23,7 +31,7 @@ local function setup(active, native)
         function c:isInside(x) return self.inside == x end
         function c:isItemAllowed(x) return not x.forbidden end
         function c:hasRoomFor(player, value, repeated)
-            assert(player == w.player)
+            assert(player == w.player or player == w.players[1])
             if type(value) == 'number' then
                 assert(repeated == value, 'use the native Build 42 aggregate-weight overload')
                 return value <= self.free
@@ -53,6 +61,7 @@ local function setup(active, native)
                 return 'native transfer', 41
             end,
             canPutIn = function(self, ...) w.paneArgs = {self, ...}; return 'native pane', 42 end,
+            refreshContainer = function(self, marker) self.refreshMarker = marker; return 'native refresh', 45 end,
             sortItemsByTypeAndWeight = function(_, items)
                 table.sort(items, function(a, b) return a.weight > b.weight end)
             end,
@@ -77,16 +86,28 @@ local function setup(active, native)
     CleanUI_Clean_ISInventoryPage, CleanUI_Vanilla_ISInventoryPage = ISInventoryPage, pageClass()
     local function dragClass()
         return {update = function(self, marker)
+            self.nativeUpdates = (self.nativeUpdates or 0) + 1
+            if not self.items then self.items = ISInventoryPane.getActualItems(ISMouseDrag.dragging) end
+            self.mouseOverContainer = self.mouseOverContainer or self:getDropContainer()
             self.itemNotOK = {}
             for _, x in ipairs(self.items) do self.itemNotOK[x] = true end
             self.nativeMarker = marker
             return 'native drag'
-        end}
+        end, reset = function(self, marker)
+            self.nativeResets = (self.nativeResets or 0) + 1
+            self.items, self.mouseOverContainer = nil, nil
+            self.itemNotOK = {}
+            self.resetMarker = marker
+            return 'native reset', 44
+        end,
+            getDropContainer = function() return w.target end,
+            cannotDropItem = function(self, item) return self.itemNotOK[item] == true end,
+        }
     end
     ISInventoryPaneDraggedItems, CleanUI_Vanilla_ISInventoryPaneDraggedItems = dragClass(), dragClass()
     ISTimedActionQueue = {add = function(action) w.queued[#w.queued + 1] = action end}
     ISInventoryTransferUtil = {newInventoryTransferAction = function(player, x, source, destination)
-        assert(player == w.player); return {item = x, source = source, destination = destination}
+        assert(player == w.player or player == w.players[1]); return {item = x, source = source, destination = destination}
     end}
     local loaded = {}
     require = function(name)
@@ -266,6 +287,151 @@ if NativeBCSmartDepositSource then
         'late bootstrap preserves already installed upstream hooks and does not claim ownership')
     print('PASS actual BC 42.21 reproduces preview/action mismatch and late-install guard')
 end
+-- Only drag feedback may reuse a bounded advisory plan; admission and actions are live.
+local function checkCachedPreview()
+    local world = setup(true)
+    dofile(gate); world.upstream.install()
+    local deposit = PZSurvivorToolkit.SmartDeposit
+    local plans, planFresh = 0, deposit.plan
+    deposit.plan = function(...)
+        plans = plans + 1
+        return planFresh(...)
+    end
+    local function planning(expected, action, message)
+        local before = plans
+        local a, b = action()
+        assert(plans - before == expected, message .. ': expected ' .. expected .. ' plans, got ' .. (plans - before))
+        return a, b
+    end
+    local first, second = world.item('First', 2), world.item('Second', 1)
+    local crate = world.container('crate', 2)
+    world.nearby(crate)
+    local selection = {first, second}
+    local view = world.pane()
+    local drag = world.drag(selection, nil, view)
+    planning(1, function()
+        for i = 1, 60 do
+            assert(drag:update(i) == 'native drag' and drag.nativeMarker == i)
+            assert(not drag.itemNotOK[first] and drag.itemNotOK[second],
+                'cached allocation must overwrite fresh native itemNotOK on every frame')
+        end
+    end, 'sixty unchanged hover frames must share one plan')
+    assert(drag.nativeUpdates == 60, 'native drag update must run on every cached frame')
+    local vanilla = world.drag(selection, CleanUI_Vanilla_ISInventoryPaneDraggedItems,
+        world.pane(CleanUI_Vanilla_ISInventoryPane))
+    planning(1, function()
+        for _ = 1, 60 do
+            vanilla:update()
+            assert(not vanilla.itemNotOK[first] and vanilla.itemNotOK[second])
+        end
+    end, 'vanilla inventory shares the same bounded partial-preview contract')
+    world.now = 1199
+    planning(0, function() drag:update() end, 'preview remains valid at 199 ms')
+    world.now = 1200
+    planning(1, function() drag:update() end, 'preview expires at exactly 200 ms')
+    world.now = 1199
+    planning(1, function() drag:update() end, 'clock rollback must not retain a future-dated plan')
+    planning(0, function() drag:update() end, 'rollback replacement is reusable')
+
+    -- Selection identity and contents must both be observed without waiting for expiry.
+    ISMouseDrag.dragging = {first, second}
+    planning(1, function() drag:update() end, 'replacement selection invalidates preview')
+    ISMouseDrag.dragging[2] = nil
+    drag.items = {first}
+    planning(1, function() drag:update() end, 'in-place selection removal invalidates preview')
+    ISMouseDrag.dragging[1] = second
+    drag.items = {second}
+    planning(1, function() drag:update() end, 'in-place item replacement invalidates preview')
+    assert(not drag.itemNotOK[second], 'replacement item receives its own allocation')
+    local row = {items = {first, first}}
+    ISMouseDrag.dragging, drag.items = {row}, {first}
+    planning(1, function() drag:update() end, 'stack selection invalidates preview')
+    row.items[2] = second
+    planning(1, function() drag:update() end, 'in-place stack member replacement invalidates preview with an unchanged native item list')
+    drag.items[1] = second
+    planning(1, function() drag:update() end, 'in-place native item replacement invalidates preview')
+    drag.items = {second}
+    planning(1, function() drag:update() end, 'native item list rebuild invalidates preview')
+    local newTarget = world.container('proximity')
+    drag.mouseOverContainer = newTarget
+    planning(1, function() drag:update() end, 'target replacement invalidates preview')
+    drag.inventoryPane = world.pane(nil, newTarget)
+    planning(1, function() drag:update() end, 'pane replacement invalidates preview')
+    drag.inventoryPane.player = 1
+    planning(1, function() drag:update() end, 'player replacement invalidates preview')
+    local other = world.drag({second})
+    other.inventoryPane.player = 1
+    planning(1, function() other:update() end, 'another drag instance must own a separate plan')
+    planning(0, function() other:update() end, 'other player reuses only its own preview')
+    Events.OnRefreshInventoryWindowContainers.fire({player = 0}, 'end')
+    planning(0, function() other:update() end, 'another player inventory refresh cannot invalidate this drag')
+    Events.OnRefreshInventoryWindowContainers.fire({player = 1}, 'end')
+    planning(1, function() other:update() end, 'the owning player inventory refresh invalidates this drag')
+
+    local resetA, resetB = other:reset('reset marker')
+    assert(resetA == 'native reset' and resetB == 44 and other.resetMarker == 'reset marker',
+        'preview reset must preserve the native reset contract')
+    other.items, other.inventoryPane, other.mouseOverContainer = {second}, world.pane(), world.target
+    ISMouseDrag.dragging = {second}
+    planning(1, function() other:update() end, 'reset drag must never reuse its old preview')
+    planning(0, function() other:update() end, 'reset replacement is reusable')
+    local activeSelection = ISMouseDrag.dragging
+    ISMouseDrag.dragging = nil
+    planning(0, function() other:update() end, 'absent native selection skips advisory planning')
+    ISMouseDrag.dragging = activeSelection
+    planning(1, function() other:update() end, 'ending a drag clears its previous preview')
+    other.mouseOverContainer = world.container()
+    planning(0, function() other:update() end, 'ordinary targets keep native feedback without advisory planning')
+    other.mouseOverContainer = world.target
+    planning(1, function() other:update() end, 'returning from an ordinary target starts a fresh preview')
+
+    local page = setmetatable({player = 0, inventoryPane = other.inventoryPane, mouseOverButton = {inventory = world.target}},
+        {__index = ISInventoryPage})
+    local r1, r2 = other.inventoryPane:refreshContainer('container marker')
+    assert(r1 == 'native refresh' and r2 == 45 and other.inventoryPane.refreshMarker == 'container marker')
+    planning(1, function() other:update() end, 'pane container refresh invalidates cached preview')
+    Events.OnContainerUpdate.fire(crate)
+    planning(1, function() other:update() end, 'container event invalidates cached preview')
+    Events.OnRefreshInventoryWindowContainers.fire(page, 'begin')
+    planning(0, function() other:update() end, 'unfinished inventory-window refresh retains the current preview')
+    Events.OnRefreshInventoryWindowContainers.fire(page, 'end')
+    planning(1, function() other:update() end, 'completed inventory-window refresh invalidates cached preview')
+    world.toggle()
+    planning(1, function() other:update() end, 'inventory mode toggle invalidates cached preview')
+
+    -- Keep the green hint stale deliberately: it must have no authority over a drop.
+    ISMouseDrag.dragging = {first}
+    local stale = world.drag({first}, nil, view)
+    planning(1, function() stale:update() end, 'initial green preview')
+    crate.free = 0
+    planning(0, function() stale:update() end, 'capacity changes may await bounded advisory refresh')
+    assert(not stale.itemNotOK[first], 'fixture must retain a stale green hint')
+    page.inventoryPane = view
+    planning(1, function() assert(not view:canPutIn()) end, 'pane rejects full storage from a fresh plan')
+    planning(1, function() assert(not page:canPutIn()) end, 'page rejects full storage from a fresh plan')
+    world.queued = {}
+    planning(1, function() view:transferItemsByWeight({first}, world.target) end, 'execution rechecks full storage')
+    assert(#world.queued == 0, 'stale green preview cannot queue an over-capacity transfer')
+    crate.free, first.forbidden = 2, true
+    planning(1, function() assert(not view:canPutIn()) end, 'pane rechecks newly restricted storage')
+    planning(1, function() assert(not page:canPutIn()) end, 'page rechecks newly restricted storage')
+    planning(1, function() view:transferItemsByWeight({first}, world.target) end, 'execution rechecks permissions')
+    assert(#world.queued == 0, 'stale green preview cannot queue a forbidden transfer')
+    first.forbidden, crate.free = nil, 0
+    local staleRed = world.drag({first}, nil, view)
+    planning(1, function() staleRed:update() end, 'initial red preview')
+    crate.free = 2
+    planning(0, function() staleRed:update() end, 'new capacity may await bounded advisory refresh')
+    assert(staleRed.itemNotOK[first], 'fixture must retain a stale red hint')
+    planning(1, function() assert(view:canPutIn()) end, 'pane accepts fresh capacity despite stale red preview')
+    planning(1, function() assert(page:canPutIn()) end, 'page accepts fresh capacity despite stale red preview')
+    planning(1, function() view:transferItemsByWeight({first}, world.target) end, 'execution replans newly available capacity')
+    assert(#world.queued == 1 and world.queued[1].item == first and world.queued[1].destination == crate,
+        'stale red preview cannot block a valid fresh transfer')
+end
+checkCachedPreview()
+print('PASS drag-local bounded advisory preview, lifecycle invalidation and fresh drop authority')
+
 -- Affinity must match BC's input mask, after OC has removed protected items.
 local function checkSelectedStockAffinity(native)
     local world = setup(true, native)
@@ -300,3 +466,56 @@ checkSelectedStockAffinity(false)
 if NativeBCSmartDepositSource then checkSelectedStockAffinity(true) end
 print('PASS selected-favorite and protected-Stick stock affinity matches native execution')
 print('PASS smart deposit capacity, priorities, protections, storage exclusions, dual inventory hooks and delegation')
+
+-- Exercise the real button callback: it refreshes feedback before using cannotDropItem.
+local function checkNativeButtonDrop(source, name, vanilla)
+    if not source then return end
+    source = source:gsub('\r', '')
+    local method = assert(source:match('(function ' .. name .. ':dropItemsInContainer%(.-)\nfunction ' .. name .. ':'),
+        name .. ' dropItemsInContainer handler missing')
+    for _, staleRed in ipairs({false, true}) do
+        local world = setup(true)
+        dofile(gate); world.upstream.install()
+        assert(loadstring(method))()
+        local class = _G[name]
+        local heavy, light = world.item('Heavy', 2), world.item('Light', 1)
+        local crate = world.container('crate', staleRed and 0 or 3)
+        world.nearby(crate)
+        local view = world.pane(vanilla and CleanUI_Vanilla_ISInventoryPane or ISInventoryPane)
+        local drag = world.drag({heavy, light}, vanilla and CleanUI_Vanilla_ISInventoryPaneDraggedItems or nil, view)
+        view.draggedItems = drag
+        drag:update()
+        assert((drag.itemNotOK[heavy] == true) == staleRed and (drag.itemNotOK[light] == true) == staleRed)
+        crate.free = staleRed and 3 or 1
+        drag:update()
+        assert((drag.itemNotOK[heavy] == true) == staleRed and (drag.itemNotOK[light] == true) == staleRed,
+            'button-drop fixture must retain the stale advisory hints before clicking')
+        local submitted, transfer = nil, view.transferItemsByWeight
+        view.transferItemsByWeight = function(self, items, target)
+            submitted = items
+            return transfer(self, items, target)
+        end
+        local page = setmetatable({player = 0, inventoryPane = view, mouseOverButton = {inventory = world.target},
+            refreshWeight = function() end, updateItemCount = function() end}, {__index = class})
+        getCore = function() return {getGameMode = function() return 'Sandbox' end} end
+        luautils = {walkToContainer = function(target, player) assert(target == world.target and player == 0); return true end}
+        getPlayerLoot = function() return {backpacks = world.backpacks, inventoryPane = {selected = {}}} end
+        getPlayerInventory = function() return {inventoryPane = {selected = {}}} end
+        assert(page:dropItemsInContainer(page.mouseOverButton))
+        assert(drag.nativeResets == 1 and drag.nativeUpdates == 3,
+            'actual button callback must reset and update drag feedback before filtering')
+        if staleRed then
+            assert(#submitted == 2 and submitted[1] == heavy and submitted[2] == light,
+                'stale red hints must not filter freshly accepted items out of the actual button drop')
+            assert(#world.queued == 2 and world.queued[1].item == heavy and world.queued[2].item == light)
+        else
+            assert(#submitted == 1 and submitted[1] == light,
+                'stale green hints must not submit freshly rejected items through the actual button drop')
+            assert(#world.queued == 1 and world.queued[1].item == light)
+        end
+    end
+    print('PASS source-backed ' .. name .. ' stale-preview button drop')
+end
+checkNativeButtonDrop(NativeInventoryPageSource, 'ISInventoryPage')
+checkNativeButtonDrop(CleanUIInventoryPageSource, 'ISInventoryPage')
+checkNativeButtonDrop(CleanUIVanillaInventoryPageSource, 'CleanUI_Vanilla_ISInventoryPage', true)

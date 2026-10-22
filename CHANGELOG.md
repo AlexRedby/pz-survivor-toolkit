@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.209
+
+- **Smart Deposit:** Reuse a drag-local advisory allocation instead of rescanning all nearby stock every frame. Refresh the hint within 200 ms and invalidate it on selection, target and inventory/UI changes. Drop admission and transfer commands still calculate current routing, capacity and protected-item rules independently.
+
 ### 0.1.208
 
 - **Action queue:** Match cancelled-operation returns by item ID, full type and original destination. Skip conflicting pickup/return histories and a different item type under a reused ID; preserve same-identity network replicas, deduplication, other required returns and the unrelated queue tail. Native transfer effects remain unchanged.

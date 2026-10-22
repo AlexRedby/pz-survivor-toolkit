@@ -9,7 +9,7 @@ local entered, starting, started, done = false, false, false, false
 local phase, since, modeIndex = 'setup', 0, 1
 local modes = {'clean', 'vanilla'}
 local objects, stores, seeds, samples, extras, expected, durations = {}, {}, {}, {}, {}, {}, {}
-local source, sourcePane, loot, pane, button, target
+local source, sourcePane, loot, pane, button, target, fixtureSquare
 local holdDrag = false
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()).queue end
 local function empty(container)
@@ -70,6 +70,7 @@ local function setup()
     BCOptions.enableProximity=true; BCOptions.enableCorpseOnly=false; BCOptions.enableDualMode=false
     BCOptions.enableNestedContainers_Loot=false; BCOptions.enableAutoLock=false
     local origin=nativeArea(player)
+    fixtureSquare=origin
     for _,offset in ipairs({{1,0},{0,1},{-1,0}}) do
         local square=assert(getCell():getGridSquare(origin:getX()+offset[1],origin:getY()+offset[2],origin:getZ()))
         local object=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
@@ -82,6 +83,9 @@ end
 local function showMode()
     assert(idle(),'previous native transfers did not drain')
     clearDrag()
+    -- Real transfers may reposition the actor at a crate. Start each UI case
+    -- from the same centre so all three fixture containers remain in reach.
+    getPlayer():teleportTo(fixtureSquare:getX()+0.5,fixtureSquare:getY()+0.5,fixtureSquare:getZ())
     for _,item in ipairs(samples) do if item:getContainer()==source then source:Remove(item) end end
     for _,item in ipairs(extras) do if item:getContainer()==source then source:Remove(item) end end
     for _,object in ipairs(objects) do empty(object:getContainer()) end
@@ -113,7 +117,8 @@ local function prepare()
             error('unexpected nearby storage: '..tostring(container:getType()))
         end
     end
-    assert(button and #stores==3,'native proximity button or three world crates missing')
+    local kinds={};for _,entry in ipairs(loot.backpacks)do kinds[#kinds+1]=entry.inventory and entry.inventory:getType()or 'nil'end
+    assert(button and #stores==3,'native proximity button or three world crates missing: mode='..modes[modeIndex]..' button='..tostring(button~=nil)..' stores='..#stores..' types='..table.concat(kinds,',')..' position='..getPlayer():getX()..','..getPlayer():getY())
     loot:onBackpackClick(button)
     assert(pane.inventory==target and PZSurvivorToolkit.SmartDeposit.isTarget(target),'real proximity target not selected')
     -- Roles follow BC's actual button order: an early fallback and category
@@ -150,6 +155,15 @@ end
 local function preview()
     loot.mouseOverButton=button
     sourcePane.draggedItems:update()
+    local previous=assert(sourcePane.draggedItems.toolkitSmartDepositPreview,'advisory preview missing')
+    for _=1,16 do
+        sourcePane.draggedItems:update()
+        local current=assert(sourcePane.draggedItems.toolkitSmartDepositPreview)
+        if current~=previous then
+            assert(current.at-previous.at>=200,'unchanged native hover rebuilt its plan before expiry')
+        end
+        previous=current
+    end
     assert(pane:canPutIn()==true and loot:canPutIn()==true,'partial batch must allow drop')
     assert(not sourcePane.draggedItems:cannotDropAnyItem(),'partial batch marked wholly rejected')
     for _,item in ipairs(samples) do
@@ -171,8 +185,9 @@ local function transfer()
         assert(baseline.Type=='ISInventoryTransferAction','ordinary Nail must use native transfer factory branch')
         durations[item]={raw=baseline.maxTime,created=baseline:adjustMaxTime(baseline.maxTime)}
     end
+    holdDrag=false
+    assert(loot:dropItemsInContainer(button),'native container-button drop did not dispatch')
     clearDrag()
-    sourcePane:transferItemsByWeight(samples,target)
     local seen, count={},0
     for _,action in ipairs(queue()) do
         if action.Type=='ISInventoryTransferAction' then

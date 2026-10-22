@@ -229,7 +229,7 @@ def main() -> None:
             lua.globals().NativePZLuaRoot = str(args.native_action_root)
         if name == 'test_container_appearance_controls.lua' and args.native_action_root:
             lua.globals().NativeColorPickerSource = (args.native_action_root / 'client/ISUI/ISColorPickerHSB.lua').read_text(encoding='utf-8')
-        if name == 'test_container_configuration_menus.lua':
+        if name in ('test_container_configuration_menus.lua', 'test_smart_deposit.lua'):
             if args.native_action_root:
                 lua.globals().NativeInventoryPageSource = (args.native_action_root / 'client/ISUI/ISInventoryPage.lua').read_text(encoding='utf-8')
             if args.cleanui_inventory_pane:
