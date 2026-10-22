@@ -23,6 +23,10 @@ Version labels come from committed component metadata, including changes made wi
 
 - **Craft from storage:** Fetch native recipe quantities and remaining uses instead of counting every ingredient as one object. Credit carried and nearby supplies first, preserve per-type scales and exclusive alternatives, reuse partial supplies across the batch, and fetch kept tools once. Native walking, transfers and final craft validation remain in control. Remove the unused competing craft-count helpers.
 
+### 0.1.205
+
+- **Action queue:** Use shared deferred settlement ownership for P4's delayed restores. Keep unique returns with their source task and shared cleanup independent of individual cancellation; retire stale queue/player scopes without replaying native effects or overriding confirmed equipment intent. Dynamic input selectors and conflicting pickup identities retain protected shared ownership.
+
 ### 0.1.204
 
 - **Action queue:** Route cancelled-operation returns and existing mask/fitness restoration through one settlement engine. Preserve native effects, exact surviving item IDs, cleanup order and unrelated queued work; reject stale ownership and repeated settlement. Existing adapter permissions and Host completion gates are unchanged.

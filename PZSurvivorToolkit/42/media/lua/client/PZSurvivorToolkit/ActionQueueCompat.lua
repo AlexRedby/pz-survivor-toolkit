@@ -5,6 +5,7 @@ require "ISUI/ISXuiSkin"
 
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
+local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
 local TidyIntent = require "PZSurvivorToolkit/ActionQueueTidyIntent"
 local Compat = {}
 Toolkit.ActionQueueCompat = Compat
@@ -96,6 +97,7 @@ function Compat.prune()
     for character, session in pairs(sessions) do
         if character:isDead() or ISTimedActionQueue.queues[character] ~= session.queue
             or (session.queue.toolkitOperationGeneration or 0) ~= session.generation then
+            Settlement.close(session)
             sessions[character] = nil
         else
             -- Delayed Tidy restores still need task/pickup history after the source action leaves the queue.
@@ -108,7 +110,7 @@ if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
     worldGeneration = worldGeneration + 1
     for action in pairs(records) do records[action] = nil end
     for action in pairs(repairedFloors) do repairedFloors[action] = nil end
-    for character in pairs(sessions) do sessions[character] = nil end
+    for character, session in pairs(sessions) do Settlement.close(session); sessions[character] = nil end
 end) end
 
 -- getModFileReader resolves the selected B42 version, then common; no Workshop path is assumed.
@@ -186,6 +188,7 @@ local function sourceClassUnchanged(id, class, methods)
 end
 
 local function live(record)
+    if record.settlement and not Settlement.isLive(record) then return false end
     local character, queue, token = record.character, record.queue, record.token
     if not token or token.toolkitCancelled or not Toolkit.Settings.actionQueue()
         or (record.worldGeneration and record.worldGeneration ~= worldGeneration)
@@ -294,21 +297,11 @@ local function tidyRestoreContext(context, action)
     if not session or not session.mixed or getmetatable(action) ~= ISInventoryTransferAction
         or not policy or not policy.isOrdinaryTransfer or not policy.isOrdinaryTransfer(action)
         or action.srcContainer ~= action.character:getInventory() or not instanceof(action.item, "InventoryItem") then return context end
-    local id, fullType = action.item:getID(), action.item:getFullType()
-    local owner
-    for token, task in pairs(session.tasks) do
-        local pickup = task.pickups[id]
-        if pickup and pickup.fullType == fullType and pickup.container == action.destContainer then
-            if owner then return context end
-            owner = token
-        end
-    end
+    local owner = Settlement.owner(session, action.item:getID(), action.item:getFullType(), action.destContainer)
     if not owner then return context end
-    for token, task in pairs(session.tasks) do
-        if token ~= owner and (task.unknownInputs or task.items[id]) then return context end
-    end
-    return {id = context.id, token = owner, character = context.character, queue = context.queue,
-        generation = context.generation}
+    local result = Settlement.context(session, owner)
+    result.id = context.id
+    return result
 end
 
 local scoped, rememberTidy
@@ -335,7 +328,8 @@ local function adopt(action)
         primary = action.primary, twoHands = action.twoHands, alwaysTurnOn = action.alwaysTurnOn,
         reason = action.reason, fromHotbar = action.fromHotbar, hotbar = action.hotbar,
         tidyHandUnequip = tidyHandUnequip,
-        opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction), sharedCleanup = context.sharedCleanup}
+        opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction),
+        settlement = context.settlement, obligation = Settlement.obligation(context)}
     records[action] = record
     if context.id == "Project_Cook" and class == ISAddItemInRecipe then context.lastApply = action end
     if class == ISQueueActionsAction then
@@ -510,7 +504,7 @@ local function inspect(action)
     if record.class == ISQueueActionsAction then result.deferred, result.knownInputs = true, false end
     if record.class == ISWashClothing or record.class == ISAddItemInRecipe then result.unknownOutputs = true end
     -- The following source command repairs invalid consumed spice on the authoritative side.
-    if record.class == ISAddItemInRecipe or record.cleanupFor or record.sharedCleanup then result.cancelOperation = false end
+    if record.class == ISAddItemInRecipe or record.cleanupFor or Settlement.required(record.obligation) then result.cancelOperation = false end
     if record.class == P4RestoreFloorAction then
         -- Floor placement is a server completion effect, never an interrupted client-side restore.
         result.interrupt, result.preparationFinish = "finish-step", true
@@ -607,7 +601,7 @@ local function installTidyFloorValidation()
             or not instanceof(action.item, "InventoryItem") or action.item:getID() ~= repair.id
             or action.item:getFullType() ~= repair.fullType then return false end
         local record = records[action]
-        if record and record.token.toolkitCancelled and not record.sharedCleanup then return false end
+        if record and record.token.toolkitCancelled and not Settlement.required(record.obligation) then return false end
         for _, name in ipairs({"x", "y", "z", "offX", "offY", "offZ", "rotationX", "rotationY", "rotationZ", "debugOutput"}) do
             if action[name] ~= repair.fields[name] then return false end
         end
@@ -662,13 +656,13 @@ local function loadSource(id, module, eventName)
                     local record = sessions[character]
                     if record then
                         if not Toolkit.Settings.actionQueue() then
+                            Settlement.close(record)
                             sessions[character] = nil
                             return TidyIntent.update(character, callback, ...)
                         end
-                        -- Shared native equipment and ambiguous returns outlive cancellation of any one task.
-                        if record.mixed and not record.restoreToken then record.restoreToken = {} end
-                        local context = {id = id, token = record.restoreToken or record.token, character = character, queue = record.queue,
-                            generation = record.generation, tidySession = record, sharedCleanup = record.mixed}
+                        -- Shared cleanup keeps a separate owner; unique returns may resolve back to their source task.
+                        local context = Settlement.context(record)
+                        context.id, context.tidySession = id, record
                         local results = pack(scoped(context, function(...) return TidyIntent.update(character, callback, ...) end, ...))
                         if #record.queue.queue == 0 and not character:hasTimedActions() then
                             record.idleTicks = (record.idleTicks or 0) + 1
@@ -1021,7 +1015,9 @@ rememberTidy = function(action)
         local character, token = action.character, action.toolkitQueueOperation
         if not Toolkit.Settings.actionQueue() then
             -- A new native operation while disabled has no single owner with an older tracked Tidy session.
-            if sessions[character] and sessions[character].token ~= token then sessions[character] = nil end
+            if sessions[character] and sessions[character].token ~= token then
+                Settlement.close(sessions[character]); sessions[character] = nil
+            end
             return
         end
         if sourceScope and sourceScope.id == "P4TidyUpMeister" then
@@ -1029,22 +1025,12 @@ rememberTidy = function(action)
         else
             local record = sessions[character]
             if not record then
-                local queue = ISTimedActionQueue.getTimedActionQueue(character)
-                record = {token = token, queue = queue, generation = queue.toolkitOperationGeneration or 0,
-                    tasks = {}, seen = {}}
+                record = Settlement.deferred(character, token)
                 sessions[character] = record
-            elseif record.token ~= token then record.mixed = true end
-            if record.seen[action] then return end
-            record.seen[action] = true
-            local task = record.tasks[token]
-            if not task then task = {items = {}, pickups = {}}; record.tasks[token] = task end
-            local contract = Toolkit.ActionQueueDefinitions.inspect(action)
-            if not contract or contract.knownInputs == false or contract.dynamicInputs then task.unknownInputs = true end
-            for id in pairs(contract and contract.items or {}) do task.items[id] = true end
-            for id in pairs(contract and contract.containerOwners or {}) do task.items[id] = true end
-            for item, container in pairs(token.toolkitPickups or {}) do
-                task.pickups[item:getID()] = {container = container, fullType = item:getFullType()}
             end
+            if record.seen[action] then return end
+            local contract = Toolkit.ActionQueueDefinitions.inspect(action)
+            Settlement.remember(record, action, contract)
         end
     end
 end

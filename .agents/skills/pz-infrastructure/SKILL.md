@@ -15,7 +15,7 @@ Check the purpose, justification and boundaries of existing mechanisms. Freely r
 
 Start a separate infrastructure pass at the user's request. While working in this role, note related problems and record concrete unfinished work in the existing root `TODO.md`. General requirements for all agents remain in `AGENTS.md`; do not add this role's duties there. Other agents carry out their tasks without an obligation to look for infrastructure problems. Scheduled checks are neither configured nor implied.
 
-General requirements for sources, agreement on behavior, installation, the environment and proportionate checks are in the [project AGENTS.md](../../../AGENTS.md). Follow them along with this role's responsibilities.
+Use the [development guide](../../../docs/DEVELOPMENT.md) for component versioning, verification platforms and test commands, and the [installation guide](../../../MOD_INSTALL.md) for setup.
 
 ## Choosing and carrying through a pass
 
@@ -41,7 +41,7 @@ Study player reports when necessary; check explicit bug and compatibility report
 
 Keep reliability work proportionate to a personal mod made for fun. Fix concrete gameplay and development problems; exclude power-loss and hardware-failure scenarios from design, testing and acceptance unless the user explicitly requests them. Do not add recurring disclaimers about those excluded scenarios.
 
-- Independently improve the project's technical structure, including structural rework, documentation, tools and checks, while preserving agreed gameplay behavior. Fix bugs with clear, already established expected results. The size of a technical change does not itself require separate permission; the general agreement boundaries in `AGENTS.md` still apply.
+- Independently improve the project's technical structure, including structural rework, documentation, tools and checks, while preserving agreed gameplay behavior. Fix bugs with clear, already established expected results. The size of a technical change does not itself require separate permission.
 - Agree on new third-party mods and replacements for existing ones as functionality changes. Reflecting the user's already agreed decision to disable a mod in the configuration is not a new choice of mod set.
 
 ## Keeping the skill current

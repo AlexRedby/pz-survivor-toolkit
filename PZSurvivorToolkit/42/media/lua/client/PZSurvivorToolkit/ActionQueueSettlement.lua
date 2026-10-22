@@ -40,6 +40,102 @@ local function insert(queue, action, index)
     table.insert(queue.queue, index, action)
 end
 
+-- A delayed producer may collect several operations before constructing its
+-- native cleanup. These are ownership claims, not proof that an effect ran.
+local deferredMarker, obligationMarker = {}, {}
+local function deferred(scope)
+    return type(scope) == "table" and scope.marker == deferredMarker
+end
+
+function Settlement.deferred(character, token)
+    local queue = ISTimedActionQueue.getTimedActionQueue(character)
+    return {marker = deferredMarker, character = character, token = token, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0, tasks = {}, seen = {}, mixed = false, phase = "prepare"}
+end
+
+function Settlement.remember(scope, action, contract)
+    if not deferred(scope) or scope.phase == "retired" or action.character ~= scope.character
+        or not action.toolkitQueueOperation then return false end
+    local token = action.toolkitQueueOperation
+    if scope.token ~= token then scope.mixed = true end
+    if scope.seen[action] then return false end
+    scope.seen[action] = true
+    local task = scope.tasks[token]
+    if not task then task = {items = {}, pickups = {}}; scope.tasks[token] = task end
+    if not contract or contract.knownInputs == false or contract.dynamicInputs or contract.dynamicInputsByType then
+        task.unknownInputs = true
+    end
+    for id in pairs(contract and contract.items or {}) do task.items[id] = true end
+    for id in pairs(contract and contract.containerOwners or {}) do task.items[id] = true end
+    for item, container in pairs(token.toolkitPickups or {}) do
+        local id, fullType = item:getID(), item:getFullType()
+        local previous = task.pickups[id]
+        task.pickups[id] = {container = container, fullType = fullType,
+            ambiguous = previous and (previous.ambiguous or previous.container ~= container or previous.fullType ~= fullType) or false}
+    end
+    return true
+end
+
+function Settlement.owner(scope, id, fullType, destination)
+    if not deferred(scope) or scope.phase == "retired" then return end
+    local owner
+    for token, task in pairs(scope.tasks) do
+        local pickup = task.pickups[id]
+        if pickup and pickup.ambiguous then return end
+        if pickup and pickup.fullType == fullType and pickup.container == destination then
+            if owner then return end
+            owner = token
+        end
+    end
+    if not owner then return end
+    for token, task in pairs(scope.tasks) do
+        if token ~= owner and (task.unknownInputs or task.items[id]) then return end
+    end
+    return owner
+end
+
+function Settlement.context(scope, owner)
+    if not deferred(scope) or scope.phase == "retired" or owner ~= nil and not scope.tasks[owner] then return end
+    local token = owner or scope.token
+    local shared = owner == nil and scope.mixed
+    if shared then
+        scope.restoreToken = scope.restoreToken or {}
+        token = scope.restoreToken
+    end
+    if scope.phase == "prepare" then scope.phase = "cleanup" end
+    return {settlement = scope, character = scope.character, token = token, queue = scope.queue,
+        generation = scope.generation, sharedCleanup = shared or nil}
+end
+
+function Settlement.isLive(context)
+    local scope = context and context.settlement
+    if not deferred(scope) or scope.phase == "retired" or context.character ~= scope.character
+        or context.queue ~= scope.queue or context.generation ~= scope.generation then return false end
+    local character, queue, token = scope.character, scope.queue, context.token
+    if not token or token.toolkitCancelled or token ~= scope.token and token ~= scope.restoreToken and not scope.tasks[token]
+        or context.sharedCleanup and (not scope.mixed or token ~= scope.restoreToken)
+        or not Toolkit.Settings or not Toolkit.Settings.actionQueue() or character:isDead()
+        or ISTimedActionQueue.queues[character] ~= queue
+        or (queue.toolkitOperationGeneration or 0) ~= scope.generation then return false end
+    return true
+end
+
+function Settlement.obligation(context)
+    if not Settlement.isLive(context) then return end
+    context.settlement.phase = "scheduled"
+    local scope = context.settlement
+    return {marker = obligationMarker, token = context.token, phase = "cleanup",
+        required = scope.mixed and context.token == scope.restoreToken}
+end
+
+function Settlement.required(obligation)
+    return type(obligation) == "table" and obligation.marker == obligationMarker and obligation.required == true
+end
+
+function Settlement.close(scope)
+    if deferred(scope) then scope.phase = "retired" end
+end
+
 -- Called only after the current native step/Host receipt has settled. Pickup
 -- locations are intents: only the surviving exact direct-root item can activate
 -- a return. Family adapters own any stronger effect/cleanup proof they require.

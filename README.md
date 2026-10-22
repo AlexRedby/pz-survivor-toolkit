@@ -15,6 +15,8 @@ Current versions come from component metadata; see the [changelog](CHANGELOG.md)
 
 The [selected set](SurvivorQoL-selected.ini) requires both local mod folders on the server and every client: **53 Mod IDs / 50 Workshop items**, targeting **B42.21**. Wishlist and the complete Quartermaster feature set, including crafting and the storage manifest, are included in Toolkit; existing lists, sorting designations, presets and settings are preserved. Container Capacity Indicator, Item Details, research availability and planting information are also built in, with existing preferences preserved. Disable their separate mods (including HasResearch and SeedSeasonIndicator) and Quartermaster when updating. Other game builds are outside the Java patches' supported scope.
 
+Supported gameplay targets are single-player and **Host** from the game menu on Windows and macOS. The project follows the Build 42 version used by the selected set; older releases and other major game branches are outside its support scope. See the [verification environment](docs/DEVELOPMENT.md#verification-environment) for development checks.
+
 Archery Nexus with Wilderness Progression is selected for bow crafting, Archery progression, arrow recovery and draw endurance/strain. Its B42.21 full-pack and Host behavior remain unverified; see [archery setup and limitations](MOD_INSTALL.md#archery).
 
 ## Installation

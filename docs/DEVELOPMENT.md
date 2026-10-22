@@ -4,6 +4,16 @@
 
 Run commands below from the repository root.
 
+## Versioning
+
+Before pushing changes to main, compare each changed component with the latest main. Changes to shipped code, assets or runtime metadata, including behavior-preserving refactors, require a version newer than main for that component: Toolkit uses [mod.info](../PZSurvivorToolkit/42/mod.info); Java Patches uses the generated metadata in [build.py](../JavaPatches/build.py). One bump can cover the complete set of changes delivered together; individual implementation commits do not each need a bump. Record the delivered changes in [CHANGELOG.md](../CHANGELOG.md) and recheck versions after merging concurrent work. Changes confined to tests, development tools, documentation or agent instructions do not require a mod version bump.
+
+## Verification environment
+
+Agent verification on macOS is sufficient for this project's Windows/macOS gameplay targets. Do not pursue Windows test environments or make Windows verification a routine completion requirement; Windows players check the project there. State the platform actually tested and do not present a macOS check as Windows verification. A separate dedicated-server run is not a required verification target.
+
+Use the [native runner guide](../tests/native_queue/README.md#commands) for isolated settings/saves and macOS window placement, including AeroSpace and current-desktop fallback.
+
 ## Checks and packaging
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests. Choose checks related to the change; the commands below are independent examples, not a mandatory full checklist.
@@ -52,6 +62,8 @@ To run the same checks against your installed game's native Mod Options implemen
 
 Use the [native runner guide](../tests/native_queue/README.md) for preparation, exclusive GUI ownership, control comparisons, runtime verdicts and coverage. The [contribution index](../tests/native_queue/contributions/README.md) lists registered adapters and their scope. Registration does not establish a native pass; use each run report and coverage matrix.
 
+For selected-mod compatibility, run the relevant native suite with `--mods selected`; isolated Lua tests do not load that set.
+
 ## Regression scenarios
 
 Use the checks below for the affected behavior. A fixture's assertions describe its acceptance contract; old successful runs and their assertion counts do not verify changed code. Keep native action durations when testing timing and network races; shortened reading or instant actions do not establish that coverage. Multiplayer item/resource effects require authoritative server checks, not client queue completion alone.
@@ -82,7 +94,9 @@ For development, `ActionQueueDefinitions.lua` owns presentation entries; changin
 
 Run `.venv/bin/python tools/audit_action_queue.py --native-root /path/to/media/lua --workshop-root /path/to/content/108600 --selected-ini SurvivorQoL-selected.ini --require-native --output /tmp/action-queue.json` with the test dependency Lupa installed. The generated catalog distinguishes source presence, presentation and behavior declarations; it does not claim that fixtures or live scenarios passed. Run `python3 -m unittest discover -s tests -p test_audit_action_queue.py` for the scanner checks. The Lua runner also accepts `--project-cook-picker /path/to/PJCK_CookerPicker.lua` for that UI binding. No game installation gives an explicit skip; `--require-native` makes it a failed release gate.
 
-`ActionQueueSettlement.finish` owns cancellation cleanup after the current native step and any required Host acknowledgement. It drops the remaining body, preserves registered cleanup and schedules exact-ID returns before the independent tail, without replaying effects or recreating items. Families register `retain(action, current, queue)` and optional `ownsPickup(current, id)` callbacks through `ActionQueueSettlement.register`; these callbacks keep their existing source/effect proofs and grant no additional edit permissions. A request records the body/cleanup/scheduled phases and cannot schedule twice. `scheduled` means cleanup was queued, not that its native effects succeeded. Mask and fitness restoration use this path; delayed P4 restoration keeps its existing ownership protocol until its separate migration gates pass.
+`ActionQueueSettlement.finish` owns cancellation cleanup after the current native step and any required Host acknowledgement. It drops the remaining body, preserves registered cleanup and schedules exact-ID returns before the independent tail, without replaying effects or recreating items. Families register `retain(action, current, queue)` and optional `ownsPickup(current, id)` callbacks through `ActionQueueSettlement.register`; these callbacks keep their existing source/effect proofs and grant no additional edit permissions. A request records the body/cleanup/scheduled phases and cannot schedule twice. `scheduled` means cleanup was queued, not that its native effects succeeded. Mask and fitness restoration use this path. Delayed P4 restoration uses shared deferred ownership while retaining its source/intent proofs and native executor.
+
+For delayed producers, `ActionQueueSettlement.deferred` captures the queue generation and `remember` snapshots task input/pickup claims. `owner` resolves only an exclusive exact-ID/type/destination return; unknown or conflicting claims keep a separate shared cleanup token. `context`, `isLive`, `obligation` and `required` bind cleanup to that ownership, while `close` retires aborted scopes. These historical claims are not authoritative effect receipts and never execute actions or reserve inventory. P4 retains ordinary native fallback with the queue disabled; already-running native completion is not suppressed by a late token cancellation.
 
 For local debugging, call `PZSurvivorToolkit.ActionQueuePolicy.setDiagnostics(true)` in the Lua console, exercise a move/cancel/priority request, and inspect `getDiagnostics()` on the same object. It retains at most 64 decision records in memory, including adapter, item IDs/types, source and blocker; it sends nothing externally. `setDiagnostics(false)` clears and disables it. Pending family migrations and their completion gates are in [TODO.md](../TODO.md).
 
