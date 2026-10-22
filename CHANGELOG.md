@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.203
+
+- **Automatic distribution:** Recheck native capacity and item admission for every actual single-player deposit, including merged items and containers changed after the action started. Skip a confirmed Host transaction rejection without dropping transfers to other containers; preserve native batching, cleanup and ordinary cancellation. Unknown transaction outcomes still stop the haul.
+
 ### 0.1.200
 
 - **Warehouse:** Rechecking unchanged storage sends bounded sample timestamps instead of item lists and preserves the client aggregation, search and sort caches. Real contents, container state and appearance changes still refresh the list.

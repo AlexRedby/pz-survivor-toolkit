@@ -24,6 +24,7 @@ ACTION_TESTS += ("test_manifest_text_fit.lua", "test_manifest_layout.lua", "test
 ACTION_TESTS += ("test_action_queue_membership.lua",)
 ACTION_TESTS += ("test_inventory_membership.lua",)
 ACTION_TESTS += ("test_context_menu_duplicates.lua",)
+ACTION_TESTS += ("test_quartermaster_deposit.lua",)
 EXTRA_TESTS = (
     'test_manifest_authority.lua',
     'test_manifest_model.lua',
@@ -147,6 +148,8 @@ def main() -> None:
         parser.error(str(error))
     if "test_quartermaster_craft_ui.lua" in requested and not args.native_action_root:
         parser.error("test_quartermaster_craft_ui requires --game or --native-action-root")
+    if "test_quartermaster_deposit.lua" in requested and not args.native_action_root:
+        parser.error("test_quartermaster_deposit requires --game or --native-action-root")
     if requested.intersection({"native_tags/check_transfer_source.lua", "native_tags/check_placement.lua"}) and not args.native_action_root:
         parser.error("selected native tag checks require --native-action-root")
 

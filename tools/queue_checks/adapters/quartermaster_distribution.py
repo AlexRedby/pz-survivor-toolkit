@@ -12,16 +12,18 @@ def definitions():
     return {SUITE: {'status': 'ready', 'clients': 1, 'default_mods': MODS,
                    'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                               'kinds': kinds, 'languages': ['EN'], 'modes': ['toolkit']}
-                             for case, kinds in [('sort', ['sp', 'mp']), ('backpack', ['sp'])]]}}
+                             for case, kinds in [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp'])]]}}
 
 
 def validate(selection):
-    if (selection.get('cases') not in (['sort'], ['backpack']) or selection.get('kind') not in ('sp', 'mp')
+    if (selection.get('cases') not in (['sort'], ['backpack'], ['deposit']) or selection.get('kind') not in ('sp', 'mp')
             or (selection.get('cases') == ['backpack'] and selection.get('kind') != 'sp')
             or selection.get('mode') != 'toolkit' or selection.get('clients', 1) != 1
             or selection.get('languages') != ['EN'] or not set(MODS) <= set(selection.get('mods', []))
-            or selection.get('options', {}).get('world_template')):
-        raise ValueError('Distribution requires sort in fresh SP/Host or backpack in fresh SP, one EN client and Toolkit')
+            or selection.get('options', {}).get('world_template')
+            or selection.get('cases') == ['deposit'] and selection.get('kind') == 'mp'
+            and selection.get('options', {}).get('mp_host') is not True):
+        raise ValueError('Distribution requires sort/deposit in fresh SP/Host or backpack in fresh SP, one EN client and Toolkit')
 
 
 def sources(project, selection):
@@ -43,6 +45,13 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
+    if selection.get('cases') == ['deposit']:
+        try:
+            records = [value for event, value in _deposit_records(text) if event == 'COMPLETE']
+            return role == 'client1' and _exact(records, [dict(case='deposit', kind=selection['kind'],
+                                                            merged=True, confirmedRejectionMP=selection['kind'] == 'mp')])
+        except (ValueError, KeyError, TypeError):
+            return False
     if selection.get('cases') == ['backpack']:
         return role == 'client1' and len(re.findall(r'\[QM_BACKPACK\] COMPLETE[ \t]*\r?$', text, re.MULTILINE)) == 1
     return role == 'client1' and len(re.findall(r'\[QM_DISTRIBUTION\] COMPLETE(?:\s|$)', text)) == 1
@@ -53,6 +62,98 @@ def _one(text, event):
     if len(values) != 1:
         raise ValueError('Missing/duplicate distribution ' + event)
     return json.loads(values[0])
+
+
+def _exact(value, expected):
+    if type(value) is not type(expected):
+        return False
+    if type(expected) is dict:
+        return set(value) == set(expected) and all(_exact(value[key], item) for key, item in expected.items())
+    if type(expected) is list:
+        return len(value) == len(expected) and all(_exact(a, b) for a, b in zip(value, expected))
+    return value == expected
+
+
+def _deposit_records(text):
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError('Duplicate deposit JSON key ' + key)
+            value[key] = item
+        return value
+    records = []
+    for line in text.splitlines():
+        marker = '[QM_DEPOSIT] '
+        offset = line.find(marker)
+        if offset < 0:
+            continue
+        event, separator, body = line[offset + len(marker):].partition(' ')
+        if not separator:
+            raise ValueError('Malformed deposit receipt')
+        value = json.loads(body, object_pairs_hook=unique,
+                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Nonfinite deposit receipt')))
+        if type(value) is not dict:
+            raise ValueError('Deposit receipt is not an object')
+        records.append((event, value))
+    return records
+
+
+def _deposit(root, selection):
+    issues, receipt, authority_receipt = [], None, None
+    try:
+        root, kind = Path(root), selection['kind']
+        text = (root / 'client1-launch.log').read_text(errors='replace')
+        records = _deposit_records(text)
+        expected_events = ['PREPARED', 'LOCAL', *(['AUTHORITY'] if kind == 'sp' else []), 'CLEANUP', 'COMPLETE']
+        if [event for event, _ in records] != expected_events:
+            raise ValueError('Deposit client lifecycle missing, duplicated or reordered')
+        values = dict(records)
+        packet, receipt = values['PREPARED'], values['LOCAL']
+        if (set(packet) != {'kind', 'ids', 'ballastId', 'boxes'} or packet['kind'] != kind
+                or type(packet['ids']) is not list or len(packet['ids']) != 3
+                or any(type(value) is not int for value in packet['ids']) or len(set(packet['ids'])) != 3
+                or kind == 'sp' and (type(packet['ballastId']) is not int or packet['ballastId'] in packet['ids'])
+                or kind == 'mp' and packet['ballastId'] is not False
+                or type(packet['boxes']) is not list or len(packet['boxes']) != 3):
+            raise ValueError('Invalid exact deposit preparation identities')
+        for point in packet['boxes']:
+            if (type(point) is not dict or set(point) != {'x', 'y', 'z', 'index'}
+                    or any(type(value) is not int for value in point.values()) or point['index'] < 0):
+                raise ValueError('Invalid deposit world-container descriptor')
+        source, limited, tail = packet['boxes']
+        if (limited['x'] != source['x'] + 2 or limited['y'] != source['y']
+                or tail['x'] != source['x'] + 1 or tail['y'] != source['y'] + 1
+                or len({point['z'] for point in packet['boxes']}) != 1):
+            raise ValueError('Deposit crates are not adjacent to the same actor position')
+        expected = dict(kind=kind, ids=packet['ids'], ballastId=packet['ballastId'],
+                        destinations=[2, 1, 3] if kind == 'sp' else [1, 1, 3], sourceCount=1 if kind == 'sp' else 2,
+                        limitedCapacity=1 if kind == 'sp' else 0, limitedWeight=.9375 if kind == 'sp' else 0,
+                        tailWeight=.0625, conserved=4 if kind == 'sp' else 3)
+        rejection_id = receipt.get('rejectionId')
+        if (type(rejection_id) is not int or (rejection_id == 0) != (kind == 'sp')
+                or not _exact(receipt, dict(expected, merged=True, confirmedRejectionMP=kind == 'mp',
+                                            rejectionId=rejection_id, startCapacity=2 if kind == 'sp' else 100))):
+            raise ValueError('Deposit exact client effect/merge/native-rejection evidence differs')
+        authority = (root / 'server-launch.log').read_text(errors='replace') if kind == 'mp' else text
+        server_records = _deposit_records(authority)
+        if kind == 'mp' and [event for event, _ in server_records] != ['PREPARED', 'AUTHORITY', 'CLEANUP']:
+            raise ValueError('Deposit authority lifecycle missing, duplicated or reordered')
+        server_values = dict(server_records)
+        authority_receipt = server_values['AUTHORITY']
+        if not _exact(server_values['PREPARED'], packet) or not _exact(authority_receipt, expected):
+            raise ValueError('Deposit client/server item identities/capacity/conservation differ')
+        if not _exact(values['CLEANUP'], {'objects': 3}) or not _exact(server_values['CLEANUP'], {'objects': 3}):
+            raise ValueError('Deposit owned cleanup missing')
+        if not complete(selection, 'client1', text) or any('[QUEUE_TEST] FAIL ' in value for value in (text, authority)):
+            raise ValueError('Deposit completion missing or native fixture failed')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        issues.append(str(error))
+    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'deposit',
+            'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
+            'evidence': {'receipt': receipt, 'authority': authority_receipt,
+                         'limits': ['Boundary fixture uses native queued transfers; no UI/menu or physical input claim.',
+                                    'Host uses one menu client and real native Request rejection.']}}
 
 
 def _backpack(root, selection):
@@ -84,6 +185,8 @@ def _backpack(root, selection):
 
 
 def verify(root, selection, catalog):
+    if selection.get('cases') == ['deposit']:
+        return _deposit(root, selection)
     if selection.get('cases') == ['backpack']:
         return _backpack(root, selection)
     issues, receipt = [], None

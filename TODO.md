@@ -132,6 +132,10 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Capture synchronous `[VEHICLE_SYNC]` logs from the original episode with two different vehicle positions: the controlled localhost race confirms ownership loss but does not establish the cause of the user's case. Check real WAN latency/packet loss.
 
-# Warehouse follow-up checks
+# Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse SP/Host scenarios with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded Warehouse checks used the 45 available Mod IDs.
+- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse and automatic-deposit SP/Host scenarios with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
+
+# Automatic storage transfers
+
+- [ ] Propose an authoritative fix for native Host light-item batch capacity: B42.21 validates each requested item before registering the whole batch, so their combined weight and concurrent reservations can overfill the destination. Local aggregate checks cannot guarantee server capacity. Preserve native batching; agree the server-side change separately from DepositAction's local validity/rejection fix.

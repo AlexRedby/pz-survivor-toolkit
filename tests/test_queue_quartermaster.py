@@ -231,7 +231,8 @@ class QuartermasterBackpack(unittest.TestCase):
 
     def test_backpack_case_is_separate_fresh_sp_with_existing_required_mods(self):
         cases = distribution.definitions()[distribution.SUITE]['cases']
-        self.assertEqual([(case['id'], case['kinds']) for case in cases], [('sort', ['sp', 'mp']), ('backpack', ['sp'])])
+        self.assertEqual([(case['id'], case['kinds']) for case in cases],
+                         [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp'])])
         distribution.validate(self.selection)
         for changes in ({'kind': 'mp'}, {'cases': ['sort', 'backpack']}, {'mode': 'native'},
                         {'languages': ['RU']}, {'clients': 2}, {'mods': distribution.MODS[:-1]},
@@ -240,6 +241,9 @@ class QuartermasterBackpack(unittest.TestCase):
                 distribution.validate(dict(self.selection, **changes))
         for kind in ('sp', 'mp'):
             distribution.validate(dict(self.selection, cases=['sort'], kind=kind))
+            distribution.validate(dict(self.selection, cases=['deposit'], kind=kind, options={'mp_host': kind == 'mp'}))
+        with self.assertRaises(ValueError):
+            distribution.validate(dict(self.selection, cases=['deposit'], kind='mp'))
 
     def test_backpack_requires_exact_result_and_case_specific_completion(self):
         text = self.write()
