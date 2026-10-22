@@ -21,7 +21,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.206
 
-- **Craft from storage:** Fetch native recipe quantities and remaining uses instead of counting every ingredient as one object. Credit carried and nearby supplies first, preserve per-type scales and exclusive alternatives, reuse partial supplies across the batch, and fetch kept tools once. Native walking, transfers and final craft validation remain in control. Remove the unused competing craft-count helpers.
+- **Craft from storage:** Fetch native recipe quantities and remaining uses instead of counting every ingredient as one object. Credit carried and nearby supplies first, preserve per-type scales and exclusive alternatives, reuse partial supplies across the batch, and fetch kept tools once. Native walking, transfers and final craft validation remain in control. Avoid rescanning exhausted ingredients for every craft in large batches, and remove the unused competing craft-count helpers.
 
 ### 0.1.205
 

@@ -372,4 +372,26 @@ assert(failedExclusive.shortfall[1] == 1 and #failedExclusive.trips == 1
     and #failedExclusive.trips[1].picks == 1,
     'two incomplete exclusive groups may not masquerade as one complete craft')
 
+-- A large valid batch must stay within a deterministic instruction budget while preserving every pick.
+-- Count instructions rather than elapsed time so this guards UI-scale work on both fast and slow hosts.
+do
+    local stock = {}
+    for i = 1, 5000 do
+        stock[i] = {input = 1, uses = 1, scale = 1, partial = false, fullType = 'Base.Plank'}
+    end
+    local callbacks = 0
+    debug.sethook(function()
+        callbacks = callbacks + 1
+        if callbacks > 10000 then error('large craft fetch exceeded its instruction budget') end
+    end, '', 1000)
+    local ok, batch = pcall(LootSorter.craftPlan.plan, {{per = 1}}, 5000, {}, {stock})
+    debug.sethook() -- Always clear the hook before propagating a planner or budget failure.
+    assert(ok, batch)
+    assert(batch.shortfall[1] == 0 and #batch.trips == 1 and batch.trips[1].box == 1
+        and #batch.trips[1].picks == 5000, 'large valid batches must reserve all required stock exactly once')
+    for i = 1, 5000 do
+        assert(batch.trips[1].picks[i] == i, 'large-batch optimization changed physical pick order')
+    end
+end
+
 print('Quartermaster craft sources: identity, overlap, units, batches and favorite/tool rules passed.')

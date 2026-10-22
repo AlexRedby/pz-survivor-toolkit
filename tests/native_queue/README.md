@@ -295,5 +295,6 @@ with a kept Hammer and Saw. The fixture requires actual walking, ingredient
 pickup and craft progress, exact consumption/output IDs, and unchanged tools in
 their source bags. Ordinary crafting physically borrows and returns the tools;
 Neat uses them in their bags. Host requires matching authoritative server effects.
+Select standalone `--cases uses` for native two-use DuctTape crafting: one full remote roll, sufficient carried supplies with no haul, and two partial rolls without touching a full spare. It verifies exact remaining uses, native put-back behavior and one output per craft through vanilla/Neat callbacks, with server receipts in Host. Large-batch planning is covered by the focused Lua regressions rather than this native case.
 These cases cover basic gameplay through programmatic UI callbacks, not physical
 mouse/controller input, every recipe, crafting batches or concurrent clients.

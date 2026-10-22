@@ -24,7 +24,7 @@ def definitions():
 
 def validate(selection):
     cases = selection.get('cases')
-    if cases and 'uses' in cases and (cases != ['uses'] or (selection.get('kind') == 'mp' and not selection.get('options', {}).get('mp_host'))):
+    if type(cases) is list and 'uses' in cases and (cases != ['uses'] or (selection.get('kind') == 'mp' and not selection.get('options', {}).get('mp_host'))):
         raise ValueError('Supply-unit crafting requires standalone uses case and menu Host for multiplayer')
     if (type(cases) is not list or not cases or cases != [case for case in CASES if case in cases]
             or selection.get('kind') not in ('sp', 'mp') or selection.get('mode') != 'toolkit'

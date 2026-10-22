@@ -36,7 +36,8 @@ def verify(root, selection):
         if ([(kind, value.get('case')) for kind, value in receipts] != [
                 (kind, case) for case in CASES for kind in ('PREPARED', 'VERIFIED')]
                 or [value.get('case') for value in results] != CASES
-                or text.count(MARKER + 'CLEANUP') != 1 or authority.count(MARKER + 'CLEANUP') != 1):
+                or text.count(MARKER + 'CLEANUP') != (0 if selection['kind'] == 'mp' else 1)
+                or authority.count(MARKER + 'CLEANUP') != 1):
             raise ValueError('Supply-unit authority/result order or cleanup differs')
         identities = []
         for index, case in enumerate(CASES, 1):

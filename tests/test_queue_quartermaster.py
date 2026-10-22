@@ -234,7 +234,7 @@ class QuartermasterSupplyUnits(unittest.TestCase):
                 client += '[QM_USES] RESULT ' + json.dumps(dict(index=index, case=case, walked=case!='carried',
                            picked=case!='carried', crafted=True, returned=case=='full', receipt=receipt)) + '\n'
             server += '[QM_USES] CLEANUP\n'
-            client += '[QM_USES] CLEANUP\n[QM_USES] COMPLETE\n'
+            client += '[QM_USES] COMPLETE\n'
             (root / 'client1-launch.log').write_text(client)
             authority = root / 'server-launch.log'
             authority.write_text(server)

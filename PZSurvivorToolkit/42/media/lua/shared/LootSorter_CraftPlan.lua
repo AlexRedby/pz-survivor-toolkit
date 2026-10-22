@@ -41,15 +41,39 @@ function LootSorter.craftPlan.plan(inputs, qty, access, boxes)
         for _, fullType in ipairs(input.types or {}) do addType(fullType) end
         for _, state in ipairs(states) do addType(state.candidate.fullType) end
 
+        local function newPool()
+            return { accessible = {}, remote = {}, accessCursor = 1, remoteCursor = 1 }
+        end
+        local pool, typePools = newPool(), {}
+        if input.exclusive then
+            for _, fullType in ipairs(types) do typePools[fullType] = newPool() end
+        end
+        for _, state in ipairs(states) do
+            local target = input.exclusive and typePools[state.candidate.fullType] or pool
+            state.pool = target
+            local list = state.box and target.remote or target.accessible
+            list[#list + 1] = state
+        end
+        local function usable(state)
+            return state.remaining / math.max(1, state.candidate.scale) > EPSILON
+        end
+
         -- Try without mutation: exclusive inputs may use one alternative type per craft.
         -- Already accessible items, including earlier selected rolls, always get first credit.
-        local function attempt(fullType)
+        -- Cursors retire exhausted prefixes once, rather than rescanning the entire batch.
+        local function attempt(target)
             local need, ordinary, steps, firstBox = demand, 0, {}, math.huge
             for pass = 1, 2 do
-                for _, state in ipairs(states) do
-                    local accessible = not state.box or state.selected == true
-                    if (pass == 1) == accessible and state.remaining > EPSILON
-                        and (not fullType or state.candidate.fullType == fullType) then
+                local accessible = pass == 1
+                local list = accessible and target.accessible or target.remote
+                local cursorKey = accessible and "accessCursor" or "remoteCursor"
+                local cursor = target[cursorKey]
+                while list[cursor] and (not usable(list[cursor])
+                    or (not accessible and list[cursor].selected)) do cursor = cursor + 1 end
+                target[cursorKey] = cursor
+                for i = cursor, #list do
+                    local state = list[i]
+                    if usable(state) and (accessible or not state.selected) then
                         -- Native caps raw/relativeScale at raw uses (also for scales below one).
                         local scale = math.max(1, state.candidate.scale)
                         local take = math.min(need, state.remaining / scale)
@@ -74,20 +98,26 @@ function LootSorter.craftPlan.plan(inputs, qty, access, boxes)
             local best
             if input.exclusive then
                 for _, fullType in ipairs(types) do
-                    local trial = attempt(fullType)
+                    local trial = attempt(typePools[fullType])
                     if not best or trial.need < best.need - EPSILON
                         or (math.abs(trial.need - best.need) <= EPSILON
                             and (trial.ordinary > best.ordinary + EPSILON
                                 or (math.abs(trial.ordinary - best.ordinary) <= EPSILON
                                     and trial.firstBox < best.firstBox))) then best = trial end
                 end
-            else best = attempt() end
+            else best = attempt(pool) end
             if not best then best = { need = demand, steps = {} } end
             shortfall[idx] = shortfall[idx] + best.need
             for _, step in ipairs(best.steps) do
                 local state = step.state
                 state.remaining = state.candidate.partial and math.max(0, state.remaining - step.raw) or 0
                 if state.box then
+                    if not state.selected and usable(state) then
+                        -- Within each pool, remote picks advance in source order. Appending
+                        -- their reusable remainder preserves the original accessible order.
+                        local list = state.pool.accessible
+                        list[#list + 1] = state
+                    end
                     state.selected = true
                     selected[state.box] = selected[state.box] or {}
                     selected[state.box][state.item] = true
