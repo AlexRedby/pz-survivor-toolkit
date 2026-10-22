@@ -33,8 +33,8 @@ class EquipmentTests(unittest.TestCase):
                 result['tidyCompletion'] = dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                flush=count, legacy=0, explicitConfirmed=3 if case == 'hands-chain' else 0,
                                                authoritativeIntent=3 if case == 'hands-chain' and self.selection['kind'] == 'mp' else 0,
-                                               cleanupConfirmed=count if case in equipment.TIDY_RETURN_EXACT_CASES else 0,
-                                               authoritativeCleanup=count if case in equipment.TIDY_RETURN_EXACT_CASES and self.selection['kind'] == 'mp' else 0)
+                                               cleanupConfirmed=count*(2 if case == 'tidy-group' else 1) if case in equipment.TIDY_RETURN_EXACT_CASES else 0,
+                                               authoritativeCleanup=count*(2 if case == 'tidy-group' else 1) if case in equipment.TIDY_RETURN_EXACT_CASES and self.selection['kind'] == 'mp' else 0)
             if case == 'hands-chain':
                 result.update(activeProgress=True, activeProtected=enabled)
             if case == 'waiting-cancel':
@@ -47,7 +47,7 @@ class EquipmentTests(unittest.TestCase):
                     result.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True, walkDistance=0.75)
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
-            if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands'):
+            if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group'):
                 count = int(enabled and 'P4TidyUpMeister' in self.selection['mods'])
                 empty = case == 'tidy-empty-hands'
                 actions = count if empty else 4*count
@@ -56,6 +56,13 @@ class EquipmentTests(unittest.TestCase):
                               restoreCompletion=dict(perform=actions, complete=actions if self.selection['kind'] == 'sp' else 0,
                                                      flush=actions, legacy=0, equip=0 if empty else 2*count,
                                                      activation=0 if empty else 2*count, unequip=count if empty else 0))
+            if case == 'tidy-group':
+                tidy = 'P4TidyUpMeister' in self.selection['mods']
+                items = [dict(id=i, fullType='Base.Nails', container='worn-bag' if tidy else 'root') for i in (901, 902)]
+                result['tidyGroup'] = dict(nativeGroups=(1 if enabled else 2) if tidy else 0, nativeItems=2 if tidy else 0,
+                                           groupSizes=([2] if enabled else [1, 1]) if tidy else [],
+                                           obligationGroups=int(tidy and enabled), unrelatedTailPreserved=True, items=items,
+                                           completedItems=[dict(id=item['id'], fullType=item['fullType'], state='completed') for item in items] if tidy and enabled else [])
             if case == 'floor-pickup':
                 result.update(floorPickup=True, pickupWorldRemoved=True)
             if case.startswith('bulk-'):
@@ -88,6 +95,10 @@ class EquipmentTests(unittest.TestCase):
         (self.root / 'client1-launch.log').write_text(text)
         if self.selection['kind'] == 'mp' and not (self.root / 'server-launch.log').exists():
             (self.root / 'server-launch.log').write_text('[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
+            if 'tidy-group' in self.selection['cases']:
+                with (self.root / 'server-launch.log').open('a') as log:
+                    row = next(row for row in (self.records()) if row.get('id') == 'tidy-group')
+                    log.write('\n[EQUIPMENT_TEST] GROUP_AUTHORITY ' + json.dumps(dict(case='tidy-group', items=row['outcome']['tidyGroup']['items'], tailCompleted=True)) + '\n')
             if 'tidy-floor' in self.selection['cases'] and 'P4TidyUpMeister' in self.selection['mods']:
                 with (self.root / 'server-launch.log').open('a') as log:
                     log.write('\n[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true\n')
@@ -362,6 +373,41 @@ class EquipmentTests(unittest.TestCase):
                 # Other scenarios validate the count shape without inventing an expected number of intents.
                 target.update(explicitConfirmed=7, authoritativeIntent=4)
                 self.assertEqual(self.verify(self.logs(rows))['issues'], [])
+
+    def test_bounded_p4_group_requires_every_exact_return_and_server_inventory(self):
+        self.selection.update(cases=['tidy-empty-hands', 'tidy-group'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for missing in (None, {}, [], True):
+                    rows = self.records()
+                    rows[2]['outcome']['tidyGroup'] = missing
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for key in ('nativeGroups', 'nativeItems', 'groupSizes', 'obligationGroups', 'completedItems', 'items', 'unrelatedTailPreserved'):
+                    rows = self.records()
+                    del rows[2]['outcome']['tidyGroup'][key]
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], key)
+                for mutation in ('one-item', 'duplicate', 'wrong-container', 'wrong-type', 'partial', 'missing-completion', 'extra-group'):
+                    rows = self.records()
+                    group = rows[2]['outcome']['tidyGroup']
+                    if mutation == 'one-item': group['items'].pop()
+                    elif mutation == 'duplicate': group['items'][1]['id'] = group['items'][0]['id']
+                    elif mutation == 'wrong-container': group['items'][1]['container'] = 'root'
+                    elif mutation == 'wrong-type': group['items'][1]['fullType'] = 'Base.Screwdriver'
+                    elif mutation == 'extra-group': group['nativeGroups'] += 1
+                    elif mode == 'toolkit':
+                        if mutation == 'partial': group['completedItems'][1]['state'] = 'waiting'
+                        else: group['completedItems'].pop()
+                    else: group['completedItems'] = [dict(id=901, fullType='Base.Nails', state='completed')]
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], mutation)
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'
+                    valid = server.read_text()
+                    server.write_text(valid.replace('GROUP_AUTHORITY', 'GROUP_MISSING'))
+                    self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(valid)
 
     def test_tidy_observer_rejects_wrong_identity_ownership_early_flush_and_legacy_scope(self):
         lua = shutil.which('luajit') or shutil.which('lua')

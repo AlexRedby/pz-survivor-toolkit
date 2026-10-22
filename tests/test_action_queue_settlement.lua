@@ -459,7 +459,7 @@ for _, client in ipairs({false, true}) do
         'unmarked proof must also be private and once-only')
 end
 -- Native inventory transfers use their own item transaction protocol. Observe
--- the singleton outcome before perform removes it; never execute that payload.
+-- one native group's outcome before perform removes it; never execute that payload.
 local function returnFixture(client)
     local s = setup(client)
     local value = s.item(81, s.root)
@@ -588,13 +588,27 @@ for _, client in ipairs({false, true}) do
         and not s.settlement.finishReturn(s.obligation, true), 'failed native callback cannot become completed later')
 end
 
-for _, shape in ipairs({'no-groups', 'extra-group', 'no-items', 'extra-item', 'different-id', 'different-type', 'no-native', 'foreign-obligation', 'guard'}) do
+for _, shape in ipairs({'no-groups', 'extra-group', 'no-items', 'duplicate-id', 'conflicting-type', 'oversized', 'sparse', 'interior-hole', 'fractional-id', 'positive-infinity-id', 'negative-infinity-id', 'nan-id', 'different-id', 'different-type', 'no-native', 'foreign-obligation', 'guard'}) do
     local s = returnFixture(true)
     local action = s.current
     if shape == 'no-groups' then action.queueList = {}
     elseif shape == 'extra-group' then action.queueList[2] = {items = {s.item(82, s.root)}}
     elseif shape == 'no-items' then action.queueList[1].items = {}
-    elseif shape == 'extra-item' then action.queueList[1].items[2] = s.item(82, s.root)
+    elseif shape == 'duplicate-id' then action.queueList[1].items[2] = s.item(81, s.root)
+    elseif shape == 'conflicting-type' then
+        local duplicate = s.item(81, s.root); duplicate.fullType = 'Base.Other'
+        action.queueList[1].items[2] = duplicate
+    elseif shape == 'oversized' then
+        for i = 2, 21 do action.queueList[1].items[i] = s.item(80 + i, s.root) end
+    elseif shape == 'sparse' then action.queueList[1].items[3] = s.item(83, s.root)
+    elseif shape == 'interior-hole' then
+        action.queueList[1].items = {action.item, s.item(82, s.root), s.item(83, s.root), s.item(84, s.root)}
+        action.queueList[1].items[2] = nil
+        assert(#action.queueList[1].items == 4, 'interior-hole regression needs a nontrivial Lua array boundary')
+    elseif shape == 'fractional-id' then action.queueList[1].items[2] = s.item(82.5, s.root)
+    elseif shape == 'positive-infinity-id' then action.queueList[1].items[2] = s.item(math.huge, s.root)
+    elseif shape == 'negative-infinity-id' then action.queueList[1].items[2] = s.item(-math.huge, s.root)
+    elseif shape == 'nan-id' then action.queueList[1].items[2] = s.item(0 / 0, s.root)
     elseif shape == 'different-id' then action.queueList[1].items[1] = s.item(82, s.root)
     elseif shape == 'different-type' then
         local member = s.item(81, s.root); member.fullType = 'Base.Other'
@@ -691,4 +705,219 @@ do
     s.observeDestination()
     assert(s.settlement.returnState(s.obligation) == 'completed', 'SP return observation must not require client transaction helpers')
 end
-print('Shared settlement: deferred ownership, native singleton return outcome/effect correlation, immutable ancestry, exact-ID returns and no effect replay passed.')
+
+local function batchReturnFixture(client, beforeMerge)
+    local s = returnFixture(client)
+    s.members = {s.current.item, s.item(82, s.root)}
+    s.root.items[82] = s.members[2]
+    if not beforeMerge then s.current.queueList[1].items[2] = s.members[2] end
+    -- The observer may tolerate a native-selected member, while ordinary source
+    -- matching still requires the original item when no member is supplied.
+    s.guard = function(action, member)
+        return s.guardLive and action == s.current and action.item
+            and action.item:getID() == (member and member.id or 81)
+            and action.item:getFullType() == (member and member.fullType or 'Base.Test')
+    end
+    s.move = function(index, replacement)
+        local original = s.members[index]
+        local observed = replacement or original
+        s.root.items[original:getID()] = nil
+        original.container = nil
+        observed.container = s.source
+        s.source.items[original:getID()] = observed
+        return observed
+    end
+    return s
+end
+
+local function assertReturnItems(s, first, second)
+    local items = s.settlement.returnItems(s.obligation)
+    assert(#items == 2 and items[1].id == 81 and items[1].fullType == 'Base.Test'
+        and items[2].id == 82 and items[2].fullType == 'Base.Test'
+        and items[1].state == first and items[2].state == second,
+        'native group must preserve exact identities and independent member states')
+    assert(s.counts() == 0 and s.queue.queue[2] == s.tail,
+        'native group observation cannot replay effects or edit unrelated work')
+    return items
+end
+
+do
+    local s = batchReturnFixture(false)
+    local mutatingGuard = function(action, member)
+        local accepted = s.guard(action, member)
+        if member then
+            member.completed = true
+            member.id, member.fullType = 999, 'Base.Other'
+        end
+        return accepted
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, mutatingGuard))
+    assert(s.finishReturn(true))
+    assertReturnItems(s, 'waiting', 'waiting')
+    s.current.item = s.members[2]
+    assertReturnItems(s, 'waiting', 'waiting')
+    assert(s.root.items[81] == s.members[1] and s.root.items[82] == s.members[2],
+        'guard callback cannot mint native effects or mutate the private item ledger')
+    s.move(1); s.move(2)
+    assert(s.settlement.returnState(s.obligation) == 'completed')
+    assertReturnItems(s, 'completed', 'completed')
+end
+
+for _, client in ipairs({false, true}) do
+    local s = batchReturnFixture(client)
+    -- Replication may leave older proxies in the native group.
+    s.current.queueList[1].items = {s.item(81, nil), s.item(82, nil)}
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    assertReturnItems(s, 'waiting', 'waiting')
+    local copied = {}; for key, value in pairs(s.obligation) do copied[key] = value end
+    assert(s.settlement.returnItems(copied) == nil, 'copied obligations cannot expose the native ledger')
+    s.current.item = s.item(82, nil)
+    s.current.transactionId = 0
+    s.move(1, s.item(81, nil)); s.move(2, s.item(82, nil))
+    assertReturnItems(s, 'waiting', 'waiting')
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed',
+        'native selection of a captured nonoriginal member must preserve the group result')
+    local public = assertReturnItems(s, 'completed', 'completed')
+    public[1].id, public[1].fullType, public[1].state = 999, 'Base.Other', 'unavailable'
+    public[2], public[3] = nil, {id = 83, state = 'completed'}
+    assertReturnItems(s, 'completed', 'completed')
+    assert(client and s.transaction.calls == 2 or not client and s.transaction.calls == 0,
+        'one group must capture its native transaction predicates exactly once')
+    s.queue.toolkitOperationGeneration = 1
+    assertReturnItems(s, 'unavailable', 'unavailable')
+end
+
+do
+    local s = batchReturnFixture(false)
+    for i = 3, 20 do
+        s.members[i] = s.item(80 + i, s.root)
+        s.root.items[80 + i] = s.members[i]
+        s.current.queueList[1].items[i] = s.members[i]
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard), 'native maximum group size remains supported')
+    for i = 1, 20 do s.move(i) end
+    s.current.item = s.members[20]
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
+    local items = s.settlement.returnItems(s.obligation)
+    assert(#items == 20 and s.counts() == 0)
+    for i, member in ipairs(items) do
+        assert(member.id == 80 + i and member.fullType == 'Base.Test' and member.state == 'completed')
+    end
+end
+
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'delayed-sibling', 'missing-sibling', 'late-finish', 'failed-callback'}) do
+        local s = batchReturnFixture(client)
+        assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+        s.current.item, s.current.transactionId = s.members[2], 0
+        s.move(1)
+        if outcome == 'late-finish' then s.advance(30001) end
+        assert(s.finishReturn(outcome ~= 'failed-callback'))
+        if outcome == 'late-finish' or outcome == 'failed-callback' then
+            assertReturnItems(s, 'unavailable', 'unavailable')
+        else
+            assert(s.settlement.returnState(s.obligation) == 'waiting')
+            assertReturnItems(s, 'completed', 'waiting')
+            if outcome == 'delayed-sibling' then
+                s.move(2, s.item(82, nil))
+                assert(s.settlement.returnState(s.obligation) == 'completed')
+                assertReturnItems(s, 'completed', 'completed')
+            else
+                s.advance(30001)
+                assert(s.settlement.returnState(s.obligation) == 'unavailable')
+                assertReturnItems(s, 'completed', 'unavailable')
+                s.move(2)
+                assertReturnItems(s, 'completed', 'unavailable')
+            end
+        end
+    end
+end
+
+for _, badEffect in ipairs({'wrong-type', 'consumed', 'source-duplicate'}) do
+    local s = batchReturnFixture(true)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.item, s.current.transactionId = s.item(82, nil), 0
+    s.move(1)
+    local observed = s.move(2, s.item(82, nil))
+    if badEffect == 'wrong-type' then observed.fullType = 'Base.Other'
+    elseif badEffect == 'consumed' then observed.consumed = true
+    else s.root.items[82] = s.item(82, s.root) end
+    assert(s.finishReturn(true))
+    assertReturnItems(s, 'completed', 'waiting')
+    s.advance(30001)
+    assertReturnItems(s, 'completed', 'unavailable')
+end
+
+for _, outcome in ipairs({'rejected', 'absent', 'unconfirmed'}) do
+    local s = batchReturnFixture(true)
+    s.transaction.done, s.transaction.rejected = outcome == 'absent', outcome ~= 'unconfirmed'
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.item, s.current.transactionId = s.members[2], 0
+    s.move(1); s.move(2)
+    assert(s.finishReturn(true))
+    local expected = outcome == 'rejected' and 'rejected' or 'unavailable'
+    assertReturnItems(s, expected, expected)
+    assert(s.transaction.calls == 2, 'visible members cannot replace missing native group authority')
+end
+
+for _, mutation in ipairs({'unknown-member', 'wrong-member-type', 'generation', 'guard', 'closed'}) do
+    local s = batchReturnFixture(true)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.item, s.current.transactionId = s.members[2], 0
+    s.move(1)
+    assert(s.finishReturn(true))
+    assertReturnItems(s, 'completed', 'waiting')
+    if mutation == 'unknown-member' then s.current.item = s.item(83, nil)
+    elseif mutation == 'wrong-member-type' then s.current.item = s.item(82, nil); s.current.item.fullType = 'Base.Other'
+    elseif mutation == 'generation' then s.queue.toolkitOperationGeneration = 1
+    elseif mutation == 'closed' then s.settlement.close(s.returnScope)
+    else s.guardLive = false end
+    assert(s.settlement.returnState(s.obligation) == 'unavailable')
+    assertReturnItems(s, 'unavailable', 'unavailable')
+end
+
+do
+    local s = batchReturnFixture(false, true)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.queueList[1].items[2] = s.members[2]
+    assert(s.settlement.refreshReturn(s.current, s.obligation), 'SP merge may expand its exact original first group')
+    assert(not s.settlement.refreshReturn(s.current, s.obligation), 'one native merge observation cannot refresh twice')
+    s.current.item = s.members[2]
+    s.move(1); s.move(2)
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
+    assertReturnItems(s, 'completed', 'completed')
+end
+
+do
+    local s = batchReturnFixture(false, true)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.advance(30001)
+    s.current.queueList[1].items[2] = s.members[2]
+    s.settlement.refreshReturn(s.current, s.obligation)
+    s.current.item = s.members[2]
+    s.move(1); s.move(2)
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'unavailable',
+        'late merge observation must not restart the captured group deadline')
+    assertReturnItems(s, 'unavailable', 'unavailable')
+end
+
+for _, invalid in ipairs({'client', 'finished', 'not-current', 'not-first', 'native', 'guard', 'wrong-first-id', 'wrong-first-type', 'shrink', 'next-group'}) do
+    local s = batchReturnFixture(invalid == 'client', invalid ~= 'shrink')
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.queueList[1].items[2] = s.members[2]
+    if invalid == 'finished' then s.finishReturn(true)
+    elseif invalid == 'not-current' then s.queue.current = s.tail
+    elseif invalid == 'not-first' then s.queue.queue[1] = s.tail
+    elseif invalid == 'native' then s.current.action = {}
+    elseif invalid == 'guard' then s.guardLive = false
+    elseif invalid == 'wrong-first-id' then s.current.queueList[1].items[1] = s.item(83, s.root)
+    elseif invalid == 'wrong-first-type' then
+        s.current.queueList[1].items[1] = s.item(81, s.root)
+        s.current.queueList[1].items[1].fullType = 'Base.Other'
+    elseif invalid == 'shrink' then s.current.queueList[1].items[2] = nil
+    elseif invalid == 'next-group' then s.current.queueList[2] = {items = {s.item(83, s.root)}} end
+    assert(not s.settlement.refreshReturn(s.current, s.obligation), invalid .. ': unsupported merge cannot expand the captured group')
+    assert(s.counts() == 0, 'rejected refresh cannot mutate native effects')
+end
+
+print('Shared settlement: deferred ownership, native group return outcomes, partial exact-ID effects, immutable ancestry and no effect replay passed.')

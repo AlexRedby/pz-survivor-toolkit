@@ -23,6 +23,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.211
+
+- **Action queue:** Observe exact per-item results for one native P4 return group, including lightweight transfers merged inside single-player completion. Preserve confirmed partial returns when another item is missing; copied, expired or stale observations cannot invent success. Keep queue edit permissions and multi-transaction cleanup protection unchanged. Isolate a failed transfer observer so it cannot abort or repeat native transfers.
+
 ### 0.1.210
 
 - **Action queue:** Record confirmed results for supported single-item P4 returns using the native item-transaction outcome captured before its removal and the exact item at its saved destination. Keep observations private and bounded; reject stale, missing, rejected or ambiguous transaction results. This is read-only cleanup accounting: native execution, cancellation, queue advancement and unsupported batches remain unchanged.

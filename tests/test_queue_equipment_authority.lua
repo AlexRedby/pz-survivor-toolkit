@@ -138,7 +138,14 @@ for _,case in ipairs({{kind='sp',held=gun,ok=true},{kind='sp',ok=false},
   finish=function()end,flush=function()end}
  local toolkit={ActionQueueLifecycle=lifecycle,ActionQueueOperations={perform=function()end,deferCompletion=function()end},
   ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment' end},
-  ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end}}
+  ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end},
+  -- This test exercises hand-state validation only; the shared effect/return
+  -- observers have their own actual-source and settlement suites.
+  ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()return false end},
+  ActionQueueAcknowledgements={},ActionQueueTidyIntent={status=function()return true end},
+  ActionQueueCompat={isInstalled=function()return true end,verifySources=function()return true end}}
+ ISInventoryPaneContextMenu,ISInventoryPane={},{}
+ getFilenameOfClosure=function()return 'fixture' end
  local observer=load('QueueEquipmentCompletion').observe(toolkit,{kind=case.kind,mode='toolkit'})
  observer.watch({id='tidy-empty-hands',pickup=gun,hammer=exact(33),screwdriver=exact(34),baseline={[31]=gun}})
  local ok=pcall(lifecycle.begin,action,'perform')

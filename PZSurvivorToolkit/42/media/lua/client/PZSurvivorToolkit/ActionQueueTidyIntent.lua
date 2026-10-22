@@ -6,6 +6,7 @@ PZSurvivorToolkit.ActionQueueTidyIntent = Intent
 local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mode='k'})
 local transfers=setmetatable({}, {__mode='k'})
 local mergeOriginal,mergeObserver
+local mergeListeners={}
 local scope, guard, wrappedUI, installed
 local serial=0
 local function pack(...) return {n=select('#',...),...} end
@@ -93,7 +94,12 @@ local function transfer(action)
     return batch
 end
 -- Observe the native merge before table.wipe destroys the child action's identity.
-function Intent.observeTransfers()
+function Intent.observeTransfers(onMerged)
+    if type(onMerged)=='function' then
+        local present=false
+        for _,listener in ipairs(mergeListeners) do if listener.callback==onMerged then present=true;break end end
+        if not present then mergeListeners[#mergeListeners+1]={callback=onMerged} end
+    end
     if mergeObserver or type(ISInventoryTransferAction.checkQueueList)~='function' then return end
     mergeOriginal=ISInventoryTransferAction.checkQueueList
     mergeObserver=function(action,...)
@@ -108,6 +114,11 @@ function Intent.observeTransfers()
             end
         end
         local result=pack(mergeOriginal(action,...))
+        -- Observation cannot abort native perform and cause the same transfer to
+        -- be retried. Quarantine a failed listener; never revive its proof here.
+        for _,listener in ipairs(mergeListeners) do
+            if not listener.failed then listener.failed=not pcall(listener.callback,action) end
+        end
         for _,record in ipairs(candidates) do
             if queue:indexOf(record.action)==-1 then
                 for _,group in ipairs(action.queueList or {}) do for _,item in ipairs(group.items) do

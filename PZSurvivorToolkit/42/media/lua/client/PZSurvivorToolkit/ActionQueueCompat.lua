@@ -251,7 +251,7 @@ local function instanceUnchanged(target, class)
     return true
 end
 
-local function sourceMatches(action, record)
+local function sourceMatches(action, record, observedItem)
     record = record or records[action]
     if not record or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
         or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
@@ -273,7 +273,7 @@ local function sourceMatches(action, record)
         if action[name] ~= record[name] then return false end
     end
     for name, value in pairs(record.fields) do
-        local identity = record.itemIdentities[name]
+        local identity = name == "item" and observedItem or record.itemIdentities[name]
         if identity then
             local item = action[name]
             if not instanceof(item, "InventoryItem") or item:getID() ~= identity.id
@@ -392,7 +392,11 @@ local function adopt(action)
                 local observed = record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction
                     and record.obligation and self.srcContainer == self.character:getInventory()
                     and self.destContainer and self.destContainer:getType() ~= "floor"
-                    and Settlement.beginReturn(self, record.obligation, function() return matches(self, record) end)
+                    and Settlement.beginReturn(self, record.obligation, function(_, member)
+                        -- Only the return observer may follow native group member changes.
+                        -- Policy matches keeps the original item and its existing edit rights.
+                        return not record.opaque and sourceMatches(self, record, member)
+                    end)
                 if not observed then return scoped(record, perform, ...) end
                 local results = pack(pcall(scoped, record, perform, ...))
                 Settlement.finishReturn(record.obligation, results[1])
@@ -962,7 +966,12 @@ function Compat.install()
     end
     if ready.P4TidyUpMeister and transferSourceSafe then
         local previous=ISInventoryTransferAction.checkQueueList
-        TidyIntent.observeTransfers()
+        TidyIntent.observeTransfers(function(action)
+            local record = records[action]
+            if record and record.id == "P4TidyUpMeister" and record.obligation then
+                Settlement.refreshReturn(action, record.obligation)
+            end
+        end)
         local policy=Toolkit.ActionQueuePolicy
         if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end
     end

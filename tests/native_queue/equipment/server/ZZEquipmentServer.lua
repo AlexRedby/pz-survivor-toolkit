@@ -4,6 +4,7 @@ if not isServer() then return end
 local Fixture=require 'QueueEquipmentFixture'
 local Selection=require 'QueueTestSelection'
 local Postprocess=require 'QueueEquipmentPostprocess'
+local JSON=require 'QueueHealthEvents'
 local session,pending,waiting,cleanup,verified=nil,nil,nil,nil,0
 local function reply(player,command,args) sendServerCommand(player,'EquipmentQueueTest',command,args) end
 Events.OnServerStarted.Add(function() print('[EQUIPMENT_TEST] SERVER_READY') end)
@@ -84,6 +85,9 @@ Events.OnTick.Add(function()
    Fixture.refresh(session)
    local passed,problem=pcall(Postprocess.verify,session,Selection.mode,getActivatedMods():contains('P4TidyUpMeister'))
    session.verified=true
+   if passed and session.id=='tidy-group' then
+    print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))
+   end
    if passed then
     print('[EQUIPMENT_TEST] AUTHORITY case='..session.id..' inventoryPreserved=true equipmentMatches=true tailCompleted=true')
    else print('[EQUIPMENT_TEST] POSTPROCESS_FAILED case='..session.id..' '..tostring(problem)) end

@@ -154,6 +154,12 @@ function Fixture.prepare(player,id,ids,options)
   assert(state.removalDelta>2,'native bag reduction must materially affect carried weight')
   assert(not fitsAfterRemoval,'pickup would still fit after native bag removal')
   assert(root:hasRoomFor(player,state.pickup),'pickup must fit again after native hand state restore')
+ elseif id=='tidy-group' then
+  seed('groupOne','Base.Nails',state.source);seed('groupTwo','Base.Nails',state.source)
+  seed('pickup','Base.Pistol',root)
+  assert(state.pickup:getCurrentAmmoCount()==0 and not state.pickup:isRoundChambered(),'group rack gun must be empty')
+  state.hammer:setUsedDelta(1);state.hammer:setActivated(true)
+  assert(state.groupOne:getWeight()<=0.1 and state.groupTwo:getWeight()<=0.1,'P4 group requires native lightweight items')
  elseif id=='hands-chain' or id=='waiting-cancel' then seed('bat','Base.BaseballBat',state.source);seed('content','Base.Nails',state.source)
  elseif Bulk.isCase(id) then Bulk.prepare(state,seed)
  elseif id=='floor-pickup' then Floor.prepare(state,seed)
@@ -203,7 +209,7 @@ function Fixture.verify(state,mode,checkpoint)
  end
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or state.id=='tidy-group' then primary,secondary=state.pickup,nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,'native final hand identities differ')
@@ -219,6 +225,9 @@ function Fixture.verify(state,mode,checkpoint)
   assert(state.bat:getContainer()==(cancelled and state.source or root),'bat reached wrong native container')
   assert(state.content:getContainer()==state.source,'unrelated bag content moved')
   assert(state.source:getItems():size()==(cancelled and 2 or 1),'bag content count differs')
+ end
+ if state.id=='tidy-group' then
+  assert(state.groupOne:getContainer()==root and state.groupTwo:getContainer()==root,'borrowed group did not reach root before unrelated tail')
  end
  local extra={}
  if Bulk.isCase(state.id) then extra=Bulk.verify(state,false,false) end
@@ -321,13 +330,14 @@ function Fixture.settled(state,mode,checkpoint)
  local player=state.player
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or state.id=='tidy-group' then primary,secondary=state.pickup,nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
  for _,book in ipairs(checkpoint and {state.front} or {state.front,state.tail}) do if book:getAlreadyReadPages()~=book:getNumberOfPages() then return false end end
  if state.bat and state.bat:getContainer()~=(cancelled and state.source or state.root) then return false end
  if state.pickup and state.pickup:getContainer()~=state.root then return false end
+ if state.id=='tidy-group' and (state.groupOne:getContainer()~=state.root or state.groupTwo:getContainer()~=state.root) then return false end
  if Bulk.isCase(state.id) then
   for name,item in pairs(state.items) do
    if name:match('^bulk') and item:getContainer()~=Bulk.container(state,name,false,false) then return false end

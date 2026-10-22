@@ -7,6 +7,43 @@ function Completion.observe(toolkit,selection)
  local captureEffect,confirmEffect=settlement.captureEffect,settlement.confirmEffect
  local beginReturn,finishReturn,returnState=settlement.beginReturn,settlement.finishReturn,settlement.returnState
  local returns={}
+ local groupNative,groupItems,groupObligations={}, {},0
+ local groupFailure
+ local enabled=selection.mode=='toolkit'
+ local returnItems=settlement.returnItems
+ local tidyIntent=toolkit.ActionQueueTidyIntent
+ local groupObserver=tidyIntent and tidyIntent.observeTransfers
+ local groupObserverBound=false
+ if groupObserver then
+  -- Subscribe after compatibility preload; protected native helper identity stays intact.
+  groupObserver(function(action)
+   if not state or state.id~='tidy-group' or action.srcContainer~=state.root or action.destContainer~=state.source or groupFailure then return end
+   if groupNative[action] then return end
+   local diagnostic='unreadable native group'
+   local ok,problem=pcall(function()
+    local groups=action.queueList
+    local ids,detail={},{}
+    for i=1,math.min(groups and #groups or 0,4) do
+     local group=groups[i];local values={}
+     for j=1,math.min(group.items and #group.items or 0,4) do values[#values+1]=tostring(group.items[j]:getID()) end
+     detail[#detail+1]=tostring(group.items and #group.items)..':'..table.concat(values,',')
+    end
+    diagnostic='groups='..tostring(groups and #groups)..' members=['..table.concat(detail,';')..']'
+    assert(groups and #groups==1 and #groups[1].items==(enabled and 2 or 1),'unexpected bounded native group shape')
+    local expected={[state.groupOne:getID()]=true,[state.groupTwo:getID()]=true}
+    for _,item in ipairs(groups[1].items) do
+     local id=item:getID()
+     assert(expected[id] and item:getFullType()=='Base.Nails' and item:getWeight()<=0.1,'unexpected native group member')
+     expected[id]=nil;ids[#ids+1]=id
+    end
+    if enabled then for _ in pairs(expected) do error('native group omitted borrowed item') end end
+    groupNative[action]=ids
+   end)
+   print('[EQUIPMENT_TEST] GROUP_OBSERVED case=tidy-group mode='..selection.mode..' '..diagnostic..' valid='..tostring(ok))
+   if not ok then groupFailure='P4 return group observation failed: '..tostring(problem)..' '..diagnostic end
+  end)
+  groupObserverBound=true
+ end
  settlement.captureEffect=function(action)
   local proof=captureEffect(action)
   if state then
@@ -55,9 +92,9 @@ function Completion.observe(toolkit,selection)
    return finished
   end
  end
- local enabled=selection.mode=='toolkit'
  local function observed(action)
   if not state or not action then return end
+  if state.id=='tidy-group' and records and records[action] then return records[action].counts end
   local kind=select(2,toolkit.ActionQueueDefinitions.inspect(action))
   if kind=='compat.tidy-transfers' then return counts end
   if kind=='compat.tidy-equipment' then return restores end
@@ -67,7 +104,11 @@ function Completion.observe(toolkit,selection)
   assert(queue and queue.current==action and queue.queue[1]==action
    and action.action==record.native and action.toolkitQueueOperation==record.token,
    'Tidy transfer lost its native parent or operation')
-  assert(action.item:getID()==record.id and action.item:getFullType()==record.kind
+  local id=action.item:getID()
+  local exact=state.id=='tidy-group' and record.counts==counts
+   and (id==state.groupOne:getID() or id==state.groupTwo:getID()) and action.item:getFullType()=='Base.Nails'
+   or id==record.id and action.item:getFullType()==record.kind
+  assert(exact
    and (record.counts~=counts or action.srcContainer==state.root and action.destContainer==state.source),
    'Tidy transfer changed its exact item or endpoints')
  end
@@ -161,6 +202,9 @@ function Completion.observe(toolkit,selection)
   print('[EQUIPMENT_TEST] INTENT_CART installed='..tostring(toolkit.ActionQueueCompat.isInstalled('SaucedCartsTransfers'))
    ..' transfer='..tostring(carts and carts.isTransferConstructor(ISInventoryTransferAction.new))
    ..' unequip='..tostring(carts and carts.isUnequipConstructor(ISUnequipAction.new)))
+  if value.id=='tidy-group' and getActivatedMods():contains('P4TidyUpMeister') then
+   assert(groupObserverBound,'P4 group native merge observer subscription unavailable')
+  end
   if value.id=='hands-chain' then assert(available,'explicit hand intent integration unavailable: '..tostring(reason)..':'..tostring(subject)) end
   print('[EQUIPMENT_TEST] INTENT_ADAPTER installed='..tostring(toolkit.ActionQueueCompat.isInstalled('P4TidyUpMeister'))..' sources='..tostring(toolkit.ActionQueueCompat.verifySources('P4TidyUpMeister')))
   for _,entry in ipairs({{ISInventoryPaneContextMenu,'OnTwoHandsEquip'},{ISInventoryPaneContextMenu,'OnPrimaryWeapon'},
@@ -170,13 +214,29 @@ function Completion.observe(toolkit,selection)
   state,records,proofs,counts=value,{},{},{perform=0,complete=0,flush=0,legacy=0,explicitConfirmed=0,authoritativeIntent=0,
    cleanupConfirmed=0,authoritativeCleanup=0}
   returns={}
+  groupNative,groupItems,groupObligations={},{},0
+  groupFailure=nil
   restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
  end
  function Completion.settled()
+  assert(not groupFailure,groupFailure)
   for obligation,record in pairs(returns) do
    assert(not record.observed and returnState(obligation)=='completed','native return obligation did not complete exactly once')
-   record.observed=true;counts.cleanupConfirmed=counts.cleanupConfirmed+1
-   if record.authoritative then counts.authoritativeCleanup=counts.authoritativeCleanup+1 end
+   record.observed=true
+   local items=assert(returnItems and returnItems(obligation),'native return item snapshot unavailable')
+   assert(type(items)=='table' and #items>=1,'native return item snapshot empty')
+   local seen={}
+   for _,item in ipairs(items) do
+    assert(type(item.id)=='number' and not seen[item.id] and item.state=='completed'
+     and state.baseline[item.id] and state.baseline[item.id]:getFullType()==item.fullType,
+     'native return item did not complete exact identity once')
+    seen[item.id]=true;counts.cleanupConfirmed=counts.cleanupConfirmed+1
+    if record.authoritative then counts.authoritativeCleanup=counts.authoritativeCleanup+1 end
+    if state.id=='tidy-group' then groupItems[#groupItems+1]={id=item.id,fullType=item.fullType,state=item.state} end
+   end
+   if state.id=='tidy-group' then
+    assert(#items==2,'bounded P4 obligation lost group members');groupObligations=groupObligations+1
+   end
   end
   if state.id=='hands-chain' then
    assert(counts.explicitConfirmed==3 and counts.authoritativeIntent==(selection.kind=='mp' and 3 or 0),
@@ -186,6 +246,26 @@ function Completion.observe(toolkit,selection)
    and counts.legacy==0,'Tidy native completion counts did not settle')
   for _,record in pairs(records) do assert(record.flushed,'Tidy transfer never flushed') end
   return counts
+ end
+ function Completion.group()
+  local tidy=getActivatedMods():contains('P4TidyUpMeister')
+  assert(not groupFailure,groupFailure)
+  local groups,nativeItems,seen,sizes=0,0,{},{}
+  for _,ids in pairs(groupNative) do
+   groups=groups+1;sizes[#sizes+1]=#ids
+   for _,id in ipairs(ids) do assert(not seen[id],'P4 native groups repeated exact item');seen[id]=true;nativeItems=nativeItems+1 end
+  end
+  assert(groups==(tidy and (enabled and 1 or 2) or 0),'P4 native return group count differs')
+  assert(nativeItems==(tidy and 2 or 0),'P4 native groups omitted exact item')
+  table.sort(sizes)
+  assert(groupObligations==(tidy and enabled and 1 or 0),'P4 return obligation group count differs')
+  assert(#groupItems==(tidy and enabled and 2 or 0),'P4 per-item completion snapshot incomplete')
+  table.sort(groupItems,function(a,b)return a.id<b.id end)
+  local expected={state.groupOne:getID(),state.groupTwo:getID()};table.sort(expected)
+  for i,item in ipairs(groupItems) do assert(item.id==expected[i],'P4 completed wrong grouped return ID') end
+  local items={}
+  for _,id in ipairs(expected) do items[#items+1]={id=id,fullType='Base.Nails',container=tidy and 'worn-bag' or 'root'} end
+  return {nativeGroups=groups,nativeItems=nativeItems,groupSizes=sizes,obligationGroups=groupObligations,completedItems=groupItems,items=items,unrelatedTailPreserved=true}
  end
  function Completion.restores()
   assert(restores.flush==restores.perform and restores.complete==(selection.kind=='sp' and restores.perform or 0)

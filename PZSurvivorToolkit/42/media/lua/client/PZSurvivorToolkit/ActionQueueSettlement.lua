@@ -208,6 +208,33 @@ local function returnProof(obligation)
     return type(seal) == "function" and seal(obligation) or nil
 end
 
+local function returnMembers(action)
+    local groups = action.queueList
+    if type(groups) ~= "table" or #groups ~= 1 or type(groups[1]) ~= "table"
+        or type(groups[1].items) ~= "table" then return end
+    local items, members, ids = groups[1].items, {}, {}
+    if #items < 1 or #items > 20 then return end
+    for key in pairs(items) do
+        if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > #items then return end
+    end
+    for index = 1, #items do
+        local item = items[index]
+        if not item or type(item.getID) ~= "function" or type(item.getFullType) ~= "function" then return end
+        local id, fullType = item:getID(), item:getFullType()
+        if type(id) ~= "number" or id % 1 ~= 0 or ids[id] or type(fullType) ~= "string" then return end
+        ids[id] = true
+        members[#members + 1] = {id = id, fullType = fullType}
+    end
+    return members
+end
+
+local function returnMember(proof, item)
+    if not item or type(item.getID) ~= "function" or type(item.getFullType) ~= "function" then return end
+    for _, member in ipairs(proof.members) do
+        if item:getID() == member.id and item:getFullType() == member.fullType then return member end
+    end
+end
+
 function Settlement.beginReturn(action, obligation, guard)
     local seal = type(obligation) == "table" and rawget(obligation, obligationScope)
     local scope, token
@@ -216,19 +243,17 @@ function Settlement.beginReturn(action, obligation, guard)
     if returnProof(obligation) then return false, "duplicate" end
     if type(guard) ~= "function" or not guard(action) then return false, "source" end
     local character, queue = action.character, scope.queue
-    local item, destination, groups = action.item, action.destContainer, action.queueList
+    local item, destination = action.item, action.destContainer
     if character ~= scope.character or queue ~= ISTimedActionQueue.queues[character]
         or (queue.toolkitOperationGeneration or 0) ~= scope.generation
         or queue.current ~= action or queue.queue[1] ~= action or not action.action
         or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "native_scope" end
     if action.srcContainer ~= character:getInventory() or not destination or destination == action.srcContainer
         or not item then return false, "endpoints" end
-    if not groups or #groups ~= 1 or not groups[1].items or #groups[1].items ~= 1 then return false, "singleton" end
-    local member = groups[1].items[1]
-    -- Host replication can rebind action.item while its native group retains
-    -- the earlier Java proxy. Inventory identity, not proxy equality, is stable.
-    if not member or type(member.getID) ~= "function" or type(member.getFullType) ~= "function"
-        or member:getID() ~= item:getID() or member:getFullType() ~= item:getFullType() then return false, "item_identity" end
+    local members = returnMembers(action)
+    if not members then return false, "group" end
+    -- Host may rebind action.item while the group retains its earlier Java proxy.
+    if members[1].id ~= item:getID() or members[1].fullType ~= item:getFullType() then return false, "item_identity" end
     local client, transaction, authority = isClient(), action.transactionId, "native"
     if client then
         authority = "unavailable"
@@ -242,11 +267,31 @@ function Settlement.beginReturn(action, obligation, guard)
         end
     end
     local proof = {scope = scope, token = token, queue = queue, generation = scope.generation, action = action, native = action.action,
-        character = character, player = character:getPlayerNum(), online = character:getOnlineID(),
-        id = item:getID(), fullType = item:getFullType(), source = action.srcContainer,
-        destination = destination, guard = guard, client = client, transaction = transaction, authority = authority,
+        character = character, player = character:getPlayerNum(), online = character:getOnlineID(), members = members,
+        source = action.srcContainer, destination = destination, guard = guard, client = client,
+        transaction = transaction, authority = authority,
         deadline = type(getTimestampMs) == "function" and getTimestampMs() + 30000}
     obligation[returnMarker] = function(candidate) if candidate == obligation then return proof end end
+    return true
+end
+
+-- SP merges only inside native perform. The existing, source-checked merge
+-- observer calls this after that merge, before any member is transferred.
+-- These are execution-group facts, not ownership claims for wiped children.
+function Settlement.refreshReturn(action, obligation)
+    local proof = returnProof(obligation)
+    if not proof or proof.action ~= action or proof.client or isClient() or proof.finished or proof.refreshed
+        or proof.queue.current ~= action or proof.queue.queue[1] ~= action
+        or action.action ~= proof.native or not proof.guard(action) then return false end
+    proof.refreshed = true
+    local members = returnMembers(action)
+    if not members or #members < #proof.members then proof.invalid = true; return false end
+    for i, member in ipairs(proof.members) do
+        if members[i].id ~= member.id or members[i].fullType ~= member.fullType then
+            proof.invalid = true; return false
+        end
+    end
+    proof.members = members
     return true
 end
 
@@ -263,19 +308,19 @@ function Settlement.returnState(obligation)
     if not proof then return end
     local action, character, scope = proof.action, proof.character, proof.scope
     local queue = proof.queue
-    if scope.phase == "retired" or scope.queue ~= queue or scope.character ~= character
+    local member = returnMember(proof, action.item)
+    if proof.invalid or scope.phase == "retired" or scope.queue ~= queue or scope.character ~= character
         or scope.generation ~= proof.generation or obligation.token ~= proof.token or action.character ~= character
         or action.action ~= proof.native or isClient() ~= proof.client
         or character:isDead() or character:getPlayerNum() ~= proof.player or character:getOnlineID() ~= proof.online
         or getSpecificPlayer(proof.player) ~= character or ISTimedActionQueue.queues[character] ~= queue
         or (queue.toolkitOperationGeneration or 0) ~= proof.generation
         or action.srcContainer ~= proof.source or action.destContainer ~= proof.destination
-        or character:getInventory() ~= proof.source or not action.item
-        or action.item:getID() ~= proof.id or action.item:getFullType() ~= proof.fullType
-        or not proof.guard(action) or proof.client and (isItemTransactionDone ~= itemTransactionDone
+        or character:getInventory() ~= proof.source or not member or not proof.guard(action, {id = member.id, fullType = member.fullType})
+        or proof.client and (isItemTransactionDone ~= itemTransactionDone
             or isItemTransactionRejected ~= itemTransactionRejected
             or action.transactionId ~= proof.transaction and action.transactionId ~= 0) then
-        proof.terminal = "unavailable"
+        proof.invalid, proof.terminal = true, "unavailable"
     end
     if proof.terminal then return proof.terminal end
     if not proof.deadline or type(getTimestampMs) ~= "function" or getTimestampMs() >= proof.deadline then
@@ -285,16 +330,39 @@ function Settlement.returnState(obligation)
     if not proof.finished then return "waiting" end
     if not proof.succeeded or proof.authority == "unavailable" then proof.terminal = "unavailable"
     elseif proof.authority == "rejected" then proof.terminal = "rejected"
+    -- Continuing groups belong to later native transactions; never apply this
+    -- group's receipt to the rest of the action.
     elseif action.queueList and #action.queueList > 0 or not proof.destination:isExistYet() then proof.terminal = "unavailable"
     else
-        local item = proof.destination:getItemById(proof.id)
-        local sourceItem = proof.source:getItemById(proof.id)
-        if item and item:getID() == proof.id and item:getFullType() == proof.fullType
-            and item:getContainer() == proof.destination and not item:getIsCraftingConsumed()
-            and not (sourceItem and sourceItem:getContainer() == proof.source) then proof.terminal = "completed"
+        local completed = 0
+        for _, expected in ipairs(proof.members) do
+            if not expected.completed then
+                local item = proof.destination:getItemById(expected.id)
+                local sourceItem = proof.source:getItemById(expected.id)
+                if item and item:getID() == expected.id and item:getFullType() == expected.fullType
+                    and item:getContainer() == proof.destination and not item:getIsCraftingConsumed()
+                    and not (sourceItem and sourceItem:getContainer() == proof.source) then expected.completed = true end
+            end
+            if expected.completed then completed = completed + 1 end
         end
+        if completed == #proof.members then proof.terminal = "completed" end
     end
     return proof.terminal or "waiting"
+end
+
+-- A fresh value snapshot preserves earned partial effects without exposing the
+-- private ledger or suggesting that a missing sibling should be replayed.
+function Settlement.returnItems(obligation)
+    local state = Settlement.returnState(obligation)
+    local proof = returnProof(obligation)
+    if not proof then return end
+    local items = {}
+    for _, member in ipairs(proof.members) do
+        items[#items + 1] = {id = member.id, fullType = member.fullType,
+            state = not proof.invalid and member.completed and "completed"
+                or (state == "completed" and "unavailable" or state)}
+    end
+    return items
 end
 
 function Settlement.required(obligation)

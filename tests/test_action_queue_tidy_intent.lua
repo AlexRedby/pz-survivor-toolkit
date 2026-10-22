@@ -12,6 +12,8 @@ local function fixture(client)
     isClient = function() return client == true end
     instanceof = function(value, kind) return kind == "InventoryItem" and type(value) == "table" and value.inventoryItem end
     getTimestampMs = function() return h.now end
+    isItemTransactionDone = function() return true end
+    isItemTransactionRejected = function() return false end
     Events = {OnMainMenuEnter = {Add = function(callback) h.callbacks[#h.callbacks + 1] = callback end},
         OnServerCommand = {Add = function(callback) h.receive = callback end}}
     PZSurvivorToolkit = {Settings = {actionQueue = function() return h.queueEnabled == true end}}
@@ -155,6 +157,7 @@ local function fixture(client)
         function value:getID() return self.id end
         function value:getFullType() return self.kind end
         function value:getContainer() return self.container end
+        function value:getIsCraftingConsumed() return false end
         function value:IsClothing() return self.location ~= nil end
         function value:getBodyLocation() return self.location end
         function value:canBeEquipped() return self.location end
@@ -217,7 +220,7 @@ local function fixture(client)
         ISInventoryPaneContextMenu.onGrabItems({item}, 0)
         h.drain()
     end
-    function h.nativeMerge()
+    function h.nativeMerge(onMerged)
         assert(NativeActionRoot, 'native source root required')
         local path=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
         local source
@@ -244,7 +247,7 @@ local function fixture(client)
         ISInventoryTransferAction.isAlreadyTransferred=function(_,item) return item:getContainer()==h.inventory end
         ISInventoryTransferAction.isValid=function(action) return not action.blocked or not action.blocked[action.item:getID()] end
         ISInventoryTransferAction.transferItem=function(action,item) h.move(item,action.destContainer) end
-        h.intent.observeTransfers()
+        h.intent.observeTransfers(onMerged)
         function h.prepareNative(action)
             action.action={reset=noop,setTime=noop,stopTimedActionAnim=noop,setLoopedAction=noop,setWaitForFinished=noop}
         end
@@ -775,6 +778,79 @@ test("new queue and main menu invalidate old intent", function()
 end)
 
 if NativeActionRoot then
+    test('native SP merge and Host group retain exact P4 return members through child wipe',function()
+        for _,client in ipairs({false,true}) do
+            for _,partial in ipairs({false,true}) do
+                local h=fixture(client)
+                h.queueEnabled=true
+                h.source.isExistYet=function()return true end
+                h.source.getItemById=function(self,id)return self.items[id]end
+                local obligation
+                h.nativeMerge(function(action) h.settlement.refreshReturn(action,obligation) end)
+                local one,two=h.item(),h.item()
+                local executor,child=h.transfer(one,h.source),h.transfer(two,h.source)
+                ISTimedActionQueue.add(executor);ISTimedActionQueue.add(child)
+                if partial then executor.blocked={[two:getID()]=true} end
+                h.prepareNative(executor);h.queue.current=executor
+                executor.transactionId=17
+                if client then executor:checkQueueList() end
+                local scope=h.settlement.deferred(h.player,{})
+                obligation=h.settlement.obligation(h.settlement.context(scope))
+                assert(h.settlement.beginReturn(executor,obligation,function()return h.valid end))
+                if client then
+                    h.move(one,h.source)
+                    if not partial then h.move(two,h.source)end
+                end
+                h.lifecycle.begin(executor,'perform')
+                executor:perform()
+                h.lifecycle.finish(executor,'perform',true)
+                assert(h.settlement.finishReturn(obligation,true))
+                assert(child.character==nil and #h.queue.queue==0,'native merge must wipe the actual child')
+                local items=h.settlement.returnItems(obligation)
+                assert(#items==2 and items[1].id==one:getID() and items[2].id==two:getID(),
+                    'SP must capture after native merge; Host must retain its pre-transaction group')
+                assert(items[1].state=='completed' and items[2].state==(partial and 'waiting' or 'completed'))
+                assert(h.settlement.returnState(obligation)==(partial and 'waiting' or 'completed'))
+                if partial then
+                    h.now=h.now+30001
+                    items=h.settlement.returnItems(obligation)
+                    assert(items[1].state=='completed' and items[2].state=='unavailable',
+                        'failed sibling cannot erase or inherit the successful exact native transfer')
+                end
+            end
+        end
+    end)
+    test('native merge observation can attach after installation without replacing its helper',function()
+        local h=fixture();h.nativeMerge()
+        local helper=ISInventoryTransferAction.checkQueueList
+        local calls=0
+        local observer=function(action)
+            calls=calls+1
+            assert(#action.queueList==1 and #action.queueList[1].items==2)
+        end
+        h.intent.observeTransfers(observer);h.intent.observeTransfers(observer)
+        assert(ISInventoryTransferAction.checkQueueList==helper,'late observation must not replace pinned native helper')
+        local one,two=h.item(),h.item()
+        local executor=h.transfer(one,h.source)
+        ISTimedActionQueue.add(executor);ISTimedActionQueue.add(h.transfer(two,h.source))
+        h.performNative(executor)
+        assert(calls==1,'duplicate subscription cannot duplicate observed outcomes')
+    end)
+    test('failed read-only merge observer cannot abort or replay native effects',function()
+        local h=fixture();h.nativeMerge()
+        local failed,healthy=0,0
+        h.intent.observeTransfers(function()failed=failed+1;error('observer failure')end)
+        h.intent.observeTransfers(function()healthy=healthy+1 end)
+        for _=1,2 do
+            local one,two=h.item(),h.item()
+            local executor=h.transfer(one,h.source)
+            ISTimedActionQueue.add(executor);ISTimedActionQueue.add(h.transfer(two,h.source))
+            h.performNative(executor)
+            assert(one:getContainer()==h.source and two:getContainer()==h.source and #h.queue.queue==0,
+                'observer failure must preserve exact native transfers and advancement')
+        end
+        assert(failed==1 and healthy==2,'failed observer must stay quarantined without suppressing independent listeners')
+    end)
     test('native small-item merge retains every explicit ID and returns borrowed neighbor',function()
         for _,client in ipairs({false,true}) do
             local h=fixture(client);h.nativeMerge()
