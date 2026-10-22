@@ -134,8 +134,4 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse and automatic-deposit SP/Host scenarios with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
-
-# Automatic storage transfers
-
-- [ ] Await user decision on native Host batch admission: include earlier items from the same Request in native capacity reservations through a scoped, nonexecuting shadow prefix. Preserve native batching and existing per-item rules; reject the whole batch before effects when it does not fit. Prove capacity, item-size/admission, carried/vehicle endpoints, competing requests and unchanged accepted transfers before shipping. Do not introduce prefix-only success or a second transfer protocol. The proposal addresses Request admission, not arbitrary scripts adding items after acceptance.
+- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse and automatic-deposit SP/Host scenarios and Host batch-admission case with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.

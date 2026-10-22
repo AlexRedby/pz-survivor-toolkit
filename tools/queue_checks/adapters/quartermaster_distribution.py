@@ -12,15 +12,18 @@ def definitions():
     return {SUITE: {'status': 'ready', 'clients': 1, 'default_mods': MODS,
                    'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                               'kinds': kinds, 'languages': ['EN'], 'modes': ['toolkit']}
-                             for case, kinds in [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp'])]]}}
+                             for case, kinds in [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']),
+                                                 ('batch', ['mp'])]]}}
 
 
 def validate(selection):
-    if (selection.get('cases') not in (['sort'], ['backpack'], ['deposit']) or selection.get('kind') not in ('sp', 'mp')
+    if (selection.get('cases') not in (['sort'], ['backpack'], ['deposit'], ['batch']) or selection.get('kind') not in ('sp', 'mp')
             or (selection.get('cases') == ['backpack'] and selection.get('kind') != 'sp')
             or selection.get('mode') != 'toolkit' or selection.get('clients', 1) != 1
             or selection.get('languages') != ['EN'] or not set(MODS) <= set(selection.get('mods', []))
             or selection.get('options', {}).get('world_template')
+            or selection.get('cases') == ['batch'] and selection.get('kind') != 'mp'
+            or selection.get('cases') == ['batch'] and selection.get('options', {}).get('mp_host') is not True
             or selection.get('cases') == ['deposit'] and selection.get('kind') == 'mp'
             and selection.get('options', {}).get('mp_host') is not True):
         raise ValueError('Distribution requires sort/deposit in fresh SP/Host or backpack in fresh SP, one EN client and Toolkit')
@@ -45,6 +48,13 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
+    if selection.get('cases') == ['batch']:
+        try:
+            records = [value for event, value in _deposit_records(text, 'QM_BATCH') if event == 'COMPLETE']
+            return role == 'client1' and _exact(records, [dict(case='batch', rejected=True, accepted=True,
+                                                              manual=True, continued=True)])
+        except (ValueError, KeyError, TypeError):
+            return False
     if selection.get('cases') == ['deposit']:
         try:
             records = [value for event, value in _deposit_records(text) if event == 'COMPLETE']
@@ -74,7 +84,7 @@ def _exact(value, expected):
     return value == expected
 
 
-def _deposit_records(text):
+def _deposit_records(text, prefix='QM_DEPOSIT'):
     def unique(pairs):
         value = {}
         for key, item in pairs:
@@ -84,7 +94,7 @@ def _deposit_records(text):
         return value
     records = []
     for line in text.splitlines():
-        marker = '[QM_DEPOSIT] '
+        marker = '[' + prefix + '] '
         offset = line.find(marker)
         if offset < 0:
             continue
@@ -184,7 +194,57 @@ def _backpack(root, selection):
             'evidence': {'receipt': receipt, 'limits': ['Programmatic native context-menu callback; no physical input or Host coverage.']}}
 
 
+def _batch(root, selection):
+    issues, receipts = [], {}
+    try:
+        root = Path(root)
+        text = (root / 'client1-launch.log').read_text(errors='replace')
+        server = (root / 'server-launch.log').read_text(errors='replace')
+        if not re.search(r'\[PZToolkitJavaPatches\][^\r\n]*itemBatchAdmission=true(?:,|\s|$)', server):
+            raise ValueError('Server batch-admission activation missing')
+        records = _deposit_records(text, 'QM_BATCH')
+        authority = _deposit_records(server, 'QM_BATCH')
+        if [event for event, _ in records] != ['PREPARED', 'REJECTED', 'ACCEPTED', 'CLEANUP', 'COMPLETE']:
+            raise ValueError('Batch client lifecycle missing, duplicated or reordered')
+        if [event for event, _ in authority] != ['PREPARED', 'REJECTED', 'ACCEPTED', 'CLEANUP']:
+            raise ValueError('Batch authority lifecycle missing, duplicated or reordered')
+        local, remote = dict(records), dict(authority)
+        packet = local['PREPARED']
+        ids, ballast = packet.get('ids'), packet.get('ballastId')
+        if (set(packet) != {'kind', 'ids', 'ballastId', 'boxes'} or packet['kind'] != 'batch'
+                or type(ids) is not list or len(ids) != 4 or any(type(value) is not int for value in ids)
+                or len(set(ids)) != 4 or type(ballast) is not int or ballast in ids
+                or type(packet['boxes']) is not list or len(packet['boxes']) != 3
+                or not _exact(remote['PREPARED'], packet)):
+            raise ValueError('Batch preparation identities differ')
+        for stage, destinations, count, weight in [('rejected', [1, 1, 1, 3], 3, .875),
+                                                   ('accepted', [2, 2, 1, 3], 1, 1)]:
+            event = stage.upper()
+            expected = dict(kind='batch', stage=stage, ids=ids, ballastId=ballast, destinations=destinations,
+                            sourceCount=count, limitedCapacity=1, limitedWeight=weight,
+                            tailWeight=.0625, conserved=5)
+            result = local[event]
+            txid = result.get('transactionId')
+            if (type(txid) is not int or txid == 0
+                    or not _exact(result, dict(result=expected, merged=True, transactionId=txid))
+                    or not _exact(remote[event], expected)):
+                raise ValueError('Batch exact effects/merge/outcome differ: ' + stage)
+            receipts[stage] = result
+        if (local['REJECTED']['transactionId'] == local['ACCEPTED']['transactionId']
+                or not _exact(local['CLEANUP'], {'objects': 3}) or not _exact(remote['CLEANUP'], {'objects': 3})
+                or not complete(selection, 'client1', text)
+                or any('[QUEUE_TEST] FAIL ' in value for value in (text, server))):
+            raise ValueError('Batch terminal/cleanup gates failed')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        issues.append(str(error))
+    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'batch',
+            'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
+            'evidence': {'receipts': receipts, 'limits': ['Menu Host with one client, native queued container transfers; no physical UI input.']}}
+
+
 def verify(root, selection, catalog):
+    if selection.get('cases') == ['batch']:
+        return _batch(root, selection)
     if selection.get('cases') == ['deposit']:
         return _deposit(root, selection)
     if selection.get('cases') == ['backpack']:

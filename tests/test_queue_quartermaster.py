@@ -232,7 +232,7 @@ class QuartermasterBackpack(unittest.TestCase):
     def test_backpack_case_is_separate_fresh_sp_with_existing_required_mods(self):
         cases = distribution.definitions()[distribution.SUITE]['cases']
         self.assertEqual([(case['id'], case['kinds']) for case in cases],
-                         [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp'])])
+                         [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']), ('batch', ['mp'])])
         distribution.validate(self.selection)
         for changes in ({'kind': 'mp'}, {'cases': ['sort', 'backpack']}, {'mode': 'native'},
                         {'languages': ['RU']}, {'clients': 2}, {'mods': distribution.MODS[:-1]},
@@ -244,6 +244,9 @@ class QuartermasterBackpack(unittest.TestCase):
             distribution.validate(dict(self.selection, cases=['deposit'], kind=kind, options={'mp_host': kind == 'mp'}))
         with self.assertRaises(ValueError):
             distribution.validate(dict(self.selection, cases=['deposit'], kind='mp'))
+        distribution.validate(dict(self.selection, cases=['batch'], kind='mp', options={'mp_host': True}))
+        with self.assertRaises(ValueError):
+            distribution.validate(dict(self.selection, cases=['batch'], kind='sp', options={'mp_host': True}))
 
     def test_backpack_requires_exact_result_and_case_specific_completion(self):
         text = self.write()
@@ -305,6 +308,37 @@ class QuartermasterBackpack(unittest.TestCase):
         self.assertEqual(distribution.verify(self.root, selection, {})['issues'], [])
         self.assertTrue(distribution.complete(selection, 'client1', text))
         self.assertFalse(distribution.complete(self.selection, 'client1', text))
+
+
+class QuartermasterBatch(unittest.TestCase):
+    def test_whole_rejection_then_native_acceptance_requires_matching_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = dict(cases=['batch'], kind='mp')
+            packet = dict(kind='batch', ids=[1, 2, 3, 4], ballastId=5,
+                          boxes=[dict(x=x, y=y, z=0, index=1) for x, y in [(10, 10), (12, 10), (11, 11)]])
+            effects = [dict(kind='batch', stage=stage, ids=packet['ids'], ballastId=5,
+                            destinations=destinations, sourceCount=count, limitedCapacity=1,
+                            limitedWeight=weight, tailWeight=.0625, conserved=5)
+                       for stage, destinations, count, weight in [('rejected', [1, 1, 1, 3], 3, .875),
+                                                                  ('accepted', [2, 2, 1, 3], 1, 1)]]
+            def record(event, value):
+                return '[QM_BATCH] ' + event + ' ' + json.dumps(value) + '\n'
+            client = record('PREPARED', packet)
+            server = '[PZToolkitJavaPatches] itemBatchAdmission=true,\n' + record('PREPARED', packet)
+            for index, effect in enumerate(effects, 1):
+                client += record(effect['stage'].upper(), dict(result=effect, merged=True, transactionId=index))
+                server += record(effect['stage'].upper(), effect)
+            client += record('CLEANUP', dict(objects=3)) + record('COMPLETE',
+                       dict(case='batch', rejected=True, accepted=True, manual=True, continued=True))
+            server += record('CLEANUP', dict(objects=3))
+            (root / 'client1-launch.log').write_text(client)
+            (root / 'server-launch.log').write_text(server)
+            self.assertEqual(distribution.verify(root, selection, {})['issues'], [])
+            for invalid in [server.replace('true,', 'false,'), server.replace('"limitedWeight": 1', '"limitedWeight": 1.0625'),
+                            server.replace('"destinations": [1, 1, 1, 3]', '"destinations": [2, 1, 1, 3]')]:
+                (root / 'server-launch.log').write_text(invalid)
+                self.assertTrue(distribution.verify(root, selection, {})['issues'])
 
 
 if __name__ == '__main__':

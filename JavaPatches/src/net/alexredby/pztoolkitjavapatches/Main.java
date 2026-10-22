@@ -181,6 +181,7 @@ public final class Main {
         BasementHallKey.prepare();
         MannequinZoneData.prepare();
         boolean fences = FenceValidation.install(FenceValidation.SUPPORTED);
+        boolean itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED);
         // Define before patch registration: recursive loads during another transform bypass instrumentation.
         if(CART_TRANSITION_SUPPORTED)
             Class.forName("zombie.core.skinnedmodel.ModelManager",false,Main.class.getClassLoader());
@@ -190,7 +191,8 @@ public final class Main {
             + ", cart=" + CART_SUPPORTED + ", cartSync=" + CART_SYNC_SUPPORTED + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + TilePropertyNames.SUPPORTED + ", fluids=" + FluidContainerNames.SUPPORTED
             + ", fences=" + fences + ", piano=" + PianoIcon.SUPPORTED + ", basementRooms=" + BasementRoomLookup.SUPPORTED
             + ", basementHall=" + BasementHallKey.SUPPORTED + ", mannequin=" + MannequinZoneData.SUPPORTED
-            + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
+            + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", itemBatchAdmission=" + itemBatches
+            + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
             + ", actionCompletion=" + COMPLETION_SUPPORTED + ", actionAcknowledgements=" + ActionAcknowledgements.SUPPORTED
             + ", craftBench=" + CraftBenchReferences.SUPPORTED);
     }

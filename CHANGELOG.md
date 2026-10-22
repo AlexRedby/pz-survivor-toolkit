@@ -939,6 +939,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.44
+
+- **Host transfers:** Include earlier items in an incoming ordinary container-transfer batch when native server validation accounts for reserved capacity. Reject the whole batch before any transfer when it cannot fit; keep fitting batches, native item rules and cancellation ownership. Floor and special transfer paths retain their native admission.
+
 ### 0.1.43
 
 - **Fixed:** Preserve a closed fist and native thumb on metal wheelbarrows; correct the wrist angle and seating around the handle shafts instead of opening the fingers. Keep the accepted body/cart stance and the open-hand approach during pickup and setdown.
