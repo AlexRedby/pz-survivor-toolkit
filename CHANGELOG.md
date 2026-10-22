@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.223
+
+- **Craft plans:** Reuse a script-structure catalog and prepare only the selected recipe's possible prerequisite chain and existing material overrides. Recalculating or confirming a plan no longer rereads unrelated recipes or checks their character/workbench availability. Keep all material and tool alternatives, fresh stock and eligibility checks, independent preview choices and native step validation. Reset the catalog at game boundaries and script reloads.
+
 ### 0.1.222
 
 - **Action queue:** Move proven P4 removal of temporarily worn ordinary clothing onto shared native completion. Preserve exact item/root/slot identity, native server effects and required cleanup before continuing independent actions. Held clothing, activation, special equipment, hotbar and heavy-item drops retain their existing fallback.

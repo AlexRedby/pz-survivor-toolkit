@@ -16,6 +16,11 @@ local function reason(kind)
 end
 
 local intentions, hooked = {}, {}
+local catalog, reloadHook
+
+local function resetCatalog()
+    catalog = nil
+end
 
 local function recipeChanged(state, recipe)
     if state.active and state.recipe ~= recipe then state.recipe, state.inputs = recipe, {} end
@@ -115,6 +120,16 @@ local function hookClose(class, method, neat)
 end
 
 function Recipes.install()
+    -- Native reloadScripts can refill the same manager/list with the same count.
+    -- Invalidate before delegation, including failed reload attempts.
+    if type(reloadScripts) == "function" and reloadScripts ~= reloadHook then
+        local original = reloadScripts
+        reloadHook = function(...)
+            resetCatalog()
+            return original(...)
+        end
+        reloadScripts = reloadHook
+    end
     -- Manual mode also auto-populates; only picker actions express a preference.
     hookPicker(ISCraftInventoryPanel, "onListItemClicked")
     hookPicker(NC_InputSwitch_Panel, "onItemSelected")
@@ -155,11 +170,12 @@ local function available(recipe, logic, player, containers)
     return logic:hasRequiredWorkstation()
 end
 
-local function spec(recipe, logic, player, containers)
+-- Script structure only. No player, world availability or selected item IDs belong here.
+local function structure(recipe)
     if callbacks(recipe) or recipe:hasOnTickInputs() or recipe:hasOnTickOutputs() then
-        return nil, reason("UnsupportedCallbacks")
+        return nil, "UnsupportedCallbacks"
     end
-    local result = {id = recipe:getName(), name = recipe:getTranslationName(), native = recipe,
+    local result = {id = recipe:getName(), native = recipe,
         inputs = {}, outputs = {}}
     local outputs, outputCount = recipe:getOutputs(), 0
     for i = 0, outputs:size() - 1 do
@@ -169,43 +185,129 @@ local function spec(recipe, logic, player, containers)
             or output:isReplaceInput() or output:hasCreateToItem() or output:isApplyOnTick()
             or tostring(output:getOriginalLine()):lower():find("mapper%s*:")
             or not integer(output:getAmount()) then
-            return nil, reason("UnsupportedOutputs")
+            return nil, "UnsupportedOutputs"
         end
         local item = items:get(0)
-        if item:getCount() ~= 1 then return nil, reason("UnsupportedOutputs") end
+        if item:getCount() ~= 1 then return nil, "UnsupportedOutputs" end
         local fullType = item:getFullName()
         outputCount = outputCount + output:getIntAmount()
-        if outputCount > 1000 then return nil, reason("UnsupportedOutputs") end
+        if outputCount > 1000 then return nil, "UnsupportedOutputs" end
         result.outputs[fullType] = (result.outputs[fullType] or 0) + output:getIntAmount()
     end
-    if outputCount == 0 then return nil, reason("UnsupportedOutputs") end
+    if outputCount == 0 then return nil, "UnsupportedOutputs" end
     local inputs = recipe:getInputs()
-    if inputs:size() > 32 then return nil, reason("UnsupportedInputs") end
+    if inputs:size() > 32 then return nil, "UnsupportedInputs" end
     for i = 0, inputs:size() - 1 do
         local input = inputs:get(i)
         if input:getResourceType() ~= ResourceType.Item or input:isVariableAmount()
             or input:hasConsumeFromItem() or input:hasCreateToItem() or input:isReplace()
             or input:isApplyOnTick() then
-            return nil, reason("UnsupportedInputs")
+            return nil, "UnsupportedInputs"
         end
         local slot = {index = recipe:getIndexForIO(input), native = input,
             keep = input:isKeep(), choices = {}}
         local items = input:getPossibleInputItems()
-        if items:size() > 256 then return nil, reason("UnsupportedInputs") end
+        if items:size() > 256 then return nil, "UnsupportedInputs" end
         for j = 0, items:size() - 1 do
             local item = items:get(j)
             local fullType, amount = item:getFullName(), input:getAmount(item:getFullName())
             if not integer(amount) or amount > 1000 or input:isUsesPartialItem(item) then
-                return nil, reason("UnsupportedInputs")
+                return nil, "UnsupportedInputs"
             end
             slot.choices[#slot.choices + 1] = {fullType = fullType, amount = amount}
         end
-        if #slot.choices == 0 then return nil, reason("UnsupportedInputs") end
-        slot.allChoices = slot.choices
+        if #slot.choices == 0 then return nil, "UnsupportedInputs" end
         result.inputs[#result.inputs + 1] = slot
     end
-    if not available(recipe, logic, player, containers) then return nil, reason("Unavailable") end
     return result
+end
+
+local function recipeCatalog()
+    local manager = getScriptManager()
+    local all = manager:getAllCraftRecipes()
+    if not catalog or catalog.manager ~= manager or catalog.all ~= all or catalog.count ~= all:size() then
+        catalog = {manager = manager, all = all, count = all:size(), byNative = {}, byId = {}, producers = {}}
+    end
+    return catalog
+end
+
+local function entryFor(index, native)
+    local entry = index.byNative[native]
+    if not entry then
+        local shape, failure = structure(native)
+        entry = {native = native, id = native:getName(), shape = shape, failure = failure}
+        index.byNative[native] = entry
+    end
+    return entry
+end
+
+local function indexRecipes(index)
+    if index.indexed then return end
+    for i = 0, index.count - 1 do
+        local entry = entryFor(index, index.all:get(i))
+        entry.order = i
+        local sameId = index.byId[entry.id] or {}
+        index.byId[entry.id] = sameId
+        sameId[#sameId + 1] = entry
+        for fullType in pairs(entry.shape and entry.shape.outputs or {}) do
+            local producers = index.producers[fullType] or {}
+            index.producers[fullType] = producers
+            producers[#producers + 1] = entry
+        end
+    end
+    index.indexed = true
+end
+
+local function copyShape(shape)
+    local result = {id = shape.id, name = shape.native:getTranslationName(), native = shape.native,
+        inputs = {}, outputs = {}}
+    for fullType, amount in pairs(shape.outputs) do result.outputs[fullType] = amount end
+    for _, slot in ipairs(shape.inputs) do
+        local input = {index = slot.index, native = slot.native, keep = slot.keep, choices = {}}
+        for _, choice in ipairs(slot.choices) do
+            input.choices[#input.choices + 1] = {fullType = choice.fullType, amount = choice.amount}
+        end
+        input.allChoices = input.choices
+        result.inputs[#result.inputs + 1] = input
+    end
+    return result
+end
+
+-- Follow every possible material and kept-tool producer, not just the last successful route.
+-- Existing overrides remain roots even when their recipe falls out of that route.
+local function relatedRecipes(index, target, overrides)
+    local selected, pending, types, ids = {}, {}, {}, {}
+    local function include(entry)
+        if entry.id == target.id then entry = target end
+        if not selected[entry] then
+            selected[entry] = true
+            pending[#pending + 1] = entry
+        end
+    end
+    include(target)
+    for id in pairs(overrides or {}) do
+        for _, entry in ipairs(index.byId[id] or {}) do include(entry) end
+    end
+    local cursor = 1
+    while cursor <= #pending do
+        local entry = pending[cursor]
+        cursor = cursor + 1
+        -- Preserve the old last-available definition when native recipe names collide.
+        if not ids[entry.id] then
+            ids[entry.id] = true
+            for _, other in ipairs(index.byId[entry.id] or {}) do include(other) end
+        end
+        for _, input in ipairs(entry.shape and entry.shape.inputs or {}) do
+            for _, choice in ipairs(input.choices) do
+                if not types[choice.fullType] then
+                    types[choice.fullType] = true
+                    for _, producer in ipairs(index.producers[choice.fullType] or {}) do include(producer) end
+                end
+            end
+        end
+    end
+    table.sort(pending, function(a, b) return (a.order or -1) < (b.order or -1) end)
+    return pending
 end
 
 local function accepts(player, input, resource)
@@ -246,18 +348,19 @@ local function collect(panel, overrides)
     if not stock then return nil, reason("complex") end
     local model = {recipes = {}, resources = stock,
         accepts = function(input, resource) return accepts(player, input, resource) end}
-    local targetSpec, failure = spec(target, logic, player, containers)
-    if not targetSpec then return nil, failure end
-    local all = getScriptManager():getAllCraftRecipes()
-    for i = 0, all:size() - 1 do
-        local native = all:get(i)
-        if native ~= target then
-            local candidate = spec(native, logic, player, containers)
-            if candidate then model.recipes[candidate.id] = candidate end
+    local index = recipeCatalog()
+    local targetEntry = entryFor(index, target)
+    if not targetEntry.shape then return nil, reason(targetEntry.failure) end
+    if not available(target, logic, player, containers) then return nil, reason("Unavailable") end
+    local targetSpec = copyShape(targetEntry.shape)
+    if overrides ~= nil and type(overrides) ~= "table" then return nil, reason("UnsupportedSelection") end
+    indexRecipes(index)
+    for _, entry in ipairs(relatedRecipes(index, targetEntry, overrides)) do
+        if entry.native ~= target and entry.shape and available(entry.native, logic, player, containers) then
+            model.recipes[entry.id] = copyShape(entry.shape)
         end
     end
     model.recipes[targetSpec.id] = targetSpec
-    if overrides ~= nil and type(overrides) ~= "table" then return nil, reason("UnsupportedSelection") end
     for id, slots in pairs(overrides or {}) do
         local candidate = model.recipes[id]
         if not candidate or type(slots) ~= "table" then return nil, reason("UnsupportedSelection") end
@@ -412,9 +515,9 @@ end
 -- Cancellation trusts only our generator and the native forceCancel implementation.
 Recipes.addStep = addStep
 if Events then
-    if Events.OnGameStart then Events.OnGameStart.Add(Recipes.install) end
-    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() reset() end) end
-    if Events.OnGameExit then Events.OnGameExit.Add(function() reset() end) end
+    if Events.OnGameStart then Events.OnGameStart.Add(function() resetCatalog(); Recipes.install() end) end
+    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() resetCatalog(); reset() end) end
+    if Events.OnGameExit then Events.OnGameExit.Add(function() resetCatalog(); reset() end) end
     if Events.OnPlayerDeath then Events.OnPlayerDeath.Add(reset) end
 end
 return Recipes
