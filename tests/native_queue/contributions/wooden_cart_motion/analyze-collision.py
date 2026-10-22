@@ -10,6 +10,7 @@ _spec = importlib.util.spec_from_file_location('cart_collision_maneuvers', Path(
 _motion = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_motion)
 wrap, fields = _motion.wrap, _motion._stationary.fields
+native_clip = _motion._stationary.native_clip
 STEPS = {
     'wall-block': [(1000, 1, 5), (6000, 0, 0), (7000, 0, 7), (9500, 0, 0)],
     'wall-slide': [(1000, 1, 2), (6000, 0, 0), (7000, 0, 7), (9500, 0, 0)],
@@ -110,7 +111,7 @@ def controls(log, wall_offset=1):
                 assert tracks and all(re.fullmatch(r'[^=;]+=[^@;]+@[^;]+', t) for t in tracks.split(';') if t), 'Invalid native Walk tracks'
                 parsed = [(n, float(speed), float(weight)) for n, speed, weight in re.findall(r'([^=;]+)=([^@;]+)@([^;]+);', tracks)]
                 assert parsed and all(math.isfinite(speed+weight) for _, speed, weight in parsed), 'Nonfinite native Walk tracks'
-                walking = any(n == 'Bob_Walk' and speed > 0 and weight > .1 for n, speed, weight in parsed)
+                walking = any(native_clip(n) == 'Bob_Walk' and speed > 0 and weight > .1 for n, speed, weight in parsed)
             row = numeric_fields(' '.join(f'{k}={v}' for k, v in raw.items()), ('wall', 'elapsed', 'x', 'y', 'heading', 'drive'), 'control sample')
             assert row['drive'] == (2 if name in ('corner', 'wall-slide-left') else 1 if name == 'wall-slide-right' else 5), 'Wrong native control input'
             if slide: row['walking'] = walking
@@ -270,7 +271,7 @@ def analyze(text):
             fail('reverse escape never engages')
         clip = 'Bob_WalkBwdNoAim1Hand'
         def progressing(selected, names):
-            tracks = [(r['elapsed'], c) for r in selected for c in r['clips'] if c['name'] in names and c['weight'] > .1 and c['speed'] > 0]
+            tracks = [(r['elapsed'], c) for r in selected for c in r['clips'] if native_clip(c['name']) in names and c['weight'] > .1 and c['speed'] > 0]
             return any(t1 > t0 and a['name'] == b['name'] and abs(a['time'] - b['time']) > .001 for (t0, a), (t1, b) in zip(tracks, tracks[1:]))
         if not progressing(reverse, {clip}):
             fail('native reverse gait does not progress')

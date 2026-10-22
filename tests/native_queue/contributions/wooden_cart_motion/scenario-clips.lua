@@ -40,7 +40,7 @@ for _,female in ipairs({false,true}) do
    elseif spec=='direct' then
     steps={{1000,2,1},{4000,nil,steer},{6000,nil,0},{8000,0,1},{9500,2,1},{11000,nil,0}}
    else
-    steps={{700,0,1},{1800,1,1},{3200,2,1},{4500,nil,steer},{6300,1,1},{8500,0,1},{10000,nil,0}}
+    steps={{700,0,1},{1800,1,1},{3200,2,1},{4500,nil,steer},{6300,config.directFastWalk and 0 or 1,1},{8500,config.directFastWalk and 1 or 0,1},{10000,nil,0}}
    end
    cases[#cases+1]={female=female,full=full,spec=spec,steps=steps,
     name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec..(turn==1 and '-left' or '-right')}

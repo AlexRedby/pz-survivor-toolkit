@@ -745,7 +745,9 @@ public final class CartTransition {
             CartGrounding.lowerHandles(held,modelName);
             // Follow native gait clearance so ordinary rendering does not shift both handles after recovery.
             // Keep the captured neutral bank/grip policy; changing it needs a separate source-pose blend.
-            float gait=profile!=null && state.movingRecovery && !state.pickup?CartLegPace.woodenGaitShift(player):0;
+            var displayedSpine=new Vector3f();
+            float gait=profile!=null && state.movingRecovery && !state.pickup?CartLegPace.woodenGaitShift(player,
+                CartGrip.nativeSpine(slot,instance.parent,displayedSpine)?displayedSpine:null):0;
             var model=model(state.item);
             if(model==null) continue;
             if(!(profile!=null?CartGrounding.alignWheelbarrow(held,profile,0,0,gait,delta)

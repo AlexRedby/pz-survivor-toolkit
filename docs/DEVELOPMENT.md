@@ -56,6 +56,30 @@ Exports retain added and moved keys and create a new `exports/` snapshot with po
 
 Run the fast parser/bridge checks with `python3 -m unittest discover -s tests -p 'test_cart*blender*.py'`. To exercise actual edits, key insertion/retiming, reload and the sidebar's native export, run Blender with `--background --python-exit-code 1 --python tests/blender_cart_edit_check.py -- WORKSPACE`; this creates a separate `verification/` scene and leaves the original scene unchanged.
 
+### Replay an inventory-equip transition
+
+Inventory-menu equip uses the native inventory animation, not the ground-pickup clip. To inspect its outgoing blend, capture the SP `wooden_cart_motion/approach` scenario with `cart_entry_contact_repro: true` and explicit `cart_scenes: ["container-equip"]` (or include `"wrong-side"` for a separate ground-approach control). The option records native Walk before the actual inventory callback, worn male baggy jeans, full cargo, full influencing bone palettes and a one-second held tail. Use the native runner's explicit dependency paths and isolated settings; source snapshots and geometry reports do not establish every rendered frame.
+
+The replay and curve-authoring tools run inside Blender. `BLENDER` below means its installed executable; `GAME` is the folder containing `projectzomboid.jar`, and `CART_FBX` is the installed wooden-wheelbarrow model. Replace `PROFILE` and `LOG` with the captured client profile and its `console.txt`:
+
+```sh
+"$BLENDER" --background --python-exit-code 1 --python tools/cart_blender_replay.py -- \
+  --profile "$PROFILE" --log "$LOG" --game "$GAME" --cart-fbx "$CART_FBX" \
+  --output build/blender/inventory-replay
+"$BLENDER" --background --python-exit-code 1 --python tools/cart_blender_clearance.py -- \
+  prepare build/blender/inventory-replay/replay.blend build/blender/inventory-clearance
+"$BLENDER" build/blender/inventory-clearance/authored.blend
+```
+
+The replay verifies Blender's evaluated body and actual `Bob_Trousers` mesh against every captured native sample within `2e-5` model units. Unweighted Nub bones are filled from their parents; all 35 influencing native bones remain measured. The saved scene works without script auto-run. Select **Equip clearance envelope** and edit its Y location curve in the Graph Editor. Frames 1..61 represent the retired share of the outgoing inventory animation, rather than scene time. A saved Action constraint evaluates the curve against recorded blend weights, so edits update the cart preview immediately. The preview arms remain recorded; actual runtime IK and closed grip require the game check.
+
+```sh
+"$BLENDER" --background --python-exit-code 1 --python tools/cart_blender_clearance.py -- \
+  export build/blender/inventory-clearance/authored.blend build/blender/inventory-clearance/export
+```
+
+Export creates a new curve JSON, generated Java sampler and approximation report. It checks zero endpoints, forward-only bounds and intermediate samples, increasing sampling until the interpolation error is below `2e-6` model units. To propose a runtime change, review both outputs and update `assets/animations/curves/wood_cart_equip_clearance.json` and `JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartEquipClearanceCurve.java` together. `tests/test_cart_clearance_curve.py` checks that they agree. Build and test the candidate through the isolated reproducer; exporting or opening the scene does not install or validate gameplay. The current envelope is a rendered cart-placement correction while inventory Loot retires; it does not replace the pickup clip or native legs.
+
 ## Checks and packaging
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests. Choose checks related to the change; the commands below are independent examples, not a mandatory full checklist.

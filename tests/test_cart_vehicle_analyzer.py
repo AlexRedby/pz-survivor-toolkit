@@ -121,6 +121,14 @@ class VehicleAnalyzerTests(unittest.TestCase):
         log=self.mutate_heading(name,lambda t,h:math.pi/2+(.03 if t%200==0 else -.03) if 3800<=t<8000 else h)
         self.assertIn((name,'vehicle contact heading chatters'),self.report(log)['motionFailures'])
 
+    def test_canonical_walk_and_reverse_keep_vehicle_contact_and_escape_checks(self):
+        log = self.log.replace('Bob_WalkBwdNoAim1Hand', 'Toolkit_CartPivot_Backward').replace('Bob_Walk', 'Toolkit_CartPivot_Walk')
+        report = self.report(log)
+        self.assertTrue(report['motionPass'], report['motionFailures'])
+        self.assertTrue(report['footprintPass'], report['footprintFailures'])
+        for wrong in ('Toolkit_CartPivot_Backwards', 'Toolkit_CartPivot_Walk'):
+            self.assertFalse(self.report(log.replace('Toolkit_CartPivot_Backward', wrong))['motionPass'])
+
     def test_complete_twelve_scene_matrix_requires_four_bare_controls(self):
         result=self.report()
         self.assertEqual((result['caseCount'],result['controlCount']),(12,4))

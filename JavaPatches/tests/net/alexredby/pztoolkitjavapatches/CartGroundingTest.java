@@ -391,7 +391,9 @@ public final class CartGroundingTest {
     throw new AssertionError("metal gait calibration refused");
    var target=new Matrix4f();CartGrip.target(profile.model(),true,false,delta,moving,target,pressure);
    // The former measured neutral wrist sat at Z=-.083618924 before its gait clearance was added.
-   if(target.m32()-(-.083618924f+CartSteeringMath.woodenShift(pressure,gait))<.075f)
+   // Remove this profile's gait/turn translation before comparing its neutral
+   // stance. Metal intentionally uses 1.15 times the wooden clearance.
+   if(target.m32()-profile.motionShift(pressure,gait)-(-.083618924f)<.075f)
     throw new AssertionError("metal motion lost the requested closer hand position");
   }
  }
@@ -479,6 +481,14 @@ public final class CartGroundingTest {
   }
  }
  public static void main(String[] args) throws Exception {
+  if(CartGrounding.inventoryEntryAdvance(0)!=0 || CartGrounding.inventoryEntryAdvance(1)!=0
+    || CartGrounding.inventoryEntryAdvance(Float.NaN)!=0) throw new AssertionError("Blender entry endpoints");
+  float authoredEntry=CartGrounding.inventoryEntryAdvance(.22222553f);
+  if(authoredEntry<.004f || authoredEntry>.0081f) throw new AssertionError("native clothing replay correction corridor");
+  for(int i=0;i<=1000;i++) {
+   float advance=CartGrounding.inventoryEntryAdvance(i/1000f);
+   if(!Float.isFinite(advance) || advance<0 || advance>.0081f) throw new AssertionError("bounded Blender curve");
+  }
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
   remoteFillModel();
   nativeExportPose();

@@ -76,6 +76,7 @@ public final class CartGrounding {
 
     private static final class Matrices {
         final Matrix4f transform=new Matrix4f(), attachment=new Matrix4f(), delta=new Matrix4f();
+        final Vector3f spine=new Vector3f();
         final org.lwjgl.util.vector.Matrix4f reference=new org.lwjgl.util.vector.Matrix4f();
         final HelperFunctions.TransformResult_QPS bone=new HelperFunctions.TransformResult_QPS();
         final org.lwjgl.util.vector.Quaternion rotation=new org.lwjgl.util.vector.Quaternion();
@@ -228,6 +229,25 @@ public final class CartGrounding {
         return true;
     }
 
+    /** Blender-authored envelope parameterized by native outgoing Loot weight. */
+    static float inventoryEntryAdvance(float outgoingWeight) {
+        return CartEquipClearanceCurve.sample(1-outgoingWeight);
+    }
+
+    private static float inventoryEntryAdvance(IsoPlayer player,ModelInstanceRenderData data,String model) {
+        if(!"WheelbarrowWood".equals(model) || player.getVariableBoolean("IsPerformingAnAction")
+            || data.modelInstance.parent==null || data.modelInstance.parent.animPlayer==null) return 0;
+        var animation=data.modelInstance.parent.animPlayer;
+        if(animation.getMultiTrack()==null) return 0;
+        float weight=0;
+        for(var track:animation.getMultiTrack().getTracks())
+            if("Bob_IdleLooting_Mid".equals(track.getName()) && track.getLayerIdx()==1) {
+                float blend=track.getBlendWeight();
+                if(Float.isFinite(blend)) weight=Math.max(weight,blend);
+            }
+        return inventoryEntryAdvance(weight);
+    }
+
     public static void render(ModelSlotRenderData slot) {
         if(Main.CART_TRANSITION_SUPPORTED) CartImpactPose.render(slot);
         CartWheelSpin.prepare(slot,Double.NaN);
@@ -248,13 +268,17 @@ public final class CartGrounding {
             var state=matrices.get();
             Matrix4f transform=state.transform;
             boolean rigid=rigid(data,clip,transform);
-            if(rigid) lowerHandles(transform,name);
+            if(rigid) {
+                lowerHandles(transform,name);
+                transform.m32(transform.m32()-inventoryEntryAdvance(player,data,name));
+            }
             float lean=handoff?0:(float)(player.isLocalPlayer()?CartSteeringHooks.lean(player):CartMotionSync.lean(player));
             float pressure=handoff?0:(float)(player.isLocalPlayer()?CartSteeringHooks.clearanceLean(player):CartMotionSync.pressure(player));
             if(rigid
                 && (CartShopping.model(name)?CartShopping.align(transform,CartTransition.model(player.getPrimaryHandItem()),
                         player.getPrimaryHandItem().worldScale,state.delta)
-                    :profile!=null?alignWheelbarrow(transform,profile,lean,pressure,handoff?0:CartLegPace.woodenGaitShift(player),state.delta)
+                    :profile!=null?alignWheelbarrow(transform,profile,lean,pressure,handoff?0:CartLegPace.woodenGaitShift(player,
+                        CartGrip.nativeSpine(slot,instance.parent,state.spine)?state.spine:null),state.delta)
                     :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                         contact(instance.modelScript.getName()),lean,state.delta))) {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.

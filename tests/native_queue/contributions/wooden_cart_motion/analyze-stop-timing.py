@@ -2,10 +2,16 @@
 from pathlib import Path
 import argparse
 import csv
+import importlib.util
 import json
 import math
 import re
 import statistics
+
+_clip_spec = importlib.util.spec_from_file_location('cart_native_clip_names', Path(__file__).with_name('clip_names.py'))
+_clip_names = importlib.util.module_from_spec(_clip_spec)
+_clip_spec.loader.exec_module(_clip_names)
+native_clip = _clip_names.native_clip
 
 CASES = {f'male-{cargo}-{gait}-stop' for cargo in ('empty', 'full') for gait in ('run', 'sprint')}
 GAP_MS = 200
@@ -120,7 +126,7 @@ def analyze(profile, text, selected_cases=None):
                 weight, time, rate = float(weight), float(time), float(rate)
                 require(all(math.isfinite(v) for v in (weight, time, rate)), 'Nonfinite native track')
                 require(0 <= weight <= 1.001 and rate >= 0 and playing in ('true', 'false'), 'Invalid native track')
-                if name in ('Bob_RunToStop2H_Heavy', 'Bob_SprintToStop2h_Heavy') and weight > .001:
+                if native_clip(name) in ('Bob_RunToStop2H_Heavy', 'Bob_SprintToStop2h_Heavy') and weight > .001:
                     row['heavy'].append(dict(name=name, weight=weight, time=time, rate=rate))
             samples[row['case']].append(row)
     windows = [(int(wall), int(wall)+16000) for _, _, wall in starts]
@@ -189,7 +195,7 @@ def analyze(profile, text, selected_cases=None):
                                 lastAfterDirectionReleaseMs=heavy[-1][0]['wall']-direction if heavy else None,
                                 maxWeight=max((track['weight'] for _, track in heavy), default=0),
                                 rates=sorted({track['rate'] for _, track in heavy}),
-                                behaviorMatchesExpectation=names == [expected])
+                                behaviorMatchesExpectation=sorted({native_clip(name) for name in names}) == [expected])
             stops.append(dict(route=route, modifierLeadMs=direction-modifier, fromModifierRelease=from_modifier,
                               fromDirectionRelease=from_direction, heavyTrack=heavy_report,
                               wheelRelativeSettling=pose_settling(recorded, rest, modifier, direction),

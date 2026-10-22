@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <animNode>
 	<m_Name>ToolkitWoodCartPivotWalk</m_Name>
-	<m_AnimName>Bob_Idle</m_AnimName>
+	<m_AnimName>Toolkit_CartPivot_Idle</m_AnimName>
 	<m_Priority>11</m_Priority>
 	<m_ConditionPriority>201</m_ConditionPriority>
 	<m_BlendTime>0.2</m_BlendTime>
@@ -52,31 +52,31 @@
 	<m_Scalar>ToolkitCartStepX</m_Scalar>
 	<m_Scalar2>ToolkitCartStepY</m_Scalar2>
 	<m_2DBlends referenceID="1">
-		<m_AnimName>Bob_Idle</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_Idle</m_AnimName>
 		<m_XPos>0.00</m_XPos>
 		<m_YPos>0.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="2">
-		<m_AnimName>Bob_Walk</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_Walk</m_AnimName>
 		<m_XPos>0.00</m_XPos>
 		<m_YPos>1.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="3">
-		<m_AnimName>Bob_WalkBwdNoAim1Hand</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_Backward</m_AnimName>
 		<m_XPos>0.00</m_XPos>
 		<m_YPos>-1.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="4">
-		<m_AnimName>Toolkit_WoodCartPivot_Right</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_WoodRight</m_AnimName>
 		<m_XPos>1.00</m_XPos>
 		<m_YPos>0.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="5">
-		<m_AnimName>Toolkit_WoodCartPivot_Left</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_WoodLeft</m_AnimName>
 		<m_XPos>-1.00</m_XPos>
 		<m_YPos>0.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
@@ -108,7 +108,7 @@
 	</m_Conditions>
 	<m_Transitions>
 		<m_Target>ToolkitCartIdle</m_Target>
-		<m_AnimName>Bob_RunToStop2H_Heavy</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_StopRun</m_AnimName>
 		<m_blendInTime>.20</m_blendInTime>
 		<m_blendOutTime>0.60</m_blendOutTime>
 		<m_speedScale>1.0</m_speedScale>
@@ -130,7 +130,7 @@
 	</m_Transitions>
 	<m_Transitions>
 		<m_Target>ToolkitCartIdle</m_Target>
-		<m_AnimName>Bob_SprintToStop2h_Heavy</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_StopSprint</m_AnimName>
 		<m_blendInTime>.22</m_blendInTime>
 		<m_blendOutTime>0.60</m_blendOutTime>
 		<m_speedScale>1.0</m_speedScale>

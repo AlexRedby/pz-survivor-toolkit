@@ -16,6 +16,7 @@ import zombie.iso.Vector2;
 
 /** Game-thread compensation for directional clips with different root-motion speeds. */
 public final class CartLegPace {
+    private static final float MAX_FAST_CLEARANCE=.24f;
     private record Velocity(String bone, BoneAxis axis, double x, double y) {}
     // Native getTotalTranslation builds a frame list; clips are immutable after loading.
     private static final WeakHashMap<AnimationClip, Velocity> velocities = new WeakHashMap<>();
@@ -188,14 +189,20 @@ public final class CartLegPace {
         return null;
     }
 
+    static boolean brakeClip(String name) {
+        if(name==null) return false;
+        return switch(name) {
+            case "Bob_RunToStop2H_Heavy", "Bob_SprintToStop2h_Heavy",
+                 "Toolkit_CartPivot_StopRun", "Toolkit_CartPivot_StopSprint" -> true;
+            default -> false;
+        };
+    }
+
     private static AnimationTrack brakeTrack(LiveAnimNode node) {
         if(!"ToolkitCartIdle".equals(node.getName()) || !node.isTransitioningIn()) return null;
         var track=node.getTransitionInTrack();
         if(track==null) return null;
-        return switch(track.getName()) {
-            case "Bob_RunToStop2H_Heavy", "Bob_SprintToStop2h_Heavy" -> track;
-            default -> null;
-        };
+        return brakeClip(track.getName())?track:null;
     }
 
     static AnimationTrack brakeTrack(IsoPlayer player) {
@@ -222,19 +229,30 @@ public final class CartLegPace {
 
     /** Model-Z grip clearance follows each native gait, including outgoing tracks. */
     public static float woodenGaitShift(IsoPlayer player) {
+        return woodenGaitShift(player,null);
+    }
+
+    static float woodenGaitShift(IsoPlayer player,org.joml.Vector3fc spine) {
         if (player == null) return 0;
         float side=Math.min(woodenSideShift(player),CartSteeringHooks.sideClearance(player));
         // Bank and Strafe provide the same shaft clearance; do not stack their advances.
         side=Math.min(0,side-CartSteeringMath.woodenShift((float)CartSteeringHooks.clearanceLean(player),0));
-        return Math.min(woodenFastShift(player),side);
+        return Math.min(woodenFastShift(player,spine),side);
     }
 
     static float woodenFastShift(IsoPlayer player) {
+        return woodenFastShift(player,null);
+    }
+
+    static float woodenFastShift(IsoPlayer player,org.joml.Vector3fc displayedSpine) {
         var animator = player.getAdvancedAnimator();
         float gait=animator == null || animator.getRootLayer() == null ? 0
             : woodenGaitShift(animator.getRootLayer().getLiveAnimNodes());
-        float weight=gait<0 || player.isRunning() || player.isSprinting()?1:CartSteeringHooks.fastPoseWeight(player);
+        // Gait flags change before the pose blends. Follow the displayed tracks,
+        // including the braking clip, instead of switching the clearance reserve on/off.
+        float weight=CartAnimationBlend.fastWeight(player);
         if(weight==0) return gait;
+        if(displayedSpine!=null) return woodenBodyShift(gait,displayedSpine.x(),displayedSpine.z(),weight);
         if(!player.hasAnimationPlayer()) return gait;
         var animation=player.getAnimationPlayer();
         if(animation==null || !animation.hasSkinningData()) return gait;
@@ -242,7 +260,7 @@ public final class CartLegPace {
         if(spine==null || spine<0 || spine>=animation.getModelTransformsCount()) return gait;
         var pose=animation.getModelTransformAt(spine);
         // AnimationPlayer stores the model pose transposed, as in the native render palette.
-        return pose==null?gait:gait+weight*(woodenBodyShift(gait,pose.m03,pose.m23)-gait);
+        return pose==null?gait:woodenBodyShift(gait,pose.m03,pose.m23,weight);
     }
 
     static float woodenSideShift(IsoPlayer player) {
@@ -255,9 +273,14 @@ public final class CartLegPace {
         double weight=0;
         for(var node:nodes) if("ToolkitCartPivotWalk".equals(node.getName()) || "ToolkitWoodCartPivotWalk".equals(node.getName()))
             for(var track:node.getMainAnimationTracks()) {
-                if(!"Bob_StrafeNoAim_Left".equals(track.getName()) && !"Bob_StrafeNoAim_Right".equals(track.getName())
-                    && !"Toolkit_WoodCartPivot_Left".equals(track.getName())
-                    && !"Toolkit_WoodCartPivot_Right".equals(track.getName())) continue;
+                boolean side=switch(track.getName()) {
+                    case "Bob_StrafeNoAim_Left", "Bob_StrafeNoAim_Right",
+                         "Toolkit_WoodCartPivot_Left", "Toolkit_WoodCartPivot_Right",
+                         "Toolkit_CartPivot_StrafeLeft", "Toolkit_CartPivot_StrafeRight",
+                         "Toolkit_CartPivot_WoodLeft", "Toolkit_CartPivot_WoodRight" -> true;
+                    default -> false;
+                };
+                if(!side) continue;
                 float blend=track.getBlendWeight();
                 if(Float.isFinite(blend) && blend>0) weight+=blend;
             }
@@ -273,12 +296,24 @@ public final class CartLegPace {
     }
 
     static float woodenBodyShift(float gait, float x, float z) {
+        return woodenBodyShift(gait,x,z,1);
+    }
+
+    static float woodenBodyShift(float gait, float x, float z, float reserveWeight) {
         if(!Float.isFinite(x) || !Float.isFinite(z)) return gait;
+        if(!Float.isFinite(reserveWeight) || reserveWeight<0 || reserveWeight>1) return gait;
         // shortcut: B42 idle pelvis and shaft clearance; recalibrate this envelope for another rig/stance.
         float body=z-.0109462375f-3*Math.abs(x+4.6785715e-7f);
-        float intrusion=Math.max(0,gait-body),t=Math.min(1,intrusion/.005f);
-        // Keep clothing clear as the native pelvis moves across the handles during a gait handoff.
-        return Math.max(-.24f,Math.min(gait,body-.025f*t*t*(3-2*t)));
+        // This is a position envelope, not a motion amplifier: the former 5mm
+        // trigger inserted 25mm of reserve and magnified a small gait sway.
+        // Its reserve now enters through the same native fast-pose blend above.
+        // Retain the measured intrusion inside the fast pose's available corridor.
+        // Walk has legitimate pelvis sway too: its proxy must not keep the full
+        // fast correction until the final track vanishes, then release it at once.
+        // Fade the existing maximum corridor, rather than multiplying every
+        // measured intrusion and weakening protection throughout the whole blend.
+        float envelope=Math.max(-MAX_FAST_CLEARANCE*reserveWeight,body-.025f*reserveWeight);
+        return Math.max(-MAX_FAST_CLEARANCE,Math.min(gait,envelope));
     }
 
     static float woodenGaitShift(Iterable<LiveAnimNode> nodes) {

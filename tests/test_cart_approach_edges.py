@@ -93,6 +93,27 @@ class ApproachChecks(unittest.TestCase):
         self.assertTrue(report['functionalPass'] and report['approachVerified'])
         self.assertEqual(len(report['cases']),7)
 
+    def test_entry_contact_requires_actual_pre_menu_walk_and_outfit(self):
+        def entry(row):
+            elapsed=row['elapsed']
+            row.update(entryContactRepro=True,female=False,pantsType='Base.Trousers_JeanBaggy',pantsID=42,pantsModel='Skinned/Clothes/Bob_Trousers',
+                       preWalkStartedAt=row['start']+300 if elapsed>=300 else -1,
+                       preWalkReleasedAt=row['start']+650 if elapsed>=650 else -1,
+                       preWalkSeen=elapsed>=650,preWalkDistance=.2*max(0,min(1,(elapsed-300)/350)),
+                       preWalkDrive=int(300<=elapsed<650))
+            row['x']+=row['preWalkDistance']
+        text,life=change_rows(fixture(),entry)
+        lines=[line for line in text.splitlines() if ('container-equip' in line or line.startswith('[WOOD_BANK] RUN_STARTED'))]
+        lines+=['[CART_APPROACH] CLEANUP_COMPLETE','[WOOD_BANK] ALL_COMPLETE cases=1']
+        text='\n'.join(lines);life=[r for r in life if r['nativeActionId']==0]
+        self.assertTrue(analyzer.analyze(text,life,scenes=['container-equip'],entry_contact=True)['functionalPass'])
+        for field,value in [('preWalkSeen',False),('preWalkDistance',0),('pantsType','Base.Skirt')]:
+            changed=change_rows((text,life),lambda row:row.update({field:value}))
+            with self.subTest(field=field),self.assertRaises(AssertionError):
+                analyzer.analyze(*changed,scenes=['container-equip'],entry_contact=True)
+        with self.assertRaisesRegex(AssertionError,'moved before'):
+            analyzer.analyze(text,life,scenes=['container-equip'])
+
     def test_native_completion_must_be_exactly_once(self):
         for mode in ('missing','duplicate','wrong-type'):
             values=list(copy.deepcopy(fixture()))

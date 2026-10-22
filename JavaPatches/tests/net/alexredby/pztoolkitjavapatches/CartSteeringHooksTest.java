@@ -946,6 +946,59 @@ public final class CartSteeringHooksTest {
         } finally {CartSteeringHooks.reset(player);time.fpsMultiplier=old;}
     }
 
+    private static void gaitBlendContinuity() {
+        for(int gait:new int[]{CartLocomotionBlend.WALK,CartLocomotionBlend.RUN,CartLocomotionBlend.SPRINT}) {
+        float previousX=Float.NaN,previousY=Float.NaN;
+        for(int fps:new int[]{30,60,144}) {
+            var blend=new CartLocomotionBlend();
+            blend.update(-.6f,.8f,1.0/fps,gait);
+            float oldX=blend.x;
+            for(int frame=0;frame<fps;frame++) {
+                blend.update(.6f,.8f,1.0/fps,gait);
+                check(Math.abs(Math.hypot(blend.x,blend.y)-1)<1e-7 && blend.y>0,
+                    "gait steering changes must retain stride radius and forward travel: "+gait+"/"+fps);
+                check(blend.x>=oldX && blend.x<=.600001f,
+                    "gait steering interpolation must not overshoot or reverse its response: "+gait+"/"+fps);
+                if(frame==0) check(blend.x<0,"one native frame must not flip the entire walking field: "+fps);
+                oldX=blend.x;
+                if(frame==fps/3-1 && fps%3==0) {
+                    if(Float.isFinite(previousX))
+                        check(Math.abs(blend.x-previousX)<2e-7 && Math.abs(blend.y-previousY)<2e-7,
+                            "equal elapsed time must yield the same gait field at different native frame rates");
+                    previousX=blend.x;previousY=blend.y;
+                }
+            }
+            check(Math.abs(blend.x-.6f)<1e-6 && Math.abs(blend.y-.8f)<1e-6,
+                "steady gait must recover its exact requested direction: "+gait+"/"+fps);
+            blend.update(-.6f,.8f,0,gait);
+            check(Math.abs(blend.x-.6f)<1e-6,"zero time must not advance the visual field");
+            blend.update(-.6f,.8f,Double.NaN,gait);
+            check(Math.abs(blend.x-.6f)<1e-6,"unknown time must not advance the visual field");
+            // Idle, reversal and special gait ownership must discard any old forward direction.
+            for(float[] target:new float[][]{{0,0},{.3f,-.4f},{.5f,0}}) {
+                blend.update(-.6f,.8f,1.0/fps,gait);
+                blend.update(target[0],target[1],1.0/fps,gait);
+                check(blend.x==target[0] && blend.y==target[1],"non-forward fields must pass through unchanged");
+                blend.update(.6f,.8f,1.0/fps,gait);
+                check(blend.x==.6f && blend.y==.8f,"forward restart must discard the preceding field direction");
+            }
+            blend.update(-.6f,.8f,1.0/fps,0);
+            check(blend.x==-.6f && blend.y==.8f,"another pose owner must receive the raw field");
+            blend.update(.6f,.8f,1.0/fps,gait);
+            check(blend.x==.6f && blend.y==.8f,"a completed pose owner must not leave a filtered direction behind");
+            blend.update(Float.NaN,.8f,1.0/fps,gait);
+            blend.update(-.6f,.8f,1.0/fps,gait);
+            check(blend.x==-.6f && blend.y==.8f,"invalid input must not poison the next native Walk field");
+            for(int incoming:new int[]{CartLocomotionBlend.WALK,CartLocomotionBlend.RUN,CartLocomotionBlend.SPRINT}) {
+                blend.update(-.6f,.8f,1.0/fps,gait);
+                blend.update(.6f,.8f,1.0/fps,incoming);
+                if(incoming!=gait)
+                    check(blend.x==.6f && blend.y==.8f,"a different native gait must begin from its own raw field");
+            }
+        }
+        }
+    }
+
     private static double nativeBudget(Player player, AnimNode node, Map<String,AnimationClip> clips, double dt) {
         var pick=node.blend2dPicker.Pick(player.stepX,player.stepY,new Anim2DBlendPicker.PickResults());
         double rootX=0,rootY=0;
@@ -958,6 +1011,128 @@ public final class CartSteeringHooksTest {
             rootX+=Math.min(1,weight)*root.x/clip.getDuration();rootY+=Math.min(1,weight)*root.y/clip.getDuration();
         }
         return player.legPace*Math.hypot(rootX,rootY)*dt;
+    }
+
+    private static void forwardWalkBudget(Player player,Map<?,?> states,AnimNode node,
+                                           Map<String,AnimationClip> clips) throws Exception {
+        player.walkSpeed=.56f;player.run=player.sprint=false;player.moving=true;
+        for(int fps:new int[]{30,60,144}) {
+            GameTime.getInstance().fpsMultiplier=60f/fps;
+            double dt=GameTime.getInstance().getRealworldSecondsSinceLastUpdate();
+            CartSteeringHooks.reset(player);player.actualX=player.actualY=0;
+            CartSteeringHooks.heading(player);Object state=states.get(player);
+            // Use the real accepted-step producer and production picker/cadence. There is no
+            // pending displacement here, so the existing native start budget provides the field.
+            boolean filtered=false;
+            for(int frame=0;frame<fps*2;frame++) {
+                field(state,"heading").setDouble(state,0);
+                field(state,"target").setDouble(state,(frame/(fps/3)%2==0?1:-1)*Math.PI/2);
+                field(state,"hasInput").setBoolean(state,true);
+                CartSteeringHooks.heading(player);
+                var requested=(CartSteeringMath.Step)field(state,"requested").get(state);
+                double length=Math.hypot(requested.x(),requested.y());
+                float rawX=(float)(player.walkSpeed*requested.y()/length);
+                float rawY=(float)(player.walkSpeed*requested.x()/length);
+                float desired=CartLegPace.targetSpeed(player,rawX,rawY);
+                check(Float.isFinite(desired) && desired>0,"forward Walk must retain the native requested root calibration");
+                check(Math.abs(Math.hypot(player.stepX,player.stepY)-Math.hypot(rawX,rawY))<1e-7,
+                    "filtered Walk must preserve the requested stride radius");
+                check(Math.abs(nativeBudget(player,node,clips,dt)/dt-desired)<2e-6,
+                    "effective native picker must retain the raw requested root budget: "+fps+"/"+frame);
+                filtered|=Math.abs(player.stepX-rawX)>.001f;
+                check(field(state,"visualSpeed").getFloat(state)==-1,
+                    "ordinary Walk filtering must leave the native outgoing movement budget in control");
+            }
+            check(filtered,"slalom fixture must exercise a different effective native field: "+fps);
+            // A Run frame owns its field immediately, and the next Walk begins from its own raw field.
+            player.run=true;field(state,"hasInput").setBoolean(state,true);CartSteeringHooks.heading(player);
+            player.run=false;field(state,"sprintMomentum").setBoolean(state,false);
+            field(state,"target").setDouble(state,Math.PI/2);field(state,"hasInput").setBoolean(state,true);
+            CartSteeringHooks.heading(player);
+            var requested=(CartSteeringMath.Step)field(state,"requested").get(state);
+            double length=Math.hypot(requested.x(),requested.y());
+            check(Math.abs(player.stepX-player.walkSpeed*requested.y()/length)<1e-7
+                && Math.abs(player.stepY-player.walkSpeed*requested.x()/length)<1e-7,
+                "Run/Walk boundary must reset the visual field: "+fps);
+            // An outgoing fast pose must not disable continuity inside the current Walk gait.
+            var layer=AnimLayer.alloc(player,player.animator);
+            var root=AdvancedAnimator.class.getDeclaredField("rootLayer");root.setAccessible(true);
+            Object previousRoot=root.get(player.animator);root.set(player.animator,layer);
+            var source=new AnimNode();source.name="ToolkitCartPivotRun";
+            var outgoing=LiveAnimNode.alloc(layer,source);
+            var track=AnimationTrack.alloc();track.startClip(clips.get("Bob_Walk"),true,0);
+            outgoing.addMainTrack(track);layer.getLiveAnimNodes().add(outgoing);
+            try {
+                for(float weight:new float[]{.4f,0}) {
+                    track.setBlendWeight(weight);
+                    field(state,"target").setDouble(state,-Math.PI/2);field(state,"hasInput").setBoolean(state,true);
+                    CartSteeringHooks.heading(player);
+                    requested=(CartSteeringMath.Step)field(state,"requested").get(state);
+                    length=Math.hypot(requested.x(),requested.y());
+                    check(Math.abs(player.stepX-player.walkSpeed*requested.y()/length)>.001f,
+                        "outgoing fast-pose weights must not interrupt the current gait filter: "+fps+"/"+weight);
+                }
+            } finally {root.set(player.animator,previousRoot);}
+        }
+    }
+
+    private static void forwardFastBudget(Player player,Map<?,?> states,Map<String,AnimationClip> clips) throws Exception {
+        var project=java.nio.file.Path.of(System.getProperty("pz.test.project","."));
+        var media=project.resolve("PZSurvivorToolkit/42/media");
+        var nodes=new java.util.ArrayList<AnimNode>();
+        for(String mode:new String[]{"run","sprint"}) {
+            var node=AnimNode.Parse(media.resolve("AnimSets/player/"+mode+"/toolkit_cart_pivot_"+mode+".xml").toString());
+            check(node!=null && node.blend2dPicker!=null,"fast regression must use the production native gait picker");
+            var animState=new AnimState();animState.nodes.add(node);player.animator.animSet.states.put(mode,animState);
+            nodes.add(node);
+            for(var blend:node.blends2d) if(!clips.containsKey(blend.animName)) {
+                var folder=blend.animName.startsWith("Toolkit_")?media.resolve("anims_X/Bob")
+                    :java.nio.file.Path.of("media/anims_X/Bob");
+                clips.put(blend.animName,importClip(folder.resolve(blend.animName+".x")));
+            }
+            String nativeName=mode.equals("run")?"Bob_Run":"Bob_Sprint";
+            if(!clips.containsKey(nativeName))
+                clips.put(nativeName,importClip(java.nio.file.Path.of("media/anims_X/Bob/"+nativeName+".x")));
+        }
+        player.walkSpeed=.8f;player.moving=true;
+        for(int fps:new int[]{30,60,144}) for(boolean sprint:new boolean[]{false,true}) {
+            player.run=!sprint;player.sprint=sprint;
+            GameTime.getInstance().fpsMultiplier=60f/fps;
+            double dt=GameTime.getInstance().getRealworldSecondsSinceLastUpdate();
+            CartSteeringHooks.reset(player);player.actualX=player.actualY=0;CartSteeringHooks.heading(player);
+            Object state=states.get(player);
+            var pace=(CartLegPace.Ramp)field(state,"pace").get(state);
+            pace.reset(CartLegPace.targetSpeed(player,0,1));
+            AnimNode node=nodes.get(sprint?1:0);boolean filtered=false;
+            // Exercise the incoming production picker and its imported root clips below the
+            // cadence cap. This is not a whole-animation/deferred-movement blend integration test.
+            for(int frame=0;frame<fps*2;frame++) {
+                field(state,"heading").setDouble(state,0);
+                field(state,"target").setDouble(state,(frame/(fps/3)%2==0?1:-1)*Math.PI/4);
+                field(state,"hasInput").setBoolean(state,true);CartSteeringHooks.heading(player);
+                var requested=(CartSteeringMath.Step)field(state,"requested").get(state);
+                double length=Math.hypot(requested.x(),requested.y());
+                float rawX=(float)(requested.y()/length),rawY=(float)(requested.x()/length);
+                float desired=CartLegPace.targetSpeed(player,rawX,rawY);
+                check(Float.isFinite(desired) && desired>0 && player.legPace<2.49f,
+                    "fast fixture must use calibrated root motion in a feasible uncapped field: "+fps+"/"+sprint+"/"+frame);
+                check(Math.abs(Math.hypot(player.stepX,player.stepY)-1)<1e-7,
+                    "fast gait filtering must retain a full stride radius");
+                check(Math.abs(nativeBudget(player,node,clips,dt)/dt-desired)<2e-6,
+                    "effective fast picker cadence must retain the raw desired budget: "+fps+"/"+sprint+"/"+frame);
+                filtered|=Math.abs(player.stepX-rawX)>.001f;
+            }
+            check(filtered,"ordinary forward fast movement must use a continuous effective field: "+fps+"/"+sprint);
+            player.run=sprint;player.sprint=!sprint;
+            field(state,"target").setDouble(state,-Math.PI/4);field(state,"hasInput").setBoolean(state,true);
+            CartSteeringHooks.heading(player);
+            var requested=(CartSteeringMath.Step)field(state,"requested").get(state);
+            double length=Math.hypot(requested.x(),requested.y());
+            check(Math.abs(player.stepX-requested.y()/length)<1e-7
+                && Math.abs(player.stepY-requested.x()/length)<1e-7,
+                "Run/Sprint boundary must begin from the incoming gait's raw field: "+fps+"/"+sprint);
+        }
+        player.run=player.sprint=false;
     }
 
     private static Object nativeStart(Player player, Map<?,?> states, IsoPlayer.InputState input, double target) throws Exception {
@@ -1101,6 +1276,9 @@ public final class CartSteeringHooksTest {
             var folder=blend.animName.startsWith("Toolkit_")?media.resolve("anims_X/Bob"):nativeFolder;
             clips.put(blend.animName,importClip(folder.resolve(blend.animName+".x")));
         }
+        // Raw desired-speed calibration and outgoing fixtures still use the stock source.
+        for(String name:List.of("Bob_Walk","Bob_WalkBwdNoAim1Hand"))
+            clips.put(name,importClip(nativeFolder.resolve(name+".x")));
         var nativeSide=importClip(nativeFolder.resolve("Bob_StrafeNoAim_Left.x"));
         double nativeSideSpeed=nativeSide.getTranslationLength("Translation_Data",BoneAxis.Y)/nativeSide.getDuration();
         check(nativeSideSpeed>0,"native reference must contain measured lateral root motion");
@@ -1153,6 +1331,8 @@ public final class CartSteeringHooksTest {
                 player.inputX=player.inputY=0;CartSteeringHooks.input(player,input);player.moving=false;
                 CartSteeringHooks.heading(player);
             }
+            forwardWalkBudget(player,states,node,clips);
+            forwardFastBudget(player,states,clips);
             nativeDirectionChanges(player,states,input,node,clips);
         } finally {
             CartSteeringHooks.reset(player);time.fpsMultiplier=oldFps;model.set(ModelManager.instance,oldModel);
@@ -1160,6 +1340,7 @@ public final class CartSteeringHooksTest {
     }
 
     public static void main(String[] args) throws Exception {
+        gaitBlendContinuity();
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var tiny=CartSteeringMath.step(0,0,.0002,1.0/60,0);
         check(!CartSteeringHooks.blockedStep(tiny,10825.5f,10142.5f,0),

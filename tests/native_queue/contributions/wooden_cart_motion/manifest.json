@@ -6,6 +6,7 @@
   "runner_adapter": null,
   "exclusive_native_process": true,
   "sources": {
+    "clip_names": "clip_names.py",
     "java": "Main.java",
     "impact_watch_checks": "ImpactWatchChecks.java",
     "test_area": "test-area.lua",

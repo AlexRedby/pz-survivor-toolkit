@@ -25,6 +25,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.217
+
+- **Cart animation:** Use a common root frame for the cart locomotion clips and match their ordinary transition times. Preserve native body and leg poses, stride timing and deferred movement while removing movement introduced by incompatible root frames and overlapping blend weights.
+
 ### 0.1.216
 
 - **Settings:** Update only affected consumers after Mod Options commits all controls. Shortcut and unrelated option changes no longer clear ground highlights or refresh inventory, media windows and context menus. Preserve immediate ground-disable cleanup on pause, Wishlist ground settings, tag-dependent menus and live feature switches.
@@ -32,6 +36,7 @@ Version labels come from committed component metadata, including changes made wi
 ### 0.1.215
 
 - **Action queue:** Bind observed P4 tool returns to the operation that actually borrowed each item. Activate per-item cleanup records only after the native pickup transaction and exact inventory effect are confirmed; preserve separate ownership through merged transfers and reject ambiguous or stale borrowing episodes. Native scheduling and queue edit permissions remain unchanged.
+
 
 ### 0.1.214
 
@@ -997,6 +1002,13 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.45
+
+- **Wooden wheelbarrow:** Add a Blender-authored, zero-endpoint clearance envelope while the outgoing inventory-equip animation retires. Preserve native leg motion, action duration, closed grip and the final cart stance. The selected male/full macOS SP reproduction is clear in captured samples; female, Host and complete rendered-frame coverage remain open.
+
+- **Changed:** Coordinate cart locomotion direction, native cadence and clearance across animation blends. Read the displayed body palette and account for masked cart layers and outgoing pelvis/root poses when calculating the fast-pose reserve; fade the available clearance corridor continuously and remove the narrow displacement amplification threshold.
+- **Development:** Add reproducible native locomotion conversion, final-draw trajectory comparisons and a Blender bridge for editing rigid cart clips before baking them back into native assets.
 
 ### 0.1.44
 

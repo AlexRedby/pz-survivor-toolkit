@@ -141,6 +141,24 @@ class CartMPWallTests(unittest.TestCase):
         with patch.object(WALL['importlib'].util,'spec_from_file_location',side_effect=load),patch.object(WALL['importlib'].util,'module_from_spec',return_value=fake):
             return COMMON['analyze'](self.root)
 
+    def test_exact_canonical_walk_and_backward_aliases_cover_tracks_and_progression(self):
+        for role in COMMON['ROLES']:
+            for row in self.rows(role, '[CART_MP_STATE] '):
+                row['tracks'] = row['tracks'].replace('Bob_WalkBwdNoAim1Hand=', 'Toolkit_CartPivot_Backward=').replace('Bob_Walk=', 'Toolkit_CartPivot_Walk=')
+                for clip in row.get('trackProgress', []):
+                    if clip['name'] == 'Bob_Walk': clip['name'] = 'Toolkit_CartPivot_Walk'
+                    elif clip['name'] == 'Bob_WalkBwdNoAim1Hand': clip['name'] = 'Toolkit_CartPivot_Backward'
+        self.assertTrue(self.analyze()['evidenceComplete'])
+        canonical = copy.deepcopy(self.logs)
+        for wrong in ('Toolkit_CartPivot_Backwards', 'Toolkit_CartPivot_Walk', 'Toolkit_CartPivot_StopRun'):
+            self.logs = copy.deepcopy(canonical)
+            for row in self.rows('client1', '[CART_MP_STATE] '):
+                row['tracks'] = row['tracks'].replace('Toolkit_CartPivot_Backward=', wrong + '=')
+                for clip in row.get('trackProgress', []):
+                    if clip['name'] == 'Toolkit_CartPivot_Backward': clip['name'] = wrong
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                self.analyze()
+
     def test_complete_bounded_evidence_keeps_visual_limit(self):
         report=self.analyze()
         self.assertTrue(report['evidenceComplete'])

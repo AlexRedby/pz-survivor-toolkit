@@ -29,6 +29,28 @@ public final class CartGrip {
     private static final ThreadLocal<Matrices> matrices=ThreadLocal.withInitial(Matrices::new);
     private static final WeakHashMap<AnimationClip,WeakHashMap<SkinningData,Quaternionf>> headNeutrals=new WeakHashMap<>();
 
+    /** Read the body being drawn, rather than a newer live AnimationPlayer pose. */
+    static boolean nativeSpine(ModelSlotRenderData slot,ModelInstance owner,Vector3f position) {
+        for(var data:slot.modelData) if(data.modelInstance==owner && data.matrixPalette!=null
+            && owner.model!=null && owner.model.tag instanceof SkinningData skin) {
+            Integer index=skin.boneIndices.get("Bip01_Spine");
+            var palette=data.matrixPalette;
+            if(index==null || index<0 || (index+1)*16>palette.limit()
+                || index>=skin.boneOffset.size() || skin.boneOffset.get(index)==null) return false;
+            var scratch=matrices.get();int before=palette.position();
+            try {
+                palette.position(index*16);scratch.skin.load(palette);
+                PZMath.convertMatrix(scratch.skin,scratch.target).transpose();
+                PZMath.convertMatrix(skin.boneOffset.get(index),scratch.adjustment).transpose().invert();
+                scratch.target.mul(scratch.adjustment);
+                if(!scratch.target.isFinite()) return false;
+                scratch.target.getTranslation(position);
+                return position.isFinite();
+            } finally {palette.position(before);}
+        }
+        return false;
+    }
+
     private static boolean upperBody(SkinningBone bone) {
         for(;bone!=null;bone=bone.parent) {
             // Native thighs branch from Spine too; keep their entire walking chains live.

@@ -61,6 +61,14 @@ class CartStopAnalyzerTest(unittest.TestCase):
    report=json.loads(output.read_text())if output.exists()else None
    return result,report
 
+ def test_canonical_stops_keep_raw_names_and_reject_unknown_or_wrong_stop(self):
+  log=self.log.replace('Bob_RunToStop2H_Heavy','Toolkit_CartPivot_StopRun').replace('Bob_SprintToStop2h_Heavy','Toolkit_CartPivot_StopSprint')
+  result,report=self.analyze(log)
+  self.assertEqual(result.returncode,0,result.stderr)
+  self.assertEqual(report['cases'][0]['stops'][0]['stopClips'],['Toolkit_CartPivot_StopRun'])
+  for wrong in ('Toolkit_CartPivot_StopRnu','Toolkit_CartPivot_StopSprint','Toolkit_CartPivot_Run'):
+   self.assertNotEqual(self.analyze(log.replace('Toolkit_CartPivot_StopRun',wrong))[0].returncode,0)
+
  def test_complete_protocol(self):
   result,report=self.analyze(self.log)
   self.assertEqual(result.returncode,0,result.stderr)

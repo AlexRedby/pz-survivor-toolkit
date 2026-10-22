@@ -20,6 +20,7 @@ def check_manifest():
     assert manifest["live_after_parameterization"] == "reverse_only_2026-10-16"
     assert manifest["exclusive_native_process"] is True
     assert manifest["sources"] == {
+        "clip_names": "clip_names.py",
         "java": "Main.java", "kahlua_checks": "KahluaChecks.java", "impact_watch_checks": "ImpactWatchChecks.java", "test_area": "test-area.lua",
         "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua", "reverse_scenario": "scenario-reverse.lua", "reverse_analyzer": "analyze-reverse.py", "reversal_scenario": "scenario-reversal.lua", "stop_scenario": "scenario-stop.lua", "stop_analyzer": "analyze-stop.py",
         "evidence": "evidence/README.md",
@@ -56,6 +57,7 @@ def check_manifest():
                 "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py", "analyze-brace.py"}
     allowed |= {"scenario-controls.lua", "scenario-variants.lua", "scenario-native-e.lua", "scenario-pivot.lua", "analyze-pivot.py",
                 "scenario-motion-matrix.lua", "analyze-motion-matrix.py", "scenario-obstacle-matrix.lua", "analyze-obstacle-matrix.py"}
+    allowed.add("clip_names.py")
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():

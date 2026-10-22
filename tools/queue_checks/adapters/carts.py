@@ -166,6 +166,15 @@ def _intake(project, suite):
 
 def validate(selection):
     suite = selection['suite']
+    options = selection.get('options', {})
+    if 'cart_entry_contact_repro' in options:
+        if (suite != SP or selection['cases'] != ['approach']
+                or type(options['cart_entry_contact_repro']) is not bool):
+            raise ValueError('cart_entry_contact_repro requires a boolean in the SP approach case')
+        chosen = options.get('cart_scenes')
+        if options['cart_entry_contact_repro'] and (not isinstance(chosen, list) or not chosen
+                or any(name not in ('container-equip', 'wrong-side') for name in chosen)):
+            raise ValueError('cart_entry_contact_repro requires explicit container-equip/wrong-side scenes')
     cases = SP_CASES if suite == SP else ['owner_observer_motion']
     if len(selection['cases']) != 1 or selection['cases'][0] not in cases or selection['mode'] != 'toolkit':
         raise ValueError('Cart candidates support one capture case in toolkit mode only')
@@ -187,6 +196,9 @@ def validate(selection):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
+    if 'cart_direct_fast_walk' in options:
+        if suite != SP or selection['cases'] != ['sprint'] or type(options['cart_direct_fast_walk']) is not bool:
+            raise ValueError('cart_direct_fast_walk requires a boolean in the SP sprint case')
     if 'cart_wall_exit' in options:
         if suite != MP or options.get('mp_host') is not True or options['cart_wall_exit'] not in ('left', 'right', 'front'):
             raise ValueError('cart_wall_exit requires left/right/front in a native MP Host selection')
@@ -301,6 +313,15 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         sp_probes += ('ShoppingWheelProbe',)
     probe_sources = ([mp / 'ClearanceProbe.java'] if selection['suite'] == MP else
                      [evidence / (name + '.java') for name in sp_probes])
+    if selection.get('options', {}).get('cart_entry_contact_repro'):
+        original = evidence / 'ClearanceProbe.java'
+        source_text = original.read_text()
+        anchor = 'private static final boolean FULL_TAIL_BONES = false;'
+        if source_text.count(anchor) != 1:
+            raise ValueError('Full entry-pose probe composition anchor changed')
+        composed = build / 'ClearanceProbe.java'
+        composed.write_text(source_text.replace(anchor, 'private static final boolean FULL_TAIL_BONES = true;'))
+        probe_sources = [composed if path == original else path for path in probe_sources]
     if not manual and not simple:
         _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
     probes = [] if manual or simple else ['ClearanceProbe'] if selection['suite'] == MP else list(sp_probes)
@@ -364,8 +385,12 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 motion.update(cartVariant=selection['options']['cart_variant'], cartType=VARIANTS[selection['options']['cart_variant']])
             if 'cart_authored_clip' in selection.get('options', {}):
                 motion['authoredClip'] = selection['options']['cart_authored_clip']
+            if 'cart_entry_contact_repro' in selection.get('options', {}):
+                motion['entryContactRepro'] = selection['options']['cart_entry_contact_repro']
             if 'cart_scenes' in selection.get('options', {}):
                 motion['scenes'] = selected_scenes(selection)
+            if selection['cases'] == ['sprint']:
+                motion['directFastWalk'] = selection.get('options', {}).get('cart_direct_fast_walk', False)
             if selection['cases'][0] in ('collision','footprint','brace','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit'): motion['footprint']=True
             if selection['cases'][0] == 'brace': motion['brace']=True
             if selection['cases'][0] == 'fast-slide': motion['fastSlide']=True
@@ -1139,6 +1164,8 @@ def verify(root, selection, catalog):
         if selection['suite'] == SP and selection['cases'] == ['approach']:
             command = [sys.executable, str(intake / 'analyze-approach.py'), '--profile', str(root / 'client1'),
                        '--log', str(logs['client1']), '--output', str(analysis / 'approach.json')]
+            if selection.get('options', {}).get('cart_entry_contact_repro'):
+                command.append('--entry-contact')
             if debug:
                 for scene in selected_scenes(selection): command += ['--scene', scene]
             evidence['analyzers'] = {'approach': _run(command, analysis, 'approach')}

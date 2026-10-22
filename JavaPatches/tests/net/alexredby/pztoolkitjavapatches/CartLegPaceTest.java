@@ -51,6 +51,12 @@ public final class CartLegPaceTest {
         var player=(Player)unsafe.allocateInstance(Player.class);
         var animation=(AnimationPlayer)unsafe.allocateInstance(AnimationPlayer.class);
         player.animation=animation;player.loaded=true;player.run=true;
+        player.animator=new AdvancedAnimator();
+        var layer=AnimLayer.alloc(player,player.animator);
+        var root=AdvancedAnimator.class.getDeclaredField("rootLayer");root.setAccessible(true);root.set(player.animator,layer);
+        var fast=live("ToolkitCartRun",true,clip("Bob_Run",1,0,0,"Translation_Data"));
+        fast.getMainAnimationTrackAt(0).setBlendWeight(1);
+        layer.getLiveAnimNodes().add(fast);
         var skinning=AnimationPlayer.class.getDeclaredField("skinningData");skinning.setAccessible(true);
         var transforms=AnimationPlayer.class.getDeclaredField("modelTransforms");transforms.setAccessible(true);
         close(CartLegPace.woodenGaitShift(player),0,"unloaded native skinning keeps gait fallback");
@@ -66,15 +72,21 @@ public final class CartLegPaceTest {
         var palette=new org.lwjgl.util.vector.Matrix4f[]{identity,pose};transforms.set(animation,palette);
         float[] before=new float[16];pose.store(java.nio.FloatBuffer.wrap(before));
         close(CartLegPace.woodenGaitShift(player),-.08594764,"native transposed Spine x/z drive shaft clearance");
+        var displayed=new org.joml.Vector3f(0,.5f,.0109462375f);
+        close(CartLegPace.woodenGaitShift(player,displayed),-.025,
+            "clearance follows the displayed snapshot instead of a newer live pose");
+        if(!displayed.equals(new org.joml.Vector3f(0,.5f,.0109462375f)))
+            throw new AssertionError("clearance changed the displayed Spine input");
         float[] after=new float[16];pose.store(java.nio.FloatBuffer.wrap(after));
         if(!java.util.Arrays.equals(before,after)) throw new AssertionError("pelvis binding changed the native model pose");
         pose.m03=0;pose.m23=-.03f;
         close(CartLegPace.woodenGaitShift(player),-.06594764,"native pelvis movement updates clearance independently of gait");
         player.run=false;
+        close(CartLegPace.woodenGaitShift(player),-.06594764,"cleared gait flags do not retire the displayed running pose");
+        fast.getMainAnimationTrackAt(0).setBlendWeight(.25f);
+        close(CartLegPace.woodenGaitShift(player),-.04719764,"only reserve fades; already blended body intrusion remains protected");
+        layer.getLiveAnimNodes().remove(fast);
         close(CartLegPace.woodenGaitShift(player),0,"ordinary Walk retains native cart position despite pelvis sway");
-        player.animator=new AdvancedAnimator();
-        var layer=AnimLayer.alloc(player,player.animator);
-        var root=AdvancedAnimator.class.getDeclaredField("rootLayer");root.setAccessible(true);root.set(player.animator,layer);
         var side=live("ToolkitCartPivotWalk",true,clip("Bob_StrafeNoAim_Left",1,0,0,"Translation_Data"));
         layer.getLiveAnimNodes().add(side);
         side.getMainAnimationTrackAt(0).setBlendWeight(.347241f);
@@ -85,12 +97,16 @@ public final class CartLegPaceTest {
         pose.m03=-.000058505f;pose.m23=.008871079f;
         close(CartLegPace.woodenGaitShift(player),-.085,"Strafe clearance survives the neutral Spine phase with protruding thigh");
         player.run=true;pose.m03=.03f;pose.m23=.014f;
+        fast.getMainAnimationTrackAt(0).setBlendWeight(1);
+        layer.getLiveAnimNodes().add(fast);
         close(CartLegPace.woodenGaitShift(player),CartLegPace.woodenBodyShift(0,pose.m03,pose.m23),
             "Strafe overlap cannot reduce the existing fast-pose clothing clearance");
         player.run=false;
+        layer.getLiveAnimNodes().remove(fast);
         side.setActive(false);side.getMainAnimationTrackAt(0).setBlendWeight(.1f);
         close(CartLegPace.woodenGaitShift(player),-.0425,"outgoing Strafe keeps clearance through the native fade");
-        player.animator=null;
+        layer.getLiveAnimNodes().remove(side);
+        layer.getLiveAnimNodes().add(fast);
         player.run=true;
         player.loaded=false;
         close(CartLegPace.woodenGaitShift(player),0,"unavailable animation player keeps gait fallback");
@@ -111,6 +127,13 @@ public final class CartLegPaceTest {
     }
 
     private static void sideClearance() {
+        for(String name:List.of("Toolkit_CartPivot_StrafeLeft","Toolkit_CartPivot_StrafeRight",
+            "Toolkit_CartPivot_WoodLeft","Toolkit_CartPivot_WoodRight")) {
+            var side=live("ToolkitWoodCartPivotWalk",false,clip(name,1,0,0,"Translation_Data"));
+            side.getMainAnimationTrackAt(0).setBlendWeight(.1f);
+            close(CartLegPace.woodenSideShift(List.of(side)),-.0425,
+                "canonical outgoing side clips retain the calibrated shaft envelope");
+        }
         var left=live("ToolkitCartPivotWalk",true,clip("Bob_StrafeNoAim_Left",1,0,0,"Translation_Data"));
         var right=live("ToolkitCartPivotWalk",false,clip("Bob_StrafeNoAim_Right",1,0,0,"Translation_Data"));
         var other=live("defaultWalk",true,clip("Bob_StrafeNoAim_Left",1,0,0,"Translation_Data"));
@@ -229,7 +252,8 @@ public final class CartLegPaceTest {
         var root=AdvancedAnimator.class.getDeclaredField("rootLayer");root.setAccessible(true);root.set(player.animator,layer);
         if(CartLegPace.brakeTrack(player)!=null)
             throw new AssertionError("missing cart brake must not claim another animation");
-        for(String name:List.of("Bob_RunToStop2H_Heavy","Bob_SprintToStop2h_Heavy")) {
+        for(String name:List.of("Bob_RunToStop2H_Heavy","Bob_SprintToStop2h_Heavy",
+            "Toolkit_CartPivot_StopRun","Toolkit_CartPivot_StopSprint")) {
             var unrelated=transition(layer,"ToolkitCartIdle","Bob_IdleToRun",.4f);
             var unrelatedTrack=unrelated.getTransitionInTrack();
             var idle=transition(layer,"ToolkitCartIdle",name,.6f);
@@ -712,21 +736,36 @@ public final class CartLegPaceTest {
         sprintNode.getMainAnimationTrackAt(0).setBlendWeight(.25f);
         close(CartLegPace.woodenGaitShift(List.of(runNode, sprintNode)), -.1025, "mostly running transition");
         close(CartLegPace.woodenGaitShift((zombie.characters.IsoPlayer) null), 0, "missing running player");
-        close(CartLegPace.woodenBodyShift(0,-4.6785715e-7f,.0109462375f),0,"idle stance is unchanged");
+        close(CartLegPace.woodenBodyShift(0,-4.6785715e-7f,.0109462375f),-.025,"fast-pose reserve is independent of the narrow intrusion threshold");
         close(CartLegPace.woodenBodyShift(-.12f,0,-.06f),-.12,"existing sufficient Run clearance is preserved");
         close(CartLegPace.woodenBodyShift(0,0,-.03f),-.06594764,"pelvis advance retains clothing clearance after Run fades");
         close(CartLegPace.woodenBodyShift(-.01f,.01f,-.02f),-.08594764,"lateral pelvis drift cannot enter a fixed shaft");
         close(CartLegPace.woodenBodyShift(0,1,-1),-.24,"extreme pose clearance is bounded");
+        close(CartLegPace.woodenBodyShift(-.03f,0,-.06405236f,.5f),-.0875,
+            "available fast corridor retains the full measured intrusion instead of weighting it twice");
+        // Native steady Walk snapshot: this negative proxy is an accepted ordinary
+        // gait, not permission to retain 28mm of fast correction until weight zero.
+        for(float gait:new float[]{0,-.0294f}) {
+            float previous=CartLegPace.woodenBodyShift(gait,.008203087f,.007592707f,0);
+            close(previous,gait,"retired fast pose leaves the accepted Walk position");
+            for(int i=1;i<=10000;i++) {
+                float weight=i/10000f;
+                float next=CartLegPace.woodenBodyShift(gait,.008203087f,.007592707f,weight);
+                if(Math.abs(next-previous)>.0000241f)
+                    throw new AssertionError("fast clearance jumps across an ownership boundary: "+weight);
+                previous=next;
+            }
+        }
         for(float invalid:new float[]{Float.NaN,Float.POSITIVE_INFINITY,Float.NEGATIVE_INFINITY}) {
             close(CartLegPace.woodenBodyShift(-.05f,invalid,0),-.05,"invalid lateral pose keeps gait fallback");
             close(CartLegPace.woodenBodyShift(-.05f,0,invalid),-.05,"invalid forward pose keeps gait fallback");
         }
-        float lastShift=0;
-        for(int i=0;i<=1000;i++) {
+        float lastShift=CartLegPace.woodenBodyShift(0,-4.6785715e-7f,.0109462375f);
+        for(int i=0;i<=20000;i++) {
             float z=.0109462375f-i*.000001f;
             float shift=CartLegPace.woodenBodyShift(0,-4.6785715e-7f,z);
-            if(shift>lastShift+1e-7f || Math.abs(shift-lastShift)>.00001f)
-                throw new AssertionError("pelvis clearance must enter continuously without reversing");
+            if(shift>lastShift+1e-7f || Math.abs(shift-lastShift)>.0000011f)
+                throw new AssertionError("forward pelvis clearance must not amplify a native pose step");
             lastShift=shift;
         }
         close(CartLegPace.runningWeight(List.of(walkNode, sprintNode, unrelated, upperBody)), 0,

@@ -18,6 +18,12 @@ def fixture(weights=None, vertices='0;0;0;,1;0;0;,0;1;0;;', faces='3;0,1,2;;'):
 
 
 class NativeBodyParserTest(unittest.TestCase):
+    def test_multimesh_clothing_requires_explicit_exact_mesh(self):
+        text=fixture()+fixture(vertices='2;0;0;,3;0;0;,2;1;0;;').split('\n',1)[1].replace('Mesh Body','Mesh Shorts')
+        with self.assertRaises(ValueError):preview.parse_body(text)
+        self.assertEqual(preview.parse_body(text,mesh_name='Body').vertices[0],(0,0,0))
+        self.assertEqual(preview.parse_body(text,mesh_name='Shorts').vertices[0],(2,0,0))
+        with self.assertRaises(ValueError):preview.parse_body(text,mesh_name='Missing')
     def test_reads_raw_model_points_and_column_major_offsets(self):
         offset = ','.join(IDENTITY.split(',')[:12] + ['2', '3', '4', '1'])
         body = preview.parse_body(fixture(f'SkinWeights {{ "Bone"; 3; 0,1,2; 1,1,1; {offset};; }}'), {'Bone'})

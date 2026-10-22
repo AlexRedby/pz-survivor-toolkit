@@ -66,6 +66,20 @@ class CartAdapterTests(unittest.TestCase):
             carts.stage(ROOT, self.output, self.root / 'game', self.root / 'jdk', self.selection, self.locations, self.runtime)
         return compiler
 
+    def test_entry_contact_repro_is_scoped_to_supported_public_menu_scenes(self):
+        self.selection['cases'] = ['approach']
+        self.options.update(cart_entry_contact_repro=True, cart_scenes=['container-equip', 'wrong-side'])
+        carts.validate(self.selection)
+        for change in ({'cart_entry_contact_repro': 'true'}, {'cart_scenes': ['wall-detour']}, {'cart_scenes': []}):
+            original = dict(self.options)
+            self.options.update(change)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'cart_entry_contact_repro'):
+                carts.validate(self.selection)
+            self.options.clear(); self.options.update(original)
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        with self.assertRaisesRegex(ValueError, 'cart_entry_contact_repro'):
+            carts.validate(self.selection)
+
     def test_sp_stage_builds_three_sealed_agents_and_waits_for_owned_probe_gate(self):
         compiler = self.stage()
         self.assertEqual(compiler.call_count, 2)
@@ -1394,6 +1408,94 @@ end
             self.assertIn('["scenes"]={'+','.join(json.dumps(name) for name in names)+'}',text)
             self.assertNotIn('\"male-empty-',text.splitlines()[0])
             self.assertNotIn('\"male-full-',text.splitlines()[0])
+
+    def test_direct_fast_walk_requires_boolean_in_sp_sprint(self):
+        self.selection['cases'] = ['sprint']
+        for value in (False, True):
+            self.options['cart_direct_fast_walk'] = value
+            carts.validate(self.selection)
+        for value in ('true', 1, None):
+            self.options['cart_direct_fast_walk'] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'cart_direct_fast_walk'):
+                carts.validate(self.selection)
+        for value in (False, True):
+            self.options['cart_direct_fast_walk'] = value
+            self.selection['cases'] = ['reverse']
+            with self.assertRaisesRegex(ValueError, 'SP sprint'):
+                carts.validate(self.selection)
+            self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+            with self.assertRaisesRegex(ValueError, 'SP sprint'):
+                carts.validate(self.selection)
+            self.selection.update(suite=carts.SP, cases=['sprint'], kind='sp', languages=['RU'])
+
+    def test_direct_fast_walk_stages_default_false_and_preserves_scene_ids(self):
+        self.selection['cases'] = ['sprint']
+        names = carts.scene_names('sprint')
+        self.assertEqual(len(names), 16)
+        gait_names = ['male-empty-gait-left', 'male-full-gait-right',
+                      'female-empty-gait-left', 'female-full-gait-right']
+        self.assertEqual([name for name in names if '-gait-' in name], gait_names)
+        for index, value in enumerate((None, False, True)):
+            with self.subTest(value=value):
+                self.output = self.root / ('direct-fast-walk-' + str(index))
+                self.output.mkdir()
+                self.role('client1')
+                self.runtime.pop('fixture', None)
+                if value is None:
+                    self.options.pop('cart_direct_fast_walk', None)
+                else:
+                    self.options['cart_direct_fast_walk'] = value
+                self.options['cart_scenes'] = gait_names
+                self.stage()
+                text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+                self.assertIn('["directFastWalk"]=' + str(value is True).lower(), text.splitlines()[0])
+                self.assertEqual(carts.selected_scenes(self.selection), gait_names)
+                self.assertEqual(carts.scene_names('sprint'), names)
+                paths = carts.sources(ROOT, self.selection)
+                self.assertIn(Path(carts.__file__), paths)
+                self.assertIn(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-clips.lua', paths)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required for actual sprint bank plan')
+    def test_direct_fast_walk_changes_only_two_gait_steps_in_actual_lua_plan(self):
+        source = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-clips.lua').read_text()
+        plan = source[source.index('local cases={}'):source.index('cases=CartLabSelectScenes(cases)')]
+        script = r'''
+local chunk=ACTUAL_PLAN..'\nreturn cases'
+local function plan(config)
+ local loader=assert(loadstring(chunk))
+ setfenv(loader,{config=config,ipairs=ipairs,assert=assert})
+ return loader()
+end
+local default,disabled,enabled=plan({}),plan({directFastWalk=false}),plan({directFastWalk=true})
+assert(#default==16 and #disabled==16 and #enabled==16)
+local changed=0
+for i,original in ipairs(default) do
+ local off,on=disabled[i],enabled[i]
+ assert(original.name==off.name and original.name==on.name,'scene ID changed')
+ assert(#original.steps==#off.steps and #original.steps==#on.steps)
+ local seen={}
+ for j,step in ipairs(original.steps) do
+  for field=1,3 do
+   assert(off.steps[j][field]==step[field],'explicit false changed default plan')
+   local expected=step[field]
+   if original.spec=='gait' and field==2 and step[1]==6300 then expected=0;changed=changed+1 end
+   if original.spec=='gait' and field==2 and step[1]==8500 then expected=1;changed=changed+1 end
+   assert(on.steps[j][field]==expected,'unexpected schedule change: '..original.name)
+  end
+  if on.steps[j][2]~=nil then seen[on.steps[j][2]]=true end
+ end
+ if original.spec=='gait' then
+  assert(seen[0] and seen[1] and seen[2],'gait coverage lost')
+  assert(on.steps[2][2]==1 and on.steps[3][2]==2 and on.steps[5][2]==0 and on.steps[6][2]==1)
+  assert(on.steps[#on.steps][3]==0,'final stop lost')
+ end
+end
+assert(changed==8,'expected two changed steps in each of four gait scenes')
+print('PASS actual sprint plan default/false/direct with unchanged scene IDs')
+'''.replace('ACTUAL_PLAN', json.dumps(plan))
+        result = subprocess.run([shutil.which('luajit'), '-'], input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS actual sprint plan', result.stdout)
 
     def test_authored_clip_pilot_is_explicit_sp_boolean(self):
         for bad in ('true', 1, None):

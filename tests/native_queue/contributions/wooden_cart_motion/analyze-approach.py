@@ -25,7 +25,7 @@ def verify_vehicle(first, selected):
     assert all(r['vehicleState']==state and r['collisionKind']=='vehicle' and r['collisionX']==first['collisionX'] and r['x']>=first['collisionX']-.002 for r in selected), prefix+'collision/pose changed'
 
 
-def analyze(text, lifecycle, scenes=None):
+def analyze(text, lifecycle, scenes=None,entry_contact=False):
     cases=CASES
     if scenes is not None:
         assert scenes and len(set(scenes))==len(scenes) and set(scenes)<=set(CASES), 'Invalid selected approach scenes'
@@ -54,6 +54,12 @@ def analyze(text, lifecycle, scenes=None):
         assert [r['event'] for r in events] == expected, 'Missing/reordered approach receipts: ' + name
         event = {r['event']: r for r in events}
         first, queued, terminal, settled = (event[k] for k in ('prepared', 'queued', 'terminal', 'settled'))
+        if entry_contact:
+            assert name in ('container-equip','wrong-side'), 'Unsupported entry-contact scene'
+            assert all(r.get('entryContactRepro') is True and r.get('female') is False
+                       and r.get('pantsType')=='Base.Trousers_JeanBaggy'
+                       and str(r.get('pantsModel','')).lower().replace('\\','/').removesuffix('.x')=='skinned/clothes/bob_trousers'
+                       and r.get('pantsID')==first.get('pantsID') for r in selected), 'Missing actual entry-contact outfit proof'
         assert len(rows) >= 30 and rows[0]['elapsed'] <= 100 and rows[-1]['wall'] >= settled['wall']-100, 'Missing approach sample window'
         assert all(0 < b['wall']-a['wall'] <= 250 for a, b in zip(rows, rows[1:])), 'Approach sampling gap'
         assert 650 <= queued['elapsed'] <= 1500 and 0 < terminal['wall']-queued['wall'] < 14000 and settled['wall']-terminal['wall'] >= 1000, 'Unbounded approach/cleanup window'
@@ -66,7 +72,16 @@ def analyze(text, lifecycle, scenes=None):
             assert (row['primaryID'] == first['id']) == (row['inventoryCount'] == 1), 'Cart ownership/hand mismatch'
             assert row['route'] == ('inventory-menu' if name == 'container-equip' else 'world-menu'), 'Public pickup route changed'
         assert first['containerCount'] == int(name == 'container-equip') and first['worldCount'] == int(name != 'container-equip') and first['inventoryCount'] == 0, 'Wrong initial source container'
-        assert all(math.dist((r['x'],r['y']),(first['x'],first['y'])) <= .002 for r in rows if r['wall'] <= queued['wall']), 'Actor moved before native menu request'
+        if entry_contact and name=='container-equip':
+            begin,end=queued['preWalkStartedAt'],queued['preWalkReleasedAt']
+            assert start+300<=begin and 350<=end-begin<=550 and 0<queued['wall']-end<=150, 'Missing bounded native pre-menu Walk/release'
+            before=[r for r in rows if r['wall']<=queued['wall']]
+            assert queued.get('preWalkSeen') is True and .05<=queued['preWalkDistance']<1.5, 'Native pre-menu Walk did not move'
+            assert any(r.get('preWalkDrive')==1 for r in before) and queued['preWalkDrive']==0, 'Missing native Walk input/release'
+            assert .05<=math.dist((queued['x'],queued['y']),(first['x'],first['y']))<1.5, 'Missing measured pre-menu displacement'
+            assert all(r['nativeActions']==r['luaActions']==0 and r['primaryID']==-1 for r in before), 'Pre-menu Walk changed native queue/cart ownership'
+        else:
+            assert all(math.dist((r['x'],r['y']),(first['x'],first['y'])) <= .002 for r in rows if r['wall'] <= queued['wall']), 'Actor moved before native menu request'
         # CancelAction can empty both queues synchronously while the bare walking animation blends out.
         # Same-ms samples printed before the terminal event still describe the pre-cancel native state.
         post_terminal=[r for r in rows if r['_order']>terminal['_order']]
@@ -147,9 +162,9 @@ def analyze(text, lifecycle, scenes=None):
         elif success and name != 'container-equip':
             assert math.dist((terminal['x'], terminal['y']), (first['goalX'], first['goalY'])) <= .002, 'Pickup started away from precise handle stance'
         summaries.append(dict(case=name, itemId=first['id'], nativeActionIds=[g[0]['nativeActionId'] for g in groups],
-                              approachResult=terminal['approachResult'], tailResult=terminal['tailResult'],**cancel_metrics))
+                              approachResult=terminal['approachResult'], tailResult=terminal['tailResult'],entryContactRepro=entry_contact,**cancel_metrics))
     return dict(functionalPass=True, approachVerified=True, preciseStallExercised=False, failures=[], cases=summaries,
-                limit='Seven SP public-menu scenes; real native wall routing and parked-vehicle native target clipping denies off-center pickup; 45-update precise collision stall is not exercised, exact item/cargo and native lifecycle. Rendered mesh/grip and Host replication remain separate gates.')
+                limit='Selected SP public-menu scenes only; exact item/cargo and native lifecycle verified. Unselected approach routes, rendered mesh/grip and Host replication remain separate gates.')
 
 
 def main():
@@ -157,11 +172,12 @@ def main():
     for name in ('profile', 'log', 'output'):
         parser.add_argument('--'+name, type=Path, required=True)
     parser.add_argument('--scene',action='append')
+    parser.add_argument('--entry-contact',action='store_true')
     args = parser.parse_args()
     assert not args.output.exists(), 'Refuse to overwrite approach report'
     try:
         lifecycle = [json.loads(line) for line in (args.profile/'action-lifecycle.jsonl').read_text().splitlines()]
-        result = analyze(args.log.read_text(errors='replace'), lifecycle,scenes=args.scene)
+        result = analyze(args.log.read_text(errors='replace'), lifecycle,scenes=args.scene,entry_contact=args.entry_contact)
     except (AssertionError, KeyError, TypeError, ValueError, OSError) as error:
         result = dict(functionalPass=False, approachVerified=False, failures=[str(error)], cases=[])
     args.output.write_text(json.dumps(result, indent=2, allow_nan=False)+'\n')

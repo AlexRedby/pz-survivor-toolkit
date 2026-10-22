@@ -1935,7 +1935,43 @@ public final class CartGripTest {
         }
     }
 
+    private static void checkDisplayedSpine() throws ReflectiveOperationException {
+        var unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
+        var unsafe=(sun.misc.Unsafe)unsafeField.get(null);
+        var inverseBind=new Matrix4f().translation(.3f,-.7f,.2f).rotateXYZ(.2f,-.1f,.4f);
+        var offset=PZMath.convertMatrix(new Matrix4f(inverseBind).transpose(),new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(new String[]{"Bip01_Spine"},List.of(-1),List.of(offset));
+        var owner=new zombie.core.skinnedmodel.model.ModelInstance();
+        owner.model=(zombie.core.skinnedmodel.model.Model)unsafe.allocateInstance(zombie.core.skinnedmodel.model.Model.class);
+        owner.model.tag=actor;
+        // There is deliberately no live AnimationPlayer: the render palette owns this pose.
+        var body=new zombie.core.skinnedmodel.model.ModelInstanceRenderData();
+        body.modelInstance=owner;body.matrixPalette=FloatBuffer.allocate(16);
+        var slot=new zombie.core.skinnedmodel.model.ModelSlotRenderData();slot.modelData.add(body);
+        var result=new Vector3f();
+        for(var pose:new Matrix4f[]{new Matrix4f().translation(.012f,.54f,-.06f).rotateY(.5f),
+            new Matrix4f().translation(-.02f,.51f,.003f).rotateZ(-.2f)}) {
+            body.matrixPalette.clear();
+            PZMath.convertMatrix(new Matrix4f(pose).mul(inverseBind).transpose(),new org.lwjgl.util.vector.Matrix4f())
+                .store(body.matrixPalette);
+            float[] before=body.matrixPalette.array().clone();body.matrixPalette.position(7);
+            if(!CartGrip.nativeSpine(slot,owner,result) || result.distance(pose.getTranslation(new Vector3f()))>1e-6f)
+                throw new AssertionError("displayed Spine ignored inverse bind or retained an older snapshot: "+result);
+            if(body.matrixPalette.position()!=7 || !java.util.Arrays.equals(before,body.matrixPalette.array()))
+                throw new AssertionError("displayed Spine read changed its render palette");
+        }
+        body.matrixPalette.put(0,Float.NaN);
+        if(CartGrip.nativeSpine(slot,owner,result) || body.matrixPalette.position()!=7)
+            throw new AssertionError("non-finite render palette accepted or cursor changed");
+        body.matrixPalette.limit(15);
+        if(CartGrip.nativeSpine(slot,owner,result) || body.matrixPalette.position()!=7)
+            throw new AssertionError("truncated render palette accepted or cursor changed");
+        slot.modelData.clear();
+        if(CartGrip.nativeSpine(slot,owner,result)) throw new AssertionError("missing displayed body accepted");
+    }
+
     public static void main(String[] args) throws ReflectiveOperationException {
+        checkDisplayedSpine();
         checkNativeHeight();
         checkRecoveryPosture();
         checkRecoveryRotation();

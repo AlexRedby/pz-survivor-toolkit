@@ -20,6 +20,7 @@ public final class CartSteeringHooks {
         double heading, target, load, lean, wheelPhase, wheelOrigin, turnRate, stationaryRate;
         final CartSteeringMath.Bank bank = new CartSteeringMath.Bank();
         final CartLegPace.Ramp pace = new CartLegPace.Ramp();
+        final CartLocomotionBlend gaitBlend = new CartLocomotionBlend();
         final CartSteeringMath.Reversal reversal = new CartSteeringMath.Reversal();
         double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace, fastReleaseWait;
         double fastPace, brakeDuration=1, brace;
@@ -660,6 +661,17 @@ public final class CartSteeringHooks {
         }
         float stepX=player.getVariableFloat("ToolkitCartStepX",0),stepY=player.getVariableFloat("ToolkitCartStepY",0);
         float target=wooden(player)?CartLegPace.targetSpeed(player,stepX,stepY):Float.NaN;
+        // Keep the requested native speed above independent of the visual picker direction.
+        // Publish that same effective field to the native animator, cadence solve and Host peers.
+        int gait=player.isSprinting()?CartLocomotionBlend.SPRINT
+            :player.isRunning()?CartLocomotionBlend.RUN:CartLocomotionBlend.WALK;
+        boolean forwardGait=wooden(player) && state.moving && !blocked
+            && !state.stationaryRoot && !state.reversal.active && !state.braking && stop==null
+            && state.brace==0 && !state.recovering && Float.isFinite(target);
+        state.gaitBlend.update(stepX,stepY,dt,forwardGait?gait:0);
+        stepX=state.gaitBlend.x;stepY=state.gaitBlend.y;
+        player.setVariable("ToolkitCartStepX",stepX);
+        player.setVariable("ToolkitCartStepY",stepY);
         // Drop inward input through native cadence once, preserving full strides and the movement budget.
         float wallScale=Double.isFinite(state.wallHeading) && state.wantsMove && !state.reversal.active
             && !state.stationaryRoot && CartFootprint.pressingWall(state.target,state.wallHeading,state.wallNormalX,state.wallNormalY)

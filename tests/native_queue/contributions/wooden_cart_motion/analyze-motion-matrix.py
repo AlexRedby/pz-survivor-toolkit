@@ -1,9 +1,15 @@
 """Measured relative-key movement only; grip, wheel, mesh and runtime gates stay separate."""
 import argparse
+import importlib.util
 import json
 import math
 from pathlib import Path
 import re
+
+_clip_spec = importlib.util.spec_from_file_location('cart_native_clip_names', Path(__file__).with_name('clip_names.py'))
+_clip_names = importlib.util.module_from_spec(_clip_spec)
+_clip_spec.loader.exec_module(_clip_names)
+native_clip = _clip_names.native_clip
 
 SPECS = ('arcs', 'slalom-up', 'slalom-down')
 SCENES = tuple(f'{sex}-{load}-{gait}-{spec}' for sex in ('male', 'female')
@@ -221,7 +227,7 @@ def analyze(text, expected_scenes=None):
                 gait_ok = ((not row['run'] and not row['sprint']) if requested == 0
                            else row['run'] and not row['sprint'] if requested == 1 else row['sprint'])
                 clip = 'Bob_'+('Walk','Run','Sprint')[requested] if drive else None
-                clocks = row['tracks'].get(clip, ()) if gait_ok else ()
+                clocks = [time for name, times in row['tracks'].items() if native_clip(name) == clip for time in times] if gait_ok else ()
                 if moving_clock_stall(clock_state, row, clip, clocks) > 500:
                     fail(phase, 'Matching native gait clock froze through more than 500ms of measured movement')
                 rows.append(row)
@@ -296,7 +302,7 @@ def analyze(text, expected_scenes=None):
                 for row in eligible:
                     gait_ok = ((not row['run'] and not row['sprint']) if contract['gait']==0
                                else row['run'] and not row['sprint'] if contract['gait']==1 else row['sprint'])
-                    active = {clip: times for clip,times in row['tracks'].items() if clip == 'Bob_'+clip_word}
+                    active = {clip: times for clip,times in row['tracks'].items() if native_clip(clip) == 'Bob_'+clip_word}
                     if gait_ok and active and row['stepY'] > .05:
                         matched.append((row,active))
                 if len(matched) < 2 or len(matched) < .6*len(eligible):

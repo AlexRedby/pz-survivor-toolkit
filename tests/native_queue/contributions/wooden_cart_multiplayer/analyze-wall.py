@@ -3,7 +3,11 @@ import importlib.util
 import math
 from pathlib import Path
 import re
+import runpy
 import statistics
+
+_clip_names = runpy.run_path(str(Path(__file__).parent.parent / 'wooden_cart_motion' / 'clip_names.py'))
+native_clip = _clip_names['native_clip']
 
 DURATION = 29000
 SETTLED = (28000, DURATION)
@@ -370,7 +374,8 @@ def analyze(profile, selection, common):
     def window(a,b):return covered(states['client1'],'wall',(a,b),'owner/motion')
     def travel(rows):return sum(math.dist((a['x'],a['y']),(b['x'],b['y'])) for a,b in zip(rows,rows[1:]))
     def gait(rows,name,backward=False):
-        pattern=re.compile(r'(?:^|;)'+re.escape(name)+r'=([-+\d.eE]+)@([-+\d.eE]+)(?:;|$)')
+        names='|'.join(re.escape(clip) for clip in _clip_names['clip_aliases'](name))
+        pattern=re.compile(r'(?:^|;)(?:'+names+r')=([-+\d.eE]+)@([-+\d.eE]+)(?:;|$)')
         active=[r for r in rows if (m:=pattern.search(r['tracks'])) and float(m[1])>0 and float(m[2])>.1 and r['stepY']*(-1 if backward else 1)>.01]
         require(len(active)>=2 and active[0]['wall']<=rows[0]['wall']+500 and active[-1]['wall']>=rows[-1]['wall']-500
                 and all(b['wall']-a['wall']<=500 for a,b in zip(active,active[1:])) and travel(rows)>.1,
@@ -379,8 +384,8 @@ def analyze(profile, selection, common):
         for r in active:
             entries=r.get('trackProgress')
             require(isinstance(entries,list) and all(isinstance(c,dict) and isinstance(c.get('name'),str) and all(number(c.get(k)) for k in ('time','duration','weight')) and c['duration']>0 and 0<=c['time']<=c['duration']+.01 and c['weight']>=0 for c in entries), 'Missing/malformed native track progression')
-            clips.extend((r['wall'],c) for c in entries if c['name']==name and c['weight']>.1)
-        require(any(t1>t0 and abs(b['time']-a['time'])>.001 for (t0,a),(t1,b) in zip(clips,clips[1:])), 'Native '+name+' animation time never advances')
+            clips.extend((r['wall'],c) for c in entries if native_clip(c['name'])==name and c['weight']>.1)
+        require(any(t1>t0 and a['name']==b['name'] and abs(b['time']-a['time'])>.001 for (t0,a),(t1,b) in zip(clips,clips[1:])), 'Native '+name+' animation time never advances')
     def stopped_pose(rows,distance):
         yaw=[wrap(r['heading']-rows[0]['heading']) for r in rows]
         return (travel(rows)<distance and max(yaw)-min(yaw)<=.025

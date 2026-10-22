@@ -132,6 +132,13 @@ class MotionMatrixTests(unittest.TestCase):
             return
         self.assertFalse(result['motionPass'],result)
 
+    def test_canonical_gaits_preserve_native_clocks_and_reject_unknown_or_wrong_gait(self):
+        log = self.log.replace('Bob_Walk@', 'Toolkit_CartPivot_Walk@').replace('Bob_Run@', 'Toolkit_CartPivot_Run@').replace('Bob_Sprint@', 'Toolkit_CartPivot_Sprint@')
+        self.assertTrue(self.analyze(log)['motionPass'])
+        self.assertIn('Toolkit_CartPivot_Run', analyzer.tracks('state,rootTracks:Toolkit_CartPivot_Run@1/.2/1;'))
+        for wrong in ('Toolkit_CartPivot_Rnu', 'Toolkit_CartPivot_Walk', 'Toolkit_CartPivot_StopRun'):
+            self.reject(log.replace('Toolkit_CartPivot_Run@', wrong + '@'))
+
     def test_complete_matrix_and_exact_angles(self):
         result=analyzer.analyze(evidence(analyzer.SCENES))
         self.assertTrue(result['motionPass'],result['motionFailures'])

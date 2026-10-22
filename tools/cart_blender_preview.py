@@ -104,7 +104,7 @@ class _Values:
             raise ValueError('unexpected values in SkinWeights')
 
 
-def parse_body(text, bone_names=None):
+def parse_body(text, bone_names=None, mesh_name=None):
     """Read the single triangulated, fully weighted native text-.x body mesh.
 
     Offsets are the original column-major SkinWeights matrices. In particular,
@@ -114,6 +114,8 @@ def parse_body(text, bone_names=None):
         raise ValueError('expected native text .x 0303 format')
     text = _without_comments(text)
     meshes = list(re.finditer(r'\bMesh\s+[A-Za-z_]\w*\s*\{', text))
+    if mesh_name is not None:
+        meshes = [match for match in meshes if match[0].split()[1] == mesh_name]
     if len(meshes) != 1:
         raise ValueError('expected exactly one named native body Mesh')
     mesh = _block(text, meshes[0].end() - 1)
@@ -188,7 +190,7 @@ def _region(name):
     return 1
 
 
-def build_preview(rig, body_path: Path):
+def build_preview(rig, body_path: Path, mesh_name=None):
     """Attach an editable live-skinned body; return the new Blender mesh object.
 
     Requires an untransformed authoring rig created by cart_clip_blender. Its
@@ -210,7 +212,7 @@ def build_preview(rig, body_path: Path):
             raise ValueError(f'authoring parent changed for {name}')
     if max(abs(a-b) for a,b in zip(bridge.column_matrix(rig.matrix_world), bridge.IDENTITY)) > 1e-6:
         raise ValueError('authoring rig object transform must remain identity')
-    body = parse_body(Path(body_path).read_text(), parents)
+    body = parse_body(Path(body_path).read_text(), parents, mesh_name)
     if bpy.context.object and bpy.context.object.mode != 'OBJECT':
         raise ValueError('attach the preview in Object mode')
     active = bpy.context.view_layer.objects.active

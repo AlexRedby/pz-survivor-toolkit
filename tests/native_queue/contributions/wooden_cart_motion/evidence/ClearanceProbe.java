@@ -13,6 +13,7 @@ import zombie.inventory.InventoryItem;
 
 /** Read-only final render poses for native body/handle clearance measurements. */
 public final class ClearanceProbe {
+    private static final boolean FULL_TAIL_BONES = false;
     private static BufferedWriter output;
     private static BufferedWriter worldOutput, tailOutput, lifecycleOutput, outlineOutput, approachOutput;
     private static final java.util.WeakHashMap<zombie.characters.CharacterTimedActions.LuaTimedActionNew,Long> actionIds=new java.util.WeakHashMap<>();
@@ -89,7 +90,7 @@ public final class ClearanceProbe {
                 if(comma)row.append(',');comma=true;row.append(quoted(name)).append(':');matrix(row,pose(body,skin,index));
             }
             // Skinning needs every influencing bone, including thighs and pelvis after the cart leaves the hands.
-            if(impact)for(var entry:skin.boneIndices.entrySet()) {
+            if(impact || FULL_TAIL_BONES)for(var entry:skin.boneIndices.entrySet()) {
                 String name=entry.getKey();
                 if(java.util.Set.of("Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand",
                     "Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_Spine","Bip01_Head",
