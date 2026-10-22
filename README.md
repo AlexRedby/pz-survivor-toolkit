@@ -55,6 +55,7 @@ The action queue is enabled on fresh profiles and preserves existing preferences
 | [Java patches](JavaPatches/README.md) | Engine fixes, server loader and activation checks. |
 | [Development](docs/DEVELOPMENT.md) | Tests, packaging, adapters and diagnostics. |
 | [Blender animation setup](docs/DEVELOPMENT.md#cart-animation-authoring-in-blender) | Prepare an editable scene and native-verified export from a fresh clone. |
+| [Cart multiplayer plan](docs/CART_MULTIPLAYER.md) | Current replication, proposed presentation timeline, traffic budget and verification gates. |
 | [Native scenarios](tests/native_queue/README.md) | Isolated game runs and fixture integration. |
 | [Open work](TODO.md) | Remaining tasks and completion gates. |
 
