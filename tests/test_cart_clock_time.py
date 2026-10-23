@@ -1,9 +1,33 @@
 import copy
 from pathlib import Path
 import runpy
+import shutil
+import subprocess
 import unittest
 
 API=runpy.run_path(str(Path(__file__).resolve().parent/'native_queue/contributions/wooden_cart_multiplayer/clock_time.py'))
+
+
+class ClockFixtureLuaTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required for actual timing call')
+    def test_observer_uses_exact_remote_hand_id_without_owner_setup_id(self):
+        source=(Path(__file__).resolve().parent/'native_queue/contributions/wooden_cart_multiplayer/client.lua').read_text()
+        begin=source.index('  if config.options and config.options.cart_time_alignment==true')
+        end=source.index('  if wallSide and not wallPositioned',begin)
+        block=source[begin:end]
+        script="""
+local config={options={cart_time_alignment=true}}
+local elapsed,duration=2000,26000
+local setup={x=1,y=2} -- Observer setup intentionally has no cartId.
+local cart={getID=function() return 2040301443 end}
+local owner={getPrimaryHandItem=function() return cart end}
+local called=0
+cartMPTimingSample=function(actualOwner,id,time)
+ assert(actualOwner==owner and id==2040301443 and time==2000)
+ called=called+1
+end
+"""+block+"\nassert(called==1)\n"
+        subprocess.run([shutil.which('luajit'),'-'],input=script,text=True,check=True,capture_output=True)
 
 
 class ClockRequestTests(unittest.TestCase):
