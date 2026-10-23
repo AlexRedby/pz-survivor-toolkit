@@ -85,17 +85,9 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
-### Next native lifecycle scenario
-
-- [ ] Seal a separate lease_lifecycle case and its owned rejoin checkpoint, isolated from motion/action/video banks. Keep normal Host launch/window/resource/provenance checks and guard common startup against duplicate reconnect.
-- [ ] Add exact original-connection activity evidence and strict phase/native trace correlation; unknown native state must not count as a successful disconnect. Gate: controller/native API checks, malformed-evidence regressions, frozen sources, actual guest lifecycle Host and clean owned cleanup.
-
-- [ ] Add a dedicated guest-as-owner Host fixture: keep client1 hosting while client2 follows actual native death, the visible Respawn/new-character callbacks and OnCreatePlayer, then native pause-menu Exit and ConnectToServer rejoin. Preserve owned launch/window/provenance gates; direct map/slot swaps do not establish gameplay lifecycle coverage.
-- [ ] Prove retirement before/inside death callbacks, through corpse removal and across fresh binds. Respawn must retain the transport and replace the actor; reconnect must replace both. Allow native OnlineID reuse/change, retain original IDs for replay, track ordinary cart/cargo effects, and reject old pending replies/payloads before and after fresh authority without reconstructing or rolling back native outcomes.
-
 ### Remaining native lifetime and traffic gates
 
-- [ ] Extend the verified native-setter release/reacquire and same-ID replacement bank to ordinary menu equip/release, actor removal/respawn and disconnect/reconnect. Keep exact native incarnation and transport provenance, permanent retirement and replay fences. The macOS Host setter/resnapshot bank does not establish these complete gameplay lifetimes.
+- [ ] Extend native lifetime coverage to ordinary menu equip/release and the remaining actor-removal/disconnection routes beyond the verified guest native-death/Coop-respawn/menu-rejoin path. Keep exact native incarnation and transport provenance, permanent retirement and replay fences.
 - [ ] Extend native action-admission coverage beyond selected Setdown/Pickup completion/cancel/repeat to hotkey Drop, pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
 - [ ] Measure RakNet/IP/UDP control costs, retransmissions/lost sends and actual relevant-recipient fan-out for bounded bind/resync bursts. Keep delivered native command serialization separate from wire totals; establish the production codec/rate budget against a matching motion baseline.
 - [ ] Connect the verified admission reference to production motion/action together only after those authority/lifetime and traffic gates pass. Preserve durable high-water fences and native root catch-up; remove the replaced v1 consumers in the same change after verification. Source-time playback remains behind its separate timing gate.
