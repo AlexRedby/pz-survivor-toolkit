@@ -230,3 +230,29 @@ do
  instanceof=oldInstanceof
 end
 print('Equipment watch postprocessing: authority rejects changed time, enabled state and ringing after exact native cleanup.')
+
+-- Final authority independently proves both original and temporary roots and
+-- exact same-slot/exclusive output, after the live fixture's native receipts.
+do
+ local Clothing=require 'QueueEquipmentClothing'
+ for _,case in ipairs({'tidy-clothing-replace','tidy-headwear-hat-exclusive','tidy-headwear-full-hat-exclusive'})do
+  for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native');local spec=Clothing.spec(sample)
+   local baseline=item(spec.fullType,sample.root);local temp=item(spec.temporaryType,sample.root)
+   baseline.getBodyLocation=function()return spec.location end;temp.getBodyLocation=function()return spec.temporaryLocation end
+   sample.clothingItem,sample.clothingTemporary,sample.clothingLocation,sample.clothingHair=baseline,temp,spec.location,'CrewCut'
+   sample.items.clothingItem=baseline;sample.items.clothingTemporary=temp
+   sample.baseline[baseline.id]=baseline;sample.baseline[temp.id]=temp;sample.expectedWorn[spec.location]=baseline
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   sample.player.getWornItem=function(self,location)return self.worn[location]end
+   sample.player.getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end}end
+   sample.player.worn=Clothing.expectedWorn(sample,sample.player.worn,tidy)
+   local value=Postprocess.verify(sample,'native',tidy).clothing
+   assert(value.id==baseline.id and value.worn==tidy and value.temporary.id==temp.id and value.temporary.worn==not tidy)
+   local kind=temp.kind;temp.kind='Base.Other';assert(not pcall(Postprocess.verify,sample,'native',tidy));temp.kind=kind
+   sample.player.worn[spec.location]=tidy and temp or baseline
+   assert(not pcall(Postprocess.verify,sample,'native',tidy),'wrong same/exclusive final worn identity must fail')
+  end
+ end
+end
+print('Equipment displacement postprocessing: both exact root identities and same/exclusive final slots passed.')

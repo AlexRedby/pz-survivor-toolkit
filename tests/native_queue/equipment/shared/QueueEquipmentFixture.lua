@@ -250,8 +250,7 @@ function Fixture.verify(state,mode,checkpoint)
  if Clothing.isCase(state.id) then
   extra.clothingCheckpoint=Clothing.verify(state,Clothing.removes(state))
   extra.clothingItem=state.clothingItem:getID()
-  expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
-  expectedWorn[state.clothingLocation]=Clothing.removes(state)and state.clothingItem or nil
+  expectedWorn=Clothing.expectedWorn(state,state.expectedWorn,Clothing.removes(state))
  end
  assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
@@ -379,7 +378,7 @@ function Fixture.settled(state,mode,checkpoint)
   end
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
- if Clothing.isCase(state.id) and (player:getWornItem(state.clothingLocation)~=(Clothing.removes(state)and state.clothingItem or nil)
+ if Clothing.isCase(state.id) and (not Clothing.slotMatches(state,Clothing.removes(state))
   or tostring(player:getHumanVisual():getHairModel())~=state.clothingHair)then return false end
  if Clothing.wristwatch(state)and (not Clothing.watchMatches(state)
   or not isClient()and Clothing.watchProcessing(state).pendingRemoval)then return false end

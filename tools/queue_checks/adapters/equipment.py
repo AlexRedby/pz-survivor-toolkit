@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both', 'tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore', 'tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove', 'tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both', 'tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both', 'tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore', 'tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove', 'tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both', 'tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
 HOTBAR_CASES = {
     'tidy-hotbar': dict(fullType='Base.Shotgun', slotType='Back', model='Rifle On Back with Bag', twoHands=True),
     'tidy-hotbar-holster-left': dict(fullType='Base.Pistol', slotType='HolsterLeft', model='Holster Left', twoHands=False),
@@ -16,7 +16,7 @@ HOTBAR_CASES = {
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-clothing-overlap-primary': 2, 'tidy-clothing-overlap-both': 2, 'tidy-clothing-held-primary': 0, 'tidy-clothing-held-secondary': 0, 'tidy-clothing-held-both': 0, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-headwear-hat-restore': 0, 'tidy-headwear-full-hat-restore': 0, 'tidy-watch-digital-restore': 0, 'tidy-watch-digital-remove': 1, 'tidy-watch-classic-restore': 0, 'tidy-watch-classic-remove': 1, 'tidy-watch-overlap-primary': 2, 'tidy-watch-overlap-secondary': 2, 'tidy-watch-overlap-both': 2, 'tidy-watch-held-primary': 0, 'tidy-watch-held-secondary': 0, 'tidy-watch-held-both': 0, 'tidy-watch-ringing-restore': 0, 'tidy-watch-ringing-remove': 1, 'tidy-watch-ringing-overlap-both': 2, 'tidy-watch-ringing-held-both': 0, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-replace': 1, 'tidy-headwear-hat-exclusive': 1, 'tidy-headwear-full-hat-exclusive': 1, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-clothing-overlap-primary': 2, 'tidy-clothing-overlap-both': 2, 'tidy-clothing-held-primary': 0, 'tidy-clothing-held-secondary': 0, 'tidy-clothing-held-both': 0, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-headwear-hat-restore': 0, 'tidy-headwear-full-hat-restore': 0, 'tidy-watch-digital-restore': 0, 'tidy-watch-digital-remove': 1, 'tidy-watch-classic-restore': 0, 'tidy-watch-classic-remove': 1, 'tidy-watch-overlap-primary': 2, 'tidy-watch-overlap-secondary': 2, 'tidy-watch-overlap-both': 2, 'tidy-watch-held-primary': 0, 'tidy-watch-held-secondary': 0, 'tidy-watch-held-both': 0, 'tidy-watch-ringing-restore': 0, 'tidy-watch-ringing-remove': 1, 'tidy-watch-ringing-overlap-both': 2, 'tidy-watch-ringing-held-both': 0, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
@@ -110,6 +110,14 @@ SCENARIO_ACTIONS = {
             'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both')},
             'restore-hands': {case: {'equipmentMatches': True, 'postprocessingVerified': True} for case in ('tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both')},
             'server-authority': {case: {'authoritative': True} for case in ('tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both')},
+        },
+    },
+    'tidy-clothing-displacement': {
+        'scope': 'Exact root ordinary same-slot socks replacement and Beany/BoxingRed exclusive-slot replacements. Native temporary Wear and unchanged CutHair arm real P4 same-slot Wear or exclusive Unequip-before-Wear cleanup. Preserve both identities/root/hands, exact worn slots, ordered Host receipts and independent tail; no world-drop or multi-item slot coverage.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive')},
         },
     },
     'tidy-wristwatch-ringing': {
@@ -554,6 +562,9 @@ def _verify_tidy_hotbar(result, selection, case):
 
 
 CLOTHING_SPECS = {
+    'tidy-clothing-replace': dict(fullType='Base.Socks_Ankle', location='base:socks', temporaryType='Base.Socks_Long', temporaryLocation='base:socks'),
+    'tidy-headwear-hat-exclusive': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True, temporaryType='Base.Hat_BoxingRed', temporaryLocation='base:fullhat'),
+    'tidy-headwear-full-hat-exclusive': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True, temporaryType='Base.Hat_Beany', temporaryLocation='base:hat'),
     'tidy-clothing': dict(fullType='Base.Socks_Ankle', location='base:socks'),
     'tidy-clothing-remove': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True),
     'tidy-clothing-overlap': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True, overlapHand='secondary'),
@@ -631,7 +642,7 @@ def _verify_ring_cleanup(text, cases, events):
 
 
 def clothing_effect_keys(case):
-    return CLOTHING_EFFECT_KEYS | (CLOTHING_OVERLAP_EFFECT_KEYS if CLOTHING_SPECS[case].get('overlapHand') else set()) | ({'watch'} if CLOTHING_SPECS[case].get('watch') else set()) | ({'watchTiming'} if CLOTHING_SPECS[case].get('ringing') else set())
+    return CLOTHING_EFFECT_KEYS | (CLOTHING_OVERLAP_EFFECT_KEYS if CLOTHING_SPECS[case].get('overlapHand') else set()) | ({'watch'} if CLOTHING_SPECS[case].get('watch') else set()) | ({'watchTiming'} if CLOTHING_SPECS[case].get('ringing') else set()) | ({'temporary'} if CLOTHING_SPECS[case].get('temporaryType') else set())
 
 
 CLOTHING_EFFECT_KEYS = {'id', 'fullType', 'bodyLocation', 'container', 'worn', 'producer', 'producerCompleted',
@@ -645,7 +656,7 @@ def _verify_tidy_clothing(result, selection, remove=False, overlap=False, case='
     tidy = 'P4TidyUpMeister' in selection['mods']
     effect_keys = clothing_effect_keys(case)
     processing_keys = {'watchProcessing'} if spec.get('watch') and selection['kind'] == 'sp' else set()
-    expected_keys = effect_keys | processing_keys | (({'watchBaseline', 'watchSetup'} | ({'watchAcknowledgements'} if not overlap else set())) if spec.get('watch') else set()) | ({'headwearSetup'} if headwear else set()) | ({'overlap'} if overlap else set()) | {'nativeGenerated', 'authoritativeRestore', 'sharedCompletion', 'unrelatedTailPreserved',
+    expected_keys = effect_keys | processing_keys | (({'watchBaseline', 'watchSetup'} | ({'watchAcknowledgements'} if not overlap else set())) if spec.get('watch') else set()) | ({'headwearSetup'} if headwear else set()) | ({'overlap'} if overlap else set()) | ({'displacement'} if spec.get('temporaryType') else set()) | {'nativeGenerated', 'authoritativeRestore', 'sharedCompletion', 'unrelatedTailPreserved',
                                            'sourceSession', 'sourceCompleted'}
     if (not isinstance(value, dict) or set(value) != expected_keys
             or not isinstance(checkpoint, dict) or set(checkpoint) != effect_keys | processing_keys):
@@ -662,7 +673,7 @@ def _verify_tidy_clothing(result, selection, remove=False, overlap=False, case='
     session = value.get('sourceSession')
     if (tidy and (type(session) is not int or session <= 0)) or (not tidy and session is not False):
         return ['P4 clothing source-owned restore session evidence missing']
-    correlation_keys = effect_keys - {'watchTiming'}
+    correlation_keys = effect_keys - {'watchTiming', 'temporary'}
     before = {key: value[key] for key in correlation_keys}
     before['worn'] = remove
     if overlap:
@@ -672,11 +683,25 @@ def _verify_tidy_clothing(result, selection, remove=False, overlap=False, case='
     if {key: checkpoint[key] for key in correlation_keys} != before or any(type(checkpoint.get(key)) is not type(value) for key, value in before.items()):
         return ['P4 clothing checkpoint differs from the exact restored socks identity']
     count = int(tidy and selection['mode'] == 'toolkit')
-    expected_completion = dict(perform=count, complete=count if selection['kind'] == 'sp' else 0, flush=count, legacy=0)
+    clothing_count = count * (2 if spec.get('temporaryType') and spec['temporaryLocation'] != spec['location'] else 1)
+    expected_completion = dict(perform=clothing_count, complete=clothing_count if selection['kind'] == 'sp' else 0, flush=clothing_count, legacy=0)
     completion = value.get('sharedCompletion')
     if (not isinstance(completion, dict) or completion != expected_completion
             or any(type(item) is not int for item in completion.values())):
         return ['P4 clothing shared completion evidence differs']
+    if spec.get('temporaryType'):
+        temporary = value['temporary']
+        wanted = dict(fullType=spec['temporaryType'], bodyLocation=spec['temporaryLocation'], container='root', worn=not tidy)
+        if (not isinstance(temporary, dict) or set(temporary) != set(wanted) | {'id'}
+                or any(not _strict_equal(temporary.get(key), field) for key, field in wanted.items())
+                or type(temporary.get('id')) is not int or temporary['id'] in (-1, value['id'])
+                or not _strict_equal(checkpoint['temporary'], dict(temporary, worn=True))):
+            return ['P4 displaced temporary clothing exact identity/root/slots differ']
+        cleanup = ([dict(kind='ISUnequipAction', id=temporary['id'])] if spec['temporaryLocation'] != spec['location'] else []) + [dict(kind='ISWearClothing', id=value['id'])]
+        producers = [dict(kind='ISWearClothing', id=temporary['id']), dict(kind='ISCutHair', id=False)]
+        expected_proof = dict(cleanup=cleanup if tidy else [], acknowledgements=[dict(row, state='completed') for row in producers + (cleanup if tidy else [])] if selection['kind'] == 'mp' else [])
+        if not _strict_equal(value['displacement'], expected_proof):
+            return ['P4 displaced clothing cleanup order/native receipts differ']
     if spec.get('watch'):
         if not _strict_equal(value['watchSetup'], dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)):
             return ['P4 wristwatch exclusive-slot/capacity setup evidence missing']

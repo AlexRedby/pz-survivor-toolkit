@@ -117,13 +117,12 @@ function Postprocess.verify(state,mode,tidy)
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);actualWorn[values:getLocation(item)]=item end
  local expectedWorn=state.expectedWorn
  if Clothing.isCase(state.id)then
-  expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
-  expectedWorn[state.clothingLocation]=Clothing.finalWorn(state,tidy)and state.clothingItem or nil
+  expectedWorn=Clothing.expectedWorn(state,state.expectedWorn,Clothing.finalWorn(state,tidy))
  end
  sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,clothingItem=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
+  clothingB=true,clothingItem=true,clothingTemporary=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)

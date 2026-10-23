@@ -33,6 +33,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.231
+
+- **Action queue:** Use shared P4 completion for proven ordinary-clothing replacement and exclusive-slot restoration. Retain every displaced root item as a resource through preceding cleanup and Host effects, preserve native order and required returns, and guard capacity-driven world outputs, including modified worn-weight multipliers. Multi-item slots, displaced special equipment and modified callbacks retain their existing handling.
+
 ### 0.1.230
 
 - **Action queue:** Keep proven P4 wristwatch cleanup on the shared completion boundary while its alarm rings or stops naturally. Preserve native alarm behavior, exact item/hand/worn identity, required cleanup and independent following actions; conflicting slots, side conversions and modified callbacks retain their existing handling.

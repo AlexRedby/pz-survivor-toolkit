@@ -79,6 +79,8 @@ class EquipmentTests(unittest.TestCase):
                     checkpoint_s = (955 if remove else False) if hand in ('secondary', 'both') else original_s
                     effect.update(primary=original_p if tidy else checkpoint_p, secondary=original_s if tidy else checkpoint_s,
                                   originalPrimary=original_p, originalSecondary=original_s)
+                if spec.get('temporaryType'):
+                    effect['temporary'] = dict(id=957, fullType=spec['temporaryType'], bodyLocation=spec['temporaryLocation'], container='root', worn=not tidy)
                 if spec.get('watch'):
                     effect['watch'] = dict(alarmHour=23, alarmMinute=40, alarmSet=spec['alarm'], ringing=bool(spec.get('ringing')))
                 if spec.get('ringing'):
@@ -89,6 +91,13 @@ class EquipmentTests(unittest.TestCase):
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                       flush=count, legacy=0), unrelatedTailPreserved=True))
+                if spec.get('temporaryType'):
+                    result['clothingCheckpoint']['temporary'] = dict(effect['temporary'], worn=True)
+                    cleanup = ([dict(kind='ISUnequipAction', id=957)] if spec['temporaryLocation'] != spec['location'] else []) + [dict(kind='ISWearClothing', id=955)]
+                    producers = [dict(kind='ISWearClothing', id=957), dict(kind='ISCutHair', id=False)]
+                    result['tidyClothing']['displacement'] = dict(cleanup=cleanup if tidy else [], acknowledgements=[dict(row, state='completed') for row in producers + (cleanup if tidy else [])] if self.selection['kind'] == 'mp' else [])
+                    total = count * len(cleanup)
+                    result['tidyClothing']['sharedCompletion'] = dict(perform=total, complete=total if self.selection['kind'] == 'sp' else 0, flush=total, legacy=0)
                 if spec.get('watch'):
                     result['tidyClothing']['watchBaseline'] = dict(effect['watch'])
                     result['tidyClothing']['watchSetup'] = dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
@@ -463,6 +472,27 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                         server.write_text(original.replace(marker, marker + '\n' + marker))
                         self.assertTrue(self.verify(self.logs())['issues'], label)
                         server.write_text(original)
+
+    def test_displaced_clothing_preserves_both_exact_items_and_cleanup_prefix(self):
+        cases = [case for case, spec in equipment.CLOTHING_SPECS.items() if spec.get('temporaryType')]
+        self.selection.update(cases=cases, mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            self.assertEqual(self.verify(self.logs())['issues'], [])
+            for case in cases:
+                for change in (lambda out: out['tidyClothing']['temporary'].update(id=955),
+                               lambda out: out['tidyClothing']['temporary'].update(fullType='Base.Other'),
+                               lambda out: out['tidyClothing']['temporary'].update(container='world'),
+                               lambda out: out['tidyClothing']['temporary'].update(worn=True),
+                               lambda out: out['clothingCheckpoint']['temporary'].update(worn=False),
+                               lambda out: out['tidyClothing']['displacement']['cleanup'].pop(),
+                               lambda out: out['tidyClothing']['sharedCompletion'].update(perform=0)):
+                    rows = self.records(); change(next(row['outcome'] for row in rows if row.get('id') == case))
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, case))
+                if kind == 'mp':
+                    rows = self.records(); next(row['outcome'] for row in rows if row.get('id') == case)['tidyClothing']['displacement']['acknowledgements'].pop()
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'every producer/prefix/restore receipt is required')
+            (self.root / 'server-launch.log').unlink(missing_ok=True)
 
     def test_ringing_lifetime_authority_observations_and_cleanup_are_independent(self):
         cases = [case for case, spec in equipment.CLOTHING_SPECS.items() if spec.get('ringing')]

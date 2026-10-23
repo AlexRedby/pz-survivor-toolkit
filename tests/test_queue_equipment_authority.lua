@@ -665,3 +665,48 @@ do
  isClient,isServer,getGameTime,instanceof=oldClient,oldServer,oldTime,oldInstanceof
 end
 print('Equipment native ring protocol: root-ready once-only native trigger, quiet convergence, lifetime bound and logical cleanup stop passed.')
+
+-- Exclusive cleanup prefixes are clothing boundaries, never synthetic hand
+-- restores. Drive the real observer through native perform/complete/flush.
+do
+ local clothing=modules.QueueEquipmentClothing
+ local oldMods=getActivatedMods
+ getActivatedMods=function()return {contains=function(_,name)return name=='P4TidyUpMeister'end}end
+ ISUnequipAction=ISUnequipAction or {Type='ISUnequipAction'}
+ ISWearClothing=ISWearClothing or {Type='ISWearClothing'}
+ for _,kind in ipairs({'sp','mp'})do
+  for _,id in ipairs({'tidy-clothing-replace','tidy-headwear-hat-exclusive','tidy-headwear-full-hat-exclusive'})do
+   local spec=clothing.spec({id=id});local root={};local player={getCharacterActions=function()return {contains=function()return false end}end}
+   local function garment(number,fullType,location)
+    return {getID=function()return number end,getFullType=function()return fullType end,getContainer=function()return root end,
+     getBodyLocation=function()return location end}
+   end
+   local baseline=garment(901,spec.fullType,spec.location);local temp=garment(902,spec.temporaryType,spec.temporaryLocation)
+   local sample={id=id,player=player,root=root,clothingItem=baseline,clothingTemporary=temp,clothingLocation=spec.location,
+    baseline={[901]=baseline,[902]=temp}}
+   local queue={character=player,queue={}}
+   ISTimedActionQueue={queues={[player]=queue}}
+   local lifecycle={begin=function()return true end,current=function()return queue.current end,finish=function()end,
+    flush=function(value)return 'completed',value.current end}
+   local toolkit={ActionQueueLifecycle=lifecycle,ActionQueueOperations={perform=function()end,deferCompletion=function()return false end},
+    ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
+    ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end},
+    ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()return false end},ActionQueueAcknowledgements={},
+    ActionQueueTidyIntent={status=function()return true end},ActionQueueCompat={isInstalled=function()return true end,verifySources=function()return true end}}
+   local observer=load('QueueEquipmentCompletion').observe(toolkit,{kind=kind,mode='toolkit'});observer.watch(sample)
+   local specs=clothing.cleanupSpec(sample)
+   for _,row in ipairs(specs)do
+    local action=setmetatable({Type=row.class.Type,item=row.item,character=player,action={},toolkitQueueOperation={}},row.class)
+    queue.current=action;queue.queue={action}
+    lifecycle.begin(action,'perform');lifecycle.finish(action,'perform',true)
+    if kind=='sp'then lifecycle.begin(action,'complete');lifecycle.finish(action,'complete',true)end
+    lifecycle.flush(queue)
+   end
+   local observed=observer.clothing();local hands=observer.restores()
+   assert(observed.perform==#specs and observed.flush==#specs and observed.complete==(kind=='sp'and #specs or 0))
+   assert(hands.perform==0 and hands.unequip==0,'clothing prefix acquired false hand restoration evidence')
+  end
+ end
+ getActivatedMods=oldMods
+end
+print('Equipment displacement completion: exact shared clothing boundaries and zero synthetic hand receipts passed in SP/Host modes.')

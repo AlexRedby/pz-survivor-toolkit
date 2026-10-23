@@ -483,6 +483,7 @@ local function item(container, id)
         canBeEquipped=function(self)return self.equippedAt end,getClothingItem=function()end,
         isBroken=function(self)return self.broken==true end,getAttachedSlot=function(self)return self.attachedSlot or -1 end,
         getUnequippedWeight=function(self)return self.weight or 0.2 end,
+        getEquippedWeight=function(self)return self.equippedWeight or self:getUnequippedWeight()*0.3 end,
         isTwoHandWeapon=function()return false end, isRequiresEquippedBothHands=function()return false end}
 end
 local function tail()
@@ -1767,6 +1768,42 @@ do
             assert(select(2,definitions.inspect(action))=='compat.selected-chains','unknown '..field..' borrowed a root-only removal proof')
         end
     end
+    for _,bad in ipairs({{value=-1},{value=math.huge},{value=0/0},{value='1'},{}})do
+        local _,_,action=restoreClothing(true,nil,true,function(sock)
+            sock.getEquippedWeight=function()return bad.value end
+        end)
+        assert(select(2,definitions.inspect(action))=='compat.selected-chains','unknown/negative worn weight obtained a root-only removal proof')
+    end
+    for _,candidate in ipairs({'queued','root','worn'})do
+    for _,bad in ipairs({-1,math.huge,0/0})do
+        local queued,_,action=restoreClothing(true,nil,true)
+        local live=item(inventory,queued:getID());live.class='Clothing'
+        local wornProxy=item(inventory,queued:getID());wornProxy.class='Clothing'
+        inventory.values={live};worn[queued:getBodyLocation()]=wornProxy
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','valid replicated removal baseline was rejected')
+        local selected=candidate=='queued'and queued or candidate=='root'and live or wornProxy
+        selected.getEquippedWeight=function()return bad end
+        assert(not definitions.inspect(action),'negative/unknown '..candidate..' worn weight retained adopted removal ownership')
+    end end
+    do
+        local sock,_,action=restoreClothing(true,nil,true,function(value)
+            value.equippedWeight=-1;load,capacity=1,2
+        end)
+        assert(select(2,definitions.inspect(action))=='compat.selected-chains','negative worn multiplier bypassed native drop protection')
+        local previous=player.removeWornItem
+        player.removeWornItem=function(_,value)
+            assert(value==sock and worn[value:getBodyLocation()]==value)
+            worn[value:getBodyLocation()]=nil
+            load=load+value:getUnequippedWeight()-value:getEquippedWeight()
+            if math.floor(load*100+0.5)/100+value:getUnequippedWeight()>capacity then
+                inventory.values={};value.container=nil
+            end
+        end
+        assert(action:complete()and sock:getContainer()==nil,'negative multiplier must reproduce native capacity-driven world output')
+        player.removeWornItem=previous
+        local _,_,safe=restoreClothing(true,nil,true,function(value)value.equippedWeight=10 end)
+        assert(select(2,definitions.inspect(safe))=='compat.tidy-equipment','larger positive worn weight must not invent a removal risk')
+    end
     do
         local _,_,action=restoreClothing(true,nil,true,function()allowed=false end)
         assert(select(2,definitions.inspect(action))=='compat.selected-chains','native item rejection retained shared removal')
@@ -1785,10 +1822,12 @@ do
             inventory.values[#inventory.values+1]=other;worn[other:getBodyLocation()]=other;exclusive=not sameSlot
         end
         local _,_,exclusiveAction=restoreClothing(true,nil,removal,function(sock)extra(sock,false)end)
-        assert(select(2,definitions.inspect(exclusiveAction))=='compat.selected-chains','exclusive worn side effects obtained a single-garment proof')
+        assert(select(2,definitions.inspect(exclusiveAction))==(removal and 'compat.selected-chains'or 'compat.tidy-equipment'),
+            'exclusive Wear resource proof or strict removal boundary differs')
         if not removal then
             local _,_,replacement=restoreClothing(true,nil,false,function(sock)extra(sock,true)end)
-            assert(select(2,definitions.inspect(replacement))=='compat.selected-chains','unrelated same-slot replacement obtained exact-item proof')
+            local proof,id=definitions.inspect(replacement)
+            assert(id=='compat.tidy-equipment'and proof.items[14805],'same-slot Wear omitted its displaced root item')
         end
         local sock,_,action=restoreClothing(true,nil,removal)
         extra(sock,false)
@@ -1814,6 +1853,171 @@ do
         local sock,_,live=restoreClothing(true,nil,removal)
         otherSlot(sock)
         assert(not definitions.inspect(live),'late same-item different-slot mutation retained shared ownership')
+    end
+    -- The real P4 observer records all displaced root items. Java storage,
+    -- equipped weight and its post-mutation drop decision remain doubles here.
+    do
+        local oldSetter,oldExclusive=player.setWornItem,group.isExclusive
+        group.isExclusive=function(_,left,right)
+            return left~=right and (left==ItemBodyLocation.SOCKS or right==ItemBodyLocation.SOCKS)
+        end
+        player.setWornItem=function(_,location,value)
+            local previous=worn[location]
+            if previous==value then return end
+            local removed={}
+            for loc,garment in pairs(worn)do
+                if loc==location or group:isExclusive(location,loc)then removed[#removed+1]={loc,garment}end
+            end
+            for _,entry in ipairs(removed)do
+                worn[entry[1]]=nil;load=load+entry[2]:getUnequippedWeight()-entry[2]:getEquippedWeight()
+            end
+            worn[location]=value;writes=writes+1
+            if value then load=load+value:getEquippedWeight()-value:getUnequippedWeight()end
+            if previous and (not allowed or math.floor(load*100+0.5)/100+previous:getUnequippedWeight()>capacity)then
+                for i,candidate in ipairs(inventory.values)do if candidate==previous then table.remove(inventory.values,i);break end end
+                previous.container=nil
+            end
+        end
+        local displaced={}
+        local function occupy(sock,pattern)
+            displaced={}
+            for index,location in ipairs(pattern=='same'and {sock:getBodyLocation()}
+                or pattern=='exclusive-two'and {ItemBodyLocation.HAT,ItemBodyLocation.HANDS}or {ItemBodyLocation.HAT})do
+                local garment=item(inventory,14900+index);garment.class='Clothing';garment.location=location
+                garment.getFullType=function()return 'Base.Displaced'..index end
+                inventory.values[#inventory.values+1]=garment;worn[location]=garment;displaced[#displaced+1]=garment
+            end
+            load,capacity=1,20
+        end
+        local displacedBoundaries=0
+        for _,pattern in ipairs({'same','exclusive','exclusive-two'})do
+        for _,mode in ipairs({'sp','mp-early','mp-late'})do
+        for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
+            local sock,owner,wear=restoreClothing(mixed,nil,false,function(value)occupy(value,pattern)end)
+            local contract,id=definitions.inspect(wear)
+            assert(id=='compat.tidy-equipment'and contract.items[sock:getID()]and contract.hands==player)
+            for _,garment in ipairs(displaced)do
+                assert(contract.items[garment:getID()]and contract.itemTypes[garment:getFullType()],
+                    'displaced clothing resource missing from the retained contract')
+            end
+            local cleanup={}
+            for _,action in ipairs(queue.queue)do
+                cleanup[#cleanup+1]=action
+                if action==wear then break end
+                assert(action.Type=='ISUnequipAction','unexpected P4 exclusive prefix')
+            end
+            assert(#cleanup==(pattern=='same'and 1 or #displaced+1),'P4 displaced cleanup changed native order/count')
+            local following=tail()
+            if cancelled then operations.invalidate(owner.toolkitQueueOperation)end
+            isClient=function()return mode~='sp'end
+            for index,action in ipairs(cleanup)do
+                assert(select(2,definitions.inspect(wear))=='compat.tidy-equipment',
+                    'displaced Wear lost its recorded resources through a native prefix')
+                local nextAction=cleanup[index+1]or following
+                local removed=false;action.action={};queue.current=action
+                player.getCharacterActions=function()return list(removed and {}or{action.action})end
+                if mode=='mp-early'then assert(action:complete())end
+                assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+                assert(queue.current==action and queue.queue[2]==nextAction and lifecycle.flush(queue)=='waiting')
+                if mode=='sp'then
+                    assert(lifecycle.begin(action,'complete'));assert(action:complete());lifecycle.finish(action,'complete',true)
+                elseif mode=='mp-late'then assert(action:complete())end
+                assert(lifecycle.flush(queue)=='waiting','displaced cleanup ignored native action removal')
+                removed=true
+                assert(lifecycle.flush(queue)=='completed'and queue.current==nextAction and lifecycle.flush(queue)==nil)
+                displacedBoundaries=displacedBoundaries+1
+            end
+            assert(worn[sock:getBodyLocation()]==sock and inventory:getItemById(sock:getID())==sock)
+            local after=definitions.inspect(wear)
+            assert(after,'early native completion revoked the displaced resource proof')
+            for _,garment in ipairs(displaced)do
+                assert(garment:getContainer()==inventory and inventory:getItemById(garment:getID())==garment
+                    and not player:getWornItems():contains(garment)and after.items[garment:getID()],
+                    'native replacement lost a displaced garment or released its resource too early')
+            end
+            isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
+        end end end end
+        assert(displacedBoundaries==72,'displaced clothing shared lifecycle coverage incomplete')
+        -- Kahlua has pairs but no global next. Early Host completion can
+        -- already have worn the exact target before its client perform starts.
+        for _,pattern in ipairs({'none','same','exclusive'})do
+            local _,_,wear=restoreClothing(true,nil,false,function(sock)
+                if pattern~='none'then occupy(sock,pattern)else load=1 end
+            end)
+            assert(wear:complete())
+            local standardNext=next;next=nil
+            local contract,id=definitions.inspect(wear)
+            next=standardNext
+            assert(contract and id=='compat.tidy-equipment','early Host clothing proof requires unavailable Kahlua next')
+        end
+        for _,change in ipairs({'missing','type','body','container','activation','new-occupant','multi','capacity','equipped-weight'})do
+            local sock,_,wear=restoreClothing(true,nil,false,function(value)occupy(value,'same')end)
+            assert(select(2,definitions.inspect(wear))=='compat.tidy-equipment')
+            local garment=displaced[1]
+            if change=='missing'then inventory.values={sock}
+            elseif change=='type'then garment.getFullType=function()return 'Base.OtherGarment'end
+            elseif change=='body'then garment.location=ItemBodyLocation.HANDS
+            elseif change=='container'then garment.container={}
+            elseif change=='activation'then garment.activatable=true
+            elseif change=='new-occupant'then
+                local other=item(inventory,14905);other.class='Clothing';inventory.values[#inventory.values+1]=other
+                worn[sock:getBodyLocation()]=other
+            elseif change=='multi'then multi=true
+            elseif change=='capacity'then capacity=1.1
+            else garment.equippedWeight=100 end
+            assert(not definitions.inspect(wear),'displaced Wear retained a stale '..change..' proof')
+        end
+        for _,change in ipairs({'alarm','container-item','broken','heavy','wrong-body','root-proxy','multi'})do
+            local _,_,wear=restoreClothing(true,nil,false,function(sock)
+                occupy(sock,'same');local garment=displaced[1]
+                if change=='alarm'then garment.class='AlarmClockClothing'
+                elseif change=='container-item'then garment.class='InventoryContainer';garment.equippedAt='Back'
+                elseif change=='broken'then garment.broken=true
+                elseif change=='heavy'then garment.fixtureHeavy=true
+                elseif change=='wrong-body'then garment.location=ItemBodyLocation.HANDS
+                elseif change=='root-proxy'then inventory.values={sock,item(inventory,garment:getID())}
+                else multi=true end
+            end)
+            assert(select(2,definitions.inspect(wear))=='compat.selected-chains','displaced Wear accepted unsupported '..change)
+        end
+        for _,target in ipairs({'incoming','displaced'})do
+        for _,bad in ipairs({-1,math.huge,0/0,100})do
+            local _,_,wear=restoreClothing(true,nil,false,function(sock)
+                occupy(sock,'same');local garment=target=='incoming'and sock or displaced[1]
+                garment.getEquippedWeight=function()return bad end
+            end)
+            assert(select(2,definitions.inspect(wear))=='compat.selected-chains','unknown native worn multiplier obtained a no-drop proof')
+        end end
+        do
+            local sock,_,wear=restoreClothing(true,nil,false,function(value)occupy(value,'same');capacity=1.1 end)
+            local garment=displaced[1]
+            assert(select(2,definitions.inspect(wear))=='compat.selected-chains','native same-slot world output was admitted')
+            assert(wear:complete()and garment:getContainer()==nil and not inventory:getItemById(garment:getID())
+                and worn[sock:getBodyLocation()]==sock,'fallback suppressed the real native capacity/drop branch')
+        end
+        do
+            -- A mod can change exclusion data after clothes were worn. The
+            -- same-slot drop check must include every newly displaced weight.
+            local sock,_,wear=restoreClothing(true,nil,false,function(value)
+                occupy(value,'same');displaced[1].equippedWeight=0
+                local other=item(inventory,14907);other.class='Clothing';other.location=ItemBodyLocation.HAT
+                other.weight,other.equippedWeight=3,0
+                inventory.values[#inventory.values+1]=other;worn[other.location]=other;displaced[#displaced+1]=other
+                value.equippedWeight=value:getUnequippedWeight();capacity=1.5
+            end)
+            assert(select(2,definitions.inspect(wear))=='compat.selected-chains',
+                'same-slot reserve ignored an additional displaced exclusive garment')
+            assert(wear:complete()and displaced[1]:getContainer()==nil and displaced[2]:getContainer()==inventory
+                and worn[sock:getBodyLocation()]==sock,'Java drop branch must affect only its same-slot old item')
+        end
+        do
+            local sock,_,wear=restoreClothing(true,nil,false,function(value)occupy(value,'exclusive-two');load,capacity=100,0 end)
+            assert(select(2,definitions.inspect(wear))=='compat.tidy-equipment',
+                'exclusive-only native Wear invented a same-slot capacity/drop check')
+            assert(wear:complete()and worn[sock:getBodyLocation()]==sock)
+            for _,garment in ipairs(displaced)do assert(garment:getContainer()==inventory)end
+        end
+        player.setWornItem,group.isExclusive=oldSetter,oldExclusive
     end
     do
         reset()
