@@ -17,68 +17,28 @@ INHERITED_ENV_EXCLUSIONS = ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTI
 
 
 def _fixture_environment(selection, role, cache, extra_env):
-    """Admit the exact sealed fixture inputs; inherited opt-in probes stay disabled."""
-    options = selection.get('options', {})
-    allowed_env = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE', 'PZ_CART_TEST_PAD'}
-    if selection['suite'] == 'basement-hall' and selection['kind'] == 'sp' and role == 'client1':
-        allowed_env.add('PZ_BASEMENT_HALL_CACHE')
-    if selection['suite'] == 'vehicle-lights' and role == 'client1':
-        allowed_env.add('PZ_LIGHTS_TEST_CACHE')
-    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
-            and selection.get('cases') == ['owner_observer_motion'] and options.get('mp_host') is True
-            and options.get('cart_inventory_equip') is True and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'
-            and role in ('client1', 'client2')):
-        allowed_env.add('PZ_CART_INVENTORY_EQUIP')
-    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
-            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
-            and role in ('server', 'client1', 'client2')):
-        allowed_env.add('PZ_CART_TIMELINE')
-    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
-            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
-            and options.get('cart_time_alignment') is True and options.get('mp_host') is True
-            and options.get('cart_inventory_equip') is not True and options.get('cart_actions') is not True
-            and 'cart_wall_exit' not in options and role in ('client1', 'client2')):
-        allowed_env.add('PZ_CART_TIME_ALIGNMENT')
-    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
-            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
-            and options.get('cart_lease_control') is True and options.get('cart_fast_motion') is True and options.get('mp_host') is True
-            and options.get('cart_inventory_equip') is not True and options.get('cart_actions') is not True
-            and 'cart_wall_exit' not in options and role in ('server', 'client1', 'client2')):
-        allowed_env.add('PZ_CART_LEASE_CONTROL')
-    if ('PZ_CART_LEASE_CONTROL' in allowed_env and options.get('cart_lease_lifetimes') is True
-            and options.get('cart_time_alignment') is not True and options.get('cart_hotkey_setdown') is not True):
-        allowed_env.add('PZ_CART_LEASE_LIFETIME')
-    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
-            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
-            and options.get('cart_action_admission') is True and options.get('cart_fast_motion') is True
-            and options.get('mp_host') is True and options.get('cart_actions') is True
-            and options.get('cart_lease_control') is not True and options.get('cart_time_alignment') is not True
-            and options.get('cart_inventory_equip') is not True and 'cart_wall_exit' not in options
-            and role in ('server', 'client1', 'client2')):
-        allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION'))
-        if options.get('cart_observer_association') is True:
-            allowed_env.add('PZ_CART_OBSERVER_ASSOCIATION')
-    if (selection['suite']=='wooden_cart_multiplayer' and selection['kind']=='mp'
-            and selection.get('cases')==['lease_lifecycle'] and options.get('mp_host') is True
-            and not any(options.get(flag,False) is not False for flag in ('cart_timeline','cart_time_alignment','cart_fast_motion',
-                'cart_actions','cart_hotkey_setdown','cart_lease_control','cart_lease_lifetimes','cart_action_admission','cart_observer_association','cart_inventory_equip'))
-            and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow'
-            and role in ('server','client1','client2')):
-        allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_LEASE_LIFETIME'))
-    if (set(extra_env) - allowed_env
-            or any(not isinstance(value, str) or not Path(value).is_absolute()
-                   for name, value in extra_env.items() if name not in ('PZ_CART_TEST_PAD', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_LEASE_LIFETIME', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION'))
-            or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')
-            or 'PZ_CART_INVENTORY_EQUIP' in extra_env and extra_env['PZ_CART_INVENTORY_EQUIP'] != 'true'
-            or 'PZ_CART_TIMELINE' in extra_env and extra_env['PZ_CART_TIMELINE'] != 'true'
-            or 'PZ_CART_TIME_ALIGNMENT' in extra_env and extra_env['PZ_CART_TIME_ALIGNMENT'] != 'true'
-            or 'PZ_CART_LEASE_CONTROL' in extra_env and extra_env['PZ_CART_LEASE_CONTROL'] != 'true'
-            or 'PZ_CART_LEASE_LIFETIME' in extra_env and extra_env['PZ_CART_LEASE_LIFETIME'] != 'true'
-            or 'PZ_CART_ACTION_ADMISSION' in extra_env and extra_env['PZ_CART_ACTION_ADMISSION'] != 'true'
-            or 'PZ_CART_OBSERVER_ASSOCIATION' in extra_env and extra_env['PZ_CART_OBSERVER_ASSOCIATION'] != 'true'
-            or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)
-            or 'PZ_LIGHTS_TEST_CACHE' in extra_env and extra_env['PZ_LIGHTS_TEST_CACHE'] != str(cache)):
+    """Admit adapter-owned values independently of the staged runtime dictionary."""
+    # These three historical baseline inputs also work with synthetic health
+    # fixtures. Keep that compatibility separate from suite-specific admission.
+    paths = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE'}
+    adapter = adapters.get(selection.get('suite'))
+    resolver = getattr(adapter, 'environment', None)
+    expected = resolver(selection, role, cache) if resolver else {}
+    if set(extra_env) - (paths | {'PZ_CART_TEST_PAD'} | expected.keys()):
         raise ValueError('Invalid fixture-owned client environment')
+    for name, value in extra_env.items():
+        valid = isinstance(value, str)
+        if name in paths:
+            valid = valid and Path(value).is_absolute()
+        elif name == 'PZ_CART_TEST_PAD':
+            valid = valid and value in ('true', 'false')
+        else:
+            allowed = expected[name]
+            # Adapter-owned cache values are Paths; diagnostic flags are exact
+            # strings. Admission never derives permission from extra_env itself.
+            valid = valid and value == str(allowed) and (not isinstance(allowed, Path) or Path(value).is_absolute())
+        if not valid or name in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS'):
+            raise ValueError('Invalid fixture-owned client environment')
     environment = {key: value for key, value in os.environ.items() if key not in INHERITED_ENV_EXCLUSIONS}
     environment.update(extra_env)
     return environment

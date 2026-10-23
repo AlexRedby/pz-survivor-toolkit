@@ -17,6 +17,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import carts
+from queue_checks import runner
 
 
 class CartAdapterTests(unittest.TestCase):
@@ -63,6 +64,10 @@ class CartAdapterTests(unittest.TestCase):
     def stage(self):
         with patch.object(carts, '_compile', side_effect=self.compiler) as compiler:
             carts.stage(ROOT, self.output, self.root / 'game', self.root / 'jdk', self.selection, self.locations, self.runtime)
+        for role, spec in self.runtime['roles'].items():
+            staged = spec.get('env', {})
+            admitted = runner._fixture_environment(self.selection, role, Path(spec['cache']), staged)
+            self.assertEqual({name: admitted[name] for name in staged}, staged)
         self._last_compiler_calls=compiler.call_args_list
         return compiler
 
