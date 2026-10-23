@@ -22,6 +22,8 @@ Version labels come from committed component metadata, including changes made wi
 
 - **Guest cart lifecycle fixture:** Add a separate disposable menu-Host death/Coop-respawn/rejoin scenario, exact native transport activity observation, stale admission checks and strict evidence analysis. Keep old cart disposition explicit and production animation unchanged.
 
+- **Guest cart lifecycle fixture:** Add a separate disposable menu-Host death/Coop-respawn/rejoin scenario, exact native transport activity observation, stale admission checks and strict evidence analysis. Distinguish native prebirth preview cleanup from a fresh, exactly registered equipment incarnation while preserving old tombstones. Keep old cart disposition explicit and production animation unchanged.
+
 - **Cart control lifecycle diagnostics:** Add explicit native-absence invalidation, permanent death-entry retirement and fresh challenge namespaces for recreated test protocols. Measure delivered native command serialization with exact original callback receipts; keep transport wire costs and full Host respawn/reconnect coverage separate.
 
 - **Cart equipment lifetime diagnostics:** Observe native equipment revisions across missed release/reacquire and same-ID replacement cycles, fence stale binds/payloads in the test-only reference, and add a separately selected Host setter bank. Certify complete remote Equip resnapshots separately from release, preserving replay fences through bounded fresh rebinds. Preserve production animation and native effects.

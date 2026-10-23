@@ -188,6 +188,91 @@ public final class EquipmentLifetimeCheck {
         static IsoPlayerState capture(){return new IsoPlayerState(zombie.characters.IsoPlayer.getInstance(),zombie.characters.IsoPlayer.players[0]);}
         void restore(){zombie.characters.IsoPlayer.players[0]=slot;zombie.characters.IsoPlayer.setInstance(current);}
     }
+    public static class BirthOwner extends Owner {
+        zombie.inventory.ItemContainer bag;
+        @Override public boolean isLocalPlayer(){return true;}
+        @Override public zombie.characters.BaseCharacterSoundEmitter getEmitter(){return new zombie.characters.DummyCharacterSoundEmitter(this);}
+        @Override public void updateLightInfo(){}
+        @Override public void setCurrentSquareFromPosition(){}
+        @Override public void updateUsername(){}
+        @Override public void setSceneCulled(boolean value){}
+        @Override public zombie.inventory.ItemContainer getInventory(){return bag;}
+        @Override public boolean isAsleep(){return false;}
+    }
+    @SuppressWarnings("unchecked")
+    private static void birthChecks(Engine engine,Connection connection)throws Exception {
+        var lives=(Main.NativeWeakMap<zombie.characters.IsoPlayer,Main.EquipmentLife>)field(Main.class,"equipmentLives").get(null);
+        var world=(zombie.iso.IsoWorld)unsafe.allocateInstance(zombie.iso.IsoWorld.class);
+        var cell=(zombie.iso.IsoCell)unsafe.allocateInstance(zombie.iso.IsoCell.class);
+        field(zombie.iso.IsoCell.class,"objectList").set(cell,new java.util.HashSet<zombie.iso.IsoMovingObject>());
+        field(zombie.iso.IsoCell.class,"addList").set(cell,new java.util.HashSet<zombie.iso.IsoMovingObject>());
+        field(zombie.iso.IsoCell.class,"processItems").set(cell,new java.util.ArrayList<zombie.inventory.InventoryItem>());
+        world.currentCell=cell;world.addCoopPlayers=new java.util.ArrayList<>();
+        var previousWorld=zombie.iso.IsoWorld.instance;var previousSound=zombie.SoundManager.instance;
+        var previousInstance=zombie.characters.IsoPlayer.getInstance();var previousSlot=zombie.characters.IsoPlayer.players[0];
+        zombie.iso.IsoWorld.instance=world;zombie.SoundManager.instance=new zombie.DummySoundManager();
+        zombie.network.GameServer.server=false;zombie.network.GameClient.client=true;
+        zombie.network.GameClient.instance.udpEngine=engine;zombie.network.GameClient.instance.connected=true;zombie.network.GameClient.connection=connection;
+        connections(engine).put(1L,connection);zombie.network.GameClient.IDToPlayerMap.clear();
+        try{
+            for(String scenario:new String[]{"preview-removed","forged-event","registered-removed","death","dead","after-birth-remove","wrong-engine","wrong-slot"}){
+                var player=(BirthOwner)unsafe.allocateInstance(BirthOwner.class);player.onlineId=7;player.playerIndex=0;player.setHealth(100);
+                player.bag=(zombie.inventory.ItemContainer)unsafe.allocateInstance(zombie.inventory.ItemContainer.class);player.bag.items=new java.util.ArrayList<>();
+                var cart=item(42);field(zombie.characters.IsoGameCharacter.class,"leftHandItem").set(player,cart);field(zombie.characters.IsoGameCharacter.class,"rightHandItem").set(player,cart);
+                zombie.characters.IsoPlayer.players[0]=null;zombie.characters.IsoPlayer.setInstance(player);zombie.network.GameClient.IDToPlayerMap.clear();
+                if(scenario.equals("registered-removed"))zombie.network.GameClient.IDToPlayerMap.put((short)7,player);
+                if(scenario.equals("preview-removed")){
+                    try{player.removeFromWorld();}catch(Throwable expected){}
+                    check(player.removedFromWorldMs>0,"Actual native preview removal did not write its historical timestamp");
+                    field(zombie.characters.IsoGameCharacter.class,"leftHandItem").set(player,cart);field(zombie.characters.IsoGameCharacter.class,"rightHandItem").set(player,cart);
+                }else{Main.equipmentLifetimeRetire(player,scenario.equals("death")?"actor-death":"actor-remove");player.removedFromWorldMs=123;}
+                var original=lives.get(player);long oldEpoch=original.actorEpoch;
+                check(Main.cartLeaseLifetime(player)==null,"Prebirth removed actor admitted");
+                var task=new zombie.util.AddCoopPlayer(player,false);world.addCoopPlayers.add(task);
+                field(zombie.util.AddCoopPlayer.class,"stage").set(task,zombie.util.AddCoopPlayer.Stage.AddToWorld);
+                if(scenario.equals("forged-event")){
+                    check(Main.equipmentLifetimeCoopEnter(task)==null,"Direct call forged native birth scope");
+                    zombie.characters.IsoPlayer.players[0]=player;
+                    zombie.Lua.LuaEventManager.triggerEvent("OnCreatePlayer",Integer.valueOf(0),player);
+                    Main.equipmentLifetimeCoopEvent("OnCreatePlayer",Integer.valueOf(0),player);
+                }else{
+                    if(scenario.equals("wrong-engine"))zombie.network.GameClient.instance.udpEngine=null;
+                    if(scenario.equals("wrong-slot"))player.playerIndex=1;
+                    if(scenario.equals("dead"))player.setHealth(0);
+                    task.update();
+                    if(scenario.equals("after-birth-remove"))Main.equipmentLifetimeRetire(player,"actor-remove");
+                    zombie.network.GameClient.instance.udpEngine=engine;player.playerIndex=0;
+                }
+                if(scenario.equals("preview-removed")){
+                    check(lives.get(player)==original && original.retired,"Native event prematurely replaced pre-registration tombstone");
+                    player.setOnlineID((short)8);player.setOnlineID((short)7);
+                    zombie.network.GameClient.IDToPlayerMap.put((short)7,player);
+                    // Actual native hand setters before promotion must remain invisible, including OnEquip reentrant reads.
+                    player.setPrimaryHandItem(null);player.setSecondaryHandItem(null);player.setPrimaryHandItem(cart);player.setSecondaryHandItem(cart);
+                    zombie.network.GameClient.IDToPlayerMap.clear();
+                    check(lives.get(player)==original && original.revision==1 && original.issued.isEmpty(),"Final native online-ID update changed prebaseline logical lifetime");
+                    check(Main.cartLeaseLifetime(player)==null,"Birth witness bypassed missing authoritative client map");
+                    zombie.network.GameClient.IDToPlayerMap.put((short)7,player);
+                    String token=life(player);var fresh=lives.get(player);check(fresh!=original && fresh.actorEpoch!=oldEpoch && fresh.born && !fresh.retired && original.retired && original.issued.isEmpty(),"Native birth did not preserve old tombstone and create distinct unissued life");
+                    check(Main.nativeTimeIdentity(player,true)==oldEpoch,"Equipment birth rotated shared object identity");
+                    check(fresh.revision==1 && token.endsWith("|1"),"Fresh baseline did not start at revision one after final online-ID update");
+                    check(token.contains("|"+fresh.actorEpoch+"|") && !token.contains("|"+oldEpoch+"|"),"Birth reused retired logical epoch");
+                    check(!Main.cartLeaseResnapshot(player,"1|"+Main.cartLeaseSeed()+"|"+oldEpoch+"|"+Main.nativeTimeIdentity(connection,false)+"|1"),"Prebirth namespace entered fresh lifetime");
+                    task.update();check(lives.get(player)==fresh && token.equals(life(player)),"Repeated completed task rotated fresh incarnation");
+                    zombie.network.GameClient.IDToPlayerMap.remove((short)7);check(Main.cartLeaseLifetime(player)==null,"Native birth bypassed remote/client map fence");zombie.network.GameClient.IDToPlayerMap.put((short)7,player);
+                    Main.equipmentLifetimeRetire(player,"actor-remove");check(Main.cartLeaseLifetime(player)==null,"Postbirth removal revived");
+                    field(zombie.util.AddCoopPlayer.class,"stage").set(task,zombie.util.AddCoopPlayer.Stage.AddToWorld);task.update();
+                    check(lives.get(player)==fresh && fresh.retired && Main.cartLeaseLifetime(player)==null,"Repeated native birth healed issued/retired incarnation");
+                }else check(lives.get(player)==original && original.retired && Main.cartLeaseLifetime(player)==null,"Invalid birth admitted "+scenario);
+                world.addCoopPlayers.remove(task);zombie.network.GameClient.IDToPlayerMap.clear();
+            }
+        }finally{
+            zombie.iso.IsoWorld.instance=previousWorld;zombie.SoundManager.instance=previousSound;
+            zombie.characters.IsoPlayer.players[0]=previousSlot;zombie.characters.IsoPlayer.setInstance(previousInstance);
+            zombie.network.GameClient.client=false;zombie.network.GameServer.server=true;
+        }
+        System.out.println("EQUIPMENT_NATIVE_COOP_BIRTH_CHECK_PASS originalEvent=true nativePreviewRemoval=true prebirthOnly=true immutableEpoch=true oldTombstonePreserved=true forgedRepeatedRegisteredDeathWrongSlotEngineDenied=true mapGuardUnchanged=true");
+    }
     public static void main(String[] args)throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         zombie.Lua.LuaManager.env=se.krka.kahlua.j2se.J2SEPlatform.getInstance().newEnvironment();
@@ -229,6 +314,7 @@ public final class EquipmentLifetimeCheck {
         zombie.network.GameServer.server=true;zombie.network.GameClient.client=false;zombie.network.GameServer.udpEngine=engine;
         var original=item(42);var owner=owner(original,(short)7);registered(owner,connection,engine);
         String first=life(owner);check(first.equals(life(owner)),"Read-only sampling changed native lifetime");
+        birthChecks(engine,connection);
         eligibilityChecks(owner,connection,engine);
         check(!Main.cartLeaseResnapshot(owner,first) && !Main.cartLeaseResnapshot(owner,"invalid"),"Unchanged or malformed native token certified");
         owner.setPrimaryHandItem(original);owner.setSecondaryHandItem(original);

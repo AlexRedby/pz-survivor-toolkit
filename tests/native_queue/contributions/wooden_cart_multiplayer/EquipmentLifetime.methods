@@ -24,15 +24,19 @@
         }
     }
     public static final class EquipmentLife {
-        public final java.lang.ref.WeakReference<IsoPlayer> actor;
+        public final java.lang.ref.WeakReference<IsoPlayer> actor;public final long actorEpoch;
+        public boolean born,birthPending,retiredRegistered;public long birthRemovedStamp;public String retirementReason;
+        public java.lang.ref.WeakReference<zombie.core.raknet.UdpEngine> birthEngine=new java.lang.ref.WeakReference<>(null);
+        public java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> birthConnection=new java.lang.ref.WeakReference<>(null);
         public final java.util.HashSet<Long> issued=new java.util.HashSet<>();
         public java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> connection=new java.lang.ref.WeakReference<>(null);
         public java.lang.ref.WeakReference<zombie.inventory.InventoryItem> primary=new java.lang.ref.WeakReference<>(null),secondary=new java.lang.ref.WeakReference<>(null);
         public long revision=1,hardRevision=1,thread;public int depth,cart,parseDepth;public boolean baseline,poisoned,retired;
-        EquipmentLife(IsoPlayer actor){this.actor=new java.lang.ref.WeakReference<>(actor);}
+        EquipmentLife(IsoPlayer actor){this(actor,nativeTimeIdentity(actor,true));}
+        EquipmentLife(IsoPlayer actor,long epoch){this.actor=new java.lang.ref.WeakReference<>(actor);this.actorEpoch=epoch;}
     }
     public record EquipmentMutation(EquipmentLife life,int depth,long thread,long serial,String reason,
-        zombie.inventory.InventoryItem oldPrimary,zombie.inventory.InventoryItem oldSecondary,EquipmentParse parse) {}
+        zombie.inventory.InventoryItem oldPrimary,zombie.inventory.InventoryItem oldSecondary,EquipmentParse parse,EquipmentPendingBirth pending) {}
     private static boolean equipmentLifetimeEnabled(){return LEASE_LIFETIME && LEASE_CONTROL && !leaseControlFailed && !equipmentLifetimeFailed;}
     private static void equipmentLifetimeError(Throwable error){equipmentLifetimeFailed=true;System.err.println("[CART_EQUIPMENT] {\"event\":\"error\",\"reason\":"+mpJsonString(String.valueOf(error))+"}");Main.timelineError(new IllegalStateException("Native equipment lifetime observation failed",error));}
     private static void equipmentLifetimeTrace(String event,EquipmentLife life,EquipmentMutation scope,String reason,boolean success) {
@@ -43,7 +47,7 @@
         var oldPrimary=resnapshot && parse!=null?parse.original:scope==null?primary:scope.oldPrimary();
         var oldSecondary=resnapshot && parse!=null?parse.original:scope==null?secondary:scope.oldSecondary();
         System.out.println("[CART_EQUIPMENT] {\"event\":"+mpJsonString(event)+",\"process\":"+mpJsonString(nativeTimeProcess)
-            +",\"ownerID\":"+(actor==null?-1:actor.getOnlineID())+",\"actorEpoch\":"+nativeTimeIdentity(actor,true)
+            +",\"ownerID\":"+(actor==null?-1:actor.getOnlineID())+",\"actorEpoch\":"+life.actorEpoch
             +",\"connectionEpoch\":"+nativeTimeIdentity(life.connection.get(),false)+",\"revision\":"+life.revision+",\"depth\":"+life.depth
             +",\"reason\":"+mpJsonString(reason)+",\"mutationSerial\":"+(scope==null?0:scope.serial())
             +",\"hardRevision\":"+life.hardRevision+",\"parseSerial\":"+(parse==null?0:parse.serial)
@@ -75,15 +79,20 @@
     }
     private static EquipmentMutation equipmentLifetimeBegin(EquipmentLife life,String reason,boolean candidate) {
         long thread=Thread.currentThread().getId();
+        var actor=life.actor.get();var pending=actor==null?null:equipmentPendingBirths.get(actor);
+        if(pending!=null && pending.previous==life && !pending.invalid){
+            if(pending.depth==Integer.MAX_VALUE || pending.depth>0 && pending.thread!=thread){pending.invalid=true;return null;}
+            pending.depth++;pending.thread=thread;
+            return new EquipmentMutation(life,pending.depth,thread,0,reason,actor.getPrimaryHandItem(),actor.getSecondaryHandItem(),null,pending);
+        }
         if(life.retired || life.poisoned)return null;
         if(life.depth>0 && life.thread!=thread){life.poisoned=true;return null;}
         if(life.revision>=9007199254740991L || equipmentLifetimeMutationSerial>=9007199254740991L || life.depth==Integer.MAX_VALUE){life.poisoned=true;return null;}
         life.revision++;life.depth++;life.thread=thread;
         var parse=equipmentLifetimeParsing.get();
         if(!candidate){life.hardRevision=life.revision;if(parse!=null)parse.invalid=true;}
-        var actor=life.actor.get();
         var scope=new EquipmentMutation(life,life.depth,thread,++equipmentLifetimeMutationSerial,reason,
-            actor==null?null:actor.getPrimaryHandItem(),actor==null?null:actor.getSecondaryHandItem(),parse);
+            actor==null?null:actor.getPrimaryHandItem(),actor==null?null:actor.getSecondaryHandItem(),parse,null);
         equipmentLifetimeTrace("mutation-enter",life,scope,reason,true);return scope;
     }
     /** Entry invalidation precedes native OnEquip callbacks; no new snapshot is eligible until exit. */
@@ -137,6 +146,11 @@
         if(scope==null)return;
         try{synchronized(equipmentLifetimeLock){
             var life=scope.life();
+            if(scope.pending()!=null){
+                var pending=scope.pending();
+                if(failure!=null || pending.depth!=scope.depth() || pending.thread!=scope.thread() || Thread.currentThread().getId()!=scope.thread())pending.invalid=true;
+                if(pending.depth>0)pending.depth--;if(pending.depth==0)pending.thread=0;return;
+            }
             if(failure!=null || life.depth!=scope.depth() || life.thread!=scope.thread() || Thread.currentThread().getId()!=scope.thread()){
                 life.poisoned=true;life.hardRevision=life.revision;if(scope.parse()!=null)scope.parse().invalid=true;
             }
@@ -150,7 +164,11 @@
     }
     public static void equipmentLifetimeRetire(zombie.characters.IsoGameCharacter actor,String reason) {
         if(!equipmentLifetimeEnabled() || !(actor instanceof IsoPlayer player))return;
-        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,true);life.retired=true;life.hardRevision=life.revision;var parse=equipmentLifetimeParsing.get();if(parse!=null)parse.invalid=true;equipmentLifetimeTrace("retire",life,null,reason,true);}}
+        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,true);var pending=equipmentPendingBirths.get(player);if(pending!=null)pending.invalid=true;int slot=player.playerIndex;
+            life.retiredRegistered|=zombie.network.GameServer.server && !zombie.network.GameClient.client && zombie.network.GameServer.IDToPlayerMap.get(player.getOnlineID())==player
+                || zombie.network.GameClient.client && !zombie.network.GameServer.server && (zombie.network.GameClient.IDToPlayerMap.get(player.getOnlineID())==player
+                    || slot>=0 && slot<IsoPlayer.players.length && IsoPlayer.players[slot]==player);
+            life.retired=true;if(life.retirementReason==null || !"actor-remove".equals(reason))life.retirementReason=reason;life.hardRevision=life.revision;var parse=equipmentLifetimeParsing.get();if(parse!=null)parse.invalid=true;equipmentLifetimeTrace("retire",life,null,reason,true);}}
         catch(Throwable error){equipmentLifetimeError(error);}
     }
     /** Capture the exact connection before the engine removes its GUID mapping or queues cleanup. */
@@ -158,11 +176,11 @@
         if(!equipmentLifetimeEnabled())return;
         try{synchronized(equipmentLifetimeLock){
             var connection=engine.getActiveConnection(guid);if(connection==null)return;equipmentRetiredConnections.put(connection,Boolean.TRUE);
-            for(var life:equipmentLifetimeRecords)if(life.connection.get()==connection){life.retired=true;life.hardRevision=life.revision;equipmentLifetimeTrace("retire",life,null,"connection-remove",true);}
+            for(var life:equipmentLifetimeRecords)if(life.connection.get()==connection){life.retired=true;life.retirementReason="connection-remove";life.hardRevision=life.revision;equipmentLifetimeTrace("retire",life,null,"connection-remove",true);}
         }}catch(Throwable error){equipmentLifetimeError(error);}
     }
     private static zombie.core.raknet.UdpConnection equipmentLifetimeConnection(IsoPlayer player) {
-        if(player==null || player.getOnlineID()<0 || player.removedFromWorldMs!=0 || !player.isAlive())return null;
+        if(player==null || player.getOnlineID()<0 || player.removedFromWorldMs!=0 && !equipmentLifetimeBornAfterRemoval(player) || !player.isAlive())return null;
         zombie.core.raknet.UdpEngine engine;zombie.core.raknet.UdpConnection connection;
         if(zombie.network.GameServer.server && !zombie.network.GameClient.client){
             if(zombie.network.GameServer.IDToPlayerMap.get(player.getOnlineID())!=player)return null;
@@ -178,6 +196,7 @@
     /** Private core is separate solely to permit no-world native checks; Lua has only the validated API. */
     private static String equipmentLifetimeRead(IsoPlayer player,zombie.core.raknet.UdpConnection connection) {
         synchronized(equipmentLifetimeLock){
+            equipmentLifetimeActivateBirth(player,connection);
             var life=equipmentLife(player,true);if(life.retired || life.poisoned || life.depth!=0 || life.parseDepth!=0 || equipmentLifetimeParsing.get()!=null)return null;
             var item=player.getPrimaryHandItem();var secondary=player.getSecondaryHandItem();
             if(life.baseline && (life.connection.get()!=connection || life.primary.get()!=item || life.secondary.get()!=secondary || item!=null && life.cart!=item.getID())){
@@ -189,7 +208,7 @@
                 if(equipmentLifetimeIssuedCount>=8192)throw new IllegalStateException("Equipment issued-lifetime limit");
                 life.issued.add(life.revision);equipmentLifetimeIssuedCount++;
             }
-            return "1|"+nativeTimeProcess+"|"+nativeTimeIdentity(player,true)+"|"+nativeTimeIdentity(connection,false)+"|"+life.revision;
+            return "1|"+nativeTimeProcess+"|"+life.actorEpoch+"|"+nativeTimeIdentity(connection,false)+"|"+life.revision;
         }
     }
     /** Only the actual direct native parser calls qualify; Lua event reentrancy is a hard mutation. */
@@ -243,12 +262,129 @@
         try{synchronized(equipmentLifetimeLock){
             var connection=equipmentLifetimeConnection(player);var life=player==null?null:equipmentLife(player,false);
             if(connection==null || life==null || !life.baseline || equipmentLifetimeRead(player,connection)==null)return false;
-            String prefix="1|"+nativeTimeProcess+"|"+nativeTimeIdentity(player,true)+"|"+nativeTimeIdentity(connection,false)+"|";
+            String prefix="1|"+nativeTimeProcess+"|"+life.actorEpoch+"|"+nativeTimeIdentity(connection,false)+"|";
             if(!previousLifetime.startsWith(prefix))return false;String field=previousLifetime.substring(prefix.length());
             if(!field.matches("[1-9][0-9]{0,15}"))return false;
             long revision=Long.parseLong(field);
             return revision<=9007199254740991L && life.issued.contains(revision) && revision>=life.hardRevision && revision<life.revision;
         }}catch(Throwable error){equipmentLifetimeError(error);return false;}
+    }
+    public static final class EquipmentBirth {
+        final zombie.util.AddCoopPlayer task;final IsoPlayer actor;final zombie.core.raknet.UdpEngine engine;
+        final zombie.core.raknet.UdpConnection connection;final EquipmentBirth previous;EquipmentPendingBirth born;
+        EquipmentBirth(zombie.util.AddCoopPlayer task,IsoPlayer actor,zombie.core.raknet.UdpEngine engine,zombie.core.raknet.UdpConnection connection,EquipmentBirth previous){
+            this.task=task;this.actor=actor;this.engine=engine;this.connection=connection;this.previous=previous;
+        }
+    }
+    public static final class EquipmentPendingBirth {
+        final EquipmentLife previous;final long epoch,removedStamp;
+        final java.lang.ref.WeakReference<zombie.core.raknet.UdpEngine> engine;
+        final java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> connection;
+        boolean invalid;int depth;long thread;
+        EquipmentPendingBirth(EquipmentLife previous,long epoch,long stamp,zombie.core.raknet.UdpEngine engine,zombie.core.raknet.UdpConnection connection){
+            this.previous=previous;this.epoch=epoch;this.removedStamp=stamp;this.engine=new java.lang.ref.WeakReference<>(engine);this.connection=new java.lang.ref.WeakReference<>(connection);
+        }
+    }
+    private static final NativeWeakMap<IsoPlayer,EquipmentPendingBirth> equipmentPendingBirths=new NativeWeakMap<>();
+    private static final ThreadLocal<EquipmentBirth> equipmentBirthScope=new ThreadLocal<>();
+    private static boolean equipmentBirthNativeCaller(Class<?> type,String method) {
+        return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk(frames->frames
+            .dropWhile(frame->frame.getDeclaringClass()==Main.class).findFirst()
+            .map(frame->frame.getDeclaringClass()==type && frame.getMethodName().equals(method)).orElse(false));
+    }
+    private static boolean equipmentBirthTransport(zombie.core.raknet.UdpEngine engine,zombie.core.raknet.UdpConnection connection) {
+        return zombie.network.GameClient.client && !zombie.network.GameServer.server
+            && Thread.currentThread()==zombie.GameWindow.gameThread && zombie.network.GameClient.instance!=null
+            && zombie.network.GameClient.instance.connected && engine!=null && connection!=null
+            && zombie.network.GameClient.instance.udpEngine==engine && zombie.network.GameClient.connection==connection
+            && equipmentRetiredConnections.get(connection)==null && engine.getActiveConnection(connection.getConnectedGUID())==connection;
+    }
+    public static EquipmentBirth equipmentLifetimeCoopEnter(zombie.util.AddCoopPlayer task) {
+        if(!equipmentLifetimeEnabled() || task==null || !equipmentBirthNativeCaller(zombie.util.AddCoopPlayer.class,"update"))return null;
+        try{synchronized(equipmentLifetimeLock){
+            var actor=task.getPlayer();var engine=zombie.network.GameClient.instance==null?null:zombie.network.GameClient.instance.udpEngine;
+            var connection=zombie.network.GameClient.connection;
+            if(actor==null || task.isFinished() || zombie.iso.IsoWorld.instance==null
+                || !zombie.iso.IsoWorld.instance.addCoopPlayers.contains(task) || !equipmentBirthTransport(engine,connection))return null;
+            var scope=new EquipmentBirth(task,actor,engine,connection,equipmentBirthScope.get());equipmentBirthScope.set(scope);return scope;
+        }}catch(Throwable error){equipmentLifetimeError(error);return null;}
+    }
+    public static void equipmentLifetimeCoopExit(EquipmentBirth scope,Throwable failure) {
+        if(scope==null)return;
+        try{synchronized(equipmentLifetimeLock){
+            if(equipmentBirthScope.get()!=scope)throw new IllegalStateException("Native birth scope mismatch");
+            if(failure!=null && scope.born!=null)scope.born.invalid=true;
+        }}catch(Throwable error){equipmentLifetimeError(error);}
+        finally{if(scope.previous==null)equipmentBirthScope.remove();else equipmentBirthScope.set(scope.previous);}
+    }
+    /** Exact original AddCoopPlayer native event; arbitrary Lua events never establish a birth. */
+    public static void equipmentLifetimeCoopEvent(String event,Object index,Object supplied) {
+        if(!equipmentLifetimeEnabled() || !"OnCreatePlayer".equals(event) || !(index instanceof Integer slot) || !(supplied instanceof IsoPlayer actor))return;
+        try{synchronized(equipmentLifetimeLock){
+            var scope=equipmentBirthScope.get();
+            boolean origin=StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk(frames->{
+                var callers=frames.dropWhile(frame->frame.getDeclaringClass()!=zombie.Lua.LuaEventManager.class || !frame.getMethodName().equals("triggerEvent")).limit(2).toList();
+                return callers.size()==2 && callers.get(0).getMethodType().parameterCount()==3
+                    && callers.get(1).getDeclaringClass()==zombie.util.AddCoopPlayer.class && callers.get(1).getMethodName().equals("update");
+            });
+            if(!origin || scope==null || scope.born!=null || scope.actor!=actor || scope.task.getPlayer()!=actor
+                || scope.task.getPlayerIndex()!=slot || slot!=0 || actor.playerIndex!=slot || IsoPlayer.players[slot]!=actor
+                || IsoPlayer.getInstance()!=actor || !actor.isLocalPlayer() || !actor.isAlive() || actor.isDead()
+                || zombie.iso.IsoWorld.instance==null || !zombie.iso.IsoWorld.instance.addCoopPlayers.contains(scope.task)
+                || !equipmentBirthTransport(scope.engine,scope.connection))return;
+            var previous=equipmentLife(actor,false);
+            // Only a genuinely unissued preview removal is eligible for a distinct native birth.
+            // Existing tokens, registered removals, deaths and repeated birth tasks stay fenced.
+            if(previous==null || !previous.retired || previous.born || previous.birthPending || previous.retiredRegistered
+                || previous.baseline || !previous.issued.isEmpty() || previous.poisoned || previous.depth!=0 || previous.parseDepth!=0
+                || !"actor-remove".equals(previous.retirementReason))return;
+            var pending=new EquipmentPendingBirth(previous,nativeTimeNext(),actor.removedFromWorldMs,scope.engine,scope.connection);
+            previous.birthPending=true;equipmentPendingBirths.put(actor,pending);scope.born=pending;
+            System.out.println("[CART_EQUIPMENT_BIRTH] {\"schema\":1,\"diagnosticOnly\":true,\"authorityProof\":false,\"process\":"+mpJsonString(nativeTimeProcess)
+                +",\"oldActorEpoch\":"+(previous==null?0:previous.actorEpoch)+",\"newActorEpoch\":"+pending.epoch
+                +",\"objectEpoch\":"+nativeTimeIdentity(actor,true)+",\"taskEpoch\":"+nativeTimeIdentity(scope.task,false)+",\"playerIndex\":"+slot
+                +",\"connectionEpoch\":"+nativeTimeIdentity(scope.connection,false)+",\"removedFromWorldMsWitness\":"+pending.removedStamp
+                +",\"prebirthRetired\":"+(previous!=null && previous.retired)+",\"prebirthUnissued\":"+(previous==null || previous.issued.isEmpty())
+                +",\"prebirthUnbaselined\":"+(previous==null || !previous.baseline)+",\"prebirthRegistered\":"+(previous!=null && previous.retiredRegistered)+",\"prebirthReason\":"+mpJsonString(previous==null?null:previous.retirementReason)
+                +",\"nativeOrigin\":\"AddCoopPlayer.update/OnCreatePlayer\",\"monoNs\":"+System.nanoTime()+"}");
+        }}catch(Throwable error){equipmentLifetimeError(error);}
+    }
+    private static boolean equipmentPendingBirthValid(IsoPlayer actor,EquipmentPendingBirth pending) {
+        return pending!=null && !pending.invalid && pending.depth==0 && pending.thread==0 && equipmentLife(actor,false)==pending.previous
+            && pending.previous.retired && !pending.previous.retiredRegistered && !pending.previous.baseline && pending.previous.issued.isEmpty()
+            && "actor-remove".equals(pending.previous.retirementReason) && !pending.previous.poisoned
+            && actor.removedFromWorldMs==pending.removedStamp && actor.playerIndex==0 && IsoPlayer.players[0]==actor
+            && IsoPlayer.getInstance()==actor && actor.isLocalPlayer() && actor.isAlive() && !actor.isDead()
+            && equipmentBirthTransport(pending.engine.get(),pending.connection.get());
+    }
+    private static boolean equipmentLifetimeBornAfterRemoval(IsoPlayer actor) {
+        var pending=equipmentPendingBirths.get(actor);
+        if(equipmentPendingBirthValid(actor,pending))return true;
+        var life=equipmentLife(actor,false);
+        return life!=null && life.born && !life.retired && !life.poisoned && actor.removedFromWorldMs==life.birthRemovedStamp
+            && life.birthEngine.get()!=null && life.birthConnection.get()!=null
+            && equipmentBirthTransport(life.birthEngine.get(),life.birthConnection.get());
+    }
+    private static void equipmentLifetimeActivateBirth(IsoPlayer actor,zombie.core.raknet.UdpConnection connection) {
+        var pending=equipmentPendingBirths.get(actor);
+        var primary=actor.getPrimaryHandItem();
+        if(!equipmentPendingBirthValid(actor,pending) || connection!=pending.connection.get()
+            || zombie.network.GameClient.IDToPlayerMap.get(actor.getOnlineID())!=actor || actor.getOnlineID()<0
+            || primary==null || primary!=actor.getSecondaryHandItem() || !equipmentLifetimeCart(primary) || primary.getWorldItem()!=null
+            || equipmentLifetimeParsing.get()!=null)return;
+        if(equipmentLifetimeRecords.size()>=512)throw new IllegalStateException("Equipment birth ledger limit");
+        var fresh=new EquipmentLife(actor,pending.epoch);fresh.born=true;fresh.birthRemovedStamp=pending.removedStamp;
+        fresh.birthEngine=pending.engine;fresh.birthConnection=pending.connection;
+        equipmentLives.put(actor,fresh);equipmentLifetimeRecords.add(fresh);equipmentPendingBirths.remove(actor);
+    }
+    @Patch(className="zombie.util.AddCoopPlayer",methodName="update",warmUp=true)
+    public static class EquipmentLifetimeCoopBirth {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.util.AddCoopPlayer task,@Patch.Local("equipmentBirth") EquipmentBirth scope){scope=Main.equipmentLifetimeCoopEnter(task);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentBirth") EquipmentBirth scope,@Patch.Thrown Throwable failure){Main.equipmentLifetimeCoopExit(scope,failure);}
+    }
+    @Patch(className="zombie.Lua.LuaEventManager",methodName="triggerEvent",strictMatch=true,warmUp=true)
+    public static class EquipmentLifetimeCoopCreateEvent {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) String event,@Patch.Argument(1) Object index,@Patch.Argument(2) Object actor){Main.equipmentLifetimeCoopEvent(event,index,actor);}
     }
     /** Diagnostic snapshot only. Never admits a lifetime, creates EquipmentLife or supplies authority. */
     @LuaMethod(name="cartLeaseEligibility",global=true)
@@ -261,17 +397,19 @@
             var engine=server?zombie.network.GameServer.udpEngine:client && zombie.network.GameClient.instance!=null?zombie.network.GameClient.instance.udpEngine:null;
             var connection=server && player!=null?zombie.network.GameServer.getConnectionFromPlayer(player):client?zombie.network.GameClient.connection:null;
             var mapped=player==null?null:zombie.network.GameClient.IDToPlayerMap.get(player.getOnlineID());
+            var mappedLife=mapped==null?null:equipmentLife(mapped,false);
+            var pending=player==null?null:equipmentPendingBirths.get(player);
             var primary=player==null?null:player.getPrimaryHandItem();var secondary=player==null?null:player.getSecondaryHandItem();
             int slot=player==null?-1:player.playerIndex;
             String active=engine==null || connection==null?"null":String.valueOf(engine.getActiveConnection(connection.getConnectedGUID())==connection);
             return "{\"schema\":1,\"diagnosticOnly\":true,\"authorityProof\":false,\"process\":"+mpJsonString(nativeTimeProcess)
                 +",\"equipmentHealthy\":"+(!equipmentLifetimeFailed)+",\"controlHealthy\":"+(!leaseControlFailed)
-                +",\"playerPresent\":"+(player!=null)+",\"actorEpoch\":"+nativeTimeIdentity(player,true)
+                +",\"playerPresent\":"+(player!=null)+",\"actorEpoch\":"+(life==null?nativeTimeIdentity(player,true):life.actorEpoch)+",\"objectEpoch\":"+nativeTimeIdentity(player,true)
                 +",\"onlineID\":"+(player==null?-1:player.getOnlineID())+",\"playerIndex\":"+slot
                 +",\"localPlayer\":"+(player!=null && player.isLocalPlayer())
                 +",\"localSlotExact\":"+(player!=null && slot>=0 && slot<IsoPlayer.players.length && IsoPlayer.players[slot]==player)
                 +",\"currentActorExact\":"+(player!=null && IsoPlayer.getInstance()==player)
-                +",\"clientMapActorEpoch\":"+nativeTimeIdentity(mapped,true)+",\"clientMapExact\":"+(player!=null && mapped==player)
+                +",\"clientMapActorEpoch\":"+(mappedLife==null?nativeTimeIdentity(mapped,true):mappedLife.actorEpoch)+",\"clientMapObjectEpoch\":"+nativeTimeIdentity(mapped,true)+",\"clientMapExact\":"+(player!=null && mapped==player)
                 +",\"alive\":"+(player!=null && player.isAlive())+",\"dead\":"+(player!=null && player.isDead())
                 +",\"removedFromWorldMs\":"+(player==null?0:player.removedFromWorldMs)
                 +",\"sourceRole\":"+mpJsonString(server?"server":client?"client":"unknown")
@@ -282,7 +420,8 @@
                 +",\"baseline\":"+(life!=null && life.baseline)+",\"retired\":"+(life!=null && life.retired)
                 +",\"poisoned\":"+(life!=null && life.poisoned)+",\"revision\":"+(life==null?0:life.revision)
                 +",\"hardRevision\":"+(life==null?0:life.hardRevision)+",\"depth\":"+(life==null?0:life.depth)
-                +",\"parseDepth\":"+(life==null?0:life.parseDepth)+",\"issuedCount\":"+(life==null?0:life.issued.size())
+                +",\"parseDepth\":"+(life==null?0:life.parseDepth)+",\"pendingBirth\":"+(pending!=null && !pending.invalid)
+                +",\"pendingBirthEpoch\":"+(pending==null?0:pending.epoch)+",\"pendingBirthDepth\":"+(pending==null?0:pending.depth)+",\"born\":"+(life!=null && life.born)+",\"issuedCount\":"+(life==null?0:life.issued.size())
                 +",\"primaryEpoch\":"+nativeTimeIdentity(primary,false)+",\"secondaryEpoch\":"+nativeTimeIdentity(secondary,false)
                 +",\"primaryID\":"+(primary==null?"null":primary.getID())+",\"secondaryID\":"+(secondary==null?"null":secondary.getID())
                 +",\"primaryType\":"+mpJsonString(primary==null?null:primary.getFullType())+",\"secondaryType\":"+mpJsonString(secondary==null?null:secondary.getFullType())

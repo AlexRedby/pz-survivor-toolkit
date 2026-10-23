@@ -8,13 +8,62 @@ L=runpy.run_path(str(Path(__file__).with_name('analyze-lease-lifetimes.py')))
 require,parse,integer,text=(L['HELD'][k] for k in ('require','parse','integer','text'))
 token,records=L['token'],L['records']
 ROLES=('server','client1','client2');CLIENTS=ROLES[1:]
-MARKER='[CART_LIFECYCLE] ';NATIVE='[CART_EQUIPMENT] ';MAX=9007199254740991
+MARKER='[CART_LIFECYCLE] ';NATIVE='[CART_EQUIPMENT] ';BIRTH='[CART_EQUIPMENT_BIRTH] ';MAX=9007199254740991
 EVENTS=set('setup phase-setup cart-setup binding-wait native-equip native-eligibility native-binding request bind-wait stale-control rejoin-ui bind bound echo receipt receipt-resnapshot prepare prepared transition-start native-kill native-death native-death-progress native-player-death unavailable unavailable-replay native-removed cart-disposition observer-absent respawn-offer respawn-ui native-create native-connection transition resnapshot reply-refused native-exit native-reconnect native-rejoin fresh-nonce-replay fresh-replay done complete-offer final-ack complete'.split())
 
 
 def identity(row):
     return (text(row,'session',120),integer(row,'grant',1,2147483647),integer(row,'lease',1,2147483647),integer(row,'cart',-2147483648,2147483647))
 
+
+
+def native_births(log,native,fixture_rows,role):
+    """Join native preview removal to an immutable logical birth, never heal a tombstone."""
+    result={};used_old=set();used_object=set();used_task=set();clocks={}
+    fields=set('schema diagnosticOnly authorityProof process oldActorEpoch newActorEpoch objectEpoch taskEpoch playerIndex connectionEpoch removedFromWorldMsWitness prebirthRetired prebirthUnissued prebirthUnbaselined prebirthRegistered prebirthReason nativeOrigin monoNs'.split())
+    for line,row in records(log,BIRTH,32):
+        require(role in CLIENTS and set(row)==fields,'Malformed/foreign native birth marker')
+        require(integer(row,'schema',1,1)==1 and row.get('diagnosticOnly') is True and row.get('authorityProof') is False,'Birth marker changed diagnostic scope')
+        process=text(row,'process',120);old=integer(row,'oldActorEpoch',1,MAX);new=integer(row,'newActorEpoch',old+1,MAX)
+        object_=integer(row,'objectEpoch',1,MAX);task=integer(row,'taskEpoch',1,MAX);connection=integer(row,'connectionEpoch',1,MAX)
+        integer(row,'playerIndex',0,0);integer(row,'removedFromWorldMsWitness',1,MAX)
+        mono=integer(row,'monoNs',-9223372036854775808,9223372036854775807)
+        require(process not in clocks or mono>=clocks[process],'Native birth clock regressed');clocks[process]=mono
+        require(object_==old and row.get('nativeOrigin')=='AddCoopPlayer.update/OnCreatePlayer','Unproven native birth origin/object')
+        require(row.get('prebirthRetired') is True and row.get('prebirthUnissued') is True and row.get('prebirthUnbaselined') is True
+                and row.get('prebirthRegistered') is False and row.get('prebirthReason')=='actor-remove','Ineligible native prebirth retirement')
+        key=(process,new);oldkey=(process,old);objectkey=(process,object_);taskkey=(process,task)
+        require(key not in result and oldkey not in used_old and objectkey not in used_object and taskkey not in used_task,'Repeated native birth lineage')
+        require(key not in used_old and oldkey not in result,'Native birth reused a logical incarnation')
+        used_old.add(oldkey);used_object.add(objectkey);used_task.add(taskkey)
+        prior=[(n,r) for n,r in native if r.get('process')==process and r.get('actorEpoch')==old]
+        require(any(n<line for n,_ in prior),'Birth lacks original native preview removal')
+        for n,r in prior:
+            require(r.get('event')=='retire' and r.get('reason')=='actor-remove' and r.get('retired') is True and r.get('success') is True and r.get('poisoned') is False
+                    and r.get('connectionEpoch')==0 and r.get('revision')==r.get('hardRevision')==1 and r.get('depth')==r.get('mutationSerial')==r.get('parseSerial')==r.get('ingressGeneration')==0,
+                    'Registered/issued/baselined old native authority cannot become a birth')
+        for _,event in fixture_rows:
+            for value in event.values():
+                if isinstance(value,str) and value.startswith('1|'):
+                    require(token(value)[:2]!=oldkey,'Prebirth old native authority was issued/reused')
+        # Birth and equipment use the same native monotonic clock and log order.
+        for n,r in native:
+            if r.get('process')==process:
+                require((n<line and r['monoNs']<=mono) or (n>line and r['monoNs']>=mono),'Birth/native clock or order mismatch')
+        fresh=[(n,r) for n,r in native if r.get('process')==process and r.get('actorEpoch')==new]
+        baselines=[(n,r) for n,r in fresh if r.get('event')=='baseline']
+        if fresh:
+            require(len(baselines)==1 and fresh[0]==baselines[0] and all(n>line for n,_ in fresh),'Birth lacks one later fresh native baseline')
+            baseline_line,baseline=baselines[0]
+            require(not any(n>line for n,_ in prior),'Native preview removed again after promoted birth')
+            require(baseline.get('connectionEpoch')==connection and baseline.get('revision')==baseline.get('hardRevision')==1
+                    and baseline.get('depth')==baseline.get('mutationSerial')==baseline.get('parseSerial')==baseline.get('ingressGeneration')==0
+                    and baseline.get('reason')=='admitted-current' and baseline.get('retired') is False,'Fresh logical birth baseline differs')
+        else:
+            require(any(n>line for n,_ in prior),'Unpromoted native birth lacks exact later cancellation removal')
+            baseline_line=None
+        result[key]=dict(line=line,row=row,baselineLine=baseline_line)
+    return result
 
 def analyze(root):
     root=Path(root);selection=parse((root/'selection.json').read_text());options=selection.get('options',{})
@@ -44,6 +93,7 @@ def analyze(root):
         complete=[r for _,r in rows[role] if r['event']=='complete']
         require(len(complete)==1 and complete[0].get('phase')==3 and complete[0].get('ok') is True,'Premature/duplicate lifecycle completion')
         require('[CART_LIFECYCLE] COMPLETE actor='+role in log,'Missing role completion marker')
+    births={role:native_births(logs[role],native[role],rows[role],role) for role in ROLES}
     def get(role,event,phase=None):
         return [(n,r) for n,r in rows[role] if r['event']==event and (phase is None or r['phase']==phase)]
     def one(role,event,phase=None):
@@ -195,6 +245,31 @@ def analyze(root):
         _,ack=one(role,'final-ack',3);require(ack.get('guarded') is True,'No final native ingress acknowledgement')
         _,server_ack=exact('server','final-ack',3,requester=role)
         require(server_ack.get('guarded') is True and server_ack.get('lifetime')==ack.get('lifetime'),'Final source acknowledgement lost native ingress/binding')
+    # Instrumented real guest respawn must prove the native preview-to-birth path.
+    # Legacy synthetic contracts without eligibility instrumentation have no implied birth.
+    if get('client2','native-eligibility') or tokens['client2'][1][:2] in births['client2']:
+        process,actor,connection,_=tokens['client2'][1]
+        witness=births['client2'].get((process,actor))
+        require(witness is not None and witness['baselineLine'] is not None,'Guest respawn lacks selected native birth witness')
+        marker=witness['row'];require(marker['connectionEpoch']==connection,'Guest birth uses another native transport')
+        creates=[(n,r) for n,r in get('client2','native-create',1) if r.get('eventSource')=='OnCreatePlayer' and r.get('newNativeActor') is True]
+        require(len(creates)==1,'Guest birth lacks exact native create callback')
+        create_line,_=creates[0]
+        snapshots=[(n,r) for n,r in get('client2','native-eligibility',1) if r.get('point')=='create' and witness['line']<n<create_line]
+        require(len(snapshots)==1,'Guest birth lacks exact create eligibility snapshot')
+        snapshot_line,snapshot=snapshots[0];state=parse(text(snapshot,'snapshot',8192))
+        require(isinstance(state,dict) and integer(state,'schema',1,1)==1 and state.get('diagnosticOnly') is True and state.get('authorityProof') is False,'Malformed native birth eligibility scope')
+        require(state.get('process')==process and state.get('actorEpoch')==marker['oldActorEpoch'] and state.get('objectEpoch')==marker['objectEpoch']
+                and state.get('pendingBirthEpoch')==actor and state.get('connectionEpoch')==connection
+                and state.get('removedFromWorldMs')==marker['removedFromWorldMsWitness'] and state.get('onlineID')==snapshot.get('ownerID'),'Guest eligibility does not match original native birth')
+        require(state.get('lifePresent') is True and state.get('retired') is True and state.get('baseline') is False and state.get('born') is False
+                and state.get('pendingBirth') is True and integer(state,'issuedCount',0,0)==0 and integer(state,'depth',0,0)==0
+                and integer(state,'parseDepth',0,0)==0 and integer(state,'pendingBirthDepth',0,0)==0
+                and integer(state,'revision',1,1)==integer(state,'hardRevision',1,1)==1,'Guest preview authority was already admitted')
+        require(all(state.get(k) is True for k in ('equipmentHealthy','controlHealthy','playerPresent','localPlayer','localSlotExact','currentActorExact','alive','clientConnected','engineKnown','exactActiveMapping'))
+                and state.get('dead') is False and state.get('poisoned') is False and state.get('connectionRetired') is False
+                and state.get('sourceRole')=='client' and integer(state,'playerIndex',0,0)==0,'Guest native birth eligibility differs')
+        require(create_line<witness['baselineLine'],'Fresh native birth admitted before original create callback completed')
     guest=get('client2','native-create');require(any(r.get('phase')==1 and r.get('eventSource')=='OnCreatePlayer' and r.get('newNativeActor') is True for _,r in guest),'No actual Coop respawn create event')
     panels={r.get('panel') for _,r in get('client2','respawn-ui',1) if r.get('nativeCallback') is True}
     require({'post-death','profession','character'}<=panels,'Native visible respawn panels not advanced')
@@ -204,7 +279,7 @@ def analyze(root):
     require(one('client2','native-rejoin',3)[1].get('nativeConnected') is True,'No native rejoin event')
     require((root/'client2/Lua/cart-lease-lifecycle-rejoin.txt').read_text()=='verified','Rejoin checkpoint incomplete')
     return dict(schema=1,diagnosticOnly=True,evidenceComplete=True,nativeLifecycleVerified=True,animationEquivalencePass=False,
-                phases=phase_data,settledNativeChains=completed_chains,nativeEpochs={r:[list(t) for t in ts] for r,ts in tokens.items()},
+                phases=phase_data,nativeBirths={role:[dict(oldActorEpoch=w['row']['oldActorEpoch'],newActorEpoch=w['row']['newActorEpoch'],connectionEpoch=w['row']['connectionEpoch'],promoted=w['baselineLine'] is not None) for w in births[role].values()] for role in ROLES},settledNativeChains=completed_chains,nativeEpochs={r:[list(t) for t in ts] for r,ts in tokens.items()},
                 scope='Programmatic native Kill, visible Coop respawn, real menu exit/rejoin and exact stale admission; fresh fixture cart may be supplied after transition. No natural-damage, same-cart, wire-cost or animation-equivalence certification.')
 
 

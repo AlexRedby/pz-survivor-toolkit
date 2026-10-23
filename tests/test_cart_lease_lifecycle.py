@@ -423,4 +423,115 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
 
 
 
+
+
+BIRTH='[CART_EQUIPMENT_BIRTH] '
+
+class NativeBirthEvidenceTests(unittest.TestCase):
+    """The old unissued preview is retained; a fresh logical epoch alone is admitted."""
+    setUp=LeaseLifecycleEvidenceTests.setUp
+    selected=LeaseLifecycleEvidenceTests.selected
+    row=LeaseLifecycleEvidenceTests.row
+    remove=LeaseLifecycleEvidenceTests.remove
+    analyze=LeaseLifecycleEvidenceTests.analyze
+    def reclock(self):
+        for rows in self.rows.values():
+            for i,(marker,row) in enumerate(rows):
+                if marker==MARKER:row['wall']=1000+i*10
+                elif marker in (NATIVE,BIRTH):row['monoNs']=(i+1)*1000000
+    def birth(self,role='client2',selected=True):
+        rows=self.rows[role]
+        if selected:
+            pos=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r['event']=='native-create' and r['phase']==1)
+        else:pos=next(i for i,(m,r) in enumerate(rows) if m==NATIVE)
+        baseline=copy.deepcopy(next(r for m,r in rows if m==NATIVE and r['event']=='baseline'))
+        old=copy.deepcopy(baseline);old.update(event='retire',reason='actor-remove',ownerID=1,actorEpoch=8,connectionEpoch=0,retired=True,
+                oldPrimaryEpoch=0,oldSecondaryEpoch=0,primaryEpoch=0,secondaryEpoch=0,primaryID=None,secondaryID=None)
+        marker=dict(schema=1,diagnosticOnly=True,authorityProof=False,process='native-'+role,oldActorEpoch=8,newActorEpoch=12 if selected else 16,
+                objectEpoch=8,taskEpoch=99,playerIndex=0,connectionEpoch=301 if role=='client2' else 201,removedFromWorldMsWitness=123,
+                prebirthRetired=True,prebirthUnissued=True,prebirthUnbaselined=True,prebirthRegistered=False,prebirthReason='actor-remove',
+                nativeOrigin='AddCoopPlayer.update/OnCreatePlayer',monoNs=1)
+        inserted=[(NATIVE,old),(BIRTH,marker)]
+        state=None
+        if selected:
+            state=dict(schema=1,diagnosticOnly=True,authorityProof=False,process='native-'+role,actorEpoch=8,objectEpoch=8,pendingBirthEpoch=12,
+                    connectionEpoch=301,removedFromWorldMs=123,onlineID=1,lifePresent=True,retired=True,baseline=False,born=False,pendingBirth=True,
+                    issuedCount=0,depth=0,parseDepth=0,pendingBirthDepth=0,revision=1,hardRevision=1,equipmentHealthy=True,controlHealthy=True,
+                    playerPresent=True,localPlayer=True,localSlotExact=True,currentActorExact=True,alive=True,clientConnected=True,engineKnown=True,
+                    exactActiveMapping=True,dead=False,poisoned=False,connectionRetired=False,sourceRole='client',playerIndex=0,clientMapExact=False)
+            inserted.append((MARKER,dict(actor=role,event='native-eligibility',phase=1,wall=1,point='create',ownerID=1,snapshot=json.dumps(state))))
+            rows[pos][1]['ownerID']=1 # Original OnCreatePlayer precedes final canonical OnlineID mapping.
+        else:inserted.append((NATIVE,copy.deepcopy(old))) # Native removal cancels an unpromoted pending birth.
+        rows[pos:pos]=inserted;self.reclock();return marker,old,state
+    def snapshot(self):
+        return next(r for m,r in self.rows['client2'] if m==MARKER and r['event']=='native-eligibility')
+    def test_selected_native_birth_keeps_preview_tombstone_and_joins_pending_create(self):
+        self.birth();result=self.analyze()
+        self.assertEqual(result['nativeBirths']['client2'],[dict(oldActorEpoch=8,newActorEpoch=12,connectionEpoch=301,promoted=True)])
+        self.assertEqual(result['nativeEpochs']['client2'][1][1],12)
+        self.assertEqual(self.snapshot()['ownerID'],1) # Interim ID need not equal later final ownerID 8.
+    def test_unused_native_pending_birth_requires_exact_later_cancellation(self):
+        for role in ('client1','client2'):
+            self.selection,self.rows=fixture();self.birth(role,False)
+            self.assertEqual(self.analyze()['nativeBirths'][role][0]['promoted'],False)
+            rows=self.rows[role];pos=next(i for i,(m,r) in enumerate(rows) if m==BIRTH)
+            del rows[pos+1];self.reclock()
+            with self.subTest(role=role),self.assertRaisesRegex(ValueError,'cancellation'):self.analyze()
+    def test_instrumented_guest_respawn_cannot_omit_native_birth_marker(self):
+        self.birth();self.rows['client2']=[(m,r) for m,r in self.rows['client2'] if m!=BIRTH];self.reclock()
+        with self.assertRaisesRegex(ValueError,'birth witness'):self.analyze()
+    def test_birth_shape_origin_and_native_preconditions_are_strict(self):
+        self.birth();original=copy.deepcopy(self.rows)
+        variants=[('schema',True),('diagnosticOnly',False),('authorityProof',True),('prebirthRetired',False),('prebirthUnissued',False),
+                  ('prebirthUnbaselined',False),('prebirthRegistered',True),('prebirthReason','actor-death'),('nativeOrigin','Lua.triggerEvent'),
+                  ('playerIndex',1),('taskEpoch',0),('objectEpoch',9),('newActorEpoch',8),('removedFromWorldMsWitness',0)]
+        for field,value in variants:
+            self.rows=copy.deepcopy(original);next(r for m,r in self.rows['client2'] if m==BIRTH)[field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+        for kind in ('missing','extra','malformed'):
+            self.rows=copy.deepcopy(original);marker=next(r for m,r in self.rows['client2'] if m==BIRTH)
+            if kind=='missing':marker.pop('taskEpoch')
+            elif kind=='extra':marker['allowHealing']=True
+            else:marker['process']='forged-process'
+            with self.subTest(shape=kind),self.assertRaises(ValueError):self.analyze()
+    def test_repeated_birth_or_reused_task_lineage_cannot_pass(self):
+        self.birth();rows=self.rows['client2'];pos=next(i for i,(m,r) in enumerate(rows) if m==BIRTH)
+        rows.insert(pos+1,(BIRTH,copy.deepcopy(rows[pos][1])));self.reclock()
+        with self.assertRaisesRegex(ValueError,'Repeated'):self.analyze()
+    def test_registered_baselined_or_issued_preview_cannot_be_reborn(self):
+        self.birth();original=copy.deepcopy(self.rows)
+        variants=[('connectionEpoch',301),('reason','actor-death'),('event','baseline'),('retired',False),('revision',2),('mutationSerial',1)]
+        for field,value in variants:
+            self.rows=copy.deepcopy(original);old=next(r for m,r in self.rows['client2'] if m==NATIVE and r['actorEpoch']==8);old[field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+        self.rows=copy.deepcopy(original);self.snapshot()['oldAuthority']='1|native-client2|8|301|1'
+        with self.assertRaisesRegex(ValueError,'issued/reused'):self.analyze()
+    def test_birth_never_heals_old_native_authority(self):
+        self.birth();rows=self.rows['client2'];pos=next(i for i,(m,r) in enumerate(rows) if m==BIRTH)
+        revived=copy.deepcopy(next(r for m,r in rows if m==NATIVE and r['event']=='baseline'));revived.update(actorEpoch=8,connectionEpoch=301)
+        rows.insert(pos+1,(NATIVE,revived));self.reclock()
+        with self.assertRaisesRegex(ValueError,'old native authority'):self.analyze()
+    def test_birth_requires_prior_removal_and_later_exact_baseline(self):
+        self.birth();original=copy.deepcopy(self.rows)
+        for defect in ('no-removal','baseline-before-marker','wrong-new-connection','wrong-new-revision'):
+            self.rows=copy.deepcopy(original);rows=self.rows['client2']
+            if defect=='no-removal':rows[:]=[(m,r) for m,r in rows if not(m==NATIVE and r['actorEpoch']==8)]
+            elif defect=='baseline-before-marker':
+                pos=next(i for i,(m,r) in enumerate(rows) if m==BIRTH);entry=rows.pop(pos)
+                target=next(i for i,(m,r) in enumerate(rows) if m==NATIVE and r['event']=='baseline' and r['actorEpoch']==12);rows.insert(target+1,entry)
+            else:
+                baseline=next(r for m,r in rows if m==NATIVE and r['event']=='baseline' and r['actorEpoch']==12)
+                baseline['connectionEpoch' if defect=='wrong-new-connection' else 'revision']=999
+            self.reclock()
+            with self.subTest(defect=defect),self.assertRaises(ValueError):self.analyze()
+    def test_birth_eligibility_cannot_alias_another_native_actor_or_issued_life(self):
+        self.birth();original=copy.deepcopy(self.rows)
+        for field,value in (('objectEpoch',9),('actorEpoch',12),('pendingBirthEpoch',999),('connectionEpoch',999),('removedFromWorldMs',124),
+                ('issuedCount',1),('baseline',True),('retired',False),('pendingBirth',False),('localSlotExact',False),('exactActiveMapping',False),('currentActorExact',False)):
+            self.rows=copy.deepcopy(original);snapshot=self.snapshot();state=json.loads(snapshot['snapshot']);state[field]=value;snapshot['snapshot']=json.dumps(state)
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+    def test_birth_marker_native_monotonic_order_must_match_raw_trace(self):
+        self.birth();marker=next(r for m,r in self.rows['client2'] if m==BIRTH);marker['monoNs']=1
+        with self.assertRaisesRegex(ValueError,'clock or order'):self.analyze()
+
 if __name__=='__main__':unittest.main()
