@@ -198,10 +198,14 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
+    if options.get('cart_time_alignment') is True and (options.get('cart_timeline') is not True
+            or options.get('mp_host') is not True or options.get('cart_inventory_equip') is True
+            or options.get('cart_actions') is True or 'cart_wall_exit' in options):
+        raise ValueError('cart_time_alignment requires passive timeline plus isolated ordinary menu Host motion')
     if 'cart_direct_fast_walk' in options:
         if suite != SP or selection['cases'] != ['sprint'] or type(options['cart_direct_fast_walk']) is not bool:
             raise ValueError('cart_direct_fast_walk requires a boolean in the SP sprint case')
@@ -319,7 +323,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         anchor = '    public static void main(String[] args)'
         if main.count(anchor) != 1:
             raise ValueError('CartLab composition anchor changed')
-        main = main.replace(anchor, (mp / 'MPMain.methods').read_text() + '\n' + anchor)
+        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods')) + '\n' + anchor)
     source = build / 'Main.java'
     source.write_text(main, encoding='utf-8')
     _compile(jdk, classpath, build / 'lab-classes', [source])
@@ -385,6 +389,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         spec['env']['PZ_CART_TEST_PAD'] = 'true' if selection['suite'] == SP else 'false'
         if selection['suite'] == MP and selection.get('options', {}).get('cart_timeline'):
             spec['env']['PZ_CART_TIMELINE'] = 'true'
+        if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_time_alignment') is True:
+            spec['env']['PZ_CART_TIME_ALIGNMENT'] = 'true'
         if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_inventory_equip'):
             spec['env']['PZ_CART_INVENTORY_EQUIP'] = 'true'
         if role == 'server':

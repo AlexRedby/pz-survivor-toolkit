@@ -811,5 +811,29 @@ class CartTimelineEnvironmentTests(unittest.TestCase):
             runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),{'PZ_CART_TIMELINE':'true'})
 
 
+class CartTimingEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict(cart_timeline=True,cart_time_alignment=True,mp_host=True))
+
+    def test_only_explicit_owned_host_clients_may_request_clock_samples(self):
+        for role in ('client1','client2'):
+            env=runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':'true'})
+            self.assertEqual(env['PZ_CART_TIME_ALIGNMENT'],'true')
+        for role in ('server','client3'):
+            with self.assertRaises(ValueError):runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':'true'})
+        for key,value in [('cart_timeline',False),('cart_time_alignment',False),('mp_host',False),('cart_inventory_equip',True),('cart_actions',True),('cart_wall_exit','front')]:
+            selected=self.selected();selected['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':'true'})
+
+    def test_inherited_experiment_flags_never_enable_extra_requests(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_TIME_ALIGNMENT':'true'}):
+            self.assertNotIn('PZ_CART_TIME_ALIGNMENT',runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','TRUE','1',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':value})
+
+
 if __name__ == "__main__":
     unittest.main()

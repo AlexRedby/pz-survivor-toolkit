@@ -1,0 +1,290 @@
+    // Opt-in diagnostic association only. No native packet or prediction is changed.
+    private static final String nativeTimeProcess=java.util.UUID.randomUUID().toString();
+    private static final java.util.concurrent.atomic.AtomicLong nativeTimeOrdinal=new java.util.concurrent.atomic.AtomicLong();
+    public static final class NativeWeakMap<K,V> {
+        private final java.util.ArrayList<java.lang.ref.WeakReference<K>> keys=new java.util.ArrayList<>();
+        private final java.util.ArrayList<V> values=new java.util.ArrayList<>();
+        public synchronized V get(K key) {
+            for(int i=keys.size()-1;i>=0;i--) {K known=keys.get(i).get();if(known==null){keys.remove(i);values.remove(i);}else if(known==key)return values.get(i);}
+            return null;
+        }
+        public synchronized void put(K key,V value) {
+            if(key==null)throw new IllegalArgumentException("Null native identity");
+            for(int i=keys.size()-1;i>=0;i--) {K known=keys.get(i).get();if(known==null){keys.remove(i);values.remove(i);}else if(known==key){values.set(i,value);return;}}
+            if(keys.size()>=512)throw new IllegalStateException("Native identity map limit");
+            keys.add(new java.lang.ref.WeakReference<>(key));values.add(value);
+        }
+        public synchronized void remove(K key) {
+            for(int i=keys.size()-1;i>=0;i--)if(keys.get(i).get()==null || keys.get(i).get()==key){keys.remove(i);values.remove(i);}
+        }
+    }
+    private static final NativeWeakMap<Object,Long> nativeTimeActors=new NativeWeakMap<>(),nativeTimeConnections=new NativeWeakMap<>();
+    private static final NativeWeakMap<zombie.network.packets.character.PlayerPacket,NativeSource> nativeTimeSources=new NativeWeakMap<>();
+    private static final NativeWeakMap<zombie.network.packets.character.PlayerPacket,NativeReceipt> nativeTimeReceipts=new NativeWeakMap<>();
+    private static final NativeWeakMap<zombie.core.network.ByteBufferWriter,NativeSend> nativeTimeSends=new NativeWeakMap<>();
+    private static final NativeWeakMap<zombie.core.network.ByteBufferReader,NativeIngress> nativeTimeIngress=new NativeWeakMap<>();
+    public record NativeAccepted(NativeReceipt receipt,java.lang.ref.WeakReference<zombie.network.fields.character.Prediction> prediction) {}
+    private static final NativeWeakMap<IsoPlayer,NativeAccepted> nativeTimeAccepted=new NativeWeakMap<>();
+    private static final ThreadLocal<NativeServerScope> nativeTimeServer=new ThreadLocal<>();
+    private static final ThreadLocal<NativeCopyScope> nativeTimeCopy=new ThreadLocal<>();
+    private static long nativeTimeNext(){return nativeTimeOrdinal.incrementAndGet();}
+    public static long nativeTimeIdentity(Object object,boolean actor) {
+        if(object==null)return 0;
+        var map=actor?nativeTimeActors:nativeTimeConnections;
+        synchronized(map){Long known=map.get(object);if(known==null){known=nativeTimeNext();map.put(object,known);}return known;}
+    }
+    public record NativeBody(String hex,String sha,int bytes,String order) {}
+    public static NativeBody nativeTimeBody(java.nio.ByteBuffer buffer,int begin,int end) {
+        if(buffer==null || begin<0 || end<begin || end>buffer.limit() || end-begin>256)throw new IllegalArgumentException("Native body span exceeds bounds");
+        var copy=buffer.duplicate();copy.position(begin);copy.limit(end);byte[] bytes=new byte[end-begin];copy.get(bytes);
+        try {
+            var hex=java.util.HexFormat.of();
+            return new NativeBody(hex.formatHex(bytes),hex.formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes)),bytes.length,buffer.order().toString());
+        } catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+    }
+    public record NativeSource(long generation,long actor,long begin,long end,String motionBegin,String motionEnd,String actionBegin,String actionEnd) {}
+    public record NativeIngress(long generation,long connection,long mono,int type,String typeName,String peer,NativeBody body) {}
+    public record NativeReceipt(long generation,long actor,long connection,long ingress,long ingressMono,int type,String typeName,String peer,NativeBody body) {}
+    public static final class NativeSend {
+        final long generation,connection,thread;
+        final String peer;
+        final java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> endpoint;
+        int type=-1;String typeName="unavailable";
+        NativeBody body;NativeSource source;NativeReceipt parent;
+        java.lang.ref.WeakReference<IsoPlayer> owner;
+        String motionAtWrite,actionAtWrite;
+        NativeSend(zombie.core.raknet.UdpConnection connection){this.generation=nativeTimeNext();this.connection=nativeTimeIdentity(connection,false);this.thread=Thread.currentThread().getId();this.peer=nativeTimePeer(connection,true);this.endpoint=new java.lang.ref.WeakReference<>(connection);}
+    }
+    public record NativeServerScope(zombie.network.packets.character.PlayerPacket packet,NativeReceipt receipt,NativeServerScope previous) {}
+    public record NativeCopyScope(zombie.characters.NetworkPlayerAI ai,zombie.network.packets.character.PlayerPacket packet,IsoPlayer owner,NativeReceipt receipt,NativeCopyScope previous) {}
+    private static String nativeTimePeer(zombie.network.IConnection connection,boolean outgoing) {
+        if(connection==null)return "unavailable";
+        if(!zombie.network.GameServer.server)return "server";
+        String name=connection.getUserName();return name==null || name.isEmpty()?"unavailable":name;
+    }
+    private static boolean nativeTimePlayerType(int type) {
+        return type==zombie.network.PacketTypes.PacketType.PlayerUpdateReliable.getId() || type==zombie.network.PacketTypes.PacketType.PlayerUpdateUnreliable.getId();
+    }
+    private static String nativeTimeFields(IsoPlayer owner,long connection,String peer,int type,String typeName,NativeBody body,NativeSource source,long send,long serverReceive,long receive,long ingress,long ingressMono) {
+        return ",\"nativePacketVersion\":1,\"nativeProcessEpoch\":"+mpJsonString(nativeTimeProcess)
+            +",\"actorEpoch\":"+nativeTimeIdentity(owner,true)+",\"connectionEpoch\":"+connection+",\"peerRole\":"+mpJsonString(peer)
+            +",\"packetType\":"+type+",\"packetTypeName\":"+mpJsonString(typeName)
+            +",\"packetBodyHex\":"+mpJsonString(body==null?"":body.hex())+",\"packetSha256\":"+mpJsonString(body==null?"":body.sha())
+            +",\"packetBytes\":"+(body==null?0:body.bytes())+",\"packetByteOrder\":"+mpJsonString(body==null?"unavailable":body.order())
+            +",\"sourceSetGeneration\":"+(source==null?0:source.generation())+",\"sourceSampleBeginNs\":"+(source==null?0:source.begin())
+            +",\"sourceSampleEndNs\":"+(source==null?0:source.end())+",\"sendGeneration\":"+send+",\"serverReceiveGeneration\":"+serverReceive
+            +",\"receiveGeneration\":"+receive+",\"ingressGeneration\":"+ingress+",\"ingressMonoNs\":"+ingressMono;
+    }
+    private static String nativeTimeReceiptFields(IsoPlayer owner,NativeReceipt receipt) {
+        return nativeTimeFields(owner,receipt.connection(),receipt.peer(),receipt.type(),receipt.typeName(),receipt.body(),null,0,
+            zombie.network.GameServer.server?receipt.generation():0,receipt.generation(),receipt.ingress(),receipt.ingressMono());
+    }
+    public static NativeSource nativeTimeSourceEnter(zombie.network.packets.character.PlayerPacket packet,IsoPlayer owner) {
+        if(!TIMELINE || !timelineOwner(owner) || !owner.isLocalPlayer() || zombie.network.GameServer.server)return null;
+        try {
+            var source=new NativeSource(nativeTimeNext(),nativeTimeIdentity(owner,true),System.nanoTime(),0,
+                owner.getVariableString("ToolkitCartPose"),null,owner.getVariableString("ToolkitCartActionPose"),null);
+            nativeTimeSources.remove(packet);return source;
+        }catch(Throwable error){timelineError(error);return null;}
+    }
+    public static void nativeTimeSourceExit(zombie.network.packets.character.PlayerPacket packet,IsoPlayer owner,NativeSource source,Throwable failure) {
+        if(source==null)return;
+        try {
+            if(failure!=null){nativeTimeSources.remove(packet);return;}
+            var done=new NativeSource(source.generation(),source.actor(),source.begin(),System.nanoTime(),source.motionBegin(),owner.getVariableString("ToolkitCartPose"),source.actionBegin(),owner.getVariableString("ToolkitCartActionPose"));
+            nativeTimeSources.put(packet,done);
+            timelineEvent("player-source-set",owner,nativeTimeFields(owner,0,"unavailable",-1,"unavailable",null,done,0,0,0,0,0)
+                +",\"sourceMotionRawAtSetBegin\":"+mpJsonString(done.motionBegin())+",\"sourceMotionRawAtSetEnd\":"+mpJsonString(done.motionEnd())
+                +",\"sourceActionRawAtSetBegin\":"+mpJsonString(done.actionBegin())+",\"sourceActionRawAtSetEnd\":"+mpJsonString(done.actionEnd()));
+        }catch(Throwable error){timelineError(error);}
+    }
+    public static void nativeTimeStart(zombie.core.raknet.UdpConnection connection,zombie.core.network.ByteBufferWriter writer,Throwable failure) {
+        if(!TIMELINE || failure!=null || writer==null)return;
+        try {nativeTimeSends.put(writer,new NativeSend(connection));}catch(Throwable error){timelineError(error);}
+    }
+    public static void nativeTimeWrite(zombie.network.packets.character.PlayerPacket packet,zombie.core.network.ByteBufferWriter writer,int begin,Throwable failure) {
+        if(!TIMELINE || failure!=null)return;
+        try {
+            var owner=packet.getPlayer();if(!timelineOwner(owner))return;
+            var body=nativeTimeBody(writer.bb,begin,writer.bb.position());var send=nativeTimeSends.get(writer);
+            var source=nativeTimeSources.get(packet);if(source!=null && (!owner.isLocalPlayer() || source.actor()!=nativeTimeIdentity(owner,true)))source=null;
+            var scope=nativeTimeServer.get();var parent=scope!=null && scope.packet()==packet?scope.receipt():null;
+            if(send!=null && send.thread!=Thread.currentThread().getId())throw new IllegalStateException("Foreign native writer thread");
+            if(send!=null && begin>=3) {
+                var header=writer.bb.duplicate().order(writer.bb.order());
+                if((header.get(begin-3)&255)!=134)throw new IllegalStateException("Native player header marker changed");
+                short type=header.getShort(begin-2);
+                if(!nativeTimePlayerType(type))throw new IllegalStateException("Native player header type changed");
+                var known=zombie.network.PacketTypes.packetTypes.get(type);
+                send.type=type;send.typeName=known==null?"unavailable":known.name();
+            }
+            var endpoint=send==null?null:send.endpoint.get();
+            if(send!=null){send.body=body;send.source=source;send.parent=parent;send.owner=new java.lang.ref.WeakReference<>(owner);
+                send.motionAtWrite=owner.isLocalPlayer()?owner.getVariableString("ToolkitCartPose"):null;
+                send.actionAtWrite=owner.isLocalPlayer()?owner.getVariableString("ToolkitCartActionPose"):null;}
+            String fields=nativeTimeFields(owner,send==null?0:send.connection,send==null?nativeTimePeer(endpoint,true):send.peer,send==null?-1:send.type,send==null?"unavailable":send.typeName,body,source,send==null?0:send.generation,parent==null?0:parent.generation(),0,0,0)
+                +",\"serializedBytes\":"+body.bytes();
+            if(owner.isLocalPlayer())fields+=",\"sourceMotionRawAtWrite\":"+mpJsonString(send==null?owner.getVariableString("ToolkitCartPose"):send.motionAtWrite)
+                +",\"sourceActionRawAtWrite\":"+mpJsonString(send==null?owner.getVariableString("ToolkitCartActionPose"):send.actionAtWrite);
+            timelineEvent("player-write",owner,fields);
+        }catch(Throwable error){timelineError(error);}
+    }
+    public static NativeActiveSend nativeTimeFinishEnter(zombie.core.raknet.UdpConnection connection) {
+        if(!TIMELINE)return null;
+        try {
+            var active=nativeTimeConnectionSend(connection);if(active==null)return null;
+            // Detach while the native buffer lock is still held. A later startPacket may
+            // acquire that connection on another thread before this method's exit advice.
+            nativeTimeActiveConnections.remove(connection);
+            var writer=active.writer.get();if(writer!=null)nativeTimeSends.remove(writer);
+            return active;
+        }catch(Throwable error){timelineError(error);return null;}
+    }
+    public static void nativeTimeFinish(zombie.core.raknet.UdpConnection connection,NativeActiveSend active,boolean cancel,Throwable failure) {
+        if(active==null)return;
+        try {
+            var value=active.send;var owner=value.owner==null?null:value.owner.get();if(owner==null || value.body==null)return;
+            String fields=nativeTimeFields(owner,value.connection,value.peer,value.type,value.typeName,value.body,value.source,value.generation,value.parent==null?0:value.parent.generation(),0,0,0)
+                +",\"submissionFailed\":"+(failure!=null);
+            timelineEvent(cancel || failure!=null?"player-cancel":"player-submit",owner,fields);
+        }catch(Throwable error){timelineError(error);}
+    }
+    public record NativeActiveSend(java.lang.ref.WeakReference<zombie.core.network.ByteBufferWriter> writer,NativeSend send) {}
+    private static final NativeWeakMap<zombie.core.raknet.UdpConnection,NativeActiveSend> nativeTimeActiveConnections=new NativeWeakMap<>();
+    public static void nativeTimeStartActive(zombie.core.raknet.UdpConnection connection,zombie.core.network.ByteBufferWriter writer,Throwable failure) {
+        nativeTimeStart(connection,writer,failure);
+        if(!TIMELINE || failure!=null || writer==null)return;
+        try {var send=nativeTimeSends.get(writer);if(send!=null)nativeTimeActiveConnections.put(connection,new NativeActiveSend(new java.lang.ref.WeakReference<>(writer),send));}
+        catch(Throwable error){timelineError(error);}
+    }
+    private static NativeActiveSend nativeTimeConnectionSend(zombie.core.raknet.UdpConnection connection) {
+        var send=nativeTimeActiveConnections.get(connection);
+        if(send!=null && send.send.thread!=Thread.currentThread().getId())throw new IllegalStateException("Foreign native send completion thread");
+        return send;
+    }
+    public static void nativeTimeIngressRead(zombie.network.ZomboidNetData data,short type,zombie.core.network.ByteBufferReader input,zombie.core.raknet.UdpConnection connection,int begin,int end,long mono,Throwable failure) {
+        if(!TIMELINE)return;
+        try {
+            nativeTimeIngress.remove(data.buffer);
+            if(failure!=null || !nativeTimePlayerType(type))return;
+            var body=nativeTimeBody(data.buffer.bb,0,data.buffer.limit());
+            var packetType=zombie.network.PacketTypes.packetTypes.get(type);
+            var receipt=new NativeIngress(nativeTimeNext(),nativeTimeIdentity(connection,false),mono,type,packetType==null?"unavailable":packetType.name(),nativeTimePeer(connection,false),body);
+            nativeTimeIngress.put(data.buffer,receipt);
+            IsoPlayer owner=null;var duplicate=data.buffer.bb.duplicate().order(data.buffer.bb.order());
+            if(duplicate.remaining()>=3){short id=duplicate.getShort();int index=duplicate.get();
+                owner=zombie.network.GameServer.server && index>=0?connection.getPlayerAt(index):zombie.network.GameClient.client?zombie.network.GameClient.IDToPlayerMap.get(id):zombie.network.GameServer.IDToPlayerMap.get(id);}
+            if(timelineOwner(owner))timelineEvent("player-ingress",owner,nativeTimeFields(owner,receipt.connection(),receipt.peer(),receipt.type(),receipt.typeName(),body,null,0,0,0,receipt.generation(),receipt.mono()));
+        }catch(Throwable error){timelineError(error);}
+    }
+    public static void nativeTimeIngressReset(zombie.network.ZomboidNetData data) {
+        if(TIMELINE)try{nativeTimeIngress.remove(data.buffer);}catch(Throwable error){timelineError(error);}
+    }
+    public static void nativeTimeParse(zombie.network.packets.character.PlayerPacket packet,zombie.core.network.ByteBufferReader reader,zombie.network.IConnection connection,int begin,Throwable failure) {
+        if(!TIMELINE)return;
+        try {
+            nativeTimeReceipts.remove(packet);if(failure!=null)return;
+            var owner=packet.getPlayer();if(!timelineOwner(owner))return;
+            var body=nativeTimeBody(reader.bb,begin,reader.position());var ingress=nativeTimeIngress.get(reader);
+            long connectionEpoch=nativeTimeIdentity(connection,false);
+            if(ingress!=null && (ingress.connection()!=connectionEpoch || !ingress.body().equals(body)))throw new IllegalStateException("Native ingress/parse body or connection mismatch");
+            var receipt=new NativeReceipt(nativeTimeNext(),nativeTimeIdentity(owner,true),connectionEpoch,ingress==null?0:ingress.generation(),ingress==null?0:ingress.mono(),ingress==null?-1:ingress.type(),ingress==null?"unavailable":ingress.typeName(),nativeTimePeer(connection,false),body);
+            nativeTimeReceipts.put(packet,receipt);timelineEvent("player-parse",owner,nativeTimeReceiptFields(owner,receipt)+",\"serializedBytes\":-1");
+        }catch(Throwable error){timelineError(error);}
+    }
+    public static NativeServerScope nativeTimeServerEnter(zombie.network.packets.character.PlayerPacket packet,zombie.network.PacketTypes.PacketType type,zombie.core.raknet.UdpConnection connection) {
+        if(!TIMELINE)return null;
+        try {
+            var receipt=nativeTimeReceipts.get(packet);
+            if(receipt!=null && (receipt.connection()!=nativeTimeIdentity(connection,false) || receipt.type()!=-1 && receipt.type()!=type.getId()))throw new IllegalStateException("Native server process route differs from parse");
+            var scope=new NativeServerScope(packet,receipt,nativeTimeServer.get());nativeTimeServer.set(scope);return scope;
+        }
+        catch(Throwable error){timelineError(error);return null;}
+    }
+    public static void nativeTimeServerExit(NativeServerScope scope) {
+        if(scope==null)return;try{if(scope.previous()==null)nativeTimeServer.remove();else nativeTimeServer.set(scope.previous());}catch(Throwable error){timelineError(error);}
+    }
+    public static NativeCopyScope nativeTimeCopyEnter(zombie.characters.NetworkPlayerAI ai,zombie.network.packets.character.PlayerPacket packet) {
+        if(!TIMELINE)return null;
+        try {
+            var owner=packet.getPlayer();var receipt=nativeTimeReceipts.get(packet);
+            if(!timelineOwner(owner) || owner.getNetworkCharacterAI()!=ai || receipt==null || receipt.actor()!=nativeTimeIdentity(owner,true))return null;
+            var scope=new NativeCopyScope(ai,packet,owner,receipt,nativeTimeCopy.get());nativeTimeCopy.set(scope);return scope;
+        }catch(Throwable error){timelineError(error);return null;}
+    }
+    public static void nativeTimeCopyExit(NativeCopyScope scope) {
+        if(scope==null)return;try{if(scope.previous()==null)nativeTimeCopy.remove();else nativeTimeCopy.set(scope.previous());}catch(Throwable error){timelineError(error);}
+    }
+    public static void nativeTimeCopied(zombie.network.fields.character.Prediction destination,zombie.network.fields.character.Prediction source,Throwable failure) {
+        if(!TIMELINE || failure!=null)return;
+        try {
+            var scope=nativeTimeCopy.get();if(scope==null || destination!=scope.ai().prediction || source!=scope.packet().prediction)return;
+            if(nativeTimeReceipts.get(scope.packet())!=scope.receipt())throw new IllegalStateException("Native cached packet parse changed within copy scope");
+            nativeTimeAccepted.put(scope.owner(),new NativeAccepted(scope.receipt(),new java.lang.ref.WeakReference<>(destination)));timelineEvent("player-accepted",scope.owner(),nativeTimeReceiptFields(scope.owner(),scope.receipt()));
+        }catch(Throwable error){timelineError(error);}
+    }
+    // This labels the accepted native input; stateful animation is not exclusively derived from it.
+    public static String timelineNativeSnapshot(IsoPlayer owner) {
+        if(!TIMELINE)return "";
+        try {
+            var accepted=owner==null || owner.isLocalPlayer()?null:nativeTimeAccepted.get(owner);
+            var receipt=accepted==null || accepted.prediction().get()!=owner.getNetworkCharacterAI().prediction?null:accepted.receipt();
+            if(receipt!=null && !zombie.network.GameServer.server && receipt.connection()!=nativeTimeIdentity(zombie.network.GameClient.connection,false))receipt=null;
+            return ",\"nativeInputVersion\":1,\"nativeProcessEpoch\":"+mpJsonString(nativeTimeProcess)+",\"nativeActorEpoch\":"+nativeTimeIdentity(owner,true)
+                +",\"nativeReceiveGeneration\":"+(receipt==null?0:receipt.generation())+",\"nativeConnectionEpoch\":"+(receipt==null?0:receipt.connection())
+                +",\"nativeIngressGeneration\":"+(receipt==null?0:receipt.ingress())+",\"nativePacketSha256\":"+mpJsonString(receipt==null?"":receipt.body().sha());
+        }catch(Throwable error){timelineError(error);return "";}
+    }
+
+    @Patch(className="zombie.network.packets.character.PlayerPacket",methodName="set",warmUp=true)
+    public static class NativeTimeSource {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.packets.character.PlayerPacket packet,@Patch.Argument(0) IsoPlayer owner,@Patch.Local("nativeSource") NativeSource source){source=Main.nativeTimeSourceEnter(packet,owner);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.network.packets.character.PlayerPacket packet,@Patch.Argument(0) IsoPlayer owner,@Patch.Local("nativeSource") NativeSource source,@Patch.Thrown Throwable failure){Main.nativeTimeSourceExit(packet,owner,source,failure);}
+    }
+    @Patch(className="zombie.core.raknet.UdpConnection",methodName="startPacket",warmUp=true)
+    public static class NativeTimeStart {
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.core.raknet.UdpConnection connection,@Patch.Return zombie.core.network.ByteBufferWriter writer,@Patch.Thrown Throwable failure){Main.nativeTimeStartActive(connection,writer,failure);}
+    }
+    @Patch(className="zombie.network.packets.character.PlayerPacket",methodName="write",warmUp=true)
+    public static class NativeTimeWrite {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer,@Patch.Local("nativeBegin") int begin){begin=writer.bb.position();}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.network.packets.character.PlayerPacket packet,@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer,@Patch.Local("nativeBegin") int begin,@Patch.Thrown Throwable failure){Main.nativeTimeWrite(packet,writer,begin,failure);}
+    }
+    @Patch(className="zombie.core.raknet.UdpConnection",methodName="endPacket",warmUp=true)
+    public static class NativeTimeEnd {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.core.raknet.UdpConnection connection,@Patch.Argument(0) int priority,@Patch.Argument(1) int reliability,@Patch.Argument(2) byte channel,@Patch.Local("nativeActive") NativeActiveSend active){active=Main.nativeTimeFinishEnter(connection);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.core.raknet.UdpConnection connection,@Patch.Argument(0) int priority,@Patch.Argument(1) int reliability,@Patch.Argument(2) byte channel,@Patch.Local("nativeActive") NativeActiveSend active,@Patch.Thrown Throwable failure){Main.nativeTimeFinish(connection,active,false,failure);}
+    }
+    @Patch(className="zombie.core.raknet.UdpConnection",methodName="cancelPacket",warmUp=true)
+    public static class NativeTimeCancel {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.core.raknet.UdpConnection connection,@Patch.Local("nativeActive") NativeActiveSend active){active=Main.nativeTimeFinishEnter(connection);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.core.raknet.UdpConnection connection,@Patch.Local("nativeActive") NativeActiveSend active,@Patch.Thrown Throwable failure){Main.nativeTimeFinish(connection,active,true,failure);}
+    }
+    @Patch(className="zombie.network.ZomboidNetData",methodName="read",warmUp=true)
+    public static class NativeTimeIngressRead {
+        @Patch.OnEnter public static void enter(@Patch.Argument(1) zombie.core.network.ByteBufferReader input,@Patch.Local("nativeBegin") int begin,@Patch.Local("nativeMono") long mono){begin=input.position();mono=System.nanoTime();}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.network.ZomboidNetData data,@Patch.Argument(0) short type,@Patch.Argument(1) zombie.core.network.ByteBufferReader input,@Patch.Argument(2) zombie.core.raknet.UdpConnection connection,@Patch.Local("nativeBegin") int begin,@Patch.Local("nativeMono") long mono,@Patch.Thrown Throwable failure){Main.nativeTimeIngressRead(data,type,input,connection,begin,input.position(),mono,failure);}
+    }
+    @Patch(className="zombie.network.ZomboidNetData",methodName="reset",warmUp=true)
+    public static class NativeTimeIngressReset {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.ZomboidNetData data){Main.nativeTimeIngressReset(data);}
+    }
+    @Patch(className="zombie.network.packets.character.PlayerPacket",methodName="parse",warmUp=true)
+    public static class NativeTimeParse {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Local("nativeBegin") int begin){begin=reader.position();}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.network.packets.character.PlayerPacket packet,@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.network.IConnection connection,@Patch.Local("nativeBegin") int begin,@Patch.Thrown Throwable failure){Main.nativeTimeParse(packet,reader,connection,begin,failure);}
+    }
+    @Patch(className="zombie.network.packets.character.PlayerPacket",methodName="processServer",warmUp=true)
+    public static class NativeTimeServerScope {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.packets.character.PlayerPacket packet,@Patch.Argument(0) zombie.network.PacketTypes.PacketType type,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Local("nativeScope") NativeServerScope scope){scope=Main.nativeTimeServerEnter(packet,type,connection);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.network.PacketTypes.PacketType type,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Local("nativeScope") NativeServerScope scope){Main.nativeTimeServerExit(scope);}
+    }
+    @Patch(className="zombie.characters.NetworkPlayerAI",methodName="parse",warmUp=true)
+    public static class NativeTimeCopyScope {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.characters.NetworkPlayerAI ai,@Patch.Argument(0) zombie.network.packets.character.PlayerPacket packet,@Patch.Local("nativeScope") NativeCopyScope scope){scope=Main.nativeTimeCopyEnter(ai,packet);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.network.packets.character.PlayerPacket packet,@Patch.Local("nativeScope") NativeCopyScope scope){Main.nativeTimeCopyExit(scope);}
+    }
+    @Patch(className="zombie.network.fields.character.Prediction",methodName="copy",warmUp=true)
+    public static class NativeTimeCopied {
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.network.fields.character.Prediction destination,@Patch.Argument(0) zombie.network.fields.character.Prediction source,@Patch.Thrown Throwable failure){Main.nativeTimeCopied(destination,source,failure);}
+    }

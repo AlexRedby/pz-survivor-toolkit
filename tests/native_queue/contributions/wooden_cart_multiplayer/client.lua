@@ -161,6 +161,9 @@ Events.OnTick.Add(function()
   end
   if not epoch then return end
   local elapsed=now-epoch
+  if config.options and config.options.cart_time_alignment==true and elapsed>=0 and elapsed<=duration then
+   assert(owner,'Native timing owner missing');cartMPTimingSample(owner,setup.cartId,elapsed)
+  end
   if wallSide and not wallPositioned and elapsed>=-8000 then
    assert(elapsed<0,'Wall pose setup missed pre-epoch window')
    position(p,setup.x,setup.y,setup.z);cartLabPoseHeading(setup.initialHeading)

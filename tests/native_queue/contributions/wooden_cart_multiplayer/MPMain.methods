@@ -326,16 +326,12 @@
             +",\"predictionMoveDirection\":"+prediction.moveDirection+",\"predictionSpeed\":"+prediction.speed
             +",\"predictionTimeRemaining\":"+prediction.predictionTimeRemaining;
     }
-    public static void timelinePlayer(zombie.network.packets.character.PlayerPacket packet,String event,int bytes) {
-        try {if(TIMELINE)timelineEvent(event,packet.getPlayer(),timelineNative(packet.prediction)+",\"serializedBytes\":"+bytes);}
-        catch(Throwable error){timelineError(error);}
-    }
     public static void timelineRemote(IsoPlayer player,String event) {
         try {
             if(!timelineOwner(player) || player.isLocalPlayer())return;
             var ai=player.getNetworkCharacterAI();
             String fields=",\"x\":"+player.getX()+",\"y\":"+player.getY()+",\"heading\":"+player.getDirectionAngleRadians()
-                +",\"targetX\":"+ai.targetX+",\"targetY\":"+ai.targetY+timelineNative(ai.prediction);
+                +",\"targetX\":"+ai.targetX+",\"targetY\":"+ai.targetY+timelineNative(ai.prediction)+timelineNativeSnapshot(player);
             for(String key:new String[]{"ToolkitCartPose","ToolkitCartActionPose"})
                 timelineEvent(event,player,fields+timelinePose(key,player.getVariableString(key)));
         } catch(Throwable error){timelineError(error);}
@@ -382,15 +378,6 @@
         @Patch.OnEnter public static void enter(@Patch.This zombie.network.packets.VariableSyncPacket packet) {Main.timelinePacket(packet,"variable-process-server-enter",-1);}
         @Patch.OnExit public static void exit(@Patch.This zombie.network.packets.VariableSyncPacket packet) {Main.timelinePacket(packet,"variable-process-server-exit",-1);}
     }
-    @Patch(className="zombie.network.packets.character.PlayerPacket",methodName="write",warmUp=true)
-    public static class TimelinePlayerWrite {
-        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer,@Patch.Local("position") int position) {position=writer.bb.position();}
-        @Patch.OnExit public static void exit(@Patch.This zombie.network.packets.character.PlayerPacket packet,@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer,@Patch.Local("position") int position) {Main.timelinePlayer(packet,"player-write",writer.bb.position()-position);}
-    }
-    @Patch(className="zombie.network.packets.character.PlayerPacket",methodName="parse",warmUp=true)
-    public static class TimelinePlayerParse {
-        @Patch.OnExit public static void exit(@Patch.This zombie.network.packets.character.PlayerPacket packet) {Main.timelinePlayer(packet,"player-parse",-1);}
-    }
     private static final java.util.WeakHashMap<zombie.network.fields.character.Prediction,java.lang.ref.WeakReference<IsoPlayer>> timelinePredictionOwners=new java.util.WeakHashMap<>();
     public static synchronized void timelineBindPrediction(IsoPlayer player) {
         if(!timelineOwner(player) || player.isLocalPlayer())return;
@@ -424,12 +411,12 @@
 
 
     private record TimelineClock(long sent,long server,long processed,long observed,long before,long after,
-        boolean readyBefore,boolean readyAfter,String guid,int connectionToken,boolean pending) {
+        boolean readyBefore,boolean readyAfter,String guid,int connectionToken,boolean pending,String requestFields) {
         String fields() {
             return ",\"clientSendNs\":"+sent+",\"serverPreparedNs\":"+server+",\"clientProcessNs\":"+processed
                 +",\"observedMonoNs\":"+observed+",\"offsetBeforeNs\":"+before+",\"offsetAfterNs\":"+after
                 +",\"readyBefore\":"+readyBefore+",\"readyAfter\":"+readyAfter+",\"connectionGUID\":"+mpJsonString(guid)
-                +",\"connectionToken\":"+connectionToken+",\"pendingBeforeOwner\":"+pending;
+                +",\"connectionToken\":"+connectionToken+",\"pendingBeforeOwner\":"+pending+requestFields;
         }
     }
     private static final java.util.ArrayDeque<TimelineClock> timelinePendingClock=new java.util.ArrayDeque<>();
@@ -459,7 +446,7 @@
             boolean bound=boundOwner!=null && timelineBoundConnectionToken==System.identityHashCode(connection);
             String guid=Long.toUnsignedString(connection.getConnectedGUID());
             var receipt=new TimelineClock(t0,server,t1,System.nanoTime(),before,timelineAppliedOffset(),readyBefore,
-                zombie.GameTime.getServerTimeShiftIsSet(),guid,System.identityHashCode(connection),!bound);
+                zombie.GameTime.getServerTimeShiftIsSet(),guid,System.identityHashCode(connection),!bound,timelineClockRequestFields(connection,t0));
             // Preserve startup evidence without opening a file or inventing an owner.
             // Later owner-bound events flush these bounded, connection-tagged observations.
             if(timelinePendingClock.size()==256){timelinePendingClock.removeFirst();timelinePendingDropped++;}
@@ -468,9 +455,10 @@
         } catch(Throwable error){timelineError(error);}
     }
     private static void timelineFlushClock(IsoPlayer owner) {
-        if(timelineFlushingClock || zombie.network.GameServer.server || timelinePendingClock.isEmpty())return;
+        if(timelineFlushingClock || zombie.network.GameServer.server || timelinePendingClock.isEmpty() && timelinePendingRequests.isEmpty())return;
         timelineFlushingClock=true;
         try {
+            timelineFlushRequests(owner);
             while(!timelinePendingClock.isEmpty())timelineEvent("clock-sync",owner,timelinePendingClock.removeFirst().fields()
                 +",\"pendingDroppedCount\":"+timelinePendingDropped);
         } finally {timelineFlushingClock=false;}

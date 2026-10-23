@@ -109,6 +109,8 @@ Native оборудование, cargo, ActionManager transaction и игров�
 
 ## Проверка и порядок внедрения
 
+Следующий timing-инструмент теперь записывает точные body bytes native PlayerPacket, локальные epochs и поколения source/ingress/accepted input, включая отдельные submit/cancel и server fan-out. Анализ одинаковых source samples остаётся неоднозначным; accepted input не является единственным источником stateful skeleton. Отдельный `cart_time_alignment` включает ограниченные повторные native TimeSync requests только в disposable Host, а пассивный `cart_timeline` сам запросов не добавляет. [Контракт эксперимента](../tests/native_queue/contributions/wooden_cart_multiplayer/README.md#exact-native-input-timing-experiment) описывает пределы и воспроизведение. Новый live gate ещё должен подтвердить source/draw associations; production протокол и playback не менялись.
+
 Использовать [существующий Host fixture](../tests/native_queue/contributions/wooden_cart_multiplayer/README.md), `ClearanceProbe`, consumed body/cart/camera receipts, `CartMotionSyncTest` / `CartActionSyncTest`, Blender replay и native geometry checks. Opt-in `cart_timeline` уже пишет publication/native/render traces, отдельные first-delivery и repeated-value ages, TimeSync exchanges и native per-connection actualBytes/resend counters. Полный IP/UDP wire scope, точный recipient fan-out и общий source presentation time остаются открыты. Готового cart delay/loss playback harness в просмотренных этих файлах нет.
 
 1. Baseline и native-time alignment spike. До результата не выбирать размер буфера и не переписывать транспорт.

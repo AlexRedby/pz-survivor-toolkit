@@ -27,7 +27,13 @@
     "inventory-equip-server.lua",
     "analyze-inventory-equip.py",
     "analyze-timeline.py",
-    "analyze-entry-contact.py"
+    "analyze-entry-contact.py",
+    "NativeTime.methods",
+    "NativeTimeCheck.java",
+    "ClockTime.methods",
+    "ClockTimeCheck.java",
+    "native_packet_time.py",
+    "clock_time.py"
   ],
   "selection_template": {
     "schema_version": 1,

@@ -10,7 +10,8 @@ KEYS = ('ToolkitCartPose', 'ToolkitCartActionPose')
 EVENTS = {'publish', 'variable-write', 'variable-parse', 'variable-process-client',
           'variable-process-server-enter', 'variable-process-server-exit', 'player-write',
           'player-parse', 'prediction-update', 'animation-update', 'capture-prepared',
-          'draw-consumed', 'transport-stats', 'clock-sync', 'trace-end'}
+          'draw-consumed', 'transport-stats', 'clock-sync', 'clock-request', 'clock-experiment-request', 'player-source-set', 'player-submit',
+          'player-cancel', 'player-ingress', 'player-accepted', 'trace-end'}
 
 
 def unique(pairs):
@@ -282,7 +283,9 @@ def analyze(root):
                     if token not in prepared: raise ValueError('Draw has no exact prepared capture')
                     capture, parts, receipt = prepared[token]; part = row.get('part')
                     if part not in ('body','cart') or part in parts: raise ValueError('Duplicate/invalid consumed part')
-                    for field in ('raw','preparedPrimary','preparedSecondary','nativeMonoNs','nativeServerNs','nativeClockReady'):
+                    for field in ('raw','preparedPrimary','preparedSecondary','nativeMonoNs','nativeServerNs','nativeClockReady',
+                                  'nativeInputVersion','nativeProcessEpoch','nativeActorEpoch','nativeReceiveGeneration',
+                                  'nativeConnectionEpoch','nativeIngressGeneration','nativePacketSha256'):
                         if row.get(field) != capture.get(field): raise ValueError('Draw identity advanced after preparation')
                     if row['monoNs'] < capture['monoNs']: raise ValueError('Draw predates preparation')
                     parts.add(part)
@@ -311,12 +314,15 @@ def analyze(root):
             for row in rows:
                 if row['event'] == event: groups[row.get('key','native-player')].append(row['monoNs'])
             for key, times in groups.items(): cadence[role+'/'+event+'/'+key+'/intervalMs'] = distribution([(b-a)/1e6 for a,b in zip(times,times[1:])])
+    import runpy
+    clock_requests=runpy.run_path(str(Path(__file__).with_name('clock_time.py')))['request_report'](traces,selection.get('options',{}).get('cart_time_alignment') is True)
+    native_report=runpy.run_path(str(Path(__file__).with_name('native_packet_time.py')))['native_packet_report'](traces)
     return dict(schema=1, diagnosticOnly=True, traceComplete=True, ownerID=next(iter(owners)), events=counts,
         sourceFiles={role:str(path.relative_to(root)) for role,path in paths.items()},
-        missingStages=missing, baselineStagesObserved=not any(missing.values()),
+        missingStages=missing, baselineStagesObserved=not any(missing.values()), nativePackets=native_report,
         clocks=dict(unsynchronizedEvents=sum(not row['clockReady'] for rows in traces.values() for row in rows),
                     skippedDifferences=dict(unaligned), qualification='GameTime synchronized clock point estimates; exchange-specific uncertainty and filter lag are reported separately',
-                    synchronization=clock_report(traces)),
+                    synchronization=clock_report(traces),requests=clock_requests),
         durationsMs={key:distribution(values) for key,values in sorted(durations.items())}, intervalsMs=cadence,
         ambiguousPublicationIdentities=len(ambiguous), unmatchedJoins=dict(unmatched),
         repeatedStageObservations=dict(repeat_observations),firstDeliverySkipped=dict(first_skipped),

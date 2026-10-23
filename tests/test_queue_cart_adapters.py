@@ -675,6 +675,25 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.assertIn(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/analyze-timeline.py',
                       carts.sources(ROOT,self.selection))
 
+    def test_native_time_sampling_requires_separate_host_optin_and_stages_clients_only(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_time_alignment=True)
+        with self.assertRaisesRegex(ValueError,'cart_time_alignment'):carts.validate(self.selection)
+        self.options.update(cart_timeline=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TIME_ALIGNMENT'],'true')
+        self.assertNotIn('PZ_CART_TIME_ALIGNMENT',self.runtime['roles']['server']['env'])
+        source=(self.output/'cart-build/Main.java').read_text()
+        for name in ('NativeTime.methods','ClockTime.methods'):
+            path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer'/name
+            self.assertIn(path.read_text(),source)
+            self.assertIn(path,carts.sources(ROOT,self.selection))
+        for key,value in [('cart_time_alignment','true'),('mp_host',False),('cart_inventory_equip',True),('cart_actions',True),('cart_wall_exit','front')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
     def test_mp_inventory_equip_explicit_false_does_not_stage_autoloading_modules(self):
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         self.options.update(mp_host=True,cart_inventory_equip=False)

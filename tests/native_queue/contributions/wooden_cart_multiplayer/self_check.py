@@ -725,7 +725,7 @@ def check_java(game, jdk, patch):
     with tempfile.TemporaryDirectory(prefix='cart-mp-compile-') as directory:
         root = Path(directory)
         main = root / 'Main.java'
-        main.write_text(base.replace(anchor, (HERE / 'MPMain.methods').read_text() + '\n' + anchor))
+        main.write_text(base.replace(anchor, '\n'.join((HERE / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods')) + '\n' + anchor))
         subprocess.run([str(javac), '--release', '25', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ClearanceProbe.java')], check=True)
         assert (root / 'net/alexredby/cartlab/Main.class').is_file() and (root / 'ClearanceProbe.class').is_file()
         checks=root/'ModelProbeCheck.java'
@@ -1023,6 +1023,12 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
+        extra_checks=[HERE/'NativeTimeCheck.java',HERE/'ClockTimeCheck.java']
+        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),*map(str,extra_checks)],check=True)
+        for name,marker in [('NativeTimeCheck','NATIVE_TIME_CHECK_PASS'),('ClockTimeCheck','CLOCK_TIME_CHECK_PASS')]:
+            result=subprocess.run([str(java),'-cp',classpath,name],capture_output=True,text=True,
+                env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_RUNTIME_FILE=str(root/'runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'commands.txt')),timeout=30)
+            assert result.returncode==0 and marker in result.stdout,result.stdout+'\n'+result.stderr
         timeline_check=root/'TimelineNativeCheck.java'
         timeline_check.write_text(r'''
 public final class TimelineNativeCheck {

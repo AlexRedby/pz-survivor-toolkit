@@ -83,6 +83,10 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 # Cart multiplayer presentation
 
+## Current native-time gate
+
+- [ ] Verify packet-buffer/cached-handler immutability and generation/ambiguity/epoch guards offline, then collect a fresh macOS menu Host trace through the existing AeroSpace policy. Gate: report unique versus ambiguous source-to-draw associations and conditional timing limits; no cart-only buffer or production playback rewrite without this evidence.
+
 Design and dependencies: [multiplayer presentation plan](docs/CART_MULTIPLAYER.md). Remaining work follows the implemented timing baseline and same-native-render clearance fallback; the current cart protocol remains active.
 
 - [ ] Complete the baseline with exact relevant-recipient fan-out, IP/UDP wire scope and explicit native animation/root-budget attribution. Reuse the implemented opt-in publication/receive/prediction/render traces, conditional TimeSync intervals and active-window serialized/native connection counters; keep first delivery separate from cached repeats. Gate: matched active maneuvers with reproducible costs and timing; the complete current Host motion/inventory captures do not establish full wire cost or source image age.

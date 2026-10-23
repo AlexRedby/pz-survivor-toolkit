@@ -17,6 +17,7 @@ Version labels come from committed component metadata, including changes made wi
 - **Native equipment checks:** Extend the common clothing matrix to initially desired held/worn baselines, with authority-only hand/worn setup after inventory delivery, exact cleared-hand checkpoints and P4 Equip/activation/Wear restoration.
 
 - **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
+- **Native cart timing:** Record exact PlayerPacket body/route and source/ingress/accepted generations without modifying the wire. Keep ambiguous repeated samples explicit and freeze accepted-input metadata with body/cart draws. Add a separately selected, bounded native TimeSync experiment for disposable Host clients; ordinary timeline capture remains passive and source-time playback remains gated.
 
 - **Cart multiplayer diagnostics:** Add opt-in publication/native-prediction/render timing, qualified native clock exchanges and per-connection transport counters. Separate first delivery from cached repeats, report active motion payload costs and preserve exact body/cart draw identities. Isolate inventory-equip fixtures from ordinary motion and add a portable source-geometry analyzer. Wait for the exact synchronized outfit before Host capture; resend native setup visuals once both recipients exist and keep pending-state polling free of repeated assertions.
 
