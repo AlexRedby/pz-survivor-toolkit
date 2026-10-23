@@ -70,25 +70,33 @@ class EquipmentTests(unittest.TestCase):
                 effect = dict(id=955, fullType=spec['fullType'], bodyLocation=spec['location'], container='root', worn=not tidy if spec.get('remove') else tidy,
                               producer='ISCutHair', producerCompleted=True, hairUnchanged=True, hairStyle='CrewCut',
                               unrelatedHandsPreserved=True)
-                if case == 'tidy-clothing-overlap':
-                    effect.update(primary=950, secondary=951 if tidy else 955, originalSecondary=951)
+                if spec.get('overlapHand'):
+                    hand = spec['overlapHand']
+                    effect.update(primary=950 if tidy or hand == 'secondary' else 955,
+                                  secondary=951 if tidy or hand == 'primary' else 955, originalPrimary=950, originalSecondary=951)
                 count = int(enabled and tidy)
-                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=bool(spec.get('remove')), **({'secondary': 955} if case == 'tidy-clothing-overlap' else {})),
+                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=bool(spec.get('remove')), **(dict(primary=955 if hand in ('primary', 'both') else 950, secondary=955 if hand in ('secondary', 'both') else 951) if spec.get('overlapHand') else {})),
                               tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                       flush=count, legacy=0), unrelatedTailPreserved=True))
                 if spec.get('headwear'):
                     result['tidyClothing']['headwearSetup'] = dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
-                if case == 'tidy-clothing-overlap':
-                    cleanup = [dict(kind='ISEquipWeaponAction', id=951), dict(kind='P4RestoreAction', id=951),
-                               dict(kind='ISUnequipAction', id=955)] if tidy else []
-                    actions = [dict(kind='ISEquipWeaponAction', id=955), dict(kind='ISWearClothing', id=955), dict(kind='ISCutHair', id=False)] + cleanup
+                if spec.get('overlapHand'):
+                    cleanup = []
+                    if tidy:
+                        if hand in ('primary', 'both'):
+                            cleanup += [dict(kind='ISEquipWeaponAction', id=950, primary=True, twoHands=False), dict(kind='P4RestoreAction', id=950, activated=False)]
+                        if hand in ('secondary', 'both'):
+                            cleanup += [dict(kind='ISEquipWeaponAction', id=951, primary=False, twoHands=False), dict(kind='P4RestoreAction', id=951, activated=False)]
+                        cleanup += [dict(kind='ISUnequipAction', id=955)]
+                    actions = [dict(kind='ISEquipWeaponAction', id=955), dict(kind='ISWearClothing', id=955), dict(kind='ISCutHair', id=False)] + [dict(kind=row['kind'], id=row['id']) for row in cleanup]
+                    hand_count = (2 if hand == 'both' else 1) * count
                     result['tidyClothing']['overlap'] = dict(
-                        intermediate=dict(primary=950, secondary=955, worn=955, container='root'), cleanup=cleanup,
+                        intermediate=dict(primary=955 if hand in ('primary', 'both') else 950, secondary=955 if hand in ('secondary', 'both') else 951, worn=955, container='root'), cleanup=cleanup,
                         acknowledgements=[dict(item, state='completed') for item in actions] if self.selection['kind'] == 'mp' else [],
-                        sharedHands=dict(perform=2*count, complete=2*count if self.selection['kind'] == 'sp' else 0,
-                                         flush=2*count, legacy=0, equip=count, activation=count, unequip=0))
+                        sharedHands=dict(perform=2*hand_count, complete=2*hand_count if self.selection['kind'] == 'sp' else 0,
+                                         flush=2*hand_count, legacy=0, equip=hand_count, activation=hand_count, unequip=0))
             if case in ('tidy-hands', 'tidy-empty-hands'):
                 result.update(rackWholeOperationMoveVerified=enabled, rackCancellationProtected=enabled, independentMoveVerified=enabled)
             if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
@@ -287,31 +295,47 @@ class EquipmentTests(unittest.TestCase):
             for mode in ('native', 'toolkit'):
                 self.selection['mode'] = mode
                 self.assertEqual(self.verify(self.logs())['issues'], [])
-                for field in ('primary', 'secondary', 'originalSecondary', 'overlap'):
-                    rows = self.records(); rows[3]['outcome']['tidyClothing'].pop(field)
-                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
-                changes = [lambda p: p['intermediate'].update(secondary=951),
-                           lambda p: p['intermediate'].update(worn=False),
-                           lambda p: p['cleanup'].reverse(), lambda p: p['cleanup'].pop(),
-                           lambda p: p['cleanup'][0].update(id=955),
-                           lambda p: p['sharedHands'].update(perform=True),
-                           lambda p: p['sharedHands'].update(complete=99),
-                           lambda p: p['sharedHands'].update(legacy=1)]
-                if kind == 'mp':
-                    changes += [lambda p: p['acknowledgements'].pop(),
-                                lambda p: p['acknowledgements'][4].update(state='canceled'),
-                                lambda p: p['acknowledgements'][2].update(id=0),
-                                lambda p: p['acknowledgements'].reverse()]
-                for change in changes:
-                    rows = self.records(); change(rows[3]['outcome']['tidyClothing']['overlap'])
-                    self.assertTrue(self.verify(self.logs(rows))['issues'])
-                rows = self.records(); rows[3]['outcome']['clothingCheckpoint']['secondary'] = 951
-                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for case, spec in equipment.CLOTHING_SPECS.items():
+                    if not spec.get('overlapHand'):
+                        continue
+                    def target(rows):
+                        return next(row['outcome'] for row in rows if row.get('id') == case)
+                    for field in ('primary', 'secondary', 'originalPrimary', 'originalSecondary', 'overlap'):
+                        rows = self.records(); target(rows)['tidyClothing'].pop(field)
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field))
+                    for field in ('primary', 'secondary', 'originalPrimary', 'originalSecondary'):
+                        rows = self.records(); value = target(rows)['tidyClothing']; value[field] = float(value[field])
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field, 'float'))
+                    changes = [lambda p: p['intermediate'].update(primary=999),
+                               lambda p: p['intermediate'].update(secondary=999),
+                               lambda p: p['intermediate'].update(worn=False),
+                               lambda p: p['cleanup'].reverse(), lambda p: p['cleanup'].pop(),
+                               lambda p: p['cleanup'][0].update(id=955),
+                               lambda p: p['cleanup'][0].update(primary=not p['cleanup'][0]['primary']),
+                               lambda p: p['cleanup'][0].update(primary=1),
+                               lambda p: p['cleanup'][0].update(twoHands=True),
+                               lambda p: p['cleanup'][1].update(activated=True),
+                               lambda p: p['sharedHands'].update(perform=True),
+                               lambda p: p['sharedHands'].update(complete=99),
+                               lambda p: p['sharedHands'].update(legacy=1)]
+                    if kind == 'mp':
+                        changes += [lambda p: p['acknowledgements'].pop(),
+                                    lambda p: p['acknowledgements'][4].update(state='canceled'),
+                                    lambda p: p['acknowledgements'][2].update(id=0),
+                                    lambda p: p['acknowledgements'].reverse()]
+                    for change in changes:
+                        rows = self.records(); change(target(rows)['tidyClothing']['overlap'])
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], case)
+                    for field in ('primary', 'secondary'):
+                        rows = self.records(); target(rows)['clothingCheckpoint'][field] = 999
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field))
                 if kind == 'mp':
                     server = self.root / 'server-launch.log'; original = server.read_text()
-                    marker = next(line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'originalSecondary' in line)
-                    server.write_text(original.replace(marker, marker.replace('951', '955')))
-                    self.assertTrue(self.verify(self.logs())['issues'])
+                    markers = [line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'originalPrimary' in line]
+                    self.assertEqual(len(markers), 3)
+                    for marker in markers:
+                        server.write_text(original.replace(marker, marker.replace('950', '955')))
+                        self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(original)
 
     def test_headwear_requires_configured_type_slot_setup_and_exact_server_correlation(self):

@@ -49,6 +49,23 @@ state.tail=book(9);assert(not Fixture.settled(state,'toolkit'),'tail must finish
 assert(Fixture.settled(state,'toolkit',true),'checkpoint precedes tail completion')
 state.front=book(9);assert(not Fixture.settled(state,'toolkit',true),'checkpoint still requires completed front')
 state.front=book(10);state.tail=book(10)
+-- Checkpoint hands use the same selector as the final clothing proof for
+-- each overlap. The independent read tail can finish only after checkpoint.
+for _,id in ipairs({'tidy-clothing-overlap','tidy-clothing-overlap-primary','tidy-clothing-overlap-both'})do
+ local clothing=modules.QueueEquipmentClothing
+ local socks={};local sample={id=id,hammer=hammer,screwdriver=screwdriver,clothingItem=socks,
+  clothingLocation='base:socks',clothingHair='CrewCut',front=book(10),tail=book(9)}
+ local primary,secondary=clothing.expectedHands(sample,false)
+ sample.player={getPrimaryHandItem=function()return primary end,getSecondaryHandItem=function()return secondary end,
+  getWornItem=function()return socks end,getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end}end}
+ assert(Fixture.settled(sample,'toolkit',true),'selected native overlap must satisfy checkpoint '..id)
+ assert(not Fixture.settled(sample,'toolkit'),'overlap must preserve independent unfinished tail '..id)
+ local expected=primary;primary=nil;assert(not Fixture.settled(sample,'toolkit',true));primary=expected
+ expected=secondary;secondary=nil;assert(not Fixture.settled(sample,'toolkit',true));secondary=expected
+ sample.tail=book(10);assert(Fixture.settled(sample,'toolkit'))
+ local finalPrimary,finalSecondary=clothing.expectedHands(sample,true)
+ assert(finalPrimary==hammer and finalSecondary==screwdriver,'P4 hand restore expectation differs '..id)
+end
 local inventory={}
 local item={getID=function() return 21 end}
 local values={size=function() return #inventory end,get=function(_,i) return inventory[i+1] end}
@@ -164,6 +181,29 @@ for _,case in ipairs({{kind='sp',held=gun,ok=true},{kind='sp',ok=false},
  observer.watch({id='tidy-empty-hands',pickup=gun,hammer=exact(33),screwdriver=exact(34),baseline={[31]=gun}})
  local ok=pcall(lifecycle.begin,action,'perform')
  assert(ok==case.ok,'unequip observer accepted wrong hand state or rejected replicated Host completion')
+end
+
+-- Overlap primary cleanup must retain the inactive Torch baseline. Other
+-- shared hand scenarios still restore their explicitly active Torch baseline.
+for _,case in ipairs({{id='tidy-clothing-overlap-primary',activated=false,ok=true},
+ {id='tidy-clothing-overlap-both',activated=false,ok=true},
+ {id='tidy-clothing-overlap-primary',activated=true,ok=false},
+ {id='tidy-clothing-overlap-both',activated=true,ok=false},
+ {id='tidy-hands',activated=true,ok=true},{id='tidy-hands',activated=false,ok=false}})do
+ local torch=exact(41);local player={}
+ local action={Type='P4RestoreAction',activated=case.activated,item=torch,character=player,action={},toolkitQueueOperation={}}
+ local queue={current=action,queue={action}}
+ ISTimedActionQueue={queues={[player]=queue}}
+ local lifecycle={begin=function()return true end,current=function()return action end,finish=function()end,flush=function()end}
+ local toolkit={ActionQueueLifecycle=lifecycle,ActionQueueOperations={perform=function()end,deferCompletion=function()end},
+  ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
+  ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end},
+  ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()return false end},
+  ActionQueueAcknowledgements={},ActionQueueTidyIntent={status=function()return true end},
+  ActionQueueCompat={isInstalled=function()return true end,verifySources=function()return true end}}
+ local observer=load('QueueEquipmentCompletion').observe(toolkit,{kind='sp',mode='toolkit'})
+ observer.watch({id=case.id,hammer=torch,screwdriver=exact(42),baseline={[41]=torch}})
+ assert(pcall(lifecycle.begin,action,'perform')==case.ok,'wrong primary baseline activation accepted/rejected '..case.id)
 end
 
 -- Host snapshots can install the authority's fixture clothing before Prepared.

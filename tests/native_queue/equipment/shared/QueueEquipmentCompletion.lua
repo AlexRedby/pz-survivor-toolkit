@@ -1,4 +1,5 @@
 local Completion={}
+local Clothing=require 'QueueEquipmentClothing'
 local function hotbarCase(id)return id=='tidy-hotbar'or id=='tidy-hotbar-holster-left'or id=='tidy-hotbar-holster-right'end
 local function clothingAction(state,action)
  return state.clothingItem and action.Type==(state.clothingRestoreType
@@ -366,7 +367,8 @@ function Completion.observe(toolkit,selection)
       'P4 removed wrong temporary equipment')
      restores.unequip=restores.unequip+1
     else
-     assert(action.Type=='P4RestoreAction' and action.activated==primary,'P4 restored wrong activation')
+     assert(action.Type=='P4RestoreAction' and action.activated==(primary and not Clothing.overlap(state)),
+      'P4 restored wrong activation')
      restores.activation=restores.activation+1
     end
    end

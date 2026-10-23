@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
+
 - **Cart multiplayer diagnostics:** Add opt-in publication/native-prediction/render timing, qualified native clock exchanges and per-connection transport counters. Separate first delivery from cached repeats, report active motion payload costs and preserve exact body/cart draw identities. Isolate inventory-equip fixtures from ordinary motion and add a portable source-geometry analyzer. Wait for the exact synchronized outfit before Host capture; resend native setup visuals once both recipients exist and keep pending-state polling free of repeated assertions.
 
 - **Cart equip checks:** Add explicit sex/load variants to the isolated public-menu SP reproducer and a separate native menu-Host owner/observer bank with exact cart/cargo identity and canonical server-result completion. Record bounded same-slot attachment gates without modifying runtime state.
