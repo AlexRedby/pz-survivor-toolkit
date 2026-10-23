@@ -248,7 +248,8 @@ function Fixture.verify(state,mode,checkpoint)
  if Slots.handles(state.id) then extra=Slots.verify(state,mode) end
  local expectedWorn=state.expectedWorn
  if Clothing.isCase(state.id) then
-  extra.clothingCheckpoint=Clothing.verify(state,Clothing.removes(state))
+  Clothing.appearanceCheckpoint(state)
+  extra.clothingCheckpoint=Clothing.verify(state,Clothing.removes(state),nil,'checkpoint')
   extra.clothingItem=state.clothingItem:getID()
   expectedWorn=Clothing.expectedWorn(state,state.expectedWorn,Clothing.removes(state))
  end
@@ -379,7 +380,7 @@ function Fixture.settled(state,mode,checkpoint)
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
  if Clothing.isCase(state.id) and (not Clothing.slotMatches(state,Clothing.removes(state))
-  or tostring(player:getHumanVisual():getHairModel())~=state.clothingHair)then return false end
+  or not Clothing.appearanceReady(state,'checkpoint'))then return false end
  if Clothing.wristwatch(state)and (not Clothing.watchMatches(state)
   or not isClient()and Clothing.watchProcessing(state).pendingRemoval)then return false end
  if state.id=='hotbar-chain' or Slots.isBelt(state.id) then

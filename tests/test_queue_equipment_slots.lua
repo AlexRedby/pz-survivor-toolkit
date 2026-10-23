@@ -685,6 +685,143 @@ do
   isClient=function()return false end
   print(case..': native temporary Wear/CutHair, exact same/exclusive cleanup, root identities and all Host receipts passed')
  end
+ -- Mohawk cases replay the real native constructors and CutHair consumption.
+ -- Java storage/transport remain doubles; full-pack SP/Host is the live gate.
+ do
+  local previousSet,previousRemove=player.setWornItem,player.removeWornItem
+  local previousItems,previousSend=state.root.getItems,sendClothing
+  sendClothing=function()end
+  local growthResets=0
+  function player:resetHairGrowingTime()growthResets=growthResets+1 end
+  function player:setWornItem(location,item)
+   if self.worn[location]==item then return end
+   previousSet(self,location,item)
+   if (location==ItemBodyLocation.HAT or location==ItemBodyLocation.FULL_HAT)and visual.hair:find('Mohawk',1,true)then visual.hair='MohawkFlat'end
+  end
+  function player:removeWornItem(item)
+   for location,value in pairs(self.worn)do if value==item then self:setWornItem(location,nil);return end end
+  end
+  local color={getRedFloat=function()return 0.2 end,getGreenFloat=function()return 0.3 end,getBlueFloat=function()return 0.4 end}
+  function visual:getHairColor()return color end
+  function state.root:getItems()local values={};for item in pairs(self.items)do values[#values+1]=item end;return list(values)end
+  function state.root:getItemFromType(kind)
+   if kind=='Hairgel'then return state.clothingGel end
+  end
+  for _,case in ipairs({'tidy-headwear-mohawk-hat-restore','tidy-headwear-mohawk-hat-remove','tidy-headwear-mohawk-full-hat-restore','tidy-headwear-mohawk-full-hat-remove'})do
+   isClient,isServer=function()return false end,function()return false end
+   state.id=case;state.ids=nil;state.clothingP4=nil;state.clothingRestoreAction=nil;state.clothingRestoreReceipt=nil
+   state.clothingReceipts=nil;state.clothingFirstObserved=nil;state.clothingAppearanceCheckpoint=nil
+   state.clothingProducerStarted=nil;state.clothingSetupPending=nil;player.worn={};visual.hair='CrewCut';visual.attached=nil
+   player.primary,player.secondary=state.hammer,state.screwdriver;styleName='MohawkFan'
+   local uses=20;local consumed=0
+   Clothing.prepare(state,function(name,kind)
+    local item=seedHead(name,kind)
+    if name=='clothingGel'then
+     function item:getMaxUses()return 20 end;function item:getCurrentUses()return uses end
+     function item:getUseDelta()return 0.05 end;function item:setCurrentUses(value)uses=value end
+     function item:UseAndSync()uses=uses-1;consumed=consumed+1 end
+    end
+    return item
+   end)
+   assert(state.clothingAppearanceBaseline.hairModel=='MohawkFan'and state.clothingAppearanceBaseline.gel.uses==20)
+   if not Clothing.removes(state)then
+    player.worn[state.clothingLocation]=nil;state.clothingSetupPending=true;state.clothingSetupPrevious=nil
+    isServer=function()return true end
+    Clothing.configure(state,state.clothingItem:getID())
+    assert(visual.hair=='MohawkFan'and player.worn[state.clothingLocation]==state.clothingItem and uses==20,'once-only Host setup must restore initial upright hair after wearing')
+    assert(not pcall(Clothing.configure,state,state.clothingItem:getID()),'duplicate Mohawk setup accepted')
+    isServer=function()return false end
+   end
+   local safe,ready=pcall(Clothing.appearanceReady,state,'checkpoint');assert(safe and not ready,'readiness must wait for native producer without asserting')
+   queue.queue={};queue.current=nil;Clothing.enqueue(state,{run=function(callback)return callback()end})
+   local first,producer=queue.queue[1],queue.queue[2]
+   assert(first.maxTime==50 and producer.maxTime==100 and producer.hairStyle=='MohawkFan'and producer.item==nil)
+   assert(first:complete()and visual.hair=='MohawkFlat'and uses==20)
+   local firstSnapshot=Clothing.verify(state,Clothing.removes(state),true,'first')
+   assert(firstSnapshot.appearance.hairModel=='MohawkFlat'and firstSnapshot.appearance.gel.uses==20
+    and firstSnapshot.appearance.gel.id==state.clothingGel:getID()and firstSnapshot.appearance.gel.container=='root'
+    and firstSnapshot.hairUnchanged==false,'SP first-phase appearance/gel flags must remain unchanged')
+   isServer=function()return true end;visual.hair=Clothing.removes(state)and 'MohawkFlat'or 'MohawkFan'
+   assert(Clothing.appearanceReady(state,'first'),'Host server first Wear/Unequip phase differs')
+   visual.hair=Clothing.removes(state)and 'MohawkFan'or 'MohawkFlat'
+   assert(not Clothing.appearanceReady(state,'first'),'Host server first-phase counterpart accepted')
+   isServer=function()return false end;visual.hair='MohawkFlat'
+   local receipts={};local ack='completed'
+   toolkit={Settings={actionQueue=function()return true end},ActionQueueDefinitions={inspect=function()return {targets={[visual]=true}},'compat.tidy-equipment'end},
+    ActionQueueAcknowledgements={capture=function(action)receipts[action]=receipts[action]or {};return receipts[action]end,
+     observe=function(action,receipt)assert(receipt==receipts[action]);return ack end}}
+   producer.isStarted=function()return true end;queue.current=producer
+   Clothing.observe(state,queue,toolkit,true)
+   local beforeGrowth=growthResets
+   assert(producer:complete()and visual.hair=='MohawkFan'and consumed==1 and uses==19 and growthResets==beforeGrowth+1)
+   Clothing.appearanceCheckpoint(state)
+   local checkpoint=Clothing.verify(state,Clothing.removes(state),nil,'checkpoint')
+   assert(checkpoint.appearance.hairModel=='MohawkFan'and checkpoint.appearance.gel.uses==19
+    and checkpoint.hairUnchanged==true and not checkpoint.appearance.hairGrowthTime,'SP checkpoint appearance/gel flags must remain unchanged')
+   -- Completion notification can observe the still-current producer again.
+   Clothing.observe(state,queue,toolkit,true)
+   local remove=Clothing.removes(state);local label=state.clothingItem:getFullType()..'#'..state.clothingItem:getID()..'@inventory'
+   Clothing.observeLine(state,prefix..'capture worn=['..(remove and ''or tostring(state.clothingLocation)..'='..label)..'] inventoryCount=9')
+   Clothing.observeLine(state,prefix..'add[add] type='..first.Type..' item='..label)
+   Clothing.observeLine(state,prefix..'add[add] type=ISCutHair item=nil')
+   Clothing.observeLine(state,prefix..'RESTORE actionTotal=4 trace=[ISReadABook -> '..first.Type..' -> ISCutHair -> ISReadABook] reason=operation:ISReadABook')
+   local cleanup=(remove and ISUnequipAction or ISWearClothing):new(player,state.clothingItem,50)
+   queue.queue={cleanup};queue.current=cleanup;Clothing.observe(state,queue,toolkit,true)
+   beforeGrowth=growthResets;assert(cleanup:complete())
+   assert(visual.hair=='MohawkFlat'and uses==19 and consumed==1 and growthResets==beforeGrowth)
+   Clothing.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S17')
+   assert(Clothing.settled(state,toolkit,true))
+   local proof=Clothing.evidence(state,toolkit,true,{perform=1,complete=1,flush=1,legacy=0})
+   assert(proof.appearance.hairModel=='MohawkFlat'and proof.appearanceBaseline.hairModel=='MohawkFan'
+    and proof.appearanceCheckpoint.gel.uses==19 and #proof.appearanceAcknowledgements==0 and not proof.hairUnchanged)
+   uses=18;assert(not Clothing.appearanceReady(state,'final',true),'extra styling use accepted');uses=19
+   local gelKind=state.clothingGel.kind;state.clothingGel.kind='Base.Other'
+   local safe,ready=pcall(Clothing.appearanceReady,state,'checkpoint');assert(safe and not ready,'readiness threw while native styling state converges')
+   state.clothingGel.kind=gelKind
+   visual.attached='Ponytail';assert(not Clothing.appearanceReady(state,'final',true));visual.attached=nil
+   isClient=function()return true end;visual.hair='MohawkFan';Clothing.observe(state,queue,toolkit,true)
+   assert(Clothing.settled(state,toolkit,true),'MP client native unflattened model must use per-role contract')
+   local mpProof=Clothing.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})
+   assert(#mpProof.appearanceAcknowledgements==3)
+   -- A failed strict final proof logs actual read-only values using the real
+   -- fixture JSON writer, before retaining its original assertion failure.
+   local previousRequire,previousPrint=require,print
+   local JSON=assert(loadfile(ProjectRoot..'/tests/native_queue/health/shared/QueueHealthEvents.lua'))()
+   local encoded,diagnostic,printed
+   require=function(name)assert(name=='QueueHealthEvents');return {encode=function(value)
+    diagnostic=value;encoded=JSON.encode(value);return encoded
+   end}end
+   print=function(line)assert(not printed,'appearance mismatch emitted more than one diagnostic');printed=line end
+   isClient=function()return false end;isServer=function()return true end
+   visual.hair=remove and 'MohawkFan'or 'MohawkFlat'
+   assert(Clothing.appearanceReady(state,'final',true),'normal Host server must follow exact native Wear/Unequip hair effect')
+   visual.hair=remove and 'MohawkFlat'or 'MohawkFan'
+   assert(not Clothing.appearanceReady(state,'final',true),'Host server counterpart hairstyle must remain rejected')
+   local gelBefore,styleBefore,attachedBefore=uses,visual.hair,visual.attached
+   local ok,problem=pcall(Clothing.verify,state,not remove)
+   require,print=previousRequire,previousPrint
+   assert(not ok and tostring(problem):find('native Mohawk phase effect differs',1,true),'diagnostic must retain the exact strict failure')
+   assert(diagnostic.case==case and diagnostic.phase=='final'and diagnostic.tidy==true and diagnostic.role=='server'
+    and diagnostic.restored==not remove and diagnostic.currentAppearance.hairModel==styleBefore
+    and diagnostic.currentAppearance.gel.uses==19 and diagnostic.currentAppearance.gel.id==state.clothingGel:getID()
+    and diagnostic.baseline==state.clothingAppearanceBaseline and diagnostic.checkpoint==state.clothingAppearanceCheckpoint
+    and diagnostic.worn.location==tostring(state.clothingLocation)
+    and diagnostic.worn.id==(not remove and state.clothingItem:getID()or false)
+    and printed=='[EQUIPMENT_TEST] APPEARANCE_MISMATCH '..encoded
+    and encoded:find('"hairGrowthTime":false',1,true),'diagnostic omitted/misrepresented actual phase/appearance/worn values')
+   assert(uses==gelBefore and visual.hair==styleBefore and visual.attached==attachedBefore,'failure diagnostic mutated native state')
+   isClient=function()return true end;isServer=function()return false end;visual.hair='MohawkFan'
+   for _,action in ipairs({first,producer,cleanup})do
+    local receipt=state.clothingReceipts[action];state.clothingReceipts[action]=nil
+    assert(not Clothing.settled(state,toolkit,true),'missing Mohawk native receipt accepted');state.clothingReceipts[action]=receipt
+   end
+   ack='started';assert(not Clothing.settled(state,toolkit,true));ack='completed'
+   state.root.items[state.clothingGel]=nil
+   print(case..': native haircut consumes one root gel use; cleanup-only appearance, per-role effects and3 Host receipts passed')
+  end
+  styleName='CrewCut';visual.hair='CrewCut';player.worn={};state.id='tidy-clothing';isClient=function()return false end
+  player.setWornItem,player.removeWornItem=previousSet,previousRemove;state.root.getItems=previousItems;sendClothing=previousSend
+ end
  -- Wristwatches use the same real Wear/Unequip and CutHair paths, preserving
  -- authority-seeded alarm configuration and capturing all three native receipts.
  local previousInstanceof=instanceof

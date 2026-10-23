@@ -359,6 +359,7 @@ Events.OnTick.Add(function()
     end
    end
    if state.id=='hands-chain' then assert(state.activeProgress,'equipment never made native active progress') end
+   if Clothing.mohawk(state)and not Clothing.appearanceReady(state,'checkpoint')then return end
    outcome=Fixture.verify(state,Selection.mode,true)
    if Selection.options.belt_walk then
     outcome.walkingVerified=true;outcome.walkedDuringTransfer=state.walkedDuringTransfer==true

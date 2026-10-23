@@ -1363,6 +1363,16 @@ do
     local oldGroup=player.getBodyLocationGroup
     local oldLoad,oldCapacity,oldAllowed=inventory.getCapacityWeight,inventory.getEffectiveCapacity,inventory.isItemAllowed
     local worn,writes,load,capacity,allowed,hair,exclusive,multi={},0,0,10,true,'CrewCut',false,false
+    local resetModel=player.resetModel
+    local visualState={getHairModel=function()return hair and {contains=function(_,needle)return hair:find(needle,1,true)~=nil end}end,
+        setHairModel=function(_,value)hair=value end}
+    local function flattenHeadwear(location)
+        -- Java visual mutation remains a double; actual Lua Wear runs below.
+        -- Normal Host authority never initializes render-only cached isoPlayer.
+        -- MP completion here simulates that server; Lua Wear still flattens.
+        if not isClient()and (location==ItemBodyLocation.HAT or location==ItemBodyLocation.FULL_HAT)
+            and hair and hair:find('Mohawk',1,true)then hair='MohawkFlat'end
+    end
     local group={getLocation=function(_,location)return location end,isMultiItem=function()return multi end,
         isExclusive=function()return exclusive end}
     player.getBodyLocationGroup=function()return group end
@@ -1380,10 +1390,10 @@ do
         return values
     end
     player.getWornItem=function(_,location)return worn[location]end
-    player.setWornItem=function(_,location,value)worn[location]=value;writes=writes+1 end
+    player.setWornItem=function(_,location,value)worn[location]=value;writes=writes+1;flattenHeadwear(location)end
     player.removeWornItem=function(_,item)
         for location,value in pairs(worn)do if value==item then
-            worn[location]=nil;writes=writes+1
+            worn[location]=nil;writes=writes+1;flattenHeadwear(location)
             -- Java storage/effects are doubles: use the worst allowed increase
             -- from worn to unequipped weight, then native's second weight debit.
             load=load+item:getUnequippedWeight()
@@ -1393,7 +1403,8 @@ do
             end
         end end
     end
-    player.getHumanVisual=function()return {getHairModel=function()return hair and {contains=function(_,needle)return hair:find(needle,1,true)~=nil end}end}end
+    player.getHumanVisual=function()return visualState end
+    player.resetModel=function()end
     local function restoreClothing(mixed,kind,removal,setup)
         local ringing=kind and kind:match('^ringing%-')~=nil
         if ringing then kind=kind:sub(9)end
@@ -1706,19 +1717,51 @@ do
         assert(select(2,definitions.inspect(action))=='compat.selected-chains','inventory alarm clock borrowed worn watch proof')
     end
     end
-    -- Both headwear directions require a live hair guard. Native Lua and Java
-    -- can flatten Mohawk, including when the requested worn value is nil.
+    -- Headwear owns the stable native HumanVisual, including before a hair
+    -- change. Hair content is mutable native state, not an identity/version.
+    local appearanceBoundaries=0
     for _,removal in ipairs({false,true})do
     for _,kind in ipairs({'hat','full-hat'})do
-        for _,style in ipairs({'Mohawk','MohawkFlat','CustomMohawk',false})do
-            local _,_,action=restoreClothing(true,kind,removal,function()hair=style end)
-            assert(select(2,definitions.inspect(action))=='compat.selected-chains','headwear adopted unknown or changing hair effects')
-        end
+    for _,style in ipairs({'MohawkFan','MohawkFlat','CustomMohawk','CrewCut'})do
+    for _,mode in ipairs({'sp','mp-early','mp-late'})do
+        local sock,owner,action=restoreClothing(true,kind,removal,function()hair=style end)
+        local contract,id=definitions.inspect(action)
+        assert(id=='compat.tidy-equipment'and contract.targets[visualState]and not contract.targets[player],
+            'headwear must own exact appearance without actor-wide food conflicts')
+        local following=tail();local removed=false;action.action={};queue.current=action
+        player.getCharacterActions=function()return list(removed and {}or{action.action})end
+        isClient=function()return mode~='sp'end
+        operations.invalidate(owner.toolkitQueueOperation)
+        if mode=='mp-early'then action:complete()end
+        assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+        assert(lifecycle.flush(queue)=='waiting'and queue.queue[2]==following)
+        if mode=='sp'then
+            assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+        elseif mode=='mp-late'then action:complete()end
+        local expectedHair=style:find('Mohawk',1,true)and (not removal or mode=='sp')and 'MohawkFlat'or style
+        assert(hair==expectedHair
+            and (worn[sock:getBodyLocation()]==sock)==not removal and sock:getContainer()==inventory,
+            'headwear cleanup changed native appearance or item effects')
+        assert(definitions.inspect(action),'native flatten or early Host effect revoked required cleanup')
+        hair='MohawkFan'
+        if removal then assert(action:complete())else assert(not action:complete())end
+        assert(hair=='MohawkFan','already completed clothing must not repeat native appearance effects')
+        removed=true;assert(lifecycle.flush(queue)=='completed'and queue.current==following)
+        isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
+        appearanceBoundaries=appearanceBoundaries+1
+    end end end end
+    assert(appearanceBoundaries==48,'headwear appearance missed a slot/direction/hair/native-order boundary')
+    for _,removal in ipairs({false,true})do
+    for _,kind in ipairs({'hat','full-hat'})do
+        local _,_,unknown=restoreClothing(true,kind,removal,function()hair=false end)
+        assert(select(2,definitions.inspect(unknown))=='compat.selected-chains','headwear adopted a missing hair API')
         local _,_,action=restoreClothing(true,kind,removal)
-        hair='Mohawk'
-        assert(not definitions.inspect(action),'headwear retained shared ownership after a live hair change')
-    end
-    end
+        hair='MohawkFan'
+        assert(definitions.inspect(action),'live native hair changes must keep the same visual resource')
+        local saved=visualState;visualState={getHairModel=saved.getHairModel,setHairModel=saved.setHairModel}
+        assert(not definitions.inspect(action),'replacement HumanVisual borrowed previous appearance ownership')
+        visualState=saved;assert(definitions.inspect(action),'original exact visual must recover its contract')
+    end end
     -- Headwear Wear adds no unrelated output when the real single slot is
     -- empty; a replaced item, occupied slot or exclusive location must never
     -- borrow that proof, even after the original action was already adopted.
@@ -2060,6 +2103,7 @@ do
         lateCartProof.unequipLatest=nil
     end
     reset();player.getWornItems,player.getWornItem,player.setWornItem,player.getHumanVisual,player.removeWornItem=getWorn,getWornItem,setWorn,visual,removeWorn
+    player.resetModel=resetModel
     player.getBodyLocationGroup=oldGroup
     inventory.getCapacityWeight,inventory.getEffectiveCapacity,inventory.isItemAllowed=oldLoad,oldCapacity,oldAllowed
 end

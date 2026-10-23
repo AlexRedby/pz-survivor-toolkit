@@ -275,10 +275,11 @@ local function ordinaryClothingItem(item, character, allowHeadwear)
     -- naturally starting/stopping its alarm does not change item ownership.
     if location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then
         if not allowHeadwear then return end
-        -- Java setWornItem also flattens Mohawk when newItem is nil.
+        -- Java setWornItem also flattens Mohawk when newItem is nil. Its
+        -- native appearance effect is owned separately from item/hand state.
         local visual = character:getHumanVisual()
         local hair = visual and visual:getHairModel()
-        if not hair or type(hair.contains) ~= "function" or hair:contains("Mohawk") then return end
+        if not hair or type(hair.contains) ~= "function" then return end
     end
     return location
 end
@@ -542,6 +543,7 @@ local function sourceMatches(action, record, observedItem)
         or action.alwaysTurnOn ~= record.alwaysTurnOn) then return false end
     if record.class == ISUnequipAction and (action.reason ~= record.reason or action.fromHotbar ~= record.fromHotbar
         or action.hotbar ~= record.hotbar) then return false end
+    if record.clothingVisual and action.character:getHumanVisual() ~= record.clothingVisual then return false end
     if record.tidyClothingUnequip and ordinaryClothingRemoval(action) ~= record.clothingLocation then return false end
     if record.tidyHotbarUnequip and not hotbarState(action, record.hotbarProof) then return false end
     if (record.tidyClothingUnequip or record.tidyHotbarUnequip) and (not nativeUnequipMethods(action)
@@ -608,6 +610,9 @@ local function adopt(action)
     if context.id == "P4TidyUpMeister" then clothingLocation, clothingDisplaced = clothingRestore(action, class) end
     local removalLocation = context.id == "P4TidyUpMeister" and clothingRemoval(action, class)
     local hotbarProof = context.id == "P4TidyUpMeister" and hotbarRestore(action, class)
+    local wornLocation = clothingLocation or removalLocation
+    local clothingVisual = wornLocation and (wornLocation == ItemBodyLocation.HAT or wornLocation == ItemBodyLocation.FULL_HAT)
+        and action.character:getHumanVisual() or nil
     local tidyHandUnequip = context.id == "P4TidyUpMeister" and class == ISUnequipAction and not action.fromHotbar
             and (action.item == action.character:getPrimaryHandItem() or action.item == action.character:getSecondaryHandItem())
             and not action.character:getWornItems():contains(action.item) and not isForceDropHeavyItem(action.item)
@@ -626,7 +631,7 @@ local function adopt(action)
         tidyHandUnequip = tidyHandUnequip, tidyClothingWear = clothingLocation ~= nil and clothingLocation ~= false,
         tidyClothingUnequip = removalLocation ~= nil and removalLocation ~= false,
         tidyHotbarUnequip = type(hotbarProof) == "table", hotbarProof = hotbarProof,
-        clothingLocation = clothingLocation or removalLocation, clothingDisplaced = clothingDisplaced,
+        clothingLocation = wornLocation, clothingDisplaced = clothingDisplaced, clothingVisual = clothingVisual,
         clothingAction = action.clothingAction, animSpeed = action.animSpeed,
         stopOnWalk = action.stopOnWalk, stopOnRun = action.stopOnRun,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction),
@@ -835,6 +840,9 @@ local function inspect(action)
         Toolkit.ActionQueuePolicy.addContainerResources(result, container)
     end
     if record.target then result.targets[record.target] = true end
+    -- Claim every admitted headwear visual, including initially plain hair:
+    -- native hair edits/sync mutate this stable object before cleanup runs.
+    if record.clothingVisual then result.targets[record.clothingVisual] = true end
     if record.id ~= "WashFix" then result.hands = action.character end
     if record.class == ISQueueActionsAction then result.deferred, result.knownInputs = true, false end
     if record.class == ISWashClothing or record.class == ISAddItemInRecipe then result.unknownOutputs = true end

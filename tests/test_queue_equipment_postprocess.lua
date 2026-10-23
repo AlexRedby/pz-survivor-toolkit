@@ -256,3 +256,37 @@ do
  end
 end
 print('Equipment displacement postprocessing: both exact root identities and same/exclusive final slots passed.')
+
+-- Server postprocess validates its own native Mohawk output and gel conservation;
+-- client and SP use the same snapshot helper with their role-specific model.
+do
+ local Clothing=require 'QueueEquipmentClothing'
+ for _,case in ipairs({'tidy-headwear-mohawk-hat-restore','tidy-headwear-mohawk-hat-remove','tidy-headwear-mohawk-full-hat-restore','tidy-headwear-mohawk-full-hat-remove'})do
+  for _,role in ipairs({'sp','client','server'})do for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native');local spec=Clothing.spec(sample)
+   local garment=item(spec.fullType,sample.root);local gel=item('Base.Hairgel',sample.root)
+   garment.getBodyLocation=function()return spec.location end
+   gel.getMaxUses=function()return 20 end;gel.getUseDelta=function()return 0.05 end;gel.getCurrentUses=function()return gel.uses end;gel.uses=20
+   sample.clothingItem,sample.clothingGel,sample.clothingLocation,sample.clothingHair=garment,gel,spec.location,'MohawkFan'
+   sample.items.clothingItem=garment;sample.items.clothingGel=gel
+   sample.baseline[garment.id]=garment;sample.baseline[gel.id]=gel
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   sample.player.getWornItem=function(self,location)return self.worn[location]end
+   local color={getRedFloat=function()return 0.2 end,getGreenFloat=function()return 0.3 end,getBlueFloat=function()return 0.4 end}
+   local visual={hair='MohawkFan',getHairModel=function(self)return self.hair end,getNonAttachedHair=function()end,getHairColor=function()return color end}
+   sample.player.getHumanVisual=function()return visual end
+   sample.clothingAppearanceBaseline=Clothing.appearance(sample);gel.uses=19
+   sample.clothingAppearanceCheckpoint=Clothing.appearance(sample)
+   visual.hair=tidy and role~='client'and (role=='sp'or not spec.remove)and 'MohawkFlat'or 'MohawkFan'
+   sample.player.worn=Clothing.expectedWorn(sample,sample.player.worn,Clothing.finalWorn(sample,tidy))
+   isClient=function()return role=='client'end;isServer=function()return role=='server'end
+   local result=Postprocess.verify(sample,'native',tidy).clothing
+   assert(result.appearance.hairModel==visual.hair and result.appearance.gel.id==gel.id and result.appearance.gel.uses==19)
+   gel.uses=20;assert(not pcall(Postprocess.verify,sample,'native',tidy),'missing native styling use accepted');gel.uses=19
+   local expected=visual.hair;visual.hair=expected=='MohawkFan'and 'MohawkFlat'or 'MohawkFan'
+   assert(not pcall(Postprocess.verify,sample,'native',tidy),'wrong per-role native appearance accepted');visual.hair=expected
+  end end
+ end
+ isClient=function()return false end;isServer=function()return false end
+end
+print('Equipment Mohawk postprocessing: exact per-role hair, color/attachment and one native gel use passed; growth timer unavailable.')

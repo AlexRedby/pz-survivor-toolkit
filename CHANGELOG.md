@@ -33,6 +33,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.232
+
+- **Action queue:** Preserve native Mohawk flattening during proven P4 headwear cleanup. Own the exact character appearance separately from item and hand resources, retain mandatory cleanup through hair changes and early Host completion, and reject a replaced visual object without blocking unrelated reading or food.
+
 ### 0.1.231
 
 - **Action queue:** Use shared P4 completion for proven ordinary-clothing replacement and exclusive-slot restoration. Retain every displaced root item as a resource through preceding cleanup and Host effects, preserve native order and required returns, and guard capacity-driven world outputs, including modified worn-weight multipliers. Multi-item slots, displaced special equipment and modified callbacks retain their existing handling.
