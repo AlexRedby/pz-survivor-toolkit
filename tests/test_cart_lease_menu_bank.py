@@ -33,6 +33,16 @@ class CartLeaseMenuBankTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn('Owner native menu driver unavailable', result.stderr)
 
+    def test_menu_commands_revalidate_exact_owner_and_observer_transports(self):
+        for who, error in (('owner', 'Native menu owner transport changed'),
+                           ('observer', 'Native menu requester transport changed')):
+            for stage in ('absence', 'bind'):
+                defect = who + '-transport-at-' + stage
+                with self.subTest(defect=defect):
+                    result = self.run_bank(defect)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(error, result.stderr)
+
     def test_server_and_observer_must_independently_observe_native_absence(self):
         for defect in ('server-no-absence', 'client2-no-absence'):
             with self.subTest(defect=defect):

@@ -80,7 +80,9 @@ if isServer() then
    for _,p in pairs(clients) do send(p,'Begin',{phase=phase,owner=target:getOnlineID()}) end
   else
    if menuMode then
-    menuTransition={before=held(target),prepared=prepared,requests={},resumed=false,complete=false}
+    menuTransition={before=held(target),actor=target,owner=target:getOnlineID(),
+     connection=assert(cartLeaseOwnerConnection(target),'Native menu owner transport missing'),
+     prepared=prepared,requests={},resumed=false,complete=false}
    else local row=cycle(target,phase,'server');observe();log(row) end
    for role,p in pairs(clients) do
     local pending=assert(prepared[role],'Missing pre-mutation pending challenge')
@@ -92,11 +94,12 @@ if isServer() then
  menuProgress=function()
   local t=menuTransition
   if not t or t.complete then return end
+  assert(target==t.actor and target:getOnlineID()==t.owner,'Native menu owner incarnation changed')
   local native=optionalHeld(target)
   if not t.resumed then
    if target:getPrimaryHandItem() or target:getSecondaryHandItem() or cartLeaseLifetime(target)~=nil then return end
-   local connection=assert(cartLeaseOwnerConnection(target),'Native release owner transport missing')
-   controller:unavailable(target:getOnlineID(),connection,target)
+   -- This retained exact binding can only close authority outside a native callback.
+   controller:unavailable(t.owner,t.connection,t.actor)
    if not t.absent then
     t.absent=true;log({actor='server',event='absence',phase=phase,owner=target:getOnlineID(),before=t.before.lifetime,nativeLifetimeAbsent=true})
    end
@@ -141,6 +144,11 @@ if isServer() then
     if all(ready) then advance() end;return
    end
    assert(clients[role]==p and args.phase==phase and phase>=1 and phase<=3 and not finished[role],'Unknown requester or phase')
+   if menuMode and menuTransition then
+    local t=menuTransition
+    assert(target==t.actor and id==t.owner and cartLeaseOwnerConnection(target)==t.connection,'Native menu owner transport changed')
+    assert(t.prepared[role] and source==t.prepared[role].source,'Native menu requester transport changed')
+   end
    if command=='MenuAbsent' then
     assert(menuMode and menuTransition and not menuTransition.resumed,'Unexpected menu absence');local t=menuTransition
     assert(not t.requests[role] and t.prepared[role] and args.nonce==t.prepared[role].reply.nonce,'Repeated/foreign menu absence')
@@ -177,7 +185,7 @@ if isServer() then
    elseif command=='Prepare' then
     assert(phase<3 and not prepared[role] and lastEcho[role] and args.afterAttempt==lastEcho[role].attempt,'Repeated/late/unbound preparation')
     local reply=assert(controller:reply(args.request,source),'Pending challenge reply missing')
-    assert(reply.actor==id and reply.open,'Pre-mutation source lease missing');prepared[role]={reply=reply,payload=menuMode and args.payload or nil}
+    assert(reply.actor==id and reply.open,'Pre-mutation source lease missing');prepared[role]={reply=reply,source=source,payload=menuMode and args.payload or nil}
     log(tuple({actor='server',event='prepare',requester=role,phase=phase,owner=id,afterAttempt=args.afterAttempt,nonce=reply.nonce,lifetime=binding.lifetime,guarded=true},reply))
     if all(prepared) then advance() end
    elseif command=='Done' then

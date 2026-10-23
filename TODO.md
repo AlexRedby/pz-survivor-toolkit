@@ -89,14 +89,14 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
-### Active ordinary-menu and hotkey verification
+### Active ordinary-menu verification
 
-- [ ] Verify the two corrected explicit banks in isolated available-mod menu Host captures with unchanged AeroSpace/resource/source/cleanup gates. Close only the routes actually proven; keep production migration, wire costs and remaining lifetime routes separate.
+- [ ] Verify the corrected public world-menu release/ground-pickup lifetime bank in an isolated available-mod menu Host capture with unchanged AeroSpace/resource/source/cleanup gates. Close only the routes actually proven; keep production migration, wire costs and remaining lifetime routes separate.
 
 ### Remaining native lifetime and traffic gates
 
 - [ ] Extend native lifetime coverage to ordinary menu equip/release and the remaining actor-removal/disconnection routes beyond the verified guest native-death/Coop-respawn/menu-rejoin path. Keep exact native incarnation and transport provenance, permanent retirement and replay fences.
-- [ ] Extend native action-admission coverage beyond selected Setdown/Pickup completion/cancel/repeat to hotkey Drop, pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
+- [ ] Extend native action-admission coverage beyond selected Setdown/Pickup and hotkey Drop completion/cancel/repeat to pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
 - [ ] Measure RakNet/IP/UDP control costs, retransmissions/lost sends and actual relevant-recipient fan-out for bounded bind/resync bursts. Keep delivered native command serialization separate from wire totals; establish the production codec/rate budget against a matching motion baseline.
 - [ ] Connect the verified admission reference to production motion/action together only after those authority/lifetime and traffic gates pass. Preserve durable high-water fences and native root catch-up; remove the replaced v1 consumers in the same change after verification. Source-time playback remains behind its separate timing gate.
 

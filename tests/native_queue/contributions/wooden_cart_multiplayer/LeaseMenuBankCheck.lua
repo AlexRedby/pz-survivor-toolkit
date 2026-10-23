@@ -74,9 +74,16 @@ for _,role in ipairs({'server','client1','client2'}) do
   if name=='QueueTestSelection' then return {disposable=true,options={cart_lease_control=true,cart_lease_lifetimes=true,cart_lease_menu=true}} end
   if name=='CartLeaseProtocol' then
    local p={server=function(...)
-    local server=Protocol.server(...);local accept=server.accept;r.sourceRefusals=0
+    local server=Protocol.server(...);local accept,observe,reply=server.accept,server.observe,server.reply;r.sourceRefusals=0
+    server.observe=function(self,...)
+     assert(r.inCommand,'Positive server binding outside native callback');return observe(self,...)
+    end
+    server.reply=function(self,...)
+     assert(r.inCommand,'Positive server reply outside native callback');return reply(self,...)
+    end
     server.accept=function(self,id,connection,actor,envelope,at)
      local result=accept(self,id,connection,actor,envelope,at)
+     assert(not result or r.inCommand,'Positive server payload outside native callback')
      if envelope and envelope.body=='retired-equipment' and not result then r.sourceRefusals=r.sourceRefusals+1 end
      return result
     end
@@ -138,9 +145,9 @@ for _,role in ipairs({'server','client1','client2'}) do
  env.cartLeaseResnapshot=function() return false end
  env.cartLeaseCurrent=function() return r.connection end
  env.cartLeaseIngress=function() return r.foreignIngress or r.connection end
- env.cartLeaseSource=function(p) return p.connection end
- env.cartLeaseOwnerConnection=function() return roles.client1.connection end
- env.cartLeaseTarget=function(id) assert(id==7);return roles.server.actor end
+ env.cartLeaseSource=function(p) assert(r.inCommand,'Native source API outside callback');return p.connection end
+ env.cartLeaseOwnerConnection=function() assert(r.inCommand,'Native owner transport API outside callback');return roles.server.actor.connection end
+ env.cartLeaseTarget=function(id) assert(r.inCommand,'Native target API outside callback');assert(id==7);return roles.server.actor end
  env.instanceItem=function() error('Menu bank attempted synthetic replacement') end
  env.getPlayer=function() return r.localPlayer end
  env.getOnlinePlayers=function() return {size=function() return 1 end,get=function() return r.actor end} end
@@ -185,7 +192,17 @@ for tickIndex=1,2500 do
   if message.kind=='OnServerCommand' and message.args[2]=='MenuResume' and defect=='malformed-resume' and not firstDefect then
    firstDefect=true;message.args[3].phase=99
   end
+  if message.kind=='OnClientCommand' and not firstDefect then
+   local command,player,args=message.args[2],message.args[3],message.args[4]
+   local stage=command=='MenuAbsent' and 'absence' or command=='Bind' and args.phase==2 and 'bind'
+   if stage then
+    local who=player:getUsername()=='client1' and 'owner' or 'observer'
+    if defect==who..'-transport-at-'..stage then firstDefect=true;player.connection={} end
+   end
+  end
+  roles[message.role].inCommand=true
   roles[message.role].callbacks[message.kind](unpack(message.args))
+  roles[message.role].inCommand=false
  end
  if roles.server.callbacks.OnTick then roles.server.callbacks.OnTick() end
  local first=roles.client1.api.finish(roles.client1.actor,now)
