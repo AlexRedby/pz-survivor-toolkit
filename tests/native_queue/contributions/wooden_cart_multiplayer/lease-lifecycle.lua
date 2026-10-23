@@ -82,7 +82,7 @@ local function bodiesAt(x,y,z,id,previous)
    local bodies=sq:getDeadBodys()
    for i=0,bodies:size()-1 do
     local body=bodies:get(i)
-    if body:isPlayer() and body:getCharacterOnlineID()==id and not (previous and previous[body]) then found[#found+1]=body end
+    if body:getCharacterOnlineID()==id and not (previous and previous[body]) then found[#found+1]=body end
    end
   end
  end end
@@ -92,17 +92,28 @@ local function corpseBaseline(p)
  local known={};for _,body in ipairs(bodiesAt(p:getX(),p:getY(),p:getZ(),p:getOnlineID())) do known[body]=true end
  return known
 end
+local function bodiesFor(cached)
+ local found,seen={},{}
+ for _,position in ipairs({{x=cached.x,y=cached.y,z=cached.z},{x=cached.actor:getX(),y=cached.actor:getY(),z=cached.actor:getZ()}}) do
+  for _,body in ipairs(bodiesAt(position.x,position.y,position.z,cached.id,cached.corpses)) do
+   if not seen[body] then seen[body]=true;found[#found+1]=body end
+  end
+ end
+ return found
+end
 local function disposition(old)
  local item=old.binding.item;local inv=item:getInventory();local cargo=inv and inv:getItemById(old.binding.cargoID)
  local location=item:getWorldItem() and 'world-item' or item:getContainer() and 'native-container' or 'unattached'
- local corpses=bodiesAt(old.x,old.y,old.z,old.id,old.corpses)
+ local corpses=bodiesFor(old)
  for _,body in ipairs(corpses) do
   local container=body:getContainer()
   if container and container:getItemById(old.binding.cart) then location='corpse-container' end
  end
  return {ownerID=old.id,cart=old.binding.cart,lifetime=old.binding.lifetime,cargoID=old.binding.cargoID,cargoWeight=cargo and cargo:getActualWeight() or -1,
   cargoStillInside=cargo~=nil,cartLocation=location,corpseCount=#corpses,oldActorDead=old.actor:isDead(),oldActorHasSquare=old.actor:getCurrentSquare()~=nil,
-  oldActorInOnlineList=containsActor(old.actor),sameCartPreservationClaim=false}
+  oldActorInOnlineList=containsActor(old.actor),sameCartPreservationClaim=false,
+  cachedX=old.x,cachedY=old.y,cachedZ=old.z,currentX=old.actor:getX(),currentY=old.actor:getY(),currentZ=old.actor:getZ(),
+  corpseX=corpses[1] and corpses[1]:getX() or nil,corpseY=corpses[1] and corpses[1]:getY() or nil,corpseZ=corpses[1] and corpses[1]:getZ() or nil}
 end
 -- Optional native getters are diagnostic only; unavailable getters omit a field.
 local function nativeRead(object,name,arg)
@@ -122,13 +133,15 @@ local function deathProgress(cached)
  for _,seconds in ipairs({1,2,5}) do
   if elapsed>=seconds*1000 and not cached.deathSamples[seconds] then
    cached.deathSamples[seconds]=true
-   local context=nativeRead(cached.actor,'getActionContext')
+   local corpses=bodiesFor(cached)
    local nativeState=nativeRead(cached.actor,'getCurrentState')
    emit('native-death-progress',{ownerID=cached.id,lifetime=cached.binding.lifetime,elapsedMs=elapsed,sampleSeconds=seconds,
-    actionState=nativeRead(context,'getCurrentStateName'),nativeState=nativeState and tostring(nativeState) or nil,
+    nativeState=nativeState and tostring(nativeState) or nil,
     bDead=nativeRead(cached.actor,'getVariableBoolean','bDead'),onFloor=nativeRead(cached.actor,'isOnFloor'),
     onDeathDone=nativeRead(cached.actor,'isOnDeathDone'),animationUpdating=nativeRead(cached.actor,'isAnimationUpdatingThisFrame'),
-    nativeLifetimeAbsent=cartLeaseLifetime(cached.actor)==nil,hasSquare=cached.actor:getCurrentSquare()~=nil,onlineList=containsActor(cached.actor)})
+    nativeLifetimeAbsent=cartLeaseLifetime(cached.actor)==nil,hasSquare=cached.actor:getCurrentSquare()~=nil,onlineList=containsActor(cached.actor),
+    cachedX=cached.x,cachedY=cached.y,cachedZ=cached.z,currentX=cached.actor:getX(),currentY=cached.actor:getY(),currentZ=cached.actor:getZ(),
+    corpseCount=#corpses,corpseX=corpses[1] and corpses[1]:getX() or nil,corpseY=corpses[1] and corpses[1]:getY() or nil,corpseZ=corpses[1] and corpses[1]:getZ() or nil})
   end
  end
 end
@@ -215,13 +228,15 @@ if isServer() then
     end
    end
   end
-  local removed=old.actor:getCurrentSquare()==nil or not containsActor(old.actor)
+  local corpses=bodiesFor(old)
+  local removed=old.actor:getCurrentSquare()==nil or not containsActor(old.actor) or #corpses>0
   if removed and not serverRemoved then
    if stage=='await-death' then
-    local corpses=bodiesAt(old.x,old.y,old.z,old.id,old.corpses)
+    local corpses=bodiesFor(old)
     if #corpses==0 then return end
     serverRemoved=true;emit('native-removed',{ownerID=old.id,lifetime=old.binding.lifetime,oldActorDead=old.actor:isDead(),hasSquare=old.actor:getCurrentSquare()~=nil,
-     onlineList=containsActor(old.actor),corpseCount=#corpses,corpseOnlineID=corpses[1]:getCharacterOnlineID(),nativeCorpse=true})
+     onlineList=containsActor(old.actor),corpseCount=#corpses,corpseOnlineID=corpses[1]:getCharacterOnlineID(),nativeCorpse=true,
+     nativeRemovalWitness='new-native-corpse',corpseX=corpses[1]:getX(),corpseY=corpses[1]:getY(),corpseZ=corpses[1]:getZ(),cachedX=old.x,cachedY=old.y,cachedZ=old.z})
    else
     serverRemoved=true;emit('native-removed',{ownerID=old.id,lifetime=old.binding.lifetime,hasSquare=old.actor:getCurrentSquare()~=nil,onlineList=containsActor(old.actor),reason='reconnect'})
    end
@@ -426,11 +441,11 @@ local function absentTick()
  deathProgress(old)
  if cartLeaseLifetime(old.actor)~=nil then return end
  if receiver then receiver:unavailable() end
- local removed=old.actor:getCurrentSquare()==nil or not containsActor(old.actor)
- local corpses=bodiesAt(old.x,old.y,old.z,old.id,old.corpses)
+ local corpses=bodiesFor(old)
+ local removed=old.actor:getCurrentSquare()==nil or not containsActor(old.actor) or #corpses>0
  if removed and not corpseKnown and (transition=='reconnect' or #corpses>=1) then
   corpseKnown=true
-  local row=disposition(old);row.reason=transition;row.nativeCorpse=#corpses>=1
+  local row=disposition(old);row.reason=transition;row.nativeCorpse=#corpses>=1;row.nativeRemovalWitness=#corpses>=1 and 'new-native-corpse' or 'native-square-or-list-absence'
   emit('native-removed',row);emit('cart-disposition',row)
  end
  if role=='client1' and corpseKnown and not absentSent then

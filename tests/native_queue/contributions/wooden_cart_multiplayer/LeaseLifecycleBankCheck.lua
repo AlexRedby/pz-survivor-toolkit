@@ -147,7 +147,7 @@ for tick=1,1000 do
  for _,log in ipairs(logs) do if log.role=='server' and log.text:find('event=native-death-progress,',1,true) then authoritativeAbsence=true end end
  if guest.dead and not removed and authoritativeAbsence then
   removed=true;guest.square=nil
-  bodies[#bodies+1]={isPlayer=function() return true end,getCharacterOnlineID=function() return 2 end,getContainer=function() return inventory() end}
+  bodies[#bodies+1]={isPlayer=function() return false end,getX=function() return 100 end,getY=function() return 100 end,getZ=function() return 0 end,getCharacterOnlineID=function() return 2 end,getContainer=function() return inventory() end}
   envs.client2.ISPostDeathUI.instance[0]={waitOver=true,buttonRespawn={isVisible=function() return true end},isVisible=function() return true end,onRespawn=function()
    guest=actor('client2',3);envs.client1.remoteItem=nil;envs.client1.remoteRevision=nil;envs.client2.ISPostDeathUI.instance[0]=nil
    fire(envs.client2,'OnCreatePlayer',0,guest)

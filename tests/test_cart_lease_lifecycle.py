@@ -87,7 +87,7 @@ def fixture():
                          eventSource='OnCharacterDeath',programmaticNativeKill=True)
                 native(role,'retire',phase,'actor-remove',revision=3 if phase==1 else 2,retired=True)
                 if phase==2 and role!='client1':native(role,'retire',phase,'connection-remove',revision=3,retired=True)
-                emit(role,'native-removed',phase,ownerID=owner,lifetime=lifetime(role,phase),nativeCorpse=phase==1,
+                emit(role,'native-removed',phase,ownerID=owner,lifetime=lifetime(role,phase),nativeCorpse=phase==1,nativeRemovalWitness='new-native-corpse' if phase==1 else None,
                      corpseCount=1 if phase==1 else 0,hasSquare=False,onlineList=False,oldActorDead=phase==1)
                 emit(role,'unavailable-replay',phase,ownerID=owner,lifetime=lifetime(role,phase),stalePayloadAccepted=False,
                      staleReplyAccepted=False,guarded=False,**ident(phase))
@@ -289,6 +289,9 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
             with self.subTest(role=role,event='final-ack'),self.assertRaises(ValueError):self.analyze()
     def test_server_final_ack_requires_original_guarded_ingress(self):
         self.row('server','final-ack',3)['guarded']=False
+        with self.assertRaises(ValueError):self.analyze()
+    def test_native_death_removal_requires_a_new_matching_corpse(self):
+        self.row('client1','native-removed',1)['nativeRemovalWitness']='online-list-absence'
         with self.assertRaises(ValueError):self.analyze()
     def test_native_menu_flags_cannot_be_synthetic(self):
         original=copy.deepcopy(self.rows)

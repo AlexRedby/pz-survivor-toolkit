@@ -158,7 +158,7 @@ def analyze(root):
             removed_line,removed=one(role,'native-removed',phase)
             require(start<removed_line,'Native removal precedes transition')
             require(removed.get('ownerID')==phase_data[phase-1]['ownerID'],'Removed wrong native actor')
-            if phase==1:require(removed.get('nativeCorpse') is True and integer(removed,'corpseCount',1,100)>=1,'No native player corpse')
+            if phase==1:require(removed.get('nativeCorpse') is True and removed.get('nativeRemovalWitness')=='new-native-corpse' and integer(removed,'corpseCount',1,100)>=1,'No native player corpse')
             if role!='server':
                 _,change=one(role,'transition',phase+1)
                 before,after=token(text(change,'before',160)),token(text(change,'after',160))
