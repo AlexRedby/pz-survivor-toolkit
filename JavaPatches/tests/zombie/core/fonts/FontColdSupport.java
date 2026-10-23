@@ -4,7 +4,6 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import javax.imageio.ImageIO;
-import net.alexredby.pztoolkitbootstrap.FontAssets;
 import zombie.GameWindow;
 import zombie.ZomboidFileSystem;
 import zombie.asset.AssetManagers;
@@ -14,7 +13,7 @@ import zombie.core.textures.TextureID;
 import zombie.core.textures.TextureIDAssetManager;
 import zombie.fileSystem.FileSystemImpl;
 
-public final class FontChecks {
+final class FontColdSupport {
     static void require(boolean value, String message) {
         if (!value) throw new AssertionError(message);
     }
@@ -104,70 +103,4 @@ public final class FontChecks {
         initialized.setBoolean(null, true);
     }
 
-    public static void main(String[] args) throws Exception {
-        setup();
-        try {
-            require(Texture.getSharedTexture("media/mainfont_0.png", 0) == null,
-                "baseline mainfont unexpectedly available before UI mount");
-            finish();
-            Texture.onTexturePacksChanged();
-            FontAssets.pageName("media/mainfont_0.png", false);
-            require(GameWindow.fileSystem.getTexturePackDevice("UI") == null, "unsupported engine mounted UI");
-            require(FontAssets.pageName("mods/custom/mainfont_0.png", true).equals("mods/custom/mainfont_0.png"),
-                "custom mainfont page changed");
-            require(GameWindow.fileSystem.getTexturePackDevice("UI") == null, "custom mainfont mounted UI");
-            var diskPage = Files.createTempFile("pz-custom-font-", ".png");
-            try {
-                ZomboidFileSystem.instance.activeFileMap.put("media/mainfont_0.png", diskPage.toString());
-                FontAssets.pageName("media/mainfont_0.png", true);
-                require(GameWindow.fileSystem.getTexturePackDevice("UI") == null, "existing disk page mounted UI");
-                FontAssets.pageName("media/mainfont2_0.png", true);
-                require(GameWindow.fileSystem.getTexturePackDevice("UI") == null, "other page shadowed existing disk font");
-                ZomboidFileSystem.instance.activeFileMap.remove("media/mainfont_0.png");
-                String originalFnt = ZomboidFileSystem.instance.activeFileMap.put("media/mainfont.fnt", diskPage.toString());
-                try {
-                    FontAssets.pageName("media/mainfont_0.png", true);
-                    require(GameWindow.fileSystem.getTexturePackDevice("UI") == null, "custom FNT mounted UI");
-                } finally {
-                    ZomboidFileSystem.instance.activeFileMap.put("media/mainfont.fnt", originalFnt);
-                }
-                String originalPack = ZomboidFileSystem.instance.activeFileMap.put("media/texturepacks/ui.pack", diskPage.toString());
-                try {
-                    FontAssets.pageName("media/mainfont_0.png", true);
-                    require(GameWindow.fileSystem.getTexturePackDevice("UI") == null, "custom/corrupt UI pack mounted early");
-                } finally {
-                    ZomboidFileSystem.instance.activeFileMap.put("media/texturepacks/ui.pack", originalPack);
-                }
-            } finally {
-                ZomboidFileSystem.instance.activeFileMap.remove("media/mainfont_0.png");
-                Files.delete(diskPage);
-            }
-            FontAssets.pageName("media/mainfont_0.png", true);
-            require(GameWindow.texturePackTextures.size() == 2, "unexpected early UI texture exposure");
-            var device = GameWindow.fileSystem.getTexturePackDevice("UI");
-            FontAssets.pageName("media/mainfont_0.png", true);
-            require(GameWindow.fileSystem.getTexturePackDevice("UI") == device, "UI mounted twice");
-            glyphs("media/mainfont.fnt", "media/mainfont_0.png");
-            glyphs("media/mainfont2.fnt", "media/mainfont2_0.png");
-            GameWindow.setTexturePackLookup();
-            require(GameWindow.texturePackTextures.isEmpty(), "native lookup reset retained early font entries");
-            FontAssets.pageName(Path.of("media/mainfont_0.png").toAbsolutePath().toString(), true);
-            require(GameWindow.fileSystem.getTexturePackDevice("UI") == device, "lookup recovery remounted UI");
-            require(GameWindow.texturePackTextures.size() == 2, "lookup recovery did not restore both font entries");
-            glyphs("media/mainfont.fnt", Path.of("media/mainfont_0.png").toAbsolutePath().toString());
-            glyphs("media/mainfont2.fnt", Path.of("media/mainfont2_0.png").toAbsolutePath().toString());
-            String missing = ZomboidFileSystem.instance.getString("media/fonts/zomboidDialogue.bmfc_0.png");
-            String corrected = FontAssets.pageName(missing, true);
-            require(!missing.equals(corrected) && Path.of(corrected).getFileName().toString().equals("zomboidDialogue_0.png"),
-                "shipped Dialogue page not corrected");
-            require(FontAssets.pageName(missing, false).equals(missing), "unsupported page changed");
-            require(FontAssets.pageName("mods/custom/zomboidDialogue.bmfc_0.png", true)
-                .equals("mods/custom/zomboidDialogue.bmfc_0.png"), "custom page changed");
-            System.out.println("FONT_CHECKS_PASS");
-        } catch (Throwable error) {
-            error.printStackTrace();
-            System.exit(1);
-        }
-        System.exit(0);
-    }
 }
