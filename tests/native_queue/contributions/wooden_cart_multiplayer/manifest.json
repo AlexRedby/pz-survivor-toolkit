@@ -40,7 +40,10 @@
     "analyze-lease.py",
     "ActionAdmission.methods",
     "action-admission.lua",
-    "analyze-action-admission.py"
+    "analyze-action-admission.py",
+    "ObserverAssociation.methods",
+    "ObserverAssociationCheck.java",
+    "analyze-observer.py"
   ],
   "selection_template": {
     "schema_version": 1,

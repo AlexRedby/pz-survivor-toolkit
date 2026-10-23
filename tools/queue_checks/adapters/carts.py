@@ -198,7 +198,7 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_action_admission'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_action_admission', 'cart_observer_association'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
@@ -216,6 +216,8 @@ def validate(selection):
             or options.get('cart_time_alignment') is True or options.get('cart_inventory_equip') is True
             or 'cart_wall_exit' in options):
         raise ValueError('cart_action_admission requires isolated 26-second menu Host motion plus cart actions and timeline')
+    if options.get('cart_observer_association') is True and options.get('cart_action_admission') is not True:
+        raise ValueError('cart_observer_association requires the explicit native action admission bank')
     if 'cart_direct_fast_walk' in options:
         if suite != SP or selection['cases'] != ['sprint'] or type(options['cart_direct_fast_walk']) is not bool:
             raise ValueError('cart_direct_fast_walk requires a boolean in the SP sprint case')
@@ -333,7 +335,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         anchor = '    public static void main(String[] args)'
         if main.count(anchor) != 1:
             raise ValueError('CartLab composition anchor changed')
-        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods')) + '\n' + anchor)
+        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods')) + '\n' + anchor)
     source = build / 'Main.java'
     source.write_text(main, encoding='utf-8')
     _compile(jdk, classpath, build / 'lab-classes', [source])
@@ -364,7 +366,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR', '[CART_ADMISSION] ERROR']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR', '[CART_ADMISSION] ERROR', '[CART_OBSERVER] ERROR']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():
@@ -409,6 +411,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             spec['env']['PZ_CART_LEASE_CONTROL'] = 'true'
         if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
             spec['env']['PZ_CART_ACTION_ADMISSION'] = 'true'
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_observer_association') is True:
+            spec['env']['PZ_CART_OBSERVER_ASSOCIATION'] = 'true'
         if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_time_alignment') is True:
             spec['env']['PZ_CART_TIME_ALIGNMENT'] = 'true'
         if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_inventory_equip'):
@@ -1252,6 +1256,12 @@ def verify(root, selection, catalog):
                 raise ValueError('Incomplete native action admission/owner receipt evidence')
             _write(analysis / 'mp-action-admission.json', json.dumps(admission, indent=2, allow_nan=False))
             evidence['actionAdmission'] = admission
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_observer_association') is True:
+            observer = _load(intake / 'analyze-observer.py').analyze(root)
+            _write(analysis / 'mp-observer-association.json', json.dumps(observer, indent=2, allow_nan=False))
+            evidence['observerAssociation'] = observer
+            if observer.get('evidenceComplete') is not True:
+                raise ValueError('Incomplete native observer association evidence')
         if selection['suite'] == MP and selection.get('options', {}).get('cart_inventory_equip'):
             report = _load(intake / 'analyze-inventory-equip.py').analyze(root, selection)
             if report.get('evidenceComplete') is not True:

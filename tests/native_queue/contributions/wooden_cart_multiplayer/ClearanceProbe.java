@@ -197,7 +197,8 @@ public final class ClearanceProbe {
     private static final Object handoffOutputLock=new Object();
     private static long captureSerial;
     private static final boolean TIMELINE="true".equals(System.getenv("PZ_CART_TIMELINE"));
-    private static Method timelineBridge,timelineInputBridge;
+    private static final boolean OBSERVER_ASSOCIATION="true".equals(System.getenv("PZ_CART_OBSERVER_ASSOCIATION"));
+    private static Method timelineBridge,timelineInputBridge,observerBridge;
     // Main is installed by CartLab on server and both clients. Resolve once at
     // attachment; the probe is compiled independently from the composed Main.
     private static void timelineFrame(String event,ModelSlotRenderData slot,DrawFrame frame,String part) {
@@ -245,7 +246,10 @@ public final class ClearanceProbe {
     }
     private static String nativeInputSnapshot(zombie.characters.IsoPlayer player) {
         if(!TIMELINE)return "";
-        try {return (String)timelineInputBridge.invoke(null,player);}
+        // Freeze proxy input provenance with the original native pose and body/cart
+        // DrawFrame. This does not exclusively attribute blended skeletal tracks.
+        try {return (String)timelineInputBridge.invoke(null,player)
+            +(OBSERVER_ASSOCIATION?(String)observerBridge.invoke(null,player):"");}
         catch(Throwable error){System.err.println("[CART_TIMELINE] ERROR native input bridge "+error);return "";}
     }
     public static synchronized void rememberNative(ModelSlotRenderData slot,zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
@@ -760,6 +764,7 @@ public final class ClearanceProbe {
             var main=Class.forName("net.alexredby.cartlab.Main");
             timelineBridge=main.getMethod("timelineEvent",String.class,zombie.characters.IsoPlayer.class,String.class);
             timelineInputBridge=main.getMethod("timelineNativeSnapshot",zombie.characters.IsoPlayer.class);
+            if(OBSERVER_ASSOCIATION)observerBridge=main.getMethod("observerAssociationSnapshot",zombie.characters.IsoPlayer.class);
         }
         directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");

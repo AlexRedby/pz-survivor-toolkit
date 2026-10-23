@@ -11,7 +11,7 @@ LUA=shutil.which('luajit')
 
 @unittest.skipUnless(LUA,'LuaJIT required')
 class ActionOwnerProbeTests(unittest.TestCase):
-    def run_lua(self,body):
+    def run_lua(self,body,observer=False):
         script=r'''
 local root=ROOT
 local callbacks={}
@@ -30,7 +30,7 @@ cartLeaseSeed=function() return '00000000-0000-0000-0000-000000000001' end
 require=function() end
 local Ack=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua')
 local J=dofile(root..'/tests/native_queue/contributions/wooden_cart_multiplayer/json.lua')
-local config={disposable=true,options={cart_action_admission=true}}
+local config={disposable=true,options={cart_action_admission=true,cart_observer_association=OBSERVER}}
 require=function(name)
  if name=='QueueTestSelection' then return config end
  if name=='CartMPJSON' then return J end
@@ -58,7 +58,7 @@ local function reply()
 end
 local function has(needle) for _,line in ipairs(logs) do if line:find(needle,1,true) then return true end end end
 BODY
-'''.replace('ROOT',json.dumps(str(ROOT))).replace('BODY',body)
+'''.replace('ROOT',json.dumps(str(ROOT))).replace('BODY',body).replace('OBSERVER','true' if observer else 'false')
         result=subprocess.run([LUA,'-'],input=script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
 
@@ -72,6 +72,28 @@ event('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=11,kin
 probe.sample();assert(has('"event":"reply"') and has('"event":"terminal"'))
 assert(not has('[CART_ADMISSION] ERROR'));assert(#commands==1)
 ''')
+
+    def test_observer_source_is_frozen_at_exact_sealed_capture_and_echoed(self):
+        self.run_lua('''
+local source='1|00000000-0000-0000-0000-000000000001|1|2|3|4|5'
+cartObserverSource=function(native) assert(native==action.action);return source end
+start();assert(commands[1].observerSource==source)
+local r=reply();r.observerSource=source;event('CartActionAdmissionProbe','Reply',r)
+assert(has('"observerSource":"'..source..'"') and has('"event":"reply"'))
+assert(not has('[CART_ADMISSION] ERROR'))
+''',observer=True)
+
+    def test_observer_source_missing_or_changed_is_refused(self):
+        for missing in (True,False):
+            self.run_lua('''
+local source='1|00000000-0000-0000-0000-000000000001|1|2|3|4|5'
+cartObserverSource=function(native) assert(native==action.action);return SOURCE end
+'''.replace('SOURCE','nil' if missing else 'source')+('''
+assert(not pcall(start));assert(#commands==0)
+''' if missing else '''
+start();local r=reply();r.observerSource=source..'9';event('CartActionAdmissionProbe','Reply',r)
+assert(has('[CART_ADMISSION] ERROR') and not has('"event":"reply"'))
+'''),observer=True)
 
     def test_native_counter_logs_preserve_exact_safe_integer_digits(self):
         self.run_lua('''

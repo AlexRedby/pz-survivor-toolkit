@@ -706,8 +706,26 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
                 self.assertEqual((lua/layer/'CartActionAdmissionProbe.lua').read_bytes(),
                     (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/action-admission.lua').read_bytes())
             self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+            self.assertNotIn('PZ_CART_OBSERVER_ASSOCIATION',env)
         for key,value in [('cart_action_admission','true'),('cart_actions',False),('cart_fast_motion',False),
                           ('cart_time_alignment',True),('cart_lease_control',True),('cart_inventory_equip',True)]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_observer_marker_is_explicit_and_requires_exact_admission_bank(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_observer_association=True)
+        with self.assertRaisesRegex(ValueError,'cart_observer_association'):carts.validate(self.selection)
+        self.options.update(cart_action_admission=True,cart_actions=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('server','client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_OBSERVER_ASSOCIATION'],'true')
+        source=(self.output/'cart-build/Main.java').read_text()
+        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/ObserverAssociation.methods'
+        self.assertIn(path.read_text(),source);self.assertIn(path,carts.sources(ROOT,self.selection))
+        for key,value in [('cart_observer_association','true'),('cart_action_admission',False),('cart_actions',False),
+                          ('cart_timeline',False),('cart_fast_motion',False),('mp_host',False)]:
             original=dict(self.options);self.options[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
             self.options.clear();self.options.update(original)

@@ -886,5 +886,30 @@ class CartActionAdmissionEnvironmentTests(unittest.TestCase):
                 runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_ACTION_ADMISSION':value})
 
 
+class CartObserverEnvironmentTests(CartActionAdmissionEnvironmentTests):
+    def selected(self):
+        selection=super().selected()
+        selection['options']['cart_observer_association']=True
+        return selection
+
+    def test_observer_marker_requires_explicit_owned_action_bank(self):
+        name='PZ_CART_OBSERVER_ASSOCIATION'
+        for role in ('server','client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{name:'true'})[name],'true')
+        for key,value in [('cart_observer_association',False),('cart_observer_association','true'),
+                          ('cart_action_admission',False),('cart_actions',False),('cart_fast_motion',False),
+                          ('cart_timeline',False),('mp_host',False),('cart_time_alignment',True),('cart_lease_control',True)]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{name:'true'})
+        with self.assertRaises(ValueError):
+            runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),{name:'true'})
+        with patch.dict(runner.os.environ,{name:'true'}):
+            self.assertNotIn(name,runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','TRUE',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{name:value})
+
+
 if __name__ == "__main__":
     unittest.main()

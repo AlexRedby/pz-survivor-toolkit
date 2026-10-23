@@ -85,6 +85,8 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
+- [ ] Verify the selected diagnostic observer association pilot, explicitly recording the altered StatePacket test wire. Gate: exact original source/connection and action identity through native processing into frozen current-proxy body/cart draw metadata, six-phase cancel/repeat Host bank, source-sealed capture and clean logs. The owner-provided marker is provenance, not a server grant or exclusive whole-image source. Do not add production playback or infer identity from nearest time/type/model/current getAction alone.
+
 - [ ] Extend current-held control evidence to complete native equipment lifetimes: observe release/reacquire, same-ID item replacement, actor removal/respawn and reconnect before accepting or retiring a lease. The successful guarded challenge/echo probe does not cover these missed edges.
 - [ ] Extend native action-admission coverage beyond selected Setdown/Pickup completion/cancel/repeat to hotkey Drop, pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
 - [ ] Prove the observer BaseAction/StatePacket association with the admitted server lifetime and native presentation. Owner-only acknowledgement tokens and a non-null getAction do not establish that bridge.

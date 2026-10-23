@@ -13,7 +13,7 @@ from .native import font_preload
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
-INHERITED_ENV_EXCLUSIONS = ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_ACTION_ADMISSION')
+INHERITED_ENV_EXCLUSIONS = ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION')
 
 
 def _fixture_environment(selection, role, cache, extra_env):
@@ -53,15 +53,18 @@ def _fixture_environment(selection, role, cache, extra_env):
             and options.get('cart_inventory_equip') is not True and 'cart_wall_exit' not in options
             and role in ('server', 'client1', 'client2')):
         allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION'))
+        if options.get('cart_observer_association') is True:
+            allowed_env.add('PZ_CART_OBSERVER_ASSOCIATION')
     if (set(extra_env) - allowed_env
             or any(not isinstance(value, str) or not Path(value).is_absolute()
-                   for name, value in extra_env.items() if name not in ('PZ_CART_TEST_PAD', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_ACTION_ADMISSION'))
+                   for name, value in extra_env.items() if name not in ('PZ_CART_TEST_PAD', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION'))
             or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')
             or 'PZ_CART_INVENTORY_EQUIP' in extra_env and extra_env['PZ_CART_INVENTORY_EQUIP'] != 'true'
             or 'PZ_CART_TIMELINE' in extra_env and extra_env['PZ_CART_TIMELINE'] != 'true'
             or 'PZ_CART_TIME_ALIGNMENT' in extra_env and extra_env['PZ_CART_TIME_ALIGNMENT'] != 'true'
             or 'PZ_CART_LEASE_CONTROL' in extra_env and extra_env['PZ_CART_LEASE_CONTROL'] != 'true'
             or 'PZ_CART_ACTION_ADMISSION' in extra_env and extra_env['PZ_CART_ACTION_ADMISSION'] != 'true'
+            or 'PZ_CART_OBSERVER_ASSOCIATION' in extra_env and extra_env['PZ_CART_OBSERVER_ASSOCIATION'] != 'true'
             or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)
             or 'PZ_LIGHTS_TEST_CACHE' in extra_env and extra_env['PZ_LIGHTS_TEST_CACHE'] != str(cache)):
         raise ValueError('Invalid fixture-owned client environment')

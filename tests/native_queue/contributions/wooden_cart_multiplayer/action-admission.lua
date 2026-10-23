@@ -5,6 +5,7 @@ local J=require 'CartMPJSON'
 if CartActionAdmissionProbe then return CartActionAdmissionProbe end
 local M={};CartActionAdmissionProbe=M
 local module='CartActionAdmissionProbe'
+local observerAssociation=config.options.cart_observer_association==true
 -- Native counters cross Kahlua as doubles. Emit safe integers in decimal so
 -- tostring's scientific representation cannot lose receipt precision. Native
 -- Kahlua modulo narrows its quotient to int; its formatter can round 2^53-1.
@@ -48,10 +49,16 @@ if isServer() then
    assert(cartLeaseSource(p),'Exact native query source missing')
    assert(type(args)=='table' and args.owner==p:getOnlineID() and type(args.nonce)=='string'
     and #args.nonce<=120 and type(args.token)=='string' and #args.token==36,'Exact query identity missing')
+   if observerAssociation then
+    assert(type(args.observerSource)=='string' and #args.observerSource>36 and #args.observerSource<=200,
+     'Exact diagnostic observer source missing')
+   end
    local native=assert(cartActionAdmission(p),'Native transaction admission unavailable')
    assert(native.token==args.token and native.cart==args.cart and native.owner==args.owner,'Query does not match exact native admission')
    assert(native.tokenObserved==true and native.sourceValidated==true and native.admittedBindingValid==true
     and (native.stage=='accepted' or native.stage=='terminal'),'Native transaction not admitted')
+   -- Diagnostic provenance only: this echo grants no admission or playback rights.
+   if observerAssociation then native.observerSource=args.observerSource end
    local row={actor='server',event='query',index=args.index,phase=args.phase,nonce=args.nonce,guarded=true}
    for k,v in pairs(native) do row[k]=v end
    emit('[CART_ADMISSION_QUERY]',row)
@@ -75,6 +82,7 @@ end
 local function row(entry,event)
  local r={actor=user,event=event,ownerProcess=cartLeaseSeed(),owner=entry.owner:getOnlineID(),index=entry.index,
   phase=entry.phase,cart=entry.cart,localActionEpoch=entry.localActionEpoch,localNativeEpoch=entry.localNativeEpoch}
+ if entry.observerSource then r.observerSource=entry.observerSource end
  if entry.snapshot then
   r.token=entry.snapshot.token;r.transaction=entry.snapshot.transaction;r.kind=entry.snapshot.kind
   r.captureGeneration=entry.snapshot.generation
@@ -141,6 +149,10 @@ function M.sample()
     local receipt=Ack.capture(action)
     if receipt then
      entry.receipt=receipt;entry.native=action.action;entry.localNativeEpoch=identity(entry.native)
+     if observerAssociation then
+      entry.observerSource=assert(cartObserverSource(entry.native),'Exact native source begin unavailable')
+      assert(type(entry.observerSource)=='string','Observer source must be an opaque diagnostic string')
+     end
      entry.snapshot={token=receipt.token,transaction=receipt.transaction,kind=receipt.kind,generation=receipt.generation,queue=receipt.queue}
      entry.connection=assert(cartLeaseCurrent(),'Owned source connection missing')
      local observed=assert(Ack.observe(action,receipt),'Sealed native receipt unavailable')
@@ -149,7 +161,7 @@ function M.sample()
      local nonce=assert(cartLeaseSeed())..':action:'..entry.index;pending[nonce]=entry;entry.nonce=nonce
      local request=row(entry,'query');request.nonce=nonce;request.guarded=true;emit('[CART_ADMISSION_OWNER]',request)
      sendClientCommand(entry.owner,module,'Query',{owner=entry.owner:getOnlineID(),token=receipt.token,nonce=nonce,
-      index=entry.index,phase=entry.phase,cart=entry.cart})
+      index=entry.index,phase=entry.phase,cart=entry.cart,observerSource=entry.observerSource})
     end
    end
   elseif not entry.terminal and not entry.revoked then
@@ -208,6 +220,7 @@ Events.OnServerCommand.Add(function(mod,command,args)
    and args.cart==entry.cart and args.token==entry.receipt.token and args.transaction==entry.receipt.transaction
    and args.kind==entry.receipt.kind and args.tokenObserved==true and args.sourceValidated==true
    and args.admittedBindingValid==true and (args.stage=='accepted' or args.stage=='terminal'),'Native/owner transaction association differs')
+  if observerAssociation then assert(args.observerSource==entry.observerSource,'Diagnostic observer source differs') end
   local reply=row(entry,'reply');for k,v in pairs(args) do reply[k]=v end
   reply.guarded=true;reply.sealed=true;emit('[CART_ADMISSION_OWNER]',reply)
   pending[args.nonce]=nil;entry.replied=true

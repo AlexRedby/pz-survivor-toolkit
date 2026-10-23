@@ -32,7 +32,9 @@
     private static boolean leaseControlObservedPacket(int type) {
         return leaseControlCommand(type) || ("true".equals(System.getenv("PZ_CART_ACTION_ADMISSION"))
             && (type==zombie.network.PacketTypes.PacketType.NetTimedAction.getId()
-                || type==zombie.network.PacketTypes.PacketType.GeneralAction.getId()));
+                || type==zombie.network.PacketTypes.PacketType.GeneralAction.getId()))
+            || ("true".equals(System.getenv("PZ_CART_OBSERVER_ASSOCIATION"))
+                && type==zombie.network.PacketTypes.PacketType.State.getId());
     }
     /** Original pooled-reader receipt only; no static/current-connection fallback. */
     public static LeaseCommandIngress leaseControlServerReceipt(zombie.core.network.ByteBufferReader reader,
