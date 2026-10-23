@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Native equipment checks:** Cover portable-radio P4 returns with separate native scissors, exact device and battery state, client pointer/sound cleanup and ordered Host receipts. Compare each role against its queue-disabled control, retaining the B42.21 unheld-radio server power-state discrepancy as a separate native defect.
+
 - **Native equipment checks:** Preflight ordinary hotbar fixture item shapes through the actual game factory before launching a window. Check native class, attribute/script metadata ownership and an independent plain-item control; retain diagnostics in the run.
 
 - **Native equipment checks:** Extend the common clothing matrix to initially desired held/worn baselines, with authority-only hand/worn setup after inventory delivery, exact cleared-hand checkpoints and P4 Equip/activation/Wear restoration.

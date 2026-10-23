@@ -1254,6 +1254,11 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
   assert(effect.acknowledgements[2].id==state.hotbarTool:getID()and effect.acknowledgements[2].id~=state.pickup:getID(), 'radio must not be passed as haircut tool')
   local data=state.pickup:getDeviceData()
   data.on=true;quietReady(false);data.on=false;quietReady(true)
+  local savedServer=isServer;isServer=function()return true end
+  local nativeOn=caseID=='tidy-hotbar-radio-on'
+  data.on=nativeOn;assert(Hotbar.radioReady(state,true),'server must retain independently seeded native power state')
+  data.on=not nativeOn;assert(not Hotbar.radioReady(state,true),'unexpected server power transition must fail')
+  data.on=false;isServer=savedServer;quietReady(true)
   data.parent={};quietReady(false);data.parent=state.pickup
   data.power=0.8;quietReady(true);data.power=1.1;quietReady(false);data.power=1
   data.channel=90000;quietReady(false)

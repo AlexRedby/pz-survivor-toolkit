@@ -140,17 +140,15 @@ Add contracts in Definitions/Policy/Operations for each family. Expose only veri
 
 Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.
 
-## Current P4 portable-radio hotbar gate
+## Native unheld-radio state in Host
 
-- [ ] Extend the existing shared hotbar proof only for established native effects; preserve source-owned mandatory cleanup, exact cancellation/transfer dependencies and at-most-once completion. Add positive and conflicting-resource regressions.
-- [ ] Reuse the equipment fixture with independent native controls, exact device/battery/hands/attachment receipts and a following action. Gate the affected lifecycle in selected macOS SP/Host runs on the full mod set with clean client/server logs. Keep flashlight activation/depletion and radio media outside this bounded family.
-- [ ] Reconcile with current main, bump only changed shipped components, record delivery in the changelog and remove completed steps.
+- [ ] Separately repair B42.21's missing server inventory-radio selector `0` route. The native sender writes player index + unheld item ID, but the server handles only held selectors `1`/`2`; an on radio switched off by the client UI after unequip stays on in the server snapshot even without the queue. Require an exact connection-owned root Radio, bounded native payload parsing, negative ownership/malformed-packet regressions and native Host controls. The P4 return gate preserves and checks this existing role difference; it does not repair the protocol.
 
 ## Remaining families
 
 These families need contract/coverage audits. Missing verification or continued use of legacy completion does not by itself mean their native actions fail.
 
-- [ ] TidyUpMeister: migrate unverified held/worn combinations and remaining special clothing, including side-conversion outputs, displaced special equipment and multi-item worn slots, hotbar devices/stateful components, changing providers and displaced attachment models, and native capacity-driven clothing world drops/heavy-item restores only after exact output contracts and their SP/Host lifecycle gates. Separately define safe edit contracts for mixed-session floor returns and unknown/dynamic entry points; these remain protected. Preserve required shared cleanup on cancellation.
+- [ ] TidyUpMeister: migrate unverified held/worn combinations and remaining special clothing, including side-conversion outputs, displaced special equipment and multi-item worn slots, flashlight activation/depletion, radio media and other unverified stateful components, changing providers and displaced attachment models, and native capacity-driven clothing world drops/heavy-item restores only after exact output contracts and their SP/Host lifecycle gates. Separately define safe edit contracts for mixed-session floor returns and unknown/dynamic entry points; these remain protected. Preserve required shared cleanup on cancellation.
 - [ ] Deferred food/fluid expansion: revisit only for a concrete bug or explicit request. Remaining variants include hot/state-changing items, custom callbacks, consumption replacements outside the bounded proof for plain and empty-fluid outputs, ingredient states outside the bounded native-food proof and other fluid actions. Preserve protective edit limits until a separate contract is proven.
 - [ ] Packaged food: check the remaining opening recipes, including random contents and mod callbacks. Keep their standard commands until a separate contract exists; queue support is limited to verified `OpenCannedFood` and `OpenCannedFood2`.
 - [ ] Farming and animals: inventory the specific actions still missing verified edit contracts, then cover target identity, plant/animal state, shared consumables and tools.

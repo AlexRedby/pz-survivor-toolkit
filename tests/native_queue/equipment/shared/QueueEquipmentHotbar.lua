@@ -5,7 +5,10 @@ local Hotbar={}
 -- preservation of arbitrary off-state volume through the third-party UI.
 -- Vanilla ISRadioWindow.update (152-154) and the installed full-pack override
 -- (185) turn an inventory radio off after it leaves hands/back. Observe that
--- native/UI transition; the fixture never calls a gameplay power setter.
+-- client UI transition; the fixture never calls a gameplay power setter.
+-- B42.21 GameServer.receiveRadioDeviceDataState lacks the unheld selector0
+-- item-ID route emitted by DeviceData, so authority retains its initial power
+-- state. Preserve that exact native role baseline; this gate does not fix it.
 local function radioVolume(on)return on and 0.25 or 0.1 end
 local cases={
  ['tidy-hotbar-radio-off']={item='Base.WalkieTalkie2',attachment='Walkie',kind='SmallBeltLeft',model='Walkie Belt Left',twoHands=false,provider=true,radio=true},
@@ -80,7 +83,7 @@ local function radioMatches(state,restored)
  end
  if value.power~=value.power or value.power<0 or value.power>baseline.power or value.scissors.container~='root'
   or value.scissors.id~=baseline.scissors.id or value.scissors.fullType~=baseline.scissors.fullType then return false,'power-scissors-root' end
- if data:getIsTurnedOn()~=(cases[state.id].on==true and not restored)then return false,'turnedOn-phase' end
+ if data:getIsTurnedOn()~=(cases[state.id].on==true and(isServer()or not restored))then return false,'turnedOn-phase' end
  -- Server updateTextObjects returns before radioEquipedCheck.
  if not isServer()and(state.player:getEquipedRadio()~=(not restored and item or nil)
   or (data:getEmitter()~=nil)~=(cases[state.id].on==true and not restored))then return false,'pointer-emitter' end
@@ -101,6 +104,11 @@ local function diagnoseRadio(state,restored,reason,details)
   ..' readiness='..diagnosticValue(details or {}))
 end
 function Hotbar.radioReady(state,restored)return not Hotbar.radio(state)or radioMatches(state,restored)end
+function Hotbar.diagnoseAuthority(state,restored)
+ if not Hotbar.radio(state)then return end
+ local valid,reason=radioMatches(state,restored)
+ if not valid then diagnoseRadio(state,restored,reason,{role='server',primary=state.player:getPrimaryHandItem()~=nil,secondary=state.player:getSecondaryHandItem()~=nil})end
+end
 local watched,installed
 function Hotbar.watch(state)watched=state end
 function Hotbar.observeLine(state,line)

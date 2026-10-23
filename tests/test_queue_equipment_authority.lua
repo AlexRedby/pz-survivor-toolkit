@@ -815,12 +815,12 @@ do
 end
 print('Equipment first-provider client setup: expired heartbeat waits for enqueue tracking, then exact receipt capture proceeds once.')
 
--- Native equipment acknowledgements can precede RadioDeviceDataState0. Drive
--- the actual server request loop: no final verifier runs until the independently
--- owned device observes the arriving off state; retry never copies client data.
+-- Drive the actual server request loop with its native role baseline. An
+-- unexpected off state must not verify; the independently seeded on state must
+-- complete without waiting for the unsupported unheld selector0 transition.
 do
  local tick,command
- local now,on,reads,checks=0,true,0,0
+ local now,on,reads,checks,diagnostics=0,false,0,0,0
  local sent,lines={},{}
  local player={getUsername=function()return 'client1'end,getCurrentSquare=function()return {}end,
   setGhostMode=function()end,getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end,
@@ -830,10 +830,11 @@ do
  local fixture={position=function()end,prepare=function()return sample end,descriptor=function()return {}end,
   transactionsSettled=function()return true end,settled=function()return true end,verify=function()return {}end,refresh=function()end}
  local hotbar={isCase=function()return true end,provider=function()end,radio=function()return true end,
-  radioReady=function(state,tidy)assert(state==sample and tidy);reads=reads+1;return not on end}
+  radioReady=function(state,tidy)assert(state==sample and tidy);reads=reads+1;return on end,
+  diagnoseAuthority=function(state,tidy)assert(state==sample and tidy);diagnostics=diagnostics+1 end}
  local required={QueueTestSelection={cases={sample.id},mode='native',options={}},QueueEquipmentFixture=fixture,
   QueueEquipmentScene={prepare=function()end,proof=function()end},QueueEquipmentClothing={isCase=function()return false end,wristwatch=function()return false end},
-  QueueEquipmentHotbar=hotbar,QueueEquipmentPostprocess={verify=function(state)assert(state==sample and not on);checks=checks+1;return {hotbar={}}end},
+  QueueEquipmentHotbar=hotbar,QueueEquipmentPostprocess={verify=function(state)assert(state==sample and on);checks=checks+1;return {hotbar={}}end},
   QueueHealthEvents={encode=function()return '{}'end}}
  local env=setmetatable({require=function(name)return assert(required[name],name)end,isServer=function()return true end,
   Events={OnServerStarted={Add=function()end},OnClientCommand={Add=function(fn)command=fn end},OnTick={Add=function(fn)tick=fn end}},
@@ -845,11 +846,11 @@ do
  command('EquipmentQueueTest','Prepare',player,{case=sample.id})
  command('EquipmentQueueTest','Checkpoint',player,{case=sample.id});tick()
  assert(sent[1].name=='Prepared'and sent[2].name=='Checkpointed'and checks==0)
- command('EquipmentQueueTest','Verify',player,{case=sample.id});tick();now=1;tick()
- assert(#sent==2 and reads==2 and checks==0 and on,'radio state lag must remain pending without changing the device')
- on=false -- Independent native radio state packet arrival, after equip completion.
- now=2;tick();tick()
+ command('EquipmentQueueTest','Verify',player,{case=sample.id});tick();now=1000;tick()
+ assert(#sent==2 and reads==2 and checks==0 and not on and diagnostics==1,'unexpected server off must remain pending without changing the device')
+ on=true -- Restore the independently seeded native server baseline in this negative test.
+ now=1001;tick();tick()
  assert(#sent==3 and sent[3].name=='Verified'and sent[3].args.passed and reads==3 and checks==1)
- for _,line in ipairs(lines)do assert(not line:find('FAIL',1,true),'radio state lag failed instead of retrying: '..line)end
+ for _,line in ipairs(lines)do assert(not line:find('FAIL',1,true),'server baseline check failed instead of retrying: '..line)end
 end
-print('Equipment authoritative radio final state: delayed native device packet retries without client-state normalization.')
+print('Equipment authoritative radio final state: exact native server baseline, rejected off transition and read-only retry passed.')
