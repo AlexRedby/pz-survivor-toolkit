@@ -1509,8 +1509,8 @@ function Compat.install()
             for _,name in ipairs(lifecycle) do if not allowed[name] and target[name]~=methods[name] then return false end end
             return true
         end
-        local stickSource=getActivatedMods and getActivatedMods():contains('organizedCategories_core')
-            and verified('organizedCategories_core',{{'client/organizedCategories_itemStick.lua',2877670095}})
+        local retention=Toolkit.ItemRetention
+        local retentionWrapper
         local floorPage = ISInventoryPage
         local floorGetter = floorPage and floorPage.GetFloorContainer
         if Proof.closure(floorGetter, "ISInventoryPage.lua") then tidyFloorPage, tidyFloorGetter = floorPage, floorGetter end
@@ -1534,8 +1534,16 @@ function Compat.install()
                 or not record and tidyClassUnchanged(action,getmetatable(action),baseline)
         end
         TidyIntent.install(tidyActionUnchanged,function(menu,name)
-            return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
-                and Proof.closure(menu[name],'organizedCategories_itemStick.lua')
+            local live=Toolkit.ItemRetention
+            if retention and live~=retention then return false end
+            local checker=live and live.isContextWrapper
+            -- Compat can install before the inventory UI publishes its hooks.
+            -- Seal only the owned checker, then reject owner/predicate changes.
+            if not retentionWrapper then
+                if type(checker)~='function' or not Proof.closure(checker,'ItemRetentionUI.lua') then return false end
+                retention,retentionWrapper=live,checker
+            end
+            return live==retention and checker==retentionWrapper and retentionWrapper(menu,name)
         end)
     end
 end

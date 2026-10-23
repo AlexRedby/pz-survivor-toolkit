@@ -55,6 +55,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.239
+
+- **Added:** Toolkit-owned item classification, including exact selected-pack assignments, fallback rules, fluids and recorded media, while preserving native loot categories and existing tag/storage category IDs. The separate organizedCategories mod is no longer selected.
+- **Added:** Protect items from mass transfer through the inventory context menu, including vehicle supplies during Distribute Loot. Explicit single-row transfers remain available. Host applies and synchronizes accepted changes after validating the exact actor, item and container; existing Stick marks are preserved.
+
 ### 0.1.238
 
 - **Action queue:** Offer one-shot recovery of the last cancelled remainder from the queue panel. Reconstruct supported pending actions under fresh operation identities, retain skill-book page progress and omit completed or unsafe partly executed work. Revalidate resources and targets before recovery; never overwrite a new queue or reuse cancelled server authority.

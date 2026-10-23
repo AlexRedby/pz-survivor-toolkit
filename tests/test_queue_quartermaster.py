@@ -53,7 +53,14 @@ class QuartermasterPresets(unittest.TestCase):
         adapter.stage(ROOT, self.output, self.game, self.root / 'jdk', self.selection, locations, self.runtime)
 
     def test_owned_toolkit_provides_quartermaster_without_external_mod(self):
-        self.assertEqual(adapter.MODS, ['PZSurvivorToolkit', 'organizedCategories_core'])
+        self.assertEqual(adapter.MODS, ['PZSurvivorToolkit'])
+        for owner in (distribution, crafting):
+            self.assertNotIn('organizedCategories_core', owner.MODS)
+        backpack = (ROOT / 'tests/native_queue/quartermaster-distribution/client/ZZQuartermasterBackpack.lua').read_text()
+        self.assertIn("require 'PZSurvivorToolkit/ItemRetentionUI'", backpack)
+        self.assertIn('Retention.setRetained(0,{items[5]},true)', backpack)
+        self.assertIn('Retention.isRetained(items[5])', backpack)
+        self.assertNotIn('OrganizedCategories', backpack)
 
     def test_reload_seals_and_copies_only_known_global_store_files(self):
         adapter.validate(self.selection)

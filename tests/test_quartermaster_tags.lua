@@ -1,3 +1,4 @@
+package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
 local enabled, starts, creates = true, {}, {}
 local openedRulePicker, adapter
 local scriptCatalog = {}
@@ -21,6 +22,9 @@ require = function(name)
             end}
     end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
+    if name == 'PZSurvivorToolkit/ItemRetention' then
+        return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
+    end
     if name == 'PZSurvivorToolkit/InventoryTransferProtection' then
         return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
     end
@@ -226,7 +230,8 @@ payload = adapter.presetArgs(editor,{cats=editor.selectedCats})
 assert(payload.pzstTagRule.include[1] == 'food' and payload.pzstTagRule.exclude[1] == 'perishable'
     and payload.pzstTagRule ~= dynamicRule, 'explicit rule edit was not detached for native preset conflict request')
 local function script(name, category, tags)
-    return {tags=tags,uiCategory=category,getDisplayCategory=function() return 'Material' end,getDisplayName=function() return name end}
+    return {tags=tags,getFullName=function() return 'Fixture.'..name end,
+        getDisplayCategory=function() return category end,getDisplayName=function() return name end}
 end
 for category, ids in pairs({OC_Snack={'food','snack'},OC_Seeds={'farming','seed'},
     OC_SeedOnly={'farming','seed'}}) do
@@ -239,7 +244,6 @@ local function unchanged(set,before,message)
     for key,value in pairs(before) do assert(set[key]==value,message) end
     for key,value in pairs(set) do assert(before[key]==value,message) end
 end
-OrganizedCategories = {getScriptInventoryDisplayCategory = function(script) return script.uiCategory end}
 for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','Pure seed'},
     {'Конфеты','Семечки подсолнуха','Пакет семян','Пустой пакет семян','Семена'}}) do
     scriptCatalog={script(names[1],'OC_Snack',{'food','snack'}),
@@ -305,7 +309,6 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(catalogReads == readsBefore + 1 and tagReads == projectionReads,
         'search, selection, saved-category changes or rule opening re-enumerated the item/tag catalog')
 end
-OrganizedCategories = nil
 print('Quartermaster tag view checks passed: owned controls, exact/refined selections, filters, controller, modes, reopens and opt-out.')
 scriptCatalog = {}
 enabled = true
@@ -325,19 +328,16 @@ local function checkSaveContract()
     obj.md.PZSTQuartermasterTagRules, obj.md.ruleRevision = nil, nil
     local p = open()
     do
-        local item = {category = 'Material', getDisplayCategory = function(self) return self.category end}
+        local item = {category = 'Material', getDisplayCategory = function(self) return self.category end,
+            setDisplayCategory=function(self,category) self.category=category end,
+            getModData=function() return {OC_DisplayCategory='OC_FoodPerishable'} end}
         local contents = {getItems = function()
             return {size = function() return 1 end, get = function() return item end}
         end}
         obj.getContainerByIndex = function() return contents end
-        OrganizedCategories = {applyItemDisplayOverride = function(current)
-            assert(current == item, 'picker replaced the real contents item')
-            current.category = 'OC_FoodPerishable'
-        end}
         local visible = p:contentsSet()
         assert(item.category == 'OC_FoodPerishable' and visible.OC_FoodPerishable and not visible.Material,
-            'owned picker contents required an external category preparation wrapper')
-        OrganizedCategories = nil
+            'owned picker must prepare preserved instance overrides without an external wrapper')
     end
     assert(p.btnSave.cachedOnclick == p.btnSave.onclick and p.btnSave.onclick == p.onSave,
         'owned Save callback was replaced')

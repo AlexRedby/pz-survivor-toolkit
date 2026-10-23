@@ -18,8 +18,7 @@ ANIMAL_CASES = {
     'combined-shared': ('combined', 'shared', 'held'),
     'combined-starved': ('combined', 'starved', 'held'),
 }
-ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
-             'organizedCategories_core']
+ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS']
 INVENTORY_MODS = list(ITEM_MODS)
 PNG = b'\x89PNG\r\n\x1a\n'
 

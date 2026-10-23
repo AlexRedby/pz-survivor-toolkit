@@ -852,5 +852,7 @@
   "UI_PZSurvivorToolkit_queue_recovery_busy": "Сначала завершите или отмените новые действия.",
   "UI_PZSurvivorToolkit_queue_recovery_moving": "Остановитесь перед восстановлением.",
   "UI_PZSurvivorToolkit_queue_recovery_settling": "Ожидание остановки прежних действий игры.",
-  "UI_PZSurvivorToolkit_queue_recovery_unavailable": "Сейчас нельзя безопасно восстановить задачи: недоступен предмет, цель или поддерживаемый способ повторного создания действия."
+  "UI_PZSurvivorToolkit_queue_recovery_unavailable": "Сейчас нельзя безопасно восстановить задачи: недоступен предмет, цель или поддерживаемый способ повторного создания действия.",
+  "UI_PZSurvivorToolkit_retain_item": "Закрепить предмет",
+  "UI_PZSurvivorToolkit_release_item": "Снять закрепление"
 }

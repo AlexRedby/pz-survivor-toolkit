@@ -275,17 +275,19 @@ tape.getDisplayName=function()return 'Different locale same recording'end
 assert(recording.key==Model.item(tape).key)
 assert(Model.text('a'..string.rep('Ж',256),512)=='a'..string.rep('Ж',255))
 assert(Model.text('abc'..string.rep('🧟',200),512)=='abc'..string.rep('🧟',127))
--- Category preparation is delegated per sampled instance, with distinct category identities.
+-- Category preparation uses the owned boundary per sampled instance.
 local prepared=0
-OrganizedCategories={applyItemDisplayOverride=function(value)
+local Categories=require 'PZSurvivorToolkit/ItemCategories'
+local originalPrepare=Categories.prepareItem
+Categories.prepareItem=function(value)
     prepared=prepared+1
     value.category='RecordedMedia'
-end}
+end
 local media=item('Base.HomeVHS','Tape')
 media.getDisplayCategory=function()return media.category or 'Food'end
 local result=Model.item(media)
 assert(prepared==1 and result.cat=='RecordedMedia')
-OrganizedCategories=nil
+Categories.prepareItem=originalPrepare
 assert(result.key~=Model.item(item('Base.HomeVHS','Tape')).key)
 assert(Authority.requestPage(player,{revision='1'})=='invalid')
 assert(Authority.requestPage(player,{cursor=0/0})=='invalid')

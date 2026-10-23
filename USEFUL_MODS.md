@@ -22,7 +22,7 @@ Restores fast-forward in multiplayer/co-op. Agreement can be required from all p
 
 Combines nearby accessible loot, filters categories, manages container names/icons/colours/order and supports nested bags. Toolkit supplies Smart Deposit for its proximity view: matching item type, then category, then a suitable available container; otherwise the item stays with the player. Drag feedback marks items that cannot be placed. Manage Containers assignments are not used.
 
-- Disable built-in Advanced Display Categories; load `organizedCategories_core` last. Nested Containers Player/Loot preserves standard multiplayer restrictions.
+- Disable built-in Advanced Display Categories; Toolkit supplies item classification. Nested Containers Player/Loot preserves standard multiplayer restrictions.
 - With CleanUI, Toolkit owns the category filter. Use its Category header control; CleanUI search still filters results.
 - A bag inside a crate cannot be addressed by the native multiplayer protocol. For deeper crate contents, carry the whole bag, work with it, then return it to the crate. Deeper nested ground bags can trigger `ContainerID.set`; disabling UI protection does not resolve the protocol limit.
 
@@ -184,11 +184,11 @@ Reworks TV, radio, car stereo, walkie-talkie and CD interfaces and adds channel 
 
 Toolkit displays known planting seasons on seeds and full packets, plus water requirements, growth time and planting months in tooltips. It reads native farming definitions; empty packets and unknown seasons have no indicator. `PlantGrowingSeasons` controls availability. Settings are under **Options > Mods > Toolkit: Planting information**, preserving previous preferences. Disable the separate `SeedSeasonIndicator` mod (`3734639991`); its code and assets are not included.
 
-## 32 organizedCategories
+## 32 Item classification and retained items: Toolkit
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3370707195) · Workshop `3370707195` · Mod `organizedCategories_core`
 
-Splits broad item categories and supports UI changes, CleanUI, pinning, renaming and container assignment. Load last; do not enable another classifier. Keep built-in Loot Safety enabled to preserve original loot types for ScriptItems. Full mod folder is required. Local distribution requires the same version for all players; local copies need manual updates.
+Toolkit now owns the item classifier, dynamic fluid/media categories and protection from mass transfer. Disable the separate `organizedCategories_core` mod on the Host and every client; it is removed from the selected INI. Existing Stick marks and exact category IDs remain readable. Native loot categories stay unchanged. The old mod's category editor, display-order instance pins and item renaming are outside this migration. See [retained items](docs/FEATURES.md#retained-items) and [item tags](docs/FEATURES.md#item-tags).
 
 ## 33 Transfer a Specified Quantity: Toolkit
 
@@ -208,7 +208,7 @@ Dashboard controls cover windows, locks, radio, air conditioning, seat selection
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3708816224) · Workshop `3708816224` · Mod `Navigator`
 
-Plans road routes and provides turn prompts; requires the mod's Navigator or Navigator Micro radio. No external library is reported. Load after Realistic Dashboard (`RealisticDash;Navigator`) and before `organizedCategories_core`. Voice, long drives, rerouting, custom maps and other vehicle mods remain unverified. Toolkit dashboard integration is documented under [Navigator](docs/FEATURES.md#navigator). The separate TheShortcut panel can overlap the dashboard.
+Plans road routes and provides turn prompts; requires the mod's Navigator or Navigator Micro radio. No external library is reported. Load after Realistic Dashboard (`RealisticDash;Navigator`). Voice, long drives, rerouting, custom maps and other vehicle mods remain unverified. Toolkit dashboard integration is documented under [Navigator](docs/FEATURES.md#navigator). The separate TheShortcut panel can overlap the dashboard.
 
 ## 37 Toolkit Action Queues and Context Menus
 
@@ -262,7 +262,7 @@ Official package version 4, B42.21. Adds white rear beams only for the local dri
 
 Toolkit includes the complete Quartermaster `0.24.0` feature set: container sorting, category/item/tag rules, presets, priorities, overflow, crafting and the single-player storage manifest. Use **Configure sorting...** on a world container and **Distribute Loot** in inventory/loot controls. Existing designations, global presets and options keep their original storage names.
 
-The separate Workshop item `3761216758` and Mod ID `Quartermaster` are no longer selected. Disable the external mod and remove any overriding local copy when installing the updated Toolkit; keep its save data. Load Toolkit before `organizedCategories_core` and do not add bridge `3797594072`. Multiplayer designations/presets remain shared; the storage manifest remains single-player. Queue adapters retain their supported crafting/manifest boundaries and conservative restrictions on unsupported actions. See [installation](MOD_INSTALL.md#update-the-set) and [action queue](docs/FEATURES.md#action-queue).
+The separate Workshop item `3761216758` and Mod ID `Quartermaster` are no longer selected. Disable the external mod and remove any overriding local copy when installing the updated Toolkit; keep its save data. Disable `organizedCategories_core` too and do not add bridge `3797594072`. Multiplayer designations/presets remain shared; the storage manifest remains single-player. Queue adapters retain their supported crafting/manifest boundaries and conservative restrictions on unsupported actions. See [installation](MOD_INSTALL.md#update-the-set) and [action queue](docs/FEATURES.md#action-queue).
 
 ## 46 Vanilla Vehicles Animated
 

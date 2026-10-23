@@ -852,5 +852,7 @@
   "UI_PZSurvivorToolkit_queue_recovery_busy": "Finish or cancel the new actions first.",
   "UI_PZSurvivorToolkit_queue_recovery_moving": "Stop moving before restoring.",
   "UI_PZSurvivorToolkit_queue_recovery_settling": "Waiting for the previous native actions to stop.",
-  "UI_PZSurvivorToolkit_queue_recovery_unavailable": "The saved tasks cannot currently be rebuilt safely: a resource, target, or supported action contract is unavailable."
+  "UI_PZSurvivorToolkit_queue_recovery_unavailable": "The saved tasks cannot currently be rebuilt safely: a resource, target, or supported action contract is unavailable.",
+  "UI_PZSurvivorToolkit_retain_item": "Protect from mass transfer",
+  "UI_PZSurvivorToolkit_release_item": "Remove transfer protection"
 }
