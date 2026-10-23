@@ -26,7 +26,6 @@ LOAD_ORDER = (
     ("PZSurvivorToolkit", "EURY_CONTAINERS"),
     ("PZSurvivorToolkit", "MPFastForward"),
     ("RealisticDash", "Navigator"),
-    ("PZSurvivorToolkit", "organizedCategories_core"),
 )
 
 

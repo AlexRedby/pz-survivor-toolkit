@@ -8,7 +8,7 @@ from . import craft, quartermaster_supply_units as supply
 
 SUITE = 'quartermaster-crafting'
 CASES = ['vanilla', 'neat', 'uses']
-MODS = craft.MODS + ['organizedCategories_core', 'NeatUI_Framework', 'Neat_Crafting']
+MODS = craft.MODS + ['NeatUI_Framework', 'Neat_Crafting']
 MARKER = '[QM_CRAFT] '
 SHARED_FIXTURES = ('QueueCraftUIFixture.lua', 'QueueCookEvolvedFixture.lua')
 RECEIPT_KEYS = {'materialIds', 'consumed', 'outputIds', 'outputs', 'resources', 'toolsReturned',

@@ -48,6 +48,8 @@ local function setup(active, native)
         function x:getContainer() return self.source end
         function x:getUnequippedWeight() return self.weight end
         function x:isFavorite() return self.favorite end
+        function x:hasModData() return self.stuck == true end
+        function x:getModData() return {pzstRetained=self.stuck} end
         return x
     end
     function w.nearby(...)
@@ -122,7 +124,7 @@ local function setup(active, native)
             value = {get = function(x) return x.category end}
         elseif name == 'PZSurvivorToolkit/InventoryClasses' or name == 'PZSurvivorToolkit/SmartDeposit' then
             value = dofile(root .. 'client/' .. name .. '.lua')
-        elseif name == 'PZSurvivorToolkit/InventoryTransferProtection' then
+        elseif name == 'PZSurvivorToolkit/InventoryTransferProtection' or name == 'PZSurvivorToolkit/ItemRetention' then
             value = dofile(root .. 'shared/' .. name .. '.lua')
         elseif name == 'BetterContainers/Proximity/Proximity_SmartDeposit' then
             value = native and assert(loadstring(NativeBCSmartDepositSource))() or {_installed = false, install = function() error('upstream installer must be replaced') end}
@@ -211,7 +213,7 @@ local moving = w.item('Moving', 1, nil, origin); origin.values = {moving}
 w.nearby(destination, origin)
 assert(D.plan(pane, {moving}, w.target).accepted[moving] == destination)
 
-OrganizedCategories = {isItemStickingEnabled = function() return true end, isItemStuck = function(x) return x.stuck end}
+PZSurvivorToolkit.ItemRetention.isRetained = function(x) return x.stuck end
 local stuck, ordinary, favorite = w.item('Stack', 2), w.item('Other', 1), w.item('Favorite', 1)
 stuck.stuck, favorite.favorite = true, true
 w.nearby(w.container())
@@ -225,10 +227,9 @@ ISMouseDrag.dragging = {{items = {stuck, stuck}}}
 assert(D.plan(pane, {stuck}, w.target).accepted[stuck], 'original explicit row permits its Stick item')
 ISMouseDrag.dragging = {favorite}
 assert(not D.plan(pane, {favorite}, w.target).accepted[favorite], 'deliberate Stick exception never overrides favorites')
-OrganizedCategories.isItemStickingEnabled = function() return false end
+stuck.stuck = false
 ISMouseDrag.dragging = {stuck, ordinary}
-assert(D.plan(pane, {stuck}, w.target).accepted[stuck], 'read optional Stick provider opt-out live')
-OrganizedCategories = nil
+assert(D.plan(pane, {stuck}, w.target).accepted[stuck], 'released items rejoin automatic transfers')
 
 local excluded = {'floor', 'local', 'localContainer', 'localInventory', 'stove', 'microwave', 'oven',
     'washingmachine', 'dryer', 'clothingwasher', 'clothingdryer', 'combinationwasherdryer', 'proximity', 'corpses', 'inventorymale', 'inventoryfemale'}
@@ -454,13 +455,13 @@ local function checkSelectedStockAffinity(native)
     local incoming = world.item('Incoming', 1, 'Food')
     stuck.stuck = true; tagged.values = {stuck}
     world.nearby(fallback, tagged)
-    OrganizedCategories = {isItemStickingEnabled = function() return true end, isItemStuck = function(x) return x.stuck end}
+    PZSurvivorToolkit.ItemRetention.isRetained = function(x) return x.stuck end
     ISMouseDrag.dragging = {stuck, incoming}
-    -- OC's installed transfer wrapper removes this protected item before BC.
+    -- Toolkit's installed transfer wrapper removes this protected item before BC.
     local executionItems = native and {incoming} or {stuck, incoming}
     world.queued = {}; world.pane():transferItemsByWeight(executionItems, world.target)
     assert(#world.queued == 1 and world.queued[1].item == incoming and world.queued[1].destination == tagged,
-        'non-deliberate Stick item remains existing stock, matching the OC-filtered native execution')
+        'non-deliberate Stick item remains existing stock, matching the retention-filtered native execution')
 end
 checkSelectedStockAffinity(false)
 if NativeBCSmartDepositSource then checkSelectedStockAffinity(true) end

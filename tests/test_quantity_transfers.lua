@@ -127,6 +127,7 @@ local function menu()
 end
 local root=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'
 dofile(root..'PZSurvivorToolkit/BulkActions.lua')
+PZSurvivorToolkit.ItemRetention={isRetained=function(x) return x.stuck end}
 dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/InventoryTransferProtection.lua')
 active.TakeAnyAmount=true
 dofile(root..'PZSurvivorToolkit/QuantityTransfers.lua')
@@ -135,7 +136,7 @@ active.TakeAnyAmount=nil
 dofile(root..'PZSurvivorToolkit/QuantityTransfers.lua')
 local Q=PZSurvivorToolkit.QuantityTransfers
 local Protection=PZSurvivorToolkit.InventoryTransferProtection
-assert(Protection.allowsAutomatic(a), 'missing optional protection provider must allow transfers')
+assert(Protection.allowsAutomatic(a), 'unretained items must allow automatic transfers')
 assert(Protection.selectionAllowsStuck({{items={a,a,b}},a,b}), 'one row plus its own children is deliberate')
 assert(Protection.selectionAllowsStuck({{items={a,b},cleanUILargeStackOptimized=true},a,b}),
     'CleanUI optimized rows include the actual first item')
@@ -193,8 +194,8 @@ ISInventoryPaneContextMenu.onMoveItemsTo=nativeMove
 -- Preserve original selection scope before the common quantity budget narrows it.
 queued={}
 local sticking=true
-OrganizedCategories={isItemStickingEnabled=function() return sticking end,
-    isItemStuck=function(x) return x.stuck end}
+PZSurvivorToolkit.ItemRetention={isEnabled=function() return sticking end,
+    isRetained=function(x) return x.stuck end}
 a.stuck=true
 local batch=Q.snapshot(0,{{items={a,a,b}},{items={c,c,d}}},inv,true)
 assert(not batch.allowsStuck and #batch.items==3 and batch.items[1]==b)
@@ -236,18 +237,8 @@ assert(#walkCalls==4 and walkCalls[1][1]==crate and walkCalls[2][1]==second
 assert(luautils.walkToContainer==observedWalk and ISInventoryTransferUtil.newInventoryTransferAction==liveAllocator,
     'individual callback failures must restore both transient helpers')
 luautils.walkToContainer,ISInventoryPaneContextMenu.onMoveItemsTo=liveWalk,liveMove
-queued={}; sticking=false
-local optedOut=Q.snapshot(0,{a,b,c,d},inv,true)
-assert(#optedOut.items==4 and Q.transfer(optedOut,'1')==1 and queued[1].item==a,
-    'live OC opt-out must allow flagged items')
-queued={}; sticking=true; a.stuck=nil
-local changedProvider=Q.snapshot(0,{a,b,c,d},inv,true)
-a.stuck=true
-OrganizedCategories={isItemStickingEnabled=function() return false end,
-    isItemStuck=function() error('disabled provider must not inspect item state') end}
-assert(Q.transfer(changedProvider,'1')==1 and queued[1].item==a,
-    'replaced provider functions must be read live instead of captured')
-OrganizedCategories=nil; a.stuck=nil
+PZSurvivorToolkit.ItemRetention={isRetained=function(x) return x.stuck end}
+a.stuck=nil
 queued={}; inventoryTab=bag
 assert(Q.transfer(selection,'2')==2 and queued[1].destination==inv and queued[2].destination==inv,
     'switching player inventory tab cannot retarget a captured grab dialog')
@@ -289,106 +280,13 @@ b.favorite=true; c.equipped=true; d.heavy=true
 assert(#Q.snapshot(0,{a,b,c,d},crate,false).items==1,'protect favorite/equipped/heavy items')
 -- Optional source conformance check: execute the installed owner's actual wrapper,
 -- without copying its private selection policy into the test.
-if OCItemStickSource then
-    local installed, received, optOut = nil, nil, false
-    local nativeCallback=ISInventoryPaneContextMenu.onMoveItemsTo
-    Events.OnGameStart={Add=function(fn) installed=fn end}
-    Events.OnCreatePlayer={Add=function() end}
-    ISInventoryPaneContextMenu.onMoveItemsTo=function(items) received=items end
-    OrganizedCategories={disableItemSticking=function() return optOut end}
-    assert(loadstring(OCItemStickSource))()
-    installed()
-    local function referenceItem(id, source, name, stuck)
-        local values={id=id,source=source,name=name,data={ocStuck=stuck}}
-        function values:getID() return self.id end
-        function values:getContainer() return self.source end
-        function values:getName() return self.name end
-        function values:isFavorite() return false end
-        function values:hasModData() return true end
-        function values:getModData() return self.data end
-        -- Real InventoryItems are userdata; the owner's wrapper uses this boundary.
-        local proxy=newproxy(true)
-        getmetatable(proxy).__index=values
-        return proxy
-    end
-    local pinned=referenceItem(101,crate,'stack',true)
-    local sibling=referenceItem(102,crate,'stack',false)
-    local other=referenceItem(103,second,'other',false)
-    local row={items={pinned,pinned,sibling}}
-    local cases={
-        {pinned,sibling}, {pinned,other}, {row}, {row,pinned,sibling},
-        {row,other}, {row,{items={pinned,pinned,sibling}}},
-        {{items={pinned,sibling},cleanUILargeStackOptimized=true},pinned,sibling},
-        {{items={pinned,pinned,sibling},cleanUIFirstActualIndex=3},pinned},
-    }
-    for _, rows in ipairs(cases) do
-        ISInventoryPaneContextMenu.onMoveItemsTo(rows,inv,0)
-        local retained=false
-        for _, x in ipairs(PZSurvivorToolkit.BulkActions.selectedItems(received)) do
-            if x==pinned then retained=true end
-        end
-        assert(retained==Protection.selectionAllowsStuck(rows),
-            'selection scope must agree with the installed OC context-transfer wrapper')
-    end
-    assert(not Protection.allowsAutomatic(pinned), 'actual enabled OC protects its flagged item')
-    -- A virtual pane may place matching names from distinct real containers in
-    -- one explicit row. Test Quantity and the actual OC wrapper together.
-    local callbackSizes={}
-    ISInventoryPaneContextMenu.onMoveItemsTo=function(items,...)
-        callbackSizes[#callbackSizes+1]=#items
-        return nativeCallback(items,...)
-    end
-    installed()
-    local otherSource=referenceItem(104,second,'stack',true)
-    local sameRow=Q.snapshot(0,{{items={pinned,pinned,otherSource}},pinned,otherSource},inv,true)
-    queued={}
-    assert(sameRow.allowsStuck and #sameRow.items==2 and Q.transfer(sameRow,'2')==2
-        and #queued==2 and queued[1].item==pinned and queued[2].item==otherSource,
-        'the actual OC wrapper must retain both deliberately selected instances across sources')
-    assert(#callbackSizes==2 and callbackSizes[1]==1 and callbackSizes[2]==1,
-        'preserve original one-row intent through individual live callbacks')
-    queued={}; callbackSizes={}
-    local mixed=Q.snapshot(0,{{items={pinned,pinned,sibling}},{items={other,other}}},inv,true)
-    assert(not mixed.allowsStuck and Q.transfer(mixed,'2')==2 and #queued==2
-        and queued[1].item==sibling and queued[2].item==other,
-        'the combined chain must still protect stuck items from original mixed selections')
-    assert(#callbackSizes==1 and callbackSizes[1]==2, 'ordinary mixed scope keeps one batched callback')
-    if NativeInventoryContextMenuSource then
-        local carriedA=referenceItem(105,inv,'stack',true)
-        local carriedB=referenceItem(106,bag,'stack',true)
-        local deposit=Q.snapshot(0,{{items={carriedA,carriedA,carriedB}}},crate,false)
-        local originalWalk, destinationWalks=luautils.walkToContainer,0
-        luautils.walkToContainer=function(target,...)
-            if target~=crate then return originalWalk(target,...) end
-            -- A native walk to a remote crate clears the pending queue first.
-            destinationWalks=destinationWalks+1
-            queued={}
-            return true
-        end
-        local walkingCallback=luautils.walkToContainer
-        queued={}
-        assert(Q.transfer(deposit,'2')==2 and #queued==2 and destinationWalks==1,
-            'individual native callbacks must share one destination walk instead of clearing earlier transfers')
-        assert(luautils.walkToContainer==walkingCallback, 'restore the live walk helper after native dispatch')
-        luautils.walkToContainer=originalWalk
-    end
-    optOut=true
-    assert(Protection.allowsAutomatic(pinned), 'actual OC option immediately disables protection')
-    queued={}; callbackSizes={}
-    assert(Q.transfer(sameRow,'2')==2 and #queued==2 and #callbackSizes==1 and callbackSizes[1]==2,
-        'live opt-out keeps the virtual row on the ordinary batched callback path')
-    SandboxVars={organizedCategories={DisableItemSticking=true}}
-    optOut=false
-    assert(Protection.allowsAutomatic(pinned), 'server/save opt-out also disables protection')
-    print('Transfer selection scope matches the actual OC Stick wrapper.')
-end
 -- A proximity pane exposes real source items through one raw aggregate list.
 -- Its membership is indexed only for the current synchronous enumeration.
 do
     local previousReachable, previousQueued, previousProvider, previousMove =
-        reachable, queued, OrganizedCategories, ISInventoryPaneContextMenu.onMoveItemsTo
-    OrganizedCategories = {isItemStickingEnabled=function() return true end,
-        isItemStuck=function(value) return value.stuck end}
+        reachable, queued, PZSurvivorToolkit.ItemRetention, ISInventoryPaneContextMenu.onMoveItemsTo
+    PZSurvivorToolkit.ItemRetention = {isEnabled=function() return true end,
+        isRetained=function(value) return value.stuck end}
     ISInventoryPaneContextMenu.onMoveItemsTo = function(items, dest) enqueue(items, dest) end
     local function aggregateBatch(count)
         local actual, aggregate, rows = container(false), container(false), {}
@@ -423,7 +321,7 @@ do
     end
     aggregateBatch(256)
     aggregateBatch(512)
-    reachable,queued,OrganizedCategories,ISInventoryPaneContextMenu.onMoveItemsTo =
+    reachable,queued,PZSurvivorToolkit.ItemRetention,ISInventoryPaneContextMenu.onMoveItemsTo =
         previousReachable,previousQueued,previousProvider,previousMove
 end
 -- A large direct source need not linearly search every reachable container per item.

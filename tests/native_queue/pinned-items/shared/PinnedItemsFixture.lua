@@ -32,7 +32,7 @@ local function clear(x,y)
     return true
 end
 
-function F.spawn(player)
+function F.spawn(player, deferItems)
     local px,py=math.floor(player:getX()),math.floor(player:getY())
     local spot
     for radius=4,24 do
@@ -58,7 +58,7 @@ function F.spawn(player)
     container:clear()
     for _, fullType in ipairs(F.types) do assert(container:AddItem(fullType),'Missing fixture item '..fullType) end
     assert(container:getItems():size()==#F.types)
-    if isServer() then sendItemsInContainer(vehicle,container) end
+    if isServer() and not deferItems then sendItemsInContainer(vehicle,container) end
     print('[PIN_ITEMS] SPAWN script='..vehicle:getScriptName()..' id='..vehicle:getId()..' container='..container:getType())
     return vehicle,container
 end

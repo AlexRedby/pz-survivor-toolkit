@@ -1817,8 +1817,7 @@
         "EURY_DST",
         "Ivmakk_ForagingTooltipExtended",
         "CustomLightSwitch",
-        "NicksTurnOffFridges",
-        "organizedCategories_core"
+        "NicksTurnOffFridges"
       ],
       "scenario_actions": {
         "tv-eject-controls": {
@@ -1875,8 +1874,7 @@
             "EURY_DST",
             "Ivmakk_ForagingTooltipExtended",
             "CustomLightSwitch",
-            "NicksTurnOffFridges",
-            "organizedCategories_core"
+            "NicksTurnOffFridges"
           ],
           "checks": {
             "success-queued": {
@@ -1946,6 +1944,179 @@
         },
         {
           "id": "eject-playing",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        }
+      ]
+    },
+    "queue-recovery": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "AnimalTrailerSyncMPFix",
+        "NeatUI_Framework",
+        "MoodleFramework",
+        "CleanUI",
+        "PZSurvivorToolkit",
+        "VHSSkillNameInTooltip",
+        "MPFastForward",
+        "EURY_CONTAINERS",
+        "CleanHotBar",
+        "Neat_Crafting",
+        "Project_Cook",
+        "P4TidyUpMeister",
+        "B42MoodleDescriptionsExpanded",
+        "DetailedDescriptionsForOccupationsAndTraits",
+        "PeekAView",
+        "PZShareMapNotes",
+        "BetterGeneratorInfo",
+        "MapSymbolsPlusDeonHand",
+        "NeatUI_Equipment",
+        "EURY_CLOTHINGINFO",
+        "RainCleansBlood",
+        "Neat_Building_UIOnly",
+        "EatSmartInt",
+        "Drink_Smart",
+        "WashFix",
+        "Neat_Crafting_AddonXP",
+        "Neat_Building_AddonXP",
+        "SmartRadialMenu",
+        "WashOrRot_MP",
+        "GasPumpIndicator",
+        "MiniHealthPlus",
+        "TheShortcut",
+        "TVRadio_ReInvented",
+        "RealisticDash",
+        "Navigator",
+        "SaucedCarts",
+        "saucedwheelbarrow",
+        "saucedwheelbarrow_Craft",
+        "ZombieVisibilityFix",
+        "PlumbedSinkMainsFix",
+        "VanillaVehiclesAnimated",
+        "AnimatedVehiclePartsFix",
+        "NepHighBeams",
+        "ReverseDriveLights",
+        "ArcheryNexus",
+        "WildernessProgressionArcheryNexusCompanion",
+        "EURY_DST",
+        "Ivmakk_ForagingTooltipExtended",
+        "CustomLightSwitch",
+        "NicksTurnOffFridges"
+      ],
+      "scenario_actions": {
+        "cancelled-remainder": {
+          "mods": [
+            "ZombieBuddy",
+            "PZToolkitJavaPatches",
+            "AnimalTrailerSyncMPFix",
+            "NeatUI_Framework",
+            "MoodleFramework",
+            "CleanUI",
+            "PZSurvivorToolkit",
+            "VHSSkillNameInTooltip",
+            "MPFastForward",
+            "EURY_CONTAINERS",
+            "CleanHotBar",
+            "Neat_Crafting",
+            "Project_Cook",
+            "P4TidyUpMeister",
+            "B42MoodleDescriptionsExpanded",
+            "DetailedDescriptionsForOccupationsAndTraits",
+            "PeekAView",
+            "PZShareMapNotes",
+            "BetterGeneratorInfo",
+            "MapSymbolsPlusDeonHand",
+            "NeatUI_Equipment",
+            "EURY_CLOTHINGINFO",
+            "RainCleansBlood",
+            "Neat_Building_UIOnly",
+            "EatSmartInt",
+            "Drink_Smart",
+            "WashFix",
+            "Neat_Crafting_AddonXP",
+            "Neat_Building_AddonXP",
+            "SmartRadialMenu",
+            "WashOrRot_MP",
+            "GasPumpIndicator",
+            "MiniHealthPlus",
+            "TheShortcut",
+            "TVRadio_ReInvented",
+            "RealisticDash",
+            "Navigator",
+            "SaucedCarts",
+            "saucedwheelbarrow",
+            "saucedwheelbarrow_Craft",
+            "ZombieVisibilityFix",
+            "PlumbedSinkMainsFix",
+            "VanillaVehiclesAnimated",
+            "AnimatedVehiclePartsFix",
+            "NepHighBeams",
+            "ReverseDriveLights",
+            "ArcheryNexus",
+            "WildernessProgressionArcheryNexusCompanion",
+            "EURY_DST",
+            "Ivmakk_ForagingTooltipExtended",
+            "CustomLightSwitch",
+            "NicksTurnOffFridges"
+          ],
+          "checks": {
+            "success-queued": {
+              "movement-cancel": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "clear-queue": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              }
+            },
+            "server-authority": {
+              "movement-cancel": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "clear-queue": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              }
+            }
+          },
+          "scope": "Two ordered full-selected-pack fresh macOS SP/menu-Host cases: public native StopAllActionQueueWalking and native ISTimedActionQueue.clear. Restore a progressed native skill reader plus untouched TV volume and independent reader once through the public Toolkit recovery API, after actual Java drain. Completed TV prefix never repeats. Queue-off controls retain cancellation with no recovery history. Exact inventory/pages/device identities, unchanged native durations and ordered native Host control receipts. Programmatic entrypoints; no physical-key, mouse or rendering claim."
+        }
+      },
+      "cases": [
+        {
+          "id": "movement-cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        },
+        {
+          "id": "clear-queue",
           "producer": "fixture",
           "capability": "effect",
           "kinds": [

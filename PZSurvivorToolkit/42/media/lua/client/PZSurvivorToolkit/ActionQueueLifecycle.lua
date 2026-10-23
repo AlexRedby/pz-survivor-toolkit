@@ -70,6 +70,12 @@ function Lifecycle.deferCompletion(queue, action)
     return false
 end
 
+-- Recovery must not infer unfinished work from a row awaiting native removal.
+function Lifecycle.completionEntered(queue, action)
+    local state = pending[queue]
+    return state ~= nil and state.action == action
+end
+
 function Lifecycle.reset(queue)
     pending[queue] = nil
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.reset(queue) end

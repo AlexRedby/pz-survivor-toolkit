@@ -9,8 +9,7 @@
     "NeatUI_Framework",
     "CleanUI",
     "PZSurvivorToolkit",
-    "EURY_CONTAINERS",
-    "organizedCategories_core"
+    "EURY_CONTAINERS"
   ],
   "excluded_mods": [
     "ContainerCapacityIndicator",

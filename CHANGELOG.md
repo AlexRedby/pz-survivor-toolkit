@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Selected pack checks:** Read classification-baseline Mod IDs through the shared INI parser, preserving whitespace/BOM handling when the complete catalog loads.
+
 - **Native equipment checks:** Cover portable-radio P4 returns with separate native scissors, exact device and battery state, client pointer/sound cleanup and ordered Host receipts. Compare each role against its queue-disabled control and require the native unheld-radio off packet to reach the server after return.
 
 - **Native equipment checks:** Preflight ordinary hotbar fixture item shapes through the actual game factory before launching a window. Check native class, attribute/script metadata ownership and an independent plain-item control; retain diagnostics in the run.
@@ -57,9 +59,18 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
-### 0.1.238
+### 0.1.240
 
 - **Wishlist / vehicle mechanics:** Offer replacement-part wishes only for slots with a native installation operation. Fixed parts such as the vanilla glovebox no longer offer Add to wishlist; replaceable parts remain eligible when tools or skills are missing, including modded installable gloveboxes.
+
+### 0.1.239
+
+- **Added:** Toolkit-owned item classification, including exact selected-pack assignments, fallback rules, fluids and recorded media, while preserving native loot categories and existing tag/storage category IDs. The separate organizedCategories mod is no longer selected.
+- **Added:** Protect items from mass transfer through the inventory context menu, including vehicle supplies during Distribute Loot. Explicit single-row transfers remain available. Host applies and synchronizes accepted changes after validating the exact actor, item and container; existing Stick marks are preserved.
+
+### 0.1.238
+
+- **Action queue:** Offer one-shot recovery of the last cancelled remainder from the queue panel. Reconstruct supported pending actions under fresh operation identities, retain skill-book page progress and omit completed or unsafe partly executed work. Revalidate resources and targets before recovery; never overwrite a new queue or reuse cancelled server authority.
 
 ### 0.1.237
 

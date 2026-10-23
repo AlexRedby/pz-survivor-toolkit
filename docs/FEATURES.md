@@ -34,7 +34,7 @@
 - **Unload selected magazines and firearms** extends native unloading with **One item / Unload selected (N)**. Supports loose magazines and firearms with integral magazines, including mixed selections. Chambered rounds and magazines inserted into weapons keep their separate native actions.
 - **Remove attachments from selected weapons** adds **Remove all parts from selected weapons (N)** beside the existing per-part choices. Uses the native detachable-part checks and tool requirements, preserving each part's identity.
 - The dismantling, clothing, battery and weapon bulk features have their own Mod Options switches. They skip favourites and worn/held items at selection, bind exact selected IDs, and stop the remaining queue on cancellation or stale targets. Native weapon callbacks and queue hooks retain Tidy Up Meister's existing transfer and equipment policies when that mod is active; they do not force an additional return to the previous hand item.
-- **Grab/Put amount** accepts one positive whole-number budget for the entire selected batch. It captures exact items and destination, rechecks reachability and character identity on confirmation, and uses native transfer actions. Favourites, equipped items and heavy forced-drop objects are skipped. With organizedCategories Stick enabled, a mixed selection also skips stuck items; deliberately selecting one row/stack permits its transfer. The original selection determines that exception even when the requested quantity is one. Rejected pickups stop their own batch without cancelling another client's same-numbered transaction. The independent switch is hidden with TakeAnyAmount active.
+- **Grab/Put amount** accepts one positive whole-number budget for the entire selected batch. It captures exact items and destination, rechecks reachability and character identity on confirmation, and uses native transfer actions. Favourites, equipped items and heavy forced-drop objects are skipped. A mixed selection also skips Toolkit-protected items; deliberately selecting one row/stack permits its transfer. The original selection determines that exception even when the requested quantity is one. Rejected pickups stop their own batch without cancelling another client's same-numbered transaction. The independent switch is hidden with TakeAnyAmount active.
 
 ## Context menus
 
@@ -179,7 +179,7 @@ The original implementation and assets are credited in the
 To distribute carried loot, configure destination containers with **Configure container...**,
 open the source bag in your inventory, then right-click an item inside it and choose
 **Distribute Loot**. The command sorts eligible items from that bag; you can keep it
-on your back. Favorite items, items protected by enabled organizedCategories Stick,
+on your back. Favorite items, items protected with Toolkit's **Protect from mass transfer** action,
 and items without a matching destination stay put. Pinning an item or item type
 controls its display order; it does not protect it from transfer.
 The inventory toolbar also has **Distribute Loot** for its selected container.
@@ -187,11 +187,25 @@ For a vehicle trunk, open it in the loot window and use that window's button.
 
 Right-click a world container or its button in the loot window to open the same editor. With Better Containers enabled, it also contains **Name**, **Choose icon**, **Colour** and **Reset look**. The first tag selected in this editor fills only empty name, icon and colour fields. Selecting an exact item uses its own icon and its primary tag's colour, without filling the name. Later selections leave these values alone; every field can still be edited manually. Opening an existing configuration does not change its appearance. Save applies appearance and sorting together; Cancel discards the draft. **Reset look** clears appearance without clearing sorting and lets the next selection suggest a fresh look. Sorting presets do not supply an appearance. Bags and other targets that cannot be sorting destinations retain their existing rename/customize controls.
 
+### Retained items
+
+Select items in any inventory, bag or vehicle trunk, then right-click and choose
+**Protect from mass transfer** (RU: **Закрепить предмет**). Toolkit leaves those
+specific instances behind during Distribute Loot, Take/Transfer All and mixed
+bulk transfers. A deliberate transfer of one row or stack still works and keeps
+the protection; choose **Remove transfer protection** to clear it. Protection
+follows the item rather than reserving a quantity of its type in a particular
+vehicle. Existing organizedCategories Stick marks remain effective.
+
+In Host, the server validates the exact item, acting player, containing inventory,
+proximity and access before saving and synchronizing a change. There are no
+organizedCategories player/sandbox switches to enable. Disable that separate mod.
+
 ### Item tags
 
-For the organizedCategories taxonomy, disable **Better Containers > Show Advanced Display Categories** so organizedCategories supplies the category IDs. Unknown category IDs remain readable as individual tags.
+Toolkit supplies item classification; disable the separate organizedCategories mod and **Better Containers > Show Advanced Display Categories**. Native ScriptItem loot categories remain unchanged. Unknown category IDs remain readable as individual tags.
 
-Toolkit imports organizedCategories categories as independent, localized tags: for example `foodPerishable_fruit` becomes Food, Perishable and Fruit; Electrical is shared by electrical tools and crafting supplies. Tags use vanilla pictograms and stable family colors: Food green, Electrical yellow, Tools blue, Medical red and Materials brown. Qualifiers such as Perishable, Fruit and Preserved have clock, apple and jar icons; qualifiers inherit the item's family color. Text remains visible and missing icons fall back to text/color. Quartermaster and the tag dropdown use the same associations. Native inventory and both CleanUI inventory modes display compact chips in the category column, with a `+N` overflow indicator and a tooltip listing every tag. The column dropdown offers tag filters alongside exact categories. **Options > Mods > PZ Survivor Toolkit > Show item tags** restores the original presentation and controls when disabled.
+Toolkit owns classification and presents the established organizedCategories taxonomy as independent, localized tags: for example `foodPerishable_fruit` becomes Food, Perishable and Fruit; Electrical is shared by electrical tools and crafting supplies. Tags use vanilla pictograms and stable family colors: Food green, Electrical yellow, Tools blue, Medical red and Materials brown. Qualifiers such as Perishable, Fruit and Preserved have clock, apple and jar icons; qualifiers inherit the item's family color. Text remains visible and missing icons fall back to text/color. Quartermaster and the tag dropdown use the same associations. Native inventory and both CleanUI inventory modes display compact chips in the category column, with a `+N` overflow indicator and a tooltip listing every tag. The column dropdown offers tag filters alongside exact categories. **Options > Mods > PZ Survivor Toolkit > Show item tags** restores the original presentation and controls when disabled.
 
 Choose **Combine tags...** in the inventory column dropdown to select multiple tags. Each tag cycles between neutral, included and excluded; the rule matches all or any included tags, with exclusions taking precedence. Search and the family dropdown narrow the tag list; the match preview shows actual inventory items before Apply. Clear resets the draft; Cancel keeps the previous filter. Exact-category and single-tag filters remain available.
 
@@ -211,7 +225,7 @@ Container-editor writes use the acting player's server-validated location, exact
 
 ### Item Details
 
-Expanded rows show remaining uses; condition, head condition and sharpness; ammunition including a chambered round and weapon attachments; food, cooking/freezing and Nutritionist values; fluid contents and quantities; clothing condition and holes. Ordinary native details remain the fallback for other items. Vehicle parts also work with **organizedCategories**.
+Expanded rows show remaining uses; condition, head condition and sharpness; ammunition including a chambered round and weapon attachments; food, cooking/freezing and Nutritionist values; fluid contents and quantities; clothing condition and holes. Ordinary native details remain the fallback for other items. Vehicle parts retain their detailed Toolkit classifications.
 
 Configure labels, bars, numeric values, Nutritionist details and stack sorting under **Options > Mods > Toolkit Item Details**. The old Item Details preference keys remain valid. Sorting uses the configured direction for each item family and sorts only the configured prefix of an expanded stack; all remaining items, physical selections and Shift-selection anchors stay intact. The native visible-child limit is unchanged. With Better Containers, food details leave space for its freshness percentage.
 

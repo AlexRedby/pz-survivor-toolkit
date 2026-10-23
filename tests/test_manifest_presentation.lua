@@ -1,4 +1,4 @@
--- Host's vanilla server category must use the client's provider without losing explicit instance state.
+-- Host's native server category must use owned classification without losing explicit instance state.
 PZSurvivorToolkit = {}
 local script = {getDisplayCategory = function() return 'Material' end,
     getDisplayName = function() return 'Local nails' end}
@@ -27,11 +27,12 @@ assert(name == 'Local nails' and label == 'Label tag:craftingMaterial' and tags[
 name, label = Presentation.describe({ft = 'Base.Nails', cat = 'instance-fluid', name = 'My custom name'})
 assert(name == 'My custom name' and label == 'Label tag:instance-fluid' and providerCalls == 1,
     'explicit instance category was replaced by generic script category')
-OrganizedCategories = {refineMediaCategory = function(proxy, cat)
+OrganizedCategories = setmetatable({}, {__index=function() error('removed media provider accessed') end})
+Categories.refineMediaCategory = function(proxy, cat)
     assert(proxy:getMediaData() == media and cat == 'craftingMaterial'); return 'experienceMedia'
-end}
+end
 name, label = Presentation.describe({ft = 'Base.Nails', cat = 'Material', mediaId = 'stable-media'})
 assert(name == 'Local VHS title' and label == 'Label tag:experienceMedia')
 name = Presentation.describe({ft = 'Base.Nails', cat = 'Material', mediaIndex = 42, name = 'Named VHS'})
 assert(name == 'Named VHS', 'media title replaced a custom name')
-print('Manifest presentation: local names/provider, instance categories, tag proxy and recorded-media labels passed.')
+print('Manifest presentation: local names/owned classification, instance categories, tag proxy and recorded-media labels passed.')

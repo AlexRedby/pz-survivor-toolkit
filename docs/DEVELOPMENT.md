@@ -126,7 +126,7 @@ The read-only Java global `toolkitMedicineCooldown(character)` returns the nativ
 
 `--mpff-source /path/to/MPFastForward/media/lua` and `--bc-filter-source /path/to/CategoryFilters.lua` exercise the upstream modules and early compatibility gates; without these paths, those source checks report SKIP.
 
-With `--game`, vehicle ground-placement regressions exercise the installed game's removal completion and item collection, including failure, callbacks and its existing ground fallback. Quantity-transfer checks use the actual inventory callbacks and sibling text-box constructor/callback; run `.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --oc-stick-source "$OC_STICK_SOURCE" --test test_quantity_transfers` with `OC_STICK_SOURCE` pointing to the installed `organizedCategories_itemStick.lua` to also check original selection intent through its live transfer wrapper.
+With `--game`, vehicle ground-placement regressions exercise the installed game's removal completion and item collection, including failure, callbacks and its existing ground fallback. Quantity-transfer checks use the actual inventory callbacks and sibling text-box constructor/callback; run `.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_quantity_transfers --test test_item_retention` to check original selection intent through Toolkit's live transfer wrapper and authoritative retention admission.
 
 Action queue and native Wishlist menu checks use `--game`. Add `--wishlist-workshop-root /path/to/steamapps/workshop/content/108600` for the Wishlist checks against installed adapters.
 

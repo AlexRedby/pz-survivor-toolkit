@@ -17,9 +17,8 @@ function Presentation.describe(entry)
     if not category or (script and category == script:getDisplayCategory()) then
         category = Categories.forScript(script) or category
     end
-    local provider = OrganizedCategories
-    if media and provider and provider.refineMediaCategory then
-        category = provider.refineMediaCategory({getMediaData = function() return media end}, category) or category
+    if media then
+        category = Categories.refineMediaCategory({getMediaData = function() return media end}, category) or category
     end
     -- Keep instance categories and planting semantics identical to the inventory tag service.
     local tags = Tags.forItem({getDisplayCategory = function() return category end,

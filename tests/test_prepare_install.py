@@ -380,8 +380,7 @@ class PrepareInstall(unittest.TestCase):
                               ('PZSurvivorToolkit', 'EURY_CONTAINERS'),
                               ('PZSurvivorToolkit', 'MPFastForward'),
                               ('ZombieBuddy', 'PZToolkitJavaPatches'),
-                              ('RealisticDash', 'Navigator'),
-                              ('PZSurvivorToolkit', 'organizedCategories_core')):
+                              ('RealisticDash', 'Navigator')):
             with self.subTest(before=before, after=after):
                 ordered = list(dict.fromkeys([after, before, *prepare_install.MOD_IDS]))
                 (self.root / prepare_install.INI_NAME).write_text('Mods=' + ';'.join(ordered) + '\n')
