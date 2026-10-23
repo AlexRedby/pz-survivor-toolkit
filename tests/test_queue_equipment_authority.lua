@@ -415,9 +415,12 @@ print('Equipment authority worn baseline checks passed: pre-Prepared clothing sn
 -- inventory-neutral and models native exclusive-slot removal.
 do
  local Scene=load('QueueEquipmentScene')
- ItemBodyLocation={HAT='base:hat',FULL_HAT='base:fullhat'}
+ ItemBodyLocation={HAT='base:hat',FULL_HAT='base:fullhat',get=function(value)return value end}
+ ResourceLocation={of=function(value)return value end}
  local group={isExclusive=function(_,target,location)
-  return target=='base:fullhat'and(location=='base:eyes'or location=='base:hat')
+  return target=='base:leftwrist'and location=='base:forearmleft'
+   or target=='base:rightwrist'and location=='base:forearmright'
+   or target=='base:fullhat'and(location=='base:eyes'or location=='base:hat')
    or location=='base:fullhat'and(target=='base:eyes'or target=='base:hat')
  end}
  local calls,sync={},{}
@@ -496,6 +499,23 @@ do
  isClient,isServer=function()return false end,function()return false end
  local sp=actor();local spProof=Scene.prepare(sp,{'tidy-headwear-full-hat-remove'})
  assert(spProof.authority=='sp'and Scene.available(sp,spProof)and #sync==1,'SP scene must not send a server clothing packet')
+ for _,side in ipairs({'left','right'})do
+  local watchPlayer,starterGlasses,starterShirt,seed=actor()
+  local wrist='base:'..side..'wrist';local forearm='base:forearm'..side
+  local guard=seed(77,'Base.ForearmGuard',forearm)
+  local case='tidy-watch-'..(side=='left'and 'digital'or 'classic')..'-remove'
+  assert(Scene.needed({case}))
+  local watchProof=Scene.prepare(watchPlayer,{case})
+  assert(#watchProof.targetLocations==1 and watchProof.targetLocations[1]==wrist)
+  assert(#watchProof.normalizedItems==1 and watchProof.normalizedItems[1].id==guard.id
+   and watchPlayer:getWornItem(forearm)==nil and watchPlayer:getWornItem('base:eyes')==starterGlasses
+   and watchPlayer:getWornItem('base:shirt')==starterShirt,'watch scene must normalize only its selected wrist/exclusive forearm')
+  assert(Scene.available(watchPlayer,watchProof,{case=case,items={}}))
+  watchPlayer.worn[forearm]=guard
+  assert(not Scene.available(watchPlayer,watchProof,{case=case,items={}}),'watch scene must await authority forearm removal')
+  watchPlayer.worn[forearm]=nil
+  assert(Scene.prepare(watchPlayer,{case})==watchProof,'watch scene must not reseed between cases')
+ end
 end
 print('Equipment scene checks passed: real helper, starter glasses, root identity, once-only preparation and authority-owned SyncClothing.')
 
@@ -545,3 +565,33 @@ do
  isClient,isServer=originalClient,originalServer
 end
 print('Equipment desired client adoption checks passed: real fixture preparation preserves both authoritative hands.')
+
+-- Server ProcessItems sweeps may lag Wear by more than five seconds. The
+-- authority receipt waits for native membership; the fixture never repairs it.
+do
+ local clothing=modules.QueueEquipmentClothing
+ local beforeClient,beforeServer,beforeCell=isClient,isServer,getCell
+ local active,pendingRemoval=true,false
+ getCell=function()return {getProcessItems=function()return {contains=function()return active end}end,
+  getProcessItemsRemove=function()return {contains=function()return pendingRemoval end}end}end
+ isClient,isServer=function()return false end,function()return true end
+ for _,alarm in ipairs({false,true})do
+  local sample={id=alarm and 'tidy-watch-digital-restore'or 'tidy-watch-classic-restore',clothingItem={},clothingWatch={alarmSet=alarm}}
+  for _,worn in ipairs({false,true})do
+   local expected=alarm and worn
+   active=not expected
+   for tick=1,3 do assert(not clothing.watchProcessingReady(sample,worn),'server must await its native processing sweep')end
+   active=expected
+   assert(clothing.watchProcessingReady(sample,worn),'settled native processing membership must release the authority gate')
+   pendingRemoval=true
+   assert(not clothing.watchProcessingReady(sample,worn),'server must await pending native removal even with matching active membership')
+   pendingRemoval=false
+  end
+ end
+ local sample={id='tidy-watch-classic-restore',clothingItem={},clothingWatch={alarmSet=false}}
+ active=true
+ isServer=function()return false end
+ assert(clothing.watchProcessingReady(sample,true),'SP must retain its already verified processing timing behavior')
+ isClient,isServer,getCell=beforeClient,beforeServer,beforeCell
+end
+print('Equipment watch processing readiness: server passively waits for disabled/worn and enabled/removed sweeps; SP unchanged.')

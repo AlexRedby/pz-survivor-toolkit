@@ -184,3 +184,43 @@ for _,mode in ipairs({'toolkit','native'}) do
  empty.player.secondary=empty.screwdriver
  rejected(empty,mode,true,'postprocessing changed final hands')
 end
+
+-- The server final postprocess independently checks alarm state after P4 has
+-- restored/removed the exact root watch, rather than trusting client evidence.
+do
+ local Clothing=require 'QueueEquipmentClothing'
+ local oldInstanceof=instanceof
+ instanceof=function(value,kind)
+  return value.watch and (kind=='AlarmClockClothing'or kind=='Clothing')or oldInstanceof(value,kind)
+ end
+ isClient=function()return false end
+ getCell=function()return {getProcessItems=function()return {contains=function()return true end}end,
+  getProcessItemsRemove=function()return {contains=function()return false end}end}end
+ for _,case in ipairs({'tidy-watch-digital-restore','tidy-watch-digital-remove','tidy-watch-classic-restore','tidy-watch-classic-remove'})do
+  for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native')
+   local spec=Clothing.spec(sample)
+   local watch=item(spec.fullType,sample.root);watch.watch=true;watch.hour=21;watch.minute=40;watch.alarm=spec.alarmSet;watch.ringing=false
+   watch.getHour=function(self)return self.hour end;watch.getMinute=function(self)return self.minute end
+   watch.isAlarmSet=function(self)return self.alarm end;watch.isRinging=function(self)return self.ringing end
+   watch.getCategory=function()return 'AlarmClock'end
+   sample.clothingItem=watch;sample.clothingLocation=spec.location;sample.clothingHair='CrewCut'
+   sample.clothingWatch={alarmHour=21,alarmMinute=40,alarmSet=spec.alarmSet,ringing=false}
+   sample.items.clothingItem=watch;sample.baseline[watch.id]=watch
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   sample.player.getWornItem=function(self,location)return self.worn[location]end
+   sample.player.getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end}end
+   local worn=Clothing.finalWorn(sample,tidy)
+   sample.player.worn[spec.location]=worn and watch or nil
+   local value=Postprocess.verify(sample,'native',tidy).clothing
+   assert(value.watch.alarmHour==21 and value.watch.alarmSet==spec.alarmSet and value.watchProcessing.active)
+   for key,bad in pairs({hour=22,minute=30,alarm=not spec.alarmSet,ringing=true})do
+    local before=watch[key];watch[key]=bad
+    rejected(sample,'native',tidy,'native watch alarm changed')
+    watch[key]=before
+   end
+  end
+ end
+ instanceof=oldInstanceof
+end
+print('Equipment watch postprocessing: authority rejects changed time, enabled state and ringing after exact native cleanup.')

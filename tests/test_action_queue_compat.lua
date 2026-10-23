@@ -43,7 +43,7 @@ end})
 for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do _G[name] = {instance = function() return {} end} end
 instanceof = function(value, kind)
-    return type(value) == 'table' and (value.class == kind or (kind == 'InventoryItem' and value.item == true))
+    return type(value) == 'table' and (value.class == kind or (kind == 'Clothing' and value.class == 'AlarmClockClothing') or (kind == 'InventoryItem' and value.item == true))
 end
 table.wipe = function(value) for key in pairs(value) do value[key] = nil end end
 getText = function(value) return value end
@@ -478,7 +478,7 @@ local function item(container, id)
         setActivated=function(self,value) self.activated=value; self.activationChanges=(self.activationChanges or 0)+1 end,
         getName = function() return 'test' end, isHidden = function() return false end,
         setJobDelta=function()end, IsInventoryContainer=function()return false end, hasTag=function()return false end,
-        getCategory=function(self)return self.class=='Clothing' and 'Clothing' or 'Item'end,
+        getCategory=function(self)return self.class=='Clothing' and 'Clothing' or self.class=='AlarmClockClothing' and 'AlarmClock' or 'Item'end,
         getBodyLocation=function(self)return self.location or ItemBodyLocation.SOCKS end,
         canBeEquipped=function(self)return self.equippedAt end,getClothingItem=function()end,
         isBroken=function(self)return self.broken==true end,getAttachedSlot=function(self)return self.attachedSlot or -1 end,
@@ -1400,6 +1400,11 @@ do
         if kind=='bag'then sock.class='InventoryContainer';sock.equippedAt='Back'
         elseif kind=='hat'then sock.location=ItemBodyLocation.HAT
         elseif kind=='full-hat'then sock.location=ItemBodyLocation.FULL_HAT
+        elseif kind=='watch-left'or kind=='watch-right'then
+            sock.class='AlarmClockClothing';sock.location=kind=='watch-left'and ItemBodyLocation.LEFT_WRIST or ItemBodyLocation.RIGHT_WRIST
+            sock.alarmHour,sock.alarmMinute,sock.alarmSet=23,40,kind=='watch-left'
+            sock.getHour=function(self)return self.alarmHour end;sock.getMinute=function(self)return self.alarmMinute end
+            sock.isAlarmSet=function(self)return self.alarmSet end;sock.isRinging=function()return false end
         elseif kind=='primary'then sock.hasTag=function(_,tag)return tag==ItemTag.REPLACE_PRIMARY end
         elseif kind=='wearable'then sock.equippedAt='Back'
         elseif kind=='wearable-tag'then sock.hasTag=function(_,tag)return tag==ItemTag.WEARABLE end
@@ -1461,7 +1466,7 @@ do
         return completed(self,action)
     end
     for _,removal in ipairs({false,true})do
-    for _,kind in ipairs(removal and {'plain','hat','full-hat','capacity-edge','held-primary','held-secondary','held-both','held-prefix'} or {'plain','hat','full-hat'})do
+    for _,kind in ipairs(removal and {'plain','hat','full-hat','watch-left','watch-right','capacity-edge','held-primary','held-secondary','held-both','held-prefix'} or {'plain','hat','full-hat','watch-left','watch-right'})do
     for _,mode in ipairs({'sp','mp-early','mp-late'})do
         for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
             local sock,owner,action=restoreClothing(mixed,kind,removal)
@@ -1495,6 +1500,10 @@ do
             assert(writes==1 and (worn[sock:getBodyLocation()]==sock)==not removal and sock:getContainer()==inventory and inventory:getItemById(sock:getID())==sock,
                 'native clothing effect lost its exact slot/item or ran twice')
             assert(hair=='CrewCut','plain headwear cleanup changed hair')
+            if kind=='watch-left'or kind=='watch-right'then
+                assert(sock:getHour()==23 and sock:getMinute()==40 and sock:isAlarmSet()==(kind=='watch-left')and not sock:isRinging(),
+                    'native wristwatch cleanup altered its alarm configuration')
+            end
             if removal then
                 assert(player.primary==expectedPrimary and player.secondary==expectedSecondary and player.equipSyncs==syncs+1,
                     'ordinary worn/held removal suppressed or repeated native hand synchronization')
@@ -1509,7 +1518,7 @@ do
     end
     end
     end
-    assert(callbacks==132,'ordinary clothing/headwear wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
+    assert(callbacks==180,'ordinary clothing/headwear/watch wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
     queue.onCompleted=completed
     -- A desired held/worn baseline is restored in the opposite direction to
     -- temporary clothing: native hands first, then Wear retains those hands.
@@ -1633,6 +1642,34 @@ do
         ISUnequipAction[name]=function()error('foreign unequip helper must not run')end
         assert(not definitions.inspect(action),'worn removal accepted changed native helper '..name)
         ISUnequipAction[name]=original
+    end
+    -- AlarmClockClothing is a real Clothing subtype. Category alone must not
+    -- admit a table alarm clock, another special category or a non-wrist slot.
+    for _,removal in ipairs({false,true})do
+    for _,kind in ipairs({'watch-left','watch-right'})do
+        for _,change in ipairs({'category','subtype','location','exclusive','multi','replacement','callback','ringing','primary','secondary'})do
+            local sock,_,action=restoreClothing(true,kind,removal)
+            assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+            if change=='category'then sock.getCategory=function()return 'UnknownClock'end
+            elseif change=='subtype'then sock.class='Clothing';sock.getCategory=function()return 'AlarmClock'end
+            elseif change=='location'then sock.location=ItemBodyLocation.SOCKS
+            elseif change=='exclusive'then
+                local other=item(inventory,14808);other.class='Clothing';worn[ItemBodyLocation.FORE_ARM_LEFT]=other;exclusive=true
+            elseif change=='multi'then multi=true
+            elseif change=='replacement'then
+                local other=item(inventory,sock:getID());other.class='AlarmClock';other.getCategory=function()return 'AlarmClock'end
+                inventory.values={other}
+            elseif change=='ringing'then sock.isRinging=function()return true end
+            elseif change=='primary'then player.primary=sock
+            elseif change=='secondary'then player.secondary=sock
+            else action.onCompleteFunc=function()error('foreign watch callback must not run')end end
+            assert(not definitions.inspect(action),'watch shared proof retained changed '..change)
+        end
+        local _,_,action=restoreClothing(true,kind,removal,function(sock)
+            sock.class='AlarmClock';sock.getCategory=function()return 'AlarmClock'end
+        end)
+        assert(select(2,definitions.inspect(action))=='compat.selected-chains','inventory alarm clock borrowed worn watch proof')
+    end
     end
     -- Both headwear directions require a live hair guard. Native Lua and Java
     -- can flatten Mohawk, including when the requested worn value is nil.

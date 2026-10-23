@@ -1,5 +1,9 @@
 local Clothing={}
 local cases={
+ ['tidy-watch-digital-restore']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true},
+ ['tidy-watch-digital-remove']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true},
+ ['tidy-watch-classic-restore']={fullType='Base.WristWatch_Right_ClassicBlack',location='base:rightwrist',wristwatch=true,alarmSet=false},
+ ['tidy-watch-classic-remove']={fullType='Base.WristWatch_Right_ClassicBlack',location='base:rightwrist',wristwatch=true,alarmSet=false,remove=true},
  ['tidy-clothing']={fullType='Base.Socks_Ankle',location='base:socks'},
  ['tidy-clothing-remove']={fullType='Base.Socks_Ankle',location='base:socks',remove=true},
  ['tidy-clothing-overlap']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlapHand='secondary'},
@@ -79,6 +83,42 @@ function Clothing.verifyCleanup(state,actions)
 end
 function Clothing.removes(state)return cases[state.id]and cases[state.id].remove==true or false end
 function Clothing.headwear(state)return cases[state.id]and cases[state.id].headwear==true or false end
+function Clothing.wristwatch(state)return cases[state.id]and cases[state.id].wristwatch==true or false end
+local function strictWatch(value,spec)
+ if type(value)~='table'or getmetatable(value)~=nil then return false end
+ local count=0
+ for key in pairs(value)do
+  if key~='alarmHour'and key~='alarmMinute'and key~='alarmSet'and key~='ringing'then return false end
+  count=count+1
+ end
+ return count==4 and type(value.alarmHour)=='number'and value.alarmHour%1==0 and value.alarmHour>=0 and value.alarmHour<24
+  and value.alarmMinute==40 and value.alarmSet==spec.alarmSet and value.ringing==false
+end
+function Clothing.watchState(state,item)
+ if not Clothing.wristwatch(state)then return nil end
+ local baseline=state.clothingWatch
+ assert(strictWatch(baseline,Clothing.spec(state)),'invalid authoritative watch baseline')
+ item=item or state.clothingItem
+ assert(instanceof(item,'AlarmClockClothing')and instanceof(item,'Clothing')and item:getCategory()=='AlarmClock',
+  'watch must remain native AlarmClockClothing')
+ local value={alarmHour=item:getHour(),alarmMinute=item:getMinute(),alarmSet=item:isAlarmSet(),ringing=item:isRinging()}
+ for key,expected in pairs(baseline)do assert(value[key]==expected,'native watch alarm changed '..key)end
+ return value
+end
+function Clothing.watchProcessing(state)
+ if not Clothing.wristwatch(state)or isClient()then return nil end
+ local cell=getCell()
+ return {active=cell:getProcessItems():contains(state.clothingItem),pendingRemoval=cell:getProcessItemsRemove():contains(state.clothingItem)}
+end
+-- The server ProcessItems sweep runs on a separate >5s cadence. Observe its
+-- native settled state before taking authority snapshots; never register or
+-- remove an item to make the expected state happen. SP keeps its existing gate.
+function Clothing.watchProcessingReady(state,worn)
+ if not isServer()or isClient()or not Clothing.wristwatch(state)then return true end
+ local processing=Clothing.watchProcessing(state)
+ return not processing.pendingRemoval and processing.active==(state.clothingWatch.alarmSet and worn)
+end
+local function preparedSlots(state)return Clothing.headwear(state)or Clothing.wristwatch(state)end
 local function capacitySafe(state)
  local weight,full,capacity=state.root:getCapacityWeight(),state.clothingItem:getUnequippedWeight(),state.root:getEffectiveCapacity(state.player)
  return weight>=0 and full>=0 and weight+2*full+0.01<=capacity and state.root:isItemAllowed(state.clothingItem)
@@ -86,12 +126,12 @@ end
 local function emptyHeadwearSlots(state,allowed)
  local values=state.player:getWornItems();local group=values:getBodyLocationGroup()
  assert(group==state.player:getBodyLocationGroup()and group:getLocation(state.clothingLocation)
-  and not group:isMultiItem(state.clothingLocation),'headwear fixture needs a real single worn slot')
+  and not group:isMultiItem(state.clothingLocation),'clothing fixture needs a real single worn slot')
  for i=0,values:size()-1 do
   local location=values:get(i):getLocation()
   assert(location==state.clothingLocation and values:get(i):getItem()==allowed
    or location~=state.clothingLocation and not group:isExclusive(state.clothingLocation,location),
-   'headwear fixture requires empty target/exclusive slots in the prepared scene')
+   'clothing fixture requires empty target/exclusive slots in the prepared scene')
  end
 end
 function Clothing.restoreType(state)return Clothing.removes(state)and 'ISUnequipAction'or 'ISWearClothing'end
@@ -150,7 +190,7 @@ function Clothing.install(withP4)
  -- Capture short native transactions when their public started/completed
  -- notifications arrive; ordinary OnTick observation remains the fallback.
  Events.OnServerCommand.Add(function(module,command)
-  if module=='PZSurvivorToolkitActions'and command=='State'and watched and Clothing.overlap(watched)then
+  if module=='PZSurvivorToolkitActions'and command=='State'and watched and (Clothing.overlap(watched)or Clothing.wristwatch(watched))then
    Clothing.observe(watched,ISTimedActionQueue.getTimedActionQueue(watched.player),PZSurvivorToolkit,true)
   end
  end)
@@ -163,14 +203,25 @@ function Clothing.prepare(state,seed)
  seed('clothingItem',spec.fullType)
  local item=state.clothingItem
  state.clothingLocation=item:getBodyLocation()
- assert(item:getCategory()=='Clothing' and item:canBeEquipped()==nil and tostring(state.clothingLocation)==spec.location
-  and not item:hasTag(ItemTag.WEARABLE)and not item:hasTag(ItemTag.REPLACE_PRIMARY),'ordinary configured Clothing fixture required')
- if Clothing.headwear(state)then
+ assert((spec.wristwatch and item:getCategory()=='AlarmClock'and instanceof(item,'AlarmClockClothing')and instanceof(item,'Clothing')
+  or not spec.wristwatch and item:getCategory()=='Clothing') and item:canBeEquipped()==nil and tostring(state.clothingLocation)==spec.location
+  and not item:hasTag(ItemTag.WEARABLE)and not item:hasTag(ItemTag.REPLACE_PRIMARY),'configured native Clothing fixture required')
+ if spec.wristwatch then
+  if isClient()then state.clothingWatch=state.ids.clothingWatch
+  else
+   -- A valid native MP alarm minute, twelve game hours from this bounded run.
+   state.clothingWatch={alarmHour=(getGameTime():getHour()+12)%24,alarmMinute=40,alarmSet=spec.alarmSet,ringing=false}
+   item:setHour(state.clothingWatch.alarmHour);item:setMinute(state.clothingWatch.alarmMinute);item:setAlarmSet(spec.alarmSet)
+   item:syncAlarmClock()
+  end
+  Clothing.watchState(state)
+ end
+ if preparedSlots(state)then
   assert(not item:canBeActivated()and item:getAttachedSlot()==-1 and not item:isBroken()and not isForceDropHeavyItem(item),
-   'headwear fixture must be plain unattached non-heavy Clothing')
-  assert(capacitySafe(state),'headwear fixture lacks conservative root capacity')
+   'clothing fixture must be plain unattached non-heavy Clothing')
+  assert(capacitySafe(state),'clothing fixture lacks conservative root capacity')
   if isClient()then
-   assert(Clothing.available(state.player,state.ids),'client has not adopted authoritative headwear setup')
+   assert(Clothing.available(state.player,state.ids),'client has not adopted authoritative prepared clothing setup')
   else
    emptyHeadwearSlots(state)
    if not Clothing.removes(state)then
@@ -180,7 +231,7 @@ function Clothing.prepare(state,seed)
    end
   end
   emptyHeadwearSlots(state,not Clothing.removes(state)and not state.clothingSetupPending and item or nil)
-  state.clothingEmptyHeadwear=true
+  if Clothing.headwear(state)then state.clothingEmptyHeadwear=true else state.clothingEmptyWatchSlots=true end
  elseif Clothing.removes(state)then state.player:setWornItem(state.clothingLocation,nil)
  elseif isClient()then
   assert(Clothing.available(state.player,state.ids),'client has not adopted authoritative clothing setup')
@@ -219,10 +270,13 @@ function Clothing.available(player,ids)
  if type(ids.clothingHair)~='string'or tostring(player:getHumanVisual():getHairModel())~=ids.clothingHair
   or player:getHumanVisual():getNonAttachedHair()then return false end
  local spec=cases[ids.case]
- if spec and (spec.headwear or not spec.remove)then
+ if spec and (spec.headwear or spec.wristwatch or not spec.remove)then
   local root=player:getInventory();local item=root:getItemById(ids.items.clothingItem)
   if not item or item:getFullType()~=spec.fullType or item:getContainer()~=root
    or tostring(item:getBodyLocation())~=spec.location then return false end
+  if spec.wristwatch then
+   if not strictWatch(ids.clothingWatch,spec)or not pcall(Clothing.watchState,{id=ids.case,clothingItem=item,clothingWatch=ids.clothingWatch})then return false end
+  end
   local expected=not spec.remove and not ids.clothingSetupPending and item or nil
   if ids.clothingSetupPending then
    for _,record in ipairs(ids.originalWorn or {})do
@@ -259,9 +313,9 @@ function Clothing.configure(state,itemID)
   'authoritative clothing setup identity/root differs')
  assert(state.player:getWornItem(state.clothingLocation)==state.clothingSetupPrevious,
   'authoritative clothing setup baseline changed')
- if Clothing.headwear(state)then
+ if preparedSlots(state)then
   emptyHeadwearSlots(state)
-  assert(capacitySafe(state),'authoritative headwear setup lacks conservative root capacity')
+  assert(capacitySafe(state),'authoritative clothing setup lacks conservative root capacity')
  end
  if Clothing.desired(state)then
   assert(state.player:getPrimaryHandItem()==state.hammer and state.player:getSecondaryHandItem()==state.screwdriver,
@@ -305,11 +359,11 @@ function Clothing.observe(state,queue,toolkit,tidy)
  local current=queue.current
  if current and current==state.clothingProducer and current:isStarted()then
   state.clothingProducerStarted=true
-  if Clothing.headwear(state)then
-   assert(state.clothingEmptyHeadwear and capacitySafe(state),'headwear removal lacks setup/capacity proof')
+  if preparedSlots(state)then
+   assert((state.clothingEmptyHeadwear or state.clothingEmptyWatchSlots)and capacitySafe(state),'clothing removal lacks setup/capacity proof')
    emptyHeadwearSlots(state,Clothing.removes(state)and state.clothingItem or nil)
-   Clothing.verify(state,Clothing.removes(state))
-   state.clothingHeadwearReady=true
+   Clothing.verify(state,Clothing.removes(state),true)
+   if Clothing.headwear(state)then state.clothingHeadwearReady=true else state.clothingWatchReady=true end
   end
   if Clothing.overlap(state)then
    local item=assert(state.root:getItemById(state.clothingItem:getID()),'overlap exact socks missing')
@@ -357,9 +411,9 @@ function Clothing.observe(state,queue,toolkit,tidy)
    end
   end
  end
- if Clothing.overlap(state)and isClient()then
+ if (Clothing.overlap(state)or Clothing.wristwatch(state))and isClient()then
   state.clothingReceipts=state.clothingReceipts or {}
-  for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
+  for _,actions in ipairs({Clothing.producerActions(state),Clothing.wristwatch(state)and {state.clothingRestoreAction}or state.clothingCleanup or {}})do
    for _,action in ipairs(actions)do
     if not state.clothingReceipts[action]then state.clothingReceipts[action]=toolkit.ActionQueueAcknowledgements.capture(action)end
    end
@@ -387,6 +441,21 @@ function Clothing.evidence(state,toolkit,tidy,completion,hands)
  if Clothing.headwear(state)then
   assert(state.clothingEmptyHeadwear and state.clothingHeadwearReady,'headwear native setup/producer was not verified')
   result.headwearSetup={emptyExclusiveSlots=true,capacityBeforeRemoval=true}
+ end
+ if Clothing.wristwatch(state)then
+  assert(state.clothingEmptyWatchSlots and state.clothingWatchReady,'watch native setup/producer was not verified')
+  result.watchBaseline=state.clothingWatch
+  result.watchSetup={emptyExclusiveSlots=true,capacityBeforeRemoval=true}
+  result.watchAcknowledgements={}
+  if isClient()then
+   local actions=Clothing.producerActions(state)
+   if tidy then actions[#actions+1]=assert(state.clothingRestoreAction)end
+   for _,action in ipairs(actions)do
+    local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'watch native acknowledgement not captured')
+    assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','watch native action did not complete authoritatively')
+    result.watchAcknowledgements[#result.watchAcknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
+   end
+  end
  end
  if Clothing.overlap(state)then
   local overlap={intermediate=assert(state.clothingOverlap,'native overlap was never observed'),cleanup={},acknowledgements={},sharedHands=hands}
@@ -423,6 +492,19 @@ function Clothing.settled(state,toolkit,tidy)
   if isClient()and (not state.clothingRestoreReceipt
    or toolkit.ActionQueueAcknowledgements.observe(state.clothingRestoreAction,state.clothingRestoreReceipt)~='completed')then return false end
  end
+ if Clothing.wristwatch(state)then
+  if not isClient()and Clothing.watchProcessing(state).pendingRemoval then return false end
+  if not state.clothingWatchReady or not pcall(Clothing.watchState,state,live)
+   or state.player:getPrimaryHandItem()~=state.hammer or state.player:getSecondaryHandItem()~=state.screwdriver then return false end
+  if isClient()then
+   local actions=Clothing.producerActions(state)
+   if tidy then actions[#actions+1]=state.clothingRestoreAction end
+   for _,action in ipairs(actions)do
+    local receipt=state.clothingReceipts and state.clothingReceipts[action]
+    if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
+   end
+  end
+ end
  if Clothing.headwear(state)and (not state.clothingHeadwearReady or state.player:getPrimaryHandItem()~=state.hammer
   or state.player:getSecondaryHandItem()~=state.screwdriver)then return false end
  if Clothing.overlap(state)then
@@ -441,7 +523,7 @@ function Clothing.settled(state,toolkit,tidy)
  end
  return true
 end
-function Clothing.verify(state,restored)
+function Clothing.verify(state,restored,transient)
  local player,item=state.player,state.clothingItem
  local live=assert(state.root:getItemById(item:getID()),'exact socks identity missing from root')
  assert(live:getFullType()==Clothing.spec(state).fullType and live:getContainer()==state.root,'socks type/container changed')
@@ -454,6 +536,11 @@ function Clothing.verify(state,restored)
   'clothing restoration changed unrelated hands')
  local result={id=live:getID(),fullType=live:getFullType(),bodyLocation=tostring(state.clothingLocation),container='root',
   worn=restored,producer='ISCutHair',producerCompleted=true,hairUnchanged=true,hairStyle=state.clothingHair,unrelatedHandsPreserved=true}
+ if Clothing.wristwatch(state)then
+  result.watch=Clothing.watchState(state,live)
+  result.watchProcessing=not transient and Clothing.watchProcessing(state)or nil
+  assert(not result.watchProcessing or not result.watchProcessing.pendingRemoval,'watch processing removal has not settled')
+ end
  if Clothing.overlap(state)then
   result.primary=primary and primary:getID()or false;result.secondary=secondary and secondary:getID()or false
   local originalPrimary,originalSecondary=Clothing.expectedHands(state,true)

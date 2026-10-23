@@ -79,12 +79,25 @@ class EquipmentTests(unittest.TestCase):
                     checkpoint_s = (955 if remove else False) if hand in ('secondary', 'both') else original_s
                     effect.update(primary=original_p if tidy else checkpoint_p, secondary=original_s if tidy else checkpoint_s,
                                   originalPrimary=original_p, originalSecondary=original_s)
+                if spec.get('watch'):
+                    effect['watch'] = dict(alarmHour=23, alarmMinute=40, alarmSet=spec['alarm'], ringing=False)
                 count = int(enabled and tidy)
                 result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=bool(spec.get('remove')), **(dict(primary=checkpoint_p, secondary=checkpoint_s) if spec.get('overlapHand') else {})),
                               tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                       flush=count, legacy=0), unrelatedTailPreserved=True))
+                if spec.get('watch'):
+                    result['tidyClothing']['watchBaseline'] = dict(effect['watch'])
+                    result['tidyClothing']['watchSetup'] = dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
+                    result['tidyClothing']['watchAcknowledgements'] = [
+                        dict(kind='ISWearClothing' if spec.get('remove') else 'ISUnequipAction', id=955, state='completed'),
+                        dict(kind='ISCutHair', id=False, state='completed'),
+                        *([dict(kind='ISUnequipAction' if spec.get('remove') else 'ISWearClothing', id=955, state='completed')] if tidy else [])
+                    ] if self.selection['kind'] == 'mp' else []
+                    if self.selection['kind'] == 'sp':
+                        result['clothingCheckpoint']['watchProcessing'] = dict(active=bool(spec['alarm'] and spec.get('remove')), pendingRemoval=False)
+                        result['tidyClothing']['watchProcessing'] = dict(active=bool(spec['alarm'] and effect['worn']), pendingRemoval=False)
                 if spec.get('headwear'):
                     result['tidyClothing']['headwearSetup'] = dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
                 if spec.get('overlapHand'):
@@ -161,11 +174,15 @@ class EquipmentTests(unittest.TestCase):
         return [dict(row, suite='equipment', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1') for row in rows]
 
     def scene_marker(self):
-        if not any(equipment.CLOTHING_SPECS.get(case, {}).get('headwear') for case in self.selection['cases']):
+        headwear = any(equipment.CLOTHING_SPECS.get(case, {}).get('headwear') for case in self.selection['cases'])
+        watch = any(equipment.CLOTHING_SPECS.get(case, {}).get('watch') for case in self.selection['cases'])
+        if not headwear and not watch:
             return ''
-        return '[EQUIPMENT_TEST] SCENE_HEADWEAR ' + json.dumps(dict(
-            prepared=True, authority='server' if self.selection['kind'] == 'mp' else 'sp', rootRetained=True,
-            normalizedItems=[dict(id=900, fullType='Base.Glasses_Cosmetic_Normal', location='base:eyes')])) + '\n'
+        proof = dict(prepared=True, authority='server' if self.selection['kind'] == 'mp' else 'sp', rootRetained=True,
+                     normalizedItems=[dict(id=900, fullType='Base.Glasses_Cosmetic_Normal', location='base:eyes' if headwear else 'base:forearm_left')])
+        if watch:
+            proof['targetLocations'] = sorted(({'base:hat', 'base:fullhat'} if headwear else set()) | {equipment.CLOTHING_SPECS[case]['location'] for case in self.selection['cases'] if equipment.CLOTHING_SPECS.get(case, {}).get('watch')})
+        return '[EQUIPMENT_TEST] SCENE_HEADWEAR ' + json.dumps(proof) + '\n'
 
     def logs(self, records=None):
         captures=[]
@@ -194,8 +211,14 @@ class EquipmentTests(unittest.TestCase):
                 if case in equipment.CLOTHING_CASES:
                     row = next(row for row in self.records() if row.get('id') == case)
                     effect = {key: row['outcome']['tidyClothing'][key] for key in equipment.clothing_effect_keys(case)}
+                    if equipment.CLOTHING_SPECS[case].get('watch'):
+                        effect['watchProcessing'] = dict(active=bool(equipment.CLOTHING_SPECS[case]['alarm'] and effect['worn']), pendingRemoval=False)
                     with (self.root / 'server-launch.log').open('a') as log:
                         log.write('\n[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' + json.dumps(effect) + '\n')
+                        if equipment.CLOTHING_SPECS[case].get('watch'):
+                            before = row['outcome']['clothingCheckpoint']
+                            checkpoint = dict(id=before['id'], watch=before['watch'], watchProcessing=dict(active=bool(equipment.CLOTHING_SPECS[case]['alarm'] and before['worn']), pendingRemoval=False))
+                            log.write('[EQUIPMENT_TEST] WATCH_CHECKPOINT ' + json.dumps(checkpoint) + '\n')
             for case in self.selection['cases']:
                 if case in equipment.HOTBAR_CASES:
                     row = next(row for row in self.records() if row.get('id') == case)
@@ -372,6 +395,57 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                         server.write_text(original.replace(marker, prefix + 'CLOTHING_AUTHORITY ' + json.dumps(value)))
                         self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(original)
+
+    def test_wristwatch_preserves_alarm_state_processing_and_every_native_receipt(self):
+        cases = [case for case, spec in equipment.CLOTHING_SPECS.items() if spec.get('watch')]
+        self.selection.update(cases=cases, mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for case in cases:
+                    def target(rows):
+                        return next(row['outcome'] for row in rows if row.get('id') == case)
+                    changes = [lambda out: out['tidyClothing']['watch'].update(alarmHour=True),
+                               lambda out: out['tidyClothing']['watch'].update(alarmMinute=41),
+                               lambda out: out['tidyClothing']['watch'].update(ringing=True),
+                               lambda out: out['tidyClothing']['watch'].update(alarmSet=int(out['tidyClothing']['watch']['alarmSet'])),
+                               lambda out: out['clothingCheckpoint']['watch'].update(alarmHour=22),
+                               lambda out: out['tidyClothing']['watchBaseline'].update(alarmHour=24),
+                               lambda out: out['tidyClothing']['watchBaseline'].update(extra=True),
+                               lambda out: out['tidyClothing'].pop('watchBaseline'),
+                               lambda out: out.update(clothingCheckpoint=None),
+                               lambda out: out['tidyClothing']['watchSetup'].update(capacityBeforeRemoval=1),
+                               lambda out: out['tidyClothing']['watchSetup'].update(emptyExclusiveSlots=False)]
+                    if kind == 'sp':
+                        for field in ('clothingCheckpoint', 'tidyClothing'):
+                            changes.extend([lambda out, field=field: out[field]['watchProcessing'].update(active=1),
+                                            lambda out, field=field: out[field]['watchProcessing'].update(active=not out[field]['watchProcessing']['active']),
+                                            lambda out, field=field: out[field]['watchProcessing'].update(pendingRemoval=True),
+                                            lambda out, field=field: out[field].pop('watchProcessing')])
+                    else:
+                        changes.extend([lambda out: out['tidyClothing']['watchAcknowledgements'].pop(),
+                                        lambda out: out['tidyClothing']['watchAcknowledgements'].reverse(),
+                                        lambda out: out['tidyClothing']['watchAcknowledgements'][0].update(id=False),
+                                        lambda out: out['tidyClothing']['watchAcknowledgements'][1].update(state='started')])
+                    for change in changes:
+                        rows = copy.deepcopy(self.records()); change(target(rows))
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, kind, mode))
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    for label in ('CLOTHING_AUTHORITY', 'WATCH_CHECKPOINT'):
+                        marker = next(line for line in original.splitlines() if label + ' ' in line)
+                        payload = json.loads(marker.split(label + ' ', 1)[1])
+                        for changed in (dict(payload, watchProcessing=dict(active=True, pendingRemoval=True)),
+                                        dict(payload, watchProcessing=dict(active=1, pendingRemoval=False)),
+                                        dict(payload, watchProcessing=dict(active=not payload['watchProcessing']['active'], pendingRemoval=False)),
+                                        dict(payload, watch=dict(payload['watch'], alarmSet=int(payload['watch']['alarmSet'])))):
+                            server.write_text(original.replace(marker, '[EQUIPMENT_TEST] ' + label + ' ' + json.dumps(changed)))
+                            self.assertTrue(self.verify(self.logs())['issues'], label)
+                        server.write_text(original.replace(marker, marker + '\n' + marker))
+                        self.assertTrue(self.verify(self.logs())['issues'], label)
+                        server.write_text(original)
 
     def test_headwear_requires_configured_type_slot_setup_and_exact_server_correlation(self):
         self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])

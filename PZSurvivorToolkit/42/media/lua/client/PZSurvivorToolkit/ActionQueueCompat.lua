@@ -258,12 +258,22 @@ local clothingMethods = {"isValid", "update", "start", "stop", "perform", "compl
 local function ordinaryClothingItem(item, character, allowHeadwear)
     if not instanceof(item, "Clothing") or not ItemTag or not ItemTag.REPLACE_PRIMARY or not ItemTag.WEARABLE
         or not ItemBodyLocation or not ItemBodyLocation.HAT or not ItemBodyLocation.FULL_HAT
-        or item:getContainer() ~= character:getInventory() or item:getCategory() ~= "Clothing"
+        or item:getContainer() ~= character:getInventory()
+        or (item:getCategory() ~= "Clothing" and not (item:getCategory() == "AlarmClock" and instanceof(item, "AlarmClockClothing")))
         or item:canBeEquipped() ~= nil or item:hasTag(ItemTag.WEARABLE)
         or item:hasTag(ItemTag.REPLACE_PRIMARY) or item:isBroken()
         or item:getAttachedSlot() ~= -1 or isForceDropHeavyItem(item) then return end
     local location = item:getBodyLocation()
     if not location or tostring(location) == "" then return end
+    -- AlarmClockClothing is a final Clothing subtype; inventory alarm clocks
+    -- share its category but not Wear's bounded single-wrist effects.
+    if item:getCategory() == "AlarmClock" and (not ItemBodyLocation.LEFT_WRIST or not ItemBodyLocation.RIGHT_WRIST
+        or (location ~= ItemBodyLocation.LEFT_WRIST and location ~= ItemBodyLocation.RIGHT_WRIST)) then return end
+    if item:getCategory() == "AlarmClock" then
+        local primary, secondary = character:getPrimaryHandItem(), character:getSecondaryHandItem()
+        if item:isRinging() ~= false or (primary and primary:getID() == item:getID())
+            or (secondary and secondary:getID() == item:getID()) then return end
+    end
     if location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then
         if not allowHeadwear then return end
         -- Java setWornItem also flattens Mohawk when newItem is nil.

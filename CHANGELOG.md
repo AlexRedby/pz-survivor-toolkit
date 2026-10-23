@@ -33,6 +33,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.228
+
+- **Action queue:** Use shared native completion for proven P4 restoration and removal of unheld, nonringing wristwatches. Preserve exact watch identity, alarm configuration, native processing, required cleanup and independent following actions. Table alarm clocks, conflicting wrist slots and modified callbacks retain their existing handling.
+
 ### 0.1.227
 
 - **Action queue:** Use shared native completion for proven P4 restoration of plain headwear into an empty slot, with unchanged non-Mohawk hair. Preserve exact item identity, required cleanup and independent following actions. Conflicting slots, hairstyle changes and modified callbacks retain their existing handling.

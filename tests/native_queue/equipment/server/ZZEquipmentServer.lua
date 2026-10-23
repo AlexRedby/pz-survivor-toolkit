@@ -52,7 +52,8 @@ local function execute(module,command,player,args)
   elseif command=='Checkpoint' or command=='Verify' then
    assert(session and session.id==args.case and not pending,'out-of-order equipment verify')
    assert(command=='Checkpoint' or session.checkpointed,'missing equipment checkpoint')
-   pending={player=player,since=getTimestampMs(),checkpoint=command=='Checkpoint'}
+   pending={player=player,since=getTimestampMs(),checkpoint=command=='Checkpoint',
+    tidy=getActivatedMods():contains('P4TidyUpMeister')}
   elseif command=='Cleanup' then
    assert(session and session.id==args.case and session.verified and not cleanup,'unverified equipment cleanup')
    cleanup={player=player,since=getTimestampMs()}
@@ -89,6 +90,11 @@ Events.OnTick.Add(function()
   assert(getTimestampMs()-pending.since<20000,'authoritative equipment state did not converge')
   local idle=Fixture.transactionsSettled()
   local settled=not pending.checkpoint or Fixture.settled(session,Selection.mode,true)
+  if Clothing.wristwatch(session)then
+   local worn=Clothing.removes(session)
+   if not pending.checkpoint then worn=Clothing.finalWorn(session,pending.tidy)end
+   settled=settled and Clothing.watchProcessingReady(session,worn)
+  end
   if not idle or not settled then
    if not pending.diagnostic or getTimestampMs()-pending.diagnostic>=5000 then
     pending.diagnostic=getTimestampMs()
@@ -102,12 +108,16 @@ Events.OnTick.Add(function()
   end
   if pending.checkpoint then
    local outcome=Fixture.verify(session,Selection.mode,true)
+   if Clothing.wristwatch(session)then
+    local clothing=assert(outcome.clothingCheckpoint)
+    print('[EQUIPMENT_TEST] WATCH_CHECKPOINT '..JSON.encode({id=clothing.id,watch=clothing.watch,watchProcessing=clothing.watchProcessing}))
+   end
    session.checkpointed=true
    print('[EQUIPMENT_TEST] CHECKPOINT case='..session.id)
    reply(pending.player,'Checkpointed',{case=session.id,ok=true,outcome=outcome})
   else
    Fixture.refresh(session)
-   local passed,problem=pcall(Postprocess.verify,session,Selection.mode,getActivatedMods():contains('P4TidyUpMeister'))
+   local passed,problem=pcall(Postprocess.verify,session,Selection.mode,pending.tidy)
    session.verified=true
    if passed and (session.id=='tidy-group' or session.id=='tidy-multigroup') then
     print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))

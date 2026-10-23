@@ -40,6 +40,8 @@ function makeItem(kind,dest)
  function i:getID() return self.id end
  function i:getBodyLocation()
   if self.kind=='Base.Socks_Ankle'then return 'base:socks'
+  elseif self.kind=='Base.WristWatch_Left_DigitalBlack'then return 'base:leftwrist'
+  elseif self.kind=='Base.WristWatch_Right_ClassicBlack'then return 'base:rightwrist'
   elseif self.kind=='Base.Hat_Beany'then return 'base:hat'
   elseif self.kind=='Base.Hat_BoxingRed'then return 'base:fullhat'
   elseif self.kind=='Base.Belt2'then return 'BELT'end
@@ -58,7 +60,12 @@ function makeItem(kind,dest)
  function i:getAttachedToModel() return self.model end
  function i:setAttachedToModel(v) self.model=v end
  function i:hasTag() return false end
- function i:getCategory() return 'Clothing' end
+ function i:getCategory() return self.kind:find('WristWatch',1,true)and 'AlarmClock'or 'Clothing' end
+ function i:getHour()return self.hour end;function i:getMinute()return self.minute end
+ function i:setHour(value)self.hour=value end;function i:setMinute(value)self.minute=value end
+ function i:isAlarmSet()return self.alarm==true end;function i:isRinging()return self.ringing==true end
+ function i:setAlarmSet(value)self.alarm=value;self.ringing=false end
+ function i:syncAlarmClock()self.alarmSynced=true end
  function i:isBroken() return false end
  function i:getClothingItem() return true end
  function i:getEquipSound() end
@@ -447,7 +454,8 @@ do
  function group:getLocation(location)return location end
  function group:isMultiItem()return self.multi end
  function group:isExclusive(a,b)
-  return a~=b and (a==ItemBodyLocation.FULL_HAT and (b==ItemBodyLocation.HAT or b=='base:mask')
+  return a~=b and (a=='base:leftwrist'and b=='base:forearmleft'or a=='base:rightwrist'and b=='base:forearmright'
+   or a==ItemBodyLocation.FULL_HAT and (b==ItemBodyLocation.HAT or b=='base:mask')
    or b==ItemBodyLocation.FULL_HAT and (a==ItemBodyLocation.HAT or a=='base:mask'))
  end
  function player:getBodyLocationGroup()return group end
@@ -582,6 +590,101 @@ do
    print(case..': two-phase Host setup rejects early native proxy, absent root, wrong ID/type/case and duplicates')
   end
  end
+ -- Wristwatches use the same real Wear/Unequip and CutHair paths, preserving
+ -- authority-seeded alarm configuration and capturing all three native receipts.
+ local previousInstanceof=instanceof
+ instanceof=function(item,kind)
+  if item.kind and item.kind:find('WristWatch',1,true)and (kind=='AlarmClockClothing'or kind=='Clothing')then return true end
+  return previousInstanceof(item,kind)
+ end
+ getGameTime=function()return {getHour=function()return 9 end}end
+ local processPending=false
+ getCell=function()return {getProcessItems=function()return {contains=function()return true end}end,
+  getProcessItemsRemove=function()return {contains=function()return processPending end}end}end
+ for _,case in ipairs({'tidy-watch-digital-restore','tidy-watch-digital-remove','tidy-watch-classic-restore','tidy-watch-classic-remove'})do
+  local remove=case:match('%-remove$')~=nil
+  state.id=case;state.ids=nil;state.clothingP4=nil;state.clothingRestoreAction=nil;state.clothingRestoreReceipt=nil
+  state.clothingReceipts=nil;state.clothingProducerStarted=nil;state.clothingWatchReady=nil
+  state.clothingSetupPending=nil;state.clothingSetupPrevious=nil;player.worn={};player.primary,player.secondary=state.hammer,state.screwdriver
+  visual.hair='CrewCut';visual.attached=nil;isClient,isServer=function()return false end,function()return true end
+  local forearm=case:find('digital',1,true)and 'base:forearmleft'or 'base:forearmright'
+  local foreign=makeItem('Base.ForearmGuard',state.root);player.worn[forearm]=foreign
+  assert(not pcall(Clothing.prepare,state,seedHead)and player.worn[forearm]==foreign,'watch fixture must reject occupied exclusive forearm')
+  player.worn[forearm]=nil
+  Clothing.prepare(state,seedHead)
+  local watch=state.clothingItem;local location=state.clothingLocation;local spec=Clothing.spec(state)
+  assert(watch.alarmSynced and watch:getHour()==21 and watch:getMinute()==40 and watch:isAlarmSet()==spec.alarmSet and not watch:isRinging())
+  local ids={case=case,items={clothingItem=watch:getID()},clothingHair='CrewCut',clothingSetupPending=state.clothingSetupPending,clothingWatch=state.clothingWatch}
+  assert(Clothing.available(player,ids),'exact watch root/alarm setup must become ready')
+  watch.minute=41;assert(not Clothing.available(player,ids),'watch replication may not repair alarm minute');watch.minute=40
+  if not remove then
+   assert(not player:getWornItem(location)and state.clothingSetupPending,'watch restore must wait for root identity before wearing')
+   sendClothing=function(actor,slot,item)assert(actor==player and slot==location and item==watch)end
+   Clothing.configure(state,watch:getID());ids.clothingSetupPending=nil
+  end
+  assert(player:getWornItem(location)==(not remove and watch or nil))
+  local prior=player.worn[location]
+  player.worn[location]={getID=function()return watch:getID()end}
+  assert(not Clothing.available(player,ids),'same-ID worn proxy cannot replace the exact root watch')
+  player.worn[location]=prior
+  local expected=ids.clothingWatch
+  ids.clothingWatch={alarmHour=21,alarmMinute=40,alarmSet=spec.alarmSet,ringing=false,unexpected=true}
+  assert(not Clothing.available(player,ids),'watch descriptor must reject unreviewed alarm fields');ids.clothingWatch=expected
+  isClient,isServer=function()return true end,function()return false end;state.ids=ids
+  local setWorn=player.setWornItem;local setAlarm=watch.setAlarmSet
+  player.setWornItem=function()error('client must not repair watch worn setup')end
+  watch.setAlarmSet=function()error('client must not repair watch alarm setup')end
+  Clothing.prepare(state,function(key)state[key]=watch end)
+  player.setWornItem=setWorn;watch.setAlarmSet=setAlarm;state.ids=nil
+  isClient=function()return false end
+  queue.queue={};queue.current=nil;Clothing.enqueue(state,{run=function(callback)return callback()end})
+  local first=state.clothingFirst;local producer=state.clothingProducer
+  local receipts,receiptStates={},{}
+  toolkit={Settings={actionQueue=function()return true end},ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
+   ActionQueueAcknowledgements={capture=function(action)
+    if queue.current~=action then return nil end
+    receipts[action]=receipts[action]or {};return receipts[action]
+   end,observe=function(action,receipt)assert(receipt==receipts[action]);return receiptStates[action]end}}
+  for _,action in ipairs({first,producer})do
+   queue.current=action;isClient=function()return true end
+   action.isStarted=function()return true end
+   if action==producer then assert(first:complete())end
+   Clothing.observe(state,queue,toolkit,true)
+   receiptStates[action]='completed'
+  end
+  assert(producer:complete());assert(state.clothingWatchReady)
+  assert(Clothing.verify(state,remove).watch.alarmSet==spec.alarmSet)
+  local label=spec.fullType..'#'..watch:getID()..'@inventory'
+  Clothing.observeLine(state,prefix..'capture worn=['..(remove and ''or tostring(location)..'='..label)..'] inventoryCount=5')
+  Clothing.observeLine(state,prefix..'add[add] type='..first.Type..' item='..label)
+  Clothing.observeLine(state,prefix..'add[add] type=ISCutHair item=nil')
+  Clothing.observeLine(state,prefix..'RESTORE actionTotal=4 trace=[ISReadABook -> '..first.Type..' -> ISCutHair -> ISReadABook] reason=operation:ISReadABook')
+  local cleanup=(remove and ISUnequipAction or ISWearClothing):new(player,watch,50)
+  queue.queue={cleanup};queue.current=cleanup
+  Clothing.observe(state,queue,toolkit,true);assert(cleanup:complete());receiptStates[cleanup]='completed'
+  Clothing.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S17')
+  assert(Clothing.settled(state,toolkit,true))
+  for _,action in ipairs({first,producer,cleanup})do
+   receiptStates[action]='started';assert(not Clothing.settled(state,toolkit,true))
+   assert(not pcall(Clothing.evidence,state,toolkit,true,{}),'each watch native authority receipt must complete')
+   receiptStates[action]='completed'
+  end
+  local outcome=Clothing.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})
+  assert(#outcome.watchAcknowledgements==3 and outcome.watchAcknowledgements[1].kind==first.Type
+   and outcome.watchAcknowledgements[2].kind=='ISCutHair'and outcome.watchAcknowledgements[2].id==false
+   and outcome.watchAcknowledgements[3].kind==cleanup.Type and outcome.watchBaseline.alarmHour==21)
+  for key,bad in pairs({hour=22,minute=30,alarm=not spec.alarmSet,ringing=true})do
+   local before=watch[key];watch[key]=bad
+   assert(not pcall(Clothing.verify,state,not remove)and not Clothing.settled(state,toolkit,true),'changed watch '..key..' accepted')
+   watch[key]=before
+  end
+  isClient=function()return false end
+  processPending=true;assert(not Clothing.settled(state,toolkit,true),'authority must wait for native process removal drain')
+  processPending=false;local authoritative=Clothing.verify(state,not remove)
+  assert(authoritative.watchProcessing.active and not authoritative.watchProcessing.pendingRemoval)
+  print(case..': native watch lifecycle, alarm conservation, no client repair and three Host receipts passed')
+ end
+ instanceof=previousInstanceof
  -- Socks use the same Host restore handshake, retaining a real starter socks
  -- baseline until configuration instead of repairing a client worn proxy.
  state.id='tidy-clothing';player.worn={};isServer=function()return true end
