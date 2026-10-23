@@ -162,6 +162,85 @@ def positive_timeout(value):
     return seconds
 
 
+def _without_comments(text, kotlin=False):
+    """Mask comments as whitespace; retain literals and reflection references.
+
+    Kotlin block comments nest and its string templates can contain quoted
+    expressions. Java block comments stop at the first closer, and Java text
+    blocks allow escapes. This only locates comments, not language dependencies.
+    """
+    tokens = re.compile(r'"""|["\'`]|//[^\r\n]*|/\*')
+    blocks = re.compile(r'/\*|\*/')
+    comments = []
+
+    def comment_end(start):
+        depth, end = 1, start + 2
+        while delimiter := blocks.search(text, end):
+            end = delimiter.end()
+            if delimiter.group() == '*/':
+                depth -= 1
+            elif kotlin:
+                depth += 1
+            if not depth:
+                return end
+        return len(text)
+
+    def quoted_end(start, quote):
+        end = start + len(quote)
+        while end < len(text):
+            if text.startswith(quote, end):
+                return end + len(quote)
+            if kotlin and quote in ('"', '"""') and text.startswith('${', end):
+                end = template_end(end + 2)
+            elif text[end] == '\\' and quote != '`' and not (kotlin and quote == '"""'):
+                end += 2
+            else:
+                end += 1
+        return len(text)
+
+    def template_end(end):
+        depth = 1
+        while end < len(text):
+            if text.startswith('/*', end):
+                stop = comment_end(end)
+                comments.append((end, stop))
+                end = stop
+            elif text.startswith('//', end):
+                newline = text.find('\n', end)
+                stop = len(text) if newline < 0 else newline + 1
+                comments.append((end, stop))
+                end = stop
+            elif text[end] in ('"', "'", '`'):
+                quote = '"""' if text.startswith('"""', end) else text[end]
+                end = quoted_end(end, quote)
+            else:
+                if text[end] == '{':
+                    depth += 1
+                elif text[end] == '}':
+                    depth -= 1
+                    if not depth:
+                        return end + 1
+                end += 1
+        return end
+
+    cursor = 0
+    while match := tokens.search(text, cursor):
+        token = match.group()
+        if token.startswith('//') or token == '/*':
+            end = comment_end(match.start()) if token == '/*' else match.end()
+            comments.append((match.start(), end))
+        else:
+            end = quoted_end(match.start(), token)
+        cursor = end
+    parts, cursor = [], 0
+    for start, end in comments:
+        parts.append(text[cursor:start])
+        parts.append(re.sub(r'[^\r\n]', ' ', text[start:end]))
+        cursor = end
+    parts.append(text[cursor:])
+    return ''.join(parts)
+
+
 def check_sources(names):
     """Select migrated checks and reachable Java/Kotlin helpers without unrelated checks."""
     directory = ROOT / 'tests'
@@ -171,6 +250,8 @@ def check_sources(names):
         kotlin = source.with_suffix('.kt')
         selected.append(kotlin if kotlin.is_file() else source.with_suffix('.java'))
     candidates = sorted(path for path in directory.rglob('*') if path.suffix in ('.java', '.kt'))
+    texts = {path: _without_comments(path.read_text(encoding="utf-8"), kotlin=path.suffix == ".kt")
+             for path in candidates}
     symbols = {}
     for candidate in candidates:
         exported = {candidate.stem}
@@ -183,7 +264,7 @@ def check_sources(names):
                 r'data|sealed|enum|value|open|abstract|actual|expect)\s+)*'
                 r'(?:(?:class|object|interface|val|var)\s+([A-Za-z_]\w*)|'
                 r'fun\s+(?:<[^>\n]+>\s*)?(?:[\w.*?<>]+\.)?([A-Za-z_]\w*)\s*\()',
-                candidate.read_text(encoding='utf-8'), re.MULTILINE)
+                texts[candidate], re.MULTILINE)
             exported.update(match.group(1) or match.group(2) for match in declarations)
         symbols[candidate] = exported
     pending, visited = list(selected), set()
@@ -192,7 +273,7 @@ def check_sources(names):
         if source in visited or not source.is_file():
             continue
         visited.add(source)
-        text = source.read_text(encoding='utf-8')
+        text = texts[source]
         identifiers = set(re.findall(r'\b[A-Za-z_]\w*\b', text))
         for candidate in candidates:
             if candidate in visited or not symbols[candidate].intersection(identifiers):

@@ -90,6 +90,106 @@ object KotlinHelper { @JvmStatic fun read() = 1 }
             sources = build.check_sources(['checks.SelectedCheck'])
         self.assertEqual(set(sources), {selected, java_helper, kotlin_helper})
 
+    def test_comment_only_helper_mentions_do_not_expand_selected_compilation(self):
+        for suffix in ('.kt', '.java'):
+            with self.subTest(suffix=suffix):
+                package = 'checks_' + suffix[1:]
+                selected = self.source(package + '/SelectedCheck' + suffix, '''package %s;
+// LocalLinePoison helpers.QualifiedLinePoison import helpers.LineImportedPoison
+/* LocalBlockPoison helpers.QualifiedBlockPoison
+import helpers.BlockImportedPoison
+*/
+%s
+''' % (package, 'object SelectedCheck { fun run() = RealHelper.read() }'
+       if suffix == '.kt' else 'class SelectedCheck { Object run() { return RealHelper.read(); } }'))
+                real = self.source(package + '/RealHelper.java',
+                                   'package %s; class RealHelper { static int read() { return 1; } }' % package)
+                for name in ('LocalLinePoison', 'LocalBlockPoison'):
+                    self.source(package + '/' + name + '.kt', 'This unrelated source must never reach the compiler.')
+                for name in ('QualifiedLinePoison', 'QualifiedBlockPoison',
+                             'LineImportedPoison', 'BlockImportedPoison'):
+                    self.source('helpers/' + name + '.kt', 'This unrelated source must never reach the compiler.')
+                with patch.object(build, 'ROOT', self.root):
+                    sources = build.check_sources([package + '.SelectedCheck'])
+                self.assertEqual(set(sources), {selected, real})
+
+    def test_commented_kotlin_declarations_do_not_export_helper_symbols(self):
+        selected = self.source('checks/SelectedCheck.kt', '''package checks
+object SelectedCheck { fun run() = liveValue() }
+''')
+        real = self.source('checks/LiveUtilities.kt', 'package checks\nfun liveValue() = 1')
+        self.source('checks/CommentedUtilities.kt', '''package checks
+/*
+fun liveValue() = error("Unrelated helper")
+*/
+''')
+        with patch.object(build, 'ROOT', self.root):
+            sources = build.check_sources(['checks.SelectedCheck'])
+        self.assertEqual(set(sources), {selected, real})
+
+    def test_kotlin_template_comments_exclude_poison_without_hiding_real_helpers(self):
+        selected = self.source('checks/SelectedCheck.kt', '''package checks
+object SelectedCheck {
+    val text = """${ /* BlockPoison */ RealHelper.read() } ${
+        // LinePoison helpers.QualifiedPoison
+        Class.forName("helpers.ReflectiveHelper")
+    } ${ "/* helpers.LiteralHelper */" }"""
+}
+''')
+        real = self.source('checks/RealHelper.kt', 'package checks\nobject RealHelper { fun read() = 1 }')
+        reflected = self.source('helpers/ReflectiveHelper.kt', 'package helpers\nobject ReflectiveHelper')
+        literal = self.source('helpers/LiteralHelper.kt', 'package helpers\nobject LiteralHelper')
+        for name in ('checks/BlockPoison.kt', 'checks/LinePoison.kt', 'helpers/QualifiedPoison.kt'):
+            self.source(name, 'This unrelated source must never reach the compiler.')
+        with patch.object(build, 'ROOT', self.root):
+            sources = build.check_sources(['checks.SelectedCheck'])
+        self.assertEqual(set(sources), {selected, real, reflected, literal})
+
+    def test_nested_block_comment_boundaries_follow_the_source_language(self):
+        for suffix, includes_inner in (('.kt', False), ('.java', True)):
+            with self.subTest(suffix=suffix):
+                package = 'checks_' + suffix[1:]
+                body = ('object SelectedCheck { fun run(): Int {\n'
+                        '/* outer /* inner */ InnerHelper.read(); */\nreturn RealHelper.read()\n} }'
+                        if suffix == '.kt' else
+                        'class SelectedCheck { int run() {\n'
+                        '/* outer /* inner */ InnerHelper.read();\nreturn RealHelper.read();\n} }')
+                selected = self.source(package + '/SelectedCheck' + suffix, 'package %s;\n%s\n' % (package, body))
+                real = self.source(package + '/RealHelper.java',
+                                   'package %s; class RealHelper { static int read() { return 1; } }' % package)
+                inner = self.source(package + '/InnerHelper.java',
+                                    'package %s; class InnerHelper { static int read() { return 2; } }' % package)
+                with patch.object(build, 'ROOT', self.root):
+                    sources = build.check_sources([package + '.SelectedCheck'])
+                expected = {selected, real, inner} if includes_inner else {selected, real}
+                self.assertEqual(set(sources), expected)
+
+    def test_literal_comment_markers_preserve_reflective_helper_references(self):
+        cases = (
+            ('.kt', 'val marker = "//"; Class.forName("helpers.ReflectiveHelper")'),
+            ('.java', 'String marker = "/*"; Class.forName("helpers.ReflectiveHelper");'),
+            ('.kt', 'val names = """//\nhelpers.ReflectiveHelper\n/*"""'),
+            ('.java', 'String names = """\n//\nhelpers.ReflectiveHelper\n/*\n""";'),
+            ('.kt', r'''val quote = '\''; Class.forName("helpers.ReflectiveHelper")'''),
+            ('.java', r'''char quote = '\''; Class.forName("helpers.ReflectiveHelper");'''),
+            ('.kt', 'val `/* marker //` = Class.forName("helpers.ReflectiveHelper")'),
+            ('.kt', 'val marker = "${"/*"}"; Class.forName("helpers.ReflectiveHelper")'),
+            ('.java', '''String marker = """
+\\""" /*
+"""; Class.forName("helpers.ReflectiveHelper");'''),
+        )
+        helper = self.source('helpers/ReflectiveHelper.kt', 'package helpers\nobject ReflectiveHelper')
+        for index, (suffix, expression) in enumerate(cases):
+            with self.subTest(expression=expression):
+                package = 'checks_' + str(index)
+                body = ('object SelectedCheck { fun run() {\n' + expression + '\n} }'
+                        if suffix == '.kt' else 'class SelectedCheck { void run() throws Exception {\n' + expression + '\n} }')
+                selected = self.source(package + '/SelectedCheck' + suffix,
+                                       'package ' + package + ';\n' + body + '\n')
+                with patch.object(build, 'ROOT', self.root):
+                    sources = build.check_sources([package + '.SelectedCheck'])
+                self.assertEqual(set(sources), {selected, helper})
+
     def prepare_checks(self):
         self.kotlin_name = 'net.alexredby.pztoolkitjavapatches.MedicineCooldownChecks'
         self.cold_name = 'net.alexredby.javapatchfixture.KotlinRuntimeChecks'
