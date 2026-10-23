@@ -55,6 +55,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.238
+
+- **Action queue:** Offer one-shot recovery of the last cancelled remainder from the queue panel. Reconstruct supported pending actions under fresh operation identities, retain skill-book page progress and omit completed or unsafe partly executed work. Revalidate resources and targets before recovery; never overwrite a new queue or reuse cancelled server authority.
+
 ### 0.1.237
 
 - **Action queue / televisions:** Preserve queued work when VHS ejection replicates before native completion. Require the empty television, one newly returned cassette with the expected media index and a correlated Host receipt; retain native effects without replaying them.

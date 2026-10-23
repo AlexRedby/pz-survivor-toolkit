@@ -2034,3 +2034,36 @@ do
     isClient,ZomboidGlobals,IsoObjectChange=previousClient,oldGlobals,oldChange
 end
 print('Native BBQ stop race: correlated completed/canceled/rejected outcomes, native removal, exact returns, independent reading and conservative abort guards passed.')
+
+-- Recovery remains reachable after a whole clear, without stale press/release IDs.
+do
+    local saved={id=101,count=2,skipped=1};local restored,forgotten
+    local previousRecovery=PZSurvivorToolkit.ActionQueueRecovery
+    PZSurvivorToolkit.ActionQueueRecovery={
+        info=function()return saved end,
+        preview=function()return saved and {id=saved.id,count=saved.count,available=true}end,
+        restore=function(_,id)restored=id;return true end,
+        forget=function(_,id)forgotten=id;saved=nil;return true end,
+    }
+    ISButton=widget:derive('ISButton')
+    function ISButton:new(x,y,w,h,title,target,callback)
+        local button=widget.new(self,x,y,w,h);button.title,button.target,button.onclick=title,target,callback;return button
+    end
+    function ISButton:onMouseDown()return true end
+    function ISButton:setTitle(title)self.title=title end
+    function widget:setY(value)self.y=value end
+    p=player();q=ISTimedActionQueue.getTimedActionQueue(p)
+    refresh();local view=ui[#ui];view:update()
+    assert(view.visible and #view.list.items==0 and view.restoreButton.visible and view.restoreButton.enabled,
+        'cancelled history keeps an empty queue window and its restore control visible')
+    assert(view.list.height==view.height-view.list.y-42 and view.restoreButton.tooltip:find('recovery_skipped',1,true))
+    view.restoreButton:onMouseDown(1,1)
+    saved={id=102,count=1,skipped=0};view.recoveryAt=nil;view:update()
+    view:restoreCancelled(view.restoreButton)
+    assert(restored==101,'a press must retain its original history ID; backend rejects a replacement')
+    view.restoreButton:onMouseDown(1,1);view:restoreCancelled(view.restoreButton);assert(restored==102)
+    view.forgetButton:onMouseDown(1,1);view:forgetCancelled(view.forgetButton);assert(forgotten==102)
+    refresh();assert(not view.visible and not view.restoreButton.visible)
+    PZSurvivorToolkit.ActionQueueRecovery=previousRecovery
+    print('Queue recovery UI: empty-window access, skipped-task hint, footer layout, one-click restore/forget and stale history press passed.')
+end

@@ -844,5 +844,13 @@
   "UI_PZST_Manifest_Totals": "Видов предметов: %1 | Всего: %2",
   "UI_PZST_Manifest_Shared": "Общий склад | для выгруженных участков показаны последние сведения",
   "UI_PZST_Manifest_Error": "Сервер недоступен. Показаны последние полученные сведения.",
-  "UI_PZST_Manifest_Open": "Открыть склад"
+  "UI_PZST_Manifest_Open": "Открыть склад",
+  "UI_PZSurvivorToolkit_queue_recovery_restore": "Восстановить (%1)",
+  "UI_PZSurvivorToolkit_queue_recovery_forget": "Забыть эту отменённую очередь",
+  "UI_PZSurvivorToolkit_queue_recovery_tip": "Однократно вернуть последний отменённый остаток. Завершённые действия не повторяются.",
+  "UI_PZSurvivorToolkit_queue_recovery_skipped": "Нельзя безопасно вернуть: %1 задач, включая неподдерживаемые и частично выполненные операции.",
+  "UI_PZSurvivorToolkit_queue_recovery_busy": "Сначала завершите или отмените новые действия.",
+  "UI_PZSurvivorToolkit_queue_recovery_moving": "Остановитесь перед восстановлением.",
+  "UI_PZSurvivorToolkit_queue_recovery_settling": "Ожидание остановки прежних действий игры.",
+  "UI_PZSurvivorToolkit_queue_recovery_unavailable": "Сейчас нельзя безопасно восстановить задачи: недоступен предмет, цель или поддерживаемый способ повторного создания действия."
 }

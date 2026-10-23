@@ -126,6 +126,10 @@ These are implementation and verification gaps, not evidence that every action u
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
 - [ ] Remove the remaining family-specific bypasses after the corresponding SP/MP checks; preserve fallback for unsupported Java/server versions, resource contracts and separate medical/cart sync fixes.
 
+# Extend cancelled queue recovery
+
+- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
+
 # Further action queue migration
 
 The executor remains `ISTimedActionQueue`. Add families through Definitions and the shared dependency/effect contract, keeping any dependency model read-only: it validates edits, never executes game effects, replaces the native scheduler or reserves future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).

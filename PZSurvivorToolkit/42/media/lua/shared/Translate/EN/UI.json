@@ -844,5 +844,13 @@
   "UI_PZST_Manifest_Totals": "%1 item types | %2 items",
   "UI_PZST_Manifest_Shared": "Shared warehouse | unloaded areas show last known contents",
   "UI_PZST_Manifest_Error": "Server unavailable. Showing the last received warehouse data.",
-  "UI_PZST_Manifest_Open": "Open warehouse"
+  "UI_PZST_Manifest_Open": "Open warehouse",
+  "UI_PZSurvivorToolkit_queue_recovery_restore": "Restore (%1)",
+  "UI_PZSurvivorToolkit_queue_recovery_forget": "Forget this cancelled queue",
+  "UI_PZSurvivorToolkit_queue_recovery_tip": "Restore the last cancelled remainder once. Completed actions are never repeated.",
+  "UI_PZSurvivorToolkit_queue_recovery_skipped": "Cannot safely restore: %1 task(s), including unsupported or partly executed operations.",
+  "UI_PZSurvivorToolkit_queue_recovery_busy": "Finish or cancel the new actions first.",
+  "UI_PZSurvivorToolkit_queue_recovery_moving": "Stop moving before restoring.",
+  "UI_PZSurvivorToolkit_queue_recovery_settling": "Waiting for the previous native actions to stop.",
+  "UI_PZSurvivorToolkit_queue_recovery_unavailable": "The saved tasks cannot currently be rebuilt safely: a resource, target, or supported action contract is unavailable."
 }

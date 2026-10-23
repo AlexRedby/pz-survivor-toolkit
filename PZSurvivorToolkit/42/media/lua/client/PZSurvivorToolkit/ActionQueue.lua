@@ -49,6 +49,7 @@ Queue.updateOperationState = updateOperationState
 
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.started(action) end
     -- Initialize disabled-mode bookkeeping before native allocation/receipts.
     -- Its first tick must not revoke a freshly captured media transaction.
     updateOperationState(ISTimedActionQueue.queues[action.character])
@@ -133,6 +134,7 @@ end
 
 local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.completed(action) end
     if Toolkit.ActionQueueLifecycle.deferCompletion(queue, action) then return end
     if Operations.deferCompletion and Operations.deferCompletion(queue, action) then return end
     if queue.toolkitOutcomeWait and queue.toolkitCancel == action and queue.current == action and queue.queue[1] == action then
@@ -315,6 +317,7 @@ if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop"
 -- Native reset/clear delegate here even when another mod retains an earlier reset wrapper.
 local cancelQueue = ISTimedActionQueue.cancelQueue
 ISTimedActionQueue.cancelQueue = function(queue)
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.capture(queue) end
     Toolkit.ActionQueueLifecycle.reset(queue)
     Toolkit.ActionQueueAcknowledgements.reset(queue)
     if Operations.invalidateQueue then Operations.invalidateQueue(queue) end
@@ -451,4 +454,5 @@ require "PZSurvivorToolkit/ActionQueueFitness"
 require "PZSurvivorToolkit/ActionQueueReading"
 require "PZSurvivorToolkit/ActionQueueMedia"
 if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end
+require "PZSurvivorToolkit/ActionQueueRecovery"
 return Queue
