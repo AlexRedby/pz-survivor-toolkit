@@ -198,7 +198,7 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_action_admission', 'cart_observer_association'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_action_admission', 'cart_observer_association'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
@@ -210,6 +210,9 @@ def validate(selection):
             or options.get('cart_fast_motion') is not True or options.get('mp_host') is not True or options.get('cart_inventory_equip') is True
             or options.get('cart_actions') is True or 'cart_wall_exit' in options):
         raise ValueError('cart_lease_control requires timeline plus isolated 26-second menu Host motion')
+    if options.get('cart_lease_lifetimes') is True and (options.get('cart_lease_control') is not True
+            or options.get('cart_time_alignment') is True or options.get('cart_hotkey_setdown') is True):
+        raise ValueError('cart_lease_lifetimes requires the isolated held lease-control Host bank')
     if options.get('cart_action_admission') is True and (options.get('cart_timeline') is not True
             or options.get('cart_fast_motion') is not True or options.get('mp_host') is not True
             or options.get('cart_actions') is not True or options.get('cart_lease_control') is True
@@ -335,7 +338,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         anchor = '    public static void main(String[] args)'
         if main.count(anchor) != 1:
             raise ValueError('CartLab composition anchor changed')
-        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods', 'ObserverParams.methods')) + '\n' + anchor)
+        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'EquipmentLifetime.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods', 'ObserverParams.methods')) + '\n' + anchor)
         main = main.replace('public static void main(String[] args) {', 'public static void main(String[] args) { ObserverParamsBootstrap.install();', 1)
     source = build / 'Main.java'
     source.write_text(main, encoding='utf-8')
@@ -392,7 +395,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                    ('inventory-equip-client.lua', 'client/CartMPInventoryEquipClient.lua'),
                                    ('inventory-equip-server.lua', 'server/CartMPInventoryEquipServer.lua'),
                                    ('inventory-equip-protocol.lua', 'shared/CartMPInventoryEquipProtocol.lua'),
-                                   ('lease-protocol.lua', 'shared/CartLeaseProtocol.lua'), ('lease-probe.lua', 'shared/CartLeaseProbe.lua')]:
+                                   ('lease-protocol.lua', 'shared/CartLeaseProtocol.lua'), ('lease-probe.lua', 'shared/CartLeaseProbe.lua'),
+                                   ('lease-lifetimes.lua', 'shared/CartLeaseLifetimes.lua')]:
+                if origin == 'lease-lifetimes.lua' and selection.get('options', {}).get('cart_lease_lifetimes') is not True:
+                    continue
                 if origin.startswith('lease-') and selection.get('options', {}).get('cart_lease_control') is not True:
                     continue
                 if origin.startswith('inventory-equip-') and selection.get('options', {}).get('cart_inventory_equip') is not True:
@@ -410,6 +416,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             spec['env']['PZ_CART_TIMELINE'] = 'true'
         if selection['suite'] == MP and (selection.get('options', {}).get('cart_lease_control') is True or selection.get('options', {}).get('cart_action_admission') is True):
             spec['env']['PZ_CART_LEASE_CONTROL'] = 'true'
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_lease_lifetimes') is True:
+            spec['env']['PZ_CART_LEASE_LIFETIME'] = 'true'
         if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
             spec['env']['PZ_CART_ACTION_ADMISSION'] = 'true'
         if selection['suite'] == MP and selection.get('options', {}).get('cart_observer_association') is True:
@@ -1251,6 +1259,12 @@ def verify(root, selection, catalog):
                 raise ValueError('Incomplete native lease-control exchange evidence')
             _write(analysis / 'mp-lease-control.json', json.dumps(lease, indent=2, allow_nan=False))
             evidence['leaseControl'] = lease
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_lease_lifetimes') is True:
+            lifetimes = _load(intake / 'analyze-lease-lifetimes.py').analyze(root)
+            if lifetimes.get('evidenceComplete') is not True:
+                raise ValueError('Incomplete native equipment lifetime evidence')
+            _write(analysis / 'mp-lease-lifetimes.json', json.dumps(lifetimes, indent=2, allow_nan=False))
+            evidence['equipmentLifetimes'] = lifetimes
         if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
             admission = _load(intake / 'analyze-action-admission.py').analyze(root)
             if admission.get('evidenceComplete') is not True:

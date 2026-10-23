@@ -85,6 +85,12 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
+### Equipment lifetime boundary work
+
+- [ ] Identify the pinned native hand/actor/connection mutation boundaries and register a bounded, fail-closed lifetime revision before the fixture's actors exist. Unknown or bypassed provenance must not authorize a held lease.
+- [ ] Feed the native lifetime revision into the test-only server/receiver binding; retain ordering fences across release/reacquire and same-ID object replacement even when polling misses the intermediate empty state. Gate: actual native setter/identity regressions plus rejected stale pending replies and payloads.
+- [ ] Extend the opt-in Host evidence with witnessed equipment edges and fresh bind/rejection chains. Gate: sealed sources, exact actor/item/cargo identity, clean logs and owned cleanup. Actor removal/respawn and reconnect remain open until their actual native scenarios are verified.
+
 - [ ] Extend current-held control evidence to complete native equipment lifetimes: observe release/reacquire, same-ID item replacement, actor removal/respawn and reconnect before accepting or retiring a lease. The successful guarded challenge/echo probe does not cover these missed edges.
 - [ ] Extend native action-admission coverage beyond selected Setdown/Pickup completion/cancel/repeat to hotkey Drop, pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
 - [ ] Measure serialized/wire control costs and bounded bind/resync bursts; the held probe's 24 logical messages and action probe's 12 logical queries are not a payload or production-frequency budget.

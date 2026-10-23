@@ -8,6 +8,7 @@ require 'SaucedCarts/CartVisuals'
 local J=require 'CartMPJSON'
 local admissionProbe=config.options and config.options.cart_action_admission==true and require 'CartActionAdmissionProbe'
 local leaseProbe=config.options and config.options.cart_lease_control==true and require 'CartLeaseProbe'
+local lifetimeProbe=config.options and config.options.cart_lease_lifetimes==true and require 'CartLeaseLifetimes'
 local wallSide=config.options and config.options.cart_wall_exit
 local wallBank=wallSide and require 'CartMPWall'
 local wallInput=wallSide and require 'CartMPWallInput'
@@ -218,6 +219,7 @@ Events.OnTick.Add(function()
     if admissionProbe and not admissionProbe.done() then return end
     actionsFinished=true
    end
+   if lifetimeProbe and not lifetimeProbe.finish(owner,now) then return end
    if not finishedAt then finishedAt=now end
    if not stopped then assert(toolkitVideoStop(),'video stop failed');stopped=true;getCore():TakeFullScreenshot('cart-mp-end.png') end
    if wallSide then

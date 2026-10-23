@@ -13,12 +13,12 @@ end
 local function binding(b)
  if b==nil then return nil end
  assert(type(b)=='table' and (b.mode=='motion' or b.mode=='action') and b.item~=nil
-  and integer(b.cart,-2147483648,2147483647) and (b.mode~='action' or b.action~=nil),'Native binding required')
- return {mode=b.mode,cart=b.cart,item=b.item,action=b.mode=='action' and b.action or nil}
+  and integer(b.cart,-2147483648,2147483647) and (b.lifetime==nil or text(b.lifetime,160)) and (b.mode~='action' or b.action~=nil),'Native binding required')
+ return {mode=b.mode,cart=b.cart,item=b.item,action=b.mode=='action' and b.action or nil,lifetime=b.lifetime}
 end
 local function same(a,b)
  return a==nil and b==nil or a~=nil and b~=nil and a.mode==b.mode and a.cart==b.cart
-  and a.item==b.item and a.action==b.action
+  and a.item==b.item and a.action==b.action and a.lifetime==b.lifetime
 end
 local function copy(s)
  local result={};for k,v in pairs(s or {}) do if k~='binding' and k~='pending' then result[k]=v end end

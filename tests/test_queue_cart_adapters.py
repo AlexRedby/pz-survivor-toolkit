@@ -683,11 +683,31 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.role('client2');self.role('server');self.stage()
         for role in ('client1','client2','server'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_LEASE_CONTROL'],'true')
+            self.assertNotIn('PZ_CART_LEASE_LIFETIME',self.runtime['roles'][role]['env'])
+            self.assertFalse((self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseLifetimes.lua').exists())
             lua=self.output/role/'mods/ActionQueueTest/42/media/lua/shared'
             for origin,target in [('lease-protocol.lua','CartLeaseProtocol.lua'),('lease-probe.lua','CartLeaseProbe.lua')]:
                 self.assertEqual((lua/target).read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer'/origin).read_bytes())
         for key,value in [('cart_lease_control','true'),('mp_host',False),('cart_timeline',False),('cart_fast_motion',False),
                           ('cart_actions',True),('cart_inventory_equip',True),('cart_wall_exit','front')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_equipment_lifetimes_are_separately_selected_and_source_sealed(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_lifetimes=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_lifetimes'):carts.validate(self.selection)
+        self.options.update(cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('server','client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_LEASE_LIFETIME'],'true')
+            path=self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseLifetimes.lua'
+            self.assertEqual(path.read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-lifetimes.lua').read_bytes())
+        source=(self.output/'cart-build/Main.java').read_text()
+        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/EquipmentLifetime.methods'
+        self.assertIn(path.read_text(),source);self.assertIn(path,carts.sources(ROOT,self.selection))
+        for key,value in [('cart_lease_lifetimes','true'),('cart_lease_control',False),('cart_time_alignment',True),('cart_hotkey_setdown',True)]:
             original=dict(self.options);self.options[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
             self.options.clear();self.options.update(original)

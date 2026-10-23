@@ -1,0 +1,197 @@
+    // Diagnostic only; pinned B42.21 audited setter/load/removal boundaries.
+    private static final boolean LEASE_LIFETIME="true".equals(System.getenv("PZ_CART_LEASE_LIFETIME"));
+    private static final Object equipmentLifetimeLock=new Object();
+    private static final NativeWeakMap<IsoPlayer,EquipmentLife> equipmentLives=new NativeWeakMap<>();
+    private static final NativeWeakMap<zombie.core.raknet.UdpConnection,Boolean> equipmentRetiredConnections=new NativeWeakMap<>();
+    private static final java.util.ArrayList<EquipmentLife> equipmentLifetimeRecords=new java.util.ArrayList<>();
+    private static volatile boolean equipmentLifetimeFailed;
+    private static long equipmentLifetimeTraceCount,equipmentLifetimeMutationSerial;
+    public static final class EquipmentLife {
+        public final java.lang.ref.WeakReference<IsoPlayer> actor;
+        public java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> connection=new java.lang.ref.WeakReference<>(null);
+        public java.lang.ref.WeakReference<zombie.inventory.InventoryItem> primary=new java.lang.ref.WeakReference<>(null),secondary=new java.lang.ref.WeakReference<>(null);
+        public long revision=1,thread;public int depth,cart;public boolean baseline,poisoned,retired;
+        EquipmentLife(IsoPlayer actor){this.actor=new java.lang.ref.WeakReference<>(actor);}
+    }
+    public record EquipmentMutation(EquipmentLife life,int depth,long thread,long serial,String reason,
+        zombie.inventory.InventoryItem oldPrimary,zombie.inventory.InventoryItem oldSecondary) {}
+    private static boolean equipmentLifetimeEnabled(){return LEASE_LIFETIME && LEASE_CONTROL && !leaseControlFailed && !equipmentLifetimeFailed;}
+    private static void equipmentLifetimeError(Throwable error){equipmentLifetimeFailed=true;System.err.println("[CART_EQUIPMENT] {\"event\":\"error\",\"reason\":"+mpJsonString(String.valueOf(error))+"}");Main.timelineError(new IllegalStateException("Native equipment lifetime observation failed",error));}
+    private static void equipmentLifetimeTrace(String event,EquipmentLife life,EquipmentMutation scope,String reason,boolean success) {
+        if(++equipmentLifetimeTraceCount>8192)throw new IllegalStateException("Equipment lifetime trace limit");
+        var actor=life.actor.get();var primary=actor==null?null:actor.getPrimaryHandItem();var secondary=actor==null?null:actor.getSecondaryHandItem();
+        var oldPrimary=scope==null?primary:scope.oldPrimary();var oldSecondary=scope==null?secondary:scope.oldSecondary();
+        System.out.println("[CART_EQUIPMENT] {\"event\":"+mpJsonString(event)+",\"process\":"+mpJsonString(nativeTimeProcess)
+            +",\"ownerID\":"+(actor==null?-1:actor.getOnlineID())+",\"actorEpoch\":"+nativeTimeIdentity(actor,true)
+            +",\"connectionEpoch\":"+nativeTimeIdentity(life.connection.get(),false)+",\"revision\":"+life.revision+",\"depth\":"+life.depth
+            +",\"reason\":"+mpJsonString(reason)+",\"mutationSerial\":"+(scope==null?0:scope.serial())
+            +",\"oldPrimaryEpoch\":"+nativeTimeIdentity(oldPrimary,false)+",\"oldSecondaryEpoch\":"+nativeTimeIdentity(oldSecondary,false)
+            +",\"primaryEpoch\":"+nativeTimeIdentity(primary,false)+",\"secondaryEpoch\":"+nativeTimeIdentity(secondary,false)
+            +",\"primaryID\":"+(primary==null?"null":String.valueOf(primary.getID()))+",\"secondaryID\":"+(secondary==null?"null":String.valueOf(secondary.getID()))
+            +",\"success\":"+success+",\"poisoned\":"+life.poisoned+",\"retired\":"+life.retired+",\"monoNs\":"+System.nanoTime()+"}");
+    }
+    private static EquipmentLife equipmentLife(IsoPlayer actor,boolean create) {
+        var life=equipmentLives.get(actor);
+        if(life==null && create){
+            // Never drop a live tombstone/order fence to admit another actor.
+            if(equipmentLifetimeRecords.size()>=512)throw new IllegalStateException("Equipment lifetime ledger limit");
+            life=new EquipmentLife(actor);equipmentLives.put(actor,life);equipmentLifetimeRecords.add(life);
+        }
+        return life;
+    }
+    private static boolean equipmentLifetimeCart(zombie.inventory.InventoryItem item) {
+        if(item==null)return false;String type=item.getFullType();
+        return "SaucedCarts.ShoppingCart".equals(type) || "SaucedWheelbarrow.WheelbarrowWood".equals(type) || "SaucedWheelbarrow.WheelbarrowMetal".equals(type);
+    }
+    private static void equipmentLifetimeRemember(EquipmentLife life,IsoPlayer actor) {
+        var primary=actor.getPrimaryHandItem();var secondary=actor.getSecondaryHandItem();
+        life.primary=new java.lang.ref.WeakReference<>(primary);life.secondary=new java.lang.ref.WeakReference<>(secondary);
+        life.cart=primary==null?0:primary.getID();
+    }
+    private static EquipmentMutation equipmentLifetimeBegin(EquipmentLife life,String reason) {
+        long thread=Thread.currentThread().getId();
+        if(life.retired || life.poisoned)return null;
+        if(life.depth>0 && life.thread!=thread){life.poisoned=true;return null;}
+        if(life.revision>=9007199254740991L || equipmentLifetimeMutationSerial>=9007199254740991L || life.depth==Integer.MAX_VALUE){life.poisoned=true;return null;}
+        life.revision++;life.depth++;life.thread=thread;
+        var actor=life.actor.get();
+        var scope=new EquipmentMutation(life,life.depth,thread,++equipmentLifetimeMutationSerial,reason,
+            actor==null?null:actor.getPrimaryHandItem(),actor==null?null:actor.getSecondaryHandItem());
+        equipmentLifetimeTrace("mutation-enter",life,scope,reason,true);return scope;
+    }
+    /** Entry invalidation precedes native OnEquip callbacks; no new snapshot is eligible until exit. */
+    public static EquipmentMutation equipmentLifetimeHands(zombie.characters.IsoGameCharacter actor,zombie.inventory.InventoryItem incoming,boolean primary) {
+        if(!equipmentLifetimeEnabled() || !(actor instanceof IsoPlayer player))return null;
+        try{synchronized(equipmentLifetimeLock){
+            var life=equipmentLife(player,false);if(life==null)return null;
+            var old=primary?player.getPrimaryHandItem():player.getSecondaryHandItem();
+            return old==incoming?null:equipmentLifetimeBegin(life,primary?"primary":"secondary");
+        }}catch(Throwable error){equipmentLifetimeError(error);return null;}
+    }
+    /** Loads directly write protected hand fields in both native character classes. */
+    public static EquipmentMutation equipmentLifetimeLoad(zombie.characters.IsoGameCharacter actor,String reason) {
+        if(!equipmentLifetimeEnabled() || !(actor instanceof IsoPlayer player))return null;
+        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,false);return life==null?null:equipmentLifetimeBegin(life,reason);}}
+        catch(Throwable error){equipmentLifetimeError(error);return null;}
+    }
+    public static EquipmentMutation equipmentLifetimeOnlineID(IsoPlayer actor,short incoming) {
+        return actor.getOnlineID()==incoming?null:equipmentLifetimeLoad(actor,"online-id");
+    }
+    /** Item ID/world transitions also invalidate tracked hands even if later restored to the old value. */
+    public static java.util.ArrayList<EquipmentMutation> equipmentLifetimeItem(zombie.inventory.InventoryItem item,boolean changed,String reason) {
+        if(!equipmentLifetimeEnabled() || !changed)return null;
+        try{synchronized(equipmentLifetimeLock){
+            var scopes=new java.util.ArrayList<EquipmentMutation>();
+            for(var life:equipmentLifetimeRecords)if(life.actor.get()!=null && (life.primary.get()==item || life.secondary.get()==item)){
+                var scope=equipmentLifetimeBegin(life,reason);if(scope!=null)scopes.add(scope);
+            }
+            return scopes;
+        }}catch(Throwable error){equipmentLifetimeError(error);return null;}
+    }
+    public static void equipmentLifetimeExit(EquipmentMutation scope,Throwable failure) {
+        if(scope==null)return;
+        try{synchronized(equipmentLifetimeLock){
+            var life=scope.life();
+            if(failure!=null || life.depth!=scope.depth() || life.thread!=scope.thread() || Thread.currentThread().getId()!=scope.thread())life.poisoned=true;
+            if(life.depth>0)life.depth--;
+            if(life.depth==0){life.thread=0;var actor=life.actor.get();if(actor!=null && !life.poisoned && !life.retired)equipmentLifetimeRemember(life,actor);}
+            equipmentLifetimeTrace("mutation-exit",life,scope,scope.reason(),failure==null && !life.poisoned);
+        }}catch(Throwable error){equipmentLifetimeError(error);}
+    }
+    public static void equipmentLifetimeItemExit(java.util.ArrayList<EquipmentMutation> scopes,Throwable failure) {
+        if(scopes!=null)for(int i=scopes.size()-1;i>=0;i--)equipmentLifetimeExit(scopes.get(i),failure);
+    }
+    public static void equipmentLifetimeRetire(zombie.characters.IsoGameCharacter actor) {
+        if(!equipmentLifetimeEnabled() || !(actor instanceof IsoPlayer player))return;
+        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,true);life.retired=true;equipmentLifetimeTrace("retire",life,null,"actor-remove",true);}}
+        catch(Throwable error){equipmentLifetimeError(error);}
+    }
+    /** Capture the exact connection before the engine removes its GUID mapping or queues cleanup. */
+    public static void equipmentLifetimeDisconnect(zombie.core.raknet.UdpEngine engine,long guid) {
+        if(!equipmentLifetimeEnabled())return;
+        try{synchronized(equipmentLifetimeLock){
+            var connection=engine.getActiveConnection(guid);if(connection==null)return;equipmentRetiredConnections.put(connection,Boolean.TRUE);
+            for(var life:equipmentLifetimeRecords)if(life.connection.get()==connection){life.retired=true;equipmentLifetimeTrace("retire",life,null,"connection-remove",true);}
+        }}catch(Throwable error){equipmentLifetimeError(error);}
+    }
+    private static zombie.core.raknet.UdpConnection equipmentLifetimeConnection(IsoPlayer player) {
+        if(player==null || player.getOnlineID()<0 || player.removedFromWorldMs!=0 || !player.isAlive())return null;
+        zombie.core.raknet.UdpEngine engine;zombie.core.raknet.UdpConnection connection;
+        if(zombie.network.GameServer.server && !zombie.network.GameClient.client){
+            if(zombie.network.GameServer.IDToPlayerMap.get(player.getOnlineID())!=player)return null;
+            connection=zombie.network.GameServer.getConnectionFromPlayer(player);engine=zombie.network.GameServer.udpEngine;
+            int slot=player.playerIndex;if(connection==null || slot<0 || slot>=4 || connection.getPlayerAt(slot)!=player)return null;
+        }else if(zombie.network.GameClient.client && !zombie.network.GameServer.server){
+            if(zombie.network.GameClient.instance==null || !zombie.network.GameClient.instance.connected
+                || zombie.network.GameClient.IDToPlayerMap.get(player.getOnlineID())!=player)return null;
+            connection=zombie.network.GameClient.connection;engine=zombie.network.GameClient.instance.udpEngine;
+        }else return null;
+        return connection!=null && equipmentRetiredConnections.get(connection)==null && engine!=null && engine.getActiveConnection(connection.getConnectedGUID())==connection?connection:null;
+    }
+    /** Private core is separate solely to permit no-world native checks; Lua has only the validated API. */
+    private static String equipmentLifetimeRead(IsoPlayer player,zombie.core.raknet.UdpConnection connection) {
+        synchronized(equipmentLifetimeLock){
+            var life=equipmentLife(player,true);if(life.retired || life.poisoned || life.depth!=0)return null;
+            var item=player.getPrimaryHandItem();var secondary=player.getSecondaryHandItem();
+            if(life.baseline && (life.connection.get()!=connection || life.primary.get()!=item || life.secondary.get()!=secondary || item!=null && life.cart!=item.getID())){
+                life.poisoned=true;return null; // Unobserved mutation cannot silently become a trusted new baseline.
+            }
+            if(item==null || item!=secondary || !equipmentLifetimeCart(item) || item.getWorldItem()!=null)return null;
+            if(!life.baseline){life.baseline=true;life.connection=new java.lang.ref.WeakReference<>(connection);equipmentLifetimeRemember(life,player);equipmentLifetimeTrace("baseline",life,null,"admitted-current",true);}
+            return "1|"+nativeTimeProcess+"|"+nativeTimeIdentity(player,true)+"|"+nativeTimeIdentity(connection,false)+"|"+life.revision;
+        }
+    }
+    @LuaMethod(name="cartLeaseLifetime",global=true)
+    public static String cartLeaseLifetime(IsoPlayer player) {
+        if(!equipmentLifetimeEnabled())return null;
+        try{synchronized(equipmentLifetimeLock){var connection=equipmentLifetimeConnection(player);return connection==null?null:equipmentLifetimeRead(player,connection);}}
+        catch(Throwable error){equipmentLifetimeError(error);return null;}
+    }
+    @Patch(className="zombie.characters.IsoGameCharacter",methodName="setPrimaryHandItem",warmUp=false)
+    public static class EquipmentLifetimePrimary {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.characters.IsoGameCharacter actor,@Patch.Argument(0) zombie.inventory.InventoryItem incoming,@Patch.Local("equipmentLife") EquipmentMutation scope){scope=Main.equipmentLifetimeHands(actor,incoming,true);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentLife") EquipmentMutation scope,@Patch.Thrown Throwable failure){Main.equipmentLifetimeExit(scope,failure);}
+    }
+    @Patch(className="zombie.characters.IsoGameCharacter",methodName="setSecondaryHandItem",warmUp=false)
+    public static class EquipmentLifetimeSecondary {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.characters.IsoGameCharacter actor,@Patch.Argument(0) zombie.inventory.InventoryItem incoming,@Patch.Local("equipmentLife") EquipmentMutation scope){scope=Main.equipmentLifetimeHands(actor,incoming,false);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentLife") EquipmentMutation scope,@Patch.Thrown Throwable failure){Main.equipmentLifetimeExit(scope,failure);}
+    }
+    @Patch(className="zombie.characters.IsoGameCharacter",methodName="load",warmUp=false)
+    public static class EquipmentLifetimeCharacterLoad {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.characters.IsoGameCharacter actor,@Patch.Local("equipmentLife") EquipmentMutation scope){scope=Main.equipmentLifetimeLoad(actor,"character-load");}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentLife") EquipmentMutation scope,@Patch.Thrown Throwable failure){Main.equipmentLifetimeExit(scope,failure);}
+    }
+    @Patch(className="zombie.characters.IsoPlayer",methodName="load",warmUp=false)
+    public static class EquipmentLifetimePlayerLoad {
+        @Patch.OnEnter public static void enter(@Patch.This IsoPlayer actor,@Patch.Local("equipmentLife") EquipmentMutation scope){scope=Main.equipmentLifetimeLoad(actor,"player-load");}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentLife") EquipmentMutation scope,@Patch.Thrown Throwable failure){Main.equipmentLifetimeExit(scope,failure);}
+    }
+    @Patch(className="zombie.characters.IsoPlayer",methodName="setOnlineID",warmUp=false)
+    public static class EquipmentLifetimeOnlineID {
+        @Patch.OnEnter public static void enter(@Patch.This IsoPlayer actor,@Patch.Argument(0) short incoming,@Patch.Local("equipmentLife") EquipmentMutation scope){scope=Main.equipmentLifetimeOnlineID(actor,incoming);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentLife") EquipmentMutation scope,@Patch.Thrown Throwable failure){Main.equipmentLifetimeExit(scope,failure);}
+    }
+    @Patch(className="zombie.inventory.InventoryItem",methodName="setID",warmUp=false)
+    public static class EquipmentLifetimeItemID {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.inventory.InventoryItem item,@Patch.Argument(0) int incoming,@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes){scopes=Main.equipmentLifetimeItem(item,item.getID()!=incoming,"item-id");}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes,@Patch.Thrown Throwable failure){Main.equipmentLifetimeItemExit(scopes,failure);}
+    }
+    @Patch(className="zombie.inventory.InventoryItem",methodName="setWorldItem",warmUp=false)
+    public static class EquipmentLifetimeWorldItem {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.inventory.InventoryItem item,@Patch.Argument(0) zombie.iso.objects.IsoWorldInventoryObject incoming,@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes){scopes=Main.equipmentLifetimeItem(item,item.getWorldItem()!=incoming,"world-item");}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes,@Patch.Thrown Throwable failure){Main.equipmentLifetimeItemExit(scopes,failure);}
+    }
+    @Patch(className="zombie.inventory.InventoryItem",methodName="load",warmUp=false)
+    public static class EquipmentLifetimeItemLoad {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.inventory.InventoryItem item,@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes){scopes=Main.equipmentLifetimeItem(item,true,"item-load");}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes,@Patch.Thrown Throwable failure){Main.equipmentLifetimeItemExit(scopes,failure);}
+    }
+    @Patch(className="zombie.characters.IsoPlayer",methodName="removeFromWorld",warmUp=false)
+    public static class EquipmentLifetimeRemove {
+        @Patch.OnEnter public static void enter(@Patch.This IsoPlayer actor){Main.equipmentLifetimeRetire(actor);}
+    }
+    @Patch(className="zombie.core.raknet.UdpEngine",methodName="removeConnection",warmUp=false)
+    public static class EquipmentLifetimeDisconnect {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.core.raknet.UdpEngine engine,@Patch.Argument(0) long guid){Main.equipmentLifetimeDisconnect(engine,guid);}
+    }

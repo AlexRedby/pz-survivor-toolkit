@@ -46,7 +46,12 @@
     "analyze-observer.py",
     "ObserverParamsBootstrap.java",
     "ObserverParams.methods",
-    "ObserverParamsCheck.java"
+    "ObserverParamsCheck.java",
+    "EquipmentLifetime.methods",
+    "EquipmentLifetimeCheck.java",
+    "lease-lifetimes.lua",
+    "LeaseLifetimeBankCheck.lua",
+    "analyze-lease-lifetimes.py"
   ],
   "selection_template": {
     "schema_version": 1,

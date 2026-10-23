@@ -4,6 +4,7 @@ assert(config.disposable==true,'Cart MP requires fresh owned disposable profiles
 local J=require 'CartMPJSON'
 local admissionProbe=config.options and config.options.cart_action_admission==true and require 'CartActionAdmissionProbe'
 local leaseProbe=config.options and config.options.cart_lease_control==true and require 'CartLeaseProbe'
+local lifetimeProbe=config.options and config.options.cart_lease_lifetimes==true and require 'CartLeaseLifetimes'
 local wallSide=config.options and config.options.cart_wall_exit
 local wallBank=wallSide and require 'CartMPWall'
 local wallDone,wallCleaned,originSince={},false,nil

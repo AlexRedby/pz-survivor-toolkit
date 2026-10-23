@@ -860,6 +860,27 @@ class CartLeaseEnvironmentTests(unittest.TestCase):
                 runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':value})
 
 
+class CartEquipmentLifetimeEnvironmentTests(CartLeaseEnvironmentTests):
+    def selected(self):
+        selection=super().selected();selection['options']['cart_lease_lifetimes']=True;return selection
+
+    def test_equipment_scope_requires_isolated_explicit_selection(self):
+        name='PZ_CART_LEASE_LIFETIME'
+        for role in ('server','client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{name:'true'})[name],'true')
+        for key,value in [('cart_lease_lifetimes',False),('cart_lease_lifetimes','true'),('cart_lease_control',False),
+                          ('cart_timeline',False),('cart_fast_motion',False),('mp_host',False),('cart_actions',True),
+                          ('cart_inventory_equip',True),('cart_time_alignment',True),('cart_hotkey_setdown',True)]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{name:'true'})
+        with patch.dict(runner.os.environ,{name:'true'}):
+            self.assertNotIn(name,runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','1',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{name:value})
+
+
 class CartActionAdmissionEnvironmentTests(unittest.TestCase):
     def selected(self):
         return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],options=dict(

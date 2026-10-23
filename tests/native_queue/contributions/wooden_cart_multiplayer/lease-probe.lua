@@ -14,7 +14,7 @@ local function held(player)
  assert(item and player:getSecondaryHandItem()==item and not item:getWorldItem(),'Exact held native cart required')
  local kind=item:getFullType()
  assert(kind=='SaucedCarts.ShoppingCart' or kind=='SaucedWheelbarrow.WheelbarrowWood' or kind=='SaucedWheelbarrow.WheelbarrowMetal','Native cart type required')
- return {mode='motion',cart=item:getID(),item=item}
+ return {mode='motion',cart=item:getID(),item=item,lifetime=config.options.cart_lease_lifetimes==true and assert(cartLeaseLifetime(player),'Native equipment lifetime missing') or nil}
 end
 if isServer() then
  local server=P.server(assert(cartLeaseSeed()),{limit=4})

@@ -258,6 +258,41 @@ f:reject(delayed,200);f:bind();f:deliver(f:envelope(1,'OPEN','replacement'),201)
 f:reject(delayed,202)
 ''')
 
+    def test_native_revision_fences_an_unpolled_release_and_reacquire(self):
+        self.scenario(r'''
+local f=setup()
+f.sourceBinding.lifetime='server:actor:1';f.localBinding.lifetime='observer:actor:9'
+check(f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding))
+check(f.receiver:native(f.observerConnection,f.observerActor,f.localBinding))
+f:bind();f:deliver(f:envelope(3,'UPDATE','before-cycle'),100)
+local delayed=f:envelope(4,'UPDATE','retired-cycle')
+local request=f.receiver:challenge();local pending=f.server:reply(request,f.observerConnection)
+-- Both native hand setters witnessed release/reacquire between these polls.
+-- Exact actor/item/cart and connection references are otherwise unchanged.
+f.sourceBinding.lifetime='server:actor:5';f.localBinding.lifetime='observer:actor:13'
+check(f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding))
+check(f.receiver:native(f.observerConnection,f.observerActor,f.localBinding))
+check(not f.receiver:reply(pending,f.observerConnection),'unpolled cycle admitted stale challenge reply')
+f:reject(delayed,200)
+local fresh=f:bind();check(fresh.lease>pending.lease,'server native cycle did not advance lease')
+f:deliver(f:envelope(1,'OPEN','after-cycle'),201);f:reject(delayed,202)
+check(f.receiver:snapshot().body=='after-cycle','old payload replaced fresh lifetime')
+''')
+
+    def test_native_revision_is_local_identity_and_stable_observation_does_not_reset(self):
+        self.scenario(r'''
+local f=setup()
+f.sourceBinding.lifetime='server-native-revision';f.localBinding.lifetime='observer-native-revision'
+check(f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding))
+check(f.receiver:native(f.observerConnection,f.observerActor,f.localBinding))
+f:bind();f:deliver(f:envelope(3),100)
+local before=f.receiver:snapshot();local serverBefore=f.server:snapshot(f.id)
+check(f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding))
+check(not f.receiver:native(f.observerConnection,f.observerActor,f.localBinding))
+unchanged(before,f.receiver:snapshot());unchanged(serverBefore,f.server:snapshot(f.id))
+f:deliver(f:envelope(4),200)
+''')
+
     def test_actor_id_reuse_and_connection_replacement_need_new_authority(self):
         self.scenario(r'''
 for _,replacement in ipairs({'actor','connection'}) do
