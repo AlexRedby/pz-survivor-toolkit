@@ -18,7 +18,7 @@ Version labels come from committed component metadata, including changes made wi
 
 - **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
 
-- **Cart native action admission:** Add an opt-in read-only Host transaction trace and exact association with the existing sealed owner receipts for pickup/setdown cancellation and repeat checks. Keep pending/accepted/retired native lifetimes, original transport provenance and logical query counts separate from observer binding, wire costs and production migration.
+- **Cart native action admission:** Add an opt-in read-only Host transaction trace and exact association with the existing sealed owner receipts for pickup/setdown cancellation and repeat checks. Keep pending/accepted/retired native lifetimes, original transport provenance and logical query counts separate from observer binding, wire costs and production migration. Observe native cancel results independently from the queue reset that revokes the owner seal; never renew action rights for diagnostics.
 
 - **Cart lease admission prototype:** Add a bounded executable grant/lease/sequence controller and deterministic replay regressions, plus an explicitly selected held-only Host challenge/echo probe with exact native transport/source scopes. Keep control-path evidence separate from complete native lifetime coverage and production migration.
 

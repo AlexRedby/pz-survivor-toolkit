@@ -122,7 +122,7 @@ local function enqueue(p,now)
  end
  assert(PZSurvivorToolkit.ActionQueueOperations,'Action queue operations required').run(callback)
  assert(not empty(p),'Native cart callback queued no action')
- if admission then admission.track(assert(queue(p).queue[1]),{index=session.index,phase=spec.name,id=session.id}) end
+ if admission then admission.trackQueued(queue(p).queue,{index=session.index,phase=spec.name,id=session.id}) end
  if hotkey and spec.drop then
   local queued=queue(p).queue
   assert(#queued==1 and queued[1].Type=='ToolkitWoodCartDrop' and queued[1].item==item,

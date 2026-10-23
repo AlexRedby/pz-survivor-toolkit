@@ -17,7 +17,7 @@ POSITIVE = ('actorEpoch', 'connectionEpoch', 'startGeneration', 'actionEpoch', '
             'ingressGeneration', 'parseGeneration')
 BOOLEANS = ('nativeBindingValid', 'admittedBindingValid', 'accepted', 'sourceValidated', 'tokenObserved')
 OWNER_IDENTITY = ('ownerProcess', 'owner', 'index', 'phase', 'cart', 'localActionEpoch')
-OWNER_RECEIPT = ('localNativeEpoch', 'token', 'transaction', 'kind')
+OWNER_RECEIPT = ('localNativeEpoch', 'token', 'transaction', 'kind', 'captureGeneration')
 NATIVE_MARKER = '[CART_ADMISSION] '
 OWNER_MARKER = '[CART_ADMISSION_OWNER] '
 QUERY_MARKER = '[CART_ADMISSION_QUERY] '
@@ -174,7 +174,7 @@ def analyze(root):
     for position, row in enumerate(owner_rows['client1']):
         require(row.get('actor') == 'client1', 'Foreign owner admission actor')
         event = row.get('event')
-        require(event in ('track', 'capture', 'query', 'reply', 'terminal'), 'Unknown owner admission event')
+        require(event in ('track', 'capture', 'query', 'reply', 'terminal', 'native-terminal-receipt', 'seal-revoked'), 'Unknown owner admission event')
         index = phase(row)
         observed_processes.add(uuid_text(row, 'ownerProcess'))
         integer(row, 'owner', 0, 32767)
@@ -186,11 +186,22 @@ def analyze(root):
         group[event], group[event+'Position'] = row, position
         if event != 'track':
             integer(row, 'localNativeEpoch', 1, MAX)
+            integer(row, 'captureGeneration', 0, MAX)
             uuid_text(row, 'token')
             transaction(row)
             require(row.get('kind') in ('ToolkitWoodCartPickup', 'ToolkitWoodCartSetdown', 'ToolkitWoodCartDrop'), 'Unknown sealed owner action kind')
         if event in ('capture', 'reply', 'terminal'):
             require(row.get('sealed') is True, 'Missing actual sealed owner receipt proof')
+        if event in ('native-terminal-receipt', 'seal-revoked'):
+            require(row.get('sealed') is False and row.get('currentAuthority') is False,
+                    'Historical receipt or revoked seal claims current sealed authority')
+        if event == 'native-terminal-receipt':
+            require(row.get('guarded') is True and row.get('state') in ('completed', 'canceled', 'rejected'),
+                    'Native terminal receipt lacks exact ingress guard/outcome')
+        if event == 'seal-revoked':
+            require(row.get('reason') == 'operation-generation-changed'
+                    and integer(row, 'observedGeneration', 0, MAX) > row['captureGeneration'],
+                    'Seal revocation lacks exact operation generation change proof: '+str(row.get('reason')))
         if event in ('query', 'reply'):
             require(row.get('guarded') is True, 'Missing actual fresh owner query/ingress guard')
             require(text(row, 'nonce', 120) == row['ownerProcess']+':action:'+str(index), 'Owner request nonce is not exact phase challenge')
@@ -199,7 +210,8 @@ def analyze(root):
         if event == 'terminal':
             require(row.get('state') in ('completed', 'canceled', 'rejected'), 'Unknown sealed owner terminal outcome')
     require(set(owners) == set(range(1, 7)) and len(observed_processes) == 1, 'Missing six owner phases or owner process changed')
-    require(all(all(event in group for event in ('track', 'capture', 'query', 'reply', 'terminal')) for group in owners.values()), 'Incomplete explicit owner action chain')
+    require(all(all(event in group for event in ('track', 'capture', 'query', 'reply', 'native-terminal-receipt'))
+                for group in owners.values()), 'Incomplete explicit owner action chain')
     require([row['index'] for row in owner_rows['client1'] if row['event'] == 'track'] == list(range(1, 7)), 'Explicit owner tracking reordered')
     require(next(iter(observed_processes)) != next(iter(lifetimes))[0], 'Owner and server reused native process epoch')
     require(len({group['track']['localActionEpoch'] for group in owners.values()}) == 6, 'Local action epoch reused across selected phases')
@@ -218,11 +230,18 @@ def analyze(root):
 
     used, results = set(), []
     for index, group in sorted(owners.items()):
-        require(all(event in group for event in ('track', 'capture', 'query', 'reply', 'terminal')), 'Incomplete explicit owner action chain')
-        track, capture, query, reply, terminal = (group[event] for event in ('track', 'capture', 'query', 'reply', 'terminal'))
+        require(all(event in group for event in ('track', 'capture', 'query', 'reply', 'native-terminal-receipt')), 'Incomplete explicit owner action chain')
+        track, capture, query, reply, receipt = (group[event] for event in ('track', 'capture', 'query', 'reply', 'native-terminal-receipt'))
+        expected_terminal = 'seal-revoked' if index in (3, 5) else 'terminal'
+        other_terminal = 'terminal' if index in (3, 5) else 'seal-revoked'
+        require(expected_terminal in group and other_terminal not in group, 'Selected owner phase lacks expected sealed outcome/revocation proof')
+        terminal = group[expected_terminal]
+        if expected_terminal == 'seal-revoked':
+            require(group['replyPosition'] < group['seal-revokedPosition'], 'Sealed reply occurred after owner authority was revoked')
         require(group['trackPosition'] < group['capturePosition'] < group['queryPosition'] < group['replyPosition']
-                and group['queryPosition'] < group['terminalPosition'], 'Owner action association reordered')
-        for event in ('capture', 'query', 'reply', 'terminal'):
+                and group['queryPosition'] < group['native-terminal-receiptPosition']
+                and group['queryPosition'] < group[expected_terminal+'Position'], 'Owner action association reordered')
+        for event in ('capture', 'query', 'reply', 'native-terminal-receipt', expected_terminal):
             identity_equal(track, group[event], OWNER_IDENTITY, 'Owner action/phase binding advanced')
             identity_equal(capture, group[event], OWNER_RECEIPT, 'Owner sealed action/native/token binding advanced')
         require(reply['token'] in tokens, 'Owner Ack token has no exact native admission')
@@ -248,22 +267,30 @@ def analyze(root):
         require(capture['kind'] == expected_kind if expected_kind else capture['kind'] in ('ToolkitWoodCartSetdown', 'ToolkitWoodCartDrop'),
                 'Native kind differs from explicit phase operation')
         direct_outcome = {'Done': 'completed', 'Reject': 'rejected'}.get(retired['nativeState'])
-        require(direct_outcome is None or terminal['state'] == direct_outcome,
-                'Direct native terminal state contradicts exact owner sealed outcome')
+        require(direct_outcome is None or receipt['state'] == direct_outcome,
+                'Direct native terminal state contradicts exact owner native receipt outcome')
         expected_outcome = 'canceled' if index in (3, 5) else 'completed'
-        require(terminal['state'] == expected_outcome, 'Selected owner phase terminal outcome differs')
+        require(receipt['state'] == expected_outcome, 'Selected owner phase native receipt outcome differs')
+        if expected_terminal == 'terminal':
+            require(terminal['state'] == receipt['state'], 'Owner sealed terminal and native receipt outcomes contradict')
         results.append(dict(index=index, phase=PHASES[index-1], ownerID=accepted['owner'], cartID=accepted['cart'],
             process=accepted['process'], sourceSession=accepted['sourceSession'], startGeneration=accepted['startGeneration'],
             token=accepted['token'], transaction=accepted['transaction'], kind=accepted['kind'],
             localActionEpoch=track['localActionEpoch'], localNativeEpoch=capture['localNativeEpoch'],
-            ownerSealedOutcome=terminal['state'], nativeTerminalState=retired['nativeState'],
+            ownerNativeReceiptOutcome=receipt['state'],
+            ownerSealedOutcome=terminal['state'] if expected_terminal == 'terminal' else None,
+            ownerSealRevocationReason=terminal['reason'] if expected_terminal == 'seal-revoked' else None,
+            captureGeneration=capture['captureGeneration'],
+            observedGeneration=terminal.get('observedGeneration') if expected_terminal == 'seal-revoked' else None,
+            nativeTerminalState=retired['nativeState'],
             nativeRetirementReason=retired['reason'], queryObservedStage=server_query['stage']))
     require(used == set(queries), 'Unmatched extra native action query')
     require(len({row['startGeneration'] for row in results}) == 6, 'Native start associated to multiple owner phases')
     return dict(schema=1, diagnosticOnly=True, evidenceComplete=True, nativeLifetimes=6, exactOwnerAssociations=6,
+        ownerSealedTerminalAssociations=4, ownerRevokedSealAssociations=2,
         logicalQueryMessages=dict(total=12, clientToServer=6, serverToClient=6), phases=results,
         sourceFiles={role: role+'-launch.log' for role in ROLES},
-        qualification='Current server native action admission plus exact existing sealed owner receipt association. Native retirement state/reason and owner receipt outcome are separate facts; native remove does not by itself prove cancellation or success. No observer skeleton/proxy binding, reconnect/reject/ID-reuse matrix, production migration, runtime PASS or full-image timing is established. Logical queries are not wire bytes.')
+        qualification='Observed server native action admission plus exact initial sealed owner receipt association. Native retirement state/reason, historical native owner receipt outcome and current sealed authority are separate facts; native remove does not by itself prove cancellation or success. Cancel/reset revokes the seal; no authority survives that reset and no seal is renewed by this probe. No observer skeleton/proxy binding, reconnect/reject/ID-reuse matrix, production migration, runtime PASS or full-image timing is established. Logical queries are not wire bytes.')
 
 
 def main():

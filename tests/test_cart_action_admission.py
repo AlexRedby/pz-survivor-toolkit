@@ -48,7 +48,7 @@ def fixture():
                      localActionEpoch=700+index,wallMs=wall)
         track = dict(owner,event='track')
         capture = dict(owner,event='capture',localNativeEpoch=800+index,token=token,transaction=index,
-                       kind=kind,state='started',sealed=True,wallMs=wall+2)
+                       kind=kind,state='started',sealed=True,captureGeneration=index*2,wallMs=wall+2)
         nonce = OWNER+':action:'+str(index)
         query = dict(capture,event='query',nonce=nonce,guarded=True,wallMs=wall+3)
         query.pop('state');query.pop('sealed')
@@ -56,9 +56,16 @@ def fixture():
                             monoNs=(wall+4)*1000000,wallMs=wall+4)
         reply = dict(query,**{key:value for key,value in server_query.items() if key not in ('actor','event')})
         reply.update(event='reply',actor='client1',sealed=True,guarded=True,wallMs=wall+5)
-        terminal = dict(capture,event='terminal',state='canceled' if cancel else 'completed',wallMs=wall+1001)
+        historical = dict(capture,event='native-terminal-receipt',state='canceled' if cancel else 'completed',
+                          sealed=False,currentAuthority=False,guarded=True,wallMs=wall+1001)
+        if cancel:
+            terminal = dict(capture,event='seal-revoked',sealed=False,currentAuthority=False,
+                            reason='operation-generation-changed',observedGeneration=index*2+1,wallMs=wall+999)
+            terminal.pop('state')
+        else:
+            terminal = dict(capture,event='terminal',state='completed',wallMs=wall+1002)
         groups['query'].append(server_query)
-        groups['owner'] += [track,capture,query,reply,terminal]
+        groups['owner'] += [track,capture,query,reply,terminal,historical] if cancel else [track,capture,query,reply,historical,terminal]
     return selection,base,groups
 
 
@@ -88,8 +95,12 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
         self.assertEqual(result['exactOwnerAssociations'],6)
         self.assertEqual(result['nativeLifetimes'],6)
         self.assertEqual(result['logicalQueryMessages'],dict(total=12,clientToServer=6,serverToClient=6))
-        canceled = [row for row in result['phases'] if row['ownerSealedOutcome']=='canceled']
+        canceled = [row for row in result['phases'] if row['ownerNativeReceiptOutcome']=='canceled']
         self.assertEqual([row['phase'] for row in canceled],['drop-cancel','pickup-cancel'])
+        self.assertEqual({row['ownerSealedOutcome'] for row in canceled},{None})
+        self.assertEqual({row['ownerSealRevocationReason'] for row in canceled},{'operation-generation-changed'})
+        self.assertEqual(result['ownerSealedTerminalAssociations'],4)
+        self.assertEqual(result['ownerRevokedSealAssociations'],2)
         self.assertEqual({row['nativeTerminalState'] for row in canceled},{'Accept'})
         self.assertEqual({row['nativeRetirementReason'] for row in canceled},{'native-remove'})
         self.assertIn('No observer skeleton/proxy binding',result['qualification'])
@@ -119,7 +130,7 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
 
     def test_every_owner_stage_and_exact_query_response_is_required_once(self):
         original = copy.deepcopy(self.groups)
-        for event in ('track','capture','query','reply','terminal'):
+        for event in ('track','capture','query','reply','terminal','native-terminal-receipt','seal-revoked'):
             self.groups = copy.deepcopy(original);self.groups['owner'].remove(self.records('owner',event)[0])
             with self.subTest(event=event),self.assertRaises(ValueError):self.analyze()
         for duplicate in (False,True):
@@ -191,7 +202,7 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
             self.groups = copy.deepcopy(original);self.records('native',event)[0]['token'] = None
             with self.subTest(event=event),self.assertRaises(ValueError):self.analyze()
         self.groups = copy.deepcopy(original)
-        for event in ('track','capture','query','reply','terminal'):
+        for event in ('track','capture','query','reply','terminal','native-terminal-receipt','seal-revoked'):
             self.groups = copy.deepcopy(original)
             row = self.records('owner',event)[0]
             if event=='track':row['localActionEpoch'] += 1
@@ -253,8 +264,8 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
                                   ('terminal','state','rejected')):
             self.groups = copy.deepcopy(original);self.records('owner',event)[0][field] = value
             with self.subTest(event=event,field=field),self.assertRaises(ValueError):self.analyze()
-        self.groups = copy.deepcopy(original);self.records('owner','terminal')[2]['state'] = 'completed'
-        with self.assertRaisesRegex(ValueError,'terminal outcome'):self.analyze()
+        self.groups = copy.deepcopy(original);self.records('owner','native-terminal-receipt')[2]['state'] = 'completed'
+        with self.assertRaisesRegex(ValueError,'native receipt outcome'):self.analyze()
 
     def test_exact_operation_and_pickup_world_binding_are_required(self):
         original = copy.deepcopy(self.groups)
@@ -276,6 +287,66 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
         self.groups=copy.deepcopy(original)
         self.base['client2'].append(MARKERS['owner']+json.dumps(self.groups['owner'][0]))
         with self.assertRaisesRegex(ValueError,'foreign endpoint'):self.analyze()
+
+    def test_historical_native_receipt_is_guarded_without_claiming_current_seal(self):
+        original = copy.deepcopy(self.groups)
+        for field,value in (('guarded',False),('guarded',1),('sealed',True),('sealed',0),
+                            ('currentAuthority',True),('currentAuthority',0),('state','started'),
+                            ('token','10000000-0000-4000-8000-000000000099'),('transaction',99)):
+            self.groups = copy.deepcopy(original)
+            self.records('owner','native-terminal-receipt')[2][field] = value
+            with self.subTest(field=field,value=value),self.assertRaises(ValueError):
+                self.analyze()
+
+    def test_cancel_requires_proved_generation_revocation_without_seal_renewal(self):
+        original = copy.deepcopy(self.groups)
+        for field,value in (('reason','observe-unavailable'),('reason','native-canceled'),
+                            ('observedGeneration',6),('observedGeneration',5),('observedGeneration',-1),('observedGeneration',True),
+                            ('captureGeneration',7),('sealed',True),('currentAuthority',True)):
+            self.groups = copy.deepcopy(original)
+            self.records('owner','seal-revoked')[0][field] = value
+            with self.subTest(field=field,value=value),self.assertRaises(ValueError):
+                self.analyze()
+        self.groups = copy.deepcopy(original)
+        revoked = self.records('owner','seal-revoked')[0]
+        revoked.update(event='terminal',state='canceled',sealed=True)
+        with self.assertRaisesRegex(ValueError,'expected sealed outcome/revocation'):
+            self.analyze()
+
+    def test_sealed_reply_cannot_follow_revocation(self):
+        rows=self.groups['owner']
+        reply=next(i for i,row in enumerate(rows) if row['index']==3 and row['event']=='reply')
+        revoked=next(i for i,row in enumerate(rows) if row['index']==3 and row['event']=='seal-revoked')
+        rows[reply],rows[revoked]=rows[revoked],rows[reply]
+        with self.assertRaisesRegex(ValueError,'after owner authority was revoked'):
+            self.analyze()
+
+    def test_completion_requires_actual_observed_api_terminal_and_same_capture_generation(self):
+        original = copy.deepcopy(self.groups)
+        complete = self.records('owner','terminal')[0]
+        complete.update(event='seal-revoked',sealed=False,currentAuthority=False,
+                        reason='operation-generation-changed',observedGeneration=3)
+        with self.assertRaisesRegex(ValueError,'expected sealed outcome/revocation'):
+            self.analyze()
+        for event in ('capture','query','reply','terminal','seal-revoked','native-terminal-receipt'):
+            self.groups = copy.deepcopy(original)
+            row = self.records('owner',event)[0]
+            row['captureGeneration'] = row['captureGeneration']+10
+            with self.subTest(event=event),self.assertRaises(ValueError):
+                self.analyze()
+        self.groups = copy.deepcopy(original)
+        result = self.analyze()
+        self.assertIn('no authority survives that reset',result['qualification'])
+        self.assertEqual(result['ownerSealedTerminalAssociations'],4)
+        self.assertEqual(result['ownerRevokedSealAssociations'],2)
+
+    def test_duplicate_native_terminal_or_revocation_observation_is_ambiguous(self):
+        original = copy.deepcopy(self.groups)
+        for event in ('native-terminal-receipt','seal-revoked'):
+            self.groups = copy.deepcopy(original)
+            self.groups['owner'].append(copy.deepcopy(self.records('owner',event)[0]))
+            with self.subTest(event=event),self.assertRaisesRegex(ValueError,'Duplicate explicit owner'):
+                self.analyze()
 
     def test_positive_epochs_uuid_and_strict_numeric_bounds(self):
         original=copy.deepcopy(self.groups)

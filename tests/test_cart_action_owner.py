@@ -42,7 +42,7 @@ sendClientCommand=function(p,module,command,args)
  commands[#commands+1]=args
 end
 local probe=dofile(root..'/tests/native_queue/contributions/wooden_cart_multiplayer/action-admission.lua')
-local action={character=player,action={},toolkitNativeTransaction=11,toolkitNativeKind='ToolkitWoodCartPickup'}
+local action={character=player,action={},Type='ToolkitWoodCartPickup',itemId=42,toolkitNativeTransaction=11,toolkitNativeKind='ToolkitWoodCartPickup'}
 local queue={current=action,queue={action},toolkitOperationGeneration=1};ISTimedActionQueue.queues[player]=queue
 local token='00000000-0000-0000-0000-000000000002'
 local function event(module,command,args) for _,fn in ipairs(callbacks) do fn(module,command,args) end end
@@ -79,6 +79,43 @@ start();local r=reply();r.monoNs=253716934852789;r.startGeneration=9007199254740
 event('CartActionAdmissionProbe','Reply',r)
 assert(has('"monoNs":253716934852789') and has('"startGeneration":9007199254740991'))
 assert(not has('[CART_ADMISSION] ERROR'))
+''')
+
+    def test_native_cancel_receipt_does_not_restore_revoked_seal(self):
+        self.run_lua('''
+start();event('CartActionAdmissionProbe','Reply',reply())
+local sealed=assert(Ack.capture(action));Ack.reset(queue);queue.toolkitOperationGeneration=2
+assert(Ack.observe(action,sealed)==nil)
+event('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=11,kind='ToolkitWoodCartPickup',token=token,state='canceled'})
+probe.sample()
+assert(has('"event":"native-terminal-receipt"') and has('"state":"canceled"'))
+assert(has('"event":"seal-revoked"') and has('"reason":"operation-generation-changed"'))
+assert(has('"captureGeneration":1') and has('"observedGeneration":2'))
+assert(not has('"event":"terminal"') and not has('[CART_ADMISSION] ERROR'))
+assert(Ack.observe(action,sealed)==nil)
+''')
+
+    def test_original_terminal_delivery_requires_exact_ingress_and_frozen_transaction(self):
+        for mutation in ('ingress=foreign','r.transaction=12'):
+            with self.subTest(mutation=mutation):
+                self.run_lua("start();local r={protocol=1,player=7,transaction=11,kind='ToolkitWoodCartPickup',token=token,state='completed'};"+mutation+";event('PZSurvivorToolkitActions','State',r);assert(has('[CART_ADMISSION] ERROR'));assert(not has('\"event\":\"native-terminal-receipt\"'))")
+
+    def test_pickup_tracks_exact_queued_cart_after_approach(self):
+        self.run_lua('''
+local walk={character=player,Type='ISWalkToTimedAction'}
+probe.trackQueued({walk,action},{index=1,phase='pickup-complete',id=42})
+queue.current=walk;probe.sample();assert(#commands==0)
+queue.current=action
+event('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=11,kind='ToolkitWoodCartPickup',token=token,state='started'})
+probe.sample();assert(#commands==1 and has('"event":"capture"'))
+''')
+
+    def test_missing_or_ambiguous_queued_cart_is_refused(self):
+        self.run_lua('''
+local spec={index=1,phase='pickup-complete',id=42}
+assert(not pcall(probe.trackQueued,{{Type='ISWalkToTimedAction'}},spec))
+assert(not pcall(probe.trackQueued,{action,action},spec))
+assert(#commands==0 and not has('"event":"track"'))
 ''')
 
     def test_role_alias_reload_registers_callbacks_once(self):

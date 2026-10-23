@@ -74,8 +74,9 @@ end
 local function row(entry,event)
  local r={actor=user,event=event,ownerProcess=cartLeaseSeed(),owner=entry.owner:getOnlineID(),index=entry.index,
   phase=entry.phase,cart=entry.cart,localActionEpoch=entry.localActionEpoch,localNativeEpoch=entry.localNativeEpoch}
- if entry.receipt then
-  r.token=entry.receipt.token;r.transaction=entry.receipt.transaction;r.kind=entry.receipt.kind
+ if entry.snapshot then
+  r.token=entry.snapshot.token;r.transaction=entry.snapshot.transaction;r.kind=entry.snapshot.kind
+  r.captureGeneration=entry.snapshot.generation
  end
  return r
 end
@@ -85,6 +86,19 @@ function M.track(action,spec)
  local entry={action=action,owner=action.character,index=spec.index,phase=spec.phase,cart=spec.id,
   localActionEpoch=identity(action)}
  entries[#entries+1]=entry;emit('[CART_ADMISSION_OWNER]',row(entry,'track'))
+end
+function M.trackQueued(queued,spec)
+ if user~='client1' then return end
+ local kind=spec.phase:sub(1,6)=='pickup' and 'ToolkitWoodCartPickup'
+  or config.options.cart_hotkey_setdown==true and 'ToolkitWoodCartDrop' or 'ToolkitWoodCartSetdown'
+ local selected
+ for _,action in ipairs(queued) do
+  if action.Type==kind then
+   local cart=kind=='ToolkitWoodCartPickup' and action.itemId or action.item and action.item:getID()
+   if cart==spec.id then assert(not selected,'Ambiguous queued cart action identity');selected=action end
+  end
+ end
+ M.track(assert(selected,'Exact queued cart action missing'),spec)
 end
 function M.sample()
  if user~='client1' then return end
@@ -96,6 +110,7 @@ function M.sample()
     local receipt=Ack.capture(action)
     if receipt then
      entry.receipt=receipt;entry.native=action.action;entry.localNativeEpoch=identity(entry.native)
+     entry.snapshot={token=receipt.token,transaction=receipt.transaction,kind=receipt.kind,generation=receipt.generation,queue=receipt.queue}
      entry.connection=assert(cartLeaseCurrent(),'Owned source connection missing')
      local observed=assert(Ack.observe(action,receipt),'Sealed native receipt unavailable')
      assert(observed=='started','Native start receipt was not observed while current')
@@ -106,16 +121,50 @@ function M.sample()
       index=entry.index,phase=entry.phase,cart=entry.cart})
     end
    end
-  elseif not entry.terminal then
+  elseif not entry.terminal and not entry.revoked then
    local observed=Ack.observe(entry.action,entry.receipt)
    if observed and observed~='started' then
     entry.terminal=observed;local terminal=row(entry,'terminal');terminal.state=observed;terminal.sealed=true
     emit('[CART_ADMISSION_OWNER]',terminal)
+   elseif observed==nil then
+    entry.revoked=true
+    local current=ISTimedActionQueue.queues[entry.owner]
+    local generation=current and (current.toolkitOperationGeneration or 0)
+    local revoked=row(entry,'seal-revoked');revoked.sealed=false;revoked.currentAuthority=false
+    revoked.observedGeneration=generation
+    revoked.reason=current==entry.snapshot.queue and generation~=entry.snapshot.generation
+     and 'operation-generation-changed' or 'observe-unavailable'
+    emit('[CART_ADMISSION_OWNER]',revoked)
    end
   end
  end
 end
 Events.OnServerCommand.Add(function(mod,command,args)
+ -- Observe the original native terminal delivery independently from the API seal.
+ -- Queue reset deliberately revokes observe(); this historical receipt grants no rights.
+ if mod=='PZSurvivorToolkitActions' then
+  if user~='client1' or command~='State' or type(args)~='table' or args.state=='started' then return end
+  for _,entry in ipairs(entries) do
+   local frozen=entry.snapshot
+   if frozen and args.token==frozen.token then
+    local ok,err=pcall(function()
+     assert(args.protocol==1 and args.player==entry.owner:getOnlineID() and args.transaction==frozen.transaction
+      and args.kind==frozen.kind and (args.state=='completed' or args.state=='canceled' or args.state=='rejected'),
+      'Native terminal differs from exact captured receipt')
+     assert(cartLeaseIngress()==entry.connection and cartLeaseCurrent()==entry.connection
+      and getPlayer()==entry.owner and entry.action.character==entry.owner,'Native terminal source/actor changed')
+     assert(not entry.nativeTerminal,'Duplicate native terminal delivery')
+     entry.nativeTerminal=args.state
+     local terminal=row(entry,'native-terminal-receipt');terminal.state=args.state
+     terminal.guarded=true;terminal.sealed=false;terminal.currentAuthority=false
+     emit('[CART_ADMISSION_OWNER]',terminal)
+    end)
+    if not ok then emit('[CART_ADMISSION_OWNER]',{actor=user,event='error',reason=tostring(err)}) end
+    return
+   end
+  end
+  return
+ end
  if mod~=module then return end
  local ok,err=pcall(function()
   assert(user=='client1' and command=='Reply','Unexpected owner admission response')
@@ -137,7 +186,7 @@ end)
 function M.done()
  if user~='client1' then return true end
  if #entries~=6 then return false end
- for _,entry in ipairs(entries) do if not entry.receipt or not entry.terminal or not entry.replied then return false end end
+ for _,entry in ipairs(entries) do if not entry.receipt or not entry.nativeTerminal or not (entry.terminal or entry.revoked) or not entry.replied then return false end end
  return true
 end
 return M
