@@ -2,28 +2,9 @@
 
 - [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host after the missing `VanillaVehiclesAnimated` source and any further unresolved pack inputs are available. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass; the game run remains blocked at pack resolution.
 
-# Cart game regression follow-up
-
-Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host profiles and saves, without installing into the user's game. Current preflight resolves 43 IDs; required local sources are missing for VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. Follow the native runner's AeroSpace placement and owned-window/focus gates.
-
-- [ ] Verify cart pose/contact and split-wheel GPU behavior in isolated full-pack SP captures where headless native matrices, palette/slot lifecycle checks and source-equivalence review do not establish actual rendering. Preserve the separate visual-design gaps; check held/world continuity and GL state restoration without changing gameplay.
-- [ ] Verify SP/Host cart input/action effects and two-client owner/observer presentation with the full pack. Preserve native authority, exact cart/cargo identity, cancellation/recovery deadlines and existing SP-only guards; parser/rate/reset tests and native JVM regressions do not establish live Host delivery or GPU presentation.
-
 # Nick's Turn Off Fridges selection
 
 - [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
-
-# Shopping cart animation port
-
-- [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
-- [ ] Extend shopping-cart cancellation/retry beyond the two selected restart scenes to moving recovery and the remaining interruption routes. Close the shared analyzer's selected-retry grip-phase coverage gap; exact native lifecycle/ownership and clock evidence do not replace that gate.
-- [ ] Extend shopping-cart wheel/caster presentation to the remaining load/sex/speed/obstacle combinations. Four independent tire phases, smoothed front caster direction, tire support and held/world continuity are checked in selected light/full SP recordings; this is not the full matrix or a collision check.
-- [ ] Review shopping-cart tight pivots before changing handling: the preserved nose-pivot path can slide the fixed rear tires sideways. Agree on the desired steering path before changing it; retain grip, natural stepping, collision and manual reverse.
-
-# Metal wheelbarrow animation port
-
-- [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
-- [ ] Review the remaining coarse stock-skin overlap around metal shafts with the closed grip; current bounded checks allow up to 1.1 mm male / 0.5 mm female. Preserve the accepted arm/cart stance and closed fist; do not obtain clearance by opening the fingers.
 
 # Selected QoL additions
 
@@ -50,60 +31,11 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 - [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.
 - [ ] Inspect passenger expanded/retracted controls and dashboard scaling in game; the current live scenario covers the stationary driver and programmatic callbacks.
 
-# Wooden wheelbarrow collisions
-
-- [ ] Extend relative-key manual reverse Host wall exits to Run/Sprint approaches and the remaining sex/load combinations, including empty carts. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms owner sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.
-- [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
-
-# Natural wooden wheelbarrow animation
-
-## Maneuvers and transitions
-
-- [ ] Extend live checks of forward/backward transitions at the reverse 130°/140° boundary and during collision, state reset and cart replacement; the math and hook regressions for these cases already exist. The full visual gate remains open until the pose defects below are resolved.
-- [ ] Extend collision interruption checks to load changes, combat/releasing the cart, Host fall/recovery and safe state reset. Preserve exact cart/cargo identity, native collision and manual reverse. The movement/doorway matrix does not verify these interruption paths or Run/Sprint observer clearance.
-
-## Pickup and put-down
-
-- [ ] After the newly selected VanillaVehiclesAnimated/AnimatedVehiclePartsFix pair is installed, recheck the blocked-handle approach against its vehicle geometry. The current SP checks use the installed 45-mod set; these two unavailable mods are excluded explicitly.
-
-- [ ] Extend moving cancellation to steering input/nonzero bank: blend the captured grip policy and torso into the moving endpoint before adopting its lean; verify the first recovery frame and final handoff.
-- [ ] Extend pickup clearance checks to the remaining approach angles and clothing combinations. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip.
-- [ ] Investigate the ordinary wrong-side ground-pickup approach walking through the wooden shafts before the pickup action starts. The selected current macOS SP reproduction has visible overlap and 23 paired geometry contact observations; classify approach routing separately from the pickup clip and held-pose correction below. Preserve native collision and agree on the intended approach before changing routing.
-- [ ] For pickup/put-down, extend live checks to cancellation before MP handoff, a late network result, item loss/replacement, cart destruction, stairs, combat/fall/death and restarting after these events. Preserve verified exact IDs/load and world/held handoff; do not delay emergency instant-drop. Lua/hook regressions do not replace the native visual gate and MP owner+observer.
-
-## Pose review and remaining coverage
-
-- [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
-- [ ] Review the existing multi-frame fore-aft clearance ramps during Walk side-clearance acquisition and fast-gait handoffs with the user before changing their speed or shape. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance; sampled trajectory continuity is not aesthetic acceptance.
-- [ ] Extend worn-clothing clearance to the unselected sex/load/gait/angle combinations, other outfits and Host owner/observer, including startup and release. Check actual garment palette/VBO provenance before claiming exact rendered-cloth clearance; source trousers re-skinned with body bones and sampled recordings do not establish every rendered frame. Keep synthetic instant-equip setup contacts separate from ordinary inventory-menu equip and wrong-side approach routing.
-- [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.
-
-## Inventory-equip clothing clearance
-
-- [ ] Complete the current-candidate isolated Host pickup/setdown/cancel/repeat handoff bank with exact cart/cargo identities and unthrottled transition-solver receipts. It depends on an AeroSpace launch that retains both owned windows through readiness; do not bypass the window-ownership gate. Related inventory and held-motion captures do not cover these action handoffs.
-- [ ] Extend held-fit positive inventory coverage to the heavier late residual-Walk phase (22.498 mm is covered by source/actual-Java-IK replay, not a new live candidate), remaining sex/load variants and actual garment GPU evidence where claimed. Measure isolated native fit cost with matched cohorts before attributing capture-to-draw age changes to the correction; keep sampled source geometry separate from every rendered frame.
-- [ ] Review adjacent held start/stop and the temporary cart excursion across the remaining variants. Keep the initial attachment correction separate from the Blender clearance envelope and independent direct candidate; do not combine them without evidence.
-- [ ] Close the remaining 3–8 ms native lifecycle-boundary evidence gaps and review the transition in a close Host-observer native-camera view. Sampled source geometry and Blender replay do not establish every rendered frame, actual garment GPU vertices or full-pack clearance. Keep wrong-side world-approach routing separate.
-
 # Cart multiplayer presentation
 
-## Current v2 admission gate
+Closure scope: approximate remote animation is sufficient. Visible jumps, small pose/placement differences and clothing/handle clipping are acceptable. Do not expand the variant matrix or implement a new protocol, codec, playback clock, transport or clearance solver to finish this work. Reopen only for a concrete gross defect reported or reproduced in normal play. [Acceptance criteria](docs/CART_MULTIPLAYER.md).
 
-### Remaining native lifetime and traffic gates
-
-- [ ] Extend native lifetime coverage to the remaining inventory-menu equip contexts and actor-removal/disconnection routes beyond the verified initial inventory Push Cart entry, world release/ground-pickup cycles and guest native-death/Coop-respawn/menu-rejoin path. Keep exact native incarnation and transport provenance, permanent retirement and replay fences.
-- [ ] Cover refusal before native Accept, spontaneous native Reject, natural transaction-byte reuse in Host, remaining delayed/duplicate outcomes and item/cart-loss or replacement routes, plus actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
-- [ ] Measure RakNet/IP/UDP control costs, retransmissions/lost sends and actual relevant-recipient fan-out for bounded bind/resync bursts. Keep delivered native command serialization separate from wire totals; establish the production codec/rate budget against a matching motion baseline.
-- [ ] Connect the verified admission reference to production motion/action together only after those authority/lifetime and traffic gates pass. Preserve durable high-water fences and native root catch-up; remove the replaced v1 consumers in the same change after verification. Source-time playback remains behind its separate timing gate.
-
-Design and dependencies: [multiplayer presentation plan](docs/CART_MULTIPLAYER.md). Remaining work follows the implemented timing baseline and same-native-render clearance fallback; the current cart protocol remains active.
-
-- [ ] Complete the baseline with exact relevant-recipient fan-out, IP/UDP wire scope and explicit native animation/root-budget attribution. Reuse the implemented opt-in publication/receive/prediction/render traces, conditional TimeSync intervals and active-window serialized/native connection counters; keep first delivery separate from cached repeats. Gate: matched active maneuvers with reproducible costs and timing; the complete current Host motion/inventory captures do not establish full wire cost or source image age.
-- [ ] Close the native-time alignment gate before source-time playback: bound clock drift/jumps between measured exchanges and native prediction generation/consumption. Human Prediction.update has no owner timestamp; use the current immutable native render revision without cart-only delay as the clearance fallback, preserving root catch-up. Gate: a measured common presentation time or a justified bounded fallback; TimeSync readiness and exchange-only intervals are insufficient.
-- [ ] Prove authoritative v2 admission before implementing the codec: bind a server-owned actor incarnation and shared motion/action lease to actual native connection/actor/item/action lifetimes, validate before VariableSync stores/relays state, and prove ordered bind/retire delivery or a fresh challenge/reply. Retain comparable high-water fences independently of visual Sender/Remote pruning. Gate: unknown old lease, cached state after ConnectedPlayer, reconnect/ID reuse, END-before-OPEN and motion/action handoff cannot revive retired presentation; packet rejection preserves native root catch-up.
-- [ ] Specify and implement a versioned compact cosmetic state with cart/session epoch, monotonic sequence, source time, semantic movement/action mode and only measured necessary phase anchors. Retain native equipment/effect authority and bounded resynchronization. Gate: duplicate/reordered/old-session/clock-wrap/late-join/cancel/replacement tests, matching endpoints and a payload budget within the measured baseline (at most 10% proposed overhead for required metadata).
-- [ ] Add bounded time-based playback only after native-time alignment is proven: interpolate continuous values, apply discrete changes at their event time, handle circular phase and bounded underrun, and retain immediate protected-state release with history/phase-anchor invalidation and an epoch/sequence fence against late-state revival (without splitting an already queued immutable camera/slot draw). Gate: deterministic jitter/loss/reordering/release-then-late-state trace replay, no backward playback or double smoothing delay, followed by matched native owner/observer draws.
-- [ ] Validate macOS SP/Host with the available mod set, sex/load variants, starts/stops/turns/reverse/collision/equip/cancel, late join/reconnect and owned-endpoint network impairment. Measure same-time pose error, grip/feet/mesh clearance, p50/p95/p99 age, underruns, actual wire bytes and relevant-recipient scaling. Change the transport only if measured reliable-ordered backlog prevents the target; first prove an isolated packet registration/relay path, then migrate its consumers completely.
+- [ ] Finish one short macOS menu-Host owner/observer check of the current ordinary wooden-cart cycle: pickup or inventory equip, push/turn/stop, setdown, cancel and retry. Review existing current-source recordings first; run only missing parts with the available mod set in disposable profiles/saves, retaining the normal resource/AeroSpace/provenance/cleanup gates. Require visible cart animation on both clients, eventual movement/action settlement without persistent total desync or a stuck pose/action, and no lost/duplicated cart or cargo. Do not require exact timing, placement, garment clearance, a full-pack run or a sex/load/network-impairment matrix. If no gross defect is found, remove this item and close cart animation/network work; otherwise retain only the concrete reproduction and its fix.
 
 # Root fix for the action queue
 
@@ -140,8 +72,6 @@ These operations can execute normally while some queue controls remain disabled.
 ## Shared game sessions and build regression
 
 - [ ] Extend the common scenario contracts beyond equipment, verified food/fluid cases and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
-
-- [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
 
 ## Near-term adapters
 
