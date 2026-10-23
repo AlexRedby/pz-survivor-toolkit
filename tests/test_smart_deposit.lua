@@ -433,7 +433,7 @@ end
 checkCachedPreview()
 print('PASS drag-local bounded advisory preview, lifecycle invalidation and fresh drop authority')
 
--- Affinity must match BC's input mask, after OC has removed protected items.
+-- Affinity must match BC's input mask after transfer protection removes retained items.
 local function checkSelectedStockAffinity(native)
     local world = setup(true, native)
     if native then require('BetterContainers/Proximity/Proximity_SmartDeposit').install()
@@ -455,7 +455,6 @@ local function checkSelectedStockAffinity(native)
     local incoming = world.item('Incoming', 1, 'Food')
     stuck.stuck = true; tagged.values = {stuck}
     world.nearby(fallback, tagged)
-    PZSurvivorToolkit.ItemRetention.isRetained = function(x) return x.stuck end
     ISMouseDrag.dragging = {stuck, incoming}
     -- Toolkit's installed transfer wrapper removes this protected item before BC.
     local executionItems = native and {incoming} or {stuck, incoming}

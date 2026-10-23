@@ -263,6 +263,63 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual('MonitorRender.lua', variables['NativeNavigatorRender'])
         self.assertEqual('NavigatorMonitorDrag.lua', variables['NativeNavigatorDrag'])
 
+    def test_explicit_deposit_paths_read_only_the_consumed_files(self):
+        # The option names an anchor; this test needs neither its filter file nor
+        # the container customizer. The anchor directory need not even exist.
+        bc = self.root / 'bc'
+        clean = self.root / 'clean'
+        sources = {
+            bc / 'Proximity/Proximity_SmartDeposit.lua': 'actual BC deposit',
+            clean / 'ISUI/ISInventoryPage.lua': 'enhanced page',
+            clean / 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua': 'vanilla page',
+        }
+        for path, content in sources.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        self.invoke('--test', 'test_smart_deposit',
+                    '--bc-filter-source', str(bc / 'Categorize/CategoryFilters.lua'),
+                    '--cleanui-inventory-pane', str(clean / 'ISUI/ISInventoryPane.lua'))
+        self.assertEqual([name for name, _ in self.executions], ['test_smart_deposit.lua'])
+        variables = self.executions[0][1]
+        self.assertEqual(variables['NativeBCSmartDepositSource'], 'actual BC deposit')
+        self.assertEqual(variables['CleanUIInventoryPageSource'], 'enhanced page')
+        self.assertEqual(variables['CleanUIVanillaInventoryPageSource'], 'vanilla page')
+        self.assertNotIn('NativeBCFilterSource', variables)
+        self.assertNotIn('NativeBCPageCustomizerSource', variables)
+
+    def test_locked_deposit_combines_effective_files_from_both_mods(self):
+        game = self.root / 'game'
+        game.mkdir()
+        (game / 'projectzomboid.jar').write_bytes(b'game')
+        (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=CleanUI;EURY_CONTAINERS\n')
+        sources = {
+            'CleanUI/common/mod.info': 'id=CleanUI\n',
+            'CleanUI/common/media/lua/client/ISUI/ISInventoryPage.lua': 'old enhanced page',
+            'CleanUI/42.21/media/lua/client/ISUI/ISInventoryPage.lua': 'active enhanced page',
+            'CleanUI/common/media/lua/client/CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua': 'common vanilla page',
+            'BetterContainers/42.20/mod.info': 'id=EURY_CONTAINERS\n',
+            'BetterContainers/42.20/media/lua/client/BetterContainers/Proximity/Proximity_SmartDeposit.lua': 'active BC deposit',
+            'game/media/lua/client/ISUI/ISInventoryPage.lua': 'native page',
+        }
+        for relative, content in sources.items():
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        lock = (self.root / 'pack.json').resolve()
+        pack.create(self.root.resolve(), lock, game)
+        arguments = ('--test', 'test_smart_deposit', '--pack-lock', str(lock), '--game', str(game))
+        self.invoke(*arguments)
+        self.assertEqual([name for name, _ in self.executions], ['test_smart_deposit.lua'])
+        variables = self.executions[0][1]
+        self.assertEqual(variables['NativeBCSmartDepositSource'], 'active BC deposit')
+        self.assertEqual(variables['CleanUIInventoryPageSource'], 'active enhanced page')
+        self.assertEqual(variables['CleanUIVanillaInventoryPageSource'], 'common vanilla page')
+        self.assertEqual(variables['NativeInventoryPageSource'], 'native page')
+        self.executions.clear()
+        with self.assertRaises(SystemExit):
+            self.invoke(*arguments, '--native-action-root', str(self.root / 'other-game/media/lua'))
+        self.assertEqual(self.executions, [])
+
     def test_discovery_does_not_admit_nested_native_scenarios_or_helper_files(self):
         for name in ("helper.lua", "native_queue/test_scenario.lua", "native_tags/check_unregistered.lua"):
             path = self.root / "tests" / name
