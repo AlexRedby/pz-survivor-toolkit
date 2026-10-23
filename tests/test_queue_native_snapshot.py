@@ -342,6 +342,48 @@ class NativeSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'manifest'):
             native.font_preload(cache, selection, game_argument)
 
+    def test_selected_adapter_helpers_are_sealed_without_unrelated_adapters(self):
+        from queue_checks.adapters import (craft_ui, inventory_grab, inventory_transfer,
+                                           fluid, food, quartermaster_crafting, queue_recovery)
+        dependencies = (
+            (craft_ui, ('craft.py',)),
+            (inventory_grab, ('craft.py',)),
+            (inventory_transfer, ('craft.py',)),
+            (fluid, ('craft.py',)),
+            (food, ('craft.py', 'fluid.py')),
+            (quartermaster_crafting, ('craft.py', 'quartermaster_supply_units.py')),
+            (queue_recovery, ('tv_controls.py',)),
+        )
+        # Keep helper mutations private; exercise the real source declarations
+        # through snapshot preparation, without compiling/staging each fixture.
+        python = self.project / 'tools/queue_checks/adapters'
+        unrelated = python / 'unrelated.py'
+        self.write(unrelated, '# unrelated adapter\n')
+        for module, helpers in dependencies:
+            with self.subTest(adapter=module.__name__):
+                selected = python / Path(module.__file__).name
+                self.write(selected, '# selected adapter\n')
+                for name in helpers:
+                    self.write(python / name, '# original helper\n')
+                adapter = self.fixture_adapter(lambda *_: None)
+                adapter.__file__ = str(selected)
+                adapter.sources = lambda project, selection: module.sources(ROOT, selection)
+                with patch.object(module, '__file__', str(selected)), \
+                        patch.object(native.adapters, 'get', return_value=adapter):
+                    output = self.prepare('helper-' + selected.stem)
+                manifest = report.read_json(output / 'source-manifest.json')
+                for name in helpers:
+                    self.assertIn(str(python / name), manifest)
+                self.assertNotIn(str(unrelated), manifest)
+                self.write(unrelated, unrelated.read_text() + '# changed\n')
+                self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+                for name in helpers:
+                    helper = python / name
+                    before = helper.read_text()
+                    self.write(helper, before + '# changed helper\n')
+                    self.assertTrue(report.verify_manifest(output, 'source-manifest.json', True), name)
+                    self.write(helper, before)
+
     def test_fresh_snapshot_pins_sources_configs_mods_and_compiler_output(self):
         output = self.prepare()
         self.assertEqual(self.compile_mock.call_args.args[0][0], str(self.jdk / "bin/javac"))

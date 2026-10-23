@@ -569,7 +569,8 @@ run={player={},ids={case='fluid-empty-cancel-waiting'},dispatched=true,
             path = project / 'tests/native_queue' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture')
-        self.assertCountEqual([project / 'tests/native_queue' / name for name in paths], fluid.sources(project, self.selection))
+        expected = [Path(fluid.craft.__file__), *(project / 'tests/native_queue' / name for name in paths)]
+        self.assertCountEqual(expected, fluid.sources(project, self.selection))
         with patch.object(fluid.craft, 'stage_common') as common:
             runtime = {'roles': {name: {'cache': self.root / name} for name in ('client1', 'server')}}
             for role in runtime['roles'].values():
