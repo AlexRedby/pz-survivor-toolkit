@@ -170,7 +170,7 @@ def window_start_counts(selection):
     """The isolated guest menu rejoin produces a second native game start."""
     options = selection.get('options', {})
     incompatible = ('cart_timeline', 'cart_time_alignment', 'cart_fast_motion', 'cart_actions',
-                    'cart_hotkey_setdown', 'cart_lease_control', 'cart_lease_lifetimes',
+                    'cart_hotkey_setdown', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu',
                     'cart_action_admission', 'cart_observer_association', 'cart_inventory_equip')
     if (selection.get('suite') == MP and selection.get('cases') == ['lease_lifecycle']
             and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
@@ -216,13 +216,13 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_action_admission', 'cart_observer_association'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu', 'cart_action_admission', 'cart_observer_association'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
     if suite == MP and selection['cases'] == ['lease_lifecycle']:
         incompatible = ('cart_timeline','cart_time_alignment','cart_fast_motion','cart_actions','cart_hotkey_setdown',
-                        'cart_lease_control','cart_lease_lifetimes','cart_action_admission','cart_observer_association','cart_inventory_equip')
+                        'cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_action_admission','cart_observer_association','cart_inventory_equip')
         if (options.get('mp_host') is not True or any(options.get(flag,False) is not False for flag in incompatible)
                 or 'cart_wall_exit' in options or options.get('cart_variant','wooden-wheelbarrow') != 'wooden-wheelbarrow'):
             raise ValueError('lease_lifecycle requires an isolated wooden-cart menu Host case')
@@ -237,6 +237,9 @@ def validate(selection):
     if options.get('cart_lease_lifetimes') is True and (options.get('cart_lease_control') is not True
             or options.get('cart_time_alignment') is True or options.get('cart_hotkey_setdown') is True):
         raise ValueError('cart_lease_lifetimes requires the isolated held lease-control Host bank')
+    if options.get('cart_lease_menu') is True and (options.get('cart_lease_lifetimes') is not True
+            or options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow'):
+        raise ValueError('cart_lease_menu requires the explicit wooden-cart equipment lifetime bank')
     if options.get('cart_action_admission') is True and (options.get('cart_timeline') is not True
             or options.get('cart_fast_motion') is not True or options.get('mp_host') is not True
             or options.get('cart_actions') is not True or options.get('cart_lease_control') is True
@@ -431,8 +434,11 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                    ('inventory-equip-protocol.lua', 'shared/CartMPInventoryEquipProtocol.lua'),
                                    ('lease-protocol.lua', 'shared/CartLeaseProtocol.lua'), ('lease-probe.lua', 'shared/CartLeaseProbe.lua'),
                                    ('lease-lifetimes.lua', 'shared/CartLeaseLifetimes.lua'),
+                                   ('lease-menu-actions.lua', 'client/CartLeaseMenuActions.lua'),
                                    ('lease-lifecycle.lua', 'shared/CartLeaseLifecycle.lua')]:
                 if origin == 'lease-lifecycle.lua' and not lifecycle:
+                    continue
+                if origin == 'lease-menu-actions.lua' and (role == 'server' or selection.get('options', {}).get('cart_lease_menu') is not True):
                     continue
                 if origin == 'lease-lifetimes.lua' and selection.get('options', {}).get('cart_lease_lifetimes') is not True:
                     continue

@@ -68,7 +68,9 @@
     "ObserverLoaderCheck.java",
     "ModuleMonitorCheck.kt",
     "ActionAdmissionCheck.kt",
-    "NullableDiagnosticCheck.kt"
+    "NullableDiagnosticCheck.kt",
+    "lease-menu-actions.lua",
+    "LeaseMenuBankCheck.lua"
   ],
   "selection_template": {
     "schema_version": 1,

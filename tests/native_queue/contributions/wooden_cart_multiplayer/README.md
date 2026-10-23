@@ -160,6 +160,14 @@ An exact successful client `EquipPacket.parse` may reconstruct the same held car
 
 `analyze-lease-lifetimes.py` verifies the guarded chains and exact process/actor/connection/revision windows, including actual empty hands and a distinct same-ID object before restoration. `EquipmentLifetimeCheck.kt` separately exercises the pinned native methods without a world. Complete normal-menu actor removal/respawn, reconnect races, foreign direct-field/reflection bypasses and production v2 migration remain outside this selected bank.
 
+## Ordinary menu lifetime bank
+
+`cart_lease_menu=true` explicitly extends the isolated wooden-cart `cart_lease_lifetimes=true` bank. It replaces the two synchronous setter cycles with two owner-only menu release/ground-pickup cycles. The native owner uses vanilla inventory `createMenu` and its exact Unequip option, then the actual Sauced world Push Cart option. The driver records exact queued/start/completed action, operation, native receipt and source identities; no fixture setter, cart replacement or effect rollback performs the transition.
+
+Server, owner and observer must each witness completed native empty hands before the server permits pickup. Prepared old replies and client/server payloads must be refused during absence and after fresh native binding. Exact cart/cargo IDs and weight remain fixed; native hand objects may be reconstructed by transport. Same-ID replacement, inventory-menu equip, other removal/reconnect routes and visual acceptance remain separate coverage. The baseline is 50 extra logical commands (maximum 90 with bounded resnapshot retries), with a 45-second bank deadline. Delivered application serialization is recorded separately from RakNet/IP/UDP wire totals.
+
+The unchanged default lifetime bank still checks direct setters and same-ID replacement. The menu bank changes only disposable fixture inputs and diagnostics; production admission and playback remain unchanged.
+
 ## Native control message size accounting
 
 Selected lease/equipment experiments tag guarded callbacks with the exact native `cartLeaseReceipt(module,command)` and emit one `[CART_LEASE_BYTES]` record per delivered command. The observer preserves the original buffer and measures its native serialized payload, including the C2S player-slot byte, plus the three-byte engine header. It does not deserialize the argument table again or send extra commands. `analyze-lease-cost.py` requires an exact receipt match for every held/equipment callback and reports command/direction totals and per-process one-second bursts. These are delivered application bytes, excluding RakNet/IP/UDP framing, lost sends and retransmissions; verbose diagnostic tables are not the production codec or its send-rate budget.

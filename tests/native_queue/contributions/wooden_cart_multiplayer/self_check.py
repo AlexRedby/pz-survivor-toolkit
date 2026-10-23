@@ -847,13 +847,16 @@ def main():
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
         for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua',
-                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-lifecycle.lua', 'action-admission.lua'):
+                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-menu-actions.lua', 'lease-lifecycle.lua', 'action-admission.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')
         bank=subprocess.run([lua,str(HERE/'LeaseLifetimeBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
         assert 'LEASE_LIFETIME_BANK_CHECK_PASS messages=42 cycles=6 staleSourceRefusals=4' in bank.stdout,bank.stdout+bank.stderr
         print('Equipment bank: PASS (actual Lua controller and42-message baseline plus injected resnapshot/resync races across three mocked native API contexts; native setter proof is separate)')
+        menu_bank=subprocess.run([lua,str(HERE/'LeaseMenuBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
+        assert 'LEASE_MENU_BANK_CHECK_PASS messages=50 ownerActions=4 absenceObservations=6' in menu_bank.stdout,menu_bank.stdout+menu_bank.stderr
+        print('Menu lifetime bank: PASS (actual Lua protocol across mocked native roles; owner input driver and native game proof checked separately)')
         lifecycle=subprocess.run([lua,str(HERE/'LeaseLifecycleBankCheck.lua'),str(HERE)],check=True,capture_output=True,text=True,timeout=15)
         assert 'LIFECYCLE_STATE_MACHINE_MOCK_PASS' in lifecycle.stdout,lifecycle.stdout+lifecycle.stderr
         print('Lifecycle state machine: PASS (mock native authority, continued Host absence polling and exact nonce logs; actual game evidence is separate)')

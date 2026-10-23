@@ -111,6 +111,9 @@ def analyze(root):
     require(isinstance(options, dict) and options.get('cart_action_admission') is True
             and options.get('cart_actions') is True and options.get('mp_host') is True,
             'Explicit menu Host native action admission bank required')
+    hotkey = options.get('cart_hotkey_setdown', False)
+    require(type(hotkey) is bool, 'cart_hotkey_setdown must be boolean')
+    drop_kind = 'ToolkitWoodCartDrop' if hotkey else 'ToolkitWoodCartSetdown'
     require('cart_wall_exit' not in options and options.get('cart_inventory_equip', False) is False
             and options.get('cart_lease_control', False) is False,
             'Native action admission is separate from held/inventory/wall experiments')
@@ -267,8 +270,8 @@ def analyze(root):
         require(accepted['owner'] == capture['owner'] and accepted['cart'] == capture['cart']
                 and accepted['transaction'] == capture['transaction'] and accepted['kind'] == capture['kind'],
                 'Native admission differs from explicit sealed owner transaction')
-        expected_kind = 'ToolkitWoodCartPickup' if PHASES[index-1].startswith('pickup') else None
-        require(capture['kind'] == expected_kind if expected_kind else capture['kind'] in ('ToolkitWoodCartSetdown', 'ToolkitWoodCartDrop'),
+        expected_kind = 'ToolkitWoodCartPickup' if PHASES[index-1].startswith('pickup') else drop_kind
+        require(capture['kind'] == expected_kind,
                 'Native kind differs from explicit phase operation')
         direct_outcome = {'Done': 'completed', 'Reject': 'rejected'}.get(retired['nativeState'])
         require(direct_outcome is None or receipt['state'] == direct_outcome,

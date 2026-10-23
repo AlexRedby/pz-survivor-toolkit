@@ -276,6 +276,32 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
         self.groups = copy.deepcopy(original);self.records('native','pending')[1]['worldEpoch'] = 0
         with self.assertRaises(ValueError):self.analyze()
 
+    def test_frozen_hotkey_bank_requires_exact_drop_kind_for_every_phase(self):
+        original = copy.deepcopy(self.groups)
+        for hotkey in (False, True):
+            self.selection['options']['cart_hotkey_setdown'] = hotkey
+            self.groups = copy.deepcopy(original)
+            expected = 'ToolkitWoodCartDrop' if hotkey else 'ToolkitWoodCartSetdown'
+            for rows in self.groups.values():
+                for row in rows:
+                    if row.get('kind') == 'ToolkitWoodCartSetdown':row['kind'] = expected
+            selected = copy.deepcopy(self.groups)
+            result = self.analyze()
+            self.assertEqual([row['kind'] for row in result['phases'] if row['phase'].startswith('drop')],
+                             [expected]*3)
+            for phase_index in (1,3,4):
+                self.groups = copy.deepcopy(selected)
+                token = self.records('owner','capture')[phase_index-1]['token']
+                for rows in self.groups.values():
+                    for row in rows:
+                        if row.get('token') == token:
+                            row['kind'] = 'ToolkitWoodCartSetdown' if hotkey else 'ToolkitWoodCartDrop'
+                # Pending starts may predate token publication; mutate that same start too.
+                self.records('native','pending')[phase_index-1]['kind'] = (
+                    'ToolkitWoodCartSetdown' if hotkey else 'ToolkitWoodCartDrop')
+                with self.subTest(hotkey=hotkey,index=phase_index),self.assertRaisesRegex(ValueError,'Native kind differs'):
+                    self.analyze()
+
     def test_foreign_endpoints_errors_and_process_restarts_fail_closed(self):
         original=copy.deepcopy(self.groups)
         self.records('owner','capture')[0]['actor']='client2'
@@ -371,7 +397,8 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
             self.selection=dict(original,**{field:value})
             with self.subTest(field=field),self.assertRaisesRegex(ValueError,'Frozen selection'):self.analyze()
         for field,value in (('cart_action_admission',1),('cart_actions',False),('mp_host',False),
-                            ('cart_lease_control',True),('cart_inventory_equip',True),('cart_wall_exit','left')):
+                            ('cart_lease_control',True),('cart_inventory_equip',True),('cart_wall_exit','left'),
+                            ('cart_hotkey_setdown',1),('cart_hotkey_setdown','true')):
             self.selection=copy.deepcopy(original);self.selection['options'][field]=value
             with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
 

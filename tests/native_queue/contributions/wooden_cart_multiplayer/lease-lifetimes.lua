@@ -1,4 +1,4 @@
--- Explicit native setter boundary bank. No production admission or playback is enabled.
+-- Explicit native setter or owner-menu lifetime bank. No production admission or playback is enabled.
 local config=require 'QueueTestSelection'
 assert(config.disposable==true and config.options.cart_lease_control==true and config.options.cart_lease_lifetimes==true,'Owned equipment lifetime bank required')
 local P=require 'CartLeaseProtocol'
@@ -6,7 +6,8 @@ local J=require 'CartMPJSON'
 local M={}
 local activeReceipt
 local module='CartLeaseLifetimes'
-local phases={'baseline','release-reacquire','same-id-replacement'}
+local menuMode=config.options.cart_lease_menu==true
+local phases=menuMode and {'baseline','menu-release-pickup','menu-release-pickup-repeat'} or {'baseline','release-reacquire','same-id-replacement'}
 local MAX_ATTEMPTS,QUIET_MS=8,250
 local function log(row)
  if activeReceipt then row.receipt=activeReceipt end
@@ -19,6 +20,10 @@ local function held(p)
  local kind=item:getFullType()
  assert(kind=='SaucedWheelbarrow.WheelbarrowWood' or kind=='SaucedWheelbarrow.WheelbarrowMetal' or kind=='SaucedCarts.ShoppingCart','Supported native cart required')
  return {mode='motion',cart=item:getID(),item=item,lifetime=assert(cartLeaseLifetime(p),'Native equipment lifetime unavailable')}
+end
+local function optionalHeld(p)
+ if not p or not p:getPrimaryHandItem() or p:getPrimaryHandItem()~=p:getSecondaryHandItem() then return nil end
+ return held(p)
 end
 local function cargo(item)
  local items=item:getInventory():getItems();assert(items:size()==1,'Fixture cargo count changed')
@@ -54,6 +59,12 @@ if isServer() then
  local controller=P.server(assert(cartLeaseChallengeSeed())..':equipment',{limit=4})
  local clients,ready,prepared,done,finished,firstBind,attempts,lastEcho={},{},{},{},{},{},{},{}
  local target,phase,offered=nil,0,false
+ local menuTransition,menuProgress
+ local function cycleRow(before,after,actor)
+  local _,cid,weight=cargo(after.item)
+  return {actor=actor,event='cycle',phase=phase,name=phases[phase],owner=target:getOnlineID(),cart=after.cart,
+   before=before.lifetime,after=after.lifetime,cargoID=cid,cargoWeight=weight,sameItem=before.item==after.item,menu=true}
+ end
  local function observe()
   local connection=assert(cartLeaseOwnerConnection(target),'Current native owner connection missing')
   local binding=held(target)
@@ -68,7 +79,9 @@ if isServer() then
    log({actor='server',event='begin',phase=phase,owner=target:getOnlineID()})
    for _,p in pairs(clients) do send(p,'Begin',{phase=phase,owner=target:getOnlineID()}) end
   else
-   local row=cycle(target,phase,'server');observe();log(row)
+   if menuMode then
+    menuTransition={before=held(target),prepared=prepared,requests={},resumed=false,complete=false}
+   else local row=cycle(target,phase,'server');observe();log(row) end
    for role,p in pairs(clients) do
     local pending=assert(prepared[role],'Missing pre-mutation pending challenge')
     send(p,'Cycle',{phase=phase,owner=target:getOnlineID(),stale=pending.reply})
@@ -76,6 +89,40 @@ if isServer() then
    prepared={}
   end
  end
+ menuProgress=function()
+  local t=menuTransition
+  if not t or t.complete then return end
+  local native=optionalHeld(target)
+  if not t.resumed then
+   if target:getPrimaryHandItem() or target:getSecondaryHandItem() or cartLeaseLifetime(target)~=nil then return end
+   local connection=assert(cartLeaseOwnerConnection(target),'Native release owner transport missing')
+   controller:unavailable(target:getOnlineID(),connection,target)
+   if not t.absent then
+    t.absent=true;log({actor='server',event='absence',phase=phase,owner=target:getOnlineID(),before=t.before.lifetime,nativeLifetimeAbsent=true})
+   end
+   for role,request in pairs(t.requests) do
+    if not request.checked then
+     local before=controller:snapshot(target:getOnlineID())
+     assert(not controller:accept(target:getOnlineID(),request.source,request.player,request.old,getTimestampMs()),'Menu-absent source payload accepted')
+     unchanged(before,controller:snapshot(target:getOnlineID()));request.checked=true
+     log(tuple({actor='server',event='absent-source',requester=role,phase=phase,owner=target:getOnlineID(),before=t.before.lifetime,
+      stalePayloadAccepted=false,nativeLifetimeAbsent=true,guarded=true,receipt=request.receipt},request.old))
+    end
+   end
+   if all(t.requests) and t.requests.client1.checked and t.requests.client2.checked then
+    t.resumed=true
+    log({actor='server',event='menu-resume',phase=phase,owner=target:getOnlineID(),nativeLifetimeAbsent=true})
+    for _,p in pairs(clients) do send(p,'MenuResume',{phase=phase,owner=target:getOnlineID()}) end
+   end
+  elseif native then
+   local _,oldID,oldWeight=cargo(t.before.item);local _,newID,newWeight=cargo(native.item)
+   assert(native.cart==t.before.cart and oldID==newID and oldWeight==newWeight and native.lifetime~=t.before.lifetime,'Menu changed cart/cargo or retained old native lifetime')
+   log(cycleRow(t.before,native,'server'));t.complete=true
+  end
+ end
+ if menuMode then Events.OnTick.Add(function()
+  local ok,err=pcall(menuProgress);if not ok then log({actor='server',event='error',reason=tostring(err)}) end
+ end) end
  Events.OnClientCommand.Add(function(mod,command,p,args)
   if mod~=module then return end
  local previousReceipt=activeReceipt
@@ -94,6 +141,14 @@ if isServer() then
     if all(ready) then advance() end;return
    end
    assert(clients[role]==p and args.phase==phase and phase>=1 and phase<=3 and not finished[role],'Unknown requester or phase')
+   if command=='MenuAbsent' then
+    assert(menuMode and menuTransition and not menuTransition.resumed,'Unexpected menu absence');local t=menuTransition
+    assert(not t.requests[role] and t.prepared[role] and args.nonce==t.prepared[role].reply.nonce,'Repeated/foreign menu absence')
+    local expected=t.prepared[role].payload;assert(expected,'Missing prepared source payload')
+    for _,key in ipairs({'session','grant','lease','seq','op','mode','cart','body'}) do assert(args.old[key]==expected[key],'Prepared menu payload changed '..key) end
+    t.requests[role]={source=source,player=p,old=args.old,receipt=activeReceipt};menuProgress();return
+   end
+   if menuMode then menuProgress();assert(not menuTransition or menuTransition.complete,'Fresh binding before authoritative menu pickup') end
    local binding=observe()
    if command=='Bind' then
     assert(type(args.attempt)=='number' and args.attempt==math.floor(args.attempt) and args.attempt==(attempts[role] or 0)+1 and args.attempt<=MAX_ATTEMPTS,'Unbounded/reordered bind attempt')
@@ -122,7 +177,7 @@ if isServer() then
    elseif command=='Prepare' then
     assert(phase<3 and not prepared[role] and lastEcho[role] and args.afterAttempt==lastEcho[role].attempt,'Repeated/late/unbound preparation')
     local reply=assert(controller:reply(args.request,source),'Pending challenge reply missing')
-    assert(reply.actor==id and reply.open,'Pre-mutation source lease missing');prepared[role]={reply=reply}
+    assert(reply.actor==id and reply.open,'Pre-mutation source lease missing');prepared[role]={reply=reply,payload=menuMode and args.payload or nil}
     log(tuple({actor='server',event='prepare',requester=role,phase=phase,owner=id,afterAttempt=args.afterAttempt,nonce=reply.nonce,lifetime=binding.lifetime,guarded=true},reply))
     if all(prepared) then advance() end
    elseif command=='Done' then
@@ -150,6 +205,8 @@ local receiver,ownerID,phase,since,current,lastChange=nil,nil,0,nil,nil,nil
 local ready,done,preparing,doneSent,offered=false,false,false,false,false
 local inflight,pendingPrepared,oldEnvelope,ackLifetime,ackAttempt=nil,nil,nil,nil,nil
 local attempts,firstPhaseAttempt,snapshots=0,true,0
+local menuPending,menuRetired
+local menuActions=menuMode and require 'CartLeaseMenuActions'
 local function owner()
  local players=getOnlinePlayers()
  for i=0,players:size()-1 do local p=players:get(i);if p:getUsername()=='client1' then return p end end
@@ -173,6 +230,51 @@ local function refresh(native)
  end
  return next
 end
+local function menuRow(event,row)
+ row=row or {};row.actor=user;row.phase=phase;row.owner=ownerID;row.event=event;row.wall=getTimestampMs()
+ print('[CART_LEASE_MENU] '..J.encode(row))
+end
+local function groundCart(native,id)
+ local found
+ for x=math.floor(native:getX())-4,math.floor(native:getX())+4 do for y=math.floor(native:getY())-4,math.floor(native:getY())+4 do
+  local square=getCell():getGridSquare(x,y,native:getZ())
+  if square then local objects=square:getWorldObjects();for i=0,objects:size()-1 do
+   local item=objects:get(i):getItem()
+   if item and item:getID()==id then assert(not found,'Duplicate menu fixture world cart');found=item end
+  end end
+ end end
+ return assert(found,'Exact menu fixture world cart missing')
+end
+local function menuPoll(native)
+ local t=menuPending;if not t then return true end
+ if t.action and not t.terminal then t.terminal=menuActions.poll(t.action) end
+ if not t.absent and not native:getPrimaryHandItem() and not native:getSecondaryHandItem() and cartLeaseLifetime(native)==nil
+  and (user~='client1' or t.terminal) then
+  receiver:unavailable()
+  local before=receiver:snapshot()
+  assert(cartLeaseCurrent()==t.ingress,'Menu cycle client transport changed')
+  assert(not receiver:reply(t.stale,t.ingress),'Menu-absent prepared reply accepted');unchanged(before,receiver:snapshot())
+  assert(not receiver:receive(oldEnvelope,getTimestampMs()),'Menu-absent old payload accepted');unchanged(before,receiver:snapshot())
+  t.absent=true
+  log({actor=user,event='absence',phase=phase,owner=ownerID,before=t.before.lifetime,nativeLifetimeAbsent=true,
+   staleReplyAccepted=false,stalePayloadAccepted=false,staleNonce=t.stale.nonce})
+  send('MenuAbsent',{nonce=t.stale.nonce,old=oldEnvelope})
+ end
+ if t.resume and user=='client1' and not t.pickup then
+  assert(t.absent and t.terminal,'Menu pickup before completed native release')
+  t.pickup=true;t.terminal=false;t.action=menuActions.enqueue(getPlayer(),groundCart(native,t.before.cart),true,phase,menuRow)
+ end
+ if not t.resume or not t.absent or user=='client1' and not t.terminal then return false end
+ local after=optionalHeld(native);if not after then return false end
+ local _,cid,weight=cargo(after.item)
+ assert(after.cart==t.before.cart and cid==t.cargoID and weight==t.cargoWeight and after.lifetime~=t.before.lifetime,'Menu cycle changed cart/cargo or revived native lifetime')
+ receiver:native(assert(cartLeaseCurrent()),native,after);current=after;lastChange=getTimestampMs();ackLifetime=nil
+ log({actor=user,event='cycle',phase=phase,name=phases[phase],owner=ownerID,cart=after.cart,before=t.before.lifetime,after=after.lifetime,
+  cargoID=cid,cargoWeight=weight,sameItem=t.before.item==after.item,menu=true,receipt=t.receipt,staleReplyAccepted=false,stalePayloadAccepted=false,staleNonce=t.stale.nonce})
+ menuRetired={reply=t.stale,payload=oldEnvelope}
+ menuPending=nil;preparing=false;pendingPrepared=nil;firstPhaseAttempt=true
+ return true
+end
 local function fresh(native)
  assert(not inflight and not preparing and phase>=1,'Overlapping lifetime bind')
  attempts=attempts+1;assert(attempts<=MAX_ATTEMPTS,'Equipment resync attempt limit')
@@ -189,7 +291,7 @@ local function drive(native)
  if phase<3 then
   pendingPrepared=assert(receiver:challenge(),'Pending pre-mutation challenge missing');preparing=true
   log({actor=user,event='prepare',phase=phase,owner=ownerID,afterAttempt=ackAttempt,nonce=pendingPrepared.nonce,lifetime=current.lifetime})
-  send('Prepare',{request=pendingPrepared,afterAttempt=ackAttempt})
+  send('Prepare',{request=pendingPrepared,afterAttempt=ackAttempt,payload=menuMode and oldEnvelope or nil})
  elseif not doneSent then
   doneSent=true;log({actor=user,event='done',phase=3,owner=ownerID,afterAttempt=ackAttempt});send('Done',{afterAttempt=ackAttempt})
  elseif offered then
@@ -204,20 +306,31 @@ Events.OnServerCommand.Add(function(mod,command,args)
    if cartLeaseReceipt then activeReceipt=assert(cartLeaseReceipt(module,command),'Exact serialized receipt missing') end
   local ingress=assert(cartLeaseIngress(),'Exact native reply ingress missing')
   local native=owner();assert(receiver and native:getOnlineID()==ownerID and args.owner==ownerID,'Unexpected owner incarnation')
-  refresh(native)
+  if not menuMode or not menuPending and not preparing then refresh(native) end
   if command=='Begin' then
    assert(phase==0 and args.phase==1,'Unexpected baseline begin');phase=1
    log({actor=user,event='begin',phase=phase,owner=ownerID})
   elseif command=='Cycle' then
    assert(args.phase==phase+1 and phase>=1 and phase<=2 and preparing,'Unexpected mutation stage')
    assert(pendingPrepared and args.stale.nonce==pendingPrepared.nonce,'Pending challenge replaced')
-   phase=args.phase;local row,after=cycle(native,phase,user)
+   phase=args.phase
+   if menuMode then
+    local _,cid,weight=cargo(current.item)
+    menuPending={before=current,cargoID=cid,cargoWeight=weight,stale=args.stale,ingress=ingress,receipt=activeReceipt}
+    if user=='client1' then menuPending.action=menuActions.enqueue(getPlayer(),current.item,false,phase,menuRow) end
+    return
+   end
+   local row,after=cycle(native,phase,user)
    receiver:native(assert(cartLeaseCurrent()),native,after);current=after;lastChange=getTimestampMs();ackLifetime=nil
    local before=receiver:snapshot()
    assert(not receiver:reply(args.stale,ingress),'Retired pending challenge reply accepted');unchanged(before,receiver:snapshot())
    assert(not receiver:receive(oldEnvelope,getTimestampMs()),'Retired receiver payload accepted');unchanged(before,receiver:snapshot())
    row.staleReplyAccepted=false;row.stalePayloadAccepted=false;row.staleNonce=args.stale.nonce
    log(row);preparing=false;pendingPrepared=nil;firstPhaseAttempt=true
+  elseif command=='MenuResume' then
+   assert(menuMode and menuPending and menuPending.absent and args.phase==phase and not menuPending.resume,'Unexpected menu pickup barrier')
+   log({actor=user,event='menu-resume-received',phase=phase,owner=ownerID,nativeLifetimeAbsent=true})
+   menuPending.resume=true;menuPoll(native)
   elseif command=='Bound' then
    assert(args.phase==phase and inflight and args.attempt==inflight.attempt and args.reply.nonce==inflight.request.nonce,'Unrequested grant')
    local accepted=receiver:reply(args.reply,ingress)
@@ -231,6 +344,13 @@ Events.OnServerCommand.Add(function(mod,command,args)
     local e={session=args.reply.session,grant=args.reply.grant,lease=args.reply.lease,seq=snapshot.seq+1,op='UPDATE',mode='motion',cart=current.cart,body='fixture-lifetime-'..phase..'-'..inflight.attempt}
     assert(receiver:receive(e,getTimestampMs()),'Fresh receiver state refused');inflight.envelope=e
     log(tuple({actor=user,event='bound',phase=phase,owner=ownerID,attempt=inflight.attempt,nonce=inflight.request.nonce,lifetime=current.lifetime,seq=e.seq,guarded=true},e))
+    if menuRetired then
+     local before=receiver:snapshot()
+     assert(not receiver:reply(menuRetired.reply,ingress),'Old menu reply restored fresh authority');unchanged(before,receiver:snapshot())
+     assert(not receiver:receive(menuRetired.payload,getTimestampMs()),'Old menu payload restored fresh authority');unchanged(before,receiver:snapshot())
+     log(tuple({actor=user,event='post-bind-stale',phase=phase,owner=ownerID,attempt=inflight.attempt,nonce=menuRetired.reply.nonce,
+      freshLifetime=current.lifetime,staleReplyAccepted=false,stalePayloadAccepted=false,guarded=true},menuRetired.payload));menuRetired=nil
+    end
     send('Echo',{attempt=inflight.attempt,nonce=inflight.request.nonce,envelope=e})
    end
   elseif command=='Receipt' then
@@ -253,12 +373,14 @@ end)
 function M.finish(native,now)
  if done then return true end
  if not since then since=now end
- assert(now-since<20000,'Equipment lifetime bank deadline')
+ assert(now-since<(menuMode and 45000 or 20000),'Equipment lifetime bank deadline')
  if not ready then
   assert(native and native:getUsername()=='client1','Exact native fixture owner required')
   ownerID=native:getOnlineID();receiver=P.receiver(ownerID,assert(cartLeaseChallengeSeed())..':'..user..':equipment')
   current=held(native);receiver:native(assert(cartLeaseCurrent()),native,current);ready=true;lastChange=getTimestampMs()
   log({actor=user,event='ready',phase=0,owner=ownerID,lifetime=current.lifetime});send('Ready',{})
+ elseif menuPending then if menuPoll(native) then drive(native) end
+ elseif menuMode and preparing and not optionalHeld(native) then receiver:unavailable()
  else refresh(native);drive(native) end
  return done
 end

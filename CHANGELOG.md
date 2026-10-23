@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Cart public-input diagnostics:** Bind admission to the selected Drop/Setdown kind, regress delayed old receipts during a fresh Drop, and add an explicit owner menu release/pickup lifetime bank with all-role native absence and stale-message fences before and after rebinding.
+
 - **Cart capture sampling:** Preserve each real native motion tick instead of discarding observations under the 100ms state throttle. Keep slower post-motion state logging, independent action sampling and unchanged analyzer coverage limits.
 
 - **Native equipment checks:** Cover portable-radio P4 returns with separate native scissors, exact device and battery state, client pointer/sound cleanup and ordered Host receipts. Compare each role against its queue-disabled control and require the native unheld-radio off packet to reach the server after return.

@@ -777,6 +777,21 @@ print('STARTUP_REJOIN_GUARD_PASS')
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
             self.options.clear();self.options.update(original)
 
+    def test_menu_lifetime_bank_is_explicit_and_stages_owner_driver_only_on_clients(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_menu=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_menu'):carts.validate(self.selection)
+        self.options.update(cart_lease_lifetimes=True,cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2'):
+            path=self.output/role/'mods/ActionQueueTest/42/media/lua/client/CartLeaseMenuActions.lua'
+            self.assertEqual(path.read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-menu-actions.lua').read_bytes())
+        self.assertFalse((self.output/'server/mods/ActionQueueTest/42/media/lua/client/CartLeaseMenuActions.lua').exists())
+        for key,value in [('cart_lease_menu','true'),('cart_lease_lifetimes',False),('cart_variant','metal-wheelbarrow')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
     def test_action_admission_stages_probe_only_for_explicit_native_action_bank(self):
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         self.options.update(cart_action_admission=True)
