@@ -65,6 +65,7 @@ end
 local reader=assert(getFileReader('smoke-user.txt',false));local user=reader:readLine();reader:close()
 local Ack=require 'PZSurvivorToolkit/ActionQueueAcknowledgements'
 local entries,pending={},{}
+local awaiting
 local identities=setmetatable({},{__mode='k'});local nextIdentity=0
 local function identity(object)
  assert(object~=nil,'Exact local action/native identity required')
@@ -87,21 +88,51 @@ function M.track(action,spec)
   localActionEpoch=identity(action)}
  entries[#entries+1]=entry;emit('[CART_ADMISSION_OWNER]',row(entry,'track'))
 end
-function M.trackQueued(queued,spec)
- if user~='client1' then return end
- local kind=spec.phase:sub(1,6)=='pickup' and 'ToolkitWoodCartPickup'
-  or config.options.cart_hotkey_setdown==true and 'ToolkitWoodCartDrop' or 'ToolkitWoodCartSetdown'
+local function selectedAction(queued,kind,id)
  local selected
  for _,action in ipairs(queued) do
   if action.Type==kind then
    local cart=kind=='ToolkitWoodCartPickup' and action.itemId or action.item and action.item:getID()
-   if cart==spec.id then assert(not selected,'Ambiguous queued cart action identity');selected=action end
+   if cart==id then assert(not selected,'Ambiguous queued cart action identity');selected=action end
   end
  end
- M.track(assert(selected,'Exact queued cart action missing'),spec)
+ return selected
+end
+function M.trackQueued(queued,spec)
+ if user~='client1' then return end
+ assert(not awaiting,'Previous native cart continuation is unresolved')
+ local kind=spec.phase:sub(1,6)=='pickup' and 'ToolkitWoodCartPickup'
+  or config.options.cart_hotkey_setdown==true and 'ToolkitWoodCartDrop' or 'ToolkitWoodCartSetdown'
+ local selected=selectedAction(queued,kind,spec.id)
+ if selected then M.track(selected,spec);return end
+ -- FromWorldItem returns a calibrated walk; its perform creates the pickup
+ -- through native addAfter, which preserves the same operation table identity.
+ assert(kind=='ToolkitWoodCartPickup','Exact queued cart action missing')
+ local walk
+ for _,candidate in ipairs(queued) do
+  if candidate.Type=='ISWalkToTimedActionF' and candidate.toolkitWoodCartItem
+   and candidate.toolkitWoodCartItem:getID()==spec.id then
+   assert(not walk,'Ambiguous native cart approach');walk=candidate
+  end
+ end
+ assert(walk and walk.character==getPlayer() and type(walk.toolkitQueueOperation)=='table','Exact deferred cart approach missing')
+ local queue=assert(ISTimedActionQueue.queues[walk.character],'Native approach queue missing')
+ awaiting={walk=walk,owner=walk.character,queue=queue,operation=walk.toolkitQueueOperation,
+  generation=queue.toolkitOperationGeneration or 0,kind=kind,spec=spec}
 end
 function M.sample()
  if user~='client1' then return end
+ if awaiting then
+  local wait=awaiting
+  assert(getPlayer()==wait.owner and ISTimedActionQueue.queues[wait.owner]==wait.queue
+   and (wait.queue.toolkitOperationGeneration or 0)==wait.generation
+   and wait.walk.toolkitQueueOperation==wait.operation,'Deferred cart source/queue operation changed')
+  local selected=selectedAction(wait.queue.queue,wait.kind,wait.spec.id)
+  if selected then
+   assert(selected.toolkitQueueOperation==wait.operation,'Deferred cart operation differs from exact native approach')
+   awaiting=nil;M.track(selected,wait.spec)
+  end
+ end
  for _,entry in ipairs(entries) do
   if not entry.receipt then
    local action=entry.action

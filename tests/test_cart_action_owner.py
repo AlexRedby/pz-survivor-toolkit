@@ -110,6 +110,30 @@ event('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=11,kin
 probe.sample();assert(#commands==1 and has('"event":"capture"'))
 ''')
 
+    def test_native_deferred_pickup_follows_exact_approach_operation(self):
+        self.run_lua('''
+local operation={};local walk={character=player,Type='ISWalkToTimedActionF',
+ toolkitWoodCartItem={getID=function() return 42 end},toolkitQueueOperation=operation}
+queue.current=walk;queue.queue={walk}
+probe.trackQueued(queue.queue,{index=1,phase='pickup-complete',id=42});probe.sample()
+assert(not has('"event":"track"') and #commands==0)
+action.toolkitQueueOperation=operation;queue.queue={action};queue.current=action
+-- Native State may arrive before the next OnTick samples the newly inserted action.
+event('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=11,kind='ToolkitWoodCartPickup',token=token,state='started'})
+probe.sample();assert(#commands==1 and has('"event":"capture"'))
+''')
+
+    def test_deferred_pickup_rejects_foreign_operation_or_queue_reset(self):
+        for mutation in ('action.toolkitQueueOperation={}','queue.toolkitOperationGeneration=2'):
+            with self.subTest(mutation=mutation):
+                self.run_lua('''
+local operation={};local walk={character=player,Type='ISWalkToTimedActionF',
+ toolkitWoodCartItem={getID=function() return 42 end},toolkitQueueOperation=operation}
+queue.current=walk;queue.queue={walk}
+probe.trackQueued(queue.queue,{index=1,phase='pickup-complete',id=42})
+action.toolkitQueueOperation=operation;queue.queue={action};queue.current=action
+'''+mutation+''';assert(not pcall(probe.sample));assert(#commands==0 and not has('"event":"track"'))''')
+
     def test_missing_or_ambiguous_queued_cart_is_refused(self):
         self.run_lua('''
 local spec={index=1,phase='pickup-complete',id=42}
