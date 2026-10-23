@@ -20,11 +20,13 @@ def get(suite):
     return import_module('.' + MODULES[suite], __name__)
 
 
-def definitions():
+def definitions(suites=None):
+    """Load declarations for requested suites, or the complete catalog by default."""
+    selected = MODULES if suites is None else {suite: MODULES[suite] for suite in suites if suite in MODULES}
     result = {}
-    for name in dict.fromkeys(MODULES.values()):
+    for name in dict.fromkeys(selected.values()):
         result.update(import_module('.' + name, __name__).definitions())
-    return result
+    return result if suites is None else {suite: result[suite] for suite in selected}
 
 
 def roles(selection, server=True):
