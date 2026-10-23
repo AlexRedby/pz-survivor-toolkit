@@ -3,6 +3,7 @@ require "ISUI/ISScrollingListBox"
 require "ISUI/ISComboBox"
 require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
+require "ISUI/ISLabel"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Schema = require "PZSurvivorToolkit/ItemTagSchema"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
@@ -150,17 +151,20 @@ function Picker:createChildren()
         result:initialise(); result:instantiate(); UIStyle.button(result); self:addChild(result)
         return result
     end
-    self.search = ISTextEntryBox:new("", 12, 34, width - 24, 26)
+    self.searchLabel = ISLabel:new(12, 34, fontHeight + 4, text("Search"), 0.9, 0.9, 0.9, 1, UIFont.Small, true)
+    self.searchLabel:initialise(); self.searchLabel:instantiate(); self:addChild(self.searchLabel)
+    local searchY = 34 + fontHeight + 8
+    self.search = ISTextEntryBox:new("", 12, searchY, width - 24, 26)
     self.search:initialise(); self.search:instantiate(); self.search:setTooltip(text("Search")); self:addChild(self.search)
-    self.group = ISComboBox:new(12, 66, width - 24, 26)
+    self.group = ISComboBox:new(12, searchY + 32, width - 24, 26)
     self.group:initialise(); self.group:instantiate()
     self.group:addOptionWithData(text("AllGroups"), false)
     for _, family in ipairs(self.families) do self.group:addOptionWithData(Tags.label(family), family) end
     self:addChild(self.group)
-    self.modeButton = button(12, 98, width - 24, "", Picker.toggleMode)
+    self.modeButton = button(12, searchY + 64, width - 24, "", Picker.toggleMode)
     self:updateMode()
     self.modeButton:setTooltip(text("Hint"))
-    local top, bottom = 150, height - 92 - fontHeight * 2
+    local top, bottom = searchY + 116, height - 92 - fontHeight * 2
     local listWidth = width >= 620 and math.floor((width - 36) * 0.55) or width - 24
     local listHeight = width >= 620 and bottom - top or math.floor((bottom - top - 28) * 0.6)
     self.list = ISScrollingListBox:new(12, top, listWidth, math.max(40, listHeight))
@@ -309,6 +313,8 @@ function Picker.open(options)
     picker.entries, picker.families = entries, families
     picker.owner, picker.onApply, picker.player = options.owner, options.onApply, options.player
     picker.title, picker.resizable = options.title or text(""), false
+    picker.background = true
+    picker.backgroundColor = {r = 0.04, g = 0.04, b = 0.04, a = 1}
     picker:initialise(); picker:instantiate(); picker:addToUIManager()
     if picker.owner then
         picker.owner.toolkitRulePicker = picker

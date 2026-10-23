@@ -2,6 +2,7 @@ require "ISUI/ISCollapsableWindowJoypad"
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
+require "ISUI/ISLabel"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Picker = ISCollapsableWindowJoypad:derive("PZSTContainerIconPicker")
 local function text(key) return getText("UI_PZST_Container" .. key) end
@@ -45,10 +46,15 @@ end
 
 function Picker:createChildren()
     ISCollapsableWindowJoypad.createChildren(self)
-    self.search = ISTextEntryBox:new("", 12, 34, self.width - 24, 24)
+    self.searchLabel = ISLabel:new(12, 0, 24, text("IconSearch"), 1, 1, 1, 1, UIFont.Small, true)
+    self.searchLabel:initialise(); self.searchLabel:instantiate(); self:addChild(self.searchLabel)
+    self.searchLabel:setY(28)
+    self.search = ISTextEntryBox:new("", 12, 54, self.width - 24, 26)
     self.search:initialise(); self.search:instantiate(); self:addChild(self.search)
     self.search:setTooltip(text("IconSearch"))
-    self.list = ISScrollingListBox:new(12, 66, self.width - 24, self.height - 114)
+    self.search.backgroundColor = {r = 0.08, g = 0.10, b = 0.13, a = 1}
+    self.search.borderColor = {r = 0.5, g = 0.65, b = 0.8, a = 1}
+    self.list = ISScrollingListBox:new(12, 86, self.width - 24, self.height - 134)
     self.list:initialise(); self.list:instantiate(); self.list.itemheight = 30
     self.list.font = UIFont.Small
     self.list.joypadParent = self
@@ -92,16 +98,25 @@ end
 function Picker.open(owner, onPick)
     if owner.toolkitIconPicker then owner.toolkitIconPicker:close() end
     local catalogue = require("BetterContainers/Customize/ui/IconCatalogue").getCatalogue()
-    local entries, seen = {}, {}
+    local entries, byTexture, withoutTexture = {}, {}, {}
     -- Consume BC's cached catalogue without changing its expansion/selection state.
     local function add(entry)
         if not entry.icon then return end
         local key = entry.icon.kind .. "|" .. entry.icon.value
-        if seen[key] then return end
-        seen[key] = true
-        entries[#entries + 1] = {icon = {kind = entry.icon.kind, value = entry.icon.value},
-            label = entry.label or entry.name or entry.icon.value, texture = entry.tex,
-            search = tostring(entry.searchText or entry.label or entry.name or entry.icon.value):lower()}
+        -- BC children share their group's actual texture. Descriptor and item names
+        -- differ even when the displayed image is identical; other textures remain choices.
+        local representative
+        if entry.tex then representative = byTexture[entry.tex] else representative = withoutTexture[key] end
+        if not representative then
+            representative = {icon = {kind = entry.icon.kind, value = entry.icon.value},
+                label = entry.label or entry.name or entry.icon.value, texture = entry.tex, search = ""}
+            entries[#entries + 1] = representative
+            if entry.tex then byTexture[entry.tex] = representative else withoutTexture[key] = representative end
+        end
+        -- Search every collapsed alias while leaving BC's cached catalogue untouched.
+        local terms = {entry.searchText or "", entry.label or "", entry.name or "", entry.icon.value}
+        for _, alias in ipairs(entry._aliasList or {}) do terms[#terms + 1] = alias end
+        representative.search = representative.search .. "\n" .. table.concat(terms, "\n"):lower()
     end
     for _, group in ipairs(catalogue.groupsSorted or {}) do
         add(group)

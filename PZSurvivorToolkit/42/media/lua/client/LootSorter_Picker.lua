@@ -28,11 +28,12 @@ local Picker = ISCollapsableWindowJoypad:derive("LootSorterPicker")
 
 local BOX = 16  -- checkbox glyph size (px)
 local ICON = 18 -- item icon size on an Items row (px)
-local WIN_W, WIN_H = 396, 580
+local WIN_W, WIN_H = 480, 700
 local ACTIVE_BG = { r = 0.25, g = 0.45, b = 0.75, a = 0.9 }
 local IDLE_BG   = { r = 0.20, g = 0.20, b = 0.20, a = 0.9 }
 local function tickTex() return getTexture("media/ui/inventoryPanes/Tickbox_Tick.png") end
 local function countSet(t) local n = 0; if t then for _, v in pairs(t) do if v then n = n + 1 end end end return n end
+local function ui(key) return getText("UI_PZST_Container" .. key) end
 
 -- Keep checked rows, counts and Save on the same effective link selection. This changes only the
 -- editor draft: reads must not publish an object's ModData. In SP the library is per-machine while
@@ -142,11 +143,22 @@ function Picker:createChildren()
     end
     AppearanceControls.create(self)
 
+    local function label(key, font, r, g, b)
+        local child = ISLabel:new(pad, 0, 22, ui(key), r or 1, g or 1, b or 1, 1, font or UIFont.Small, true)
+        child:initialise(); child:instantiate(); self:addChild(child)
+        return child
+    end
+    self.sortingHeading = label("Sorting", UIFont.Medium, 0.85, 0.9, 1)
+    self.sortingHint = label("SortingHint", UIFont.Small, 0.8, 0.8, 0.8)
+    self.filterLabel = label("Search")
+
     self.filter = ISTextEntryBox:new("", pad, 0, 10, 22)
     self.filter:initialise(); self.filter:instantiate()
     self.filter.font = UIFont.Medium
     self:addChild(self.filter)
-    self.filter:setTooltip("Type to filter the list")
+    self.filter:setTooltip(ui("SearchHint"))
+    self.filter.backgroundColor = {r = 0.08, g = 0.10, b = 0.13, a = 1}
+    self.filter.borderColor = {r = 0.5, g = 0.65, b = 0.8, a = 1}
     self.lastFilter = nil
 
     -- mode row: Categories | Items (highlighted buttons)
@@ -158,10 +170,10 @@ function Picker:createChildren()
     self.btnModePreset:setTooltip("Reusable bundles of categories/items. Ticking a preset makes this box use it in addition to any manual categories/items picks. Global presets can also be modified here.")
 
     -- filter row: two combinable checkboxes
-    self.chkChecked = self:makeCheckbox("onlyChecked", "Only Checked")
-    self.chkContents = self:makeCheckbox("onlyContents", "Only Contents")
-    self.chkChecked:setTooltip("Show only entries this box is set to hold")
-    self.chkContents:setTooltip("Show only entries matching what's currently in this box")
+    self.chkChecked = self:makeCheckbox("onlyChecked", ui("OnlyChecked"))
+    self.chkContents = self:makeCheckbox("onlyContents", ui("OnlyContents"))
+    self.chkChecked:setTooltip(ui("OnlyCheckedHint"))
+    self.chkContents:setTooltip(ui("OnlyContentsHint"))
 
     self.toolkitTagSwitch = ISButton:new(pad, 0, 10, 22, "", self, Picker.onTagView)
     self.toolkitTagRuleButton = ISButton:new(pad, 0, 10, 22, "", self, Picker.onTagRule)
@@ -172,7 +184,7 @@ function Picker:createChildren()
     -- so the editor hides these.
     self.btnPriorityDown = ISButton:new(0, 0, 22, 22, "-", self, Picker.onPriorityDown)
     self.btnPriorityUp = ISButton:new(0, 0, 22, 22, "+", self, Picker.onPriorityUp)
-    local priorityTip = "Fill order. Higher goes first, 0 is normal, below 0 goes last. Distance decides between boxes on the same number."
+    local priorityTip = ui("PriorityHint")
     -- Not setOnlyNumbers: that rejects the minus sign too, and negatives are half the point. The
     -- change handler validates instead.
     self.priorityEntry = ISTextEntryBox:new(tostring(self.priority), 0, 0, 40, 22)
@@ -183,7 +195,7 @@ function Picker:createChildren()
     self.priorityEntry:setMaxTextLength(LootSorter.PRIORITY_MAX_DIGITS + 1)   -- +1 for a minus sign
     self:addChild(self.priorityEntry)
 
-    self.priorityLabel = ISLabel:new(0, 0, 22, "Fill priority", 1, 1, 1, 1, UIFont.Small, true)
+    self.priorityLabel = ISLabel:new(0, 0, 22, ui("Priority"), 1, 1, 1, 1, UIFont.Small, true)
     self.priorityLabel:initialise(); self.priorityLabel:instantiate()
     self.priorityLabel:setTooltip(priorityTip)
     self:addChild(self.priorityLabel)
@@ -192,8 +204,11 @@ function Picker:createChildren()
     self.listbox = ISScrollingListBox:new(pad, 0, 10, 10)
     self.listbox.itemheight = 22
     self.listbox.drawBorder = true
+    -- Restore the window's stencil before drawing empty-state text over this list.
+    self.listbox.doRepaintStencil = true
     self.listbox.target = self
     self.listbox.doDrawItem = Picker.doDrawItem
+    self.listbox.prerender = Picker.prerenderList
     self.listbox.onmousedown = Picker.onRowClick        -- left-click toggles the row (all modes)
     self.listbox.joypadParent = self
     -- right-click a row -> the menu for the active mode: preset management (Edit / Delete / New) in
@@ -268,9 +283,10 @@ function Picker:createChildren()
     end
 
     -- action buttons (uniform across all modes; preset management is via the row's context menu)
-    self.btnAll = ISButton:new(pad, 0, 10, 26, "Check filtered", self, Picker.onSelectFiltered)
-    self.btnClear = ISButton:new(pad, 0, 10, 26, "Uncheck all", self, Picker.onClear)
-    self.btnSave = ISButton:new(pad, 0, 10, 26, "Save", self, Picker.onSave)
+    self.btnAll = ISButton:new(pad, 0, 10, 26, ui("CheckFiltered"), self, Picker.onSelectFiltered)
+    self.btnClear = ISButton:new(pad, 0, 10, 26, ui("UncheckAll"), self, Picker.onClear)
+    self.btnSave = ISButton:new(pad, 0, 10, 26, ui("Save"), self, Picker.onSave)
+    self.btnSave.backgroundColor = {r = 0.15, g = 0.3, b = 0.22, a = 1}
 
     -- priorityEntry is absent on purpose: like self.filter it is a text box, already initialised and
     -- added where it was created.
@@ -306,17 +322,25 @@ end
 -- position every control from the CURRENT window size, so resizing stays aligned and nothing clips
 function Picker:layout()
     local pad, gap = 10, 6
-    local rowH, btnH = 22, 26
+    local rowH = math.max(26, getTextManager():getFontHeight(UIFont.Small) + 8)
+    local searchH = math.max(rowH, getTextManager():getFontHeight(UIFont.Medium) + 8)
+    local hintH = getTextManager():getFontHeight(UIFont.Small) + 6
+    local btnH = rowH + 4
     local w, h = self:getWidth(), self:getHeight()
     local innerW = w - pad * 2
     local halfW = (innerW - gap) / 2
     local rightX = pad + halfW + gap
     local top = self:titleBarHeight() + 8
     top = AppearanceControls.layout(self, top)
+    self.sortingHeading:setY(top); self.sortingHeading:setHeight(rowH)
+    self.sortingHint:setY(top + rowH); self.sortingHint:setHeight(hintH)
+    top = top + rowH + hintH + gap
+    local searchLabelW = getTextManager():MeasureStringX(UIFont.Small, ui("Search")) + 12
+    self.filterLabel:setY(top); self.filterLabel:setHeight(searchH)
+    self.filter:setX(pad + searchLabelW); self.filter:setY(top)
+    self.filter:setWidth(innerW - searchLabelW); self.filter:setHeight(searchH)
 
-    self.filter:setX(pad); self.filter:setY(top); self.filter:setWidth(innerW)
-
-    local modeY = top + rowH + gap
+    local modeY = top + searchH + gap
     -- box picker: three mode toggles (Categories / Items / Presets). Preset editor: two only (no nested
     -- Presets tab), so the Presets button is hidden and the row splits in half.
     local editingPreset = self.targetKind == "preset"
@@ -338,8 +362,9 @@ function Picker:layout()
     local stack = 2                                  -- breathing room between the stacked checkboxes
     local secondRowY = viewY + rowH + stack
     local showPriority = self.targetKind ~= "preset"
-    local stepW, valueW, tight = 22, 40, 2
+    local stepW, valueW, tight = rowH, 54, 2
     local priorityW = stepW * 2 + valueW + tight * 2
+    priorityW = math.max(priorityW, getTextManager():MeasureStringX(UIFont.Small, ui("Priority")))
     for _, b in ipairs({ self.btnPriorityDown, self.btnPriorityUp, self.priorityEntry, self.priorityLabel }) do
         b:setVisible(showPriority)
     end
@@ -390,10 +415,14 @@ function Picker:layout()
         self.listbox:setY(listY + (rowH + gap) * 2)
         self.listbox:setHeight(math.max(12, self.listbox:getHeight() - (rowH + gap) * 2))
     end
-    -- Native clipping reads scrollbar geometry, including after mode changes and live tag toggles.
+    -- This layout owns the scrollbar frame. Native anchors apply a deferred parent-size delta
+    -- after Lua layout; combining them with these exact sizes resizes/moves the bar twice.
     local scroll = self.listbox.vscroll
     if scroll then
+        scroll:setAnchorRight(false)
+        scroll:setAnchorBottom(false)
         scroll:setX(innerW - 16)
+        scroll:setY(0)
         scroll:setHeight(self.listbox:getHeight())
         self.listbox:updateScrollbars()
     end
@@ -452,6 +481,27 @@ function Picker:rebuild()
     end
     self.lastFilter = text
     self.needRebuild = false
+    self.emptyListKey = nil
+    if self.listbox.count == 0 then
+        local key = "NoEntries"
+        if text ~= "" or self.onlyContents then key = "NoMatches"
+        elseif self.onlyChecked and countSet(self.selection) == 0 then key = "NoSelected"
+        elseif self.mode == "presets" and #entries == 0 then key = "NoPresets" end
+        self.emptyListKey = key
+    end
+end
+
+-- Keep empty-state text in the list's own drawing pass, above its background.
+function Picker.prerenderList(list)
+    ISScrollingListBox.prerender(list)
+    local key = list.target.emptyListKey
+    if not key then return end
+    local top = 12 - list:getYScroll()
+    list:drawText(ui(key), 12, top, 0.8, 0.82, 0.85, 1, UIFont.Small)
+    if key ~= "NoEntries" then
+        list:drawText(ui(key .. "Hint"), 12, top + getTextManager():getFontHeight(UIFont.Small) + 6,
+            0.65, 0.68, 0.72, 1, UIFont.Small)
+    end
 end
 
 function Picker:prerender()
@@ -462,7 +512,9 @@ function Picker:prerender()
         self:layout()
         if self.joypadConfigured then self:configJoypad() end
     end
-    self.toolkitTagRuleButton:setTitle(getText("UI_PZST_QMTagRule") .. (Tags.ruleActive(self.toolkitTagRule) and " *" or ""))
+    local ruleActive = Tags.ruleActive(self.toolkitTagRule)
+    self.toolkitTagRuleButton:setTitle(ui(ruleActive and "EditRule" or "AddRule"))
+    self.toolkitTagRuleButton.backgroundColor = ruleActive and ACTIVE_BG or IDLE_BG
     self.toolkitTagSwitch:setTitle(getText(self.toolkitTagView and "UI_PZST_QMShowCategories" or "UI_PZST_QMShowTags"))
     ISCollapsableWindow.prerender(self)
     if self.configJoypadLater then self.configJoypadLater = false; self:configJoypad() end
@@ -470,12 +522,14 @@ function Picker:prerender()
         self._lw, self._lh = self:getWidth(), self:getHeight()
         self:layout()
     end
-    self.btnModeCat:setTitle("Categories (" .. countSet(self.selectedCats) .. ")")
-    self.btnModeItem:setTitle("Items (" .. countSet(self.selectedItems) .. ")")
+    -- A tag may cover several categories; do not present the category count as a tag count.
+    self.btnModeCat:setTitle(enabled and self.toolkitTagView and ui("Tags")
+        or (ui("Categories") .. " (" .. countSet(self.selectedCats) .. ")"))
+    self.btnModeItem:setTitle(ui("Items") .. " (" .. countSet(self.selectedItems) .. ")")
     self.btnModeCat.backgroundColor  = (self.mode == "cats")  and ACTIVE_BG or IDLE_BG
     self.btnModeItem.backgroundColor = (self.mode == "items") and ACTIVE_BG or IDLE_BG
     if self.targetKind ~= "preset" then
-        self.btnModePreset:setTitle("Presets (" .. countSet(self.selectedPresets) .. ")")
+        self.btnModePreset:setTitle(ui("Presets") .. " (" .. countSet(self.selectedPresets) .. ")")
         self.btnModePreset.backgroundColor = (self.mode == "presets") and ACTIVE_BG or IDLE_BG
     end
     -- "Only Contents" filters by what's physically in the box -- meaningless for presets, hide it there
@@ -1010,9 +1064,10 @@ function Picker:new(x, y, w, h)
     o.onlyContents = false
     o._modeState = { cats = {}, items = {}, presets = {} }
     o.title = getText("UI_PZST_ConfigureContainer")
+    o.background, o.backgroundColor = true, {r = 0.04, g = 0.04, b = 0.04, a = 1}
     o.resizable = true
-    o.minimumWidth = 300
-    o.minimumHeight = 380
+    o.minimumWidth = 420
+    o.minimumHeight = 600
     return o
 end
 

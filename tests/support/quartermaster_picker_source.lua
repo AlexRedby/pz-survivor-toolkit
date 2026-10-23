@@ -52,10 +52,16 @@ return function(control, rules, options)
         function c:setMaxTextLength(value) self.maxLength = value end
         return c
     end}
-    ISLabel = {new = function(_, x, y, h) return rect(x, y, 0, h) end}
-    ISScrollingListBox = {new = function(_, x, y, w, h)
+    ISLabel = {new = function(_, x, y, h, name)
+        local label = rect(x, y, 0, h); label.name = name
+        function label:setName(value) self.name = value end
+        return label
+    end}
+    ISScrollingListBox = {prerender = function() end, new = function(_, x, y, w, h)
         local lb = rect(x, y, w, h)
         lb.vscroll = rect(w - 16, 0, 16, h)
+        function lb.vscroll:setAnchorRight(value) self.anchorRight = value end
+        function lb.vscroll:setAnchorBottom(value) self.anchorBottom = value end
         function lb:updateScrollbars() end
         function lb:getScrollHeight() return self.scrollHeight or self.count * self.itemheight end
         function lb:setScrollHeight(height) self.scrollHeight = height end

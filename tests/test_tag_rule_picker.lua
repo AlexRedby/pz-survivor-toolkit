@@ -22,6 +22,7 @@ function Base:removeFromUIManager() self.added=false end
 function Base:unfocus() self.focused=false end
 function Base:hidePopup() self.popup.visible=false end
 function Base:setVisible(value) self.visible=value end
+function Base:setHeight(value) self.height=value end
 function Base:getIsVisible() return self.visible end
 function Base:setTooltip(value) self.tooltip=value end
 function Base:setTitle(value) self.title=value end
@@ -32,6 +33,10 @@ function Base:setOnMouseDownFunction(target,callback) self.target,self.onmousedo
 function Base:addOptionWithData(label,data) self.options=self.options or {};self.options[#self.options+1]={label=label,data=data};self.selected=self.selected or 1 end
 function Base:getOptionData(index) return self.options[index].data end
 ISCollapsableWindowJoypad,ISScrollingListBox,ISComboBox=Base,Base:derive(),Base:derive()
+ISLabel=Base:derive()
+function ISLabel:new(x,y,height,label)
+    local result=Base.new(self,x,y,0,height);result.text=label;return result
+end
 ISButton=Base:derive()
 function ISButton:new(x,y,w,h,title,target,callback) local b=Base.new(self,x,y,w,h);b.title,b.target,b.callback=title,target,callback;return b end
 ISTextEntryBox=Base:derive()
@@ -54,6 +59,13 @@ local owner={getIsVisible=function() return true end,dimmer=Base:new(0,0,1,1)}
 owner.dimmer.visible=false
 local picker=Picker.open({player=0,owner=owner,rule=original,categories={'foodPerishable_ingredient','foodNonPerishable_ingredient','Tool','ModCat'},onApply=function(rule,first) applied=rule;firstSelected=first end})
 assert(picker and picker.added and owner.toolkitRulePicker==picker and owner.dimmer.visible)
+assert(picker.background and picker.backgroundColor.a==1 and picker.backgroundColor.r<0.1,
+    'rule picker background is not opaque near-black')
+assert(picker.searchLabel.text=='UI_PZST_TagRuleSearch' and picker.searchLabel.y+picker.searchLabel.height<=picker.search.y
+    and picker.search.y+picker.search.height<=picker.group.y
+    and picker.group.y+picker.group.height<=picker.modeButton.y
+    and picker.modeButton.y+picker.modeButton.height<=picker.list.y,
+    'visible search label or top control spacing is missing')
 assert(picker.matchCount==2 and picker.rule~=original and picker.rule.include~=original.include,'draft aliases saved rule')
 local rows={}
 for _,row in ipairs(picker.entries) do rows[row.id]=row end
@@ -111,7 +123,11 @@ owner.getIsVisible=function() return false end;third:prerender()
 assert(not third.added,'picker outlived parent')
 screenWidth=580
 picker=Picker.open({categories={'Tool'},onApply=function() end})
-assert(picker.width==556 and picker.preview.y>picker.list.y+picker.list.height and picker.preview.height>=40,'small-screen lists overlap')
+assert(picker.width==556 and picker.preview.y>picker.list.y+picker.list.height and picker.preview.height>=40
+    and picker.list.y+picker.list.height<=picker.preview.y
+    and picker.preview.y+picker.preview.height<=picker.height-84
+    and picker.cancelButton.y>=picker.preview.y+picker.preview.height,
+    'narrow-screen list/preview flow overlaps the footer or loses usable height')
 enabled=false;picker:prerender()
 assert(not picker.added,'disabled tags left picker open')
 assert(not Picker.open({categories={'Tool'},onApply=function() end}),'disabled tags opened picker')

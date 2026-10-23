@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.241
+
+- Make the container editor easier to read with a larger icon preview, container identity, an opaque background, compact appearance/sorting sections, labelled searches and explicit tag-rule state. Localize its main controls in English and Russian, explain empty search/selection/preset lists, make the tag-rule dialog opaque with a labelled search, keep the scrollbar aligned through resizing and collapse duplicate icon images while retaining their search aliases.
+
 ### 0.1.240
 
 - **Wishlist / vehicle mechanics:** Offer replacement-part wishes only for slots with a native installation operation. Fixed parts such as the vanilla glovebox no longer offer Add to wishlist; replaceable parts remain eligible when tools or skills are missing, including modded installable gloveboxes.
