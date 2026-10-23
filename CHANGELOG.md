@@ -33,6 +33,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.230
+
+- **Action queue:** Keep proven P4 wristwatch cleanup on the shared completion boundary while its alarm rings or stops naturally. Preserve native alarm behavior, exact item/hand/worn identity, required cleanup and independent following actions; conflicting slots, side conversions and modified callbacks retain their existing handling.
+
 ### 0.1.229
 
 - **Action queue:** Support proven P4 wristwatch cleanup when the same watch is worn and held in either or both hands. Preserve native hand-before-worn restoration, alarm configuration and processing, exact item identity, required cleanup and independent following actions. Ringing watches, conflicting slots and side conversions retain their existing handling.

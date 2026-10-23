@@ -10,6 +10,10 @@ local cases={
  ['tidy-watch-held-primary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='primary'},
  ['tidy-watch-held-secondary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='secondary'},
  ['tidy-watch-held-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='both'},
+ ['tidy-watch-ringing-restore']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,},
+ ['tidy-watch-ringing-remove']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,remove=true,},
+ ['tidy-watch-ringing-overlap-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,remove=true,overlapHand='both',},
+ ['tidy-watch-ringing-held-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,overlapHand='both',},
  ['tidy-clothing']={fullType='Base.Socks_Ankle',location='base:socks'},
  ['tidy-clothing-remove']={fullType='Base.Socks_Ankle',location='base:socks',remove=true},
  ['tidy-clothing-overlap']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlapHand='secondary'},
@@ -101,7 +105,8 @@ end
 function Clothing.removes(state)return cases[state.id]and cases[state.id].remove==true or false end
 function Clothing.headwear(state)return cases[state.id]and cases[state.id].headwear==true or false end
 function Clothing.wristwatch(state)return cases[state.id]and cases[state.id].wristwatch==true or false end
-local function strictWatch(value,spec)
+function Clothing.ringing(state)return cases[state.id]and cases[state.id].ringing==true or false end
+local function strictWatch(value,spec,pending)
  if type(value)~='table'or getmetatable(value)~=nil then return false end
  local count=0
  for key in pairs(value)do
@@ -109,18 +114,67 @@ local function strictWatch(value,spec)
   count=count+1
  end
  return count==4 and type(value.alarmHour)=='number'and value.alarmHour%1==0 and value.alarmHour>=0 and value.alarmHour<24
-  and value.alarmMinute==40 and value.alarmSet==spec.alarmSet and value.ringing==false
+  and type(value.alarmMinute)=='number'and value.alarmMinute%1==0 and value.alarmMinute>=0 and value.alarmMinute<60
+  and (spec.ringing or value.alarmMinute==40)and value.alarmSet==spec.alarmSet
+  and value.ringing==(spec.ringing==true and not pending)
+end
+local function watchSnapshot(item)
+ return {alarmHour=item:getHour(),alarmMinute=item:getMinute(),alarmSet=item:isAlarmSet(),ringing=item:isRinging()}
+end
+-- Readiness must not throw assertions while native alarm packets converge.
+function Clothing.watchMatches(state,item)
+ if not Clothing.wristwatch(state)then return true end
+ item=item or state.clothingItem
+ if not strictWatch(state.clothingWatch,Clothing.spec(state),state.clothingRingPending)
+  or not instanceof(item,'AlarmClockClothing')or not instanceof(item,'Clothing')or item:getCategory()~='AlarmClock'then return false end
+ local value=watchSnapshot(item)
+ for key,expected in pairs(state.clothingWatch)do if value[key]~=expected then return false end end
+ return true
 end
 function Clothing.watchState(state,item)
  if not Clothing.wristwatch(state)then return nil end
- local baseline=state.clothingWatch
- assert(strictWatch(baseline,Clothing.spec(state)),'invalid authoritative watch baseline')
- item=item or state.clothingItem
- assert(instanceof(item,'AlarmClockClothing')and instanceof(item,'Clothing')and item:getCategory()=='AlarmClock',
-  'watch must remain native AlarmClockClothing')
- local value={alarmHour=item:getHour(),alarmMinute=item:getMinute(),alarmSet=item:isAlarmSet(),ringing=item:isRinging()}
- for key,expected in pairs(baseline)do assert(value[key]==expected,'native watch alarm changed '..key)end
- return value
+ assert(Clothing.watchMatches(state,item),'native watch alarm changed or invalid authoritative watch baseline')
+ return watchSnapshot(item or state.clothingItem)
+end
+local function finite(value)return type(value)=='number'and value==value and value>-math.huge and value<math.huge end
+function Clothing.watchTiming(state)
+ if not Clothing.ringing(state)or state.clothingRingPending then return nil end
+ local started,observed=state.clothingWatchStartedAge,getGameTime():getWorldAgeHours()
+ assert(finite(started)and finite(observed)and observed>=started and observed-started<0.5,'native ring lifetime evidence expired or clock changed')
+ return {startedAgeHours=started,observedAgeHours=observed}
+end
+function Clothing.armRing(state,itemID)
+ assert(not isClient()and Clothing.ringing(state)and state.clothingRingPending==true and not state.clothingSetupPending,
+  'ring arming belongs to the once-only SP/server root-ready phase')
+ local item=state.clothingItem
+ assert(itemID==item:getID()and state.root==state.player:getInventory()and state.root:getItemById(itemID)==item
+  and item:getContainer()==state.root and item:getFullType()==Clothing.spec(state).fullType and Clothing.watchMatches(state),
+  'ring arming exact root/configuration differs')
+ local primary,secondary=Clothing.expectedHands(state,true)
+ assert(state.player:getPrimaryHandItem()==primary and state.player:getSecondaryHandItem()==secondary
+  and state.player:getWornItem(state.clothingLocation)==(not Clothing.removes(state)and item or nil),
+  'ring arming must follow exact authoritative hand/worn setup')
+ local time=getGameTime();local minute=time:getMinutes()
+ if isServer()then minute=math.floor(minute/10)*10 end
+ item:setAlarmSet(true);item:setHour(time:getHour());item:setMinute(minute);item:setForceDontRing(-1)
+ state.clothingWatchStartedAge=time:getWorldAgeHours()
+ -- This is the real alarm trigger. Its server start sends the native packet;
+ -- the owning client applies its setters/force flag then calls native update.
+ item:update()
+ assert(item:isRinging(),'native alarm update did not start the prepared ring')
+ state.clothingWatch=watchSnapshot(item);state.clothingRingPending=nil
+ Clothing.watchState(state);Clothing.watchTiming(state)
+end
+function Clothing.stopRing(state)
+ if not Clothing.ringing(state)or state.clothingRingStopped then return nil end
+ local item=state.clothingItem
+ item:stopRinging()
+ if isServer()then item:syncStopRinging()end
+ local value=watchSnapshot(item)
+ assert(not value.ringing and value.alarmHour==state.clothingWatch.alarmHour and value.alarmMinute==state.clothingWatch.alarmMinute
+  and value.alarmSet==state.clothingWatch.alarmSet,'fixture cleanup changed alarm configuration')
+ state.clothingRingStopped=true
+ return {id=item:getID(),watch=value}
 end
 function Clothing.watchProcessing(state)
  if not Clothing.wristwatch(state)or isClient()then return nil end
@@ -217,6 +271,10 @@ function Clothing.prepare(state,seed)
  local spec=Clothing.spec(state)
  assert(not isClient()or not state.ids.clothingSetupPending,'client cannot prepare before authoritative clothing setup')
  state.clothingRestoreType=Clothing.restoreType(state)
+ if spec.ringing then
+  state.clothingRingPending=not isClient()or state.ids.clothingRingPending or nil
+  state.clothingWatchStartedAge=state.ids and state.ids.clothingWatchStartedAge or nil
+ end
  seed('clothingItem',spec.fullType)
  local item=state.clothingItem
  state.clothingLocation=item:getBodyLocation()
@@ -288,6 +346,7 @@ function Clothing.prepare(state,seed)
   visual:setNonAttachedHair(nil);visual:setHairModel(state.clothingHair);state.player:resetModel()
   if isServer()then sendHumanVisual(state.player)end
  end
+ if spec.ringing and not isClient()and not isServer()then Clothing.armRing(state,item:getID())end
 end
 function Clothing.available(player,ids)
  if type(ids.clothingHair)~='string'or tostring(player:getHumanVisual():getHairModel())~=ids.clothingHair
@@ -298,7 +357,11 @@ function Clothing.available(player,ids)
   if not item or item:getFullType()~=spec.fullType or item:getContainer()~=root
    or tostring(item:getBodyLocation())~=spec.location then return false end
   if spec.wristwatch then
-   if not strictWatch(ids.clothingWatch,spec)or not pcall(Clothing.watchState,{id=ids.case,clothingItem=item,clothingWatch=ids.clothingWatch})then return false end
+   if not Clothing.watchMatches({id=ids.case,clothingItem=item,clothingWatch=ids.clothingWatch,clothingRingPending=ids.clothingRingPending})then return false end
+   if spec.ringing and not ids.clothingRingPending then
+    local age=getGameTime():getWorldAgeHours();local started=ids.clothingWatchStartedAge
+    if not finite(started)or not finite(age)or age<started or age-started>=0.5 then return false end
+   end
   end
   local expected=not spec.remove and not ids.clothingSetupPending and item or nil
   if ids.clothingSetupPending then
@@ -518,7 +581,7 @@ function Clothing.settled(state,toolkit,tidy)
  if Clothing.wristwatch(state)then
   if not isClient()and Clothing.watchProcessing(state).pendingRemoval then return false end
   local primary,secondary=Clothing.expectedHands(state,tidy)
-  if not state.clothingWatchReady or not pcall(Clothing.watchState,state,live)
+  if not state.clothingWatchReady or not Clothing.watchMatches(state,live)
    or state.player:getPrimaryHandItem()~=primary or state.player:getSecondaryHandItem()~=secondary then return false end
   if isClient()and not Clothing.overlap(state)then
    for _,action in ipairs(nativeActions(state,tidy))do
@@ -558,6 +621,7 @@ function Clothing.verify(state,restored,transient)
   worn=restored,producer='ISCutHair',producerCompleted=true,hairUnchanged=true,hairStyle=state.clothingHair,unrelatedHandsPreserved=true}
  if Clothing.wristwatch(state)then
   result.watch=Clothing.watchState(state,live)
+  result.watchTiming=Clothing.watchTiming(state)
   result.watchProcessing=not transient and Clothing.watchProcessing(state)or nil
   assert(not result.watchProcessing or not result.watchProcessing.pendingRemoval,'watch processing removal has not settled')
  end

@@ -265,6 +265,8 @@ end
 function Fixture.release(state)
  Fixture.refresh(state)
  local player=state.player
+ local stopped=Clothing.stopRing(state)
+ if stopped then print('[EQUIPMENT_TEST] WATCH_CLEANUP '..require('QueueHealthEvents').encode(stopped))end
  if Slots.handles(state.id) then Slots.cleanup(state) end
  if Hotbar.isCase(state.id)then Hotbar.release(state)end
  for _,item in ipairs(state.owned) do player:removeFromHands(item);player:removeWornItem(item) end
@@ -337,7 +339,8 @@ end
 function Fixture.descriptor(state)
  local result={case=state.id,items={},originalWorn={},primary=state.originalPrimary and state.originalPrimary:getID(),
   secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor,clothingHair=state.clothingHair,
-  clothingSetupPending=state.clothingSetupPending,clothingWatch=state.clothingWatch}
+  clothingSetupPending=state.clothingSetupPending,clothingWatch=state.clothingWatch,
+  clothingRingPending=state.clothingRingPending,clothingWatchStartedAge=state.clothingWatchStartedAge}
  for name,item in pairs(state.items) do result.items[name]=item:getID() end
  for location,item in pairs(state.originalWorn) do
   result.originalWorn[#result.originalWorn+1]={location=tostring(location),id=item:getID(),fullType=item:getFullType()}
@@ -378,7 +381,7 @@ function Fixture.settled(state,mode,checkpoint)
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
  if Clothing.isCase(state.id) and (player:getWornItem(state.clothingLocation)~=(Clothing.removes(state)and state.clothingItem or nil)
   or tostring(player:getHumanVisual():getHairModel())~=state.clothingHair)then return false end
- if Clothing.wristwatch(state)and (not pcall(Clothing.watchState,state)
+ if Clothing.wristwatch(state)and (not Clothing.watchMatches(state)
   or not isClient()and Clothing.watchProcessing(state).pendingRemoval)then return false end
  if state.id=='hotbar-chain' or Slots.isBelt(state.id) then
   local item,old=state.hotbarReplacement,state.hotbarInitial

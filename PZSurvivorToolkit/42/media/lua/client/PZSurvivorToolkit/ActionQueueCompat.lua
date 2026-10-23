@@ -271,7 +271,8 @@ local function ordinaryClothingItem(item, character, allowHeadwear)
         or (location ~= ItemBodyLocation.LEFT_WRIST and location ~= ItemBodyLocation.RIGHT_WRIST)) then return end
     -- Ordinary Wear retains matching hand references; Unequip releases them.
     -- Existing character-hand ownership covers preceding P4 hand restoration.
-    if item:getCategory() == "AlarmClock" and item:isRinging() ~= false then return end
+    -- Native clothing actions retain alarm state on the same watch;
+    -- naturally starting/stopping its alarm does not change item ownership.
     if location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then
         if not allowHeadwear then return end
         -- Java setWornItem also flattens Mohawk when newItem is nil.

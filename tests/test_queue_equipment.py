@@ -80,7 +80,9 @@ class EquipmentTests(unittest.TestCase):
                     effect.update(primary=original_p if tidy else checkpoint_p, secondary=original_s if tidy else checkpoint_s,
                                   originalPrimary=original_p, originalSecondary=original_s)
                 if spec.get('watch'):
-                    effect['watch'] = dict(alarmHour=23, alarmMinute=40, alarmSet=spec['alarm'], ringing=False)
+                    effect['watch'] = dict(alarmHour=23, alarmMinute=40, alarmSet=spec['alarm'], ringing=bool(spec.get('ringing')))
+                if spec.get('ringing'):
+                    effect['watchTiming'] = dict(startedAgeHours=100.0, observedAgeHours=100.1)
                 count = int(enabled and tidy)
                 result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=bool(spec.get('remove')), **(dict(primary=checkpoint_p, secondary=checkpoint_s) if spec.get('overlapHand') else {})),
                               tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
@@ -192,6 +194,8 @@ class EquipmentTests(unittest.TestCase):
                 count=0 if case == 'waiting-cancel' and self.selection['mode'] == 'toolkit' else equipment.RECEIPTS[case]
                 for _ in range(count):
                     captures.append('[EQUIPMENT_TEST] CAPTURE case=' + case + ' kind=ISEquipWeaponAction token=00000000-0000-0000-0000-' + str(len(captures)+1).zfill(12))
+        captures.extend('[EQUIPMENT_TEST] WATCH_CLEANUP ' + json.dumps(dict(id=row['outcome']['tidyClothing']['id'], watch=dict(row['outcome']['tidyClothing']['watch'], ringing=False)))
+                        for row in self.records() if equipment.CLOTHING_SPECS.get(row.get('id'), {}).get('ringing'))
         return (self.scene_marker() if self.selection['kind'] == 'sp' else '') + '\n'.join(captures + ['[QUEUE_CHECK] ' + json.dumps(row) for row in (records or self.records())]
                          + ['[EQUIPMENT_TEST] RECEIPT case=' + case for case in self.selection['cases']]
                          + ['[EQUIPMENT_TEST] COMPLETE'])
@@ -218,8 +222,10 @@ class EquipmentTests(unittest.TestCase):
                         log.write('\n[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' + json.dumps(effect) + '\n')
                         if equipment.CLOTHING_SPECS[case].get('watch'):
                             before = row['outcome']['clothingCheckpoint']
-                            checkpoint = dict(id=before['id'], watch=before['watch'], watchProcessing=dict(active=bool(equipment.CLOTHING_SPECS[case]['alarm'] and before['worn']), pendingRemoval=False))
+                            checkpoint = dict(id=before['id'], watch=before['watch'], **({'watchTiming': before['watchTiming']} if equipment.CLOTHING_SPECS[case].get('ringing') else {}), watchProcessing=dict(active=bool(equipment.CLOTHING_SPECS[case]['alarm'] and before['worn']), pendingRemoval=False))
                             log.write('[EQUIPMENT_TEST] WATCH_CHECKPOINT ' + json.dumps(checkpoint) + '\n')
+                        if equipment.CLOTHING_SPECS[case].get('ringing'):
+                            log.write('[EQUIPMENT_TEST] WATCH_CLEANUP ' + json.dumps(dict(id=effect['id'], watch=dict(effect['watch'], ringing=False))) + '\n')
             for case in self.selection['cases']:
                 if case in equipment.HOTBAR_CASES:
                     row = next(row for row in self.records() if row.get('id') == case)
@@ -389,7 +395,7 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                 if kind == 'mp':
                     server = self.root / 'server-launch.log'; original = server.read_text()
                     markers = [line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'originalPrimary' in line]
-                    self.assertEqual(len(markers), 12)
+                    self.assertEqual(len(markers), 14)
                     for marker in markers:
                         prefix, payload = marker.split('CLOTHING_AUTHORITY ', 1)
                         value = json.loads(payload); value['originalPrimary'] = 999
@@ -413,7 +419,7 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                         return value['overlap']['acknowledgements'] if equipment.CLOTHING_SPECS[case].get('overlapHand') else value['watchAcknowledgements']
                     changes = [lambda out: out['tidyClothing']['watch'].update(alarmHour=True),
                                lambda out: out['tidyClothing']['watch'].update(alarmMinute=41),
-                               lambda out: out['tidyClothing']['watch'].update(ringing=True),
+                               lambda out: out['tidyClothing']['watch'].update(ringing=not out['tidyClothing']['watch']['ringing']),
                                lambda out: out['tidyClothing']['watch'].update(alarmSet=int(out['tidyClothing']['watch']['alarmSet'])),
                                lambda out: out['clothingCheckpoint']['watch'].update(alarmHour=22),
                                lambda out: out['tidyClothing']['watchBaseline'].update(alarmHour=24),
@@ -422,6 +428,13 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                                lambda out: out.update(clothingCheckpoint=None),
                                lambda out: out['tidyClothing']['watchSetup'].update(capacityBeforeRemoval=1),
                                lambda out: out['tidyClothing']['watchSetup'].update(emptyExclusiveSlots=False)]
+                    if equipment.CLOTHING_SPECS[case].get('ringing'):
+                        for field in ('clothingCheckpoint', 'tidyClothing'):
+                            changes.extend([lambda out, field=field: out[field]['watchTiming'].update(startedAgeHours=True),
+                                            lambda out, field=field: out[field]['watchTiming'].update(observedAgeHours=float('nan')),
+                                            lambda out, field=field: out[field]['watchTiming'].update(observedAgeHours=float('inf')),
+                                            lambda out, field=field: out[field]['watchTiming'].update(observedAgeHours=100.5),
+                                            lambda out, field=field: out[field]['watchTiming'].update(observedAgeHours=99.9)])
                     if kind == 'sp':
                         for field in ('clothingCheckpoint', 'tidyClothing'):
                             changes.extend([lambda out, field=field: out[field]['watchProcessing'].update(active=1),
@@ -450,6 +463,40 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                         server.write_text(original.replace(marker, marker + '\n' + marker))
                         self.assertTrue(self.verify(self.logs())['issues'], label)
                         server.write_text(original)
+
+    def test_ringing_lifetime_authority_observations_and_cleanup_are_independent(self):
+        cases = [case for case, spec in equipment.CLOTHING_SPECS.items() if spec.get('ringing')]
+        self.selection.update(cases=cases, mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            self.assertEqual(self.verify(self.logs())['issues'], [])
+            original = self.logs()
+            cleanup = next(line for line in original.splitlines() if 'WATCH_CLEANUP ' in line)
+            for broken in (original.replace(cleanup, ''), original.replace(cleanup, cleanup + '\n' + cleanup),
+                           original.replace(cleanup, cleanup.replace('"ringing": false', '"ringing": true'))):
+                self.assertTrue(self.verify(broken)['issues'])
+            for field in ('clothingCheckpoint', 'tidyClothing'):
+                rows = self.records()
+                next(row['outcome'] for row in rows if row.get('id') == cases[0])[field]['watchTiming'] = None
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+            if kind == 'mp':
+                server = self.root / 'server-launch.log'; saved = server.read_text()
+                for label in ('WATCH_CHECKPOINT', 'CLOTHING_AUTHORITY'):
+                    marker = next(line for line in saved.splitlines() if label + ' ' in line)
+                    value = json.loads(marker.split(label + ' ', 1)[1])
+                    value['watchTiming']['observedAgeHours'] = 100.2 if label == 'CLOTHING_AUTHORITY' else 100.05
+                    changed = saved.replace(marker, '[EQUIPMENT_TEST] ' + label + ' ' + json.dumps(value))
+                    server.write_text(changed)
+                    self.assertEqual(self.verify(original)['issues'], [], 'authority observation time need not equal the client')
+                    if label == 'CLOTHING_AUTHORITY':
+                        value['watchTiming']['observedAgeHours'] = 100.05
+                        server.write_text(saved.replace(marker, '[EQUIPMENT_TEST] ' + label + ' ' + json.dumps(value)))
+                        self.assertTrue(self.verify(original)['issues'], 'authority final clock must not precede its checkpoint')
+                    value['watchTiming']['startedAgeHours'] = 100.01
+                    server.write_text(saved.replace(marker, '[EQUIPMENT_TEST] ' + label + ' ' + json.dumps(value)))
+                    self.assertTrue(self.verify(original)['issues'], 'authority must identify the same native ring start')
+                server.write_text(saved)
+            (self.root / 'server-launch.log').unlink(missing_ok=True)
 
     def test_headwear_requires_configured_type_slot_setup_and_exact_server_correlation(self):
         self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])

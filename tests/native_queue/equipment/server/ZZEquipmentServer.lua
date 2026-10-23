@@ -43,6 +43,11 @@ local function execute(module,command,player,args)
    Clothing.configure(session,args.item)
    reply(player,'ClothingConfigured',{case=session.id,item=session.clothingItem:getID(),ok=true})
    print('[EQUIPMENT_TEST] CLOTHING_SETUP_CONFIGURED case='..session.id..' id='..session.clothingItem:getID())
+  elseif command=='ConfigureRing'then
+   assert(session and session.id==args.case and not pending and not cleanup,'invalid authoritative ring setup session')
+   Clothing.armRing(session,args.item)
+   reply(player,'RingConfigured',{case=session.id,item=session.clothingItem:getID(),ok=true,watch=session.clothingWatch,
+    startedAgeHours=session.clothingWatchStartedAge})
   elseif command=='ConfigureHotbar'then
    assert(session and session.id==args.case and session.holster and not session.hotbarConfigured and not pending
     and args.item==session.pickup:getID(),'invalid native holster setup request')
@@ -110,7 +115,7 @@ Events.OnTick.Add(function()
    local outcome=Fixture.verify(session,Selection.mode,true)
    if Clothing.wristwatch(session)then
     local clothing=assert(outcome.clothingCheckpoint)
-    print('[EQUIPMENT_TEST] WATCH_CHECKPOINT '..JSON.encode({id=clothing.id,watch=clothing.watch,watchProcessing=clothing.watchProcessing}))
+    print('[EQUIPMENT_TEST] WATCH_CHECKPOINT '..JSON.encode({id=clothing.id,watch=clothing.watch,watchProcessing=clothing.watchProcessing,watchTiming=clothing.watchTiming}))
    end
    session.checkpointed=true
    print('[EQUIPMENT_TEST] CHECKPOINT case='..session.id)
