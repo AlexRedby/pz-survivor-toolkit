@@ -364,6 +364,8 @@ local spec,owner,receiver,current,old,inflight=nil,nil,nil,nil,nil,nil
 local ready,ack,preparing,transition,respawnAllowed=false,false,false,nil,false
 local attempts,lastHello,lastPulse,lastEquip=0,0,0,0
 local nextBindAt,rejoinCreationAdvanced=0,false
+local bindingSince,bindingSamples=nil,{}
+local equipSent,equipResends,serverEquipPendingSince=false,0,nil
 local corpseKnown,absentSent,deathLogged=false,false,false
 local exitAt,exitStage,rejoining=nil,nil,false
 local phaseBeforeReset=resuming and 2 or nil
@@ -388,9 +390,62 @@ end
 local function cache()
  return {actor=owner,connection=assert(cartLeaseCurrent()),id=spec.ownerID,binding=current,x=owner:getX(),y=owner:getY(),z=owner:getZ(),corpses=corpseBaseline(owner)}
 end
+local function eligibility(point,p)
+ emit('native-eligibility',{point=point,ownerID=p and p:getOnlineID() or nil,snapshot=cartLeaseEligibility(p)})
+end
+local function nativeOwner()
+ if role=='client2' then
+  local p=getPlayer()
+  if p and p:getUsername()=='client2' and p:isLocalPlayer() then return p end
+  return nil
+ end
+ return playerNamed('client2')
+end
+local function bindingRefusal(p)
+ if not p then return 'native-owner-unavailable' end
+ if p:getOnlineID()~=spec.ownerID then return 'native-owner-id-not-ready' end
+ if p:isDead() then return 'native-owner-dead' end
+ if not p:getCurrentSquare() then return 'native-owner-square-unavailable' end
+ local a,b=p:getPrimaryHandItem(),p:getSecondaryHandItem()
+ if not a then return 'native-primary-unavailable' end
+ if a~=b then return 'native-hands-not-same-item' end
+ if a:getID()~=spec.cart then return 'native-cart-id-not-ready' end
+ if a:getFullType()~=CART then return 'native-cart-type-differs' end
+ if a:getWorldItem() then return 'native-cart-world-attached' end
+ local contents=a:getInventory():getItems()
+ if contents:size()~=1 then return 'native-cargo-count-not-ready' end
+ local cargo=contents:get(0)
+ if cargo:getID()~=spec.cargoID then return 'native-cargo-id-not-ready' end
+ if cargo:getFullType()~='Base.Log' or cargo:getActualWeight()~=30 then return 'native-cargo-type-or-weight-differs' end
+ if cartLeaseLifetime(p)==nil then return 'native-equipment-lifetime-unavailable' end
+ if cartLeaseCurrent()==nil then return 'native-current-connection-unavailable' end
+ return 'native-binding-eligible'
+end
+local function bindingWait()
+ if not spec or transition or current or not bindingSince then return end
+ local elapsed=now()-bindingSince
+ for _,seconds in ipairs({1,2,5}) do
+  if elapsed>=seconds*1000 and not bindingSamples[seconds] then
+   bindingSamples[seconds]=true
+   local p,named,candidate=getPlayer(),playerNamed('client2'),nativeOwner()
+   local a=p and p:getPrimaryHandItem();local b=p and p:getSecondaryHandItem()
+   local contents=a and a:getFullType()==CART and a:getInventory():getItems() or nil
+   local cargo=contents and contents:size()==1 and contents:get(0) or nil
+   emit('binding-wait',{ownerID=spec.ownerID,cart=spec.cart,elapsedMs=elapsed,sampleSeconds=seconds,
+    localID=p and p:getOnlineID() or nil,localUsername=p and p:getUsername() or nil,localPlayer=p and p:isLocalPlayer() or false,
+    localDead=p and p:isDead() or false,hasSquare=p and p:getCurrentSquare()~=nil or false,namedOwnerPresent=named~=nil,namedOwnerIsLocal=named~=nil and named==p,
+    nativeOwnerIsLocal=candidate~=nil and candidate==p,nativeOwnerID=candidate and candidate:getOnlineID() or nil,
+    currentNativeConnection=cartLeaseCurrent()~=nil,localLifetime=p and cartLeaseLifetime(p) or nil,lifetime=candidate and cartLeaseLifetime(candidate) or nil,
+    primaryID=a and a:getID() or nil,primaryType=a and a:getFullType() or nil,secondaryID=b and b:getID() or nil,secondaryType=b and b:getFullType() or nil,
+    handSameItem=a~=nil and a==b,primaryWorldAttached=a and a:getWorldItem()~=nil or false,cargoCount=contents and contents:size() or nil,
+    cargoID=cargo and cargo:getID() or nil,cargoWeight=cargo and cargo:getActualWeight() or nil,expectedCargoID=spec.cargoID,
+    snapshot=cartLeaseEligibility(p),refusal=bindingRefusal(candidate),targetProbeScope='server-command-only-unavailable-on-tick',equipSent=equipSent,equipResends=equipResends})
+  end
+ end
+end
 local function refresh()
  if not spec then return nil end
- local p=playerNamed('client2');if not p or p:getOnlineID()~=spec.ownerID then return nil end
+ local p=nativeOwner();if not p or p:getOnlineID()~=spec.ownerID then return nil end
  local b=held(p,spec.cart);if not b or b.cargoID~=spec.cargoID then return nil end
  if not receiver then
   owner=p;receiver=P.receiver(spec.ownerID,assert(cartLeaseChallengeSeed())..':lc');current=b
@@ -467,6 +522,7 @@ end)
 Events.OnCreatePlayer.Add(function(index,p)
  if p and p:getUsername()==role then
   guarded(function()
+   eligibility('create',p)
    emit('native-create',{ownerID=p:getOnlineID(),index=index,eventSource='OnCreatePlayer',newNativeActor=old and p~=old.actor or nil,rejoinPending=resuming})
    started=true;lastHello=0
   end)
@@ -488,6 +544,8 @@ Events.OnServerCommand.Add(function(module,command,args)
    if old then assert(args.ownerID~=nil,'Native replacement ID missing') end
    phase=args.phase;spec=args;owner=nil;receiver=nil;current=nil;inflight=nil;ack=false;preparing=false;transition=nil;ready=false;attempts=0
    corpseKnown,absentSent=false,false;respawnAllowed=false;lastEquip=0
+   bindingSince=now();bindingSamples={};equipSent=false;equipResends=0;serverEquipPendingSince=nil
+   eligibility('setup',getPlayer())
    emit('phase-setup',{ownerID=spec.ownerID,cart=spec.cart,cargoID=spec.cargoID,reusedNativeCart=spec.reusedNativeCart})
    return
   end
@@ -497,8 +555,10 @@ Events.OnServerCommand.Add(function(module,command,args)
   assert(spec and args.phase==phase and args.ownerID==spec.ownerID,'Unexpected native lifecycle response incarnation')
   if command=='Wait' then
    assert(inflight and args.attempt==inflight.attempt,'Unrequested native lifecycle wait');inflight=nil;nextBindAt=now()+500
+   serverEquipPendingSince=serverEquipPendingSince or now()
    emit('bind-wait',{ownerID=spec.ownerID,attempt=args.attempt,serverEquipmentPending=true});return
   elseif command=='Bound' then
+   serverEquipPendingSince=nil
    local b=refresh();assert(b and inflight and args.attempt==inflight.attempt and args.reply.nonce==inflight.request.nonce,'Unrequested native lifecycle grant')
    if args.stale then replay('fresh-nonce-replay',args.stale,args.payload,ingress,{freshNonce=inflight.request.nonce}) end
    local accepted=receiver:reply(args.reply,ingress)
@@ -637,6 +697,7 @@ Events.OnTick.Add(function()
   if since then assert(now()-since<DEADLINE,'Lifecycle client deadline phase='..tostring(phase)..' transition='..tostring(transition)) end
   if not isIngameState() then return end
   absentTick()
+  bindingWait()
   if not initialized() then return end
   local p=getPlayer()
   if spec and (role=='client1' or not transition or p==owner) and now()-lastPulse>250 then lastPulse=now();send('Pulse',{}) end
@@ -644,13 +705,17 @@ Events.OnTick.Add(function()
    if now()-lastHello>1000 then lastHello=now();send('Hello',{rejoin=resuming,afterDeath=transition=='death'}) end
    return
   end
-  if role=='client2' and not transition and not ack and now()-lastEquip>1000 then
+  if role=='client2' and not transition and not ack and (not equipSent or serverEquipPendingSince and now()-serverEquipPendingSince>=2000 and equipResends<1) then
    lastEquip=now();local cart=p:getInventory():getItemById(spec.cart)
    if cart then
     assert(cart:getFullType()==CART,'Replicated exact native cart changed type')
     if p:getPrimaryHandItem()~=cart or p:getSecondaryHandItem()~=cart then p:setPrimaryHandItem(cart);p:setSecondaryHandItem(cart) end
     if SaucedCarts then SaucedCarts.applyCartPose(p);SaucedCarts.updateCartVisual(cart,p,true) end
     p:updateHandEquips()
+    if equipSent then equipResends=equipResends+1 end
+    equipSent=true
+    emit('native-equip',{ownerID=spec.ownerID,cart=spec.cart,equipResends=equipResends,serverEquipmentPending=serverEquipPendingSince~=nil})
+    if equipResends==0 then eligibility('equip',p) end
    end
   end
   bindTick()

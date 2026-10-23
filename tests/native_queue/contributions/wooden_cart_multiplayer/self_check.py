@@ -1113,7 +1113,7 @@ public final class ObserverLoaderCheck {
             cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_LEASE_CONTROL='true',PZ_CART_LEASE_LIFETIME='true',
                 PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
             capture_output=True,text=True,timeout=90)
-        assert result.returncode==0 and 'EQUIPMENT_LIFETIME_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+        assert result.returncode==0 and 'EQUIPMENT_LIFETIME_CHECK_PASS' in result.stdout and 'EQUIPMENT_ELIGIBILITY_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
         result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
             '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'LeaseCostCheck'],
             cwd=game,env=dict(os.environ,PZ_CART_LEASE_CONTROL='true',

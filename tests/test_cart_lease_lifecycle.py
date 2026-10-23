@@ -156,6 +156,13 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
         row['authoritativeAbsence']=False
         with self.assertRaises(ValueError):self.analyze()
 
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT required for actual lifecycle controller')
+    def test_actual_controller_uses_owned_local_actor_and_does_not_flood_equip(self):
+        base=ROOT/ANALYZER.parent
+        result=subprocess.run([shutil.which('luajit'),str(base/'LeaseLifecycleBankCheck.lua'),str(base),'normal','certified','normal','missing-local','delayed-lifetime'],capture_output=True,text=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('LIFECYCLE_STATE_MACHINE_MOCK_PASS',result.stdout)
+
     def test_complete_synthetic_contract_keeps_diagnostic_scope(self):
         result=self.analyze()
         self.assertTrue(result['evidenceComplete']);self.assertTrue(result['diagnosticOnly'])

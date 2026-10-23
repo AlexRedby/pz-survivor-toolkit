@@ -4,11 +4,13 @@ local function readSource(name) local f=assert(io.open(base..'/'..name));local s
 local source=readSource('lease-lifecycle.lua')
 local protocol=readSource('lease-protocol.lua')
 mockRace=arg[2]=='resnapshot';mockRaceCertified=arg[3]~='uncertified';mockDelayedHostDeath=arg[4]=='delayed-death'
+mockLocalMissingFromOnline=arg[5]=='missing-local';mockRespawnLifetimeDelay=arg[6]=='delayed-lifetime'
 local time,serial=10000,10
 local queue,envs,logs,files={},{},{},{}
 local guestGeneration=1
 local activeEnvironment,raceInjected=nil,false
 local hostDeathLagUntil,pendingHostDeath=nil,nil
+local respawnLifetimeReadyAt=nil
 local function list(items)
  items=items or {};return {size=function() return #items end,get=function(_,i) return items[i+1] end}
 end
@@ -38,6 +40,7 @@ local conn1,conn2={active=true},{active=true}
 local function actor(name,epoch,inv)
  local p={name=name,epoch=epoch,id=name=='client1' and 1 or 2,inventory=inv or inventory(),square=square,x=100,y=100,z=0,dead=false}
  function p:getUsername() return self.name end
+ function p:isLocalPlayer() return activeEnvironment and activeEnvironment.mockName==self.name end
  function p:getOnlineID() return self.id end
  function p:getCurrentSquare() return self.square end
  function p:isDead() if self.name=='client2' and activeEnvironment and activeEnvironment.mockName=='client1' and hostDeathLagUntil and time<hostDeathLagUntil then return false end;return self.dead end
@@ -79,11 +82,12 @@ local function makeEnv(name)
  e.isServer=function() return name=='server' end
  e.isClient=function() return name~='server' end
  e.getTimestampMs=function() return time end
- e.getOnlinePlayers=function() local ps={host};if guest.square then ps[#ps+1]=guest end;return list(ps) end
+ e.getOnlinePlayers=function() local ps={host};if guest.square and not (name=='client2' and mockLocalMissingFromOnline) then ps[#ps+1]=guest end;return list(ps) end
  e.getPlayer=function() return current(name) end
  e.getCell=function() return {getGridSquare=function() return square end} end
  e.getFileReader=function(path) local value=path=='smoke-user.txt' and name or e.files[path];if value==nil then return nil end;return {readLine=function() return value end,close=function() end} end
  e.getFileWriter=function(path) return {write=function(_,value) e.files[path]=value end,close=function() end} end
+ e.cartLeaseEligibility=function(p) return '{"fixtureMock":true}' end
  e.cartLeaseChallengeSeed=function() serial=serial+1;return 'uuid-'..name..'-'..serial end
  e.cartMPPadHost=function() return true end
  e.cartLeaseSource=function(p) assert(e.inCommand,'no native scope');return p==host and conn1 or conn2 end
@@ -93,6 +97,7 @@ local function makeEnv(name)
  e.cartLeaseCurrent=function() return e.inGame and (name=='client1' and conn1 or conn2) or nil end
  e.cartLeaseIngress=function() return e.inCommand and (name=='client1' and conn1 or conn2) or nil end
  e.cartLeaseLifetime=function(p)
+  if mockRespawnLifetimeDelay and name=='client2' and p.epoch==3 and respawnLifetimeReadyAt and time<respawnLifetimeReadyAt then return nil end
   local hostLag=name=='client1' and hostDeathLagUntil and time<hostDeathLagUntil
   if p.dead and not hostLag or not p.square or not p.primary or p.primary~=p.secondary then return nil end
   local c=name=='client1' and conn1 or p==host and conn1 or conn2
@@ -155,7 +160,7 @@ for tick=1,1000 do
   removed=true;guest.square=nil
   bodies[#bodies+1]={isPlayer=function() return false end,getX=function() return 100 end,getY=function() return 100 end,getZ=function() return 0 end,getCharacterOnlineID=function() return 2 end,getContainer=function() return inventory() end}
   envs.client2.ISPostDeathUI.instance[0]={waitOver=true,buttonRespawn={isVisible=function() return true end},isVisible=function() return true end,onRespawn=function()
-   guest=actor('client2',3);envs.client1.remoteItem=nil;envs.client1.remoteRevision=nil;envs.client2.ISPostDeathUI.instance[0]=nil
+   guest=actor('client2',3);respawnLifetimeReadyAt=time+6000;envs.client1.remoteItem=nil;envs.client1.remoteRevision=nil;envs.client2.ISPostDeathUI.instance[0]=nil
    fire(envs.client2,'OnCreatePlayer',0,guest)
   end}
  end
@@ -183,6 +188,16 @@ for tick=1,1000 do
    end
    assert(earlyClose and laterNativeDeath,'Trusted early close did not precede delayed host native death')
   end
+  local equipCount=0;local waits={}
+  for _,log in ipairs(logs) do
+   if log.role=='client2' and log.text:find('event=native-equip,',1,true) then equipCount=equipCount+1 end
+   if log.role=='client2' and log.text:find('event=binding-wait,',1,true) and log.text:find('phase=2,',1,true) then
+    assert(log.text:find('refusal=native-equipment-lifetime-unavailable,',1,true),'Binding wait diagnostic differs')
+    for _,sample in ipairs({1,2,5}) do if log.text:find('sampleSeconds='..sample..',',1,true) then waits[sample]=true end end
+   end
+  end
+  assert(equipCount==3,'Fixture repeated native equip without authoritative setup necessity')
+  if mockRespawnLifetimeDelay then assert(waits[1] and waits[2] and waits[5],'Missing bounded respawn binding wait diagnostics') end
   print('LIFECYCLE_STATE_MACHINE_MOCK_PASS ticks='..tick..' roles=3 phases=3 hostPulseAfterDeathOneSecond=true noncePreserved=true receiptRace='..tostring(mockRace==true)..' delayedHostDeath='..tostring(mockDelayedHostDeath==true));return
  end
 end

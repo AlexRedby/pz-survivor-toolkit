@@ -9,7 +9,7 @@ require,parse,integer,text=(L['HELD'][k] for k in ('require','parse','integer','
 token,records=L['token'],L['records']
 ROLES=('server','client1','client2');CLIENTS=ROLES[1:]
 MARKER='[CART_LIFECYCLE] ';NATIVE='[CART_EQUIPMENT] ';MAX=9007199254740991
-EVENTS=set('setup phase-setup cart-setup native-binding request bind-wait stale-control rejoin-ui bind bound echo receipt receipt-resnapshot prepare prepared transition-start native-kill native-death native-death-progress native-player-death unavailable unavailable-replay native-removed cart-disposition observer-absent respawn-offer respawn-ui native-create native-connection transition resnapshot reply-refused native-exit native-reconnect native-rejoin fresh-nonce-replay fresh-replay done complete-offer final-ack complete'.split())
+EVENTS=set('setup phase-setup cart-setup binding-wait native-equip native-eligibility native-binding request bind-wait stale-control rejoin-ui bind bound echo receipt receipt-resnapshot prepare prepared transition-start native-kill native-death native-death-progress native-player-death unavailable unavailable-replay native-removed cart-disposition observer-absent respawn-offer respawn-ui native-create native-connection transition resnapshot reply-refused native-exit native-reconnect native-rejoin fresh-nonce-replay fresh-replay done complete-offer final-ack complete'.split())
 
 
 def identity(row):

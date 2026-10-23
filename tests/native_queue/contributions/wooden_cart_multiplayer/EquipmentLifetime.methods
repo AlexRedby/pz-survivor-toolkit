@@ -250,6 +250,47 @@
             return revision<=9007199254740991L && life.issued.contains(revision) && revision>=life.hardRevision && revision<life.revision;
         }}catch(Throwable error){equipmentLifetimeError(error);return false;}
     }
+    /** Diagnostic snapshot only. Never admits a lifetime, creates EquipmentLife or supplies authority. */
+    @LuaMethod(name="cartLeaseEligibility",global=true)
+    public static String cartLeaseEligibility(IsoPlayer player) {
+        if(!LEASE_LIFETIME || !LEASE_CONTROL)return null;
+        try{synchronized(equipmentLifetimeLock){
+            var life=player==null?null:equipmentLife(player,false);
+            boolean server=zombie.network.GameServer.server && !zombie.network.GameClient.client;
+            boolean client=zombie.network.GameClient.client && !zombie.network.GameServer.server;
+            var engine=server?zombie.network.GameServer.udpEngine:client && zombie.network.GameClient.instance!=null?zombie.network.GameClient.instance.udpEngine:null;
+            var connection=server && player!=null?zombie.network.GameServer.getConnectionFromPlayer(player):client?zombie.network.GameClient.connection:null;
+            var mapped=player==null?null:zombie.network.GameClient.IDToPlayerMap.get(player.getOnlineID());
+            var primary=player==null?null:player.getPrimaryHandItem();var secondary=player==null?null:player.getSecondaryHandItem();
+            int slot=player==null?-1:player.playerIndex;
+            String active=engine==null || connection==null?"null":String.valueOf(engine.getActiveConnection(connection.getConnectedGUID())==connection);
+            return "{\"schema\":1,\"diagnosticOnly\":true,\"authorityProof\":false,\"process\":"+mpJsonString(nativeTimeProcess)
+                +",\"equipmentHealthy\":"+(!equipmentLifetimeFailed)+",\"controlHealthy\":"+(!leaseControlFailed)
+                +",\"playerPresent\":"+(player!=null)+",\"actorEpoch\":"+nativeTimeIdentity(player,true)
+                +",\"onlineID\":"+(player==null?-1:player.getOnlineID())+",\"playerIndex\":"+slot
+                +",\"localPlayer\":"+(player!=null && player.isLocalPlayer())
+                +",\"localSlotExact\":"+(player!=null && slot>=0 && slot<IsoPlayer.players.length && IsoPlayer.players[slot]==player)
+                +",\"currentActorExact\":"+(player!=null && IsoPlayer.getInstance()==player)
+                +",\"clientMapActorEpoch\":"+nativeTimeIdentity(mapped,true)+",\"clientMapExact\":"+(player!=null && mapped==player)
+                +",\"alive\":"+(player!=null && player.isAlive())+",\"dead\":"+(player!=null && player.isDead())
+                +",\"removedFromWorldMs\":"+(player==null?0:player.removedFromWorldMs)
+                +",\"sourceRole\":"+mpJsonString(server?"server":client?"client":"unknown")
+                +",\"clientConnected\":"+(zombie.network.GameClient.instance!=null && zombie.network.GameClient.instance.connected)
+                +",\"engineKnown\":"+(engine!=null)+",\"connectionEpoch\":"+nativeTimeIdentity(connection,false)
+                +",\"connectionRetired\":"+(connection!=null && equipmentRetiredConnections.get(connection)!=null)
+                +",\"exactActiveMapping\":"+active+",\"lifePresent\":"+(life!=null)
+                +",\"baseline\":"+(life!=null && life.baseline)+",\"retired\":"+(life!=null && life.retired)
+                +",\"poisoned\":"+(life!=null && life.poisoned)+",\"revision\":"+(life==null?0:life.revision)
+                +",\"hardRevision\":"+(life==null?0:life.hardRevision)+",\"depth\":"+(life==null?0:life.depth)
+                +",\"parseDepth\":"+(life==null?0:life.parseDepth)+",\"issuedCount\":"+(life==null?0:life.issued.size())
+                +",\"primaryEpoch\":"+nativeTimeIdentity(primary,false)+",\"secondaryEpoch\":"+nativeTimeIdentity(secondary,false)
+                +",\"primaryID\":"+(primary==null?"null":primary.getID())+",\"secondaryID\":"+(secondary==null?"null":secondary.getID())
+                +",\"primaryType\":"+mpJsonString(primary==null?null:primary.getFullType())+",\"secondaryType\":"+mpJsonString(secondary==null?null:secondary.getFullType())
+                +",\"primaryWorldAttached\":"+(primary!=null && primary.getWorldItem()!=null)
+                +",\"secondaryWorldAttached\":"+(secondary!=null && secondary.getWorldItem()!=null)
+                +",\"sameHands\":"+(primary!=null && primary==secondary)+"}";
+        }}catch(Throwable error){return null;}
+    }
     @LuaMethod(name="cartLeaseLifetime",global=true)
     public static String cartLeaseLifetime(IsoPlayer player) {
         if(!equipmentLifetimeEnabled())return null;

@@ -139,6 +139,55 @@ public final class EquipmentLifetimeCheck {
         }
         zombie.network.GameClient.client=false;zombie.network.GameServer.server=true;
     }
+    private static void jsonField(String json,String key,Object value){
+        String encoded=value instanceof String?"\""+value+"\"":String.valueOf(value);
+        check(json!=null && json.contains("\""+key+"\":"+encoded+(json.endsWith("\""+key+"\":"+encoded+"}")?"}":",")),"Diagnostic field differs: "+key+" expected="+encoded+" json="+json);
+    }
+    @SuppressWarnings("unchecked")
+    private static void eligibilityChecks(Owner known,Connection connection,Engine engine)throws Exception {
+        var lives=(Main.NativeWeakMap<zombie.characters.IsoPlayer,Main.EquipmentLife>)field(Main.class,"equipmentLives").get(null);
+        var records=(java.util.ArrayList<?>)field(Main.class,"equipmentLifetimeRecords").get(null);
+        var issued=field(Main.class,"equipmentLifetimeIssuedCount");var state=lives.get(known);
+        int count=records.size(),issuedSize=state.issued.size();long issuedCount=issued.getLong(null),revision=state.revision,hard=state.hardRevision;
+        String json=Main.cartLeaseEligibility(known);check(json!=null && json.equals(Main.cartLeaseEligibility(known)),"Repeated diagnostic snapshot changed state");
+        jsonField(json,"schema",1);jsonField(json,"authorityProof",false);jsonField(json,"diagnosticOnly",true);
+        jsonField(json,"actorEpoch",Main.nativeTimeIdentity(known,true));jsonField(json,"clientMapExact",false);
+        jsonField(json,"sourceRole","server");jsonField(json,"engineKnown",true);jsonField(json,"exactActiveMapping",true);
+        jsonField(json,"baseline",true);jsonField(json,"retired",false);jsonField(json,"revision",revision);
+        jsonField(json,"primaryEpoch",Main.nativeTimeIdentity(known.getPrimaryHandItem(),false));jsonField(json,"sameHands",true);
+        var unknown=owner(item(84),(short)12);
+        String absent=Main.cartLeaseEligibility(unknown);jsonField(absent,"lifePresent",false);jsonField(absent,"issuedCount",0);
+        jsonField(absent,"connectionEpoch",0);jsonField(absent,"exactActiveMapping",null);
+        check(lives.get(unknown)==null,"Diagnostic snapshot created an unknown actor lifetime");
+        String missing=Main.cartLeaseEligibility(null);jsonField(missing,"playerPresent",false);jsonField(missing,"lifePresent",false);
+        check(records.size()==count && issued.getLong(null)==issuedCount && state.issued.size()==issuedSize && state.revision==revision && state.hardRevision==hard,
+            "Read-only diagnostics changed ledger count, issued tokens or native revision");
+        zombie.network.GameServer.server=false;zombie.network.GameClient.client=true;zombie.network.GameClient.instance.connected=true;
+        zombie.network.GameClient.instance.udpEngine=engine;zombie.network.GameClient.connection=connection;
+        var previous=IsoPlayerState.capture();
+        try{
+            zombie.characters.IsoPlayer.players[0]=unknown;zombie.characters.IsoPlayer.setInstance(unknown);
+            zombie.network.GameClient.IDToPlayerMap.clear();zombie.network.GameClient.IDToPlayerMap.put((short)12,unknown);
+            String local=Main.cartLeaseEligibility(unknown);jsonField(local,"localSlotExact",true);jsonField(local,"currentActorExact",true);
+            jsonField(local,"clientMapExact",true);jsonField(local,"clientMapActorEpoch",Main.nativeTimeIdentity(unknown,true));jsonField(local,"clientConnected",true);
+            jsonField(local,"sourceRole","client");jsonField(local,"lifePresent",false);jsonField(local,"exactActiveMapping",true);
+            check(lives.get(unknown)==null && records.size()==count && issued.getLong(null)==issuedCount,"Local eligibility diagnostics issued a binding");
+            zombie.network.GameClient.IDToPlayerMap.put((short)12,known);
+            String wrong=Main.cartLeaseEligibility(unknown);jsonField(wrong,"clientMapExact",false);jsonField(wrong,"clientMapActorEpoch",Main.nativeTimeIdentity(known,true));
+            unknown.removedFromWorldMs=123;jsonField(Main.cartLeaseEligibility(unknown),"removedFromWorldMs",123);unknown.removedFromWorldMs=0;
+            connections(engine).remove(1L);jsonField(Main.cartLeaseEligibility(unknown),"exactActiveMapping",false);connections(engine).put(1L,connection);
+            zombie.network.GameClient.instance.udpEngine=null;jsonField(Main.cartLeaseEligibility(unknown),"engineKnown",false);jsonField(Main.cartLeaseEligibility(unknown),"exactActiveMapping",null);
+            zombie.network.GameClient.instance.udpEngine=engine;
+        }finally{previous.restore();zombie.network.GameClient.IDToPlayerMap.clear();zombie.network.GameClient.client=false;zombie.network.GameServer.server=true;}
+        Main.equipmentLifetimeRetire(unknown,"actor-remove");var retired=lives.get(unknown);long retiredRevision=retired.revision;
+        jsonField(Main.cartLeaseEligibility(unknown),"retired",true);
+        check(retired.revision==retiredRevision && retired.issued.isEmpty() && issued.getLong(null)==issuedCount,"Diagnostic snapshot revived or issued retired actor");
+        System.out.println("EQUIPMENT_ELIGIBILITY_CHECK_PASS noNewLife=true noTokenIssuance=true revisionsUnchanged=true unknownActor=true localMapAndSlot=true retiredPreserved=true");
+    }
+    private record IsoPlayerState(zombie.characters.IsoPlayer current,zombie.characters.IsoPlayer slot) {
+        static IsoPlayerState capture(){return new IsoPlayerState(zombie.characters.IsoPlayer.getInstance(),zombie.characters.IsoPlayer.players[0]);}
+        void restore(){zombie.characters.IsoPlayer.players[0]=slot;zombie.characters.IsoPlayer.setInstance(current);}
+    }
     public static void main(String[] args)throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         zombie.Lua.LuaManager.env=se.krka.kahlua.j2se.J2SEPlatform.getInstance().newEnvironment();
@@ -180,6 +229,7 @@ public final class EquipmentLifetimeCheck {
         zombie.network.GameServer.server=true;zombie.network.GameClient.client=false;zombie.network.GameServer.udpEngine=engine;
         var original=item(42);var owner=owner(original,(short)7);registered(owner,connection,engine);
         String first=life(owner);check(first.equals(life(owner)),"Read-only sampling changed native lifetime");
+        eligibilityChecks(owner,connection,engine);
         check(!Main.cartLeaseResnapshot(owner,first) && !Main.cartLeaseResnapshot(owner,"invalid"),"Unchanged or malformed native token certified");
         owner.setPrimaryHandItem(original);owner.setSecondaryHandItem(original);
         check(first.equals(life(owner)),"Native same-reference setter no-op invalidated lifetime");
