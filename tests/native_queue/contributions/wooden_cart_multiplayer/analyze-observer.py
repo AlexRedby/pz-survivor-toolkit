@@ -11,6 +11,11 @@ parse, require, integer, text, marked = (ADMISSION[key] for key in ('parse', 're
 uuid_text, equal, MAX = ADMISSION['uuid_text'], ADMISSION['identity_equal'], ADMISSION['MAX']
 ROLES = ('server', 'client1', 'client2')
 MARKER = '[CART_OBSERVER] '
+PARAMS_MARKER = '[CART_OBSERVER_PARAMS] '
+ASSOCIATION_FIELDS = ('associationKind', 'actionEpoch', 'consumeGeneration', 'paramsMapEpoch', 'paramsRevision')
+SNAP_PARAMS = ('observerAssociationKind', 'observerConsumeGeneration', 'observerParamsMapEpoch', 'observerParamsRevision')
+PARAM_LINKS = dict(observerAssociationKind='associationKind', observerConsumeGeneration='consumeGeneration',
+                   observerParamsMapEpoch='paramsMapEpoch', observerParamsRevision='paramsRevision')
 EVENTS = {'source-begin', 'source-capture', 'source-end', 'state-set', 'state-write', 'state-submit', 'state-cancel',
           'state-parse', 'state-process-server', 'state-process-client', 'state-apply',
           'proxy-associate', 'proxy-stop', 'proxy-replaced', 'state-discard'}
@@ -71,6 +76,16 @@ def row_check(row, role):
         tag = life(row.get('stateTag'), True)
         require(row['stateTag'] == row['sourceLife']+'|'+str(row['stateGeneration'])
                 and tag[:-1] == values and row['packetEpoch'] > 0, 'State marker differs from exact source revision')
+    if any(key in row for key in ASSOCIATION_FIELDS):
+        require(all(key in row for key in ASSOCIATION_FIELDS), 'Incomplete native association metadata')
+        require(row['associationKind'] in ('unavailable', 'packet-apply', 'retained-params'), 'Unknown native association kind')
+        for key in ASSOCIATION_FIELDS[1:]: integer(row, key, 0, MAX)
+        if row['proxyEpoch'] > 0:
+            require(row['actionEpoch'] > 0 and row['associationKind'] != 'unavailable', 'Proxy lacks concrete native action identity')
+            require((row['associationKind'] == 'retained-params') == all(row[key] > 0 for key in ASSOCIATION_FIELDS[2:]),
+                    'Association kind differs from retained parameter ordinals')
+        if row['associationKind'] != 'retained-params':
+            require(all(row[key] == 0 for key in ASSOCIATION_FIELDS[2:]), 'Non-retained association claims parameter provenance')
     return row
 
 
@@ -80,6 +95,138 @@ def packet_key(row):
 
 def successful(row):
     require(row['success'] is True, 'Failed native diagnostic operation')
+
+
+PARAM_EVENTS = {'params-birth', 'params-load', 'params-invalidate', 'params-escape',
+                'params-consume-begin', 'params-consume', 'params-error'}
+PARAM_MASK_FIELDS = ('loadedParamMask', 'nativeDefaultMask', 'defaultConsumerGeneration')
+PARAM_IDENTITY = ('actorEpoch', 'mapEpoch', 'revision', 'variablesEpoch', 'variablesMapEpoch',
+                  'variablesRevision', 'packetEpoch', 'applyGeneration', 'stateTag', 'sourceLife')
+
+
+def retained_consumers(logs, processes, applies, parsed_packets, selected):
+    """Replay native map revisions and permanent alias escapes, never map values."""
+    maps, begins, consumers, defaulted_loads = {}, {}, {}, []
+    count = 0
+    for role in ROLES:
+        previous = None
+        for row in marked(logs[role], PARAMS_MARKER):
+            count += 1
+            require(isinstance(row, dict) and row.get('event') in PARAM_EVENTS, 'Unknown retained parameter event')
+            require(type(row.get('protocol')) is int and row['protocol'] == 1, 'Unknown retained parameter protocol')
+            require(row.get('process') == processes[role], 'Retained parameter belongs to another process')
+            require(type(row.get('success')) is bool and type(row.get('bound')) is bool,
+                    'Retained parameter guards must be booleans')
+            require(row.get('mapKind') in ('params', 'variables', 'none'), 'Unknown retained parameter map kind')
+            for field in PARAM_IDENTITY[:8]+('consumeGeneration', 'actionEpoch'):
+                integer(row, field, 0, MAX)
+            integer(row, 'monoNs', -(1 << 63), (1 << 63)-1)
+            require(previous is None or row['monoNs'] >= previous, 'Retained parameter log order moved backwards')
+            previous = row['monoNs']
+            text(row, 'reason', 160)
+            require(isinstance(row.get('stateTag'), str) and isinstance(row.get('sourceLife'), str), 'Missing retained parameter source fields')
+            require(row['event'] != 'params-error', 'Native retained parameter diagnostic error')
+            key = row['process'], row['mapEpoch']
+            event = row['event']
+            if event == 'params-birth':
+                require(row['success'] and not row['bound'] and row['mapEpoch'] > 0 and row['revision'] == 0
+                        and key not in maps and row['mapKind'] != 'none', 'Invalid/duplicate retained map birth')
+                require((row['mapKind'] == 'params' and row['actorEpoch'] > 0)
+                        or (row['mapKind'] == 'variables' and row['actorEpoch'] == 0
+                            and row['variablesEpoch'] > 0 and row['variablesMapEpoch'] == row['mapEpoch']
+                            and row['variablesRevision'] == 0), 'Retained map birth lacks exact owner/wrapper identity')
+                maps[key] = dict(birth=row, revision=0, escaped=False, load=None)
+                continue
+            if event in ('params-invalidate', 'params-escape'):
+                require(not row['bound'] and row['mapEpoch'] > 0, 'Map mutation claims retained authority')
+                state = maps.get(key)
+                if state is None:
+                    require(event == 'params-escape', 'Map write has no observed birth')
+                    maps[key] = dict(birth=None, revision=row['revision'], escaped=True, load=None)
+                else:
+                    require(row['revision'] > state['revision'], 'Map mutation did not advance native revision')
+                    if state['birth'] is not None:
+                        equal(state['birth'], row, ('mapKind', 'actorEpoch'), 'Map mutation changed native map owner')
+                    state.update(revision=row['revision'], escaped=state['escaped'] or event == 'params-escape', load=None)
+                continue
+            if event == 'params-load':
+                state = maps.get(key)
+                if not row['bound']:
+                    if state is not None: state['load'] = None
+                    continue
+                require(role == 'client2' and row['success'] and row['mapKind'] == 'params', 'Invalid retained State load')
+                loaded_mask = integer(row, 'loadedParamMask', 0, 127)
+                default_mask = integer(row, 'nativeDefaultMask', 0, 127)
+                default_generation = integer(row, 'defaultConsumerGeneration', 0, MAX)
+                require(loaded_mask & default_mask == 0 and loaded_mask | default_mask == 127,
+                        'Retained load lacks complete disjoint native parameter origin masks')
+                require(default_mask & ~12 == 0 and bool(default_generation) == bool(default_mask),
+                        'Retained load claims unsupported or unproven native parameter default')
+                require(state is not None and state['birth'] is not None and not state['escaped']
+                        and state['revision'] == row['revision'] and row['revision'] > 0,
+                        'Retained State load lacks unescaped exact map birth/revision')
+                equal(state['birth'], row, ('actorEpoch',), 'Retained State load changed map actor')
+                nested = maps.get((row['process'], row['variablesMapEpoch']))
+                require(nested is not None and nested['birth'] is not None and not nested['escaped']
+                        and nested['birth']['mapKind'] == 'variables' and row['variablesEpoch'] > 0
+                        and nested['birth']['variablesEpoch'] == row['variablesEpoch']
+                        and nested['revision'] == row['variablesRevision'], 'Retained State load lacks unescaped exact variables birth/revision')
+                if row['sourceLife'] not in selected:
+                    state['load'] = row
+                    continue
+                apply = applies.get((row['process'], row['applyGeneration']))
+                require(apply is not None and row['packetEpoch'] == apply['packetEpoch']
+                        and row['stateTag'] == apply['stateTag'] and row['sourceLife'] == apply['sourceLife']
+                        and row['actorEpoch'] == apply['actorEpoch'] and apply['stage'] == 'Enter'
+                        and parsed_packets[packet_key(apply)]['monoNs'] <= row['monoNs'] <= apply['monoNs'],
+                        'Retained load lacks exact original successful State apply')
+                state['load'] = row
+                if default_mask: defaulted_loads.append(row)
+                continue
+            consume_key = row['process'], row['consumeGeneration']
+            require(row['consumeGeneration'] > 0, 'Missing native parameter consume generation')
+            if event == 'params-consume-begin':
+                require(consume_key not in begins and row['actionEpoch'] == 0 and row['success'] and not row['bound'],
+                        'Duplicate/invalid parameter consume begin')
+                begins[consume_key] = row
+                continue
+            require(event == 'params-consume' and consume_key in begins and consume_key not in consumers,
+                    'Parameter consume lacks unique native begin/exit')
+            begin = begins[consume_key]
+            require(begin['monoNs'] <= row['monoNs'], 'Parameter consume exit precedes entry')
+            consumers[consume_key] = row
+            if not row['bound'] or row['sourceLife'] not in selected: continue
+            equal(begin, row, PARAM_IDENTITY+PARAM_MASK_FIELDS+('consumeGeneration', 'mapKind'), 'Parameter consume changed native input revision')
+            require(role == 'client2' and begin['success'] and row['success'] and not begin['bound']
+                    and row['actionEpoch'] > 0 and row['mapKind'] == 'params', 'Retained consume lacks successful exact native action')
+            state = maps.get(key)
+            load = None if state is None else state['load']
+            require(load is not None and not state['escaped'] and state['revision'] == row['revision'],
+                    'Retained consume follows overwrite/unmarked load/unknown alias')
+            equal(load, row, PARAM_IDENTITY+PARAM_MASK_FIELDS, 'Retained consume differs from exact loaded State revision')
+            nested = maps.get((row['process'], row['variablesMapEpoch']))
+            require(nested is not None and not nested['escaped'] and nested['revision'] == row['variablesRevision'],
+                    'Retained variables changed or escaped before consume')
+            apply = applies[row['process'], row['applyGeneration']]
+            require(apply['monoNs'] <= begin['monoNs'], 'Retained consumer began before original State apply completed')
+    require(set(begins) == set(consumers), 'Parameter consumer has no completed native exit')
+    used_defaults = set()
+    for load in defaulted_loads:
+        key = load['process'], load['defaultConsumerGeneration']
+        consume, begin = consumers.get(key), begins.get(key)
+        require(consume is not None and begin is not None and key not in used_defaults,
+                'Native default lacks unique completed original consumer')
+        apply = applies[load['process'], load['applyGeneration']]
+        require(not consume['bound'] and consume['success'] and consume['reason'] == 'non-retained-apply'
+                and consume['actionEpoch'] > 0 and consume['actionEpoch'] == apply['actionEpoch']
+                and apply.get('associationKind') == 'packet-apply' and apply['proxyEpoch'] > 0,
+                'Native default lacks successful original packet-apply proxy consumer')
+        equal(load, consume, PARAM_IDENTITY+PARAM_MASK_FIELDS, 'Native default commit changed original consumer input revision')
+        equal(load, begin, ('actorEpoch', 'mapEpoch'), 'Native default began on a different actor/map')
+        require(parsed_packets[packet_key(apply)]['monoNs'] <= begin['monoNs'] <= consume['monoNs']
+                <= load['monoNs'] <= apply['monoNs'], 'Native default escaped original State apply consumer')
+        used_defaults.add(key)
+    return {key: row for key, row in consumers.items() if row['bound'] and row['sourceLife'] in selected}, count, len(used_defaults)
 
 
 def analyze(root):
@@ -102,6 +249,9 @@ def analyze(root):
             by_event[role][row['event']].append(row)
         require(len(observed) == 1, 'Observer process changed during selected bank')
         processes[role] = next(iter(observed))
+    native_params_schema = any('associationKind' in row for values in rows.values() for row in values)
+    require(all(('associationKind' in row) == native_params_schema for values in rows.values() for row in values),
+            'Native association metadata schema changed during bank')
     require(len(set(processes.values())) == 3, 'Observer endpoints reused process epoch')
     require(all(phase['process'] == processes['server'] for phase in admission['phases']),
             'Diagnostic relay belongs to another native admission process')
@@ -270,17 +420,38 @@ def analyze(root):
         require(origin['peerRole'] == route[0] and submissions[(*route, origin['stateTag'])],
                 'Parsed State lacks successful directed diagnostic submission')
         require(processes_by_packet[key], 'Parsed State lacks successful native source/process validation')
+    consumers, params_event_count, native_default_commits = retained_consumers(logs, processes, applies, parsed_packets, selected)
+    require(not params_event_count or native_params_schema, 'Retained parameter events require explicit native association schema')
+    used_consumers, associated_actions = set(), set()
     for key, proxy in proxies.items():
+        if native_params_schema:
+            action_key = proxy['process'], proxy['actionEpoch']
+            require(action_key not in associated_actions, 'Native action reused by distinct proxy associations')
+            associated_actions.add(action_key)
         apply = applies.get((proxy['process'], proxy['applyGeneration']))
         require(apply is not None, 'Proxy setAction has no completed exact State apply')
         require(packet_key(proxy) not in discards, 'Discarded State revision claims an applied proxy')
-        require(apply['proxyEpoch'] == proxy['proxyEpoch'] and apply['proxyCurrent']
-                and apply['associationValid'] and apply['proxyState'] == 'active',
-                'Completed State apply does not validate exact current proxy')
         equal(proxy, apply, LOCAL_FIELDS+('connectionEpoch',), 'Proxy linked to a different native apply receipt')
-        require(proxy['monoNs'] <= apply['monoNs'], 'Scoped proxy creation follows State apply exit')
+        if proxy.get('associationKind') == 'retained-params':
+            consumer_key = proxy['process'], proxy['consumeGeneration']
+            consume = consumers.get(consumer_key)
+            require(consume is not None and consumer_key not in used_consumers, 'Retained proxy lacks unique successful native parameter consumer')
+            require(proxy['reason'] == 'exact-retained-params-consumer' and proxy['associationValid']
+                    and proxy['actionEpoch'] == consume['actionEpoch'] and proxy['actorEpoch'] == consume['actorEpoch']
+                    and proxy['paramsMapEpoch'] == consume['mapEpoch'] and proxy['paramsRevision'] == consume['revision']
+                    and proxy['packetEpoch'] == consume['packetEpoch'] and proxy['applyGeneration'] == consume['applyGeneration']
+                    and proxy['stateTag'] == consume['stateTag'] and proxy['sourceLife'] == consume['sourceLife']
+                    and consume['monoNs'] <= proxy['monoNs'], 'Retained proxy changed exact successful native consumer')
+            used_consumers.add(consumer_key)
+        else:
+            require(apply['proxyEpoch'] == proxy['proxyEpoch'] and apply['proxyCurrent']
+                    and apply['associationValid'] and apply['proxyState'] == 'active',
+                    'Completed State apply does not validate exact current proxy')
+            if native_params_schema:
+                equal(proxy, apply, ASSOCIATION_FIELDS, 'Completed apply changed exact native proxy action identity')
+            require(proxy['monoNs'] <= apply['monoNs'], 'Scoped proxy creation follows State apply exit')
         for boundary in boundaries[key]:
-            equal(proxy, boundary, LOCAL_FIELDS+('connectionEpoch', 'proxyEpoch', 'applyGeneration'), 'Retired proxy changed original association')
+            equal(proxy, boundary, LOCAL_FIELDS+('connectionEpoch', 'proxyEpoch', 'applyGeneration')+(ASSOCIATION_FIELDS if native_params_schema else ()), 'Retired proxy changed original association')
             require(boundary['monoNs'] >= proxy['monoNs'], 'Proxy retirement precedes association')
     require(set(boundaries) <= set(proxies), 'Proxy retirement has no exact association')
 
@@ -290,15 +461,28 @@ def analyze(root):
     for row in trace:
         if row['event'] not in ('capture-prepared', 'draw-consumed'): continue
         require(row.get('ownerID') == admission['phases'][0]['ownerID'], 'Frozen observer slot belongs to wrong native actor')
-        require(type(row.get('observerVersion')) is int and row['observerVersion'] == 1
+        require(type(row.get('observerVersion')) is int and row['observerVersion'] == (2 if native_params_schema else 1)
                 and row.get('observerDiagnosticWire') is True, 'Missing diagnostic frozen observer schema')
         require(row.get('observerProcess') == processes['client2'], 'Frozen proxy belongs to another observer process')
         require(all(type(row.get(field)) is bool for field in ('observerProxyCurrent', 'observerAssociationValid')),
                 'Frozen observer guards must be actual booleans')
         for field in tuple(SNAP_LINKS)[2:]: integer(row, field, 0, MAX)
+        if native_params_schema:
+            require(all(key in row for key in SNAP_PARAMS), 'Incomplete frozen retained parameter metadata')
+            require(row['observerAssociationKind'] in ('unavailable', 'packet-apply', 'retained-params'), 'Unknown frozen association kind')
+            for field in SNAP_PARAMS[1:]: integer(row, field, 0, MAX)
+            if row['observerAssociationKind'] == 'retained-params':
+                require(all(row[field] > 0 for field in SNAP_PARAMS[1:]), 'Retained frozen association lacks parameter identity')
+            else:
+                require(all(row[field] == 0 for field in SNAP_PARAMS[1:]), 'Frozen non-retained association claims parameter identity')
+        else:
+            require(not any(key in row for key in SNAP_PARAMS), 'Old frozen schema claims retained parameter metadata')
         state = row.get('observerProxyState')
         require(state in ('active', 'stopped', 'replaced', 'unavailable'), 'Unknown frozen proxy state')
         text(row, 'observerReason', 160)
+        if native_params_schema:
+            require((state == 'unavailable') == (row['observerAssociationKind'] == 'unavailable'),
+                    'Frozen proxy state differs from association availability')
         if state == 'unavailable':
             require(row.get('observerSourceLife') == row.get('observerStateTag') == ''
                     and all(row[field] == 0 for field in tuple(SNAP_LINKS)[2:])
@@ -324,7 +508,7 @@ def analyze(root):
             require(key in captures and row.get('part') in ('body', 'cart'), 'Consumed draw lacks exact prepared body/cart slot')
             captured, parts = captures[key]
             require(row['part'] not in parts, 'Duplicate consumed body/cart part')
-            equal(captured, row, FROZEN, 'Body/cart draw advanced frozen native association metadata')
+            equal(captured, row, FROZEN+(SNAP_PARAMS if native_params_schema else ()), 'Body/cart draw advanced frozen native association metadata')
             require(row['monoNs'] >= captured['monoNs'], 'Consumed draw predates preparation')
             parts[row['part']] = row
     # Both variable keys duplicate the same native slot. Validate both above;
@@ -332,7 +516,7 @@ def analyze(root):
     views = {}
     for (capture_id, slot, key), (captured, parts) in captures.items():
         if (capture_id, slot) in views:
-            equal(views[capture_id, slot], captured, SNAPSHOT+('nativeMonoNs', 'nativeServerNs', 'nativeClockReady',
+            equal(views[capture_id, slot], captured, SNAPSHOT+(SNAP_PARAMS if native_params_schema else ())+('nativeMonoNs', 'nativeServerNs', 'nativeClockReady',
                   'preparedPrimary', 'preparedSecondary'), 'Pose-key views changed the same frozen slot association')
         else: views[capture_id, slot] = captured
     for (capture_id, slot, key), (captured, parts) in captures.items():
@@ -348,8 +532,12 @@ def analyze(root):
         require(proxy is not None, 'Frozen selected source has no exact native proxy association')
         equal(dict((field, proxy[native]) for field, native in SNAP_LINKS.items()), captured,
               tuple(SNAP_LINKS), 'Frozen body/cart slot changed exact proxy input revision')
+        if native_params_schema:
+            equal(dict((field, proxy[native]) for field, native in PARAM_LINKS.items()), captured, SNAP_PARAMS,
+                  'Frozen body/cart slot changed retained parameter consumer identity')
         apply = applies[(proxy['process'], proxy['applyGeneration'])]
         require(apply['monoNs'] <= captured['nativeMonoNs'], 'Frozen proxy predates successful State apply')
+        require(proxy['monoNs'] <= captured['nativeMonoNs'], 'Frozen proxy predates native association')
         past = [row for row in boundaries[(proxy['process'], proxy['proxyEpoch'])] if row['monoNs'] <= captured['nativeMonoNs']]
         if past:
             latest = max(past, key=lambda row: row['monoNs'])
@@ -386,13 +574,15 @@ def analyze(root):
                 exactSealedSourceAssociations=6, nativeAdmissionEvidenceComplete=True,
                 logicalQueryMessages=admission['logicalQueryMessages'], phases=phases,
                 diagnostics=dict(diagnostics), sourceBeginsWithoutSelectedSeal=sum(row['sourceLife'] not in selected for row in by_event['client1']['source-begin']),
-                proxyAssociations=len(proxies), successfulDirectedSubmissions=sum(map(len, submissions.values())),
+                proxyAssociations=len(proxies), retainedParamsEvidenceAvailable=bool(params_event_count),
+                retainedParamsEvents=params_event_count, retainedParamsConsumerAssociations=len(used_consumers),
+                originalNativeDefaultCommits=native_default_commits, successfulDirectedSubmissions=sum(map(len, submissions.values())),
                 parsedStateRevisions=len(parsed_packets),
                 discardedStateRevisions=len(discards),
                 sourceRevisionCoverageComplete=True, proxyCoverageComplete=True, sampledDrawCoverageComplete=not failures,
                 repeatedSubmissionCandidateSets=sum(len(value) > 1 for value in submissions.values()),
                 sourceFiles=[str(root/(role+'-launch.log')) for role in ROLES]+[str(trace_path)],
-                qualification='Opt-in altered diagnostic State wire pilot: exact source revision and initial native proxy associations for this six-phase bank only. Frozen body/cart coverage is complete only when sampledDrawCoverageComplete is true; failures preserve missing phases explicitly. The marker is provenance, not a lease grant or production authority. Repeated writes do not identify a unique physical transmission. Stopped/replaced and frozen carryover inputs do not count as active draws. Stateful skeleton blending/tracks and other inputs prevent whole-image/source-age or playback equivalence claims. No action/release/reconnect protocol proof, production migration or runtime PASS is inferred; runtime and source verification remain separate.')
+                qualification='Opt-in altered diagnostic State wire pilot: exact source revision and native packet-apply/retained-parameter proxy associations for this six-phase bank only. Frozen body/cart coverage is complete only when sampledDrawCoverageComplete is true; failures preserve missing phases explicitly. Native hand-slot defaults count only with a completed exact original apply consumer. The marker is provenance, not a lease grant or production authority. Repeated writes do not identify a unique physical transmission. Stopped/replaced and frozen carryover inputs do not count as active draws. Stateful skeleton blending/tracks and other inputs prevent whole-image/source-age or playback equivalence claims. No action/release/reconnect protocol proof, production migration or runtime PASS is inferred; runtime and source verification remain separate.')
 
 
 def main():

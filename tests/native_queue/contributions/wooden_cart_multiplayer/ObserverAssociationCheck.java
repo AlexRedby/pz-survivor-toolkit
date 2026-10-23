@@ -6,8 +6,45 @@ import net.alexredby.cartlab.Main;
 public final class ObserverAssociationCheck {
     public static final class Owner extends zombie.characters.IsoPlayer {
         Map<zombie.ai.State.Param<?>,Object> values;
+        Network ai;
         Owner(){super(null,null,0,0,0);}
         @Override public Map<zombie.ai.State.Param<?>,Object> getStateMachineParams(Class<?> type){return values;}
+        @Override public zombie.characters.NetworkPlayerAI getNetworkCharacterAI(){return ai;}
+        @Override public boolean isLocalPlayer(){return false;}
+        @Override public short getOnlineID(){return 7;}
+        @Override public String getUsername(){return "client2";}
+    }
+    public static final class Network extends zombie.characters.NetworkPlayerAI {
+        Owner owner; zombie.characters.CharacterTimedActions.BaseAction current;
+        Network(Owner owner){super(owner);}
+        @Override public zombie.characters.IsoGameCharacter getCharacter(){return owner;}
+        @Override public zombie.characters.CharacterTimedActions.BaseAction getAction(){return current;}
+    }
+    @SuppressWarnings("unchecked")
+    private static void clearedProxyCheck(sun.misc.Unsafe unsafe,Owner owner,zombie.network.packets.actions.StatePacket packet,Main.ObserverTag tag)throws Exception {
+        var ai=(Network)unsafe.allocateInstance(Network.class);ai.owner=owner;owner.ai=ai;
+        var action=(zombie.characters.CharacterTimedActions.BaseAction)unsafe.allocateInstance(zombie.characters.CharacterTimedActions.BaseAction.class);
+        var packetCtor=Main.ObserverPacket.class.getDeclaredConstructor(zombie.network.packets.actions.StatePacket.class,zombie.characters.IsoPlayer.class,Main.ObserverTag.class);packetCtor.setAccessible(true);
+        var input=packetCtor.newInstance(packet,owner,tag);input.applied=true;input.processed=true;
+        var proxyCtor=Main.ObserverProxy.class.getDeclaredConstructor(zombie.characters.CharacterTimedActions.BaseAction.class,zombie.characters.IsoPlayer.class,Main.ObserverPacket.class,long.class);proxyCtor.setAccessible(true);
+        var proxy=proxyCtor.newInstance(action,owner,input,1L);
+        // Deterministic weak-reference retirement, without depending on collector timing.
+        proxy.proxy.clear();check(proxy.proxy.get()==null && ai.getAction()==null,"Cleared-action fixture still has a live pointer");
+        var field=Main.class.getDeclaredField("observerActors");field.setAccessible(true);
+        var actors=(Main.NativeWeakMap<zombie.characters.IsoPlayer,Main.ObserverProxy>)field.get(null);var previous=actors.get(owner);actors.put(owner,proxy);
+        try {
+            String snapshot=Main.observerAssociationSnapshot(owner);
+            check(snapshot.contains("\"observerProxyEpoch\":"+proxy.epoch+","),"Cleared-action fixture did not reach diagnostic snapshot");
+            check(snapshot.contains("\"observerProxyState\":\"active\"") && snapshot.contains("\"observerProxyCurrent\":false")
+                && snapshot.contains("\"observerAssociationValid\":false"),"Two null pointers revived a historical proxy");
+            Main.observerAction(ai,null,null);
+            check(proxy.state.equals("replaced"),"Null assignment did not retire a cleared weak proxy");
+            ai.current=action;Main.observerAction(ai,action,null);
+            snapshot=Main.observerAssociationSnapshot(owner);
+            check(proxy.state.equals("replaced") && snapshot.contains("\"observerProxyState\":\"replaced\"")
+                && snapshot.contains("\"observerProxyCurrent\":false") && snapshot.contains("\"observerAssociationValid\":false"),
+                "Later pointer reuse resurrected the retired association");
+        } finally {if(previous==null)actors.remove(owner);else actors.put(owner,previous);}
     }
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
     public static void main(String[] args)throws Exception {
@@ -39,6 +76,7 @@ public final class ObserverAssociationCheck {
         var parsed=new zombie.network.PZNetKahluaTableImpl(new LinkedHashMap<>());parsed.load(new zombie.core.network.ByteBufferReader(bytes),null);
         check(text.equals(parsed.rawget(Main.OBSERVER_MARKER)) && bytes.position()==end,"Native params serialization lost diagnostic marker");
         check(packet.shouldInstantiate(),"StatePacket stopped allocating distinct receipt instances");
+        clearedProxyCheck(unsafe,owner,packet,tag);
         System.out.println("OBSERVER_ASSOCIATION_CHECK_PASS");
     }
 }

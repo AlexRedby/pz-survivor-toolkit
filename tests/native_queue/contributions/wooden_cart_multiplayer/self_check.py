@@ -725,8 +725,9 @@ def check_java(game, jdk, patch):
     with tempfile.TemporaryDirectory(prefix='cart-mp-compile-') as directory:
         root = Path(directory)
         main = root / 'Main.java'
-        main.write_text(base.replace(anchor, '\n'.join((HERE / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods')) + '\n' + anchor))
-        subprocess.run([str(javac), '--release', '25', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ClearanceProbe.java')], check=True)
+        main.write_text(base.replace(anchor, '\n'.join((HERE / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods', 'ObserverParams.methods')) + '\n' + anchor))
+        main.write_text(main.read_text().replace('public static void main(String[] args) {', 'public static void main(String[] args) { ObserverParamsBootstrap.install();', 1))
+        subprocess.run([str(javac), '--release', '25', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ObserverParamsBootstrap.java'), str(HERE / 'ClearanceProbe.java')], check=True)
         assert (root / 'net/alexredby/cartlab/Main.class').is_file() and (root / 'ClearanceProbe.class').is_file()
         checks=root/'ModelProbeCheck.java'
         checks.write_text(r'''
@@ -1023,7 +1024,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-        extra_checks=[HERE/'NativeTimeCheck.java',HERE/'ClockTimeCheck.java',HERE/'ObserverAssociationCheck.java']
+        extra_checks=[HERE/'NativeTimeCheck.java',HERE/'ClockTimeCheck.java',HERE/'ObserverAssociationCheck.java',HERE/'ObserverParamsCheck.java']
         subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),*map(str,extra_checks)],check=True)
         for name,marker in [('NativeTimeCheck','NATIVE_TIME_CHECK_PASS'),('ClockTimeCheck','CLOCK_TIME_CHECK_PASS')]:
             result=subprocess.run([str(java),'-cp',classpath,name,str(HERE)],cwd=game,capture_output=True,text=True,
@@ -1069,13 +1070,43 @@ public final class TimelineNativeCheck {
         subprocess.run([str(javac),'--release','25','-cp',classpath,'-d',str(root),str(timeline_check)],check=True)
         lab=root/'CartLab.jar'
         subprocess.run([str(jdk/'bin/jar'),'--create','--file',str(lab),'-C',str(root),'net/alexredby/cartlab'],check=True)
+        bootstrap=root/'ObserverLoaderCheck.java'
+        bootstrap.write_text(r'''
+/** Match normal mod loading after core RNG initialization, before test actors exist. */
+public final class ObserverLoaderCheck {
+    public static void main(String[] args)throws Exception {
+        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
+        var phase=Class.forName("me.zed_0xff.zombie_buddy.Loader$Phase");
+        var constant=phase.getDeclaredField("MAIN");constant.setAccessible(true);
+        var loader=Class.forName("me.zed_0xff.zombie_buddy.Loader");
+        var load=loader.getDeclaredMethod("loadJar",java.nio.file.Path.class,String.class,String.class,phase);load.setAccessible(true);
+        if(!Boolean.TRUE.equals(load.invoke(null,java.nio.file.Path.of(args[0]),"net.alexredby.cartlab",java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(java.nio.file.Files.readAllBytes(java.nio.file.Path.of(args[0])))),constant.get(null))))
+            throw new AssertionError("Native mod loader refused CartLab");
+        Class.forName(args[1]).getMethod("main",String[].class).invoke(null,(Object)java.util.Arrays.copyOfRange(args,2,args.length));
+    }
+}
+''')
+        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),str(bootstrap)],check=True)
         (root/'Lua').mkdir()
-        result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1,patches_jar='+str(lab)+':net.alexredby.cartlab',
-            '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverAssociationCheck'],
+        result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
+            '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'ObserverAssociationCheck'],
             cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_LEASE_CONTROL='true',PZ_CART_ACTION_ADMISSION='true',
                 PZ_CART_OBSERVER_ASSOCIATION='true',PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
             capture_output=True,text=True,timeout=90)
         assert result.returncode==0 and 'OBSERVER_ASSOCIATION_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+        for check_args,marker,expected_error in [([], 'OBSERVER_PARAMS_CHECK_PASS', False),
+                (['null-roundtrip'], 'OBSERVER_PARAMS_NULL_ROUNDTRIP_PASS', False),
+                (['pending-default'], 'OBSERVER_PARAMS_PENDING_DEFAULT_PASS', False),
+                (['fail-cleanup'], 'OBSERVER_PARAMS_FAIL_CLEANUP_PASS', True)]:
+            result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
+                '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'ObserverParamsCheck',*check_args],
+                cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_LEASE_CONTROL='true',PZ_CART_ACTION_ADMISSION='true',
+                    PZ_CART_OBSERVER_ASSOCIATION='true',PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
+                capture_output=True,text=True,timeout=90)
+            output=result.stdout+'\n'+result.stderr
+            assert result.returncode==0 and marker in output,output
+            assert ('"event":"params-error"' in output)==expected_error,output
+            assert 'ERROR' not in output,output
         result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1,patches_jar='+str(lab)+':net.alexredby.cartlab',
             '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'TimelineNativeCheck'],
             cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
@@ -1086,7 +1117,7 @@ public final class TimelineNativeCheck {
         assert [row['event'] for row in rows]==['publish','variable-write','trace-end'],rows
         assert [row['seq'] for row in rows]==[1,2,3] and all(row['clockReady'] and row['serverNs']>0 for row in rows)
         assert rows[0]['cartID']==42 and rows[1]['serial']==3 and rows[1]['serializedBytes']>0
-    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API, native diagnostic State marker preservation/unknown-key isolation and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API, native diagnostic State marker preservation/unknown-key isolation, mod-load parameter birth/mutation/escape/default and failure cleanup checks, and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
 
 
 def main():

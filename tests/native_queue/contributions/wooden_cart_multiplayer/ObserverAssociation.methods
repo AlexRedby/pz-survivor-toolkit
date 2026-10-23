@@ -35,9 +35,16 @@
     public static final class ObserverProxy {
         public final java.lang.ref.WeakReference<zombie.characters.CharacterTimedActions.BaseAction> proxy;
         public final java.lang.ref.WeakReference<IsoPlayer> owner;
-        public final ObserverPacket input; public final long epoch=observerSequence.incrementAndGet(),apply;
+        public final ObserverPacket input; public final long epoch=observerSequence.incrementAndGet(),apply,actionEpoch,consumeGeneration,paramsMapEpoch,paramsRevision;
+        public final String associationKind;
         public volatile String state="active",reason="state-apply";
-        ObserverProxy(zombie.characters.CharacterTimedActions.BaseAction proxy,IsoPlayer owner,ObserverPacket input,long apply){this.proxy=new java.lang.ref.WeakReference<>(proxy);this.owner=new java.lang.ref.WeakReference<>(owner);this.input=input;this.apply=apply;}
+        ObserverProxy(zombie.characters.CharacterTimedActions.BaseAction proxy,IsoPlayer owner,ObserverPacket input,long apply) {
+            this(proxy,owner,input,apply,"packet-apply",0,0,0);
+        }
+        ObserverProxy(zombie.characters.CharacterTimedActions.BaseAction proxy,IsoPlayer owner,ObserverPacket input,long apply,String kind,long consume,long map,long revision) {
+            this.proxy=new java.lang.ref.WeakReference<>(proxy);this.owner=new java.lang.ref.WeakReference<>(owner);this.input=input;this.apply=apply;
+            this.actionEpoch=nativeTimeIdentity(proxy,false);this.associationKind=kind;this.consumeGeneration=consume;this.paramsMapEpoch=map;this.paramsRevision=revision;
+        }
     }
     public record ObserverParse(int begin,LeaseCommandIngress ingress) {}
     public record ObserverApply(ObserverPacket input,long generation,ObserverApply previous) {}
@@ -221,10 +228,10 @@
         finally{if(scope.previous()==null)observerApplying.remove();else observerApplying.set(scope.previous());}
     }
     private static boolean observerProxyCurrent(ObserverProxy proxy) {
-        var owner=proxy.owner.get();return owner!=null && owner.getNetworkCharacterAI()!=null && owner.getNetworkCharacterAI().getAction()==proxy.proxy.get();
+        var owner=proxy.owner.get();var action=proxy.proxy.get();return owner!=null && action!=null && owner.getNetworkCharacterAI()!=null && owner.getNetworkCharacterAI().getAction()==action;
     }
     private static boolean observerProxyValid(ObserverProxy proxy) {
-        var owner=proxy.owner.get();return "active".equals(proxy.state) && observerProxyCurrent(proxy) && proxy.input.applied && proxy.input.processed && observerTransport(proxy.input)
+        var owner=proxy.owner.get();return "active".equals(proxy.state) && (!"retained-params".equals(proxy.associationKind) || observerParamsHealthy()) && observerProxyCurrent(proxy) && proxy.input.applied && proxy.input.processed && observerTransport(proxy.input)
             && owner!=null && !owner.isDead() && !owner.isLocalPlayer() && zombie.network.GameClient.IDToPlayerMap.get(owner.getOnlineID())==owner;
     }
     public static void observerAction(zombie.characters.NetworkCharacterAI ai,zombie.characters.CharacterTimedActions.BaseAction action,Throwable failure) {
@@ -232,11 +239,30 @@
         try {
             if(!(ai.getCharacter() instanceof IsoPlayer owner) || owner.isLocalPlayer() || ai.getAction()!=action)return;
             var old=observerActors.get(owner);
-            if(old!=null && old.proxy.get()!=action && "active".equals(old.state)){old.state="replaced";old.reason="native-replacement";observerReplacement(old,action);}
+            if(old!=null && (action==null || old.proxy.get()!=action) && "active".equals(old.state)){old.state="replaced";old.reason="native-replacement";observerReplacement(old,action);}
             var scope=observerApplying.get();var record=scope==null?null:scope.input();
             if(record==null || record.owner.get()!=owner || !"Enter".equals(record.stage) || !record.processed || !observerTransport(record) || action==null || action.chr!=owner)return;
             var proxy=new ObserverProxy(action,owner,record,scope.generation());observerProxies.put(action,proxy);observerActors.put(owner,proxy);
             observerLog("proxy-associate",record,proxy,proxy.apply,"exact-apply-set-action",true,0,0,0,0,"",0);
+        }catch(Throwable error){observerError(error);}
+    }
+    /** Historical input association after every native consumer read completed; never a new action grant. */
+    public static void observerParamsConsumed(ObserverPacket input,IsoPlayer owner,zombie.characters.CharacterTimedActions.BaseAction action,
+            long applyGeneration,long consumeGeneration,long mapEpoch,long revision) {
+        if(!observerEnabled() || observerApplying.get()!=null)return;
+        try {
+            if(input==null || input.owner.get()!=owner || !input.applied || !input.processed || !observerTransport(input)
+                || owner==null || owner.isLocalPlayer() || owner.isDead() || zombie.network.GameClient.IDToPlayerMap.get(owner.getOnlineID())!=owner
+                || action==null || action.chr!=owner || owner.getNetworkCharacterAI()==null || owner.getNetworkCharacterAI().getAction()!=action
+                || input.apply!=applyGeneration || !"Enter".equals(input.stage) || consumeGeneration<=0 || mapEpoch<=0 || revision<=0)return;
+            var previous=observerActors.get(owner);
+            if(previous!=null && previous.proxy.get()==action)return;
+            if(previous!=null && "active".equals(previous.state)) {
+                previous.state="replaced";previous.reason="native-replacement";observerReplacement(previous,action);
+            }
+            var proxy=new ObserverProxy(action,owner,input,applyGeneration,"retained-params",consumeGeneration,mapEpoch,revision);
+            observerProxies.put(action,proxy);observerActors.put(owner,proxy);
+            observerLog("proxy-associate",input,proxy,applyGeneration,"exact-retained-params-consumer",true,0,0,0,0,"",0);
         }catch(Throwable error){observerError(error);}
     }
     public static ObserverProxy observerStopEnter(zombie.characters.NetworkCharacterAI ai) {
@@ -293,6 +319,8 @@
         fields.put("protocol",1);fields.put("diagnosticWire",true);fields.put("process",nativeTimeProcess);fields.put("role",observerRole());fields.put("owner",owner==null?-1:owner.getOnlineID());fields.put("actorEpoch",owner==null?0:nativeTimeIdentity(owner,true));fields.put("connectionEpoch",connection);fields.put("peerRole",peer);
         fields.put("sourceLife",tag==null?"":tag.life());fields.put("stateTag",tag==null?"":tag.text());fields.put("sourceProcess",tag==null?"":tag.process());fields.put("sourceActorEpoch",tag==null?0:tag.actor());fields.put("sourceConnectionEpoch",tag==null?0:tag.connection());fields.put("sourceNativeEpoch",tag==null?0:tag.action());fields.put("sourceTableEpoch",tag==null?0:tag.table());fields.put("sourceBeginGeneration",tag==null?0:tag.begin());fields.put("stateGeneration",tag==null?0:tag.state());
         fields.put("packetEpoch",record==null?0:record.epoch);fields.put("ingressGeneration",record==null || record.ingress==null?0:record.ingress.generation());fields.put("receiveGeneration",record==null?0:record.receive);fields.put("sendGeneration",send);fields.put("parentReceiveGeneration",record!=null && zombie.network.GameServer.server?record.receive:0);
+        fields.put("associationKind",proxy==null?"unavailable":proxy.associationKind);fields.put("actionEpoch",proxy==null?0:proxy.actionEpoch);
+        fields.put("consumeGeneration",proxy==null?0:proxy.consumeGeneration);fields.put("paramsMapEpoch",proxy==null?0:proxy.paramsMapEpoch);fields.put("paramsRevision",proxy==null?0:proxy.paramsRevision);
         fields.put("proxyEpoch",proxy==null?0:proxy.epoch);fields.put("applyGeneration",apply);fields.put("proxyState",proxy==null?"unavailable":proxy.state);fields.put("proxyCurrent",proxy!=null && observerProxyCurrent(proxy));fields.put("associationValid",proxy!=null && observerProxyValid(proxy));fields.put("transportValidated",record!=null && (observerTransport(record) || (record.ingress==null && connection>0 && connection==record.tag.connection() && zombie.network.GameClient.connection!=null && nativeTimeIdentity(zombie.network.GameClient.connection,false)==connection && leaseControlOwnedClient())));fields.put("sourceValidated",record!=null && record.sourceValidated);fields.put("stage",record==null?"unavailable":record.stage);fields.put("reason",reason);fields.put("packetBytes",bytes);fields.put("bodyBegin",begin);fields.put("bodyEnd",end);fields.put("success",success);fields.put("monoNs",System.nanoTime());fields.put("wallMs",System.currentTimeMillis());return fields;
     }
     private static void observerWrite(String event,java.util.Map<String,Object> fields) {
@@ -327,14 +355,17 @@
         if(!OBSERVER_ASSOCIATION)return "";
         try {
             var proxy=observerEnabled() && owner!=null?observerActors.get(owner):null;var record=proxy==null?null:proxy.input;
-            return ",\"observerVersion\":1,\"observerDiagnosticWire\":true,\"observerProcess\":"+mpJsonString(nativeTimeProcess)
+            return ",\"observerVersion\":2,\"observerDiagnosticWire\":true,\"observerProcess\":"+mpJsonString(nativeTimeProcess)
                 +",\"observerSourceLife\":"+mpJsonString(record==null?"":record.tag.life())+",\"observerStateTag\":"+mpJsonString(record==null?"":record.tag.text())
                 +",\"observerStateGeneration\":"+(record==null?0:record.tag.state())+",\"observerPacketEpoch\":"+(record==null?0:record.epoch)
                 +",\"observerIngressGeneration\":"+(record==null || record.ingress==null?0:record.ingress.generation())+",\"observerReceiveGeneration\":"+(record==null?0:record.receive)
                 +",\"observerApplyGeneration\":"+(proxy==null?0:proxy.apply)+",\"observerProxyEpoch\":"+(proxy==null?0:proxy.epoch)
+                +",\"observerAssociationKind\":"+mpJsonString(proxy==null?"unavailable":proxy.associationKind)
+                +",\"observerConsumeGeneration\":"+(proxy==null?0:proxy.consumeGeneration)+",\"observerParamsMapEpoch\":"+(proxy==null?0:proxy.paramsMapEpoch)
+                +",\"observerParamsRevision\":"+(proxy==null?0:proxy.paramsRevision)
                 +",\"observerProxyState\":"+mpJsonString(proxy==null?"unavailable":proxy.state)+",\"observerProxyCurrent\":"+(proxy!=null && observerProxyCurrent(proxy))
                 +",\"observerAssociationValid\":"+(proxy!=null && observerProxyValid(proxy))+",\"observerReason\":"+mpJsonString(proxy==null?"unavailable":proxy.reason);
-        }catch(Throwable error){observerError(error);return ",\"observerVersion\":1,\"observerDiagnosticWire\":true,\"observerAssociationValid\":false,\"observerReason\":\"diagnostic-failed\"";}
+        }catch(Throwable error){observerError(error);return ",\"observerVersion\":2,\"observerDiagnosticWire\":true,\"observerAssociationValid\":false,\"observerReason\":\"diagnostic-failed\"";}
     }
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew",methodName="start",warmUp=false)
     public static class ObserverAssociationBegin {

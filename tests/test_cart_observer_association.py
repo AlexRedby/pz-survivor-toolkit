@@ -91,6 +91,7 @@ class ObserverAssociationEvidence(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.selection,self.base,self.admission,self.rows,self.timeline = fixture()
+        self.params=[]
 
     def events(self,role,event):
         return [row for row in self.rows[role] if row['event']==event]
@@ -102,6 +103,8 @@ class ObserverAssociationEvidence(unittest.TestCase):
             for group in (('native','query') if role=='server' else ('owner',) if role=='client1' else ()):
                 lines += [PRIOR['MARKERS'][group]+json.dumps(row) for row in self.admission[group]]
             lines += [MARKER+json.dumps(row) for row in sorted(self.rows[role],key=lambda row:row['monoNs'])]
+            if role == 'client2':
+                lines += [API['PARAMS_MARKER']+json.dumps(row) for row in sorted(self.params,key=lambda row:row['monoNs'])]
             (self.root/(role+'-launch.log')).write_text('\n'.join(lines)+'\n')
         path=self.root/'client2';path.mkdir(exist_ok=True)
         rows=sorted(self.timeline,key=lambda row:row['monoNs'])
@@ -124,6 +127,302 @@ class ObserverAssociationEvidence(unittest.TestCase):
         self.assertIn('whole-image/source-age',result['qualification'])
         self.assertNotIn('latencyMs',str(result))
         self.assertNotIn('functionalPass',result)
+
+    def new_schema(self):
+        for values in self.rows.values():
+            for row in values:
+                row.update(associationKind='packet-apply' if row['proxyEpoch'] else 'unavailable',
+                           actionEpoch=row['proxyEpoch'],consumeGeneration=0,paramsMapEpoch=0,paramsRevision=0)
+        for row in self.timeline:
+            row.update(observerVersion=2,observerAssociationKind='packet-apply',observerConsumeGeneration=0,
+                       observerParamsMapEpoch=0,observerParamsRevision=0)
+
+    def test_new_packet_apply_schema_remains_exact_without_retained_claim(self):
+        self.new_schema()
+        result=self.analyze()
+        self.assertTrue(result['evidenceComplete'])
+
+    def test_partial_or_mixed_association_schema_is_rejected(self):
+        original=copy.deepcopy(self.rows)
+        for missing in API['ASSOCIATION_FIELDS']:
+            self.rows=copy.deepcopy(original);self.new_schema()
+            del self.events('client2','proxy-associate')[0][missing]
+            with self.subTest(missing=missing),self.assertRaises(ValueError):self.analyze()
+
+    def test_new_frozen_fields_are_immutable_across_body_cart_and_pose_keys(self):
+        self.new_schema();original=copy.deepcopy(self.timeline)
+        for field in API['SNAP_PARAMS']:
+            self.timeline=copy.deepcopy(original)
+            row=next(row for row in self.timeline if row['part']=='cart')
+            row[field]=1 if type(row[field]) is int else 'retained-params'
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+
+    def retained_schema(self):
+        self.new_schema()
+        for index, original in enumerate(self.events('client2','proxy-associate')[:],1):
+            apply=next(row for row in self.events('client2','state-apply') if row['applyGeneration']==original['applyGeneration'])
+            at=apply['monoNs'];top=900000+index*10;nested=top+1;generation=top+2
+            common=dict(protocol=1,process=OBSERVER,actorEpoch=original['actorEpoch'],mapKind='params',mapEpoch=top,
+                        revision=7,variablesEpoch=top+3,variablesMapEpoch=nested,variablesRevision=0,
+                        packetEpoch=original['packetEpoch'],applyGeneration=original['applyGeneration'],
+                        consumeGeneration=0,stateTag=original['stateTag'],sourceLife=original['sourceLife'],
+                        actionEpoch=0,success=True,bound=False,reason='test-native-boundary',
+                        loadedParamMask=127,nativeDefaultMask=0,defaultConsumerGeneration=0)
+            def emit(event,offset,**changes):
+                row=dict(common,event=event,monoNs=at+offset);row.update(changes);self.params.append(row);return row
+            emit('params-birth',-5000,revision=0)
+            emit('params-birth',-4500,mapKind='variables',actorEpoch=0,mapEpoch=nested,revision=0)
+            emit('params-invalidate',-4000)
+            emit('params-load',-1000,bound=True)
+            emit('params-consume-begin',1000,bound=False,consumeGeneration=generation)
+            action=top+4
+            emit('params-consume',2000,bound=True,consumeGeneration=generation,actionEpoch=action)
+            oldstop=next(row for row in self.events('client2','proxy-stop') if row['proxyEpoch']==original['proxyEpoch'])
+            self.rows['client2'].remove(oldstop)
+            self.rows['client2'].append(dict(oldstop,event='proxy-replaced',proxyState='replaced',proxyCurrent=False,
+                                             reason='native-replacement',monoNs=at+1500))
+            new=dict(original,proxyEpoch=top+5,actionEpoch=action,consumeGeneration=generation,paramsMapEpoch=top,
+                     paramsRevision=7,associationKind='retained-params',associationValid=True,
+                     reason='exact-retained-params-consumer',monoNs=at+3000)
+            self.rows['client2'].append(new)
+            self.rows['client2'].append(dict(new,event='proxy-stop',proxyState='stopped',associationValid=False,
+                                             reason='native-stop',monoNs=oldstop['monoNs']))
+            for row in self.timeline:
+                if row['captureId']==index:
+                    row.update(observerProxyEpoch=new['proxyEpoch'],observerAssociationKind='retained-params',
+                               observerConsumeGeneration=generation,observerParamsMapEpoch=top,observerParamsRevision=7)
+
+    def param_events(self,event):
+        return [row for row in self.params if row['event']==event]
+
+    def test_six_retained_consumers_share_original_applies_and_cover_active_draws(self):
+        self.retained_schema();result=self.analyze()
+        self.assertTrue(result['evidenceComplete'])
+        self.assertTrue(result['retainedParamsEvidenceAvailable'])
+        self.assertEqual(result['retainedParamsConsumerAssociations'],6)
+        self.assertEqual(result['proxyAssociations'],12)
+        self.assertEqual(result['activeFrozenPhaseCount'],6)
+        self.assertEqual([phase['stateRevisions'] for phase in result['phases']],[1]*6)
+        self.assertEqual(len(self.events('client2','state-apply')),6)
+
+    def test_legacy_logs_explicitly_have_no_retained_parameter_proof(self):
+        result=self.analyze()
+        self.assertFalse(result['retainedParamsEvidenceAvailable'])
+        self.assertEqual(result['retainedParamsConsumerAssociations'],0)
+
+    def test_retained_load_requires_both_map_births_and_exact_native_packet_apply(self):
+        self.retained_schema();original=copy.deepcopy(self.params)
+        for missing in ('params','variables'):
+            self.params=copy.deepcopy(original)
+            birth=next(row for row in self.param_events('params-birth') if row['mapKind']==missing)
+            self.params.remove(birth)
+            with self.subTest(missing=missing),self.assertRaises(ValueError):self.analyze()
+        for field,value in (('actorEpoch',999),('packetEpoch',999),('applyGeneration',999),
+                            ('variablesEpoch',999),('variablesMapEpoch',999),('variablesRevision',999),
+                            ('process',OWNER),('stateTag','other'),('sourceLife','other')):
+            self.params=copy.deepcopy(original);self.param_events('params-load')[0][field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+
+    def test_overwrite_unmarked_load_or_alias_escape_forbids_retained_binding(self):
+        self.retained_schema();original=copy.deepcopy(self.params)
+        for event,nested in (('params-invalidate',False),('params-invalidate',True),('params-load',False),
+                             ('params-escape',False),('params-escape',True)):
+            self.params=copy.deepcopy(original);load=self.param_events('params-load')[0]
+            changed=dict(load,event=event,bound=False,revision=load['revision']+1,monoNs=load['monoNs']+1)
+            if nested:changed.update(mapKind='variables',actorEpoch=0,mapEpoch=load['variablesMapEpoch'],revision=1)
+            self.params.append(changed)
+            with self.subTest(event=event,nested=nested),self.assertRaises(ValueError):self.analyze()
+
+    def test_escape_is_permanent_even_after_a_later_exact_tagged_reload(self):
+        self.retained_schema();load=self.param_events('params-load')[0]
+        self.params.append(dict(load,event='params-escape',bound=False,revision=8,monoNs=load['monoNs']-2))
+        self.params.append(dict(load,event='params-load',bound=True,revision=8,monoNs=load['monoNs']-1))
+        with self.assertRaisesRegex(ValueError,'unescaped'):self.analyze()
+
+    def test_unknown_prebirth_alias_and_revision_rollback_cannot_be_healed(self):
+        self.retained_schema();original=copy.deepcopy(self.params)
+        birth=self.param_events('params-birth')[0]
+        self.params.remove(birth)
+        self.params.append(dict(birth,event='params-escape',revision=1,monoNs=birth['monoNs']))
+        with self.assertRaises(ValueError):self.analyze()
+        self.params=copy.deepcopy(original)
+        self.param_events('params-invalidate')[0]['revision']=0
+        with self.assertRaisesRegex(ValueError,'advance'):self.analyze()
+
+    def test_consume_requires_successful_unique_begin_exit_and_exact_action(self):
+        self.retained_schema();original=copy.deepcopy(self.params)
+        for event in ('params-consume-begin','params-consume'):
+            for duplicate in (False,True):
+                self.params=copy.deepcopy(original);row=self.param_events(event)[0]
+                if duplicate:self.params.append(copy.deepcopy(row))
+                else:self.params.remove(row)
+                with self.subTest(event=event,duplicate=duplicate),self.assertRaises(ValueError):self.analyze()
+        for field,value in (('actionEpoch',999),('success',False),('bound',False),('consumeGeneration',999),
+                            ('revision',8),('actorEpoch',999),('variablesRevision',1)):
+            self.params=copy.deepcopy(original);self.param_events('params-consume')[0][field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+
+    def test_retained_proxy_cannot_precede_consumer_or_reuse_its_generation(self):
+        self.retained_schema();retained=[row for row in self.events('client2','proxy-associate') if row['associationKind']=='retained-params']
+        original=copy.deepcopy(self.rows)
+        retained[0]['monoNs']=self.param_events('params-consume')[0]['monoNs']-1
+        with self.assertRaisesRegex(ValueError,'consumer'):self.analyze()
+        self.rows=copy.deepcopy(original)
+        first=next(row for row in self.events('client2','proxy-associate') if row['associationKind']=='retained-params')
+        self.rows['client2'].append(dict(first,proxyEpoch=999999,actionEpoch=999998))
+        with self.assertRaisesRegex(ValueError,'unique'):self.analyze()
+
+    def test_retained_retirement_and_missing_draws_stay_strict(self):
+        self.retained_schema();original=copy.deepcopy(self.timeline)
+        self.timeline=[row for row in self.timeline if row['captureId']!=2]
+        result=self.analyze();self.assertFalse(result['evidenceComplete']);self.assertEqual(result['activeFrozenPhaseCount'],5)
+        self.timeline=original
+        stop=next(row for row in self.events('client2','proxy-stop') if row['associationKind']=='retained-params')
+        for row in self.timeline:
+            if row['captureId']==1:row.update(nativeMonoNs=stop['monoNs']+10,monoNs=stop['monoNs']+20)
+        with self.assertRaisesRegex(ValueError,'revived'):self.analyze()
+
+    def test_distinct_later_consumers_can_reuse_one_unchanged_loaded_revision(self):
+        self.retained_schema()
+        first=next(row for row in self.events('client2','proxy-associate') if row['associationKind']=='retained-params')
+        consume=self.param_events('params-consume')[0]
+        captured=[row for row in self.timeline if row['captureId']==1]
+        at=captured[0]['nativeMonoNs']+1000;generation=consume['consumeGeneration']+100
+        self.params.append(dict(consume,event='params-consume-begin',bound=False,actionEpoch=0,
+                                consumeGeneration=generation,monoNs=at))
+        self.params.append(dict(consume,consumeGeneration=generation,actionEpoch=consume['actionEpoch']+100,monoNs=at+10))
+        new=dict(first,consumeGeneration=generation,actionEpoch=consume['actionEpoch']+100,
+                 proxyEpoch=first['proxyEpoch']+100,monoNs=at+20)
+        self.rows['client2'].append(new)
+        stop=next(row for row in self.events('client2','proxy-stop') if row['proxyEpoch']==first['proxyEpoch'])
+        self.rows['client2'].remove(stop)
+        self.rows['client2'].append(dict(stop,event='proxy-replaced',proxyState='replaced',proxyCurrent=False,
+                                        reason='native-replacement',monoNs=at+5))
+        self.rows['client2'].append(dict(new,event='proxy-stop',proxyState='stopped',associationValid=False,
+                                        reason='native-stop',monoNs=stop['monoNs']))
+        for row in copy.deepcopy(captured):
+            row.update(captureId=7,observerConsumeGeneration=generation,observerProxyEpoch=new['proxyEpoch'],
+                       nativeMonoNs=at+30,monoNs=at+31+{'both':0,'body':1,'cart':2}[row['part']])
+            self.timeline.append(row)
+        result=self.analyze()
+        self.assertEqual(result['retainedParamsConsumerAssociations'],7)
+        self.assertEqual(result['phases'][0]['activeFrozenBodyCartPairs'],2)
+        self.assertEqual(len(self.events('client2','state-apply')),6)
+
+    def test_native_action_epoch_cannot_be_reused_by_another_proxy(self):
+        self.retained_schema()
+        first=next(row for row in self.events('client2','proxy-associate') if row['associationKind']=='retained-params')
+        self.rows['client2'].append(dict(first,proxyEpoch=999999))
+        with self.assertRaisesRegex(ValueError,'Native action reused'):self.analyze()
+
+    def test_unbound_consume_failure_remains_diagnostic_even_when_its_revision_changed(self):
+        self.retained_schema();base=self.param_events('params-consume')[-1];at=base['monoNs']+1000
+        begin=dict(base,event='params-consume-begin',bound=False,actionEpoch=0,consumeGeneration=999999,monoNs=at)
+        self.params.append(begin)
+        self.params.append(dict(begin,event='params-consume',success=False,revision=base['revision']+1,
+                                mapEpoch=0,mapKind='none',monoNs=at+1))
+        result=self.analyze();self.assertTrue(result['evidenceComplete'])
+        self.assertEqual(result['retainedParamsConsumerAssociations'],6)
+
+    def test_retained_metadata_guards_do_not_accept_numeric_truthiness(self):
+        self.retained_schema();original=copy.deepcopy(self.params)
+        for field in ('success','bound'):
+            self.params=copy.deepcopy(original);self.param_events('params-consume')[0][field]=1
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,'booleans'):self.analyze()
+
+    def deferred_defaults(self, mask=8):
+        self.retained_schema()
+        for load in self.param_events('params-load')[:]:
+            apply=next(row for row in self.events('client2','state-apply') if row['applyGeneration']==load['applyGeneration'])
+            at=apply['monoNs'];generation=load['mapEpoch']+8
+            related=[row for row in self.params if row['mapEpoch']==load['mapEpoch']]
+            birth=next(row for row in related if row['event']=='params-birth')
+            birth['monoNs']=at-3_000_000
+            nested=next(row for row in self.param_events('params-birth') if row['mapEpoch']==load['variablesMapEpoch'])
+            nested['monoNs']=at-2_999_000
+            mutation=next(row for row in related if row['event']=='params-invalidate')
+            mutation.update(monoNs=at-1_800_000,revision=6)
+            self.params.append(dict(load,bound=False,revision=6,loadedParamMask=127^mask,nativeDefaultMask=0,
+                                    defaultConsumerGeneration=0,reason='pending-native-default',monoNs=at-1_700_000))
+            self.params.append(dict(load,event='params-consume-begin',bound=False,actionEpoch=0,revision=6,
+                                    consumeGeneration=generation,loadedParamMask=0,nativeDefaultMask=0,
+                                    defaultConsumerGeneration=0,monoNs=at-1_500_000))
+            self.params.append(dict(load,event='params-invalidate',bound=False,consumeGeneration=generation,
+                                    loadedParamMask=0,nativeDefaultMask=0,defaultConsumerGeneration=0,
+                                    reason='Param.get-default:secondary',monoNs=at-1_400_000))
+            for row in self.params:
+                if row['mapEpoch']==load['mapEpoch'] and row['event'] in ('params-consume','params-consume-begin') and row['consumeGeneration']!=generation:
+                    row.update(loadedParamMask=127^mask,nativeDefaultMask=mask,defaultConsumerGeneration=generation)
+            load.update(loadedParamMask=127^mask,nativeDefaultMask=mask,defaultConsumerGeneration=generation)
+            self.params.append(dict(load,event='params-consume',bound=False,consumeGeneration=generation,
+                                    actionEpoch=apply['actionEpoch'],reason='non-retained-apply',monoNs=at-2000))
+
+    def test_omitted_native_hand_slots_bind_only_after_original_default_consumer(self):
+        for mask in (4,8,12):
+            self.params=[];self.selection,self.base,self.admission,self.rows,self.timeline=fixture()
+            self.deferred_defaults(mask)
+            with self.subTest(mask=mask):
+                report=self.analyze()
+                self.assertTrue(report['evidenceComplete'])
+                self.assertEqual(report['retainedParamsConsumerAssociations'],6)
+                self.assertEqual(report['originalNativeDefaultCommits'],6)
+                self.assertEqual(report['activeFrozenPhaseCount'],6)
+
+    def test_native_default_origin_masks_are_complete_disjoint_and_supported(self):
+        self.deferred_defaults();original=copy.deepcopy(self.params)
+        for field,value in (('loadedParamMask',127),('loadedParamMask',0),('nativeDefaultMask',16),
+                            ('nativeDefaultMask',True),('defaultConsumerGeneration',0),
+                            ('defaultConsumerGeneration',999999),('loadedParamMask',128)):
+            self.params=copy.deepcopy(original)
+            load=next(row for row in self.param_events('params-load') if row['bound'])
+            load[field]=value
+            with self.subTest(field=field,value=value),self.assertRaises(ValueError):self.analyze()
+
+    def test_deferred_default_proof_requires_successful_original_action_and_exact_revision(self):
+        self.deferred_defaults();original=copy.deepcopy(self.params)
+        for field,value in (('actionEpoch',999999),('success',False),('reason','consumer-unbound'),
+                            ('revision',99),('variablesRevision',99),('actorEpoch',999999),
+                            ('packetEpoch',999999),('loadedParamMask',127),('defaultConsumerGeneration',999999)):
+            self.params=copy.deepcopy(original)
+            consume=next(row for row in self.param_events('params-consume') if row['reason']=='non-retained-apply')
+            consume[field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+
+    def test_deferred_default_generation_cannot_reference_retained_or_future_consumer(self):
+        self.deferred_defaults()
+        load=next(row for row in self.param_events('params-load') if row['bound'])
+        retained=next(row for row in self.param_events('params-consume') if row['bound'])
+        generation=retained['consumeGeneration']
+        for row in self.params:
+            if row['mapEpoch']==load['mapEpoch'] and row.get('defaultConsumerGeneration'):
+                row['defaultConsumerGeneration']=generation
+        with self.assertRaisesRegex(ValueError,'original packet-apply'):self.analyze()
+
+    def test_custom_supplier_or_unknown_default_does_not_supply_a_committed_load(self):
+        self.deferred_defaults();original=copy.deepcopy(self.params)
+        for reason in ('custom-default-supplier','unknown-default-origin','foreign-default-context'):
+            self.params=copy.deepcopy(original)
+            load=next(row for row in self.param_events('params-load') if row['bound'])
+            load.update(bound=False,reason=reason)
+            with self.subTest(reason=reason),self.assertRaisesRegex(ValueError,'overwrite/unmarked load/unknown alias'):self.analyze()
+
+    def test_deferred_default_cannot_commit_after_apply_or_before_original_consumer_finishes(self):
+        self.deferred_defaults();original=copy.deepcopy(self.params)
+        for change in ('after-apply','before-consume'):
+            self.params=copy.deepcopy(original)
+            load=next(row for row in self.param_events('params-load') if row['bound'])
+            apply=next(row for row in self.events('client2','state-apply') if row['applyGeneration']==load['applyGeneration'])
+            original_consume=next(row for row in self.param_events('params-consume') if row['consumeGeneration']==load['defaultConsumerGeneration'])
+            load['monoNs']=apply['monoNs']+1 if change=='after-apply' else original_consume['monoNs']-1
+            with self.subTest(change=change),self.assertRaises(ValueError):self.analyze()
+
+    def test_unmarked_load_or_escape_after_native_default_commit_still_revokes_binding(self):
+        self.deferred_defaults();original=copy.deepcopy(self.params)
+        for event in ('params-load','params-invalidate','params-escape'):
+            self.params=copy.deepcopy(original)
+            load=next(row for row in self.param_events('params-load') if row['bound'])
+            self.params.append(dict(load,event=event,bound=False,revision=8,monoNs=load['monoNs']+1))
+            with self.subTest(event=event),self.assertRaises(ValueError):self.analyze()
 
     def test_existing_admission_prerequisite_is_not_replaced_by_marker(self):
         self.admission['native']=[row for row in self.admission['native'] if row['event']!='accepted']

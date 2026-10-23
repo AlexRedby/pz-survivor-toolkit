@@ -724,6 +724,9 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         source=(self.output/'cart-build/Main.java').read_text()
         path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/ObserverAssociation.methods'
         self.assertIn(path.read_text(),source);self.assertIn(path,carts.sources(ROOT,self.selection))
+        params=path.with_name('ObserverParams.methods')
+        self.assertIn(params.read_text(),source);self.assertIn(params,carts.sources(ROOT,self.selection))
+        self.assertIn(path.with_name('ObserverParamsBootstrap.java'),carts.sources(ROOT,self.selection))
         for key,value in [('cart_observer_association','true'),('cart_action_admission',False),('cart_actions',False),
                           ('cart_timeline',False),('cart_fast_motion',False),('mp_host',False)]:
             original=dict(self.options);self.options[key]=value

@@ -335,10 +335,11 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         anchor = '    public static void main(String[] args)'
         if main.count(anchor) != 1:
             raise ValueError('CartLab composition anchor changed')
-        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods')) + '\n' + anchor)
+        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods', 'ObserverParams.methods')) + '\n' + anchor)
+        main = main.replace('public static void main(String[] args) {', 'public static void main(String[] args) { ObserverParamsBootstrap.install();', 1)
     source = build / 'Main.java'
     source.write_text(main, encoding='utf-8')
-    _compile(jdk, classpath, build / 'lab-classes', [source])
+    _compile(jdk, classpath, build / 'lab-classes', [source, *([mp / 'ObserverParamsBootstrap.java'] if selection['suite'] == MP else [])])
     _jar(build / 'CartLab.jar', build / 'lab-classes')
     evidence = sp / 'evidence'
     variant_probes = selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart')

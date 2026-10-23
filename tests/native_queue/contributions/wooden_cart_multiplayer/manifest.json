@@ -43,7 +43,10 @@
     "analyze-action-admission.py",
     "ObserverAssociation.methods",
     "ObserverAssociationCheck.java",
-    "analyze-observer.py"
+    "analyze-observer.py",
+    "ObserverParamsBootstrap.java",
+    "ObserverParams.methods",
+    "ObserverParamsCheck.java"
   ],
   "selection_template": {
     "schema_version": 1,
