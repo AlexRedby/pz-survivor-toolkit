@@ -4,6 +4,8 @@
     private static volatile boolean leaseControlFailed;
     private static final java.util.concurrent.atomic.AtomicLong leaseControlGeneration=new java.util.concurrent.atomic.AtomicLong();
     private static final NativeWeakMap<zombie.core.network.ByteBufferReader,LeaseCommandIngress> leaseControlIngresses=new NativeWeakMap<>();
+    // Membership comes only from an already validated native transport, never from a caller's GUID.
+    private static final NativeWeakMap<zombie.core.raknet.UdpConnection,LeaseTransport> leaseControlConnections=new NativeWeakMap<>();
     private static final ThreadLocal<LeaseDecodeScope> leaseControlDecode=new ThreadLocal<>();
     private static final ThreadLocal<LeaseDispatchScope> leaseControlDispatch=new ThreadLocal<>();
     private static final ThreadLocal<LeaseCallbackScope> leaseControlCallback=new ThreadLocal<>();
@@ -135,6 +137,36 @@
             && zombie.network.GameClient.instance!=null && zombie.network.GameClient.instance.udpEngine==engine
             && zombie.network.GameClient.connection==connection;
     }
+    private static zombie.core.raknet.UdpConnection leaseControlRemember(LeaseTransport transport,boolean server) {
+        if(!leaseControlCurrent(transport,server))return null;
+        var connection=transport.connection().get();var previous=leaseControlConnections.get(connection);
+        // A native object crossing engines cannot silently replace its original membership witness.
+        if(previous!=null && (previous.engine().get()!=transport.engine().get() || previous.guid()!=transport.guid()
+            || previous.epoch()!=transport.epoch()))return null;
+        leaseControlConnections.put(connection,transport);return connection;
+    }
+    /** Read-only transport membership, only inside the exact current native command event.
+     * Null means unknown/wrong scope or engine; false requires a known, still-owned engine. */
+    @LuaMethod(name="cartLeaseConnectionActive",global=true)
+    public static Boolean cartLeaseConnectionActive(zombie.core.raknet.UdpConnection connection) {
+        if(!LEASE_CONTROL || leaseControlFailed || connection==null)return null;
+        try {
+            var scope=leaseControlCallback.get();
+            if(scope==null || scope.ingress()==null || !leaseReceiptNativeEvent(scope.server())
+                || leaseControlIngresses.get(scope.reader())!=scope.ingress()
+                || !leaseControlCurrent(scope.ingress().transport(),scope.server()))return null;
+            if(scope.server()){
+                if(leaseControlValidatedServerScope()!=scope)return null;
+            }else if(cartLeaseIngress()!=scope.connection())return null;
+            var known=leaseControlConnections.get(connection);
+            var engine=scope.ingress().transport().engine().get();
+            if(known==null || engine==null || known.engine().get()!=engine || known.connection().get()!=connection
+                || known.epoch()!=nativeTimeIdentity(connection,false) || known.guid()!=connection.getConnectedGUID())return null;
+            // The current callback independently established this exact engine as the owning role engine.
+            // Actor death, equipment retirement and player-map removal do not retire the transport.
+            return engine.getActiveConnection(known.guid())==connection;
+        }catch(Throwable error){leaseControlError(error);return null;}
+    }
     public static LeaseDecodeScope leaseControlDecodeEnter(zombie.core.raknet.UdpEngine engine,zombie.core.network.ByteBufferReader reader) {
         if(!LEASE_CONTROL)return null;
         var previous=leaseControlDecode.get();LeaseTransport transport=null;
@@ -251,7 +283,7 @@
                 || connection.getPlayerAt(scope.playerIndex())!=player || player.getOnlineID()<0
                 || zombie.network.GameServer.IDToPlayerMap.get(player.getOnlineID())!=player
                 || zombie.network.GameServer.getConnectionFromPlayer(player)!=connection)return null;
-            return connection;
+            return leaseControlRemember(scope.ingress().transport(),true);
         }catch(Throwable error){leaseControlError(error);return null;}
     }
     /** No current-static-connection fallback: a live original transport receipt is mandatory. */
@@ -264,7 +296,7 @@
                 || callback.reader()!=dispatch.reader() || callback.ingress()!=dispatch.ingress()
                 || leaseControlIngresses.get(callback.reader())!=callback.ingress()
                 || !leaseControlCurrent(callback.ingress().transport(),false))return null;
-            return callback.connection()==callback.ingress().transport().connection().get()?callback.connection():null;
+            return callback.connection()==callback.ingress().transport().connection().get()?leaseControlRemember(callback.ingress().transport(),false):null;
         }catch(Throwable error){leaseControlError(error);return null;}
     }
 
@@ -283,7 +315,13 @@
     /** Current local pending-request binding only; never use this as ingress authority. */
     @LuaMethod(name="cartLeaseCurrent",global=true)
     public static zombie.core.raknet.UdpConnection cartLeaseCurrent() {
-        try{return leaseControlOwnedClient()?zombie.network.GameClient.connection:null;}
+        try{
+            if(!leaseControlOwnedClient())return null;
+            var connection=zombie.network.GameClient.connection;
+            var engine=zombie.network.GameClient.instance.udpEngine;
+            return leaseControlRemember(new LeaseTransport(new java.lang.ref.WeakReference<>(engine),
+                new java.lang.ref.WeakReference<>(connection),nativeTimeIdentity(connection,false),connection.getConnectedGUID(),-1),false);
+        }
         catch(Throwable error){leaseControlError(error);return null;}
     }
     @LuaMethod(name="cartLeaseChallengeSeed",global=true)
@@ -317,8 +355,10 @@
                 || zombie.network.GameServer.IDToPlayerMap.get(target.getOnlineID())!=target)return null;
             var connection=zombie.network.GameServer.getConnectionFromPlayer(target);
             int index=target.playerIndex;
-            return connection!=null && index>=0 && index<4 && connection.getPlayerAt(index)==target
-                && zombie.network.GameServer.udpEngine.getActiveConnection(connection.getConnectedGUID())==connection?connection:null;
+            if(connection==null || index<0 || index>=4 || connection.getPlayerAt(index)!=target)return null;
+            var engine=zombie.network.GameServer.udpEngine;
+            return leaseControlRemember(new LeaseTransport(new java.lang.ref.WeakReference<>(engine),
+                new java.lang.ref.WeakReference<>(connection),nativeTimeIdentity(connection,false),connection.getConnectedGUID(),-1),true);
         }catch(Throwable error){leaseControlError(error);return null;}
     }
 

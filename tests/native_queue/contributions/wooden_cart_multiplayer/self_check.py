@@ -1119,7 +1119,7 @@ public final class ObserverLoaderCheck {
             cwd=game,env=dict(os.environ,PZ_CART_LEASE_CONTROL='true',
                 PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
             capture_output=True,text=True,timeout=90)
-        assert result.returncode==0 and 'LEASE_COST_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+        assert result.returncode==0 and 'LEASE_COST_CHECK_PASS' in result.stdout and 'LEASE_CONNECTION_ACTIVITY_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
 
         result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1,patches_jar='+str(lab)+':net.alexredby.cartlab',
             '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'TimelineNativeCheck'],
@@ -1157,7 +1157,7 @@ def main():
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
         for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua',
-                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'action-admission.lua'):
+                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-lifecycle.lua', 'action-admission.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')

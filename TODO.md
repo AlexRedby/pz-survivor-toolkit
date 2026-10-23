@@ -87,6 +87,9 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ### Next native lifecycle scenario
 
+- [ ] Seal a separate lease_lifecycle case and its owned rejoin checkpoint, isolated from motion/action/video banks. Keep normal Host launch/window/resource/provenance checks and guard common startup against duplicate reconnect.
+- [ ] Add exact original-connection activity evidence and strict phase/native trace correlation; unknown native state must not count as a successful disconnect. Gate: controller/native API checks, malformed-evidence regressions, frozen sources, actual guest lifecycle Host and clean owned cleanup.
+
 - [ ] Add a dedicated guest-as-owner Host fixture: keep client1 hosting while client2 follows actual native death, the visible Respawn/new-character callbacks and OnCreatePlayer, then native pause-menu Exit and ConnectToServer rejoin. Preserve owned launch/window/provenance gates; direct map/slot swaps do not establish gameplay lifecycle coverage.
 - [ ] Prove retirement before/inside death callbacks, through corpse removal and across fresh binds. Respawn must retain the transport and replace the actor; reconnect must replace both. Allow native OnlineID reuse/change, retain original IDs for replay, track ordinary cart/cargo effects, and reject old pending replies/payloads before and after fresh authority without reconstructing or rolling back native outcomes.
 

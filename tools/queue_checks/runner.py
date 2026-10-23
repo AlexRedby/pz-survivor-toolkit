@@ -58,6 +58,13 @@ def _fixture_environment(selection, role, cache, extra_env):
         allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION'))
         if options.get('cart_observer_association') is True:
             allowed_env.add('PZ_CART_OBSERVER_ASSOCIATION')
+    if (selection['suite']=='wooden_cart_multiplayer' and selection['kind']=='mp'
+            and selection.get('cases')==['lease_lifecycle'] and options.get('mp_host') is True
+            and not any(options.get(flag,False) is not False for flag in ('cart_timeline','cart_time_alignment','cart_fast_motion',
+                'cart_actions','cart_hotkey_setdown','cart_lease_control','cart_lease_lifetimes','cart_action_admission','cart_observer_association','cart_inventory_equip'))
+            and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow'
+            and role in ('server','client1','client2')):
+        allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_LEASE_LIFETIME'))
     if (set(extra_env) - allowed_env
             or any(not isinstance(value, str) or not Path(value).is_absolute()
                    for name, value in extra_env.items() if name not in ('PZ_CART_TEST_PAD', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_LEASE_LIFETIME', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION'))

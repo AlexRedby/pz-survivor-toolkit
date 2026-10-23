@@ -18,6 +18,7 @@ MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit',
         'SaucedCarts', 'saucedwheelbarrow']
 SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'
+MP_CASES = ('owner_observer_motion', 'lease_lifecycle')
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stop-timing': ('scenario-stop.lua', 4),
@@ -151,7 +152,7 @@ def definitions():
                                'kinds': ['sp' if suite == SP else 'mp'], 'modes': ['toolkit'],
                                'control_reason': 'Preserved candidate capture requires toolkit mode; it does not assess animation equivalence',
                                'languages': ['RU'] if suite == SP else ['EN', 'RU']}
-                              for case in (SP_CASES if suite == SP else ['owner_observer_motion'])]}
+                              for case in (SP_CASES if suite == SP else MP_CASES)]}
             for suite in (SP, MP)}
     result[SP]['game_inputs'] = ['media/models_X/Skinned/MaleBody.x', 'media/models_X/Skinned/FemaleBody.x',
         'media/models_X/Skinned/Clothes/Bob_Trousers.x', 'media/models_X/Skinned/Clothes/Kate_Trousers.x']
@@ -181,7 +182,7 @@ def validate(selection):
                 raise ValueError(key+' requires the SP entry-contact reproducer')
             if key=='cart_entry_female' and type(options[key]) is not bool or key=='cart_entry_load' and options[key] not in ('empty','full'):
                 raise ValueError('Invalid '+key)
-    cases = SP_CASES if suite == SP else ['owner_observer_motion']
+    cases = SP_CASES if suite == SP else MP_CASES
     if len(selection['cases']) != 1 or selection['cases'][0] not in cases or selection['mode'] != 'toolkit':
         raise ValueError('Cart candidates support one capture case in toolkit mode only')
     if selection['kind'] != ('sp' if suite == SP else 'mp') or selection['languages'] != (['RU'] if suite == SP else ['EN', 'RU']):
@@ -202,6 +203,12 @@ def validate(selection):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
+    if suite == MP and selection['cases'] == ['lease_lifecycle']:
+        incompatible = ('cart_timeline','cart_time_alignment','cart_fast_motion','cart_actions','cart_hotkey_setdown',
+                        'cart_lease_control','cart_lease_lifetimes','cart_action_admission','cart_observer_association','cart_inventory_equip')
+        if (options.get('mp_host') is not True or any(options.get(flag,False) is not False for flag in incompatible)
+                or 'cart_wall_exit' in options or options.get('cart_variant','wooden-wheelbarrow') != 'wooden-wheelbarrow'):
+            raise ValueError('lease_lifecycle requires an isolated wooden-cart menu Host case')
     if options.get('cart_time_alignment') is True and (options.get('cart_timeline') is not True
             or options.get('mp_host') is not True or options.get('cart_inventory_equip') is True
             or options.get('cart_actions') is True or 'cart_wall_exit' in options):
@@ -325,7 +332,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     project, output, game = map(Path, (project, output, game))
     sp, mp = _intake(project, SP), _intake(project, MP)
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
-    simple = selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'showcase', 'native-e')
+    lifecycle = selection['suite'] == MP and selection['cases'] == ['lease_lifecycle']
+    simple = lifecycle or selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'showcase', 'native-e')
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -370,7 +378,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR', '[CART_ADMISSION] ERROR', '[CART_OBSERVER] ERROR']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR', '[CART_ADMISSION] ERROR', '[CART_OBSERVER] ERROR', '[CART_LIFECYCLE] ERROR']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():
@@ -396,14 +404,17 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                    ('inventory-equip-server.lua', 'server/CartMPInventoryEquipServer.lua'),
                                    ('inventory-equip-protocol.lua', 'shared/CartMPInventoryEquipProtocol.lua'),
                                    ('lease-protocol.lua', 'shared/CartLeaseProtocol.lua'), ('lease-probe.lua', 'shared/CartLeaseProbe.lua'),
-                                   ('lease-lifetimes.lua', 'shared/CartLeaseLifetimes.lua')]:
+                                   ('lease-lifetimes.lua', 'shared/CartLeaseLifetimes.lua'),
+                                   ('lease-lifecycle.lua', 'shared/CartLeaseLifecycle.lua')]:
+                if origin == 'lease-lifecycle.lua' and not lifecycle:
+                    continue
                 if origin == 'lease-lifetimes.lua' and selection.get('options', {}).get('cart_lease_lifetimes') is not True:
                     continue
-                if origin.startswith('lease-') and selection.get('options', {}).get('cart_lease_control') is not True:
+                if origin.startswith('lease-') and selection.get('options', {}).get('cart_lease_control') is not True and not (lifecycle and origin in ('lease-protocol.lua','lease-lifecycle.lua')):
                     continue
                 if origin.startswith('inventory-equip-') and selection.get('options', {}).get('cart_inventory_equip') is not True:
                     continue
-                _write(lua / target, (mp / origin).read_text())
+                _write(lua / target, "require 'CartLeaseLifecycle'\n" if lifecycle and origin in ('client.lua','server.lua') else (mp / origin).read_text())
             if selection.get('options', {}).get('cart_action_admission') is True:
                 for layer in ('client', 'server'):
                     _write(lua / layer / 'CartActionAdmissionProbe.lua', (mp / 'action-admission.lua').read_text())
@@ -414,9 +425,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         spec['env']['PZ_CART_TEST_PAD'] = 'true' if selection['suite'] == SP else 'false'
         if selection['suite'] == MP and selection.get('options', {}).get('cart_timeline'):
             spec['env']['PZ_CART_TIMELINE'] = 'true'
-        if selection['suite'] == MP and (selection.get('options', {}).get('cart_lease_control') is True or selection.get('options', {}).get('cart_action_admission') is True):
+        if selection['suite'] == MP and (selection.get('options', {}).get('cart_lease_control') is True or selection.get('options', {}).get('cart_action_admission') is True or lifecycle):
             spec['env']['PZ_CART_LEASE_CONTROL'] = 'true'
-        if selection['suite'] == MP and selection.get('options', {}).get('cart_lease_lifetimes') is True:
+        if selection['suite'] == MP and (selection.get('options', {}).get('cart_lease_lifetimes') is True or lifecycle):
             spec['env']['PZ_CART_LEASE_LIFETIME'] = 'true'
         if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
             spec['env']['PZ_CART_ACTION_ADMISSION'] = 'true'
@@ -487,6 +498,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
+    if selection['suite'] == MP and selection['cases'] == ['lease_lifecycle']:
+        return '[CART_LIFECYCLE] COMPLETE actor=' + role in text and '"event":"complete"' in text.replace(' ', '')
     if selection['suite'] == SP and selection['cases'] == ['manual']:
         return False
     if selection['suite'] == SP:
@@ -1176,6 +1189,16 @@ def verify(root, selection, catalog):
         for text in texts.values():
             if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR', '[CART_TIMELINE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
+        if selection['suite'] == MP and selection['cases'] == ['lease_lifecycle']:
+            lifecycle = _load(intake / 'analyze-lease-lifecycle.py').analyze(root)
+            if lifecycle.get('evidenceComplete') is not True:
+                raise ValueError('Incomplete actual native lifecycle evidence')
+            _write(analysis / 'mp-lease-lifecycle.json',json.dumps(lifecycle,indent=2,allow_nan=False))
+            return {'issues': [], 'evidence': {'lifecycle':lifecycle,'analysis':str(analysis)}, 'outcomes': [
+                {'actor': role,'case':'lease_lifecycle','status':'captured',
+                 'reason':'Native guest death/respawn/menu rejoin and exact stale-admission checks; animation equivalence is separate',
+                 'outcome':{'animationEquivalencePass':False,'evidenceComplete':True,'nativeLifecycleVerified':True}}
+                for role in roles]}
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
         if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):
             report = _model_capture_coverage(root / 'client1', texts['client1'], selection)

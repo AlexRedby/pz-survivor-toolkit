@@ -53,7 +53,9 @@
     "LeaseLifetimeBankCheck.lua",
     "analyze-lease-lifetimes.py",
     "analyze-lease-cost.py",
-    "LeaseCostCheck.java"
+    "LeaseCostCheck.java",
+    "analyze-lease-lifecycle.py",
+    "lease-lifecycle.lua"
   ],
   "selection_template": {
     "schema_version": 1,

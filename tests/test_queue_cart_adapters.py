@@ -635,6 +635,71 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.assertFalse(row['outcome']['animationEquivalencePass'])
             self.assertFalse(row['outcome']['evidenceComplete'])
 
+    def test_lifecycle_is_separate_host_case_without_render_or_other_banks(self):
+        self.selection.update(suite=carts.MP,cases=['lease_lifecycle'],kind='mp',languages=['EN','RU'])
+        self.options['mp_host']=True
+        self.role('client2');self.role('server')
+        compiler=self.stage()
+        self.assertEqual(compiler.call_count,1)
+        for role in ('server','client1','client2'):
+            env=self.runtime['roles'][role]['env']
+            self.assertEqual(env['PZ_CART_LEASE_CONTROL'],'true')
+            self.assertEqual(env['PZ_CART_LEASE_LIFETIME'],'true')
+            self.assertNotIn('PZ_CART_TIMELINE',env)
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertTrue((lua/'shared/CartLeaseLifecycle.lua').is_file())
+            self.assertTrue((lua/'shared/CartLeaseProtocol.lua').is_file())
+            self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+            self.assertFalse((lua/'shared/CartLeaseLifetimes.lua').exists())
+            entry=lua/('server/ZZCartMP_Server.lua' if role=='server' else 'client/ZZCartMP.lua')
+            self.assertEqual(entry.read_text(),"require 'CartLeaseLifecycle'\n")
+        self.assertEqual(self.runtime['fixture']['attach'],{'client1':[],'client2':[]})
+        self.assertTrue(carts.complete(self.selection,'client2','[CART_LIFECYCLE] COMPLETE actor=client2\n{"event":"complete"}'))
+        self.assertFalse(carts.complete(self.selection,'client2','[CART_MP] COMPLETE actor=client2\n{"event":"complete"}'))
+        for key,value in [('mp_host',False),('mp_host','true'),('cart_timeline',True),('cart_fast_motion',True),
+                          ('cart_actions',True),('cart_inventory_equip',True),('cart_lease_control',True),
+                          ('cart_lease_lifetimes',True),('cart_variant','metal-wheelbarrow'),('cart_wall_exit','front')]:
+            prior=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(prior)
+
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT required for startup callbacks')
+    def test_lifecycle_checkpoint_blocks_only_owned_guest_duplicate_reconnect(self):
+        source=ROOT/'tests/native_queue/startup/client/ZZStartup.lua'
+        script=r'''
+local source=SOURCE
+for _,case in ipairs({'lease_lifecycle','owner_observer_motion'}) do
+ for _,user in ipairs({'client1','client2'}) do
+  for _,checkpoint in ipairs({'pending','verified','absent'}) do
+   local callbacks,connects,hosts={},0,0
+   package.loaded.QueueTestSelection=nil
+   package.preload.QueueTestSelection=function()return {kind='mp',cases={case},options={mp_host=true},resources={heap_mib=2048}}end
+   Events={};for _,name in ipairs({'OnCoopServerMessage','OnMainMenuEnter','OnPreUIDraw','OnConnectFailed','OnGameStart','OnTick'}) do
+    Events[name]={Add=function(fn)callbacks[name]=fn end}
+   end
+   isClient=function()return false end
+   getFileReader=function(name,create)
+    assert(create==false)
+    local value=name=='smoke-user.txt' and user or checkpoint~='absent' and checkpoint or nil
+    if not value then return nil end
+    return {readLine=function()return value end,close=function()end}
+   end
+   getSteamModeActive=function()return false end
+   CoopConnection={};CoopServer={launch=function()hosts=hosts+1 end}
+   ConnectToServer={instance={connect=function()connects=connects+1 end}};MainScreen={instance={}}
+   assert(loadfile(source))();callbacks.OnMainMenuEnter()
+   if user=='client1' then assert(hosts==1 and connects==0)
+   elseif case=='lease_lifecycle' and checkpoint=='pending' then assert(connects==0 and hosts==0)
+   else assert(connects==1 and hosts==0) end
+  end
+ end
+end
+print('STARTUP_REJOIN_GUARD_PASS')
+'''.replace('SOURCE',json.dumps(str(source)))
+        result=subprocess.run([shutil.which('luajit'),'-'],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('STARTUP_REJOIN_GUARD_PASS',result.stdout)
+
     def test_mp_stage_composes_original_methods_and_identical_selection(self):
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
         self.role('client2'); server = self.role('server')
