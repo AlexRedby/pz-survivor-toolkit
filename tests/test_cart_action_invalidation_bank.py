@@ -117,8 +117,13 @@ local function set(name,value)
 end
 set('stage','lost');set('oldAction',{});set('oldReceipt',{token='original',transaction=-128,kind='ToolkitWoodCartPickup'})
 set('terminal',{token='original',transaction=-128,kind='ToolkitWoodCartPickup',protocol=1,player=0,state='canceled'})
-set('endpoint',function() return {} end)
-assert(not M.finish(p,1001) and observed==1)
+local drained=false
+set('endpoint',function() if not drained then return nil end return {} end)
+-- A historical canceled receipt can precede the client queue's native advancement.
+PZSurvivorToolkit.ActionQueueAcknowledgements.capture=function() if not drained then return {} end end
+assert(not M.finish(p,1001) and observed==0 and #sends==1)
+drained=true
+assert(not M.finish(p,1002) and observed==1)
 assert(sends[2]=='Settled' and sends[3]=='LostReady')
 """
         result=subprocess.run([LUA,'-e','local SOURCE='+json.dumps(str(SOURCE))+'\n'+code],capture_output=True,text=True,timeout=15)

@@ -243,9 +243,10 @@ function M.finish(owner,now)
  elseif stage=='lost' and not lostSeen then
   if actor=='client1' then
    if not terminal then return false end
-   local observed=Ack.observe(oldAction,oldReceipt)
-   assert(Ack.capture(oldAction)==nil and Ack.state(oldAction,oldReceipt)==nil and observed~='started' and observed~='completed')
    if not endpoint(owner,'ground','invalid-ground',2) then return false end
+   local observed=Ack.observe(oldAction,oldReceipt)
+   assert(Ack.capture(oldAction)==nil and Ack.state(oldAction,oldReceipt)==nil and observed~='started' and observed~='completed',
+    'Invalidated action retained receipt rights after its native/Lua queues drained')
    emit('invalidated',2,{token=oldReceipt.token,transaction=oldReceipt.transaction,kind=oldReceipt.kind,
     observation=observed or 'unavailable',currentAuthority=false,captureUnavailable=true,stateUnavailable=true})
    send('Settled',terminal)
