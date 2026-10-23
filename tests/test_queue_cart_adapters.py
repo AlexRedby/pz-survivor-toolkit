@@ -751,7 +751,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.assertEqual((lua/'shared/CartMPWall.lua').read_bytes(),
                 (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/wall.lua').read_bytes())
         self.assertTrue(any(path.name=='analyze-wall.py' for path in carts.sources(ROOT,self.selection)))
-        self.assertIn(ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java', carts.sources(ROOT,self.selection))
+        self.assertIn(ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt', carts.sources(ROOT,self.selection))
 
     def test_cart_variant_requires_exact_enum_and_allows_three_action_families(self):
         self.options['cart_variant'] = 'wooden-wheelbarrow'

@@ -277,7 +277,7 @@ def sources(project, selection):
     if selection['suite'] == MP:
         paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
         if 'cart_wall_exit' in selection.get('options', {}):
-            paths.append(Path(project) / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java')
+            paths.append(Path(project) / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt')
     paths += [_path(selection, key, key != 'patch_jar') for key in ('patch_jar', 'ffmpeg', 'ffprobe')]
     return paths
 

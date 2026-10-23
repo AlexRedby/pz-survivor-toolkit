@@ -441,8 +441,8 @@ def analyze(profile, selection, common):
             serial=int(fields[2]);require(serial>=previous and serial>0, role+': pose serial regressed');previous=serial
             require(all(number(float(v)) for v in fields[3:]), role+': invalid pose payload')
             serials[role].setdefault(serial,r['wall'])
-    source=Path(__file__).resolve().parents[4]/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java'
-    match=re.search(r'CHANGE_NANOS\s*=\s*([\d_]+)L',source.read_text())
+    source=Path(__file__).resolve().parents[4]/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt'
+    match=re.search(r'\bconst\s+val\s+CHANGE_NANOS(?:\s*:\s*Long)?\s*=\s*([\d_]+)L\b',source.read_text())
     require(match is not None, 'Missing sender CHANGE_NANOS budget')
     interval=int(match[1].replace('_',''))/1_000_000
     require(interval>0,'Invalid sender budget')

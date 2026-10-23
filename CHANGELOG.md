@@ -1070,6 +1070,7 @@ The older README associates medicine indicators with this label, but no separate
 - **Kotlin cart calibration:** Migrate wheelbarrow/shopping profiles and generated clearance/wheel geometry with their generators and associated tests. Preserve numeric data, native matrix mutation order, live array identity and Java record contracts. Retarget/replay tools use a source-verified mixed build artifact; stale artifacts require rebuilding.
 - **Kotlin cart presentation:** Migrate gait/pose blending, calibrated leg clearance, closed grip, grounding and held/world wheel rendering with their Kotlin regression bodies. Preserve thread-local scratch, palette ownership, native getters, class monitors, exact draw scopes and GL cleanup; retain original reflective static entry points.
 - **Kotlin cart impact:** Migrate final pickup approach, bounded impact movement/pose and emergency release with native Kotlin regressions. Preserve exact item/world ownership, authoritative native effects, SP-only impact scope, expiry clocks, atomic palette writes and pooled renderer restoration.
+- **Kotlin cart actions and networking:** Migrate steering hooks, pickup/setdown transitions and cosmetic owner/observer synchronization with their Kotlin regressions and source consumers. Preserve native authority, exact identities, parsing and rate limits, cancellation/recovery deadlines, Lua globals and render scopes.
 
 ### 0.1.47
 

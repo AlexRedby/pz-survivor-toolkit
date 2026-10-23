@@ -17,7 +17,7 @@
 | Свежесть | До трёх секунд от наблюдения нового raw value на получателе. Это не возраст исходного снимка владельца: старый пакет из очереди может выглядеть только что полученным. |
 | Доставка | В проверенном B42.21 `VariableSyncPacket` использует `RELIABLE_ORDERED`, channel 0. Сервер пересылает другим соединениям, relevant к положению владельца. |
 
-Источники реализации: [CartMotionSync](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java), [CartActionSync](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartActionSync.java), [регистрация переменных](../PZSurvivorToolkit/42/media/lua/client/000ToolkitCartMotion.lua), [native hooks](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/Main.java). Transport, framing, native prediction и часы проверены по bytecode установленного `projectzomboid.jar`; файлы игры в репозиторий не копируются.
+Источники реализации: [CartMotionSync](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt), [CartActionSync](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartActionSync.kt), [регистрация переменных](../PZSurvivorToolkit/42/media/lua/client/000ToolkitCartMotion.lua), [native hooks](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/Main.java). Transport, framing, native prediction и часы проверены по bytecode установленного `projectzomboid.jar`; файлы игры в репозиторий не копируются.
 
 Порядок TCP здесь не обсуждается: фактическая доставка идёт через RakNet/UDP с надёжностью и упорядочением. Потеря раннего сообщения может задерживать последующие сообщения этого канала; размер такой задержки в текущем Host пока не измерен. Замена на Lua commands не является готовым улучшением: native `ClientCommand` использует reliable unordered delivery, а текущий receiver не отбрасывает старые serial.
 
@@ -61,13 +61,13 @@ Observer first-receipt age p95 составил 41.91/42.39 мс, capture-to-bod
 
 ## Основное ограничение PZ
 
-Native remote movement использует извлечённое движение корневой кости анимации — root motion — для догоняния позиции. В [CartMotionSync.applyLocomotion](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java) поэтому сохранён свежий предыдущий moving budget. Принудительная поза остановившегося владельца может лишить наблюдателя этого budget и остановить догоняние. Этот механизм нельзя удалять ради совпадения картинки.
+Native remote movement использует извлечённое движение корневой кости анимации — root motion — для догоняния позиции. В [CartMotionSync.applyLocomotion](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt) поэтому сохранён свежий предыдущий moving budget. Принудительная поза остановившегося владельца может лишить наблюдателя этого budget и остановить догоняние. Этот механизм нельзя удалять ради совпадения картинки.
 
 Известный успешный male/full inventory-equip Host capture показывает контакт левых брюк с ручкой на четырёх draw-bound снимках через 344–394 мс после первого held snapshot; два также пересекают нижнюю часть исходного body mesh. В этот момент у наблюдателя ещё живы Walk/WalkSlow/CartWalk и CartIdle, Loot уже отсутствует, владелец не пересекает ручки. Это доказывает несовпадение текущей presentation на выбранном переходе. Оно не доказывает, что причина — недостаточная частота сети. Это source meshes с измеренными bones; точная GPU-палитра одежды и все отрисованные кадры остаются отдельной проверкой.
 
 Нужны два явно разделённых потребителя: native locomotion budget для движения и единое согласованное состояние для отрисовки body/cart/hands/camera. Разделение не означает, что native skeleton уже можно независимо перемотать: его root motion всё ещё используется игрой. Сначала нужно доказать безопасную границу. Для текущего clipping первым кандидатом остаётся presentation относительно фактически измеренных native bones при неизменной частоте сети.
 
-Уже существующие [CartObserverRender](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartObserverRender.java) и [CartObserverPose](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartObserverPose.java) связывают cosmetic correction с producer camera и worker model slot. Их immutable pair и collision/reachability checks следует расширять согласованно. Другая поза камеры, тела и тележки в одном draw недопустима.
+Уже существующие [CartObserverRender](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartObserverRender.kt) и [CartObserverPose](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartObserverPose.kt) связывают cosmetic correction с producer camera и worker model slot. Их immutable pair и collision/reachability checks следует расширять согласованно. Другая поза камеры, тела и тележки в одном draw недопустима.
 
 ## Предлагаемая архитектура
 
