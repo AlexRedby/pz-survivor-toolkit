@@ -55,7 +55,8 @@ object FenceValidationLogic {
         val transformer = object : ClassFileTransformer {
             override fun transform(loader: ClassLoader?, name: String?, type: Class<*>?,
                                    domain: ProtectionDomain?, bytes: ByteArray?): ByteArray? =
-                if (TARGET == name) weave(bytes) else null
+                // Foreign loads include Kotlin itself; do not resolve Intrinsics during its definition.
+                if (TARGET.equals(name)) weave(bytes) else null
         }
         instrumentation.addTransformer(transformer, true)
         try {

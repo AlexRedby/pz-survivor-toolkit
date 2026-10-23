@@ -78,19 +78,19 @@ The replay verifies Blender's evaluated body and actual `Bob_Trousers` mesh agai
   export build/blender/inventory-clearance/authored.blend build/blender/inventory-clearance/export
 ```
 
-Export creates a new curve JSON, generated Java sampler and approximation report. It checks zero endpoints, forward-only bounds and intermediate samples, increasing sampling until the interpolation error is below `2e-6` model units. To propose a runtime change, review both outputs and update `assets/animations/curves/wood_cart_equip_clearance.json` and `JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartEquipClearanceCurve.java` together. `tests/test_cart_clearance_curve.py` checks that they agree. Build and test the candidate through the isolated reproducer; exporting or opening the scene does not install or validate gameplay. The current envelope is a rendered cart-placement correction while inventory Loot retires; it does not replace the pickup clip or native legs.
+Export creates a new curve JSON, generated Kotlin sampler and approximation report. It checks zero endpoints, forward-only bounds and intermediate samples, increasing sampling until the interpolation error is below `2e-6` model units. To propose a runtime change, review both outputs and update `assets/animations/curves/wood_cart_equip_clearance.json` and `JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartEquipClearanceCurve.kt` together. `tests/test_cart_clearance_curve.py` checks that they agree. Build and test the candidate through the isolated reproducer; exporting or opening the scene does not install or validate gameplay. The current envelope is a rendered cart-placement correction while inventory Loot retires; it does not replace the pickup clip or native legs.
 
 ### Recalibrating the held-leg clearance cage
 
-The held wooden-cart fit reads the native render slot's body and supported trousers palettes. Its generated source cage and shaft decomposition are committed in `CartLegClearanceData.java`; ordinary Java builds need neither Blender nor NumPy. A changed game/Workshop asset hash disables that asset's calibration until it is reviewed and regenerated.
+The held wooden-cart fit reads the native render slot's body and supported trousers palettes. Its generated source cage and shaft decomposition are committed in `CartLegClearanceData.kt`; ordinary patch builds need neither Blender nor NumPy. A changed game/Workshop asset hash disables that asset's calibration until it is reviewed and regenerated.
 
 Regeneration requires Python with NumPy, the supported B42.21 game files and the original wooden cart FBX:
 
 ```sh
 python3 tools/cart_leg_clearance_profile.py --game "$GAME" --mesh "$CART_FBX" \
-  --output JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartLegClearanceData.java
+  --output JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartLegClearanceData.kt
 python3 tools/cart_leg_clearance_profile.py --game "$GAME" --mesh "$CART_FBX" \
-  --output JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartLegClearanceData.java --check
+  --output JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartLegClearanceData.kt --check
 ```
 
 The generator verifies source identities, skin weights and exact kernel-fan decomposition of the nonconvex closed shaft pieces. Open braces retain their original triangles. The runtime selects the nearest lateral corridor with a 1 mm source-cage margin, rechecks the solved hand pose and refuses a nonzero correction whose calibrated cart vertices leave the existing Walk footprint. Native collision, leg/root motion, packet frequency and the Blender forward envelope remain unchanged. Source-cage regressions and captured matrices do not certify unseen clothing or every GPU-rendered frame; rerun the isolated SP/Host checks after recalibration.
@@ -260,6 +260,8 @@ Java Patches supports mixed Java/Kotlin sources. Use the [Kotlin 2.3.0 compiler 
 For one Java regression, use `python3 JavaPatches/build.py --test MediaChecks`; repeat `--test` to select more. When present, `--test` overrides the `--check`/`--check-video` groups; without it, those flags retain their existing behavior. `--help` lists the available test names. Each Java regression has a 120-second timeout; change it with a positive integer `--test-timeout SECONDS`. A timed-out test fails and retains its output in the reported `JavaPatches/build/<check-name>.log`. The limit applies to each test invocation, not to compilation.
 
 Migrate associated regression bodies to Kotlin with each runtime module. The builder selects either `.kt` or `.java`, resolves selected Kotlin helpers, and compiles Kotlin checks against the original application metadata with friend access for `internal` declarations. It relocates the resulting test bytecode before compiling remaining Java fixtures; executed tests use the distributed private runtime. Java fixtures remain appropriate for a demonstrated loader or instrumentation contract: `KotlinRuntimeChecks.java` must start without any Kotlin runtime reference before it appends the mod JAR. Do not add the compiler, unshaded stdlib or raw application classes to its runtime classpath.
+
+The ordinary JAR contains portable source/build fingerprints in `META-INF/pztoolkit-build-inputs.json`. The metal-pickup retarget/replay tools verify these against the current checkout and compile only their tool entry point against the complete mixed artifact. Rebuild Java Patches after changing runtime sources or build tools; stale/legacy artifacts fail before the solver runs or writes output. Direct Java-source overlays are no longer used.
 
 ## Java patch boundaries
 

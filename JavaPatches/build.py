@@ -1,5 +1,5 @@
 """Build against local PZ, ZombieBuddy and Kotlin compiler inputs; no downloads."""
-import argparse, os, re, shutil, subprocess, sys, tempfile
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 
@@ -7,6 +7,34 @@ ROOT = Path(__file__).resolve().parent
 KOTLIN_VERSION = '2.3.0'
 KOTLIN_MODULE = 'pz_toolkit_java_patches'
 KOTLIN_RUNTIME_PACKAGE = 'net/alexredby/pztoolkitruntime/kotlin'
+SOURCE_MANIFEST = 'META-INF/pztoolkit-build-inputs.json'
+
+
+def source_fingerprints(root):
+    """Portable fingerprints for the ordinary runtime and its build tools, without local paths."""
+    sources = list((root / 'src/net/alexredby/pztoolkitjavapatches').rglob('*'))
+    sources = [path for path in sources if path.suffix in ('.java', '.kt') and path.is_file()]
+    sources += [path for path in (root / 'build.py', root / 'tools/RelocateKotlin.java') if path.is_file()]
+    return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(sources)}
+
+
+def write_source_manifest(root, classes, fingerprints=None):
+    target = classes / SOURCE_MANIFEST
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({'format': 1, 'sources': source_fingerprints(root) if fingerprints is None else fingerprints},
+                                 sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
+
+
+def require_current_patch_jar(jar, root):
+    """Authoring tools must execute the complete current mixed artifact, not partial Java overlays."""
+    try:
+        with ZipFile(jar) as archive:
+            manifest = json.loads(archive.read(SOURCE_MANIFEST))
+    except (OSError, BadZipFile, KeyError, ValueError) as error:
+        raise ValueError(f'Cannot verify current patch JAR {jar}: {error}. Rebuild JavaPatches/build.py first.') from error
+    if not isinstance(manifest, dict) or manifest.get('format') != 1 or manifest.get('sources') != source_fingerprints(root):
+        raise ValueError(f'Patch JAR {jar} does not match the current runtime sources/build tools. Rebuild JavaPatches/build.py first.')
 
 
 def kotlin_toolchain(home, parser):
@@ -254,6 +282,7 @@ def main(argv=None):
     kotlin_sources = sorted((ROOT / 'src').rglob('*.kt'))
     java_sources = sorted((ROOT / 'src').rglob('*.java'))
     kotlin_home = kotlin_toolchain(args.kotlin_home, parser) if kotlin_sources or kotlin_tests else None
+    fingerprints = source_fingerprints(ROOT)
     build.mkdir(exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix='.build-', dir=build))
     previous = temporary / 'previous'
@@ -271,6 +300,9 @@ def main(argv=None):
             compilepath = os.pathsep.join([str(classes), str(stdlib), classpath])
         # Output targets Java 17; reading the game's Java 25 classes still requires javac 25+.
         subprocess.run([javac, '--release', '17', '-cp', compilepath, '-d', str(classes), *map(str, java_sources)], check=True)
+        if source_fingerprints(ROOT) != fingerprints:
+            raise ValueError('Runtime sources or build tools changed during compilation; rebuild the candidate.')
+        write_source_manifest(ROOT, classes, fingerprints)
         test_api = temporary / 'test-api'
         if kotlin_tests:
             # Kotlin tests see original module metadata and internals before runtime relocation.
@@ -297,8 +329,8 @@ def main(argv=None):
                             str(ROOT / 'tools/RelocateKotlin.java')], check=True)
             subprocess.run([str(args.jdk / 'bin/java'), '-cp', os.pathsep.join([str(build_tools), compiler_jar]),
                             'RelocateKotlin', str(classes)], check=True)
-            runtime_entries = ['-C', str(classes), KOTLIN_RUNTIME_PACKAGE, '-C', str(classes), 'META-INF']
-        subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches', *runtime_entries], check=True)
+            runtime_entries = ['-C', str(classes), KOTLIN_RUNTIME_PACKAGE]
+        subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches', *runtime_entries, '-C', str(classes), 'META-INF'], check=True)
         subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(fontjar), '--manifest', str(manifest), '-C', str(classes), 'net/alexredby/pztoolkitbootstrap'], check=True)
         (mod/'42/mod.info').write_text(''.join(f'{key}={value}\n' for key, value in MOD_INFO.items()))
         for base in [mod/'common/media', mod/'42/media']:

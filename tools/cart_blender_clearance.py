@@ -4,7 +4,7 @@ Blender --background --python this_file -- prepare SCENE.blend OUTPUT_DIRECTORY
 Blender --background --python this_file -- export AUTHORED.blend OUTPUT_DIRECTORY
 
 The envelope parameter is the retired share (1 - outgoing Loot blend weight),
-not wall time or pickup progress. Output is a bounded data asset and a Java
+not wall time or pickup progress. Output is a bounded data asset and a Kotlin
 linear sampler generated from the evaluated Blender F-curve. Runtime activation
 and native IK still need an isolated game check.
 """
@@ -67,22 +67,22 @@ def prepare(source,output):
     bpy.ops.wm.save_as_mainfile(filepath=str((output/'authored.blend').resolve()))
 
 
-def java_sampler(values):
+def kotlin_sampler(values):
     array=',\n        '.join(','.join(f'{v:.10g}f' if v else '0f' for v in values[i:i+8]) for i in range(0,len(values),8))
-    return '''package net.alexredby.pztoolkitjavapatches;
+    return '''package net.alexredby.pztoolkitjavapatches
 
 /** Generated from Blender's evaluated clearance curve; regenerate with tools/cart_blender_clearance.py. */
-final class CartEquipClearanceCurve {
-    private static final float[] ADVANCE={
+internal object CartEquipClearanceCurve {
+    private val ADVANCE = floatArrayOf(
         ARRAY
-    };
-    static float sample(float retiredShare) {
-        if(!Float.isFinite(retiredShare) || retiredShare<=0 || retiredShare>=1) return 0;
-        float position=retiredShare*(ADVANCE.length-1);
-        int index=Math.min(ADVANCE.length-2,(int)position);
-        return ADVANCE[index]+(position-index)*(ADVANCE[index+1]-ADVANCE[index]);
+    )
+    @JvmStatic
+    fun sample(retiredShare: Float): Float {
+        if (!java.lang.Float.isFinite(retiredShare) || retiredShare <= 0 || retiredShare >= 1) return 0f
+        val position = retiredShare * (ADVANCE.size - 1)
+        val index = Math.min(ADVANCE.size - 2, position.toInt())
+        return ADVANCE[index] + (position - index) * (ADVANCE[index + 1] - ADVANCE[index])
     }
-    private CartEquipClearanceCurve() {}
 }
 '''.replace('ARRAY',array)
 
@@ -114,7 +114,7 @@ def export(source,output):
           'sourceBlendSha256':hashlib.sha256(source.read_bytes()).hexdigest(),
           'scope':'Wooden inventory-equip transition; runtime gating and native grip remain separate.'}
     (output/'wood_cart_equip_clearance.json').write_text(json.dumps(data,indent=2)+'\n')
-    (output/'CartEquipClearanceCurve.java').write_text(java_sampler(values))
+    (output/'CartEquipClearanceCurve.kt').write_text(kotlin_sampler(values))
     (output/'report.json').write_text(json.dumps({'blenderEvaluatedSamples':len(values),'maxApproximationError':error,'endpointsZero':True,'runtimeTested':False},indent=2)+'\n')
     print(json.dumps(data,indent=2))
 

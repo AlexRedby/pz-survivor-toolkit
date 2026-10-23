@@ -51,7 +51,8 @@ internal object ItemBatchAdmissionLogic {
         if (instrumentation == null || !instrumentation.isRetransformClassesSupported()) return false
         val transformer = object : ClassFileTransformer {
             override fun transform(loader: ClassLoader?, name: String?, type: Class<*>?, domain: ProtectionDomain?, bytes: ByteArray?): ByteArray? {
-                if (name != TARGET) return null
+                // Keep foreign-class dispatch independent of Kotlin runtime initialization.
+                if (!TARGET.equals(name)) return null
                 val replacement = weave(bytes)
                 woven = replacement != null
                 if (!woven) System.err.println("[PZToolkitJavaPatches] Disabled item batch admission: native consistency method changed")

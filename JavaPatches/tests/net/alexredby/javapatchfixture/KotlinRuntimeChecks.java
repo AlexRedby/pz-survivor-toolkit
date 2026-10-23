@@ -29,6 +29,13 @@ public final class KotlinRuntimeChecks {
             require(jar.getEntry("META-INF/licenses/kotlin/LICENSE.txt") != null,
                 "bundled Kotlin runtime license was omitted");
             instrumentation.appendToSystemClassLoaderSearch(jar);
+            // Keep this entry in Java: a Kotlin main would warm Intrinsics before the transformer
+            // is installed, hiding recursive class definition on its foreign-class dispatch path.
+            var fences = Class.forName("net.alexredby.pztoolkitjavapatches.FenceValidation", true, loader);
+            for (var loaded : instrumentation.getAllLoadedClasses())
+                require(!loaded.getName().equals(privateRuntime), "cold transformer fixture warmed Intrinsics too early");
+            require(Boolean.TRUE.equals(fences.getMethod("install", boolean.class).invoke(null, true)),
+                "cold Kotlin transformer installation failed");
             var paths = Class.forName("net.alexredby.pztoolkitjavapatches.TVVideoPaths", true, loader);
             var redirect = paths.getMethod("redirect", String.class, boolean.class);
             require(redirect.invoke(null, null, true) == null, "nullable Java API changed");
@@ -59,6 +66,6 @@ public final class KotlinRuntimeChecks {
                 "early fonts unexpectedly bundled the Kotlin runtime");
         }
         System.out.println("KOTLIN_RUNTIME_CHECKS_PASS (late mod JAR registration, private stdlib 2.3.0 beside game "
-            + gameVersion + ", Java static/null ABI, independent fonts)");
+            + gameVersion + ", cold transformer, Java static/null ABI, independent fonts)");
     }
 }

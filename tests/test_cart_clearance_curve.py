@@ -1,4 +1,4 @@
-"""Keep the authored Blender curve and shipped Java sampler in sync."""
+"""Keep the authored Blender curve and shipped Kotlin sampler in sync."""
 import json
 from pathlib import Path
 import sys
@@ -17,9 +17,9 @@ class ClearanceCurveContract(unittest.TestCase):
         self.assertEqual((values[0],values[-1]),(0,0))
         self.assertTrue(all(0<=value<=.0081 for value in values))
         self.assertLess(data['maximumApproximationError'],2e-6)
-        runtime=ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartEquipClearanceCurve.java'
-        self.assertEqual(runtime.read_text(),authoring.java_sampler(values),
-                         'Regenerate and deliver both the curve JSON and Java sampler')
+        runtime=ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartEquipClearanceCurve.kt'
+        self.assertEqual(runtime.read_text(),authoring.kotlin_sampler(values),
+                         'Regenerate and deliver both the curve JSON and Kotlin sampler')
 
 
 if __name__=='__main__':unittest.main()

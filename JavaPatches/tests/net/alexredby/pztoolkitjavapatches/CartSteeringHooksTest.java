@@ -946,59 +946,6 @@ public final class CartSteeringHooksTest {
         } finally {CartSteeringHooks.reset(player);time.fpsMultiplier=old;}
     }
 
-    private static void gaitBlendContinuity() {
-        for(int gait:new int[]{CartLocomotionBlend.WALK,CartLocomotionBlend.RUN,CartLocomotionBlend.SPRINT}) {
-        float previousX=Float.NaN,previousY=Float.NaN;
-        for(int fps:new int[]{30,60,144}) {
-            var blend=new CartLocomotionBlend();
-            blend.update(-.6f,.8f,1.0/fps,gait);
-            float oldX=blend.x;
-            for(int frame=0;frame<fps;frame++) {
-                blend.update(.6f,.8f,1.0/fps,gait);
-                check(Math.abs(Math.hypot(blend.x,blend.y)-1)<1e-7 && blend.y>0,
-                    "gait steering changes must retain stride radius and forward travel: "+gait+"/"+fps);
-                check(blend.x>=oldX && blend.x<=.600001f,
-                    "gait steering interpolation must not overshoot or reverse its response: "+gait+"/"+fps);
-                if(frame==0) check(blend.x<0,"one native frame must not flip the entire walking field: "+fps);
-                oldX=blend.x;
-                if(frame==fps/3-1 && fps%3==0) {
-                    if(Float.isFinite(previousX))
-                        check(Math.abs(blend.x-previousX)<2e-7 && Math.abs(blend.y-previousY)<2e-7,
-                            "equal elapsed time must yield the same gait field at different native frame rates");
-                    previousX=blend.x;previousY=blend.y;
-                }
-            }
-            check(Math.abs(blend.x-.6f)<1e-6 && Math.abs(blend.y-.8f)<1e-6,
-                "steady gait must recover its exact requested direction: "+gait+"/"+fps);
-            blend.update(-.6f,.8f,0,gait);
-            check(Math.abs(blend.x-.6f)<1e-6,"zero time must not advance the visual field");
-            blend.update(-.6f,.8f,Double.NaN,gait);
-            check(Math.abs(blend.x-.6f)<1e-6,"unknown time must not advance the visual field");
-            // Idle, reversal and special gait ownership must discard any old forward direction.
-            for(float[] target:new float[][]{{0,0},{.3f,-.4f},{.5f,0}}) {
-                blend.update(-.6f,.8f,1.0/fps,gait);
-                blend.update(target[0],target[1],1.0/fps,gait);
-                check(blend.x==target[0] && blend.y==target[1],"non-forward fields must pass through unchanged");
-                blend.update(.6f,.8f,1.0/fps,gait);
-                check(blend.x==.6f && blend.y==.8f,"forward restart must discard the preceding field direction");
-            }
-            blend.update(-.6f,.8f,1.0/fps,0);
-            check(blend.x==-.6f && blend.y==.8f,"another pose owner must receive the raw field");
-            blend.update(.6f,.8f,1.0/fps,gait);
-            check(blend.x==.6f && blend.y==.8f,"a completed pose owner must not leave a filtered direction behind");
-            blend.update(Float.NaN,.8f,1.0/fps,gait);
-            blend.update(-.6f,.8f,1.0/fps,gait);
-            check(blend.x==-.6f && blend.y==.8f,"invalid input must not poison the next native Walk field");
-            for(int incoming:new int[]{CartLocomotionBlend.WALK,CartLocomotionBlend.RUN,CartLocomotionBlend.SPRINT}) {
-                blend.update(-.6f,.8f,1.0/fps,gait);
-                blend.update(.6f,.8f,1.0/fps,incoming);
-                if(incoming!=gait)
-                    check(blend.x==.6f && blend.y==.8f,"a different native gait must begin from its own raw field");
-            }
-        }
-        }
-    }
-
     private static double nativeBudget(Player player, AnimNode node, Map<String,AnimationClip> clips, double dt) {
         var pick=node.blend2dPicker.Pick(player.stepX,player.stepY,new Anim2DBlendPicker.PickResults());
         double rootX=0,rootY=0;
@@ -1340,7 +1287,7 @@ public final class CartSteeringHooksTest {
     }
 
     public static void main(String[] args) throws Exception {
-        gaitBlendContinuity();
+        CartLocomotionBlendChecks.check();
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var tiny=CartSteeringMath.step(0,0,.0002,1.0/60,0);
         check(!CartSteeringHooks.blockedStep(tiny,10825.5f,10142.5f,0),
