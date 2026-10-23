@@ -85,16 +85,11 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
-### Equipment lifetime boundary work
+### Remaining native lifetime and traffic gates
 
-- [ ] Distinguish a certified complete remote Equip resnapshot from an authoritative release/END. Fresh same-lease readmission must require exact original Equip ingress and parse provenance, preserve sequence/time floors, and keep generic mutations/terminal leases closed. Extend the bank with explicit bounded resnapshot/resync evidence before repeating Host.
-- [ ] Identify the pinned native hand/actor/connection mutation boundaries and register a bounded, fail-closed lifetime revision before the fixture's actors exist. Unknown or bypassed provenance must not authorize a held lease.
-- [ ] Feed the native lifetime revision into the test-only server/receiver binding; retain ordering fences across release/reacquire and same-ID object replacement even when polling misses the intermediate empty state. Gate: actual native setter/identity regressions plus rejected stale pending replies and payloads.
-- [ ] Extend the opt-in Host evidence with witnessed equipment edges and fresh bind/rejection chains. Gate: sealed sources, exact actor/item/cargo identity, clean logs and owned cleanup. Actor removal/respawn and reconnect remain open until their actual native scenarios are verified.
-
-- [ ] Extend current-held control evidence to complete native equipment lifetimes: observe release/reacquire, same-ID item replacement, actor removal/respawn and reconnect before accepting or retiring a lease. The successful guarded challenge/echo probe does not cover these missed edges.
+- [ ] Extend the verified native-setter release/reacquire and same-ID replacement bank to ordinary menu equip/release, actor removal/respawn and disconnect/reconnect. Keep exact native incarnation and transport provenance, permanent retirement and replay fences. The macOS Host setter/resnapshot bank does not establish these complete gameplay lifetimes.
 - [ ] Extend native action-admission coverage beyond selected Setdown/Pickup completion/cancel/repeat to hotkey Drop, pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
-- [ ] Measure serialized/wire control costs and bounded bind/resync bursts; the held probe's 24 logical messages and action probe's 12 logical queries are not a payload or production-frequency budget.
+- [ ] Measure serialized/wire control costs and bounded bind/resync bursts, including the equipment bank's dynamically counted fresh rebinds; the held probe's 24 logical messages and action probe's 12 logical queries are not a payload or production-frequency budget.
 - [ ] Connect the verified admission reference to production motion/action together only after those authority/lifetime and traffic gates pass. Preserve durable high-water fences and native root catch-up; remove the replaced v1 consumers in the same change after verification. Source-time playback remains behind its separate timing gate.
 
 Design and dependencies: [multiplayer presentation plan](docs/CART_MULTIPLAYER.md). Remaining work follows the implemented timing baseline and same-native-render clearance fallback; the current cart protocol remains active.
