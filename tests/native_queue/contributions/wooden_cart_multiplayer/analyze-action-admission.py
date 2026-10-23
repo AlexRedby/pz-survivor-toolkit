@@ -239,8 +239,13 @@ def analyze(root):
     for index, group in sorted(owners.items()):
         require(all(event in group for event in ('track', 'capture', 'query', 'reply', 'native-terminal-receipt')), 'Incomplete explicit owner action chain')
         track, capture, query, reply, receipt = (group[event] for event in ('track', 'capture', 'query', 'reply', 'native-terminal-receipt'))
-        expected_terminal = 'seal-revoked' if index in (3, 5) else 'terminal'
-        other_terminal = 'terminal' if index in (3, 5) else 'seal-revoked'
+        # Native Drop effects can invalidate the client action before its Lua
+        # perform. A native stop then resets the queue.
+        # Keep that revoked seal separate from the independently proven Done result.
+        completed_drop = drop_kind == 'ToolkitWoodCartDrop' and index in (1, 4)
+        revoked = index in (3, 5) or (completed_drop and 'seal-revoked' in group)
+        expected_terminal = 'seal-revoked' if revoked else 'terminal'
+        other_terminal = 'terminal' if revoked else 'seal-revoked'
         require(expected_terminal in group and other_terminal not in group, 'Selected owner phase lacks expected sealed outcome/revocation proof')
         terminal = group[expected_terminal]
         if expected_terminal == 'seal-revoked':
@@ -276,6 +281,9 @@ def analyze(root):
         direct_outcome = {'Done': 'completed', 'Reject': 'rejected'}.get(retired['nativeState'])
         require(direct_outcome is None or receipt['state'] == direct_outcome,
                 'Direct native terminal state contradicts exact owner native receipt outcome')
+        if completed_drop and revoked:
+            require(retired['nativeState'] == 'Done' and retired['reason'] == 'completed',
+                    'Revoked completed Drop lacks direct native Done proof')
         expected_outcome = 'canceled' if index in (3, 5) else 'completed'
         require(receipt['state'] == expected_outcome, 'Selected owner phase native receipt outcome differs')
         if expected_terminal == 'terminal':
@@ -294,10 +302,11 @@ def analyze(root):
     require(used == set(queries), 'Unmatched extra native action query')
     require(len({row['startGeneration'] for row in results}) == 6, 'Native start associated to multiple owner phases')
     return dict(schema=1, diagnosticOnly=True, evidenceComplete=True, nativeLifetimes=6, exactOwnerAssociations=6,
-        ownerSealedTerminalAssociations=4, ownerRevokedSealAssociations=2,
+        ownerSealedTerminalAssociations=sum(row['ownerSealedOutcome'] is not None for row in results),
+        ownerRevokedSealAssociations=sum(row['ownerSealRevocationReason'] is not None for row in results),
         logicalQueryMessages=dict(total=12, clientToServer=6, serverToClient=6), phases=results,
         sourceFiles={role: role+'-launch.log' for role in ROLES},
-        qualification='Observed server native action admission plus exact initial sealed owner receipt association. Native retirement state/reason, historical native owner receipt outcome and current sealed authority are separate facts; native remove does not by itself prove cancellation or success. Cancel/reset revokes the seal; no authority survives that reset and no seal is renewed by this probe. No observer skeleton/proxy binding, reconnect/reject/ID-reuse matrix, production migration, runtime PASS or full-image timing is established. Logical queries are not wire bytes.')
+        qualification='Observed server native action admission plus exact initial sealed owner receipt association. Native retirement state/reason, historical native owner receipt outcome and current sealed authority are separate facts; native remove does not by itself prove cancellation or success. Cancel/reset revokes the seal; completed hotkey Drop may also reset after replicated native effects and requires direct Done proof when revoked. No authority survives that reset and no seal is renewed by this probe. No observer skeleton/proxy binding, reconnect/reject/ID-reuse matrix, production migration, runtime PASS or full-image timing is established. Logical queries are not wire bytes.')
 
 
 def main():

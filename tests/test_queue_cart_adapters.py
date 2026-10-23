@@ -783,6 +783,8 @@ print('STARTUP_REJOIN_GUARD_PASS')
         with self.assertRaisesRegex(ValueError,'cart_lease_menu'):carts.validate(self.selection)
         self.options.update(cart_lease_lifetimes=True,cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
         self.role('client2');self.role('server');self.stage()
+        failure='LOG : Lua > [CART_LEASE_LIFETIME] ERROR attempted index: enqueue of non-table: null java.lang.RuntimeException'
+        self.assertTrue(any(marker in failure for marker in self.runtime['fixture']['failure_markers']))
         for role in ('client1','client2'):
             path=self.output/role/'mods/ActionQueueTest/42/media/lua/client/CartLeaseMenuActions.lua'
             self.assertEqual(path.read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-menu-actions.lua').read_bytes())

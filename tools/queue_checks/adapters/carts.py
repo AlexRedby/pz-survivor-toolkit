@@ -407,7 +407,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR', '[CART_ADMISSION] ERROR', '[CART_OBSERVER] ERROR', '[CART_LIFECYCLE] ERROR']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR', '[CART_LEASE_LIFETIME] ERROR', '[CART_ADMISSION] ERROR', '[CART_OBSERVER] ERROR', '[CART_LIFECYCLE] ERROR']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():

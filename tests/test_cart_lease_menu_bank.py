@@ -26,6 +26,13 @@ class CartLeaseMenuBankTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn('Equipment lifetime bank deadline', result.stderr)
 
+    def test_runtime_owner_input_requires_a_complete_native_menu_driver(self):
+        for defect in ('missing-menu-driver', 'non-table-menu-driver', 'incomplete-menu-driver'):
+            with self.subTest(defect=defect):
+                result = self.run_bank(defect)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('Owner native menu driver unavailable', result.stderr)
+
     def test_server_and_observer_must_independently_observe_native_absence(self):
         for defect in ('server-no-absence', 'client2-no-absence'):
             with self.subTest(defect=defect):

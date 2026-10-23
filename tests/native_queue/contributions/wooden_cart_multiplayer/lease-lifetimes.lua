@@ -206,7 +206,7 @@ local ready,done,preparing,doneSent,offered=false,false,false,false,false
 local inflight,pendingPrepared,oldEnvelope,ackLifetime,ackAttempt=nil,nil,nil,nil,nil
 local attempts,firstPhaseAttempt,snapshots=0,true,0
 local menuPending,menuRetired
-local menuActions=menuMode and require 'CartLeaseMenuActions'
+local menuActions
 local function owner()
  local players=getOnlinePlayers()
  for i=0,players:size()-1 do local p=players:get(i);if p:getUsername()=='client1' then return p end end
@@ -317,7 +317,12 @@ Events.OnServerCommand.Add(function(mod,command,args)
    if menuMode then
     local _,cid,weight=cargo(current.item)
     menuPending={before=current,cargoID=cid,cargoWeight=weight,stale=args.stale,ingress=ingress,receipt=activeReceipt}
-    if user=='client1' then menuPending.action=menuActions.enqueue(getPlayer(),current.item,false,phase,menuRow) end
+    if user=='client1' then
+     -- Shared files load before the client require paths are available.
+     local driver=menuActions or require 'CartLeaseMenuActions'
+     assert(type(driver)=='table' and type(driver.enqueue)=='function' and type(driver.poll)=='function','Owner native menu driver unavailable')
+     menuActions=driver;menuPending.action=menuActions.enqueue(getPlayer(),current.item,false,phase,menuRow)
+    end
     return
    end
    local row,after=cycle(native,phase,user)

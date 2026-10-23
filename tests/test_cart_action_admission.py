@@ -302,6 +302,51 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
                 with self.subTest(hotkey=hotkey,index=phase_index),self.assertRaisesRegex(ValueError,'Native kind differs'):
                     self.analyze()
 
+    def hotkey_completion_revoked(self, indices=(1,4)):
+        self.selection['options']['cart_hotkey_setdown'] = True
+        for rows in self.groups.values():
+            for row in rows:
+                if row.get('kind') == 'ToolkitWoodCartSetdown':row['kind'] = 'ToolkitWoodCartDrop'
+        for row in self.records('owner','terminal'):
+            if row['index'] in indices:
+                row.update(event='seal-revoked',sealed=False,currentAuthority=False,
+                           reason='operation-generation-changed',observedGeneration=row['captureGeneration']+1)
+                row.pop('state')
+
+    def test_completed_hotkey_drop_keeps_native_done_separate_from_revoked_authority(self):
+        original = copy.deepcopy(self.groups)
+        for indices in ((),(1,),(4,),(1,4)):
+            self.groups=copy.deepcopy(original);self.hotkey_completion_revoked(indices)
+            result=self.analyze()
+            self.assertEqual(result['ownerSealedTerminalAssociations'],4-len(indices))
+            self.assertEqual(result['ownerRevokedSealAssociations'],2+len(indices))
+            for row in result['phases']:
+                if row['index'] in indices:
+                    self.assertEqual(row['ownerNativeReceiptOutcome'],'completed')
+                    self.assertIsNone(row['ownerSealedOutcome'])
+                    self.assertEqual(row['ownerSealRevocationReason'],'operation-generation-changed')
+                    self.assertEqual((row['nativeTerminalState'],row['nativeRetirementReason']),('Done','completed'))
+
+    def test_revoked_hotkey_success_requires_direct_done_and_exact_generation_proof(self):
+        self.hotkey_completion_revoked();original=copy.deepcopy(self.groups)
+        for state,reason in (('Accept','native-remove'),('unavailable','native-absent'),('Reject','rejected')):
+            self.groups=copy.deepcopy(original)
+            self.records('native','retired')[0].update(nativeState=state,reason=reason)
+            with self.subTest(state=state),self.assertRaises(ValueError):self.analyze()
+        for field,value in (('observedGeneration',2),('observedGeneration',True),('reason','observe-unavailable'),
+                            ('sealed',True),('currentAuthority',True),('token','10000000-0000-4000-8000-000000000099')):
+            self.groups=copy.deepcopy(original)
+            next(row for row in self.records('owner','seal-revoked') if row['index']==1)[field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+        self.groups=copy.deepcopy(original)
+        self.records('owner','native-terminal-receipt')[0]['state']='canceled'
+        with self.assertRaises(ValueError):self.analyze()
+        self.groups=copy.deepcopy(original)
+        revoked=next(row for row in self.records('owner','seal-revoked') if row['index']==1)
+        terminal=dict(revoked,event='terminal',state='completed',sealed=True)
+        self.groups['owner'].append(terminal)
+        with self.assertRaisesRegex(ValueError,'expected sealed outcome/revocation'):self.analyze()
+
     def test_foreign_endpoints_errors_and_process_restarts_fail_closed(self):
         original=copy.deepcopy(self.groups)
         self.records('owner','capture')[0]['actor']='client2'
@@ -362,7 +407,7 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
                 self.analyze()
         self.groups = copy.deepcopy(original)
         result = self.analyze()
-        self.assertIn('no authority survives that reset',result['qualification'])
+        self.assertIn('No authority survives that reset',result['qualification'])
         self.assertEqual(result['ownerSealedTerminalAssociations'],4)
         self.assertEqual(result['ownerRevokedSealAssociations'],2)
 

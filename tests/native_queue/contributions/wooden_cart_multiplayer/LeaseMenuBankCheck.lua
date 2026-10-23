@@ -4,6 +4,7 @@ local folder=root..'/tests/native_queue/contributions/wooden_cart_multiplayer/'
 local Protocol=dofile(folder..'lease-protocol.lua')
 local messages,roles,logs,updates,drivers={},{},{},{},{}
 local now,tick,messageCount,menuCount=1000,0,0,0
+local runtime=false
 local commandCounts={};local firstDefect=false
 local function copy(value)
  if type(value)~='table' then return value end
@@ -95,7 +96,13 @@ for _,role in ipairs({'server','client1','client2'}) do
    end};return p
   end
   if name=='CartMPJSON' then return {encode=function(row) logs[#logs+1]={role=role,row=row};return row.event end} end
-  if name=='CartLeaseMenuActions' then return {
+  if name=='CartLeaseMenuActions' then
+   assert(runtime and role=='client1','Menu helper must load only for runtime owner input')
+   r.menuRequires=(r.menuRequires or 0)+1
+   if defect=='missing-menu-driver' then return nil end
+   if defect=='non-table-menu-driver' then return true end
+   if defect=='incomplete-menu-driver' then return {enqueue=function() error('Incomplete menu driver invoked') end} end
+   return {
    enqueue=function(player,cart,pickup,phase,emit)
     assert(role=='client1' and player==r.actor and cart==r.actor.cart,'Foreign menu enqueue')
     assert(phase==2 or phase==3,'Unexpected native menu phase')
@@ -159,6 +166,7 @@ for _,role in ipairs({'server','client1','client2'}) do
 end
 roles.server.sources={client1=roles.server.actor,client2={role='client2',connection=roles.client2.connection,getUsername=function() return 'client2' end}}
 roles.server.actor.role='client1';roles.server.actor.connection=roles.client1.connection
+runtime=true
 for tickIndex=1,2500 do
  tick=tickIndex;now=now+20
  for index=#updates,1,-1 do
@@ -187,6 +195,7 @@ for tickIndex=1,2500 do
 end
 assert(defect=='none','Injected menu bank defect unexpectedly completed: '..defect)
 assert(messageCount==50 and menuCount==4,'Menu command/action matrix mismatch')
+assert(roles.client1.menuRequires==1 and not roles.client2.menuRequires and not roles.server.menuRequires,'Native menu helper load scope differs')
 assert(commandCounts.MenuAbsent==4 and commandCounts.MenuResume==4,'Menu barrier command count differs')
 for _,role in ipairs({'server','client1','client2'}) do
  assert(#records(role,'cycle')==2 and #records(role,'absence')==2,'Missing role transition/absence observations')
