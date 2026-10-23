@@ -90,6 +90,40 @@ assert(not primary and not secondary and cargo:getID()==99)
 
 @unittest.skipUnless(LUA,'Lua interpreter required')
 class InvalidationControllerTests(unittest.TestCase):
+    def test_client_receipt_api_is_resolved_after_shared_module_loading(self):
+        code=r"""
+local callback;Events={OnServerCommand={Add=function(fn) callback=fn end}}
+package.preload.QueueTestSelection=function() return {disposable=true,options={cart_action_invalidation=true}} end
+package.preload.CartMPJSON=function() return {encode=function(v) return '"'..tostring(v)..'"' end} end
+package.preload['PZSurvivorToolkit/ActionQueueAcknowledgements']=function() error('Client receipt module requested during shared loading') end
+isServer=function() return false end
+getFileReader=function() return {readLine=function() return 'client1' end,close=function() end} end
+local p={getOnlineID=function() return 0 end};getPlayer=function() return p end
+getTimestampMs=function() return 1000 end
+local source={};cartLeaseIngress=function() return source end;cartLeaseCurrent=function() return source end
+local sends={};sendClientCommand=function(player,module,command,args) assert(player==p);sends[#sends+1]=command end
+print=function(line) assert(not line:find('ERROR',1,true),line) end
+local M=dofile(SOURCE)
+local observed=0
+PZSurvivorToolkit={ActionQueueAcknowledgements={observe=function() observed=observed+1;return 'canceled' end,
+ capture=function() end,state=function() end}}
+assert(not M.finish(p,1000) and sends[1]=='Begin')
+callback('CartActionInvalidation','Init',{owner=0,cart=42,cargoID=99,cargoWeight=30})
+local function set(name,value)
+ for i=1,50 do local key=debug.getupvalue(M.finish,i);if not key then break end
+  if key==name then debug.setupvalue(M.finish,i,value);return end
+ end
+ error('Missing actual finish upvalue '..name)
+end
+set('stage','lost');set('oldAction',{});set('oldReceipt',{token='original',transaction=-128,kind='ToolkitWoodCartPickup'})
+set('terminal',{token='original',transaction=-128,kind='ToolkitWoodCartPickup',protocol=1,player=0,state='canceled'})
+set('endpoint',function() return {} end)
+assert(not M.finish(p,1001) and observed==1)
+assert(sends[2]=='Settled' and sends[3]=='LostReady')
+"""
+        result=subprocess.run([LUA,'-e','local SOURCE='+json.dumps(str(SOURCE))+'\n'+code],capture_output=True,text=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
     def test_missing_transport_cannot_mutate_and_exact_world_loss_precedes_native_stop(self):
         # Expected refused callbacks are emitted, not suppressed by a permissive source double.
         code=HARNESS.replace("assert(not row:find(' ERROR ',1,true),row);",'')

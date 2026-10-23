@@ -163,7 +163,7 @@ if isServer() then
  return M
 end
 local reader=assert(getFileReader('smoke-user.txt',false));actor=reader:readLine();reader:close()
-local Ack=require 'PZSurvivorToolkit/ActionQueueAcknowledgements'
+local Ack
 local phase,stage,action,driver,started,terminal,oldAction,oldReceipt,oldNative,oldSource,deadline,replays=0,nil,nil,nil,false,nil,nil,nil,nil,nil,nil,0
 local initial,groundSeen,lostSeen,recoveredSeen,done=false,false,false,false,false
 local function send(command,args)
@@ -218,6 +218,7 @@ Events.OnServerCommand.Add(function(mod,command,args)
  if not ok then emit('error',phase,{reason=tostring(err)});print('[CART_ACTION_INVALIDATION] ERROR '..tostring(err)) end
 end)
 function M.finish(owner,now)
+ if actor=='client1' and not Ack then Ack=assert(PZSurvivorToolkit and PZSurvivorToolkit.ActionQueueAcknowledgements,'Runtime owner receipt API missing') end
  if done then return true end
  deadline=deadline or now;assert(now-deadline<45000,'Action invalidation bank deadline')
  if not stage then if actor=='client1' then stage='begin';send('Begin') end;return false end
