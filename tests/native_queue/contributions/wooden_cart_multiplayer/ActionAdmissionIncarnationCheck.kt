@@ -405,6 +405,63 @@ object ActionAdmissionIncarnationCheck {
                     invocation.record.reason == "item-invalid",
                 "Foreign stop changed native queue, effects, receipt or absorbing retirement",
             )
+            // The world/binding and ingress are explicit model inputs. The actual queued action,
+            // token ledger, native stop implementation and resulting wire receipt remain real.
+            // Model Pickup only after retirement; this does not claim native world-Pickup admission.
+            invocation.action.type = "ToolkitWoodCartPickup"
+            invocation.record.kind = "ToolkitWoodCartPickup"
+            val ownerReader = ByteBufferReader(ByteBuffer.allocate(8))
+            val ownerTransport = LeaseControl.LeaseTransport(
+                WeakReference(engine), WeakReference(connection),
+                NativeTime.nativeTimeIdentity(connection, false), 1L,
+                PacketTypes.PacketType.ClientCommand.id.toInt(),
+            )
+            val ownerIngress = LeaseControl.LeaseCommandIngress(++ingressGeneration, ownerTransport)
+            LeaseControl.leaseControlIngresses.put(ownerReader, ownerIngress)
+            LeaseControl.leaseControlCallback.set(
+                LeaseControl.LeaseCallbackScope(ownerReader, ownerIngress, connection, 0, true, null),
+            )
+            try {
+                ensure(
+                    LeaseControl.leaseControlValidatedServerScope() != null &&
+                        LeaseControl.cartLeaseSource(owner) === connection,
+                    "Positive native stop requires the exact owner callback source",
+                )
+                ensure(
+                    ActionInvalidation.stop(
+                        owner, invocation.record.token, invocation.record.actionEpoch.toDouble(),
+                    ),
+                    "Exact invalidated native action was not stopped",
+                )
+                val canceled = connection.receipts.last()
+                ensure(
+                    connection.receipts.size == receipts + 1 &&
+                        canceled.rawget("state") == "canceled" &&
+                        canceled.rawget("kind") == "ToolkitWoodCartPickup" &&
+                        canceled.rawget("transaction") == TRANSACTION.toDouble() &&
+                        canceled.rawget("player") == owner.onlineId.toDouble() &&
+                        canceled.rawget("token") == invocation.record.token &&
+                        actions.none { it === invocation.action },
+                    "Helper did not produce the exact real native cancellation/removal",
+                )
+                ensure(
+                    invocation.action.action.rawget("performed") == 0.0 &&
+                        invocation.action.action.rawget("stopped") == 1.0 &&
+                        invocation.record.stage == "terminal" &&
+                        invocation.record.reason == "item-invalid" &&
+                        !invocation.record.nativeBindingValid,
+                    "Positive stop changed original effects or renewed the retired observation",
+                )
+                ActionAdmission.actionAdmissionProcessExit(invocation.scope, null)
+                ActionAdmission.actionAdmissionSweep("fixture-after-positive-stop")
+                ensure(
+                    invocation.record.stage == "terminal" && invocation.record.reason == "item-invalid" &&
+                        connection.receipts.size == receipts + 1,
+                    "Positive stop rewrote or revived the retired incarnation",
+                )
+            } finally {
+                LeaseControl.leaseControlIngresses.remove(ownerReader)
+            }
         } finally {
             if (previous == null) LeaseControl.leaseControlCallback.remove()
             else LeaseControl.leaseControlCallback.set(previous)
@@ -514,7 +571,7 @@ object ActionAdmissionIncarnationCheck {
             "ACTION_ADMISSION_INCARNATION_CHECK_PASS composedModel=true nativeReject=true " +
                 "nativeCancel=true signedByteReuse=true exactFreshToken=true " +
                 "delayedOriginalReceipt=true historicalOnly=true retirementAbsorbing=true " +
-                "foreignStopRefused=true noHostClaim=true",
+                "foreignStopRefused=true exactNativeStop=true noHostClaim=true",
         )
     }
 }

@@ -43,7 +43,9 @@ object ActionInvalidation {
         check(field("state") == TransactionState.Accept)
         check(NativeTime.nativeTimeIdentity(action.action, false).toDouble() == row.rawget("tableEpoch"))
         // The real native stop owns cancellation, serverStop, queue removal and its owner receipt.
-        ActionManager.stop(action)
+        // Its parameter type zombie.core.Action is package-private even though stop is public.
+        ActionManager::class.java.getDeclaredMethod("stop", Class.forName("zombie.core.Action"))
+            .apply { isAccessible = true }.invoke(null, action)
         check(actions.none { it === action })
         val after = checkNotNull(ActionAdmission.cartActionAdmission(player))
         check(after.rawget("token") == token && after.rawget("stage") == "terminal")
