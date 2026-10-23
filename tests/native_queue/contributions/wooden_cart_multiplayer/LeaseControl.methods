@@ -29,6 +29,19 @@
     private static boolean leaseControlCommand(int type) {
         return type==zombie.network.PacketTypes.PacketType.ClientCommand.getId();
     }
+    private static boolean leaseControlObservedPacket(int type) {
+        return leaseControlCommand(type) || ("true".equals(System.getenv("PZ_CART_ACTION_ADMISSION"))
+            && (type==zombie.network.PacketTypes.PacketType.NetTimedAction.getId()
+                || type==zombie.network.PacketTypes.PacketType.GeneralAction.getId()));
+    }
+    /** Original pooled-reader receipt only; no static/current-connection fallback. */
+    public static LeaseCommandIngress leaseControlServerReceipt(zombie.core.network.ByteBufferReader reader,
+            zombie.core.raknet.UdpConnection connection,int type) {
+        if(!LEASE_CONTROL || leaseControlFailed || reader==null || connection==null)return null;
+        var receipt=leaseControlIngresses.get(reader);
+        return receipt!=null && receipt.transport().type()==type
+            && receipt.transport().connection().get()==connection && leaseControlCurrent(receipt.transport(),true)?receipt:null;
+    }
     private static boolean leaseControlCurrent(LeaseTransport transport,boolean server) {
         if(transport==null || leaseControlFailed)return false;
         var engine=transport.engine().get();var connection=transport.connection().get();
@@ -46,7 +59,7 @@
         try {
             if(!leaseControlFailed) {
                 int type=leaseControlHeader(reader.bb);
-                if(leaseControlCommand(type)) {
+                if(leaseControlObservedPacket(type)) {
                     // This reads the actual packet GUID from this decode invocation's native
                     // receiving peer, rather than trusting GameClient's mutable static connection.
                     long guid=engine.getPeer().getGuidOfPacket();
@@ -69,7 +82,7 @@
         if(!LEASE_CONTROL)return null;
         try {
             leaseControlIngresses.remove(data.buffer);
-            if(leaseControlFailed || !leaseControlCommand(type))return null;
+            if(leaseControlFailed || !leaseControlObservedPacket(type))return null;
             var scope=leaseControlDecode.get();
             if(scope==null || scope.reader()!=reader || scope.transport()==null)return null;
             var transport=scope.transport();
@@ -84,7 +97,7 @@
             leaseControlIngresses.remove(data.buffer);
             if(failure!=null || ingress==null || leaseControlFailed)return;
             var transport=ingress.transport();
-            if(data.type!=zombie.network.PacketTypes.PacketType.ClientCommand || data.connection!=transport.guid()
+            if(data.type==null || data.type.getId()!=transport.type() || data.connection!=transport.guid()
                 || !leaseControlCurrent(transport,zombie.network.GameServer.server))return;
             leaseControlIngresses.put(data.buffer,ingress);
         }catch(Throwable error){leaseControlError(error);}

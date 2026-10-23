@@ -1,0 +1,316 @@
+    // Opt-in observation of native server cart transactions. No effects, sends, or state writes.
+    private static final boolean ACTION_ADMISSION="true".equals(System.getenv("PZ_CART_ACTION_ADMISSION"));
+    private static volatile boolean actionAdmissionFailed;
+    private static final Object actionAdmissionLock=new Object();
+    private static final java.util.concurrent.atomic.AtomicLong actionAdmissionSequence=new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.ArrayList<ActionAdmissionRecord> actionAdmissions=new java.util.ArrayList<>();
+    private static final NativeWeakMap<Object,ActionAdmissionParsed> actionAdmissionParsed=new NativeWeakMap<>();
+    private static final ThreadLocal<ActionAdmissionScope> actionAdmissionScope=new ThreadLocal<>();
+    public record ActionAdmissionParsed(LeaseCommandIngress ingress,long generation) {}
+    public record ActionAdmissionParseScope(Object packet,LeaseCommandIngress ingress) {}
+    public static final class ActionAdmissionScope {
+        public final Object packet; public final ActionAdmissionParsed receipt; public final zombie.core.raknet.UdpConnection connection;
+        public final ActionAdmissionScope previous; public final java.util.ArrayList<ActionAdmissionRecord> starts=new java.util.ArrayList<>();
+        public ActionAdmissionScope(Object packet,ActionAdmissionParsed receipt,zombie.core.raknet.UdpConnection connection,ActionAdmissionScope previous){this.packet=packet;this.receipt=receipt;this.connection=connection;this.previous=previous;}
+    }
+    public record ActionAdmissionBinding(zombie.inventory.InventoryItem item,zombie.iso.objects.IsoWorldInventoryObject world,String refusal) {}
+    public static final class ActionAdmissionRecord {
+        public java.lang.ref.WeakReference<zombie.core.NetTimedAction> action;
+        public java.lang.ref.WeakReference<se.krka.kahlua.vm.KahluaTable> table;
+        public java.lang.ref.WeakReference<IsoPlayer> actor;
+        public java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> connection;
+        public java.lang.ref.WeakReference<zombie.inventory.InventoryItem> item;
+        public java.lang.ref.WeakReference<zombie.iso.objects.IsoWorldInventoryObject> world;
+        public LeaseTransport transport;
+        public long startGeneration,actorEpoch,connectionEpoch,actionEpoch,tableEpoch,itemEpoch,worldEpoch,ingressGeneration,parseGeneration,cart;
+        public int owner,transaction,packetType;
+        public String kind,token,stage="pending",reason="native-request-start",nativeState="Request",bindingRefusal;
+        public boolean sourceValidated,nativeBindingValid,admittedBindingValid,accepted,pendingLogged;
+    }
+    private static void actionAdmissionError(Throwable error) {
+        actionAdmissionFailed=true;
+        Main.timelineError(new IllegalStateException("Native cart admission observation failed",error));
+    }
+    private static boolean actionAdmissionEnabled(){return ACTION_ADMISSION && LEASE_CONTROL && !leaseControlFailed && !actionAdmissionFailed && zombie.network.GameServer.server && !zombie.network.GameClient.client;}
+    private static Object actionAdmissionField(Object object,String name) throws ReflectiveOperationException {
+        for(Class<?> cls=object.getClass();cls!=null;cls=cls.getSuperclass()) {
+            try{var field=cls.getDeclaredField(name);field.setAccessible(true);return field.get(object);}
+            catch(NoSuchFieldException absent){}
+        }
+        throw new NoSuchFieldException(object.getClass().getName()+"."+name);
+    }
+    private static zombie.network.fields.character.PlayerID actionAdmissionPlayer(Object action) throws ReflectiveOperationException {
+        return (zombie.network.fields.character.PlayerID)actionAdmissionField(action,"playerId");
+    }
+    private static String actionAdmissionState(Object action) throws ReflectiveOperationException {
+        Object state=actionAdmissionField(action,"state");return state==null?"unavailable":state.toString();
+    }
+    private static boolean actionAdmissionRegistered(IsoPlayer player,zombie.core.raknet.UdpConnection connection) {
+        return player!=null && connection!=null && player.getOnlineID()>=0 && !player.isDead()
+            && player.playerIndex>=0 && player.playerIndex<4 && connection.getPlayerAt(player.playerIndex)==player
+            && zombie.network.GameServer.IDToPlayerMap.get(player.getOnlineID())==player
+            && zombie.network.GameServer.getConnectionFromPlayer(player)==connection
+            && zombie.network.GameServer.udpEngine!=null
+            && zombie.network.GameServer.udpEngine.getActiveConnection(connection.getConnectedGUID())==connection;
+    }
+    private static boolean actionAdmissionCart(zombie.inventory.InventoryItem item) {
+        if(item==null)return false;String type=item.getFullType();
+        return "SaucedCarts.ShoppingCart".equals(type) || "SaucedWheelbarrow.WheelbarrowWood".equals(type) || "SaucedWheelbarrow.WheelbarrowMetal".equals(type);
+    }
+    public static boolean actionAdmissionKind(String kind){return "ToolkitWoodCartPickup".equals(kind) || "ToolkitWoodCartSetdown".equals(kind) || "ToolkitWoodCartDrop".equals(kind);}
+    /** Pure admission guard: retirement is absorbing and a token is mandatory. */
+    public static boolean actionAdmissionCanAccept(String stage,String nativeState,boolean source,boolean binding,boolean queued,String token) {
+        return "pending".equals(stage) && "Accept".equals(nativeState) && source && binding && queued && token!=null && !token.isEmpty();
+    }
+    private static ActionAdmissionBinding actionAdmissionBinding(zombie.core.NetTimedAction action,IsoPlayer player) {
+        var table=action.action;
+        if(table==null || table.rawget("character")!=player || table.rawget("netAction")!=action)return new ActionAdmissionBinding(null,null,"action-table-owner");
+        if(!"ToolkitWoodCartPickup".equals(action.type)) {
+            Object value=table.rawget("item");
+            if(!(value instanceof zombie.inventory.InventoryItem item) || !actionAdmissionCart(item))return new ActionAdmissionBinding(null,null,"held-item-unresolved");
+            if(player.getPrimaryHandItem()!=item || player.getSecondaryHandItem()!=item || item.getContainer()!=player.getInventory() || item.getWorldItem()!=null)
+                return new ActionAdmissionBinding(item,null,"held-item-binding");
+            return new ActionAdmissionBinding(item,null,null);
+        }
+        if(player.getPrimaryHandItem()!=null || player.getSecondaryHandItem()!=null)return new ActionAdmissionBinding(null,null,"pickup-hands-occupied");
+        Object x=table.rawget("squareX"),y=table.rawget("squareY"),z=table.rawget("squareZ"),id=table.rawget("itemId");
+        if(!(x instanceof Number nx) || !(y instanceof Number ny) || !(z instanceof Number nz) || !(id instanceof Number ni)
+            || !actionAdmissionInteger(nx.doubleValue()) || !actionAdmissionInteger(ny.doubleValue()) || !actionAdmissionInteger(nz.doubleValue()) || !actionAdmissionInteger(ni.doubleValue()))
+            return new ActionAdmissionBinding(null,null,"pickup-constructor-fields");
+        if(zombie.iso.IsoWorld.instance==null || zombie.iso.IsoWorld.instance.currentCell==null)return new ActionAdmissionBinding(null,null,"pickup-cell-unavailable");
+        var square=zombie.iso.IsoWorld.instance.currentCell.getGridSquare(nx.intValue(),ny.intValue(),nz.intValue());
+        if(square==null)return new ActionAdmissionBinding(null,null,"pickup-square-unavailable");
+        var objects=square.getWorldObjects();if(objects.size()>256)return new ActionAdmissionBinding(null,null,"pickup-square-capacity");
+        zombie.inventory.InventoryItem found=null;zombie.iso.objects.IsoWorldInventoryObject binding=null;
+        for(var world:objects) {
+            var item=world.getItem();
+            if(item!=null && item.getID()==ni.doubleValue()) {
+                if(found!=null)return new ActionAdmissionBinding(null,null,"pickup-item-id-ambiguous");
+                if(!actionAdmissionCart(item) || item.getWorldItem()!=world || world.getSquare()!=square || item.getContainer()!=null)
+                    return new ActionAdmissionBinding(item,world,"pickup-world-binding");
+                found=item;binding=world;
+            }
+        }
+        return found==null?new ActionAdmissionBinding(null,null,"pickup-item-unresolved"):new ActionAdmissionBinding(found,binding,null);
+    }
+    public static boolean actionAdmissionInteger(double n){return Double.isFinite(n) && n==Math.rint(n) && n>=Integer.MIN_VALUE && n<=Integer.MAX_VALUE;}
+    private static boolean actionAdmissionQueued(Object action) throws ReflectiveOperationException {
+        var field=zombie.core.ActionManager.class.getDeclaredField("actions");field.setAccessible(true);
+        Object value=field.get(null);
+        if(!(value instanceof java.util.Collection<?> queue))throw new IllegalStateException("Native ActionManager.actions is not a collection");
+        int count=0;for(Object candidate:queue){if(++count>4096)throw new IllegalStateException("Native action queue observation capacity exceeded");if(candidate==action)return true;}return false;
+    }
+    private static boolean actionAdmissionCurrentBinding(ActionAdmissionRecord record) {
+        var action=record.action.get();var player=record.actor.get();
+        if(action==null || player==null || action.action!=record.table.get() || !record.kind.equals(action.type))return false;
+        var binding=actionAdmissionBinding(action,player);
+        return binding.refusal()==null && binding.item()!=null && binding.item()==record.item.get() && binding.world()==record.world.get();
+    }
+    public static ActionAdmissionParseScope actionAdmissionParseEnter(Object packet,zombie.core.network.ByteBufferReader reader,zombie.network.IConnection connection,int type) {
+        if(!actionAdmissionEnabled())return null;
+        try{actionAdmissionParsed.remove(packet);return new ActionAdmissionParseScope(packet,connection instanceof zombie.core.raknet.UdpConnection source?leaseControlServerReceipt(reader,source,type):null);}
+        catch(Throwable error){actionAdmissionError(error);return null;}
+    }
+    public static void actionAdmissionParseExit(ActionAdmissionParseScope scope,Throwable failure) {
+        if(scope==null)return;
+        try{actionAdmissionParsed.remove(scope.packet());if(failure==null && scope.ingress()!=null && leaseControlCurrent(scope.ingress().transport(),true))
+            actionAdmissionParsed.put(scope.packet(),new ActionAdmissionParsed(scope.ingress(),actionAdmissionSequence.incrementAndGet()));}
+        catch(Throwable error){actionAdmissionError(error);}
+    }
+    public static ActionAdmissionScope actionAdmissionProcessEnter(Object packet,zombie.network.PacketTypes.PacketType type,zombie.core.raknet.UdpConnection connection) {
+        if(!actionAdmissionEnabled())return null;
+        var previous=actionAdmissionScope.get();ActionAdmissionParsed valid=null;
+        try {
+            ActionAdmissionParsed receipt;
+            synchronized(actionAdmissionParsed){receipt=actionAdmissionParsed.get(packet);actionAdmissionParsed.remove(packet);}
+            if(receipt!=null && type!=null && receipt.ingress().transport().type()==type.getId()
+                && receipt.ingress().transport().connection().get()==connection && leaseControlCurrent(receipt.ingress().transport(),true))valid=receipt;
+        }catch(Throwable error){actionAdmissionError(error);}
+        var scope=new ActionAdmissionScope(packet,valid,connection,previous);actionAdmissionScope.set(scope);return scope;
+    }
+    public static ActionAdmissionRecord actionAdmissionStartEnter(Object value) {
+        if(!actionAdmissionEnabled() || !(value instanceof zombie.core.NetTimedAction action) || !actionAdmissionKind(action.type))return null;
+        try {
+            var scope=actionAdmissionScope.get();
+            if(scope==null || scope.receipt==null || !(scope.packet instanceof zombie.network.packets.NetTimedActionPacket packet)
+                || packet.action!=action.action || !"Request".equals(actionAdmissionState(packet)))return null;
+            var owner=actionAdmissionPlayer(action);var packetOwner=actionAdmissionPlayer(packet);var player=owner.getPlayer();
+            int transaction=((Byte)actionAdmissionField(action,"id")).intValue();
+            if(player==null || packetOwner==null || transaction==0 || transaction!=((Byte)actionAdmissionField(packet,"id")).intValue() || owner.getPlayerIndex()!=player.playerIndex
+                || packetOwner.getPlayer()!=player || owner.getID()!=player.getOnlineID() || packetOwner.getID()!=player.getOnlineID()
+                || packetOwner.getPlayerIndex()!=player.playerIndex || !actionAdmissionRegistered(player,scope.connection))return null;
+            var binding=actionAdmissionBinding(action,player);var record=new ActionAdmissionRecord();
+            record.action=new java.lang.ref.WeakReference<>(action);record.table=new java.lang.ref.WeakReference<>(action.action);record.actor=new java.lang.ref.WeakReference<>(player);
+            record.connection=new java.lang.ref.WeakReference<>(scope.connection);record.item=new java.lang.ref.WeakReference<>(binding.item());record.world=new java.lang.ref.WeakReference<>(binding.world());
+            record.transport=scope.receipt.ingress().transport();record.startGeneration=actionAdmissionSequence.incrementAndGet();
+            record.actorEpoch=nativeTimeIdentity(player,true);record.connectionEpoch=nativeTimeIdentity(scope.connection,false);record.actionEpoch=nativeTimeIdentity(action,false);
+            record.tableEpoch=nativeTimeIdentity(action.action,false);record.itemEpoch=binding.item()==null?0:nativeTimeIdentity(binding.item(),false);record.worldEpoch=binding.world()==null?0:nativeTimeIdentity(binding.world(),false);
+            record.owner=player.getOnlineID();record.transaction=transaction;record.kind=action.type;record.cart=binding.item()==null?0:binding.item().getID();
+            record.ingressGeneration=scope.receipt.ingress().generation();record.parseGeneration=scope.receipt.generation();record.packetType=record.transport.type();
+            record.sourceValidated=true;record.nativeBindingValid=binding.refusal()==null;record.bindingRefusal=binding.refusal();
+            synchronized(actionAdmissionLock) {
+                if(actionAdmissions.size()>=128)throw new IllegalStateException("Native cart admission registry capacity exceeded; no proof evicted");
+                // A new real invocation is a new lifetime even if native reuses the Java object.
+                for(var old:actionAdmissions)if(old.action.get()==action && !"terminal".equals(old.stage))actionAdmissionRetire(old,"native-restart");
+                actionAdmissions.add(record);scope.starts.add(record);
+            }
+            return record;
+        }catch(Throwable error){actionAdmissionError(error);return null;}
+    }
+    public static void actionAdmissionStartExit(ActionAdmissionRecord record,Throwable failure) {
+        if(record==null)return;
+        try{synchronized(actionAdmissionLock){if(failure!=null)actionAdmissionRetire(record,"start-threw");}}
+        catch(Throwable error){actionAdmissionError(error);}
+    }
+    /** Called after the existing synchronized acknowledgement helper; no registry->Ack lock path. */
+    public static void actionAdmissionAcknowledged(Object action,Throwable failure) {
+        if(!actionAdmissionEnabled() || failure!=null)return;
+        try {
+            var cls=Class.forName("net.alexredby.pztoolkitjavapatches.ActionAcknowledgements",false,Main.class.getClassLoader());
+            var field=cls.getDeclaredField("tokens");field.setAccessible(true);
+            // started is synchronized. Read only here, while that native helper still owns its monitor.
+            Object raw=((java.util.Map<?,?>)field.get(null)).get(action);String token=raw instanceof String text?text:null;
+            var scope=actionAdmissionScope.get();if(scope==null || scope.receipt==null)return;
+            synchronized(actionAdmissionLock){for(var record:scope.starts)if(record.action.get()==action && "pending".equals(record.stage)) {
+                record.token=token;actionAdmissionPending(record);
+            }}
+        }catch(Throwable error){actionAdmissionError(error);}
+    }
+    private static void actionAdmissionPending(ActionAdmissionRecord record) {
+        if(!record.pendingLogged){record.pendingLogged=true;actionAdmissionLog("pending",record);}
+    }
+    private static void actionAdmissionRetire(ActionAdmissionRecord record,String reason) throws ReflectiveOperationException {
+        if("terminal".equals(record.stage))return;
+        actionAdmissionPending(record);record.stage="terminal";record.reason=reason;
+        var action=record.action.get();record.nativeState=action==null?"unavailable":actionAdmissionState(action);
+        record.nativeBindingValid=actionAdmissionCurrentBinding(record);actionAdmissionLog("retired",record);
+    }
+    public static void actionAdmissionProcessExit(ActionAdmissionScope scope,Throwable failure) {
+        if(scope==null)return;
+        try {
+            synchronized(actionAdmissionLock) {
+                for(var record:scope.starts) {
+                    actionAdmissionPending(record);if("terminal".equals(record.stage))continue;
+                    var action=record.action.get();record.nativeState=action==null?"unavailable":actionAdmissionState(action);
+                    record.nativeBindingValid=actionAdmissionCurrentBinding(record);
+                    boolean source=actionAdmissionRegistered(record.actor.get(),record.connection.get()) && leaseControlCurrent(record.transport,true);
+                    boolean freshToken=true;
+                    for(var old:actionAdmissions)if(old!=record && record.token!=null && record.token.equals(old.token))freshToken=false;
+                    if(failure==null && freshToken && actionAdmissionCanAccept(record.stage,record.nativeState,source && record.sourceValidated,record.nativeBindingValid,action!=null && actionAdmissionQueued(action),record.token)) {
+                        record.accepted=true;record.admittedBindingValid=true;record.stage="accepted";record.reason="native-accepted";actionAdmissionLog("accepted",record);
+                    } else actionAdmissionRetire(record,failure!=null?"handler-threw":"admission-refused:"+(record.bindingRefusal!=null?record.bindingRefusal:record.token==null?"token-unobserved":!freshToken?"token-reused":!source?"source-invalid":"native-not-accepted"));
+                }
+            }
+        }catch(Throwable error){actionAdmissionError(error);}
+        finally{if(scope.previous==null)actionAdmissionScope.remove();else actionAdmissionScope.set(scope.previous);}
+    }
+    private static void actionAdmissionRefresh(ActionAdmissionRecord record,String removedReason) throws ReflectiveOperationException {
+        if(!"accepted".equals(record.stage))return;
+        var action=record.action.get();record.nativeState=action==null?"unavailable":actionAdmissionState(action);record.nativeBindingValid=actionAdmissionCurrentBinding(record);
+        if("Done".equals(record.nativeState))actionAdmissionRetire(record,"completed");
+        else if("Reject".equals(record.nativeState))actionAdmissionRetire(record,"rejected");
+        else if(!"Accept".equals(record.nativeState))actionAdmissionRetire(record,"native-state-changed");
+        else if(!actionAdmissionRegistered(record.actor.get(),record.connection.get()) || !leaseControlCurrent(record.transport,true))actionAdmissionRetire(record,"actor-invalid");
+        else if(action==null || !actionAdmissionQueued(action))actionAdmissionRetire(record,removedReason);
+        else if(!record.nativeBindingValid)actionAdmissionRetire(record,"item-invalid");
+    }
+    /** Bounded invocation-local pins survive native queue/token removal until its exit observation. */
+    public static java.util.ArrayList<Object> actionAdmissionPin() {
+        if(!actionAdmissionEnabled())return null;
+        try {
+            var pins=new java.util.ArrayList<Object>();
+            synchronized(actionAdmissionLock) {
+                if(actionAdmissions.size()>128)throw new IllegalStateException("Native cart admission pin capacity exceeded");
+                for(var record:actionAdmissions)if(!"terminal".equals(record.stage)) {
+                    Object[] refs={record.action.get(),record.table.get(),record.actor.get(),record.connection.get(),record.item.get(),record.world.get()};
+                    for(Object ref:refs)if(ref!=null)pins.add(ref);
+                }
+            }
+            return pins;
+        }catch(Throwable error){actionAdmissionError(error);return null;}
+    }
+    public static void actionAdmissionSweepPinned(java.util.ArrayList<Object> pins,String reason) {
+        try{actionAdmissionSweep(reason);}
+        finally{java.lang.ref.Reference.reachabilityFence(pins);}
+    }
+    public static void actionAdmissionSweep(String reason) {
+        if(!actionAdmissionEnabled())return;
+        try{synchronized(actionAdmissionLock){for(var record:actionAdmissions)actionAdmissionRefresh(record,reason);}}
+        catch(Throwable error){actionAdmissionError(error);}
+    }
+    public static void actionAdmissionDisconnected(zombie.core.raknet.UdpConnection connection) {
+        if(!actionAdmissionEnabled())return;
+        try{synchronized(actionAdmissionLock){for(var record:actionAdmissions)if(record.connection.get()==connection && !"terminal".equals(record.stage))actionAdmissionRetire(record,"disconnect");}}
+        catch(Throwable error){actionAdmissionError(error);}
+    }
+    private static java.util.LinkedHashMap<String,Object> actionAdmissionSnapshot(ActionAdmissionRecord record) {
+        var result=new java.util.LinkedHashMap<String,Object>();
+        result.put("protocol",1);result.put("process",nativeTimeProcess);result.put("sourceSession",nativeTimeProcess+":"+record.connectionEpoch+":"+Long.toUnsignedString(record.transport.guid()));
+        result.put("owner",record.owner);result.put("actorEpoch",record.actorEpoch);result.put("connectionEpoch",record.connectionEpoch);result.put("startGeneration",record.startGeneration);
+        result.put("actionEpoch",record.actionEpoch);result.put("tableEpoch",record.tableEpoch);result.put("token",record.token);result.put("transaction",record.transaction);result.put("kind",record.kind);result.put("cart",record.cart);
+        result.put("itemEpoch",record.itemEpoch);result.put("worldEpoch",record.worldEpoch);result.put("stage",record.stage);result.put("reason",record.reason);result.put("nativeState",record.nativeState);
+        result.put("nativeBindingValid",record.nativeBindingValid);result.put("admittedBindingValid",record.admittedBindingValid);result.put("accepted",record.accepted);result.put("sourceValidated",record.sourceValidated);result.put("tokenObserved",record.token!=null);
+        result.put("ingressGeneration",record.ingressGeneration);result.put("parseGeneration",record.parseGeneration);result.put("packetType",record.packetType);result.put("monoNs",System.nanoTime());result.put("wallMs",System.currentTimeMillis());return result;
+    }
+    private static void actionAdmissionLog(String event,ActionAdmissionRecord record) {
+        var fields=actionAdmissionSnapshot(record);var json=new StringBuilder("{\"event\":").append(mpJsonString(event));
+        for(var entry:fields.entrySet()){json.append(',').append(mpJsonString(entry.getKey())).append(':');Object value=entry.getValue();json.append(value instanceof Number || value instanceof Boolean?value:mpJsonString((String)value));}
+        System.out.println("[CART_ADMISSION] "+json.append('}'));
+    }
+    @LuaMethod(name="cartActionAdmission",global=true)
+    public static se.krka.kahlua.vm.KahluaTable cartActionAdmission(IsoPlayer player) {
+        if(!actionAdmissionEnabled() || player==null)return null;
+        try {
+            if(leaseControlValidatedServerScope()==null || player.getOnlineID()<0 || zombie.network.GameServer.IDToPlayerMap.get(player.getOnlineID())!=player)return null;
+            synchronized(actionAdmissionLock) {
+                for(int i=actionAdmissions.size()-1;i>=0;i--) {
+                    var record=actionAdmissions.get(i);if(record.actor.get()!=player)continue;
+                    actionAdmissionRefresh(record,"native-absent");var result=zombie.Lua.LuaManager.platform.newTable();
+                    for(var entry:actionAdmissionSnapshot(record).entrySet()){Object value=entry.getValue();result.rawset(entry.getKey(),value instanceof Number number?number.doubleValue():value);}return result;
+                }
+            }
+        }catch(Throwable error){actionAdmissionError(error);}return null;
+    }
+    @Patch(className="zombie.core.NetTimedAction",methodName="parse",warmUp=false)
+    public static class ActionAdmissionTimedParse {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.core.NetTimedAction packet,@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.network.IConnection connection,@Patch.Local("admissionParse") ActionAdmissionParseScope scope){scope=Main.actionAdmissionParseEnter(packet,reader,connection,zombie.network.PacketTypes.PacketType.NetTimedAction.getId());}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.network.IConnection connection,@Patch.Local("admissionParse") ActionAdmissionParseScope scope,@Patch.Thrown Throwable failure){Main.actionAdmissionParseExit(scope,failure);}
+    }
+    @Patch(className="zombie.network.packets.GeneralActionPacket",methodName="parse",warmUp=false)
+    public static class ActionAdmissionGeneralParse {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.packets.GeneralActionPacket packet,@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.network.IConnection connection,@Patch.Local("admissionParse") ActionAdmissionParseScope scope){scope=Main.actionAdmissionParseEnter(packet,reader,connection,zombie.network.PacketTypes.PacketType.GeneralAction.getId());}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.network.IConnection connection,@Patch.Local("admissionParse") ActionAdmissionParseScope scope,@Patch.Thrown Throwable failure){Main.actionAdmissionParseExit(scope,failure);}
+    }
+    @Patch(className="zombie.network.packets.NetTimedActionPacket",methodName="processServer",warmUp=false)
+    public static class ActionAdmissionTimedProcess {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.packets.NetTimedActionPacket packet,@Patch.Argument(0) zombie.network.PacketTypes.PacketType type,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Local("admissionProcess") ActionAdmissionScope scope){scope=Main.actionAdmissionProcessEnter(packet,type,connection);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.network.PacketTypes.PacketType type,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Local("admissionProcess") ActionAdmissionScope scope,@Patch.Thrown Throwable failure){Main.actionAdmissionProcessExit(scope,failure);}
+    }
+    @Patch(className="zombie.network.packets.GeneralActionPacket",methodName="processServer",warmUp=false)
+    public static class ActionAdmissionGeneralProcess {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.packets.GeneralActionPacket packet,@Patch.Argument(0) zombie.network.PacketTypes.PacketType type,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Local("admissionProcess") ActionAdmissionScope scope){scope=Main.actionAdmissionProcessEnter(packet,type,connection);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.network.PacketTypes.PacketType type,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Local("admissionProcess") ActionAdmissionScope scope,@Patch.Thrown Throwable failure){Main.actionAdmissionProcessExit(scope,failure);Main.actionAdmissionSweep("native-remove");}
+    }
+    @Patch(className="zombie.core.ActionManager",methodName="start",warmUp=false)
+    public static class ActionAdmissionStarted {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) Object action,@Patch.Local("admissionStart") ActionAdmissionRecord record){record=Main.actionAdmissionStartEnter(action);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) Object action,@Patch.Local("admissionStart") ActionAdmissionRecord record,@Patch.Thrown Throwable failure){Main.actionAdmissionStartExit(record,failure);}
+    }
+    @Patch(className="net.alexredby.pztoolkitjavapatches.ActionAcknowledgements",methodName="started",warmUp=false)
+    public static class ActionAdmissionToken {
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) Object action,@Patch.Thrown Throwable failure){Main.actionAdmissionAcknowledged(action,failure);}
+    }
+    @Patch(className="zombie.core.ActionManager",methodName="update",warmUp=false)
+    public static class ActionAdmissionUpdated {
+        @Patch.OnEnter public static void enter(@Patch.Local("admissionPins") java.util.ArrayList<Object> pins){pins=Main.actionAdmissionPin();}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("admissionPins") java.util.ArrayList<Object> pins){Main.actionAdmissionSweepPinned(pins,"native-absent");}
+    }
+    @Patch(className="zombie.core.ActionManager",methodName="remove",warmUp=false)
+    public static class ActionAdmissionRemoved {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.network.fields.character.PlayerID player,@Patch.Argument(1) byte id,@Patch.Argument(2) boolean canceled,@Patch.Local("admissionPins") java.util.ArrayList<Object> pins){pins=Main.actionAdmissionPin();}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.network.fields.character.PlayerID player,@Patch.Argument(1) byte id,@Patch.Argument(2) boolean canceled,@Patch.Local("admissionPins") java.util.ArrayList<Object> pins){Main.actionAdmissionSweepPinned(pins,"native-remove");}
+    }
+    @Patch(className="zombie.core.ActionManager",methodName="disconnectPlayer",warmUp=false)
+    public static class ActionAdmissionDisconnect {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.core.raknet.UdpConnection connection){Main.actionAdmissionDisconnected(connection);}
+    }

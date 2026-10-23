@@ -85,6 +85,9 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
+- [ ] Add and validate an opt-in action-admission trace for the existing six-phase Host bank: exact incoming source and server NetTimedAction/table/start generation, pending versus accepted state, read-only native cart/world binding, and terminal/removal/disconnect retirement. Keep classifier refusals explicit.
+- [ ] Join selected admitted server lifetimes to the owner's existing sealed ActionQueueAcknowledgements receipt and current local action/native pointer; exercise cancel/repeat without driving effects or inferring an observer bridge. Gate: exact token/lifecycle/IDs and clean source-sealed Host evidence, then retain uncovered reject/ID-reuse/reconnect cases as pending.
+
 - [ ] Extend current-held control evidence to complete native equipment lifetimes: observe release/reacquire, same-ID item replacement, actor removal/respawn and reconnect before accepting or retiring a lease. The successful guarded challenge/echo probe does not cover these missed edges.
 - [ ] Bind action admission to the exact accepted server NetTimedAction instance/table, registered source connection/actor and native item/world ownership. Start precedes Accept; update can write terminal state without setState. Reuse the existing sealed ActionAcknowledgements owner token/queue receipts where proven; test pending/accepted/cancel/reject/repeat/byte-ID reuse/removal/disconnect. Prove the observer BaseAction/StatePacket association separately; non-null getAction is insufficient.
 - [ ] Measure serialized/wire control costs and bounded bind/resync bursts; the held probe's 24 logical messages are not a payload or production-frequency budget.

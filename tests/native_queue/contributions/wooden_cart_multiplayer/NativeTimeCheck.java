@@ -26,6 +26,17 @@ public final class NativeTimeCheck {
         catch(IllegalArgumentException expected){}
     }
     public static void main(String[] args)throws Exception {
+        check(Main.actionAdmissionKind("ToolkitWoodCartPickup") && !Main.actionAdmissionKind("ISWalkToTimedAction"),"Unrelated action admitted");
+        check(Main.actionAdmissionCanAccept("pending","Accept",true,true,true,"exact-token"),"Actual accepted action refused");
+        check(!Main.actionAdmissionCanAccept("terminal","Accept",true,true,true,"exact-token"),"Retired action reopened");
+        check(!Main.actionAdmissionCanAccept("pending","Request",true,true,true,"exact-token"),"Pre-Accept start admitted");
+        check(!Main.actionAdmissionCanAccept("pending","Accept",false,true,true,"exact-token")
+            && !Main.actionAdmissionCanAccept("pending","Accept",true,false,true,"exact-token")
+            && !Main.actionAdmissionCanAccept("pending","Accept",true,true,false,"exact-token")
+            && !Main.actionAdmissionCanAccept("pending","Accept",true,true,true,null),"Missing authority/binding/queue/token admitted");
+        check(Main.actionAdmissionInteger(Integer.MIN_VALUE) && Main.actionAdmissionInteger(Integer.MAX_VALUE)
+            && !Main.actionAdmissionInteger(Double.NaN) && !Main.actionAdmissionInteger(.5)
+            && !Main.actionAdmissionInteger(2147483648d),"Native constructor integer domain changed");
         for(var order:new ByteOrder[]{ByteOrder.BIG_ENDIAN,ByteOrder.LITTLE_ENDIAN}) {
             var header=ByteBuffer.allocate(16).order(order);header.position(4);header.put((byte)134).putShort((short)321);
             header.limit(7).position(4);header.mark();byte[] original=header.array().clone();

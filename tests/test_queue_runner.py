@@ -860,5 +860,31 @@ class CartLeaseEnvironmentTests(unittest.TestCase):
                 runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':value})
 
 
+class CartActionAdmissionEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],options=dict(
+            cart_timeline=True,cart_fast_motion=True,cart_actions=True,cart_action_admission=True,mp_host=True))
+
+    def test_action_observation_requires_explicit_isolated_host_bank(self):
+        for role in ('server','client1','client2'):
+            env=runner._fixture_environment(self.selected(),role,Path('/owned/cache'),
+                {'PZ_CART_LEASE_CONTROL':'true','PZ_CART_ACTION_ADMISSION':'true'})
+            self.assertEqual(env['PZ_CART_ACTION_ADMISSION'],'true')
+        for key,value in [('cart_timeline',False),('cart_fast_motion',False),('cart_actions',False),('cart_action_admission',False),
+                          ('mp_host',False),('cart_lease_control',True),('cart_time_alignment',True),
+                          ('cart_inventory_equip',True),('cart_wall_exit','front')]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{'PZ_CART_ACTION_ADMISSION':'true'})
+
+    def test_action_observation_cannot_be_inherited_or_enabled_by_invalid_value(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_ACTION_ADMISSION':'true','PZ_CART_LEASE_CONTROL':'true'}):
+            env=runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{})
+            self.assertNotIn('PZ_CART_ACTION_ADMISSION',env);self.assertNotIn('PZ_CART_LEASE_CONTROL',env)
+        for value in ('false','1','TRUE',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_ACTION_ADMISSION':value})
+
+
 if __name__ == "__main__":
     unittest.main()

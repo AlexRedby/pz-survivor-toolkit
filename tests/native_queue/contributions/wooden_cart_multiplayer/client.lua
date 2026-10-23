@@ -6,6 +6,7 @@ assert(type(config.videoRoot)=='table','Per-role config.videoRoot required')
 require 'SaucedCarts/Core'
 require 'SaucedCarts/CartVisuals'
 local J=require 'CartMPJSON'
+local admissionProbe=config.options and config.options.cart_action_admission==true and require 'CartActionAdmissionProbe'
 local leaseProbe=config.options and config.options.cart_lease_control==true and require 'CartLeaseProbe'
 local wallSide=config.options and config.options.cart_wall_exit
 local wallBank=wallSide and require 'CartMPWall'
@@ -92,6 +93,7 @@ Events.OnTick.Add(function()
  if not started or done then return end
  local ok,e=pcall(function()
   local now=getTimestampMs();local p=getPlayer()
+  if admissionProbe then admissionProbe.sample() end
   if now-readyAt>240000 and not epoch then error('MP setup deadline') end
   if not setup then if now-lastReady>1000 then lastReady=now;sendClientCommand('CartMP','Ready',{}) end;return end
   if not prepared then
@@ -213,6 +215,7 @@ Events.OnTick.Add(function()
     assert(elapsed<duration+35000,'MP action bank deadline')
     if user=='client1' then actions.tick(p,setup,now) end
     if not actions.done(owner,now,user) then return end
+    if admissionProbe and not admissionProbe.done() then return end
     actionsFinished=true
    end
    if not finishedAt then finishedAt=now end

@@ -18,6 +18,8 @@ Version labels come from committed component metadata, including changes made wi
 
 - **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
 
+- **Cart native action admission:** Add an opt-in read-only Host transaction trace and exact association with the existing sealed owner receipts for pickup/setdown cancellation and repeat checks. Keep pending/accepted/retired native lifetimes, original transport provenance and logical query counts separate from observer binding, wire costs and production migration.
+
 - **Cart lease admission prototype:** Add a bounded executable grant/lease/sequence controller and deterministic replay regressions, plus an explicitly selected held-only Host challenge/echo probe with exact native transport/source scopes. Keep control-path evidence separate from complete native lifetime coverage and production migration.
 
 - **Native cart timing:** Record exact PlayerPacket body/route and source/ingress/accepted generations without modifying the wire. Keep ambiguous repeated samples explicit and freeze accepted-input metadata with body/cart draws. Add a separately selected, bounded native TimeSync experiment for disposable Host clients; ordinary timeline capture remains passive and source-time playback remains gated. Resolve observer sampling from its exact remote held item and qualify active experiment coverage separately from startup request matching.

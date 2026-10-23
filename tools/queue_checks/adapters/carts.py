@@ -198,7 +198,7 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_action_admission'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
@@ -210,6 +210,12 @@ def validate(selection):
             or options.get('cart_fast_motion') is not True or options.get('mp_host') is not True or options.get('cart_inventory_equip') is True
             or options.get('cart_actions') is True or 'cart_wall_exit' in options):
         raise ValueError('cart_lease_control requires timeline plus isolated 26-second menu Host motion')
+    if options.get('cart_action_admission') is True and (options.get('cart_timeline') is not True
+            or options.get('cart_fast_motion') is not True or options.get('mp_host') is not True
+            or options.get('cart_actions') is not True or options.get('cart_lease_control') is True
+            or options.get('cart_time_alignment') is True or options.get('cart_inventory_equip') is True
+            or 'cart_wall_exit' in options):
+        raise ValueError('cart_action_admission requires isolated 26-second menu Host motion plus cart actions and timeline')
     if 'cart_direct_fast_walk' in options:
         if suite != SP or selection['cases'] != ['sprint'] or type(options['cart_direct_fast_walk']) is not bool:
             raise ValueError('cart_direct_fast_walk requires a boolean in the SP sprint case')
@@ -327,7 +333,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         anchor = '    public static void main(String[] args)'
         if main.count(anchor) != 1:
             raise ValueError('CartLab composition anchor changed')
-        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods')) + '\n' + anchor)
+        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'ActionAdmission.methods')) + '\n' + anchor)
     source = build / 'Main.java'
     source.write_text(main, encoding='utf-8')
     _compile(jdk, classpath, build / 'lab-classes', [source])
@@ -358,7 +364,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[CART_LEASE] ERROR', '[CART_ADMISSION] ERROR']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():
@@ -389,6 +395,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 if origin.startswith('inventory-equip-') and selection.get('options', {}).get('cart_inventory_equip') is not True:
                     continue
                 _write(lua / target, (mp / origin).read_text())
+            if selection.get('options', {}).get('cart_action_admission') is True:
+                for layer in ('client', 'server'):
+                    _write(lua / layer / 'CartActionAdmissionProbe.lua', (mp / 'action-admission.lua').read_text())
         elif role != 'server':
             _write(lua / 'client/QueueCartStartup.lua', (project / 'tests/native_queue/support/QueueCartStartup.lua').read_text())
         runtime_lua = cache / 'Lua/cart-runtime.lua'
@@ -396,8 +405,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         spec['env']['PZ_CART_TEST_PAD'] = 'true' if selection['suite'] == SP else 'false'
         if selection['suite'] == MP and selection.get('options', {}).get('cart_timeline'):
             spec['env']['PZ_CART_TIMELINE'] = 'true'
-        if selection['suite'] == MP and selection.get('options', {}).get('cart_lease_control') is True:
+        if selection['suite'] == MP and (selection.get('options', {}).get('cart_lease_control') is True or selection.get('options', {}).get('cart_action_admission') is True):
             spec['env']['PZ_CART_LEASE_CONTROL'] = 'true'
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
+            spec['env']['PZ_CART_ACTION_ADMISSION'] = 'true'
         if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_time_alignment') is True:
             spec['env']['PZ_CART_TIME_ALIGNMENT'] = 'true'
         if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_inventory_equip'):
@@ -1235,6 +1246,12 @@ def verify(root, selection, catalog):
                 raise ValueError('Incomplete native lease-control exchange evidence')
             _write(analysis / 'mp-lease-control.json', json.dumps(lease, indent=2, allow_nan=False))
             evidence['leaseControl'] = lease
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
+            admission = _load(intake / 'analyze-action-admission.py').analyze(root)
+            if admission.get('evidenceComplete') is not True:
+                raise ValueError('Incomplete native action admission/owner receipt evidence')
+            _write(analysis / 'mp-action-admission.json', json.dumps(admission, indent=2, allow_nan=False))
+            evidence['actionAdmission'] = admission
         if selection['suite'] == MP and selection.get('options', {}).get('cart_inventory_equip'):
             report = _load(intake / 'analyze-inventory-equip.py').analyze(root, selection)
             if report.get('evidenceComplete') is not True:

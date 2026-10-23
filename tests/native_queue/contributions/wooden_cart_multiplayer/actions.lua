@@ -5,6 +5,7 @@ require 'TimedActions/ISTimedActionQueue'
 local J=require 'CartMPJSON'
 local Actions={}
 local config=require 'QueueTestSelection'
+local admission=config.options and config.options.cart_action_admission==true and require 'CartActionAdmissionProbe'
 local variants={['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal',['shopping-cart']='SaucedCarts.ShoppingCart'}
 local cartType=assert(variants[config.options and config.options.cart_variant or 'wooden-wheelbarrow'],'Actions require an exact supported cart variant')
 local hotkey=config.options and config.options.cart_hotkey_setdown==true
@@ -121,6 +122,7 @@ local function enqueue(p,now)
  end
  assert(PZSurvivorToolkit.ActionQueueOperations,'Action queue operations required').run(callback)
  assert(not empty(p),'Native cart callback queued no action')
+ if admission then admission.track(assert(queue(p).queue[1]),{index=session.index,phase=spec.name,id=session.id}) end
  if hotkey and spec.drop then
   local queued=queue(p).queue
   assert(#queued==1 and queued[1].Type=='ToolkitWoodCartDrop' and queued[1].item==item,

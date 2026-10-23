@@ -37,7 +37,10 @@
     "LeaseControl.methods",
     "lease-protocol.lua",
     "lease-probe.lua",
-    "analyze-lease.py"
+    "analyze-lease.py",
+    "ActionAdmission.methods",
+    "action-admission.lua",
+    "analyze-action-admission.py"
   ],
   "selection_template": {
     "schema_version": 1,

@@ -692,6 +692,26 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
             self.options.clear();self.options.update(original)
 
+    def test_action_admission_stages_probe_only_for_explicit_native_action_bank(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_action_admission=True)
+        with self.assertRaisesRegex(ValueError,'cart_action_admission'):carts.validate(self.selection)
+        self.options.update(cart_timeline=True,cart_fast_motion=True,cart_actions=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('server','client1','client2'):
+            env=self.runtime['roles'][role]['env']
+            self.assertEqual(env['PZ_CART_ACTION_ADMISSION'],'true');self.assertEqual(env['PZ_CART_LEASE_CONTROL'],'true')
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            for layer in ('client','server'):
+                self.assertEqual((lua/layer/'CartActionAdmissionProbe.lua').read_bytes(),
+                    (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/action-admission.lua').read_bytes())
+            self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+        for key,value in [('cart_action_admission','true'),('cart_actions',False),('cart_fast_motion',False),
+                          ('cart_time_alignment',True),('cart_lease_control',True),('cart_inventory_equip',True)]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
     def test_native_time_sampling_requires_separate_host_optin_and_stages_clients_only(self):
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         self.options.update(cart_time_alignment=True)
