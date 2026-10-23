@@ -1,3 +1,9 @@
+# Cart main delivery
+
+- [ ] Merge current origin/main, preserve concurrent queue/build changes and keep delivered component versions newer than main.
+- [ ] Run merged cart and shared-runner/build regression checks, confirm no unintended runtime differences and preserve known native verification limits.
+- [ ] Recheck remote main, publish with a normal fast-forward push and verify the remote commit.
+
 # Nick's Turn Off Fridges selection
 
 - [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
