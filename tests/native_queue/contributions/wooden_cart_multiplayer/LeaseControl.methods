@@ -1,0 +1,251 @@
+    // Test-only command provenance. These hooks only observe native buffers and scope;
+    // the Lua reference controller owns challenge/reply policy, and owns no game effects.
+    private static final boolean LEASE_CONTROL="true".equals(System.getenv("PZ_CART_LEASE_CONTROL"));
+    private static volatile boolean leaseControlFailed;
+    private static final java.util.concurrent.atomic.AtomicLong leaseControlGeneration=new java.util.concurrent.atomic.AtomicLong();
+    private static final NativeWeakMap<zombie.core.network.ByteBufferReader,LeaseCommandIngress> leaseControlIngresses=new NativeWeakMap<>();
+    private static final ThreadLocal<LeaseDecodeScope> leaseControlDecode=new ThreadLocal<>();
+    private static final ThreadLocal<LeaseDispatchScope> leaseControlDispatch=new ThreadLocal<>();
+    private static final ThreadLocal<LeaseCallbackScope> leaseControlCallback=new ThreadLocal<>();
+    public record LeaseTransport(java.lang.ref.WeakReference<zombie.core.raknet.UdpEngine> engine,
+        java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> connection,long epoch,long guid,int type) {}
+    public record LeaseCommandIngress(long generation,LeaseTransport transport) {}
+    public record LeaseDecodeScope(zombie.core.network.ByteBufferReader reader,LeaseTransport transport,LeaseDecodeScope previous) {}
+    public record LeaseDispatchScope(zombie.core.network.ByteBufferReader reader,LeaseCommandIngress ingress,LeaseDispatchScope previous) {}
+    public record LeaseCallbackScope(zombie.core.network.ByteBufferReader reader,LeaseCommandIngress ingress,
+        zombie.core.raknet.UdpConnection connection,int playerIndex,boolean server,LeaseCallbackScope previous) {}
+
+    private static void leaseControlError(Throwable error) {
+        leaseControlFailed=true;
+        Main.timelineError(new IllegalStateException("Lease command provenance observation failed",error));
+    }
+    /** Return the original native type header, or -1 when absent; preserve all buffer state. */
+    public static int leaseControlHeader(java.nio.ByteBuffer buffer) {
+        if(buffer==null)return -1;
+        int at=buffer.position();
+        if(buffer.remaining()<3 || (buffer.get(at)&255)!=134)return -1;
+        return buffer.getShort(at+1)&65535;
+    }
+    private static boolean leaseControlCommand(int type) {
+        return type==zombie.network.PacketTypes.PacketType.ClientCommand.getId();
+    }
+    private static boolean leaseControlCurrent(LeaseTransport transport,boolean server) {
+        if(transport==null || leaseControlFailed)return false;
+        var engine=transport.engine().get();var connection=transport.connection().get();
+        if(engine==null || connection==null || nativeTimeIdentity(connection,false)!=transport.epoch()
+            || connection.getConnectedGUID()!=transport.guid() || engine.getActiveConnection(transport.guid())!=connection)return false;
+        if(server)return zombie.network.GameServer.server && !zombie.network.GameClient.client
+            && zombie.network.GameServer.udpEngine==engine;
+        return zombie.network.GameClient.client && !zombie.network.GameServer.server
+            && zombie.network.GameClient.instance!=null && zombie.network.GameClient.instance.udpEngine==engine
+            && zombie.network.GameClient.connection==connection;
+    }
+    public static LeaseDecodeScope leaseControlDecodeEnter(zombie.core.raknet.UdpEngine engine,zombie.core.network.ByteBufferReader reader) {
+        if(!LEASE_CONTROL)return null;
+        var previous=leaseControlDecode.get();LeaseTransport transport=null;
+        try {
+            if(!leaseControlFailed) {
+                int type=leaseControlHeader(reader.bb);
+                if(leaseControlCommand(type)) {
+                    // This reads the actual packet GUID from this decode invocation's native
+                    // receiving peer, rather than trusting GameClient's mutable static connection.
+                    long guid=engine.getPeer().getGuidOfPacket();
+                    var connection=engine.getActiveConnection(guid);
+                    if(connection!=null) {
+                        var candidate=new LeaseTransport(new java.lang.ref.WeakReference<>(engine),new java.lang.ref.WeakReference<>(connection),nativeTimeIdentity(connection,false),guid,type);
+                        if(leaseControlCurrent(candidate,zombie.network.GameServer.server))transport=candidate;
+                    }
+                }
+            }
+        }catch(Throwable error){leaseControlError(error);}
+        var scope=new LeaseDecodeScope(reader,transport,previous);leaseControlDecode.set(scope);return scope;
+    }
+    public static void leaseControlDecodeExit(LeaseDecodeScope scope) {
+        if(scope==null)return;
+        try{if(scope.previous()==null)leaseControlDecode.remove();else leaseControlDecode.set(scope.previous());}
+        catch(Throwable error){leaseControlError(error);}
+    }
+    public static LeaseCommandIngress leaseControlReadEnter(zombie.network.ZomboidNetData data,short type,zombie.core.network.ByteBufferReader reader,zombie.core.raknet.UdpConnection supplied) {
+        if(!LEASE_CONTROL)return null;
+        try {
+            leaseControlIngresses.remove(data.buffer);
+            if(leaseControlFailed || !leaseControlCommand(type))return null;
+            var scope=leaseControlDecode.get();
+            if(scope==null || scope.reader()!=reader || scope.transport()==null)return null;
+            var transport=scope.transport();
+            if(transport.type()!=type || transport.connection().get()!=supplied
+                || !leaseControlCurrent(transport,zombie.network.GameServer.server))return null;
+            return new LeaseCommandIngress(leaseControlGeneration.incrementAndGet(),transport);
+        }catch(Throwable error){leaseControlError(error);return null;}
+    }
+    public static void leaseControlReadExit(zombie.network.ZomboidNetData data,LeaseCommandIngress ingress,Throwable failure) {
+        if(!LEASE_CONTROL)return;
+        try {
+            leaseControlIngresses.remove(data.buffer);
+            if(failure!=null || ingress==null || leaseControlFailed)return;
+            var transport=ingress.transport();
+            if(data.type!=zombie.network.PacketTypes.PacketType.ClientCommand || data.connection!=transport.guid()
+                || !leaseControlCurrent(transport,zombie.network.GameServer.server))return;
+            leaseControlIngresses.put(data.buffer,ingress);
+        }catch(Throwable error){leaseControlError(error);}
+    }
+    public static void leaseControlReadReset(zombie.network.ZomboidNetData data) {
+        if(!LEASE_CONTROL)return;
+        try{leaseControlIngresses.remove(data.buffer);}catch(Throwable error){leaseControlError(error);}
+    }
+    public static LeaseDispatchScope leaseControlDispatchEnter(zombie.network.ZomboidNetData data) {
+        if(!LEASE_CONTROL)return null;
+        var previous=leaseControlDispatch.get();LeaseCommandIngress ingress=null;
+        try {
+            if(!leaseControlFailed && data!=null && data.type==zombie.network.PacketTypes.PacketType.ClientCommand) {
+                var candidate=leaseControlIngresses.get(data.buffer);
+                if(candidate!=null && data.connection==candidate.transport().guid() && leaseControlCurrent(candidate.transport(),false))ingress=candidate;
+            }
+        }catch(Throwable error){leaseControlError(error);}
+        var scope=new LeaseDispatchScope(data==null?null:data.buffer,ingress,previous);leaseControlDispatch.set(scope);return scope;
+    }
+    public static void leaseControlDispatchExit(LeaseDispatchScope scope) {
+        if(scope==null)return;
+        try{if(scope.previous()==null)leaseControlDispatch.remove();else leaseControlDispatch.set(scope.previous());}
+        catch(Throwable error){leaseControlError(error);}
+    }
+    public static LeaseCallbackScope leaseControlClientEnter(zombie.core.network.ByteBufferReader reader,short type) {
+        if(!LEASE_CONTROL)return null;
+        var previous=leaseControlCallback.get();LeaseCommandIngress ingress=null;zombie.core.raknet.UdpConnection connection=null;
+        try {
+            var dispatch=leaseControlDispatch.get();
+            if(!leaseControlFailed && leaseControlCommand(type) && dispatch!=null && dispatch.reader()==reader
+                && dispatch.ingress()!=null && leaseControlIngresses.get(reader)==dispatch.ingress()
+                && leaseControlCurrent(dispatch.ingress().transport(),false)) {
+                ingress=dispatch.ingress();connection=ingress.transport().connection().get();
+            }
+        }catch(Throwable error){leaseControlError(error);}
+        var scope=new LeaseCallbackScope(reader,ingress,connection,-1,false,previous);leaseControlCallback.set(scope);return scope;
+    }
+    public static LeaseCallbackScope leaseControlServerEnter(zombie.core.network.ByteBufferReader reader,zombie.core.raknet.UdpConnection connection,short type) {
+        if(!LEASE_CONTROL)return null;
+        var previous=leaseControlCallback.get();LeaseCommandIngress ingress=null;int index=-1;
+        try {
+            var candidate=leaseControlIngresses.get(reader);
+            if(!leaseControlFailed && leaseControlCommand(type) && candidate!=null && candidate.transport().type()==type
+                && candidate.transport().connection().get()==connection && leaseControlCurrent(candidate.transport(),true)
+                && reader.bb.remaining()>0) {
+                // Native receiveClientCommand consumes this signed player-index byte first.
+                int wireIndex=reader.bb.get(reader.bb.position());
+                if(wireIndex>=0 && wireIndex<4){index=wireIndex;ingress=candidate;}
+            }
+        }catch(Throwable error){leaseControlError(error);}
+        var scope=new LeaseCallbackScope(reader,ingress,ingress==null?null:connection,index,true,previous);leaseControlCallback.set(scope);return scope;
+    }
+    public static void leaseControlCallbackExit(LeaseCallbackScope scope) {
+        if(scope==null)return;
+        try{if(scope.previous()==null)leaseControlCallback.remove();else leaseControlCallback.set(scope.previous());}
+        catch(Throwable error){leaseControlError(error);}
+    }
+    /** Only the authenticated event player of the exact native command invocation qualifies. */
+    @LuaMethod(name="cartLeaseSource",global=true)
+    public static zombie.core.raknet.UdpConnection cartLeaseSource(IsoPlayer player) {
+        if(!LEASE_CONTROL || leaseControlFailed || player==null)return null;
+        try {
+            var scope=leaseControlCallback.get();
+            if(scope==null || !scope.server() || scope.ingress()==null || scope.playerIndex()<0 || scope.playerIndex()>=4
+                || leaseControlIngresses.get(scope.reader())!=scope.ingress() || !leaseControlCurrent(scope.ingress().transport(),true))return null;
+            var connection=scope.connection();
+            if(connection==null || connection!=scope.ingress().transport().connection().get()
+                || connection.getPlayerAt(scope.playerIndex())!=player || player.getOnlineID()<0
+                || zombie.network.GameServer.IDToPlayerMap.get(player.getOnlineID())!=player
+                || zombie.network.GameServer.getConnectionFromPlayer(player)!=connection)return null;
+            return connection;
+        }catch(Throwable error){leaseControlError(error);return null;}
+    }
+    /** No current-static-connection fallback: a live original transport receipt is mandatory. */
+    @LuaMethod(name="cartLeaseIngress",global=true)
+    public static zombie.core.raknet.UdpConnection cartLeaseIngress() {
+        if(!LEASE_CONTROL || leaseControlFailed)return null;
+        try {
+            var callback=leaseControlCallback.get();var dispatch=leaseControlDispatch.get();
+            if(callback==null || callback.server() || callback.ingress()==null || dispatch==null
+                || callback.reader()!=dispatch.reader() || callback.ingress()!=dispatch.ingress()
+                || leaseControlIngresses.get(callback.reader())!=callback.ingress()
+                || !leaseControlCurrent(callback.ingress().transport(),false))return null;
+            return callback.connection()==callback.ingress().transport().connection().get()?callback.connection():null;
+        }catch(Throwable error){leaseControlError(error);return null;}
+    }
+
+    private static boolean leaseControlOwnedClient() {
+        if(!LEASE_CONTROL || leaseControlFailed || !zombie.network.GameClient.client || zombie.network.GameServer.server
+            || zombie.network.GameClient.connection==null || zombie.network.GameClient.instance==null
+            || !zombie.network.GameClient.instance.connected || Thread.currentThread()!=zombie.GameWindow.gameThread)return false;
+        var player=IsoPlayer.getInstance();
+        if(player==null || !player.isLocalPlayer() || player.getOnlineID()<0
+            || !("client1".equals(player.getUsername()) || "client2".equals(player.getUsername()))
+            || zombie.network.GameClient.IDToPlayerMap.get(player.getOnlineID())!=player)return false;
+        var configured=runtime.getParent().getParent().toAbsolutePath().normalize();
+        var cache=java.nio.file.Path.of(zombie.ZomboidFileSystem.instance.getCacheDir()).toAbsolutePath().normalize();
+        return cache.equals(configured);
+    }
+    /** Current local pending-request binding only; never use this as ingress authority. */
+    @LuaMethod(name="cartLeaseCurrent",global=true)
+    public static zombie.core.raknet.UdpConnection cartLeaseCurrent() {
+        try{return leaseControlOwnedClient()?zombie.network.GameClient.connection:null;}
+        catch(Throwable error){leaseControlError(error);return null;}
+    }
+    @LuaMethod(name="cartLeaseSeed",global=true)
+    public static String cartLeaseSeed() {return LEASE_CONTROL && !leaseControlFailed?nativeTimeProcess:null;}
+    private static LeaseCallbackScope leaseControlValidatedServerScope() {
+        var scope=leaseControlCallback.get();
+        if(scope==null || !scope.server() || scope.connection()==null || scope.playerIndex()<0 || scope.playerIndex()>=4)return null;
+        var requester=scope.connection().getPlayerAt(scope.playerIndex());
+        return cartLeaseSource(requester)==scope.connection()?scope:null;
+    }
+    @LuaMethod(name="cartLeaseTarget",global=true)
+    public static IsoPlayer cartLeaseTarget(int onlineID) {
+        if(!LEASE_CONTROL || leaseControlFailed || onlineID<0 || onlineID>Short.MAX_VALUE)return null;
+        try {
+            if(leaseControlValidatedServerScope()==null)return null;
+            var target=zombie.network.GameServer.IDToPlayerMap.get((short)onlineID);
+            return target!=null && target.getOnlineID()==onlineID?target:null;
+        }catch(Throwable error){leaseControlError(error);return null;}
+    }
+    @LuaMethod(name="cartLeaseOwnerConnection",global=true)
+    public static zombie.core.raknet.UdpConnection cartLeaseOwnerConnection(IsoPlayer target) {
+        if(!LEASE_CONTROL || leaseControlFailed || target==null)return null;
+        try {
+            if(leaseControlValidatedServerScope()==null || target.getOnlineID()<0
+                || zombie.network.GameServer.IDToPlayerMap.get(target.getOnlineID())!=target)return null;
+            var connection=zombie.network.GameServer.getConnectionFromPlayer(target);
+            int index=target.playerIndex;
+            return connection!=null && index>=0 && index<4 && connection.getPlayerAt(index)==target
+                && zombie.network.GameServer.udpEngine.getActiveConnection(connection.getConnectedGUID())==connection?connection:null;
+        }catch(Throwable error){leaseControlError(error);return null;}
+    }
+
+    @Patch(className="zombie.core.raknet.UdpEngine",methodName="decode",warmUp=false)
+    public static class LeaseControlDecode {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.core.raknet.UdpEngine engine,@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Local("leaseDecode") LeaseDecodeScope scope){scope=Main.leaseControlDecodeEnter(engine,reader);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Local("leaseDecode") LeaseDecodeScope scope){Main.leaseControlDecodeExit(scope);}
+    }
+    @Patch(className="zombie.network.ZomboidNetData",methodName="read",warmUp=true)
+    public static class LeaseControlRead {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.ZomboidNetData data,@Patch.Argument(0) short type,@Patch.Argument(1) zombie.core.network.ByteBufferReader reader,@Patch.Argument(2) zombie.core.raknet.UdpConnection connection,@Patch.Local("leaseIngress") LeaseCommandIngress ingress){ingress=Main.leaseControlReadEnter(data,type,reader,connection);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.This zombie.network.ZomboidNetData data,@Patch.Argument(0) short type,@Patch.Argument(1) zombie.core.network.ByteBufferReader reader,@Patch.Argument(2) zombie.core.raknet.UdpConnection connection,@Patch.Local("leaseIngress") LeaseCommandIngress ingress,@Patch.Thrown Throwable failure){Main.leaseControlReadExit(data,ingress,failure);}
+    }
+    @Patch(className="zombie.network.ZomboidNetData",methodName="reset",warmUp=true)
+    public static class LeaseControlReset {
+        @Patch.OnEnter public static void enter(@Patch.This zombie.network.ZomboidNetData data){Main.leaseControlReadReset(data);}
+    }
+    @Patch(className="zombie.network.GameClient",methodName="mainLoopHandlePacketInternal",warmUp=false)
+    public static class LeaseControlDispatch {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.network.ZomboidNetData data,@Patch.Local("leaseDispatch") LeaseDispatchScope scope){scope=Main.leaseControlDispatchEnter(data);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.network.ZomboidNetData data,@Patch.Local("leaseDispatch") LeaseDispatchScope scope){Main.leaseControlDispatchExit(scope);}
+    }
+    @Patch(className="zombie.network.GameClient",methodName="receiveClientCommand",warmUp=false)
+    public static class LeaseControlClientCommand {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) short type,@Patch.Local("leaseCallback") LeaseCallbackScope scope){scope=Main.leaseControlClientEnter(reader,type);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) short type,@Patch.Local("leaseCallback") LeaseCallbackScope scope){Main.leaseControlCallbackExit(scope);}
+    }
+    @Patch(className="zombie.network.GameServer",methodName="receiveClientCommand",warmUp=false)
+    public static class LeaseControlServerCommand {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Argument(2) short type,@Patch.Local("leaseCallback") LeaseCallbackScope scope){scope=Main.leaseControlServerEnter(reader,connection,type);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.core.raknet.UdpConnection connection,@Patch.Argument(2) short type,@Patch.Local("leaseCallback") LeaseCallbackScope scope){Main.leaseControlCallbackExit(scope);}
+    }

@@ -17,7 +17,8 @@ Version labels come from committed component metadata, including changes made wi
 - **Native equipment checks:** Extend the common clothing matrix to initially desired held/worn baselines, with authority-only hand/worn setup after inventory delivery, exact cleared-hand checkpoints and P4 Equip/activation/Wear restoration.
 
 - **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
-- **Native cart timing:** Record exact PlayerPacket body/route and source/ingress/accepted generations without modifying the wire. Keep ambiguous repeated samples explicit and freeze accepted-input metadata with body/cart draws. Add a separately selected, bounded native TimeSync experiment for disposable Host clients; ordinary timeline capture remains passive and source-time playback remains gated.
+
+- **Cart lease admission prototype:** Add a bounded executable grant/lease/sequence controller and deterministic replay regressions, plus an explicitly selected held-only Host challenge/echo probe with exact native transport/source scopes. Keep control-path evidence separate from complete native lifetime coverage and production migration.
 
 - **Native cart timing:** Record exact PlayerPacket body/route and source/ingress/accepted generations without modifying the wire. Keep ambiguous repeated samples explicit and freeze accepted-input metadata with body/cart draws. Add a separately selected, bounded native TimeSync experiment for disposable Host clients; ordinary timeline capture remains passive and source-time playback remains gated. Resolve observer sampling from its exact remote held item and qualify active experiment coverage separately from startup request matching.
 

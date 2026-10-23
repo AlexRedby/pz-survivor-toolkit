@@ -26,6 +26,15 @@ public final class NativeTimeCheck {
         catch(IllegalArgumentException expected){}
     }
     public static void main(String[] args)throws Exception {
+        for(var order:new ByteOrder[]{ByteOrder.BIG_ENDIAN,ByteOrder.LITTLE_ENDIAN}) {
+            var header=ByteBuffer.allocate(16).order(order);header.position(4);header.put((byte)134).putShort((short)321);
+            header.limit(7).position(4);header.mark();byte[] original=header.array().clone();
+            check(Main.leaseControlHeader(header)==321,"Lease command header/order lost");
+            check(header.position()==4 && header.limit()==7 && header.order()==order,"Lease header changed cursor/limit/order");
+            header.reset();check(header.position()==4 && Arrays.equals(original,header.array()),"Lease header changed mark/content");
+            header.limit(6);check(Main.leaseControlHeader(header)==-1,"Truncated lease header accepted");
+            header.limit(7);header.put(4,(byte)1);check(Main.leaseControlHeader(header)==-1,"Foreign header accepted");
+        }
         var buffer=ByteBuffer.allocate(300).order(ByteOrder.LITTLE_ENDIAN);
         buffer.putInt(0x01020304).putFloat(-0.0f).putInt(0x7fc01234);buffer.position(2);buffer.mark();
         byte[] before=buffer.array().clone();var body=Main.nativeTimeBody(buffer,4,12);

@@ -725,7 +725,7 @@ def check_java(game, jdk, patch):
     with tempfile.TemporaryDirectory(prefix='cart-mp-compile-') as directory:
         root = Path(directory)
         main = root / 'Main.java'
-        main.write_text(base.replace(anchor, '\n'.join((HERE / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods')) + '\n' + anchor))
+        main.write_text(base.replace(anchor, '\n'.join((HERE / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods')) + '\n' + anchor))
         subprocess.run([str(javac), '--release', '25', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ClearanceProbe.java')], check=True)
         assert (root / 'net/alexredby/cartlab/Main.class').is_file() and (root / 'ClearanceProbe.class').is_file()
         checks=root/'ModelProbeCheck.java'
@@ -1106,7 +1106,7 @@ def main():
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
         for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua',
-                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua'):
+                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')

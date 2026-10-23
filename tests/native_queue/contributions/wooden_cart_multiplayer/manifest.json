@@ -33,7 +33,11 @@
     "ClockTime.methods",
     "ClockTimeCheck.java",
     "native_packet_time.py",
-    "clock_time.py"
+    "clock_time.py",
+    "LeaseControl.methods",
+    "lease-protocol.lua",
+    "lease-probe.lua",
+    "analyze-lease.py"
   ],
   "selection_template": {
     "schema_version": 1,

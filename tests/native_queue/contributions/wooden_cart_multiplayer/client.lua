@@ -6,6 +6,7 @@ assert(type(config.videoRoot)=='table','Per-role config.videoRoot required')
 require 'SaucedCarts/Core'
 require 'SaucedCarts/CartVisuals'
 local J=require 'CartMPJSON'
+local leaseProbe=config.options and config.options.cart_lease_control==true and require 'CartLeaseProbe'
 local wallSide=config.options and config.options.cart_wall_exit
 local wallBank=wallSide and require 'CartMPWall'
 local wallInput=wallSide and require 'CartMPWallInput'
@@ -161,6 +162,7 @@ Events.OnTick.Add(function()
   end
   if not epoch then return end
   local elapsed=now-epoch
+  if leaseProbe then leaseProbe.sample(owner,elapsed) end
   if config.options and config.options.cart_time_alignment==true and elapsed>=0 and elapsed<=duration then
    assert(owner,'Native timing owner missing')
    local timingCart=assert(owner:getPrimaryHandItem(),'Native timing cart missing')

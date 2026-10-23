@@ -835,5 +835,30 @@ class CartTimingEnvironmentTests(unittest.TestCase):
                 runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':value})
 
 
+class CartLeaseEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict(cart_timeline=True,cart_lease_control=True,cart_fast_motion=True,mp_host=True))
+
+    def test_control_scope_requires_explicit_owned_host_selection(self):
+        for role in ('server','client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selected(),role,Path('/owned/cache'),
+                {'PZ_CART_LEASE_CONTROL':'true'})['PZ_CART_LEASE_CONTROL'],'true')
+        for key,value in [('cart_timeline',False),('cart_lease_control',False),('cart_fast_motion',False),('mp_host',False),
+                          ('cart_inventory_equip',True),('cart_actions',True),('cart_wall_exit','front')]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':'true'})
+        with self.assertRaises(ValueError):
+            runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':'true'})
+
+    def test_control_scope_is_never_inherited_or_enabled_by_nontrue_values(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_LEASE_CONTROL':'true'}):
+            self.assertNotIn('PZ_CART_LEASE_CONTROL',runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','TRUE','1',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':value})
+
+
 if __name__ == "__main__":
     unittest.main()
