@@ -5,6 +5,7 @@ import re
 import shutil
 
 from . import craft, fluid
+from ..mod_selection import metadata, mod_ids
 
 FULL_MOVE_CASE = 'food-full-replacement-move-independent'
 FULL_CANCEL_CASE = 'food-full-replacement-cancel-pending'
@@ -70,9 +71,7 @@ ALL_WORLD_CASES = (*WORLD_CASES, *WORLD_BAG_CASES)
 BAG_CASES = (BAG_CASE, *EXTRA_TRANSFER_CASES, *ALL_WORLD_CASES)
 CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES, *REPLACEMENT_CASES, *CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES, *ALL_WORLD_CASES, *FULL_CASES]
 # The full selected installation. Locked EatSmart debug logging leaves native completion unchanged.
-MODS = next(line.split('=', 1)[1].split(';') for line in
-            (Path(__file__).resolve().parents[3] / 'SurvivorQoL-selected.ini').read_text().splitlines()
-            if line.startswith('Mods='))
+MODS = mod_ids(metadata(Path(__file__).resolve().parents[3] / 'SurvivorQoL-selected.ini')['Mods'])
 RECEIPT_KEYS = {'case', 'bagId', 'bagType', 'bagCount', 'foodId', 'foodType', 'baseHunger', 'remaining',
                 'source', 'foodCount', 'foodTypeCount', 'deleted', 'anchorId', 'anchorType', 'anchorAmount', 'anchorCount',
                 'anchorThirstChange', 'hunger', 'thirst'}
