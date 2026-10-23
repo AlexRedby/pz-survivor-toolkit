@@ -15,6 +15,85 @@
     public record LeaseCallbackScope(zombie.core.network.ByteBufferReader reader,LeaseCommandIngress ingress,
         zombie.core.raknet.UdpConnection connection,int playerIndex,boolean server,LeaseCallbackScope previous) {}
 
+    // Native receive-buffer accounting only; tables are parsed exactly once by the game.
+    private static final ThreadLocal<java.util.IdentityHashMap<LeaseCallbackScope,LeaseReceiptFrame>> leaseReceiptFrames=new ThreadLocal<>();
+    private static long leaseReceiptRows;
+    public static final class LeaseReceiptFrame {
+        final java.nio.ByteBuffer buffer;final int begin,end;final java.nio.ByteOrder order;
+        final String module,command;String receipt;
+        LeaseReceiptFrame(java.nio.ByteBuffer buffer,int begin,int end,String module,String command){
+            this.buffer=buffer;this.begin=begin;this.end=end;this.order=buffer.order();this.module=module;this.command=command;
+        }
+    }
+    private static boolean leaseReceiptModule(String module) {
+        return "CartLeaseProbe".equals(module) || "CartLeaseLifetimes".equals(module) || "CartActionAdmissionProbe".equals(module);
+    }
+    private static void leaseReceiptCapture(LeaseCallbackScope scope) {
+        if(scope==null || scope.ingress()==null || scope.reader()==null || scope.reader().bb==null)return;
+        var buffer=scope.reader().bb;int begin=buffer.position(),end=buffer.limit();
+        try {
+            // ByteBufferReader.getUTF uses a signed-short UTF-8 byte length in the pinned native JAR.
+            var duplicate=buffer.asReadOnlyBuffer().order(buffer.order());
+            var reader=new zombie.core.network.ByteBufferReader(duplicate);
+            if(scope.server() && reader.getByte()!=scope.playerIndex())return;
+            String module=reader.getUTF();if(!leaseReceiptModule(module))return;
+            String command=reader.getUTF();if(command==null || command.isEmpty())return;
+            // A native command always has its has-table byte after the two header strings.
+            if(duplicate.remaining()<1)return;
+            var frames=leaseReceiptFrames.get();if(frames==null){frames=new java.util.IdentityHashMap<>();leaseReceiptFrames.set(frames);}
+            frames.put(scope,new LeaseReceiptFrame(buffer,begin,end,module,command));
+        }catch(java.nio.BufferUnderflowException | java.lang.NegativeArraySizeException malformed){
+            // A truncated/malformed header never becomes a receipt; the original parser remains authoritative.
+        }catch(Throwable error){leaseControlError(error);}
+    }
+    private static void leaseReceiptCleanup(LeaseCallbackScope scope) {
+        var frames=leaseReceiptFrames.get();if(frames==null)return;
+        frames.remove(scope);if(frames.isEmpty())leaseReceiptFrames.remove();
+    }
+    /** Require the nearest native event call to be this native command parser's dispatch. */
+    private static boolean leaseReceiptNativeEvent(boolean server) {
+        return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk(frames->{
+            var event=frames.dropWhile(frame->frame.getDeclaringClass()!=zombie.Lua.LuaEventManager.class || !frame.getMethodName().equals("triggerEvent")).limit(2).toList();
+            return event.size()==2 && event.get(0).getMethodType().parameterCount()==(server?5:4)
+                && event.get(1).getDeclaringClass()==(server?zombie.network.GameServer.class:zombie.network.GameClient.class)
+                && event.get(1).getMethodName().equals("receiveClientCommand");
+        });
+    }
+    /** Opaque original receive receipt, valid only inside the exact guarded native command event. */
+    @LuaMethod(name="cartLeaseReceipt",global=true)
+    public static String cartLeaseReceipt(String module,String command) {
+        if(!LEASE_CONTROL || leaseControlFailed || !leaseReceiptModule(module) || command==null)return null;
+        try {
+            var scope=leaseControlCallback.get();var frames=leaseReceiptFrames.get();
+            var frame=scope==null || frames==null?null:frames.get(scope);
+            if(frame==null || !frame.module.equals(module) || !frame.command.equals(command)
+                || scope.reader()==null || scope.reader().bb!=frame.buffer || frame.buffer.limit()!=frame.end
+                || frame.buffer.order()!=frame.order || frame.begin<0 || frame.begin>=frame.end || frame.buffer.position()!=frame.end
+                || scope.ingress()==null || !leaseControlCommand(scope.ingress().transport().type())
+                || leaseControlIngresses.get(scope.reader())!=scope.ingress()
+                || !leaseControlCurrent(scope.ingress().transport(),scope.server()) || !leaseReceiptNativeEvent(scope.server()))return null;
+            if(scope.server()){
+                if(leaseControlValidatedServerScope()!=scope)return null;
+            }else if(cartLeaseIngress()!=scope.connection())return null;
+            if(frame.receipt!=null)return frame.receipt;
+            synchronized(LeaseReceiptFrame.class){
+                if(frame.receipt!=null)return frame.receipt;
+                long connection=nativeTimeIdentity(scope.connection(),false),generation=scope.ingress().generation(),mono=System.nanoTime();
+                if(leaseReceiptRows>=1024 || connection<=0 || connection>9007199254740991L || generation<=0 || generation>9007199254740991L)throw new IllegalStateException("Native command receipt bounds");
+                long serial=++leaseReceiptRows;int payload=frame.end-frame.begin;
+                String receipt="1|"+nativeTimeProcess+"|"+connection+"|"+generation+"|"+serial;
+                if(receipt.length()>160)throw new IllegalStateException("Native command receipt token limit");
+                frame.receipt=receipt;
+                System.out.println("[CART_LEASE_BYTES] {\"process\":"+mpJsonString(nativeTimeProcess)+",\"connectionEpoch\":"+connection
+                    +",\"ingressGeneration\":"+generation+",\"receipt\":"+mpJsonString(receipt)
+                    +",\"direction\":"+mpJsonString(scope.server()?"client-to-server":"server-to-client")
+                    +",\"module\":"+mpJsonString(module)+",\"command\":"+mpJsonString(command)
+                    +",\"payloadBytes\":"+payload+",\"engineBytes\":"+((long)payload+3)+",\"monoNs\":"+mono+"}");
+                return receipt;
+            }
+        }catch(Throwable error){leaseControlError(error);return null;}
+    }
+
     private static void leaseControlError(Throwable error) {
         leaseControlFailed=true;
         Main.timelineError(new IllegalStateException("Lease command provenance observation failed",error));
@@ -137,7 +216,7 @@
                 ingress=dispatch.ingress();connection=ingress.transport().connection().get();
             }
         }catch(Throwable error){leaseControlError(error);}
-        var scope=new LeaseCallbackScope(reader,ingress,connection,-1,false,previous);leaseControlCallback.set(scope);return scope;
+        var scope=new LeaseCallbackScope(reader,ingress,connection,-1,false,previous);leaseControlCallback.set(scope);leaseReceiptCapture(scope);return scope;
     }
     public static LeaseCallbackScope leaseControlServerEnter(zombie.core.network.ByteBufferReader reader,zombie.core.raknet.UdpConnection connection,short type) {
         if(!LEASE_CONTROL)return null;
@@ -152,11 +231,11 @@
                 if(wireIndex>=0 && wireIndex<4){index=wireIndex;ingress=candidate;}
             }
         }catch(Throwable error){leaseControlError(error);}
-        var scope=new LeaseCallbackScope(reader,ingress,ingress==null?null:connection,index,true,previous);leaseControlCallback.set(scope);return scope;
+        var scope=new LeaseCallbackScope(reader,ingress,ingress==null?null:connection,index,true,previous);leaseControlCallback.set(scope);leaseReceiptCapture(scope);return scope;
     }
     public static void leaseControlCallbackExit(LeaseCallbackScope scope) {
         if(scope==null)return;
-        try{if(scope.previous()==null)leaseControlCallback.remove();else leaseControlCallback.set(scope.previous());}
+        try{leaseReceiptCleanup(scope);if(scope.previous()==null)leaseControlCallback.remove();else leaseControlCallback.set(scope.previous());}
         catch(Throwable error){leaseControlError(error);}
     }
     /** Only the authenticated event player of the exact native command invocation qualifies. */
@@ -205,6 +284,12 @@
     @LuaMethod(name="cartLeaseCurrent",global=true)
     public static zombie.core.raknet.UdpConnection cartLeaseCurrent() {
         try{return leaseControlOwnedClient()?zombie.network.GameClient.connection:null;}
+        catch(Throwable error){leaseControlError(error);return null;}
+    }
+    @LuaMethod(name="cartLeaseChallengeSeed",global=true)
+    public static String cartLeaseChallengeSeed() {
+        if(!LEASE_CONTROL || leaseControlFailed)return null;
+        try{return java.util.UUID.randomUUID().toString();}
         catch(Throwable error){leaseControlError(error);return null;}
     }
     @LuaMethod(name="cartLeaseSeed",global=true)

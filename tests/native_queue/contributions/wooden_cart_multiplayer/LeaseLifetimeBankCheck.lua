@@ -46,7 +46,8 @@ local function run(injected)
   env.print=function(s) assert(not s:find(' ERROR ',1,true),s) end
   env.getTimestampMs=function() now=now+1;return now end
   env.isServer=function() return role=='server' end
-  env.cartLeaseSeed=function() return role end
+  local seedSerial=0
+  env.cartLeaseChallengeSeed=function() seedSerial=seedSerial+1;return role..':run:'..seedSerial end
   env.cartLeaseLifetime=function(p) return p.primary and p.primary==p.secondary and '1|mock-'..role..'|101|201|'..p.revision or nil end
   env.cartLeaseResnapshot=function(p,old)
    local revision=tonumber(old:match('^1|mock%-'..role..'|101|201|(%d+)$'))

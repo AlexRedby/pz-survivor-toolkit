@@ -1265,6 +1265,9 @@ def verify(root, selection, catalog):
                 raise ValueError('Incomplete native equipment lifetime evidence')
             _write(analysis / 'mp-lease-lifetimes.json', json.dumps(lifetimes, indent=2, allow_nan=False))
             evidence['equipmentLifetimes'] = lifetimes
+            costs = _load(intake / 'analyze-lease-cost.py').analyze(root)
+            _write(analysis / 'mp-lease-cost.json', json.dumps(costs, indent=2, allow_nan=False))
+            evidence['leaseControlCost'] = costs
         if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
             admission = _load(intake / 'analyze-action-admission.py').analyze(root)
             if admission.get('evidenceComplete') is not True:

@@ -5,11 +5,12 @@ import java.util.HashMap;
 /** Actual native setter/removal advice checks; no game world, save, socket or installation. */
 public final class EquipmentLifetimeCheck {
     public static class Owner extends zombie.characters.IsoPlayer {
-        boolean nested,throwAfter;int blockedCallbacks;
+        boolean nested,throwAfter,nativeAliveCheck;int blockedCallbacks;
         zombie.inventory.InventoryItem nestedItem;
         Owner(){super(null,null,0,0,0);}
         @Override public String getUsername(){return "client1";}
-        @Override public boolean isAlive(){return true;}
+        @Override public boolean isAlive(){return !nativeAliveCheck || super.isAlive();}
+        @Override public boolean isInvulnerable(){return false;}
         @Override public boolean isLocalPlayer(){return false;}
         @Override public void checkAnimalAttachedToRope(zombie.inventory.InventoryItem item){}
         @Override protected void setEquipParent(zombie.inventory.InventoryItem old,zombie.inventory.InventoryItem next){}
@@ -39,6 +40,8 @@ public final class EquipmentLifetimeCheck {
     }
     private static sun.misc.Unsafe unsafe;
     private static int eventCallbacks;private static String eventFailure;
+    private static Owner deathExpected;private static zombie.inventory.InventoryItem deathItem;
+    private static int deathCallbacks;private static String deathFailure,deathToken;
     private static ThreadLocal<Main.EquipmentParse> checkedParsing;
     private static Boolean expectedParseTrust;private static boolean expectedDirectParse;private static int parseCallbacks;
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
@@ -63,6 +66,31 @@ public final class EquipmentLifetimeCheck {
         field(zombie.core.raknet.UdpEngine.class,"connectionArray").set(engine,new zombie.core.raknet.UdpConnection[]{connection});
     }
     private static String life(Owner owner){var life=Main.cartLeaseLifetime(owner);check(life!=null,"Expected admitted current lifetime");return life;}
+    @SuppressWarnings("unchecked")
+    private static void deathChecks(Engine engine,Connection connection)throws Exception {
+        var item=item(42);var dying=owner(item,(short)7);registered(dying,connection,engine);
+        dying.nativeAliveCheck=true;dying.setHealth(100);
+        String token=life(dying);check(dying.isAlive(),"Native health baseline is not alive");
+        var lives=(Main.NativeWeakMap<zombie.characters.IsoPlayer,Main.EquipmentLife>)field(Main.class,"equipmentLives").get(null);
+        dying.setHealth(0);check(!dying.isAlive(),"Native death health not applied");
+        check(Main.cartLeaseLifetime(dying)==null && !lives.get(dying).retired,"Dead guard did not precede permanent native entry retirement");
+        deathExpected=dying;deathItem=item;deathToken=token;int beforeCallbacks=deathCallbacks;
+        // Actual instrumented native OnDeath; server role stops after its original superclass event,
+        // before world-dependent client UI/drop code. No helper or fake event invokes the advice.
+        dying.OnDeath();
+        check(deathCallbacks==beforeCallbacks+1 && deathFailure==null,"Native superclass death callback absent or observed a live binding: "+deathFailure);
+        check(lives.get(dying).retired,"Native OnDeath did not leave a permanent actor tombstone");
+        dying.setHealth(100);dying.setPrimaryHandItem(null);dying.setSecondaryHandItem(null);
+        dying.setPrimaryHandItem(item);dying.setSecondaryHandItem(item);
+        check(dying.isAlive() && dying.getHealth()==100 && dying.getPrimaryHandItem()==item && dying.getSecondaryHandItem()==item,
+            "Native health/hands restoration fixture did not restore exact actor/item");
+        check(Main.cartLeaseLifetime(dying)==null && !Main.cartLeaseResnapshot(dying,token),"Restored health/hands resurrected native death token");
+        check(dying.removedFromWorldMs==0,"Death entry check unexpectedly used actor removal");
+        var fresh=owner(item,(short)7);registered(fresh,connection,engine);
+        check(!life(fresh).equals(token),"Death tombstone collapsed fresh same-ID actor incarnation");
+        deathExpected=null;deathItem=null;deathToken=null;
+        System.out.println("EQUIPMENT_NATIVE_DEATH_ENTRY_CHECK_PASS callbacks="+(deathCallbacks-beforeCallbacks)+" restoredHealthHands=true oldTokenRevived=false actorRemoval=false");
+    }
     @SuppressWarnings("unchecked")
     private static void parseChecks(Engine engine,Connection connection)throws Exception {
         // Only negative classifier tests seed receipt objects. Positive native receipt proof is the Host gate.
@@ -128,6 +156,23 @@ public final class EquipmentLifetimeCheck {
         var callback=se.krka.kahlua.luaj.compiler.LuaCompiler.loadstring("assertBlocked(...)","native-equipment-event",zombie.Lua.LuaManager.env);
         zombie.Lua.LuaEventManager.AddEvent("OnEquipPrimary").callbacks.add(callback);
         zombie.Lua.LuaEventManager.AddEvent("OnEquipSecondary").callbacks.add(callback);
+        zombie.Lua.LuaManager.env.rawset("assertDeathRetired",(se.krka.kahlua.vm.JavaFunction)(frame,count)->{
+            Object actor=frame.get(0);deathCallbacks++;
+            try{
+                if(actor!=deathExpected || !(actor instanceof Owner player))deathFailure="Wrong native death actor";
+                else {
+                    var lives=(Main.NativeWeakMap<zombie.characters.IsoPlayer,Main.EquipmentLife>)field(Main.class,"equipmentLives").get(null);
+                    var state=lives.get(player);
+                    if(state==null || !state.retired || Main.cartLeaseLifetime(player)!=null || Main.cartLeaseResnapshot(player,deathToken))
+                        deathFailure="Superclass OnCharacterDeath callback preceded retirement";
+                    else if(player.getPrimaryHandItem()!=deathItem || player.getSecondaryHandItem()!=deathItem || player.removedFromWorldMs!=0)
+                        deathFailure="Native death callback did not precede hand release/removal";
+                }
+            }catch(Throwable error){deathFailure=error.toString();}
+            return 0;
+        });
+        var deathCallback=se.krka.kahlua.luaj.compiler.LuaCompiler.loadstring("assertDeathRetired(...)","native-equipment-death-event",zombie.Lua.LuaManager.env);
+        zombie.Lua.LuaEventManager.AddEvent("OnCharacterDeath").callbacks.add(deathCallback);
         var access=field(sun.misc.Unsafe.class,"theUnsafe");unsafe=(sun.misc.Unsafe)access.get(null);
         var engine=(Engine)unsafe.allocateInstance(Engine.class);
         field(zombie.core.raknet.UdpEngine.class,"connectionMap").set(engine,new HashMap<Long,zombie.core.raknet.UdpConnection>());
@@ -160,6 +205,7 @@ public final class EquipmentLifetimeCheck {
         var itemLoaded=item(42);var itemOwner=owner(itemLoaded,(short)7);registered(itemOwner,connection,engine);life(itemOwner);
         try{var bytes=java.nio.ByteBuffer.allocate(4).putInt(43);bytes.flip();itemLoaded.load(bytes,249);}catch(Throwable expected){}
         check(itemLoaded.getID()==43 && Main.cartLeaseLifetime(itemOwner)==null,"Actual item.load ID write/failure escaped lifetime fence");
+        deathChecks(engine,connection);
         var removed=owner(original,(short)7);registered(removed,connection,engine);life(removed);
         try{removed.removeFromWorld();}catch(Throwable expected){}
         check(Main.cartLeaseLifetime(removed)==null,"Actual removal entry did not permanently retire actor");

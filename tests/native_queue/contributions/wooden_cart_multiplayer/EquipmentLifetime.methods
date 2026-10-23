@@ -1,4 +1,4 @@
-    // Diagnostic only; pinned B42.21 audited setter/load/removal boundaries.
+    // Diagnostic only; pinned B42.21 audited setter/load/death/removal boundaries.
     private static final boolean LEASE_LIFETIME="true".equals(System.getenv("PZ_CART_LEASE_LIFETIME"));
     private static final Object equipmentLifetimeLock=new Object();
     private static final NativeWeakMap<IsoPlayer,EquipmentLife> equipmentLives=new NativeWeakMap<>();
@@ -148,9 +148,9 @@
     public static void equipmentLifetimeItemExit(java.util.ArrayList<EquipmentMutation> scopes,Throwable failure) {
         if(scopes!=null)for(int i=scopes.size()-1;i>=0;i--)equipmentLifetimeExit(scopes.get(i),failure);
     }
-    public static void equipmentLifetimeRetire(zombie.characters.IsoGameCharacter actor) {
+    public static void equipmentLifetimeRetire(zombie.characters.IsoGameCharacter actor,String reason) {
         if(!equipmentLifetimeEnabled() || !(actor instanceof IsoPlayer player))return;
-        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,true);life.retired=true;life.hardRevision=life.revision;var parse=equipmentLifetimeParsing.get();if(parse!=null)parse.invalid=true;equipmentLifetimeTrace("retire",life,null,"actor-remove",true);}}
+        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,true);life.retired=true;life.hardRevision=life.revision;var parse=equipmentLifetimeParsing.get();if(parse!=null)parse.invalid=true;equipmentLifetimeTrace("retire",life,null,reason,true);}}
         catch(Throwable error){equipmentLifetimeError(error);}
     }
     /** Capture the exact connection before the engine removes its GUID mapping or queues cleanup. */
@@ -301,9 +301,14 @@
         @Patch.OnEnter public static void enter(@Patch.This zombie.inventory.InventoryItem item,@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes){scopes=Main.equipmentLifetimeItem(item,true,"item-load");}
         @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentItems") java.util.ArrayList<EquipmentMutation> scopes,@Patch.Thrown Throwable failure){Main.equipmentLifetimeItemExit(scopes,failure);}
     }
+    /** Retire before native super/OnCharacterDeath and hand-release callbacks can reenter. */
+    @Patch(className="zombie.characters.IsoPlayer",methodName="OnDeath",warmUp=false)
+    public static class EquipmentLifetimeDeath {
+        @Patch.OnEnter public static void enter(@Patch.This IsoPlayer actor){Main.equipmentLifetimeRetire(actor,"actor-death");}
+    }
     @Patch(className="zombie.characters.IsoPlayer",methodName="removeFromWorld",warmUp=false)
     public static class EquipmentLifetimeRemove {
-        @Patch.OnEnter public static void enter(@Patch.This IsoPlayer actor){Main.equipmentLifetimeRetire(actor);}
+        @Patch.OnEnter public static void enter(@Patch.This IsoPlayer actor){Main.equipmentLifetimeRetire(actor,"actor-remove");}
     }
     @Patch(className="zombie.core.raknet.UdpEngine",methodName="removeConnection",warmUp=false)
     public static class EquipmentLifetimeDisconnect {

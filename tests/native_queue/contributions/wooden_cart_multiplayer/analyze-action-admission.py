@@ -1,4 +1,5 @@
 """Exact native admission/owner receipt joins; no observer action or gameplay authority."""
+import re
 import argparse
 import json
 from pathlib import Path
@@ -204,7 +205,10 @@ def analyze(root):
                     'Seal revocation lacks exact operation generation change proof: '+str(row.get('reason')))
         if event in ('query', 'reply'):
             require(row.get('guarded') is True, 'Missing actual fresh owner query/ingress guard')
-            require(text(row, 'nonce', 120) == row['ownerProcess']+':action:'+str(index), 'Owner request nonce is not exact phase challenge')
+            nonce=text(row,'nonce',120); suffix=':action:'+str(index)
+            require(nonce.endswith(suffix),'Owner request nonce is not exact phase challenge')
+            challenge=nonce[:-len(suffix)]
+            require(challenge!=row['ownerProcess'] and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',challenge) is not None, 'Fresh action challenge namespace missing')
         if event == 'capture':
             require(row.get('state') == 'started', 'Owner captured an action after its start rights expired')
         if event == 'terminal':

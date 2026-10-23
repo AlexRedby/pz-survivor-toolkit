@@ -71,6 +71,7 @@ if isServer() then
 end
 local reader=assert(getFileReader('smoke-user.txt',false));local user=reader:readLine();reader:close()
 local Ack=require 'PZSurvivorToolkit/ActionQueueAcknowledgements'
+local challengeSeed=assert(cartLeaseChallengeSeed(),'Fresh native action challenge namespace missing')
 local entries,pending={},{}
 local awaiting
 local identities=setmetatable({},{__mode='k'});local nextIdentity=0
@@ -158,7 +159,7 @@ function M.sample()
      local observed=assert(Ack.observe(action,receipt),'Sealed native receipt unavailable')
      assert(observed=='started','Native start receipt was not observed while current')
      local capture=row(entry,'capture');capture.state=observed;capture.sealed=true;emit('[CART_ADMISSION_OWNER]',capture)
-     local nonce=assert(cartLeaseSeed())..':action:'..entry.index;pending[nonce]=entry;entry.nonce=nonce
+     local nonce=challengeSeed..':action:'..entry.index;pending[nonce]=entry;entry.nonce=nonce
      local request=row(entry,'query');request.nonce=nonce;request.guarded=true;emit('[CART_ADMISSION_OWNER]',request)
      sendClientCommand(entry.owner,module,'Query',{owner=entry.owner:getOnlineID(),token=receipt.token,nonce=nonce,
       index=entry.index,phase=entry.phase,cart=entry.cart,observerSource=entry.observerSource})

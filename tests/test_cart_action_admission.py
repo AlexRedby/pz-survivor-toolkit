@@ -49,7 +49,7 @@ def fixture():
         track = dict(owner,event='track')
         capture = dict(owner,event='capture',localNativeEpoch=800+index,token=token,transaction=index,
                        kind=kind,state='started',sealed=True,captureGeneration=index*2,wallMs=wall+2)
-        nonce = OWNER+':action:'+str(index)
+        nonce = 'fece74df-9316-4af6-b8d4-7c9f6321beef:action:'+str(index)
         query = dict(capture,event='query',nonce=nonce,guarded=True,wallMs=wall+3)
         query.pop('state');query.pop('sealed')
         server_query = dict(accepted,event='query',actor='server',index=index,phase=phase,nonce=nonce,guarded=True,
@@ -374,6 +374,12 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
                             ('cart_lease_control',True),('cart_inventory_equip',True),('cart_wall_exit','left')):
             self.selection=copy.deepcopy(original);self.selection['options'][field]=value
             with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+
+    def test_action_challenge_namespace_cannot_reuse_process_identity(self):
+        for row in self.groups['owner']:
+            if row.get('event') in ('query','reply'):
+                row['nonce']=row['ownerProcess']+':action:'+str(row['index'])
+        with self.assertRaisesRegex(ValueError,'Fresh action challenge namespace'):self.analyze()
 
     def test_strict_json_and_read_only_cli_preserve_source_capture(self):
         self.write();before={path.name:path.read_bytes() for path in self.profile.iterdir()}

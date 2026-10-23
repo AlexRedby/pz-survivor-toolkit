@@ -20,6 +20,8 @@ Version labels come from committed component metadata, including changes made wi
 
 - **Cart equipment lifetime diagnostics:** Observe native equipment revisions across missed release/reacquire and same-ID replacement cycles, fence stale binds/payloads in the test-only reference, and add a separately selected Host setter bank. Preserve production animation and native effects.
 
+- **Cart control lifecycle diagnostics:** Add explicit native-absence invalidation, permanent death-entry retirement and fresh challenge namespaces for recreated test protocols. Measure delivered native command serialization with exact original callback receipts; keep transport wire costs and full Host respawn/reconnect coverage separate.
+
 - **Cart equipment lifetime diagnostics:** Observe native equipment revisions across missed release/reacquire and same-ID replacement cycles, fence stale binds/payloads in the test-only reference, and add a separately selected Host setter bank. Certify complete remote Equip resnapshots separately from release, preserving replay fences through bounded fresh rebinds. Preserve production animation and native effects.
 
 - **Cart retained-parameter diagnostics:** Trace exact remote state-machine replacement calls and monitor native parameter-map birth, escaped aliases, writes and completed consumers before associating replacement proxies with their original packet. Keep unknown provenance unbound and production animation unchanged.

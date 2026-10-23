@@ -4,10 +4,12 @@ assert(config.disposable==true and config.options.cart_lease_control==true and c
 local P=require 'CartLeaseProtocol'
 local J=require 'CartMPJSON'
 local M={}
+local activeReceipt
 local module='CartLeaseLifetimes'
 local phases={'baseline','release-reacquire','same-id-replacement'}
 local MAX_ATTEMPTS,QUIET_MS=8,250
 local function log(row)
+ if activeReceipt then row.receipt=activeReceipt end
  row.wall=getTimestampMs();print('[CART_LEASE_LIFETIME] '..J.encode(row))
  if row.event=='error' then print('[CART_LEASE_LIFETIME] ERROR '..tostring(row.reason)) end
 end
@@ -49,7 +51,7 @@ local function tuple(row,b)
  row.session=b.session;row.grant=b.grant;row.lease=b.lease;row.cart=b.cart;return row
 end
 if isServer() then
- local controller=P.server(assert(cartLeaseSeed())..':equipment',{limit=4})
+ local controller=P.server(assert(cartLeaseChallengeSeed())..':equipment',{limit=4})
  local clients,ready,prepared,done,finished,firstBind,attempts,lastEcho={},{},{},{},{},{},{},{}
  local target,phase,offered=nil,0,false
  local function observe()
@@ -76,7 +78,9 @@ if isServer() then
  end
  Events.OnClientCommand.Add(function(mod,command,p,args)
   if mod~=module then return end
+ local previousReceipt=activeReceipt
   local ok,err=pcall(function()
+   if cartLeaseReceipt then activeReceipt=assert(cartLeaseReceipt(module,command),'Exact serialized receipt missing') end
    local source=assert(cartLeaseSource(p),'Exact native request source missing')
    local role=p:getUsername();assert(role=='client1' or role=='client2','Owned requester required')
    assert(type(args)=='table','Command arguments missing')
@@ -136,7 +140,8 @@ if isServer() then
     if all(finished) then log({actor='server',event='complete',phase=3,owner=id}) end
    else error('Unexpected lifetime request') end
   end)
-  if not ok then log({actor='server',event='error',reason=tostring(err)}) end
+  activeReceipt=previousReceipt
+ if not ok then log({actor='server',event='error',reason=tostring(err)}) end
  end)
  return M
 end
@@ -194,7 +199,9 @@ local function drive(native)
 end
 Events.OnServerCommand.Add(function(mod,command,args)
  if mod~=module then return end
+ local previousReceipt=activeReceipt
  local ok,err=pcall(function()
+   if cartLeaseReceipt then activeReceipt=assert(cartLeaseReceipt(module,command),'Exact serialized receipt missing') end
   local ingress=assert(cartLeaseIngress(),'Exact native reply ingress missing')
   local native=owner();assert(receiver and native:getOnlineID()==ownerID and args.owner==ownerID,'Unexpected owner incarnation')
   refresh(native)
@@ -240,6 +247,7 @@ Events.OnServerCommand.Add(function(mod,command,args)
   else error('Unexpected lifetime response') end
   drive(native)
  end)
+ activeReceipt=previousReceipt
  if not ok then log({actor=user,event='error',reason=tostring(err)}) end
 end)
 function M.finish(native,now)
@@ -248,7 +256,7 @@ function M.finish(native,now)
  assert(now-since<20000,'Equipment lifetime bank deadline')
  if not ready then
   assert(native and native:getUsername()=='client1','Exact native fixture owner required')
-  ownerID=native:getOnlineID();receiver=P.receiver(ownerID,assert(cartLeaseSeed())..':'..user..':equipment')
+  ownerID=native:getOnlineID();receiver=P.receiver(ownerID,assert(cartLeaseChallengeSeed())..':'..user..':equipment')
   current=held(native);receiver:native(assert(cartLeaseCurrent()),native,current);ready=true;lastChange=getTimestampMs()
   log({actor=user,event='ready',phase=0,owner=ownerID,lifetime=current.lifetime});send('Ready',{})
  else refresh(native);drive(native) end

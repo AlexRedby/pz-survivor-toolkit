@@ -403,6 +403,55 @@ for _,replacement in ipairs({'actor','connection'}) do
 end
 ''')
 
+    def test_native_unavailability_closes_receiver_during_absent_interval(self):
+        self.scenario(r'''
+local f=setup();f:bind();f:deliver(f:envelope(4),100)
+local pending=f.receiver:challenge();local reply=f.server:reply(pending,f.observerConnection)
+check(f.receiver:unavailable(),'missing native actor did not invalidate presentation')
+local gap=f.receiver:snapshot()
+check(not gap.open and not gap.visible and not gap.body and not gap.received and not gap.rebind)
+check(gap.seq==4 and gap.acceptedAt==100 and gap.grant==reply.grant and gap.lease==reply.lease)
+check(not f.receiver:challenge(),'absent native actor requested admission')
+check(not f.receiver:reply(reply,f.observerConnection),'old pending reply revived absence')
+check(not f.receiver:receive(f:envelope(5),200),'payload accepted while native actor absent')
+check(not f.receiver:unavailable(),'duplicate absence changed native revision');unchanged(gap,f.receiver:snapshot())
+f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+local request=f.receiver:challenge();check(not f.receiver:reply(f.server:reply(request,f.observerConnection),f.observerConnection),'same old lease healed absence')
+f.sourceBinding=binding('motion',{});f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding)
+f:bind();f:deliver(f:envelope(1,'OPEN','new-lease'),201)
+''')
+
+    def test_authoritative_unavailability_is_exact_and_never_creates_an_actor(self):
+        self.scenario(r'''
+local f=setup({limit=1});f:bind();f:deliver(f:envelope(4),100)
+local old=f:envelope(5);local before=f.server:snapshot(f.id)
+check(not f.server:unavailable(8,f.sourceConnection,f.sourceActor),'unknown retirement allocated authority')
+check(not f.server:unavailable(f.id,{},f.sourceActor),'foreign connection closed current actor')
+check(not f.server:unavailable(f.id,f.sourceConnection,{}),'foreign actor closed successor')
+unchanged(before,f.server:snapshot(f.id))
+check(f.server:unavailable(f.id,f.sourceConnection,f.sourceActor),'current native absence ignored')
+local gap=f.server:snapshot(f.id);check(not gap.open and not gap.body and not gap.received and gap.seq==4 and gap.grant==before.grant and gap.lease==before.lease)
+check(not f.server:accept(f.id,f.sourceConnection,f.sourceActor,old,200),'retired native source accepted in gap')
+check(not f.server:unavailable(f.id,f.sourceConnection,f.sourceActor),'repeated native absence mutated state');unchanged(gap,f.server:snapshot(f.id))
+f.sourceActor={};f.observerActor={}
+check(f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding))
+f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+f:bind();local current=f.server:snapshot(f.id);check(current.grant>gap.grant)
+check(not f.server:unavailable(f.id,f.sourceConnection,before.actor),'late old actor retirement closed successor')
+unchanged(current,f.server:snapshot(f.id));f:deliver(f:envelope(1),201)
+check(not f.server:accept(f.id,f.sourceConnection,before.actor,old,202),'old incarnation admitted after replacement')
+''')
+
+    def test_recreated_receiver_requires_a_fresh_challenge_namespace(self):
+        self.scenario(r'''
+local f=setup();f:bind();local retiredReply=f.reply
+f.receiver=P.receiver(f.id,'new-native-instance')
+f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+local request=f.receiver:challenge();check(request.nonce~=retiredReply.nonce,'fixture recreated old namespace')
+local before=f.receiver:snapshot();check(not f.receiver:reply(retiredReply,f.observerConnection),'cached response admitted by recreated receiver');unchanged(before,f.receiver:snapshot())
+check(f.receiver:reply(f.server:reply(request,f.observerConnection),f.observerConnection),'fresh instance challenge refused')
+''')
+
     def test_visual_suspension_retains_accepted_state_and_ordering_fences(self):
         self.scenario(r'''
 local f=setup();f:bind();f:deliver(f:envelope(5,'UPDATE','accepted-moving'),100)

@@ -59,6 +59,15 @@ function Server:observe(id,connection,actor,b)
  end
  return true
 end
+-- Absence is authoritative adapter input, scoped to the exact recorded incarnation.
+function Server:unavailable(id,connection,actor)
+ assert(integer(id,0,32767) and connection~=nil and actor~=nil,'Exact unavailable native actor required')
+ local s=self.actors[id]
+ if not s or s.connection~=connection or s.actor~=actor or not s.binding then return false end
+ s.binding=nil;s.open=false;s.body=nil;s.received=nil
+ -- Preserve grant, lease and sequence; never allocate/evict a namespace on a stale close.
+ return true
+end
 function Server:reply(request,recipientConnection)
  if recipientConnection==nil or type(request)~='table' or not integer(request.actor,0,32767) or not text(request.nonce,120) then return nil end
  local s=self.actors[request.actor];if not s then return nil end
@@ -103,6 +112,14 @@ function Receiver:native(connection,actor,b)
  self.connection=connection;self.actor=actor;self.binding=b;self.revision=self.revision+1
  self.pending=nil;self.open=false;self.visible=false;self.body=nil;self.received=nil
  -- Same-connection actor/item transitions retain the comparable grant/lease floor.
+ return true
+end
+-- Native absence must close admission immediately, independently of visual suspension.
+function Receiver:unavailable()
+ if not self.binding and not self.pending and not self.open then return false end
+ self.binding=nil;self.pending=nil;self.revision=self.revision+1
+ self.open=false;self.rebind=false;self.visible=false;self.body=nil;self.received=nil
+ -- Keep comparable authority/sequence/time floors until a fresh native bind succeeds.
  return true
 end
 function Receiver:challenge()

@@ -51,7 +51,9 @@
     "EquipmentLifetimeCheck.java",
     "lease-lifetimes.lua",
     "LeaseLifetimeBankCheck.lua",
-    "analyze-lease-lifetimes.py"
+    "analyze-lease-lifetimes.py",
+    "analyze-lease-cost.py",
+    "LeaseCostCheck.java"
   ],
   "selection_template": {
     "schema_version": 1,

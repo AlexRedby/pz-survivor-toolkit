@@ -85,6 +85,13 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
+### Current lifecycle and control-cost work
+
+- [ ] Audit actual B42.21 death/new-character and disconnect/reconnect entry points and identify a disposable Host sequence. Preserve owned launch/window/provenance gates; simulated map/slot changes do not close gameplay lifecycle coverage.
+- [ ] Check loss of native actor/connection availability against the executable admission reference. If stale state stays open during the absent interval, add explicit invalidation with replay fences and focused regressions before wiring the native scenario.
+- [ ] Measure native serialized lease-control commands by exact direction/module/command and original guarded callback; report actual serialized bytes and bounded resync bursts separately from IP/UDP/RakNet wire cost. Gate: native serializer checks and a sealed Host capture if the measurement needs live ingress.
+- [ ] Add the smallest verified native lifecycle scenario and require old pending replies/payloads to remain rejected before and after fresh authority. Keep normal menu release, death/respawn and full transport reconnect as separate gates until individually captured.
+
 ### Remaining native lifetime and traffic gates
 
 - [ ] Extend the verified native-setter release/reacquire and same-ID replacement bank to ordinary menu equip/release, actor removal/respawn and disconnect/reconnect. Keep exact native incarnation and transport provenance, permanent retirement and replay fences. The macOS Host setter/resnapshot bank does not establish these complete gameplay lifetimes.

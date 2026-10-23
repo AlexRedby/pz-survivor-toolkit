@@ -4,8 +4,10 @@ assert(config.disposable==true and config.options.cart_lease_control==true,'Expl
 local P=require 'CartLeaseProtocol'
 local J=require 'CartMPJSON'
 local M={}
+local activeReceipt
 local module='CartLeaseProbe'
 local function log(row)
+ if activeReceipt then row.receipt=activeReceipt end
  row.wall=getTimestampMs();print('[CART_LEASE] '..J.encode(row))
  if row.event=='error' then print('[CART_LEASE] ERROR '..tostring(row.reason)) end
 end
@@ -17,10 +19,12 @@ local function held(player)
  return {mode='motion',cart=item:getID(),item=item,lifetime=config.options.cart_lease_lifetimes==true and assert(cartLeaseLifetime(player),'Native equipment lifetime missing') or nil}
 end
 if isServer() then
- local server=P.server(assert(cartLeaseSeed()),{limit=4})
+ local server=P.server(assert(cartLeaseChallengeSeed()),{limit=4})
  Events.OnClientCommand.Add(function(mod,command,player,args)
   if mod~=module then return end
+ local previousReceipt=activeReceipt
   local ok,err=pcall(function()
+   if cartLeaseReceipt then activeReceipt=assert(cartLeaseReceipt(module,command),'Exact serialized receipt missing') end
    local source=assert(cartLeaseSource(player),'Missing exact native command source')
    local role=player:getUsername();assert(role=='client1' or role=='client2','Owned fixture source required')
    local target=assert(cartLeaseTarget(args.actor),'Registered target missing')
@@ -39,7 +43,8 @@ if isServer() then
     sendServerCommand(player,module,'Receipt',{nonce=args.nonce,actor=args.actor,accepted=accepted,session=args.envelope.session,grant=args.envelope.grant,lease=args.envelope.lease,seq=args.envelope.seq,cart=args.envelope.cart})
    else error('Unexpected lease probe command') end
   end)
-  if not ok then log({actor='server',event='error',reason=tostring(err)}) end
+  activeReceipt=previousReceipt
+ if not ok then log({actor='server',event='error',reason=tostring(err)}) end
  end)
  return M
 end
@@ -57,7 +62,9 @@ local function owner()
 end
 Events.OnServerCommand.Add(function(mod,command,args)
  if mod~=module then return end
+ local previousReceipt=activeReceipt
  local ok,err=pcall(function()
+   if cartLeaseReceipt then activeReceipt=assert(cartLeaseReceipt(module,command),'Exact serialized receipt missing') end
   local ingress=assert(cartLeaseIngress(),'Missing exact transport/dispatch ingress')
   local native=owner();assert(native:getOnlineID()==ownerID,'Native owner changed')
   observe(native)
@@ -76,13 +83,14 @@ Events.OnServerCommand.Add(function(mod,command,args)
    log({actor=user,event='receipt',nonce=args.nonce,owner=args.actor,accepted=args.accepted,session=args.session,grant=args.grant,lease=args.lease,seq=args.seq,cart=args.cart,guarded=true})
   else error('Unexpected lease control response') end
  end)
+ activeReceipt=previousReceipt
  if not ok then log({actor=user,event='error',reason=tostring(err)}) end
 end)
 function M.sample(native,elapsed)
  if elapsed<0 or elapsed>26000 or round>=3 or elapsed<round*8000 then return end
  assert(native and native:getUsername()=='client1','Native probe owner missing')
  local connection=assert(cartLeaseCurrent(),'Owned local connection unavailable')
- if not receiver then ownerID=native:getOnlineID();receiver=P.receiver(ownerID,assert(cartLeaseSeed())..':'..user) end
+ if not receiver then ownerID=native:getOnlineID();receiver=P.receiver(ownerID,assert(cartLeaseChallengeSeed())..':'..user) end
  assert(native:getOnlineID()==ownerID,'Fixture actor ID replaced')
  observe(native)
  local request=assert(receiver:challenge(),'Bounded fresh challenge unavailable')
