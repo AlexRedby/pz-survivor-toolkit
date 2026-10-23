@@ -49,10 +49,7 @@ def compile_sources(jdk, classpath, classes, sources, *, kotlin_home=None):
     if home:
         stdlib = home / 'lib/kotlin-stdlib.jar'
         compilepath = os.pathsep.join([str(classes), str(stdlib), classpath])
-        command = [jdk/'bin/java', '-jar', home/'lib/kotlin-compiler.jar', '-kotlin-home', home,
-                   '-jvm-target', build.JVM_TARGET, '-module-name', 'cart_lab', '-no-stdlib', '-no-reflect',
-                   '-classpath', compilepath, '-d', classes]
-        run([*command, *sources])
+        build.compile_kotlin(jdk, home, compilepath, classes, sources, module_name='cart_lab', run=run)
     if java:
         run([jdk/'bin/javac', '--release', build.JVM_TARGET, '-cp', compilepath, '-d', classes, *java])
     if not list(classes.rglob('*.class')):
@@ -60,8 +57,5 @@ def compile_sources(jdk, classpath, classes, sources, *, kotlin_home=None):
     if home:
         build.stage_kotlin_runtime(home, classes)
         with tempfile.TemporaryDirectory(prefix='cart-kotlin-relocate-') as directory:
-            compiler = home/'lib/kotlin-compiler.jar'
-            run([jdk/'bin/javac', '--release', build.JVM_TARGET, '-cp', compiler, '-d', directory,
-                 ROOT/'JavaPatches/tools/RelocateKotlin.java'])
-            run([jdk/'bin/java', '-cp', os.pathsep.join([directory, str(compiler)]),
-                 'RelocateKotlin', classes, '--tests'])
+            relocator = build.build_kotlin_relocator(jdk, home, directory, run=run)
+            run([*relocator, classes, '--tests'])

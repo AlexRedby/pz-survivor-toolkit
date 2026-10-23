@@ -182,6 +182,74 @@ def window_start_counts(selection):
     return {}
 
 
+def environment(selection, role, cache):
+    """Resolve the exact opt-in fixture flags admitted for this role."""
+    options = selection.get('options', {})
+    allowed_env = set()
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('mp_host') is True
+            and options.get('cart_inventory_equip') is True and options.get('cart_lease_inventory', False) is False
+            and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'
+            and role in ('client1', 'client2')):
+        allowed_env.add('PZ_CART_INVENTORY_EQUIP')
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('mp_host') is True
+            and all(options.get(flag) is True for flag in ('cart_lease_inventory', 'cart_lease_menu',
+                'cart_lease_lifetimes', 'cart_lease_control', 'cart_timeline', 'cart_fast_motion'))
+            and all(options.get(flag, False) is False for flag in ('cart_inventory_equip', 'cart_actions',
+                'cart_hotkey_setdown', 'cart_time_alignment', 'cart_action_admission', 'cart_observer_association'))
+            and 'cart_wall_exit' not in options
+            and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'
+            and role in ('client1', 'client2')):
+        allowed_env.add('PZ_CART_INVENTORY_EQUIP')
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
+            and role in ('server', 'client1', 'client2')):
+        allowed_env.add('PZ_CART_TIMELINE')
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
+            and options.get('cart_time_alignment') is True and options.get('mp_host') is True
+            and options.get('cart_inventory_equip') is not True and options.get('cart_actions') is not True
+            and 'cart_wall_exit' not in options and role in ('client1', 'client2')):
+        allowed_env.add('PZ_CART_TIME_ALIGNMENT')
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
+            and options.get('cart_lease_control') is True and options.get('cart_fast_motion') is True and options.get('mp_host') is True
+            and options.get('cart_inventory_equip') is not True and options.get('cart_actions') is not True
+            and 'cart_wall_exit' not in options and role in ('server', 'client1', 'client2')):
+        allowed_env.add('PZ_CART_LEASE_CONTROL')
+    if ('PZ_CART_LEASE_CONTROL' in allowed_env and options.get('cart_lease_lifetimes') is True
+            and options.get('cart_time_alignment') is not True and options.get('cart_hotkey_setdown') is not True):
+        allowed_env.add('PZ_CART_LEASE_LIFETIME')
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('cart_timeline') is True
+            and options.get('cart_action_admission') is True and options.get('cart_fast_motion') is True
+            and options.get('mp_host') is True and options.get('cart_actions') is True
+            and options.get('cart_lease_control') is not True and options.get('cart_time_alignment') is not True
+            and options.get('cart_inventory_equip') is not True and 'cart_wall_exit' not in options
+            and role in ('server', 'client1', 'client2')):
+        allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION'))
+        if options.get('cart_observer_association') is True:
+            allowed_env.add('PZ_CART_OBSERVER_ASSOCIATION')
+    if (selection['suite']=='wooden_cart_multiplayer' and selection['kind']=='mp'
+            and selection.get('cases')==['owner_observer_motion']
+            and all(options.get(flag) is True for flag in ('cart_action_invalidation','mp_host','cart_timeline','cart_fast_motion'))
+            and all(options.get(flag,False) is False for flag in ('cart_actions','cart_action_admission',
+                'cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_lease_inventory','cart_inventory_equip',
+                'cart_time_alignment','cart_hotkey_setdown','cart_observer_association'))
+            and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow'
+            and role in ('server','client1','client2')):
+        allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION','PZ_CART_ACTION_INVALIDATION'))
+    if (selection['suite']=='wooden_cart_multiplayer' and selection['kind']=='mp'
+            and selection.get('cases')==['lease_lifecycle'] and options.get('mp_host') is True
+            and not any(options.get(flag,False) is not False for flag in ('cart_timeline','cart_time_alignment','cart_fast_motion',
+                'cart_actions','cart_hotkey_setdown','cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_lease_inventory','cart_action_invalidation','cart_action_admission','cart_observer_association','cart_inventory_equip'))
+            and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow'
+            and role in ('server','client1','client2')):
+        allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_LEASE_LIFETIME'))
+    return dict.fromkeys(allowed_env, 'true')
+
+
 def validate(selection):
     suite = selection['suite']
     options = selection.get('options', {})
@@ -470,22 +538,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         runtime_lua = cache / 'Lua/cart-runtime.lua'
         spec['env'] = dict(spec.get('env', {}), PZ_CART_RUNTIME_FILE=str(runtime_lua), PZ_CART_COMMAND_FILE=str(cache / 'Lua/cart-command.txt'))
         spec['env']['PZ_CART_TEST_PAD'] = 'true' if selection['suite'] == SP else 'false'
-        if selection['suite'] == MP and selection.get('options', {}).get('cart_timeline'):
-            spec['env']['PZ_CART_TIMELINE'] = 'true'
-        if selection['suite'] == MP and (selection.get('options', {}).get('cart_lease_control') is True or selection.get('options', {}).get('cart_action_admission') is True or lifecycle):
-            spec['env']['PZ_CART_LEASE_CONTROL'] = 'true'
-        if selection['suite'] == MP and (selection.get('options', {}).get('cart_lease_lifetimes') is True or lifecycle):
-            spec['env']['PZ_CART_LEASE_LIFETIME'] = 'true'
-        if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
-            spec['env']['PZ_CART_ACTION_ADMISSION'] = 'true'
-        if selection['suite'] == MP and selection.get('options', {}).get('cart_observer_association') is True:
-            spec['env']['PZ_CART_OBSERVER_ASSOCIATION'] = 'true'
-        if selection['suite'] == MP and selection.get('options', {}).get('cart_action_invalidation') is True:
-            spec['env'].update(PZ_CART_LEASE_CONTROL='true', PZ_CART_ACTION_ADMISSION='true', PZ_CART_ACTION_INVALIDATION='true')
-        if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_time_alignment') is True:
-            spec['env']['PZ_CART_TIME_ALIGNMENT'] = 'true'
-        if selection['suite'] == MP and role != 'server' and (selection.get('options', {}).get('cart_inventory_equip') is True or selection.get('options', {}).get('cart_lease_inventory') is True):
-            spec['env']['PZ_CART_INVENTORY_EQUIP'] = 'true'
+        spec['env'].update(environment(selection, role, cache))
         if role == 'server':
             _write(runtime_lua, 'return true\n')
             sandbox = cache / 'Server' / (runtime['server_name'] + '_SandboxVars.lua')

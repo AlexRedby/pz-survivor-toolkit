@@ -1,8 +1,8 @@
-# Wooden cart multiplayer capture intake
+# Wooden cart multiplayer fixtures
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
-Source-only fixture for one owner (`client1`), one real observer (`client2`) and a native menu Host (`mp_host=true`) or the default server fixture, on B42.21. It is connected by `tools/queue_checks/adapters/carts.py`, which owns fresh preparation, launch, attachment and verification. No copied core, binary, asset or profile is included here; the manifest retains historical intake metadata. Current evidence is recorded separately in each run report. The current placement uses native floor, free-space, vehicle, room and adjacency collision checks; decorations alone are allowed.
+These B42.21 fixtures capture one cart owner (`client1`) and one real observer (`client2`) on menu Host or the server fixture. The `carts` adapter owns preparation, launch, probe attachment and verification; current evidence is recorded in each run report. Placement uses native floor, free-space, vehicle, room and adjacency collision checks; decorations alone are allowed.
 
 The server creates the loaded wooden cart in its inventory authority and sends it to the owner. The owner equips the same item in both hands and calls `player:updateHandEquips()` so the native equipment pipeline reaches the observer. Global Lua `sendEquip` is SERVER-ONLY; calling it from a client prevented earlier setup. The protocol waits for both clients to observe the owner's equipped cart, then the server broadcasts a single epoch 25 seconds in the future. The analyzer compares that epoch, one owner onlineID and one cartID on server and both clients.
 

@@ -3,7 +3,7 @@ package.path = shared .. '?.lua;' .. package.path
 local enabled = true
 PZSurvivorToolkit = {Settings = {itemTags = function() return enabled end}}
 local resetPlanting
-Events={OnGameBoot={Add=function(fn) resetPlanting=fn end}}
+Events={OnGameBoot={Add=function(fn) local prior=resetPlanting;resetPlanting=function()if prior then prior()end;fn()end end}}
 getTextOrNull = function(key) if key == 'UI_PZST_Tag_food' then return 'Еда' end end
 local Tags = require 'PZSurvivorToolkit/ItemTags'
 local schema = require 'PZSurvivorToolkit/ItemTagSchema'
@@ -180,7 +180,7 @@ enriched[1]='medical'
 assert(Tags.matches(Tags.forScriptItem(sunflower),{'food'}),'caller mutated classification cache')
 assert(not Tags.matches(Tags.forCategory(sunflower.category),{'seed'}),'item role contaminated its category')
 for _,case in ipairs({{'Base.Potato','foodPerishable_vegetable','food'},
- {'Base.LemonGrass','medicalTreatment','medical'},{'Base.BarleySeed','Gardening','farming'}}) do
+ {'Base.LemonGrass','medicalTreatment','medical'},{'Base.BarleySeed','farmingSeed','farming'}}) do
  local script=scriptItem(case[1],case[2]);local values=Tags.forScriptItem(script)
  assert(Tags.matches(values,{case[3],'farming','seed'}),case[1]..' lost native planting role')
  assert(Tags.category(values)==case[2],'planting tags changed legacy category')
@@ -211,7 +211,7 @@ assert(Tags.matches(emptyTags,{'farming'}) and not Tags.matches(emptyTags,{'seed
 assert(Tags.category(emptyTags)=='farmingSeed','seed removal lost exact legacy origin')
 assert(Tags.matches(emptyTags,{'category:farmingSeed'}),'exact saved category lost on empty packet')
 empty.category='RecipeResource'
-assert(Tags.matches(Tags.forScriptItem(empty),{'crafting','farming'}),'vanilla empty packet lost farming role')
+assert(Tags.matches(Tags.forScriptItem(empty),{'farming'}),'owned empty packet lost farming role')
 assert(not Tags.matches(Tags.forScriptItem(empty),{'seed'}))
 local book=scriptItem('Base.BookFarming1','Literature')
 local food=scriptItem('Base.UnconfiguredSeed_Empty','Food')
@@ -224,54 +224,30 @@ assert(Tags.matches(Tags.forScriptItem(scriptItem('Mod.LateCrop','Food')),{'food
  'preboot planting cache ignored definitions loaded later')
 next = luaNext
 
--- Script loot buckets must not leak into inventory tag/catalog choices. The
--- optional provider may load after this module; live instance overrides win.
+-- Owned classification must not leak into native loot buckets. No provider is
+-- loaded; even a stale global must not affect classification or preparation.
 local Categories = require 'PZSurvivorToolkit/ItemCategories'
 local thread = scriptItem('Base.Thread', 'Material')
 thread.getDisplayName = function() return 'Thread' end
 local stone = scriptItem('Base.LargeStone', 'Material')
 stone.getDisplayName = function() return 'Stone' end
-assert(Categories.forScript(thread) == 'Material' and Categories.forScript(nil) == nil)
+assert(Categories.forScript(thread) == 'craftingTailoring_material' and Categories.forScript(nil) == nil)
+OrganizedCategories = {getScriptInventoryDisplayCategory=function() error('removed provider was called') end}
 local liveThread = inventoryItem(thread)
-Categories.prepareItem(liveThread)
-assert(liveThread.category == 'Material', 'provider-free preparation changed item')
-local providerCategory = 'craftingTailoring_material'
-local prepared = {}
-OrganizedCategories = {
- getScriptInventoryDisplayCategory = function(script)
-  if script == thread then return providerCategory end
- end,
- autoSortLiquid = function(item) prepared[#prepared+1] = 'fluid';item.category = 'mechanicsFuel' end,
- applyItemDisplayOverride = function(item)
-  prepared[#prepared+1] = 'override'
-  if item == liveThread then item.category = 'medicalTreatment' end
- end,
-}
+liveThread.setDisplayCategory = function(self, value) self.category = value end
+Categories.prepareContainer({getItems=function() return javaList({liveThread}) end})
+assert(liveThread.category == 'craftingTailoring_material', 'owned preparation did not classify item')
 assert(Tags.matches(Tags.forScriptItem(thread), {'tailoring', 'material'}), 'script tags used loot bucket')
-assert(Categories.forScript(stone) == 'Material', 'missing provider value lost raw fallback')
-providerCategory = ''
-assert(Categories.forScript(thread) == 'Material', 'empty provider value lost raw fallback')
-providerCategory = 'craftingTailoring_material'
-local liquid = inventoryItem(scriptItem('Base.Bottle', 'Container'))
-liquid.isFluidContainer = function() return true end
-Categories.prepareContainer({getItems=function() return javaList({liveThread, liquid}) end})
-assert(table.concat(prepared, ',') == 'override,fluid,override', 'fluid preparation must precede instance overrides')
-assert(Tags.matches(Tags.forItem(liveThread), {'medical'}) and not Tags.matches(Tags.forItem(liveThread), {'tailoring'}),
- 'live instance override replaced by script/type category')
-assert(Tags.matches(Tags.forItem(liquid), {'fuel'}), 'fluid result lost')
 assert(thread.category == 'Material', 'inventory preparation rewrote loot-safe ScriptItem')
-
--- Exercise the owned catalog without organizedCategories replacing its functions.
+local providerCategory = 'craftingTailoring_material'
 getScriptManager = function() return {getAllItems=function() return javaList({thread, stone}) end} end
 dofile(shared .. 'LootSorter_Categories.lua')
 local cats = LootSorter.getCategories()
-assert(#cats == 2 and cats[1] == 'Material' and cats[2] == providerCategory, 'owned catalog ignored inventory categories')
+assert(#cats == 2, 'owned catalog ignored inventory categories')
 local entries = LootSorter.getItemsInCategory(providerCategory)
 assert(#entries == 1 and entries[1].fullType == 'Base.Thread', 'owned catalog grouped by loot bucket')
-assert(#LootSorter.getItemsInCategory('Material') == 1 and thread.category == 'Material', 'catalog changed script data')
+assert(thread.category == 'Material', 'catalog changed script data')
 OrganizedCategories = nil
-dofile(shared .. 'LootSorter_Categories.lua')
-assert(#LootSorter.getCategories() == 1 and #LootSorter.getItemsInCategory('Material') == 2, 'provider-free catalog failed')
 local hidden = scriptItem('Base.Hidden', 'HiddenCategory')
 hidden.isHidden = function() return true end
 hidden.getObsolete = function() return false end
@@ -284,6 +260,6 @@ dofile(shared .. 'LootSorter_Categories.lua')
 local ruleScripts = LootSorter.getTagScriptItems()
 assert(#ruleScripts == 2 and ruleScripts[1] == thread and ruleScripts[2] == hidden,
  'rule catalog must include hidden items but exclude obsolete scripts')
-assert(#LootSorter.getCategories() == 1 and LootSorter.getCategories()[1] == 'Material',
+assert(#LootSorter.getCategories() == 1 and LootSorter.getCategories()[1] == 'craftingTailoring_material',
  'visible category picker inherited rule-preview inclusion policy')
 print('ItemTags: '..count..' exact legacy projections, independent tags, aliases, unknown/ambiguous keys and live fluid changes passed.')

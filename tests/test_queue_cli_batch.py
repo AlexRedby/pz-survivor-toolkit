@@ -477,5 +477,27 @@ class StatusTests(unittest.TestCase):
         self.assertIn('ERROR: Cannot sample host resources', error.getvalue())
 
 
+class UtilityCommandTests(unittest.TestCase):
+    def test_lock_pack_does_not_load_native_catalog(self):
+        output = Path('/tmp/queue-pack.json')
+        result = {'mods': [{'id': 'PZSurvivorToolkit'}]}
+        with patch.object(cli.report, 'read_json', side_effect=AssertionError('lock-pack must not read catalog')), \
+             patch.object(cli.adapters, 'definitions', side_effect=AssertionError('lock-pack must not load adapters')), \
+             patch.object(cli.pack, 'create', return_value=result) as create, \
+             patch('sys.stdout', io.StringIO()):
+            self.assertEqual(0, cli.main(['lock-pack', str(output), '--game', '/game']))
+        create.assert_called_once_with(cli.ROOT, output, Path('/game'), [], {})
+
+    def test_save_world_does_not_load_native_catalog(self):
+        run, output = Path('/tmp/queue-run'), Path('/tmp/world-template')
+        result = {'files': {'db/servertest.db': 'digest'}}
+        with patch.object(cli.report, 'read_json', side_effect=AssertionError('save-world must not read catalog')), \
+             patch.object(cli.adapters, 'definitions', side_effect=AssertionError('save-world must not load adapters')), \
+             patch.object(cli.worlds, 'export', return_value=result) as export, \
+             patch('sys.stdout', io.StringIO()):
+            self.assertEqual(0, cli.main(['save-world', str(run), str(output)]))
+        export.assert_called_once_with(run, output)
+
+
 if __name__ == '__main__':
     unittest.main()

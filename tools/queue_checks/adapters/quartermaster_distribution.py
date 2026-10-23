@@ -7,7 +7,7 @@ import shutil
 from .. import receipts
 
 SUITE = 'quartermaster-distribution'
-MODS = ['PZSurvivorToolkit', 'PZToolkitJavaPatches', 'organizedCategories_core']
+MODS = ['PZSurvivorToolkit', 'PZToolkitJavaPatches']
 
 
 def definitions():

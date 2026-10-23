@@ -7,6 +7,7 @@ require "ISUI/ISContextMenu"
 require "ISUI/ISButton"
 require "ISUI/ISInventoryPaneContextMenu"
 require "ISUI/ISInventoryPane"
+require "RadioCom/RadioWindowModules/RWMVolume"
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 
 local Operations = {}
@@ -159,8 +160,12 @@ end
 
 local function startCommand(action)
     action:beginAddingActions()
-    Operations.runWith(action.toolkitQueueOperation, action.addActionsFunction, action.character, unpack(action.args))
+    local results = pack(pcall(Operations.runWith, action.toolkitQueueOperation,
+        action.addActionsFunction, action.character, unpack(action.args)))
     action:endAddingActions()
+    -- Restore the native insertion boundary even for an unexpected producer
+    -- error; propagate it rather than leaving all future enqueues nested here.
+    if not results[1] then error(results[2], 0) end
     -- An invalid future target skips its command without clearing unrelated native actions.
     action:forceComplete()
 end
@@ -244,6 +249,16 @@ function Operations.perform(action, callback, ...)
         pending.queue:onCompleted(action)
     end
     return unpack(results, 2, results.n)
+end
+
+-- Only synchronous producer dispatch can enqueue future preparation. Native
+-- completion, asynchronous continuations and nested expansion already run at
+-- their execution boundary and must retain the native boolean result.
+function Operations.preparationScope(character)
+    if completionScope or continuationScope then return end
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    if lifecycle and lifecycle.current(character) then return end
+    return scope
 end
 
 local function stamp(action, token)
@@ -430,6 +445,32 @@ wrap(ISInventoryPane, "onMouseUp")
 wrap(ISInventoryPane, "onMouseDoubleClick")
 wrap(ISInventoryPaneContextMenu, "readItem", true)
 
+-- The native volume bar commits directly, or later from update() after a
+-- joypad/+/- change. Scope the real producer rather than the earlier UI click.
+local volumeProducer
+function Operations.installVolumeProducer()
+    local class, panel = RWMVolume, RWMPanel
+    if volumeProducer then
+        return class == volumeProducer.class and panel == volumeProducer.panel
+            and class.onVolumeChange == volumeProducer.wrapper
+    end
+    local callback, walk = class and class.onVolumeChange, panel and panel.doWalkTo
+    local proof = require "PZSurvivorToolkit/SourceProof"
+    if not proof or not proof.closure(callback, "RWMVolume.lua") or not proof.closure(walk, "RWMPanel.lua")
+        or not proof.matches("media/lua/client/RadioCom/RadioWindowModules/RWMVolume.lua", 1122481123, nil, true)
+        or not proof.matches("media/lua/client/RadioCom/RadioWindowModules/RWMPanel.lua", 4229885986, nil, true) then return false end
+    local wrapper
+    wrapper = function(self, ...)
+        if RWMVolume ~= class or RWMPanel ~= panel or class.onVolumeChange ~= wrapper
+            or panel.doWalkTo ~= walk or self.doWalkTo ~= walk then return callback(self, ...) end
+        return Operations.run(callback, self, ...)
+    end
+    volumeProducer = {class = class, panel = panel, wrapper = wrapper}
+    class.onVolumeChange = wrapper
+    return true
+end
+Operations.installVolumeProducer()
+
 local transferPanes = {}
 local function installTransferPane(class)
     if not class or transferPanes[class] or type(class.transferItemsByWeight) ~= "function" then return end
@@ -458,8 +499,15 @@ local function installTransferPanes()
     InventoryClasses.panes(installTransferPane)
 end
 Events.OnGameStart.Add(function()
+    Operations.installVolumeProducer()
     installTransferPanes()
     InventoryClasses.onToggle(installTransferPanes)
 end)
+
+local approach = require "PZSurvivorToolkit/ActionQueueApproach"
+if approach then
+    approach.install()
+    Events.OnGameStart.Add(approach.install)
+end
 
 return Operations

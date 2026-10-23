@@ -1,3 +1,19 @@
+# Cart delivery and manual playground
+
+- [ ] Launch the prepared isolated manual CartLab playground for the user, confirm bootstrap readiness and provide controls and diagnostic/log locations without changing personal saves or installation.
+
+# Container editor visual states
+
+- [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.
+
+# Vehicle Repair Overhaul verification
+
+- [ ] Resolve both VRO modules from Workshop 2757712197 or explicit sources, then check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
+
+# Vehicle aim roof fix verification
+
+- [ ] Resolve CarRoofFix through Workshop or an explicit source override, then verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
+
 # Fitness completion verification
 
 - [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host after the missing `VanillaVehiclesAnimated` source and any further unresolved pack inputs are available. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass; the game run remains blocked at pack resolution.
@@ -48,13 +64,17 @@ These are implementation and verification gaps, not evidence that every action u
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
 - [ ] Remove the remaining family-specific bypasses after the corresponding SP/MP checks; preserve fallback for unsupported Java/server versions, resource contracts and separate medical/cart sync fixes.
 
+# Extend cancelled queue recovery
+
+- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
+
 # Further action queue migration
 
 The executor remains `ISTimedActionQueue`. Add families through Definitions and the shared dependency/effect contract, keeping any dependency model read-only: it validates edits, never executes game effects, replaces the native scheduler or reserves future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
 
 ## Known limits of move/cancel controls
 
-These operations can execute normally while some queue controls remain disabled. The work below is to prove safe edits; real shared dependencies and required cleanup must remain protected. Current behavior is described in the [action queue limits](docs/FEATURES.md#supported-actions-and-limits).
+These operations can execute normally while some queue controls remain disabled. The work below is to prove safe edits; real shared dependencies and required cleanup must remain protected. Current behavior is described in the [action queue limits](docs/features/ACTION_QUEUE.md#supported-actions-and-limits).
 
 - [ ] Vehicle fuel and wreck dismantling: reordering and individual cancellation remain protected because containers/tools are chosen at execution time. Define exact contracts for shared cans, hoses, masks and blowtorches before enabling these controls. Preserve deferred selection, native fuel transactions, wreck removal and the unrelated queue tail.
 - [ ] Project Cook evolved recipes: ingredient application and compensating consumed-spice cleanup protect the operation from cancellation. Define which edits, if any, are independent of already-applied ingredients; preserve authoritative consumption and required cleanup rather than dropping the cleanup step.
@@ -98,7 +118,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
+- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 55-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
 
 # Inventory infrastructure proposals
 

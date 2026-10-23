@@ -12,6 +12,21 @@ ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
 
 
+def load_catalog(suites=None):
+    """Resolve only the requested declarations; full reports retain the complete catalog."""
+    catalog = report.read_json(CATALOG)
+    if suites is not None:
+        known = dict.fromkeys([*catalog['suites'], *adapters.MODULES])
+        unknown = set(suites) - known.keys()
+        if unknown:
+            raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
+                             + '; available: ' + ', '.join(known))
+    catalog['suites'].update(adapters.definitions(suites))
+    if suites is not None:
+        catalog['suites'] = {suite: catalog['suites'][suite] for suite in suites}
+    return catalog
+
+
 def selection(args, catalog, options=None):
     suite = catalog["suites"][args.suite]
     if suite["status"] != "ready":
@@ -307,8 +322,6 @@ def main(argv=None):
                 for limit in value['limits']:
                     print('Note: ' + limit)
             return 0
-        catalog = report.read_json(CATALOG)
-        catalog['suites'].update(adapters.definitions())
         if args.command == 'lock-pack':
             overrides = {}
             for argument in args.mod_source:
@@ -323,13 +336,15 @@ def main(argv=None):
             value = worlds.export(args.run, args.output)
             print('Saved world template: ' + str(args.output.resolve()) + ' (' + str(len(value['files'])) + ' files)')
             return 0
+        if args.command == 'prepare':
+            catalog = load_catalog([args.suite])
+        elif args.command == 'matrix' and args.suite:
+            catalog = load_catalog(args.suite)
+        else:
+            catalog = load_catalog()
         if args.command == 'batch':
             return batch(args, catalog)
         if args.command == "matrix":
-            unknown = set(args.suite) - catalog['suites'].keys()
-            if unknown:
-                raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
-                                 + '; available: ' + ', '.join(catalog['suites']))
             value = report.matrix(catalog, [report.read_json(path) for path in args.reports])
             for field in ('rows', 'scenarios'):
                 value[field] = [row for row in value[field]

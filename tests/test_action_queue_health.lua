@@ -245,7 +245,7 @@ local function privateHandler(name)
     return assert(nativeHandlers[name],'missing native private handler '..name)
 end
 local pruneHealth,clearHealth
-local function freshHealth(change,queueRuntime)
+local function freshHealth(change,queueRuntime,sharedApproach)
     f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     f.native('shared/ISBaseObject.lua')
     ISHealthPanel={}
@@ -256,7 +256,16 @@ local function freshHealth(change,queueRuntime)
     local class=privateHandler('HDisinfect')
     local parent=getmetatable(class).__index
     local restore=change and change(class,parent)
-    f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');f.project('ActionQueuePolicy')
+    f.project('ActionQueueOperations')
+    if sharedApproach then
+        f.native('shared/luautils.lua')
+        isServer=function()return false end
+        local original=luautils.walkToContainer
+        local approach=f.project('ActionQueueApproach');assert(approach.install())
+        assert(luautils.walkToContainer~=original and approach.nativeHelper(luautils,'walkToContainer',luautils.walkToContainer)==original,
+            'the actual dispatcher must precede Health helper trust capture')
+    end
+    f.project('ActionQueueDefinitions');f.project('ActionQueuePolicy')
     if queueRuntime then f.project('ActionQueueLabels');f.project('ActionQueue') end
     if queueRuntime then
         Events.OnTick.Add=function(callback)pruneHealth=callback end
@@ -797,7 +806,7 @@ isClient=function()return false end
 print('Health runtime guards: hidden tools, fluid state, panel/actor identity, moving/removed patients, same-car exception and native stop preserve exact tail.')
 
 do
-    adapter=freshHealth(nil,true);policy=PZSurvivorToolkit.ActionQueuePolicy
+    adapter=freshHealth(nil,true,true);policy=PZSurvivorToolkit.ActionQueuePolicy
     local actor=f.player
     Perks={Doctor=1};CharacterTrait={DEXTROUS=1,ALL_THUMBS=2}
     getTimestampMs=function()return 0 end;getCore=function()return {getGameMode=function()return 'Sandbox' end}end
@@ -884,12 +893,45 @@ do
     local borrowed=bandage();borrowed.getContainer=function()return bag end;bag.items={borrowed};inventory.items={owner}
     local treatment=clinicalWound('HApplyBandage')
     child,q,head=direct(borrowed,treatment)
-    local preparation=q.queue[2]
-    assert(#q.queue==3 and preparation.Type=='ISInventoryTransferAction' and preparation.item==borrowed
+    local route,preparation=q.queue[2],q.queue[3]
+    assert(#q.queue==4 and PZSurvivorToolkit.ActionQueueApproach.isContainer(route,bag,actor)
+        and route.toolkitQueueOperation==child.toolkitQueueOperation and preparation.Type=='ISInventoryTransferAction' and preparation.item==borrowed
         and preparation.srcContainer==bag and preparation.destContainer==inventory and adapter.inspect(child),
         'actual inventory producer retains its carried-bag transfer and exact clinical child')
     assert(preparation.toolkitQueueOperation==child.toolkitQueueOperation and adapter.canPreserveStop(preparation),
         'inventory pickup and bandage are one cancellable medical intent')
+    -- The verified three-row body admits only its exact live container intent.
+    local enqueue=ISTimedActionQueue.add
+    for _,kind in ipairs({'wrong-source','wrong-token','arbitrary-command','extra-command'})do
+        local intercepted=false
+        ISTimedActionQueue.add=function(action)
+            if not intercepted and action.toolkitQueueApproach then
+                intercepted=true
+                if kind=='wrong-source'then action.toolkitQueueCommand.snapshot.args[1]=inventory
+                elseif kind=='wrong-token'then action.toolkitQueueOperation={}
+                elseif kind=='arbitrary-command'then
+                    local replacement=PZSurvivorToolkit.ActionQueueOperations.command(actor,function()end,{})
+                    replacement.toolkitQueueOperation=action.toolkitQueueOperation;return enqueue(replacement)
+                else
+                    local extra=PZSurvivorToolkit.ActionQueueOperations.command(actor,function()end,{})
+                    extra.toolkitQueueOperation=action.toolkitQueueOperation;enqueue(extra)
+                end
+            end
+            return enqueue(action)
+        end
+        local unsupported,badQueue=direct(borrowed,clinicalWound('HApplyBandage'))
+        ISTimedActionQueue.add=enqueue
+        assert(intercepted and not adapter.inspect(unsupported),'foreign '..kind..' preparation must keep the medical producer opaque')
+        assert(#badQueue.queue==(kind=='extra-command'and 5 or 4),'opaque preparation must remain visible in the real queue')
+    end
+    -- Inspection still guards the live wrapper, not just its unwrapped source body.
+    local helper=luautils.walkToContainer
+    luautils.walkToContainer=function()error('foreign routing helper must not execute during inspection')end
+    assert(not adapter.inspect(child),'foreign replacement cannot borrow dispatcher provenance')
+    luautils.walkToContainer=helper
+    assert(adapter.inspect(child),'restoring the exact dispatcher restores the original producer proof')
+
+    ISTimedActionQueue.queues[actor]=q
     assert(policy.cancelReason(q,child)=='dependent' and not policy.cancelOperationReason(q,child),
         'a bandage child cannot be removed independently of its carried-bag preparation')
     local source=preparation.srcContainer;preparation.srcContainer=inventory

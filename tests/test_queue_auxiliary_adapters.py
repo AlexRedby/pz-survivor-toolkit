@@ -62,6 +62,13 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         fixture = (client / 'ZZQuartermasterScreens.lua').read_text()
         self.assertIn('assert(getTexture(', fixture)
         self.assertIn("shot('05-vanilla-inventory')", fixture)
+        self.assertIn('PZSurvivorToolkit.ItemCategories and PZSurvivorToolkit.ItemTags', fixture)
+        self.assertNotIn('organizedCategories_core', fixture)
+        self.assertNotIn('organizedCategories_core', adapter.ITEM_MODS)
+        for suite in ('item-tags', 'inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
+            manifest = json.loads((ROOT / 'tests/native_queue/contributions' / suite / 'manifest.json').read_text())
+            self.assertNotIn('organizedCategories_core', manifest['required_mods_in_order'])
+            self.assertNotIn('organizedCategories_core', adapter.definitions()[suite]['default_mods'])
         self.assertIn('setValue(false)', (client / 'ZZQuartermasterSetup.lua').read_text())
         self.assertIn('height=720', (self.cache / 'options.ini').read_text())  # staging preserves the prepared override
         self.assertEqual(adapter.definitions()['item-tags']['window_size'], [1280, 900])
@@ -84,7 +91,7 @@ class AuxiliaryAdapterTests(unittest.TestCase):
 
     def test_locked_pack_uses_actual_ini_order_but_still_requires_all_tag_dependencies(self):
         mods = list(adapter.ITEM_MODS)
-        a, b = mods.index('PZSurvivorToolkit'), mods.index('organizedCategories_core')
+        a, b = mods.index('PZSurvivorToolkit'), mods.index('EURY_CONTAINERS')
         mods[a], mods[b] = mods[b], mods[a]
         self.selection.update(suite='item-tags', cases=['scenes'], languages=['RU'], mods=mods)
         with self.assertRaisesRegex(ValueError, 'load order'):

@@ -1,6 +1,6 @@
 # Движение и анимация тележек в multiplayer
 
-[Разработка](DEVELOPMENT.md) · [Невыполненные задачи проекта](../TODO.md)
+[Разработка](../DEVELOPMENT.md) · [Невыполненные задачи проекта](../../TODO.md)
 
 ## Критерий завершения
 
@@ -22,7 +22,7 @@
 | Приём | Используется последнее значение; числовые параметры и native heading догоняются со сглаживанием tau 60 мс. Истории snapshots и playback clock нет. |
 | Доставка | В проверенном B42.21 `VariableSyncPacket` использует `RELIABLE_ORDERED`, channel 0. Сервер пересылает состояние relevant-соединениям. |
 
-Источники: [CartMotionSync](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt), [CartActionSync](../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartActionSync.kt), [регистрация переменных](../PZSurvivorToolkit/42/media/lua/client/000ToolkitCartMotion.lua).
+Источники: [CartMotionSync](../../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt), [CartActionSync](../../JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartActionSync.kt), [регистрация переменных](../../PZSurvivorToolkit/42/media/lua/client/000ToolkitCartMotion.lua).
 
 Текущий протокол v1 остаётся рабочим. Отдельный admission-прототип и диагностические проверки native действий не являются внедрением v2 в игровой код. Сервер подтверждает игровые эффекты; видимую анимацию нужно смотреть на клиенте-наблюдателе.
 

@@ -49,6 +49,7 @@ Queue.updateOperationState = updateOperationState
 
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.started(action) end
     -- Initialize disabled-mode bookkeeping before native allocation/receipts.
     -- Its first tick must not revoke a freshly captured media transaction.
     updateOperationState(ISTimedActionQueue.queues[action.character])
@@ -69,6 +70,9 @@ function Queue.cancel(queue, action)
     Policy.record("cancel", action, decision)
     if not decision.allowed then return false, decision.reason end
     if craft(action) then return Queue.cancelOperation(queue, action) end
+    -- Policy validates deferred commands as complete operations. Execute that
+    -- same edit, so required preparation cannot be detached from its body.
+    if action.Type == "ISQueueActionsAction" then return Queue.cancelOperation(queue, action) end
     if appliance(action) then return Queue.cancelOperation(queue, action) end
     local contract = Policy.inspect(action)
     if contract and contract.cancelWaiting and not stoppable(action) then return Queue.cancelOperation(queue, action) end
@@ -133,6 +137,8 @@ end
 
 local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
+    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.completed(action) end
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.completed(action) end
     if Toolkit.ActionQueueLifecycle.deferCompletion(queue, action) then return end
     if Operations.deferCompletion and Operations.deferCompletion(queue, action) then return end
     if queue.toolkitOutcomeWait and queue.toolkitCancel == action and queue.current == action and queue.queue[1] == action then
@@ -249,6 +255,8 @@ end
 
 local stop = ISBaseTimedAction.stop
 ISBaseTimedAction.stop = function(action)
+    local approach = Toolkit.ActionQueueApproach
+    if approach then approach.onStop(action) end
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.stop(action) end
     local queue = ISTimedActionQueue.queues[action.character]
     local world = Toolkit.ActionQueueWorld
@@ -275,7 +283,9 @@ ISBaseTimedAction.stop = function(action)
         local fireUnavailable = fire and fire.canSkip and fire.canSkip(action)
         if (generators and generators.canSkip and generators.canSkip(action))
             or fireUnavailable
-            or (health and health.canPreserveStop and health.canPreserveStop(action)) then
+            or (health and health.canPreserveStop and health.canPreserveStop(action))
+            or (Toolkit.ActionQueueMedia and Toolkit.ActionQueueMedia.canSkipUnavailable
+                and Toolkit.ActionQueueMedia.canSkipUnavailable(action)) then
             local request = {action = action, token = action.toolkitQueueOperation}
             local receipt = fireUnavailable and Toolkit.ActionQueueAcknowledgements.capture(action)
             if receipt then
@@ -313,6 +323,8 @@ if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop"
 -- Native reset/clear delegate here even when another mod retains an earlier reset wrapper.
 local cancelQueue = ISTimedActionQueue.cancelQueue
 ISTimedActionQueue.cancelQueue = function(queue)
+    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.reset(queue) end
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.capture(queue) end
     Toolkit.ActionQueueLifecycle.reset(queue)
     Toolkit.ActionQueueAcknowledgements.reset(queue)
     if Operations.invalidateQueue then Operations.invalidateQueue(queue) end
@@ -425,6 +437,9 @@ ISTimedActionQueue.tick = function(queue)
         and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false)
         and ((health and health.canSkip(current) and health.canPreserveStop(current))
             or (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.canSkip(current)
+                and not Toolkit.ActionQueueAcknowledgements.capture(current))
+            or (Toolkit.ActionQueueMedia and Toolkit.ActionQueueMedia.canSkipUnavailable
+                and Toolkit.ActionQueueMedia.canSkipUnavailable(current)
                 and not Toolkit.ActionQueueAcknowledgements.capture(current))) then
         Operations.invalidate(current.toolkitQueueOperation)
         queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
@@ -446,4 +461,5 @@ require "PZSurvivorToolkit/ActionQueueFitness"
 require "PZSurvivorToolkit/ActionQueueReading"
 require "PZSurvivorToolkit/ActionQueueMedia"
 if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end
+require "PZSurvivorToolkit/ActionQueueRecovery"
 return Queue

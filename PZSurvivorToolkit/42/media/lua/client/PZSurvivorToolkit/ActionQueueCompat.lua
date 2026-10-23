@@ -232,8 +232,7 @@ local function ownerUnchanged(id)
         end
     end
     if id == "WashFix" and washWalkHelper then
-        local scopedWalk = sourceScope and sourceScope.id == id and sourceScope.walkAdjacentWrapper
-        if luautils ~= washWalkHelper.owner or (luautils.walkAdj ~= washWalkHelper.callback and luautils.walkAdj ~= scopedWalk) then return false end
+        if luautils ~= washWalkHelper.owner or luautils.walkAdj ~= washWalkHelper.callback then return false end
     end
     for _, owner in ipairs(owners[id] or {}) do
         for name, method in pairs(owner.methods) do if owner.target[name] ~= method then return false end end
@@ -692,6 +691,9 @@ local scoped, rememberTidy
 local function adopt(action)
     local context = sourceScope
     if not context then return end
+    -- Verified Toolkit dispatchers already own their scope and lifecycle. A
+    -- foreign producer may enqueue them, but must not replace their executor.
+    if Operations.isCommand and Operations.isCommand(action) then return end
     local class = getmetatable(action)
     local baseline = classes[context.id] and classes[context.id][class]
     if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
@@ -827,8 +829,6 @@ scoped = function(context, callback, ...)
     local insert, add, addAfter, queueActions = table.insert, ISTimedActionQueue.add,
         ISTimedActionQueue.addAfter, ISTimedActionQueue.queueActions
     local addOption = ISContextMenu and ISContextMenu.addOption
-    local walkAdjacent = luautils and luautils.walkAdj
-    local previousWalkWrapper = context.walkAdjacentWrapper
     local function valid() return ownerUnchanged(context.id) and (not context.token or live(context)) end
     ISTimedActionQueue.add = function(action)
         if context.id == "P4TidyUpMeister" and sessions[action.character] then sessions[action.character].restored = true end
@@ -874,18 +874,9 @@ scoped = function(context, callback, ...)
             return addOption(menu, label, target, callback, ...)
         end
     end
-    if walkAdjacent and context.id == "WashFix" then
-        -- Native walkAdj clears existing work before even checking whether the sink is already adjacent.
-        context.walkAdjacentWrapper = function(character, square, keepActions, excluded)
-            return walkAdjacent(character, square, true, excluded)
-        end
-        luautils.walkAdj = context.walkAdjacentWrapper
-    end
     local results = pack(pcall(callback, ...))
     table.insert, ISTimedActionQueue.add, ISTimedActionQueue.addAfter, ISTimedActionQueue.queueActions = insert, add, addAfter, queueActions
     if addOption then ISContextMenu.addOption = addOption end
-    if walkAdjacent then luautils.walkAdj = walkAdjacent end
-    context.walkAdjacentWrapper = previousWalkWrapper
     sourceScope = previous
     if not results[1] then error(results[2], 0) end
     return unpack(results, 2, results.n)
@@ -1509,8 +1500,8 @@ function Compat.install()
             for _,name in ipairs(lifecycle) do if not allowed[name] and target[name]~=methods[name] then return false end end
             return true
         end
-        local stickSource=getActivatedMods and getActivatedMods():contains('organizedCategories_core')
-            and verified('organizedCategories_core',{{'client/organizedCategories_itemStick.lua',2877670095}})
+        local retention=Toolkit.ItemRetention
+        local retentionWrapper
         local floorPage = ISInventoryPage
         local floorGetter = floorPage and floorPage.GetFloorContainer
         if Proof.closure(floorGetter, "ISInventoryPage.lua") then tidyFloorPage, tidyFloorGetter = floorPage, floorGetter end
@@ -1534,8 +1525,16 @@ function Compat.install()
                 or not record and tidyClassUnchanged(action,getmetatable(action),baseline)
         end
         TidyIntent.install(tidyActionUnchanged,function(menu,name)
-            return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
-                and Proof.closure(menu[name],'organizedCategories_itemStick.lua')
+            local live=Toolkit.ItemRetention
+            if retention and live~=retention then return false end
+            local checker=live and live.isContextWrapper
+            -- Compat can install before the inventory UI publishes its hooks.
+            -- Seal only the owned checker, then reject owner/predicate changes.
+            if not retentionWrapper then
+                if type(checker)~='function' or not Proof.closure(checker,'ItemRetentionUI.lua') then return false end
+                retention,retentionWrapper=live,checker
+            end
+            return live==retention and checker==retentionWrapper and retentionWrapper(menu,name)
         end)
     end
 end

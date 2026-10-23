@@ -414,15 +414,16 @@ do
     LootSorter.addCoord, LootSorter.removeCoords, LootSorter.notify = originalAdd, originalRemove, originalNotify
 end
 do
-    local previousProvider = OrganizedCategories
+    local Categories = require 'PZSurvivorToolkit/ItemCategories'
+    local previousPrepare = Categories.prepareItem
     local previousGather, previousNotify = LootSorter.gatherBoxesOrWarn, LootSorter.notify
     local item = {category = 'Material', getDisplayCategory = function(self) return self.category end}
     local source = {getItems = function() return list({item}) end, isInCharacterInventory = function() return true end}
     local gathered = false
-    OrganizedCategories = {applyItemDisplayOverride = function(current)
+    Categories.prepareItem = function(current)
         assert(current == item, 'sort replaced the original inventory item')
         current.category = 'craftingTailoring_material'
-    end}
+    end
     LootSorter.gatherBoxesOrWarn = function()
         gathered = true
         assert(item.category == 'craftingTailoring_material', 'owned sort did not prepare its raw source before planning')
@@ -430,8 +431,8 @@ do
     end
     LootSorter.notify = function() end
     LootSorter.sort(source, 0)
-    assert(gathered and item.category == 'craftingTailoring_material', 'owned sort required an external preparation wrapper')
-    OrganizedCategories = previousProvider
+    assert(gathered and item.category == 'craftingTailoring_material', 'owned sort did not invoke its classification boundary')
+    Categories.prepareItem = previousPrepare
     LootSorter.gatherBoxesOrWarn, LootSorter.notify = previousGather, previousNotify
 end
 do

@@ -1760,6 +1760,571 @@
           ]
         }
       ]
+    },
+    "tv-controls": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "AnimalTrailerSyncMPFix",
+        "NeatUI_Framework",
+        "MoodleFramework",
+        "CleanUI",
+        "PZSurvivorToolkit",
+        "VHSSkillNameInTooltip",
+        "MPFastForward",
+        "EURY_CONTAINERS",
+        "CleanHotBar",
+        "Neat_Crafting",
+        "Project_Cook",
+        "P4TidyUpMeister",
+        "B42MoodleDescriptionsExpanded",
+        "DetailedDescriptionsForOccupationsAndTraits",
+        "PeekAView",
+        "PZShareMapNotes",
+        "BetterGeneratorInfo",
+        "MapSymbolsPlusDeonHand",
+        "NeatUI_Equipment",
+        "EURY_CLOTHINGINFO",
+        "RainCleansBlood",
+        "Neat_Building_UIOnly",
+        "EatSmartInt",
+        "Drink_Smart",
+        "WashFix",
+        "Neat_Crafting_AddonXP",
+        "Neat_Building_AddonXP",
+        "SmartRadialMenu",
+        "WashOrRot_MP",
+        "GasPumpIndicator",
+        "MiniHealthPlus",
+        "TheShortcut",
+        "TVRadio_ReInvented",
+        "RealisticDash",
+        "Navigator",
+        "SaucedCarts",
+        "saucedwheelbarrow",
+        "saucedwheelbarrow_Craft",
+        "ZombieVisibilityFix",
+        "PlumbedSinkMainsFix",
+        "VanillaVehiclesAnimated",
+        "AnimatedVehiclePartsFix",
+        "CarRoofFix",
+        "NepHighBeams",
+        "ReverseDriveLights",
+        "ArcheryNexus",
+        "WildernessProgressionArcheryNexusCompanion",
+        "EURY_DST",
+        "Ivmakk_ForagingTooltipExtended",
+        "CustomLightSwitch",
+        "NicksTurnOffFridges",
+        "VehicleRepairOverhaul",
+        "VehicleSalvageOverhaulB42"
+      ],
+      "scenario_actions": {
+        "tv-eject-controls": {
+          "mods": [
+            "ZombieBuddy",
+            "PZToolkitJavaPatches",
+            "AnimalTrailerSyncMPFix",
+            "NeatUI_Framework",
+            "MoodleFramework",
+            "CleanUI",
+            "PZSurvivorToolkit",
+            "VHSSkillNameInTooltip",
+            "MPFastForward",
+            "EURY_CONTAINERS",
+            "CleanHotBar",
+            "Neat_Crafting",
+            "Project_Cook",
+            "P4TidyUpMeister",
+            "B42MoodleDescriptionsExpanded",
+            "DetailedDescriptionsForOccupationsAndTraits",
+            "PeekAView",
+            "PZShareMapNotes",
+            "BetterGeneratorInfo",
+            "MapSymbolsPlusDeonHand",
+            "NeatUI_Equipment",
+            "EURY_CLOTHINGINFO",
+            "RainCleansBlood",
+            "Neat_Building_UIOnly",
+            "EatSmartInt",
+            "Drink_Smart",
+            "WashFix",
+            "Neat_Crafting_AddonXP",
+            "Neat_Building_AddonXP",
+            "SmartRadialMenu",
+            "WashOrRot_MP",
+            "GasPumpIndicator",
+            "MiniHealthPlus",
+            "TheShortcut",
+            "TVRadio_ReInvented",
+            "RealisticDash",
+            "Navigator",
+            "SaucedCarts",
+            "saucedwheelbarrow",
+            "saucedwheelbarrow_Craft",
+            "ZombieVisibilityFix",
+            "PlumbedSinkMainsFix",
+            "VanillaVehiclesAnimated",
+            "AnimatedVehiclePartsFix",
+            "CarRoofFix",
+            "NepHighBeams",
+            "ReverseDriveLights",
+            "ArcheryNexus",
+            "WildernessProgressionArcheryNexusCompanion",
+            "EURY_DST",
+            "Ivmakk_ForagingTooltipExtended",
+            "CustomLightSwitch",
+            "NicksTurnOffFridges",
+            "VehicleRepairOverhaul",
+            "VehicleSalvageOverhaulB42"
+          ],
+          "checks": {
+            "success-queued": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              }
+            },
+            "server-authority": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              }
+            },
+            "move-independent": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              }
+            },
+            "cancel-waiting": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              }
+            }
+          },
+          "scope": "Two ordered full-selected-pack SP/menu-Host cases: native UI insertion and optional playback before baseline; eject across a channel setter and redundant pending volume cancellation only with queue enabled. Actual volume/mute/unmute/channel callbacks and two naturally completed root books. Exact new VHS ID/index/type, independent authoritative media/settings/pages and ordered native Host control receipts. Adjacent TV requires no emitted walk; no physical input, video/audio rendering, arbitrary inventory output capacity or playback-toggle projection coverage implied."
+        }
+      },
+      "cases": [
+        {
+          "id": "eject-idle",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        },
+        {
+          "id": "eject-playing",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        }
+      ]
+    },
+    "queue-recovery": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "AnimalTrailerSyncMPFix",
+        "NeatUI_Framework",
+        "MoodleFramework",
+        "CleanUI",
+        "PZSurvivorToolkit",
+        "VHSSkillNameInTooltip",
+        "MPFastForward",
+        "EURY_CONTAINERS",
+        "CleanHotBar",
+        "Neat_Crafting",
+        "Project_Cook",
+        "P4TidyUpMeister",
+        "B42MoodleDescriptionsExpanded",
+        "DetailedDescriptionsForOccupationsAndTraits",
+        "PeekAView",
+        "PZShareMapNotes",
+        "BetterGeneratorInfo",
+        "MapSymbolsPlusDeonHand",
+        "NeatUI_Equipment",
+        "EURY_CLOTHINGINFO",
+        "RainCleansBlood",
+        "Neat_Building_UIOnly",
+        "EatSmartInt",
+        "Drink_Smart",
+        "WashFix",
+        "Neat_Crafting_AddonXP",
+        "Neat_Building_AddonXP",
+        "SmartRadialMenu",
+        "WashOrRot_MP",
+        "GasPumpIndicator",
+        "MiniHealthPlus",
+        "TheShortcut",
+        "TVRadio_ReInvented",
+        "RealisticDash",
+        "Navigator",
+        "SaucedCarts",
+        "saucedwheelbarrow",
+        "saucedwheelbarrow_Craft",
+        "ZombieVisibilityFix",
+        "PlumbedSinkMainsFix",
+        "VanillaVehiclesAnimated",
+        "AnimatedVehiclePartsFix",
+        "CarRoofFix",
+        "NepHighBeams",
+        "ReverseDriveLights",
+        "ArcheryNexus",
+        "WildernessProgressionArcheryNexusCompanion",
+        "EURY_DST",
+        "Ivmakk_ForagingTooltipExtended",
+        "CustomLightSwitch",
+        "NicksTurnOffFridges",
+        "VehicleRepairOverhaul",
+        "VehicleSalvageOverhaulB42"
+      ],
+      "scenario_actions": {
+        "cancelled-remainder": {
+          "mods": [
+            "ZombieBuddy",
+            "PZToolkitJavaPatches",
+            "AnimalTrailerSyncMPFix",
+            "NeatUI_Framework",
+            "MoodleFramework",
+            "CleanUI",
+            "PZSurvivorToolkit",
+            "VHSSkillNameInTooltip",
+            "MPFastForward",
+            "EURY_CONTAINERS",
+            "CleanHotBar",
+            "Neat_Crafting",
+            "Project_Cook",
+            "P4TidyUpMeister",
+            "B42MoodleDescriptionsExpanded",
+            "DetailedDescriptionsForOccupationsAndTraits",
+            "PeekAView",
+            "PZShareMapNotes",
+            "BetterGeneratorInfo",
+            "MapSymbolsPlusDeonHand",
+            "NeatUI_Equipment",
+            "EURY_CLOTHINGINFO",
+            "RainCleansBlood",
+            "Neat_Building_UIOnly",
+            "EatSmartInt",
+            "Drink_Smart",
+            "WashFix",
+            "Neat_Crafting_AddonXP",
+            "Neat_Building_AddonXP",
+            "SmartRadialMenu",
+            "WashOrRot_MP",
+            "GasPumpIndicator",
+            "MiniHealthPlus",
+            "TheShortcut",
+            "TVRadio_ReInvented",
+            "RealisticDash",
+            "Navigator",
+            "SaucedCarts",
+            "saucedwheelbarrow",
+            "saucedwheelbarrow_Craft",
+            "ZombieVisibilityFix",
+            "PlumbedSinkMainsFix",
+            "VanillaVehiclesAnimated",
+            "AnimatedVehiclePartsFix",
+            "CarRoofFix",
+            "NepHighBeams",
+            "ReverseDriveLights",
+            "ArcheryNexus",
+            "WildernessProgressionArcheryNexusCompanion",
+            "EURY_DST",
+            "Ivmakk_ForagingTooltipExtended",
+            "CustomLightSwitch",
+            "NicksTurnOffFridges",
+            "VehicleRepairOverhaul",
+            "VehicleSalvageOverhaulB42"
+          ],
+          "checks": {
+            "success-queued": {
+              "movement-cancel": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "clear-queue": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              }
+            },
+            "server-authority": {
+              "movement-cancel": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "clear-queue": {
+                "effectsVerified": true,
+                "serverAuthorityVerified": true
+              }
+            }
+          },
+          "scope": "Two ordered full-selected-pack fresh macOS SP/menu-Host cases: public native StopAllActionQueueWalking and native ISTimedActionQueue.clear. Restore a progressed native skill reader plus untouched TV volume and independent reader once through the public Toolkit recovery API, after actual Java drain. Completed TV prefix never repeats. Queue-off controls retain cancellation with no recovery history. Exact inventory/pages/device identities, unchanged native durations and ordered native Host control receipts. Programmatic entrypoints; no physical-key, mouse or rendering claim."
+        }
+      },
+      "cases": [
+        {
+          "id": "movement-cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        },
+        {
+          "id": "clear-queue",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        }
+      ]
+    },
+    "approach-queue": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "AnimalTrailerSyncMPFix",
+        "NeatUI_Framework",
+        "MoodleFramework",
+        "CleanUI",
+        "PZSurvivorToolkit",
+        "VHSSkillNameInTooltip",
+        "MPFastForward",
+        "EURY_CONTAINERS",
+        "CleanHotBar",
+        "Neat_Crafting",
+        "Project_Cook",
+        "P4TidyUpMeister",
+        "B42MoodleDescriptionsExpanded",
+        "DetailedDescriptionsForOccupationsAndTraits",
+        "PeekAView",
+        "PZShareMapNotes",
+        "BetterGeneratorInfo",
+        "MapSymbolsPlusDeonHand",
+        "NeatUI_Equipment",
+        "EURY_CLOTHINGINFO",
+        "RainCleansBlood",
+        "Neat_Building_UIOnly",
+        "EatSmartInt",
+        "Drink_Smart",
+        "WashFix",
+        "Neat_Crafting_AddonXP",
+        "Neat_Building_AddonXP",
+        "SmartRadialMenu",
+        "WashOrRot_MP",
+        "GasPumpIndicator",
+        "MiniHealthPlus",
+        "TheShortcut",
+        "TVRadio_ReInvented",
+        "RealisticDash",
+        "Navigator",
+        "SaucedCarts",
+        "saucedwheelbarrow",
+        "saucedwheelbarrow_Craft",
+        "ZombieVisibilityFix",
+        "PlumbedSinkMainsFix",
+        "VanillaVehiclesAnimated",
+        "AnimatedVehiclePartsFix",
+        "CarRoofFix",
+        "NepHighBeams",
+        "ReverseDriveLights",
+        "ArcheryNexus",
+        "WildernessProgressionArcheryNexusCompanion",
+        "EURY_DST",
+        "Ivmakk_ForagingTooltipExtended",
+        "CustomLightSwitch",
+        "NicksTurnOffFridges",
+        "VehicleRepairOverhaul",
+        "VehicleSalvageOverhaulB42"
+      ],
+      "scenario_actions": {
+        "native-cursor-approach": {
+          "mods": [
+            "ZombieBuddy",
+            "PZToolkitJavaPatches",
+            "AnimalTrailerSyncMPFix",
+            "NeatUI_Framework",
+            "MoodleFramework",
+            "CleanUI",
+            "PZSurvivorToolkit",
+            "VHSSkillNameInTooltip",
+            "MPFastForward",
+            "EURY_CONTAINERS",
+            "CleanHotBar",
+            "Neat_Crafting",
+            "Project_Cook",
+            "P4TidyUpMeister",
+            "B42MoodleDescriptionsExpanded",
+            "DetailedDescriptionsForOccupationsAndTraits",
+            "PeekAView",
+            "PZShareMapNotes",
+            "BetterGeneratorInfo",
+            "MapSymbolsPlusDeonHand",
+            "NeatUI_Equipment",
+            "EURY_CLOTHINGINFO",
+            "RainCleansBlood",
+            "Neat_Building_UIOnly",
+            "EatSmartInt",
+            "Drink_Smart",
+            "WashFix",
+            "Neat_Crafting_AddonXP",
+            "Neat_Building_AddonXP",
+            "SmartRadialMenu",
+            "WashOrRot_MP",
+            "GasPumpIndicator",
+            "MiniHealthPlus",
+            "TheShortcut",
+            "TVRadio_ReInvented",
+            "RealisticDash",
+            "Navigator",
+            "SaucedCarts",
+            "saucedwheelbarrow",
+            "saucedwheelbarrow_Craft",
+            "ZombieVisibilityFix",
+            "PlumbedSinkMainsFix",
+            "VanillaVehiclesAnimated",
+            "AnimatedVehiclePartsFix",
+            "CarRoofFix",
+            "NepHighBeams",
+            "ReverseDriveLights",
+            "ArcheryNexus",
+            "WildernessProgressionArcheryNexusCompanion",
+            "EURY_DST",
+            "Ivmakk_ForagingTooltipExtended",
+            "CustomLightSwitch",
+            "NicksTurnOffFridges",
+            "VehicleRepairOverhaul",
+            "VehicleSalvageOverhaulB42"
+          ],
+          "checks": {
+            "success-queued": {
+              "bush": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              },
+              "manual-grass": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              }
+            },
+            "server-authority": {
+              "bush": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              },
+              "manual-grass": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              }
+            }
+          },
+          "scope": "Two ordered full-current-selected-pack fresh macOS SP/menu-Host cases: stock ISRemovePlantCursor.tryBuild for bush and manual grass. Second initially adjacent target is submitted while a first distant native walk is active. Toolkit preserves first work and resolves both required walks from their future positions; queue-off native cursor clear cancels the first and removes only the second. Exact marked stock object identities, authoritative removal order and stock loot conservation, naturally completed independent root reader in SP and Toolkit Host; native Host additionally requires an exact completed-removal receipt and a never-started reader at its initial pages after native queue drain. Unchanged native durations/lifecycle. Programmatic cursor entrypoint; no physical input or wall-vine/container coverage."
+        }
+      },
+      "cases": [
+        {
+          "id": "bush",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        },
+        {
+          "id": "manual-grass",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        }
+      ]
     }
   }
 }

@@ -2,9 +2,11 @@ local model = TestManifestModel
 if not model then
     local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
     local originalRequire = require
+    local loaded = {}
     require = function(name)
-        assert(name == 'PZSurvivorToolkit/ItemCategories')
-        return dofile(root .. name .. '.lua')
+        assert(name:match('^PZSurvivorToolkit/'))
+        if not loaded[name] then loaded[name] = dofile(root .. name .. '.lua') end
+        return loaded[name]
     end
     model = dofile(root .. 'PZSurvivorToolkit/ManifestModel.lua')
     require = originalRequire
