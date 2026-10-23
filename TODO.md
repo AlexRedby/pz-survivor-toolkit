@@ -1,3 +1,7 @@
+# Vehicle aim roof fix verification
+
+- [ ] Resolve CarRoofFix through Workshop or an explicit source override, then verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
+
 # Fitness completion verification
 
 - [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host after the missing `VanillaVehiclesAnimated` source and any further unresolved pack inputs are available. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass; the game run remains blocked at pack resolution.
@@ -8,7 +12,7 @@
 
 # Cart game regression follow-up
 
-Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host profiles and saves, without installing into the user's game. Current preflight resolves 43 IDs; required local sources are missing for VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. Follow the native runner's AeroSpace placement and owned-window/focus gates.
+Run these checks with all 54 selected Mod IDs in separate macOS SP/menu-Host profiles and saves, without installing into the user's game. Current preflight resolves 43 IDs; required local sources are missing for VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. Follow the native runner's AeroSpace placement and owned-window/focus gates.
 
 - [ ] Verify cart pose/contact and split-wheel GPU behavior in isolated full-pack SP captures where headless native matrices, palette/slot lifecycle checks and source-equivalence review do not establish actual rendering. Preserve the separate visual-design gaps; check held/world continuity and GL state restoration without changing gameplay.
 - [ ] Verify SP/Host cart input/action effects and two-client owner/observer presentation with the full pack. Preserve native authority, exact cart/cargo identity, cancellation/recovery deadlines and existing SP-only guards; parser/rate/reset tests and native JVM regressions do not establish live Host delivery or GPU presentation.
@@ -178,7 +182,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
+- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 54-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
 
 # Inventory infrastructure proposals
 

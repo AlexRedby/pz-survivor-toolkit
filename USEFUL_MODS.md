@@ -270,7 +270,7 @@ The separate Workshop item `3761216758` and Mod ID `Quartermaster` are no longer
 
 Reworks vanilla vehicle models into separate animated parts: doors, hoods and trunks can visibly open, and removed panels disappear instead of remaining gray. The author reports B42.21 support and allows adding/removing it on existing saves. Only the main mod is selected; transparent windows, passenger-hiding, armor patches and other optional submods remain disabled. Vehicles with independent modded models need their own support.
 
-Selected before Animated Vehicle Parts Fix and the lighting mods. In single-player, leaving a running vehicle far enough away to unload it can collapse its animated parts when returning; the related fix below targets this bug. For multiplayer, VVA alone does not continuously synchronize animations to other players. Its recommended `VASinked` addon is not selected because its author warns of B42.20 incompatibility and users report B42.21 failure. Native macOS SP visuals, compatibility with Toolkit controls/lighting and Host owner/passenger animation visibility have not been verified.
+Selected before Animated Vehicle Parts Fix, Vehicle Aim Roof Fix and the lighting mods. VVA exposes standing vanilla aim poses inside vehicles; the selected [Vehicle Aim Roof Fix](#53-vehicle-aim-roof-fix) targets that symptom while keeping occupants visible. In single-player, leaving a running vehicle far enough away to unload it can collapse its animated parts when returning; the related fix below targets this bug. For multiplayer, VVA alone does not continuously synchronize animations to other players. Its recommended `VASinked` addon is not selected because its author warns of B42.20 incompatibility and users report B42.21 failure. Native macOS SP visuals, compatibility with Toolkit controls/lighting and Host owner/passenger animation visibility have not been verified.
 
 ## 47 Animated Vehicle Parts Fix
 
@@ -326,3 +326,11 @@ Adds right-click unplug/replug controls for fridges and freezers to stop cooling
 No required dependencies or special load order are listed. The author declares Build 42 single-player and co-op support and allows adding the mod to existing saves; B42.21 is not separately confirmed. Modded appliances using standard fridge/freezer container types are supported according to the author. Workshop reports mention fridge-light performance and an Open All Containers sprite conflict; neither is verified with this set, and Open All Containers is not selected. Full-pack macOS B42.21 SP/Host cooling, generator demand, reload persistence and synchronization remain unverified.
 
 **Before removing the mod, plug every fridge and freezer back in.** The unplugged state is stored on each appliance. According to the author, removing the mod while it is unplugged leaves it inert, without cooling or power demand, until the mod is restored.
+
+## 53 Vehicle Aim Roof Fix
+
+[Steam Workshop](https://steamcommunity.com/workshop/filedetails/?id=3781616141) · Workshop `3781616141` · Mod `CarRoofFix`
+
+Keeps the visible character seated when holding right mouse to look around or aim inside a vehicle. Selected after `VanillaVehiclesAnimated;AnimatedVehiclePartsFix`, before the lighting mods; `VVA_cullseats` stays disabled so occupants remain visible. The downloaded B42 layer overrides ten vehicle aim nodes and the seat-switch node with `Bob_IdleDriving`; it contains no Lua, Java JAR or item/vehicle scripts and declares no dependencies. The B42.21 `aim_heavy`, `aim_spear` and `aim_chainsaw` nodes are not overridden, so this selection does not establish coverage for every equipped weapon.
+
+The author declares B42 SP/MP support and existing-save compatibility. Multiplayer can occasionally need a restart for animation loading; the author's optional Vehicle Enter/Exit Fix recommendation is not selected. Full-pack macOS B42.21 SP/Host RMB look-around, release, seat switching, armed aiming and second-player presentation remain unverified. Workshop supplies the mod directly; no files are repacked into Toolkit.
