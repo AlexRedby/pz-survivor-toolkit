@@ -7,7 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from queue_checks import runner, admission, coop
@@ -114,6 +114,26 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn("-novoip", self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
+
+    def test_idle_guard_preserves_display_sleep_and_cleans_up_owned_process(self):
+        popen = self.popen
+        def launch(command, **kwargs):
+            process = popen(command, **kwargs)
+            if command[0] == '/usr/bin/caffeinate':
+                process.terminate = Mock(wraps=process.terminate)
+                process.wait = Mock(wraps=process.wait)
+                process.kill = Mock(wraps=process.kill)
+            return process
+        self.popen = launch
+        result, kills = self.invoke()
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(self.commands[0], ['/usr/bin/caffeinate', '-i', '-w', str(runner.os.getpid())])
+        guard = self.processes[0]
+        guard.terminate.assert_called_once_with()
+        guard.wait.assert_called_once_with(timeout=5)
+        guard.kill.assert_not_called()
+        self.assertEqual(guard.returncode, -15)
+        self.assertEqual([call.args[0] for call in kills], [101])
 
     def test_crash_after_completion_marker_is_failed_after_cleanup(self):
         original_popen = self.popen

@@ -12,7 +12,7 @@ Create a JSON options file outside the checkout, for example `/tmp/pz-video-opti
 {
   "ffmpeg": "/absolute/path/to/ffmpeg",
   "ffprobe": "/absolute/path/to/ffprobe",
-  "desktop_mode": "aerospace"
+  "desktop_mode": "auto"
 }
 ```
 
@@ -30,7 +30,7 @@ python3 tools/check_action_queue.py resume /tmp/pz-video-capture-fresh
 
 The run directory must not already exist at preparation. `prepare` creates snapshots without launching; `resume` launches that prepared run, stops its owned processes and writes the common report. To prepare and launch in one command, use `run` instead of `prepare` with another fresh run directory and the same arguments. EN is the default; RU is accepted, with historical language coverage listed below. The default mod subset is ZombieBuddy, Java Patches and Toolkit; it does not establish full-pack compatibility.
 
-This configuration uses `desktop_mode=aerospace`, which requires successful placement in the assigned test workspace. Keep the shared runner's PID/window, focus/fullscreen and admission gates; do not invoke a separate launcher or use direct `Popen` to bypass them. See the [runner commands](../../README.md#commands) for preparation and resource options. The scenario starts a fresh Sandbox named `VideoFixture`, records twice for about 3.5 seconds, and checks duplicate starts/stops and recording restart. The adapter requires `[VIDEO_TEST] PASSED` before verifying the clips; the common report also requires readiness, clean runtime logs and unchanged inputs.
+This configuration uses `desktop_mode=auto`: AeroSpace placement is primary, with current-desktop fallback admitted only after undiscovered owned windows and confirmed sleeping online displays. Use `aerospace` to require placement without fallback. Keep the shared runner's PID/window, focus/fullscreen and admission gates; do not invoke a separate launcher or use direct `Popen` to bypass them. See the [runner commands](../../README.md#commands) for preparation and resource options. The scenario starts a fresh Sandbox named `VideoFixture`, records twice for about 3.5 seconds, and checks duplicate starts/stops and recording restart. The adapter requires `[VIDEO_TEST] PASSED` before verifying the clips; the common report also requires readiness, clean runtime logs and unchanged inputs.
 
 ## Clip evidence
 

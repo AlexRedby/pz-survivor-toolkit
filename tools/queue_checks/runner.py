@@ -260,7 +260,7 @@ def run(root, resource_wait=300):
             for sig in (signal.SIGINT, signal.SIGTERM):
                 previous[sig] = signal.getsignal(sig)
                 signal.signal(sig, interrupted)
-            guard = subprocess.Popen(["/usr/bin/caffeinate", "-diu", "-w", str(os.getpid())])
+            guard = subprocess.Popen(["/usr/bin/caffeinate", "-i", "-w", str(os.getpid())])
             if selection["kind"] == "mp":
                 launch('client1' if hosted else 'server')
                 deadline = time.monotonic() + (180 if hosted else 120)

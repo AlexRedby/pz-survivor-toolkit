@@ -1,7 +1,3 @@
-# Native desktop fallback policy
-
-- [ ] Align `tools/queue_checks/desktop.py` and the native runner guide with the agreed asleep-only fallback: permit current-desktop fallback only when CoreGraphics confirms all online displays are asleep and AeroSpace cannot discover the owned window. Missing/malformed AeroSpace, unknown or restricted display probes, foreign/escaped windows, and routing/identity failures must remain errors. Verify awake/asleep/unknown and multi-client cases while preserving the owned PID/GLFW gate and focus/fullscreen suppression; use explicit `aerospace` for video capture until this is resolved.
-
 # Vehicle Repair Overhaul verification
 
 - [ ] Resolve both VRO modules from Workshop 2757712197 or explicit sources, then check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
