@@ -232,7 +232,7 @@
         try {
             if(!(ai.getCharacter() instanceof IsoPlayer owner) || owner.isLocalPlayer() || ai.getAction()!=action)return;
             var old=observerActors.get(owner);
-            if(old!=null && old.proxy.get()!=action && "active".equals(old.state)){old.state="replaced";old.reason="native-replacement";observerLog("proxy-replaced",old.input,old,old.apply,old.reason,true,0,0,0,0,"",0);}
+            if(old!=null && old.proxy.get()!=action && "active".equals(old.state)){old.state="replaced";old.reason="native-replacement";observerReplacement(old,action);}
             var scope=observerApplying.get();var record=scope==null?null:scope.input();
             if(record==null || record.owner.get()!=owner || !"Enter".equals(record.stage) || !record.processed || !observerTransport(record) || action==null || action.chr!=owner)return;
             var proxy=new ObserverProxy(action,owner,record,scope.generation());observerProxies.put(action,proxy);observerActors.put(owner,proxy);
@@ -295,8 +295,27 @@
         fields.put("packetEpoch",record==null?0:record.epoch);fields.put("ingressGeneration",record==null || record.ingress==null?0:record.ingress.generation());fields.put("receiveGeneration",record==null?0:record.receive);fields.put("sendGeneration",send);fields.put("parentReceiveGeneration",record!=null && zombie.network.GameServer.server?record.receive:0);
         fields.put("proxyEpoch",proxy==null?0:proxy.epoch);fields.put("applyGeneration",apply);fields.put("proxyState",proxy==null?"unavailable":proxy.state);fields.put("proxyCurrent",proxy!=null && observerProxyCurrent(proxy));fields.put("associationValid",proxy!=null && observerProxyValid(proxy));fields.put("transportValidated",record!=null && (observerTransport(record) || (record.ingress==null && connection>0 && connection==record.tag.connection() && zombie.network.GameClient.connection!=null && nativeTimeIdentity(zombie.network.GameClient.connection,false)==connection && leaseControlOwnedClient())));fields.put("sourceValidated",record!=null && record.sourceValidated);fields.put("stage",record==null?"unavailable":record.stage);fields.put("reason",reason);fields.put("packetBytes",bytes);fields.put("bodyBegin",begin);fields.put("bodyEnd",end);fields.put("success",success);fields.put("monoNs",System.nanoTime());fields.put("wallMs",System.currentTimeMillis());return fields;
     }
+    private static void observerWrite(String event,java.util.Map<String,Object> fields) {
+        var json=new StringBuilder("{\"event\":").append(mpJsonString(event));
+        for(var entry:fields.entrySet()) {
+            Object value=entry.getValue();json.append(',').append(mpJsonString(entry.getKey())).append(':')
+                .append(value instanceof Number || value instanceof Boolean?value:mpJsonString((String)value));
+        }
+        System.out.println("[CART_OBSERVER] "+json.append('}'));
+    }
+    /** Diagnostic call provenance only. A replacement is never rebound by its stack or timing. */
+    private static void observerReplacement(ObserverProxy old,zombie.characters.CharacterTimedActions.BaseAction replacement) {
+        var fields=observerFields(old.input,old,old.apply,old.reason,true,0,0,0,0,"",0);
+        var scope=observerApplying.get();
+        fields.put("replacementActionEpoch",nativeTimeIdentity(replacement,false));
+        fields.put("replacementApplyGeneration",scope==null?0:scope.generation());
+        fields.put("replacementTaggedApply",scope!=null && scope.input()!=null);
+        fields.put("replacementStack",StackWalker.getInstance().walk(frames->frames.skip(1).limit(16)
+            .map(frame->frame.getClassName()+"."+frame.getMethodName()).collect(java.util.stream.Collectors.joining("|"))));
+        observerWrite("proxy-replaced",fields);
+    }
     private static void observerLog(String event,ObserverPacket record,ObserverProxy proxy,long apply,String reason,boolean success,int begin,int end,int bytes,long connection,String peer,long send) {
-        var json=new StringBuilder("{\"event\":").append(mpJsonString(event));for(var entry:observerFields(record,proxy,apply,reason,success,begin,end,bytes,connection,peer,send).entrySet()){Object value=entry.getValue();json.append(',').append(mpJsonString(entry.getKey())).append(':').append(value instanceof Number || value instanceof Boolean?value:mpJsonString((String)value));}System.out.println("[CART_OBSERVER] "+json.append('}'));
+        observerWrite(event,observerFields(record,proxy,apply,reason,success,begin,end,bytes,connection,peer,send));
     }
     private static void observerSourceLog(String event,ObserverSource source,String reason,boolean success) {
         var tag=observerAssociationTag(source.life+"|1");var owner=source.owner.get();var fields=observerFields(null,null,0,reason,success,0,0,0,source.connection.get()==null?0:nativeTimeIdentity(source.connection.get(),false),"server",0);

@@ -85,6 +85,7 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
+- [ ] Capture a bounded exact replacement call stack and original apply scope in the next source-sealed six-phase Host run; use that dynamic dispatch evidence before extending proxy association.
 - [ ] Trace the exact runtime replacement dispatch, then extend the observer diagnostic from the initial packet-apply proxy through retained native parameters into any later Enter proxy. Bind the exact StatePacket.apply/loadFrom actor/map revision, then invalidate on later tagged or untagged loadFrom, clear, Param.set/remove/get insertion and direct/nested mutable-map writes. Unknown writes remain unbound; retained parameters grant no fresh action authority. Gate: repeat the six-phase Host bank with active frozen body/cart pairs in all six phases. Initial proxy coverage is insufficient while the later state-machine replacement remains unbound.
 - [ ] Verify the selected diagnostic observer association pilot, explicitly recording the altered StatePacket test wire. Gate: exact original source/connection and action identity through native processing into frozen current-proxy body/cart draw metadata, six-phase cancel/repeat Host bank, source-sealed capture and clean logs. The owner-provided marker is provenance, not a server grant or exclusive whole-image source. Do not add production playback or infer identity from nearest time/type/model/current getAction alone.
 
