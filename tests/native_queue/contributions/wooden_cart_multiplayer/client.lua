@@ -12,6 +12,10 @@ local lifetimeProbe=config.options and config.options.cart_lease_lifetimes==true
 local inventoryMode=config.options and config.options.cart_lease_inventory==true
 local inventoryState=inventoryMode and require 'CartLeaseInventoryState'
 local inventoryDriver,inventoryAction,inventorySince,inventoryHeld
+local function setupCommand(command,args)
+ if inventoryMode then sendClientCommand(getPlayer(),'CartMP',command,args)
+ else sendClientCommand('CartMP',command,args) end
+end
 local function inventoryRow(event,row)
  row.actor='client1';row.event=event;row.phase=0;row.owner=getPlayer():getOnlineID();row.wall=getTimestampMs()
  print('[CART_LEASE_INVENTORY] '..J.encode(row))
@@ -103,7 +107,7 @@ Events.OnTick.Add(function()
   local now=getTimestampMs();local p=getPlayer()
   if admissionProbe then admissionProbe.sample() end
   if now-readyAt>240000 and not epoch then error('MP setup deadline') end
-  if not setup then if now-lastReady>1000 then lastReady=now;sendClientCommand('CartMP','Ready',{}) end;return end
+  if not setup then if now-lastReady>1000 then lastReady=now;setupCommand('Ready',{}) end;return end
   if not prepared then
    assert(setup.variant==variant and setup.cartType==cartType,'Server cart variant differs from selection')
    if wallSide then
@@ -162,14 +166,14 @@ Events.OnTick.Add(function()
   if user=='client1' and not skillReady then
    if not skillSince then skillSince=now end
    assert(now-skillSince<10000,'Authoritative Sprinting snapshot deadline')
-   if now-lastReady>1000 then lastReady=now;sendClientCommand('CartMP','Ready',{}) end
+   if now-lastReady>1000 then lastReady=now;setupCommand('Ready',{}) end
   else skillSince=nil end
   if skillReady and (not armed or not epoch and now-lastArm>1000) and owner and owner:getPrimaryHandItem() and owner:getPrimaryHandItem():getFullType()==cartType and owner:getSecondaryHandItem()==owner:getPrimaryHandItem() then
    if inventoryMode and not inventoryHeld then
     if not owner:getCharacterActions():isEmpty() or owner:hasPath() then return end
     inventoryState.emit(user,'held',owner,owner:getPrimaryHandItem(),assert(cartLeaseCurrent()));inventoryHeld=true
    end
-   sendClientCommand('CartMP','Armed',{sprintLevel=p:getPerkLevel(Perks.Sprinting),padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion});armed=true;lastArm=now
+   setupCommand('Armed',{sprintLevel=p:getPerkLevel(Perks.Sprinting),padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion});armed=true;lastArm=now
    print('[CART_MP] ARMED '..user..' sprintLevel='..p:getPerkLevel(Perks.Sprinting))
   end
   if user=='client2' and owner then

@@ -99,7 +99,9 @@ Events.OnClientCommand.Add(function(module,command,p,args)
   if command=='Ready' then
    if not players[user] then
     if not p:getCurrentSquare() then return end
+    local inventorySource
     if inventoryMode and user=='client1' then
+     inventorySource=assert(cartLeaseSource(p),'Initial inventory owner transport missing')
      inventoryWait[user]=inventoryWait[user] or getTimestampMs()
      if not inventoryState.loaded(p) then
       assert(getTimestampMs()-inventoryWait[user]<30000,'Initial inventory server area readiness deadline')
@@ -127,7 +129,7 @@ Events.OnClientCommand.Add(function(module,command,p,args)
      local cargo=cart:getInventory():AddItem('Base.Log');cargo:setActualWeight(cart:getInventory():getEffectiveCapacity(p));cargo:setCustomWeight(true)
      cartSession={id=cart:getID(),cargoID=cargo:getID(),cargoWeight=cargo:getActualWeight(),x=state.x,y=state.y,z=state.z}
      print('[CART_MP] CART_SPEC '..J.encode({variant=variant,cartType=cartType,id=cart:getID(),cargoCount=1,cargoID=cargo:getID(),cargoWeight=cargo:getActualWeight(),cargoType=cargo:getFullType(),capacity=cart:getInventory():getEffectiveCapacity(p)}))
-     if inventoryMode then inventoryState.emit('server','unheld',p,cart,assert(cartLeaseSource(p),'Initial inventory owner transport missing')) end
+     if inventoryMode then inventoryState.emit('server','unheld',p,cart,inventorySource) end
      sendAddItemToContainer(p:getInventory(),cart)
     end
     if not origin.elevated then p:teleportTo(math.floor(state.x),math.floor(state.y),state.z) end
