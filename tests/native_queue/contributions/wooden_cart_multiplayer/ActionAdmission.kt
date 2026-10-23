@@ -474,16 +474,26 @@ object ActionAdmission {
     fun actionAdmissionAcknowledged(action: Any?, failure: Throwable?) {
         if (!actionAdmissionEnabled() || failure != null) return
         try {
-            val cls =
+            val loader = ActionAdmission::class.java.classLoader
+            val monitor =
                 Class.forName(
                     "net.alexredby.pztoolkitjavapatches.ActionAcknowledgements",
                     false,
-                    ActionAdmission::class.java.getClassLoader(),
+                    loader,
+                )
+            check(Thread.holdsLock(monitor)) {
+                "Native acknowledgement observation escaped its synchronized facade"
+            }
+            val cls =
+                Class.forName(
+                    "net.alexredby.pztoolkitjavapatches.ActionAcknowledgementLogic",
+                    false,
+                    loader,
                 )
             val field = cls.getDeclaredField("tokens")
-            field.setAccessible(true)
-            // started is synchronized. Read only here, while that native helper still owns its
-            // monitor.
+            field.isAccessible = true
+            // The facade's synchronized started() still owns this monitor on advice exit.
+            // Read its logic's weak ledger before taking the admission registry lock.
             val raw = (field.get(null) as Map<*, *>).get(action)
             val token = if (raw is String) raw else null
             val scope = actionAdmissionScope.get()
