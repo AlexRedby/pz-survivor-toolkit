@@ -21,7 +21,7 @@ Archery Nexus with Wilderness Progression is selected for bow crafting, Archery 
 
 ## Installation
 
-The server owner needs Python 3.10+, JDK 25+, the [Kotlin 2.3.0 compiler distribution](https://github.com/JetBrains/kotlin/releases/tag/v2.3.0) and the ZombieBuddy loader to prepare Toolkit and Java Patches. The Kotlin path must point to the distribution root containing `lib/` (not its `bin/` directory). The build selects Kotlin in this order: `--kotlin-home`, `KOTLIN_HOME`, then `kotlinc` on `PATH`:
+The server owner needs Python 3.10+, JDK 25+, the [Kotlin 2.4.21 compiler distribution](https://github.com/JetBrains/kotlin/releases/tag/v2.4.21) and the ZombieBuddy loader to prepare Toolkit and Java Patches. The Kotlin path must point to the distribution root containing `lib/` (not its `bin/` directory). The build selects Kotlin in this order: `--kotlin-home`, `KOTLIN_HOME`, then `kotlinc` on `PATH`:
 
 ```sh
 python3 tools/prepare_install.py

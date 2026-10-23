@@ -4,7 +4,7 @@ from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 
 ROOT = Path(__file__).resolve().parent
-KOTLIN_VERSION = '2.3.0'
+KOTLIN_VERSION = '2.4.21'
 KOTLIN_MODULE = 'pz_toolkit_java_patches'
 KOTLIN_RUNTIME_PACKAGE = 'net/alexredby/pztoolkitruntime/kotlin'
 SOURCE_MANIFEST = 'META-INF/pztoolkit-build-inputs.json'

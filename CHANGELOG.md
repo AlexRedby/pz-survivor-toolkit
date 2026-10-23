@@ -1073,6 +1073,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.49
 
+- **Kotlin toolchain:** Update the pinned compiler and bundled private standard library to Kotlin 2.4.21; retain isolation from the game runtime and independent early font loading. Update build and preparation instructions.
 - **Kotlin boundaries:** Migrate the read-only crafting, fluid, item-stat, fence and vehicle-trace patch facades to Kotlin while preserving static JVM entry points, patch annotations and class monitors. Retain Java where advice writes back into instrumented arguments/locals/results and where bootstrap tests must start without the mod runtime.
 - **Kotlin style:** Apply a pinned Kotlin-language formatting profile to handwritten runtime and regression sources, add a repeatable format check and simplify safe nullable state reads. Preserve generated numeric tables, native identities, wire data, arithmetic order and initialization behavior.
 

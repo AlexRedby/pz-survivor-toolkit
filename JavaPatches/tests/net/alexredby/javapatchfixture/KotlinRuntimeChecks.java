@@ -57,7 +57,7 @@ public final class KotlinRuntimeChecks {
                 "mod replaced the game's Kotlin runtime");
             var version = Class.forName("net.alexredby.pztoolkitruntime.kotlin.KotlinVersion", true, loader)
                 .getField("CURRENT").get(null);
-            require("2.3.0".equals(version.toString()), "private runtime version changed");
+            require("2.4.21".equals(version.toString()), "private runtime version changed");
         }
         var fonts = patch.getParent().getParent().resolve("bootstrap/PZToolkitFonts.jar");
         try (var jar = new JarFile(fonts.toFile())) {
@@ -65,7 +65,7 @@ public final class KotlinRuntimeChecks {
                 || entry.getName().startsWith("net/alexredby/pztoolkitruntime/")),
                 "early fonts unexpectedly bundled the Kotlin runtime");
         }
-        System.out.println("KOTLIN_RUNTIME_CHECKS_PASS (late mod JAR registration, private stdlib 2.3.0 beside game "
+        System.out.println("KOTLIN_RUNTIME_CHECKS_PASS (late mod JAR registration, private stdlib 2.4.21 beside game "
             + gameVersion + ", cold transformer, Java static/null ABI, independent fonts)");
     }
 }

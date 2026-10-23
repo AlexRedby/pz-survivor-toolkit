@@ -124,7 +124,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, help="game Java folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--jdk", type=Path, help="JDK 25+ folder; defaults are provided by JavaPatches/build.py")
-    parser.add_argument("--kotlin-home", type=Path, help="Kotlin 2.3.0 compiler distribution; also accepts KOTLIN_HOME or kotlinc on PATH")
+    parser.add_argument("--kotlin-home", type=Path, help="Kotlin 2.4.21 compiler distribution; also accepts KOTLIN_HOME or kotlinc on PATH")
     parser.add_argument("--check", action="store_true", help="also run the native JVM regression checks")
     args = parser.parse_args()
     try:
