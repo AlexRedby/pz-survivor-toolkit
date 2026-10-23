@@ -97,7 +97,12 @@ INTEGRATIONS = {
                    'client/PZSurvivorToolkit/ContainerConfigurationMenus.lua'],
         'option': 'bc_filter_source', 'root': 'media/lua/client/BetterContainers',
         'argument': 'Categorize/CategoryFilters.lua',
-        'tests': {'test_bc_filter_compat.lua': (Source('NativeBCFilterSource', 'Categorize/CategoryFilters.lua'),),
+        'tests': {'test_bc_filter_compat.lua': (
+                      Source('NativeBCFilterSource', 'Categorize/CategoryFilters.lua'),
+                      Source('NativeBCInventoryCategorySource', 'Categorize/InventoryCategory.lua'),
+                      Source('NativeBCCategoryStoreSource', 'Categorize/CategoryStore.lua'),
+                      Source('NativeBCIniWriterSource', '_IO/IniWriter.lua'),
+                      Source('NativeBCIOSource', '_IO/_IO.lua')),
                   'test_smart_deposit.lua': (Source('NativeBCSmartDepositSource', 'Proximity/Proximity_SmartDeposit.lua'),),
                   'test_container_configuration_menus.lua': (Source('NativeBCPageCustomizerSource',
                                                                     'Customize/Customize_ISInventoryPage.lua'),)},

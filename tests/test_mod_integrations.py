@@ -56,7 +56,13 @@ class ModIntegrations(unittest.TestCase):
     def containers(self, full=False):
         self.select('EURY_CONTAINERS', 'BetterContainers/42.20')
         root = self.root / 'BetterContainers/42.20/media/lua/client/BetterContainers'
-        self.write(root / 'Categorize/CategoryFilters.lua', 'category filters')
+        for relative, text in (
+                ('Categorize/CategoryFilters.lua', 'category filters'),
+                ('Categorize/InventoryCategory.lua', 'inventory category'),
+                ('Categorize/CategoryStore.lua', 'category store'),
+                ('_IO/IniWriter.lua', 'INI writer'),
+                ('_IO/_IO.lua', 'INI IO')):
+            self.write(root / relative, text)
         if full:
             self.write(root / 'Proximity/Proximity_SmartDeposit.lua', 'BC smart deposit')
             self.write(root / 'Customize/Customize_ISInventoryPage.lua', 'BC page customizer')
@@ -253,7 +259,11 @@ class ModIntegrations(unittest.TestCase):
         self.lock_sources()
         args, requested = self.configure(['EURY_CONTAINERS'])
         self.assertEqual({'test_bc_filter_compat.lua', 'test_smart_deposit.lua', 'test_container_configuration_menus.lua'}, requested)
-        self.assertEqual({'NativeBCFilterSource': 'category filters'}, self.bound(args, 'test_bc_filter_compat.lua'))
+        self.assertEqual({'NativeBCFilterSource': 'category filters',
+                          'NativeBCInventoryCategorySource': 'inventory category',
+                          'NativeBCCategoryStoreSource': 'category store',
+                          'NativeBCIniWriterSource': 'INI writer',
+                          'NativeBCIOSource': 'INI IO'}, self.bound(args, 'test_bc_filter_compat.lua'))
         smart = self.bound(args, 'test_smart_deposit.lua')
         self.assertEqual('BC smart deposit', smart['NativeBCSmartDepositSource'])
         self.assertEqual('CleanUI page', smart['CleanUIInventoryPageSource'])
@@ -266,8 +276,32 @@ class ModIntegrations(unittest.TestCase):
         self.lock_sources()
         args, requested = self.configure(requested=['test_bc_filter_compat.lua'])
         self.assertEqual({'test_bc_filter_compat.lua'}, requested)
-        self.assertEqual({'NativeBCFilterSource': 'category filters'}, self.bound(args, 'test_bc_filter_compat.lua'))
+        self.assertEqual({'NativeBCFilterSource': 'category filters',
+                          'NativeBCInventoryCategorySource': 'inventory category',
+                          'NativeBCCategoryStoreSource': 'category store',
+                          'NativeBCIniWriterSource': 'INI writer',
+                          'NativeBCIOSource': 'INI IO'}, self.bound(args, 'test_bc_filter_compat.lua'))
         self.assertIsNone(args.native_action_root)
+
+    def test_container_filter_helpers_use_per_file_layers_and_are_required(self):
+        root = self.containers()
+        helper = root / 'Categorize/InventoryCategory.lua'
+        common = self.write(self.root / 'BetterContainers/common/media/lua/client/BetterContainers'
+                            / 'Categorize/InventoryCategory.lua', 'common inventory category')
+        helper.unlink()
+        self.lock_sources()
+        args, requested = self.configure(requested=['test_bc_filter_compat.lua'])
+        sources = args.integration_sources['test_bc_filter_compat.lua']
+        self.assertEqual({'test_bc_filter_compat.lua'}, requested)
+        self.assertEqual(root / 'Categorize/CategoryFilters.lua', sources['NativeBCFilterSource'])
+        self.assertEqual(common, sources['NativeBCInventoryCategorySource'])
+        bound = self.bound(args, 'test_bc_filter_compat.lua')
+        self.assertEqual('common inventory category', bound['NativeBCInventoryCategorySource'])
+        (root / 'Categorize/CategoryStore.lua').unlink()
+        self.lock.unlink()
+        self.lock_sources()
+        with self.assertRaisesRegex(ValueError, 'Missing upstream source: .*Categorize/CategoryStore.lua'):
+            self.configure(requested=['test_bc_filter_compat.lua'])
 
     def test_speed_profile_binds_exact_sources_without_other_checks(self):
         self.select('MPFastForward', 'MPFastForward/42')
