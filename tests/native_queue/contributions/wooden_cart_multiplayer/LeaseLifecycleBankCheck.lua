@@ -3,9 +3,11 @@ local base=assert(arg[1],'Supply contribution directory')
 local function readSource(name) local f=assert(io.open(base..'/'..name));local s=f:read('*a');f:close();return s end
 local source=readSource('lease-lifecycle.lua')
 local protocol=readSource('lease-protocol.lua')
+mockRace=arg[2]=='resnapshot';mockRaceCertified=arg[3]~='uncertified'
 local time,serial=10000,10
 local queue,envs,logs,files={},{},{},{}
 local guestGeneration=1
+local activeEnvironment,raceInjected=nil,false
 local function list(items)
  items=items or {};return {size=function() return #items end,get=function(_,i) return items[i+1] end}
 end
@@ -38,8 +40,8 @@ local function actor(name,epoch,inv)
  function p:getOnlineID() return self.id end
  function p:getCurrentSquare() return self.square end
  function p:isDead() return self.dead end
- function p:getPrimaryHandItem() return self.primary end
- function p:getSecondaryHandItem() return self.secondary end
+ function p:getPrimaryHandItem() return activeEnvironment and activeEnvironment.remoteItem and self.name=='client2' and activeEnvironment.remoteItem or self.primary end
+ function p:getSecondaryHandItem() return activeEnvironment and activeEnvironment.remoteItem and self.name=='client2' and activeEnvironment.remoteItem or self.secondary end
  function p:setPrimaryHandItem(v) self.primary=v end
  function p:setSecondaryHandItem(v) self.secondary=v end
  function p:getInventory() return self.inventory end
@@ -60,6 +62,7 @@ end
 local host,guest=actor('client1',1),actor('client2',2)
 local function current(name) return name=='client1' and host or guest end
 local function fire(e,event,...)
+ activeEnvironment=e
  for _,f in ipairs(e.Events[event].listeners) do f(...) end
 end
 local function clone(t)
@@ -89,9 +92,9 @@ local function makeEnv(name)
   if p.dead or not p.square or not p.primary or p.primary~=p.secondary then return nil end
   local c=name=='client1' and conn1 or p==host and conn1 or conn2
   if not c.active then return nil end
-  return '1|process-'..name..'|'..p.epoch..'|'..(c==conn1 and '1' or tostring(guestGeneration+1))..'|1'
+  return '1|process-'..name..'|'..p.epoch..'|'..(c==conn1 and '1' or tostring(guestGeneration+1))..'|'..tostring(e.remoteRevision or 1)
  end
- e.cartLeaseResnapshot=function() return false end
+ e.cartLeaseResnapshot=function(p,previous) return name=='client1' and e.remoteRevision==2 and previous:match('|1$')~=nil and mockRaceCertified~=false end
  e.sendAddItemToContainer=function() end
  e.sendServerCommand=function(p,module,command,args) queue[#queue+1]={target=p.name,module=module,command=command,args=clone(args)} end
  e.sendClientCommand=function(p,module,command,args) queue[#queue+1]={target='server',p=p,module=module,command=command,args=clone(args)} end
@@ -115,7 +118,7 @@ local function makeEnv(name)
  end}
  e.ConnectToServer={instance={connect=function()
   guestGeneration=guestGeneration+1
-  local inv=guest.inventory;guest=actor('client2',4,inv);conn2={active=true}
+  local inv=guest.inventory;guest=actor('client2',4,inv);conn2={active=true};envs.client1.remoteItem=nil;envs.client1.remoteRevision=nil
   e.inGame=true;e.MainScreen.instance.inGame=true;e.menuVisible=false
   fire(e,'OnCreatePlayer',0,guest);fire(e,'OnGameStart')
  end}}
@@ -133,16 +136,20 @@ for tick=1,1000 do
  while #queue>0 do
   count=count+1;assert(count<100,'message storm')
   local message=table.remove(queue,1);local e=envs[message.target];e.inCommand=true
+  if mockRace and not raceInjected and message.target=='client1' and message.command=='Receipt' and message.args.phase==1 then
+   raceInjected=true;e.remoteRevision=2;e.remoteItem={}
+   for k,v in pairs(guest.primary) do e.remoteItem[k]=v end
+  end
   if message.target=='server' then fire(e,'OnClientCommand',message.module,message.command,message.p,message.args) else fire(e,'OnServerCommand',message.module,message.command,message.args) end
   e.inCommand=false
  end
  local authoritativeAbsence=false
- for _,log in ipairs(logs) do if log.role=='server' and log.text:find('event=unavailable,',1,true) then authoritativeAbsence=true end end
+ for _,log in ipairs(logs) do if log.role=='server' and log.text:find('event=native-death-progress,',1,true) then authoritativeAbsence=true end end
  if guest.dead and not removed and authoritativeAbsence then
   removed=true;guest.square=nil
   bodies[#bodies+1]={isPlayer=function() return true end,getCharacterOnlineID=function() return 2 end,getContainer=function() return inventory() end}
   envs.client2.ISPostDeathUI.instance[0]={waitOver=true,buttonRespawn={isVisible=function() return true end},isVisible=function() return true end,onRespawn=function()
-   guest=actor('client2',3);envs.client2.ISPostDeathUI.instance[0]=nil
+   guest=actor('client2',3);envs.client1.remoteItem=nil;envs.client1.remoteRevision=nil;envs.client2.ISPostDeathUI.instance[0]=nil
    fire(envs.client2,'OnCreatePlayer',0,guest)
   end}
  end
@@ -154,7 +161,15 @@ for tick=1,1000 do
    for _,log in ipairs(logs) do if log.text:find('event='..kind..',',1,true) then assert(log.text:find('nonce=',1,true),'Missing nonce on '..kind);seen=true end end
    assert(seen,'Missing exchange event '..kind)
   end
-  print('LIFECYCLE_STATE_MACHINE_MOCK_PASS ticks='..tick..' roles=3 phases=3 hostPulseBeforeCorpse=true noncePreserved=true');return
+  if mockRace then
+   local receiptRace,freshAfter=false,false
+   for _,log in ipairs(logs) do
+    if log.role=='client1' and log.text:find('event=receipt-resnapshot,',1,true) then assert(log.text:find('freshNativeProof=false,',1,true));receiptRace=true end
+    if receiptRace and log.role=='client1' and log.text:find('event=receipt,',1,true) then freshAfter=true end
+   end
+   assert(raceInjected and receiptRace and freshAfter,'Remote receipt race did not settle through a normal fresh receipt')
+  end
+  print('LIFECYCLE_STATE_MACHINE_MOCK_PASS ticks='..tick..' roles=3 phases=3 hostPulseAfterDeathOneSecond=true noncePreserved=true receiptRace='..tostring(mockRace==true));return
  end
 end
 for _,log in ipairs(logs) do print(log.role..' '..log.text) end

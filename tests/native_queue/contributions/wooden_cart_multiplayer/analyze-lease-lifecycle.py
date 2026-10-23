@@ -9,7 +9,7 @@ require,parse,integer,text=(L['HELD'][k] for k in ('require','parse','integer','
 token,records=L['token'],L['records']
 ROLES=('server','client1','client2');CLIENTS=ROLES[1:]
 MARKER='[CART_LIFECYCLE] ';NATIVE='[CART_EQUIPMENT] ';MAX=9007199254740991
-EVENTS=set('setup phase-setup cart-setup native-binding request bind-wait stale-control rejoin-ui bind bound echo receipt prepare prepared transition-start native-kill native-death native-death-progress native-player-death unavailable unavailable-replay native-removed cart-disposition observer-absent respawn-offer respawn-ui native-create native-connection transition resnapshot reply-refused native-exit native-reconnect native-rejoin fresh-nonce-replay fresh-replay done complete-offer final-ack complete'.split())
+EVENTS=set('setup phase-setup cart-setup native-binding request bind-wait stale-control rejoin-ui bind bound echo receipt receipt-resnapshot prepare prepared transition-start native-kill native-death native-death-progress native-player-death unavailable unavailable-replay native-removed cart-disposition observer-absent respawn-offer respawn-ui native-create native-connection transition resnapshot reply-refused native-exit native-reconnect native-rejoin fresh-nonce-replay fresh-replay done complete-offer final-ack complete'.split())
 
 
 def identity(row):
@@ -63,7 +63,7 @@ def analyze(root):
         filtered='\n'.join(line if NATIVE not in line or parse(line.split(NATIVE,1)[1]).get('process')==proc
                          and parse(line.split(NATIVE,1)[1]).get('actorEpoch')==actor else '' for line in logs[role].splitlines())
         _,snapshots,_=L['native_trace'](filtered,(proc,actor,conn,revision),owner,cart,cutoff-1)
-        require(revision in snapshots,'Native token has no complete mutation/parse state')
+        require(revision in snapshots and max(snapshots)==revision,'Native token is not the current complete mutation/parse state')
         require(not any(n<cutoff and r.get('event')=='retire' for n,r in actor_rows),'Retired native actor readmitted')
         require(all(r.get('connectionEpoch')==conn and r.get('ownerID')==owner for _,r in actor_rows if r.get('event')=='retire'),'Native tombstone targets wrong connection/actor ID')
         return (proc,actor,conn,revision),actor_rows
@@ -103,12 +103,28 @@ def analyze(root):
                     require(refused[0][1].get('accepted') is False and refused[0][1].get('before')!=refused[0][1].get('after'),'Unexplained grant refusal')
                     continue
                 bound_line,bound=bound[0];echo_line,echo=exact('server','echo',phase,requester=role,attempt=attempt)
-                receipt_line,receipt=exact(role,'receipt',phase,attempt=attempt)
+                settled=[(n,r) for event in ('receipt','receipt-resnapshot') for n,r in get(role,event,phase) if r.get('attempt')==attempt]
+                require(len(settled)==1,'Echo must settle exactly once')
+                receipt_line,receipt=settled[0]
                 require(request_line<bound_line<receipt_line and bind_line<echo_line,'Reordered guarded chain')
                 require(all(identity(r)==identity(bind) and r.get('nonce')==nonce and r.get('ownerID')==owner and r.get('guarded') is True for r in (bound,echo,receipt)),'Fresh guarded chain differs')
                 require(echo.get('accepted') is (role=='client2') and receipt.get('accepted') is (role=='client2'),'Native owner/observer authority differs')
                 require(integer(bound,'seq',1,2147483647)==echo.get('seq')==receipt.get('seq'),'Echo sequence changed')
                 native_binding(role,text(bound,'lifetime',160),owner,cart,bound_line)
+                if receipt['event']=='receipt-resnapshot':
+                    before=token(text(receipt,'before',160));after=token(text(receipt,'after',160))
+                    require(receipt.get('before')==bound.get('lifetime') and receipt.get('lifetime')==receipt.get('after')
+                            and before[:3]==after[:3] and after[3]>before[3] and receipt.get('nativeCertified') is True
+                            and receipt.get('freshNativeProof') is False,'Old echo became fresh native proof')
+                    _,trace=native_binding(role,receipt['after'],owner,cart,receipt_line)
+                    revision=before[3]
+                    while revision<after[3]:
+                        certificate=[r for n,r in trace if n<receipt_line and r.get('event')=='resnapshot' and r.get('certified') is True and r.get('beforeRevision')==revision]
+                        require(len(certificate)==1,'Receipt retry lacks exact whole-parse certificate')
+                        revision=integer(certificate[0],'afterRevision',revision+1,after[3])
+                    continue
+                require(receipt.get('lifetime')==bound.get('lifetime'),'Receipt settled for another native lifetime')
+                native_binding(role,text(receipt,'lifetime',160),owner,cart,receipt_line)
                 successful.append((attempt,nonce,identity(bind)));completed_chains+=1
             require(successful,'No settled native chain')
             if phase<3:

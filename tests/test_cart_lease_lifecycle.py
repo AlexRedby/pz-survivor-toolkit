@@ -131,7 +131,16 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
         base=ROOT/ANALYZER.parent
         result=subprocess.run([shutil.which('luajit'),str(base/'LeaseLifecycleBankCheck.lua'),str(base)],capture_output=True,text=True,timeout=15)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        self.assertIn('hostPulseBeforeCorpse=true noncePreserved=true',result.stdout)
+        self.assertIn('hostPulseAfterDeathOneSecond=true noncePreserved=true',result.stdout)
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT required for actual lifecycle controller')
+    def test_actual_controller_requires_certified_resnapshot_and_fresh_receipt(self):
+        base=ROOT/ANALYZER.parent
+        command=[shutil.which('luajit'),str(base/'LeaseLifecycleBankCheck.lua'),str(base),'resnapshot']
+        good=subprocess.run(command,capture_output=True,text=True,timeout=15)
+        self.assertEqual(good.returncode,0,good.stdout+good.stderr)
+        bad=subprocess.run(command+['uncertified'],capture_output=True,text=True,timeout=15)
+        self.assertNotEqual(bad.returncode,0)
+        self.assertIn('Uncertified equipment transition',bad.stdout+bad.stderr)
     def test_complete_synthetic_contract_keeps_diagnostic_scope(self):
         result=self.analyze()
         self.assertTrue(result['evidenceComplete']);self.assertTrue(result['diagnosticOnly'])
@@ -315,6 +324,78 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
             for marker,event,field in ((NATIVE,'retire','monoNs'),(MARKER,'complete','wall')):
                 self.rows=copy.deepcopy(original);self.row(role,event,marker=marker)[field]=1
                 with self.subTest(role=role,marker=marker),self.assertRaises(ValueError):self.analyze()
+
+    def receipt_resnapshot_fixture(self):
+        """Host Bound races with real, exactly certified same-ID remote Equip parsing."""
+        role='client1';old='1|native-client1|11|201|1';new='1|native-client1|11|201|3'
+        rows=self.rows[role];baseline=copy.deepcopy(self.row(role,'baseline',marker=NATIVE))
+        def native(event,revision,depth,serial,reason='primary',**fields):
+            row=copy.deepcopy(baseline);row.update(event=event,revision=revision,depth=depth,mutationSerial=serial,
+                reason=reason,parseSerial=1,ingressGeneration=1,hardRevision=1);row.update(fields);return (NATIVE,row)
+        mutations=[
+            native('mutation-enter',2,1,1),
+            native('mutation-exit',2,0,1,primaryEpoch=1001),
+            native('mutation-enter',3,1,2,'secondary',oldPrimaryEpoch=1001,primaryEpoch=1001),
+            native('mutation-exit',3,0,2,'secondary',oldPrimaryEpoch=1001,primaryEpoch=1001,secondaryEpoch=1001),
+            native('resnapshot',3,0,0,'remote-equip-resnapshot',primaryEpoch=1001,secondaryEpoch=1001,
+                   beforeRevision=1,afterRevision=3,directCalls=2,genericCalls=0,certified=True),
+        ]
+        receipt=self.row(role,'receipt',1);receipt.update(event='receipt-resnapshot',before=old,after=new,
+            lifetime=new,nativeCertified=True,freshNativeProof=False)
+        at=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r is receipt);rows[at:at]=mutations
+        fresh=[]
+        for event in ('request','bound','receipt'):
+            source=receipt if event=='receipt' else self.row(role,event,1)
+            row=copy.deepcopy(source);row.update(event=event,attempt=2,nonce='client1-phase-1-retry',lifetime=new)
+            if event in ('bound','receipt'):row['seq']=2
+            for field in ('before','after','nativeCertified','freshNativeProof'):row.pop(field,None)
+            fresh.append((MARKER,row))
+        at=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r is receipt);rows[at+1:at+1]=fresh
+        for event in ('bind','echo'):
+            source=next(r for r in self.selected('server',event,1) if r['requester']==role)
+            row=copy.deepcopy(source);row.update(attempt=2,nonce='client1-phase-1-retry')
+            if event=='echo':row['seq']=2
+            server=self.rows['server'];at=next(i for i,(m,r) in enumerate(server) if m==MARKER and r['event']=='prepared' and r['phase']==1 and r['requester']==role)
+            server.insert(at,(MARKER,row))
+        self.row(role,'prepare',1).update(attempt=2,lifetime=new)
+        next(r for r in self.selected('server','prepared',1) if r['requester']==role)['attempt']=2
+        for event in ('transition-start','native-death','native-removed','unavailable-replay','cart-disposition'):
+            for row in self.selected(role,event,1):row['lifetime']=new
+        self.row(role,'transition',2)['before']=new
+        for role_rows in self.rows.values():
+            for i,(marker,row) in enumerate(role_rows):
+                if marker==MARKER:row['wall']=1000+i*10
+                if marker==NATIVE:row['monoNs']=(i+1)*1000000
+        return old,new
+    def test_receipt_resnapshot_settles_old_echo_then_requires_fresh_native_retry(self):
+        self.receipt_resnapshot_fixture();result=self.analyze()
+        self.assertTrue(result['evidenceComplete'])
+        self.assertEqual(result['settledNativeChains'],6,'Resnapshot receipt must not count as a fresh native proof')
+    def test_receipt_resnapshot_without_fresh_retry_does_not_complete_phase(self):
+        self.receipt_resnapshot_fixture()
+        for role,events in (('client1',('request','bound','receipt')),('server',('bind','echo'))):
+            self.rows[role]=[(m,r) for m,r in self.rows[role] if not (m==MARKER and r['event'] in events and r['phase']==1 and r.get('attempt')==2 and (role=='client1' or r.get('requester')=='client1'))]
+        with self.assertRaises(ValueError):self.analyze()
+    def test_receipt_resnapshot_requires_exact_raw_parse_certificate(self):
+        self.receipt_resnapshot_fixture();original=copy.deepcopy(self.rows)
+        for field,value in (('certified',False),('beforeRevision',2),('afterRevision',4),('directCalls',1),('genericCalls',1),('ingressGeneration',0)):
+            self.rows=copy.deepcopy(original);self.row('client1','resnapshot',marker=NATIVE)[field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+        self.rows=copy.deepcopy(original);self.remove('client1','resnapshot',marker=NATIVE)
+        with self.subTest(field='missing-certificate'),self.assertRaises(ValueError):self.analyze()
+    def test_receipt_resnapshot_shape_cannot_certify_old_or_wrong_native_state(self):
+        self.receipt_resnapshot_fixture();original=copy.deepcopy(self.rows)
+        for field,value in (('nativeCertified',False),('guarded',False),('freshNativeProof',True),
+                ('before','1|native-client1|11|201|2'),('after','1|native-client1|11|201|4'),
+                ('lifetime','1|native-client1|11|201|1')):
+            self.rows=copy.deepcopy(original);self.row('client1','receipt-resnapshot',1)[field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+    def test_stale_normal_receipt_cannot_count_as_new_native_proof(self):
+        old,_=self.receipt_resnapshot_fixture();receipt=self.row('client1','receipt-resnapshot',1)
+        receipt.update(event='receipt',lifetime=old)
+        for field in ('before','after','nativeCertified','freshNativeProof'):receipt.pop(field,None)
+        with self.assertRaises(ValueError):self.analyze()
+
 
 
 if __name__=='__main__':unittest.main()

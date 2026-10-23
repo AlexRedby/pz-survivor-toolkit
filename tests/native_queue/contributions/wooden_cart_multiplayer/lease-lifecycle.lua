@@ -499,7 +499,13 @@ Events.OnServerCommand.Add(function(module,command,args)
   elseif command=='Receipt' then
    assert(inflight and inflight.payload and args.attempt==inflight.attempt and args.nonce==inflight.request.nonce and args.accepted==(role=='client2'),'Lifecycle exact echo receipt differs')
    for _,k in ipairs({'session','grant','lease','seq','cart','body'}) do assert(args.payload[k]==inflight.payload[k],'Native echo receipt changed '..k) end
-   refresh();assert(current.lifetime==inflight.lifetime,'Native lifetime changed before exact echo settled')
+   refresh()
+   if current.lifetime~=inflight.lifetime then
+    assert(owner and cartLeaseResnapshot(owner,inflight.lifetime)==true,'Uncertified native lifetime changed before exact echo settled')
+    emit('receipt-resnapshot',tuple({ownerID=spec.ownerID,nonce=args.nonce,attempt=inflight.attempt,accepted=args.accepted,
+     before=inflight.lifetime,after=current.lifetime,nativeCertified=true,guarded=true,freshNativeProof=false},args.payload))
+    inflight=nil;ack=false;nextBindAt=now()+500;return
+   end
    ack={wall=now(),attempt=inflight.attempt};emit('receipt',tuple({ownerID=spec.ownerID,lifetime=current.lifetime,nonce=args.nonce,attempt=inflight.attempt,accepted=args.accepted,guarded=true},args.payload));inflight=nil
    if args.phase>1 and old and old.reply then replay('fresh-replay',old.reply,old.payload,ingress,{freshBound=true}) end
   elseif command=='Transition' then
