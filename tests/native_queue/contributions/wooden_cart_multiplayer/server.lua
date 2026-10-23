@@ -11,6 +11,7 @@ local wallDone,wallCleaned,originSince={},false,nil
 local players,ready,armed={}, {}, {}
 local epoch,last,origin,lastTraffic= nil,0,nil,0
 local actions=config.options and config.options.cart_actions
+local motionDuration=wallSide=='front' and 18000 or wallSide and 29000 or config.options and config.options.cart_fast_motion and 26000 or 15000
 local hotkey=config.options and config.options.cart_hotkey_setdown==true
 assert(not hotkey or actions,'cart_hotkey_setdown requires cart_actions')
 local variants={['shopping-cart']='SaucedCarts.ShoppingCart',['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
@@ -189,7 +190,10 @@ end)
 Events.OnTick.Add(function()
  local now=getTimestampMs()
  if pendingAction then local ok,e=pcall(pollAction,now);if not ok then pendingAction=nil;print('[QUEUE_TEST] FAIL CART_MP server '..tostring(e));broadcast('ActionFailed',{error=tostring(e)}) end end
- if (epoch and now-epoch>(wallSide and 30000 or config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or now-last<(epoch and 100 or 500) then return end;last=now
+ -- Native server ticks can be just under 100ms; throttling them again loses
+ -- alternate observations. Match the clients' real-tick motion sampling.
+ local inMotion=epoch and now>=epoch and now-epoch<=motionDuration
+ if (epoch and now-epoch>(wallSide and 30000 or config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or not inMotion and now-last<(epoch and 100 or 500) then return end;last=now
  for user,p in pairs(players) do
   if epoch and now>=epoch-2000 and (wallSide or config.options and config.options.cart_fast_motion) and user=='client1'
    and not (p:getX()>=origin.minX+origin.margin and p:getX()<=origin.minX+origin.size-origin.margin
