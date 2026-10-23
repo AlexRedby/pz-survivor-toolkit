@@ -369,25 +369,30 @@ def analyze(root):
             phase['frozenCarryoverBodyCartPairs'] += 1; diagnostics['frozen-carryover-pairs'] += 1
         else:
             phase['activeFrozenBodyCartPairs'] += 1
+    failures = []
     for phase in phases:
         source = phase['sourceLife']; index = phase['index']
         phase['stateRevisions'] = sum(row['sourceLife'] == source for row in sets.values())
         phase['proxyAssociations'] = sum(row['sourceLife'] == source for row in proxies.values())
         phase['sourceStateSetsBeforeSealedCapture'] = sum(row['sourceLife'] == source and row['wallMs'] <= owners[index]['capture']['wallMs']
                                                         for row in sets.values())
-        require(phase['stateRevisions'] > 0 and phase['proxyAssociations'] > 0
-                and phase['activeFrozenBodyCartPairs'] > 0, 'Selected phase lacks transported active frozen body/cart association: '+phase['phase'])
-    return dict(schema=1, diagnosticOnly=True, alteredDiagnosticWire=True, evidenceComplete=True,
+        require(phase['stateRevisions'] > 0 and phase['proxyAssociations'] > 0,
+                'Selected phase lacks transported native proxy association: '+phase['phase'])
+        if phase['activeFrozenBodyCartPairs'] == 0:
+            failures.append('Selected phase lacks transported active frozen body/cart association: '+phase['phase'])
+    return dict(schema=1, diagnosticOnly=True, alteredDiagnosticWire=True, evidenceComplete=not failures,
+                failures=failures, activeFrozenPhaseCount=sum(phase['activeFrozenBodyCartPairs'] > 0 for phase in phases),
+                proxyReplacementBoundaries=sum(row['event']=='proxy-replaced' for values in boundaries.values() for row in values),
                 exactSealedSourceAssociations=6, nativeAdmissionEvidenceComplete=True,
                 logicalQueryMessages=admission['logicalQueryMessages'], phases=phases,
                 diagnostics=dict(diagnostics), sourceBeginsWithoutSelectedSeal=sum(row['sourceLife'] not in selected for row in by_event['client1']['source-begin']),
                 proxyAssociations=len(proxies), successfulDirectedSubmissions=sum(map(len, submissions.values())),
                 parsedStateRevisions=len(parsed_packets),
                 discardedStateRevisions=len(discards),
-                sourceRevisionCoverageComplete=True, proxyCoverageComplete=True, sampledDrawCoverageComplete=True,
+                sourceRevisionCoverageComplete=True, proxyCoverageComplete=True, sampledDrawCoverageComplete=not failures,
                 repeatedSubmissionCandidateSets=sum(len(value) > 1 for value in submissions.values()),
                 sourceFiles=[str(root/(role+'-launch.log')) for role in ROLES]+[str(trace_path)],
-                qualification='Opt-in altered diagnostic State wire pilot: exact source revision, native proxy and frozen body/cart input associations for this six-phase bank only. The marker is provenance, not a lease grant or production authority. Repeated writes do not identify a unique physical transmission. Stopped/replaced and frozen carryover inputs do not count as active draws. Stateful skeleton blending/tracks and other inputs prevent whole-image/source-age or playback equivalence claims. No action/release/reconnect protocol proof, production migration or runtime PASS is inferred; runtime and source verification remain separate.')
+                qualification='Opt-in altered diagnostic State wire pilot: exact source revision and initial native proxy associations for this six-phase bank only. Frozen body/cart coverage is complete only when sampledDrawCoverageComplete is true; failures preserve missing phases explicitly. The marker is provenance, not a lease grant or production authority. Repeated writes do not identify a unique physical transmission. Stopped/replaced and frozen carryover inputs do not count as active draws. Stateful skeleton blending/tracks and other inputs prevent whole-image/source-age or playback equivalence claims. No action/release/reconnect protocol proof, production migration or runtime PASS is inferred; runtime and source verification remain separate.')
 
 
 def main():

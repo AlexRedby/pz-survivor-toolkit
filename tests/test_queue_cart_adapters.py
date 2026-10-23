@@ -730,6 +730,24 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
             self.options.clear();self.options.update(original)
 
+    def test_partial_observer_draw_report_is_preserved_and_rejected(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_observer_association=True,cart_action_admission=True,cart_timeline=True)
+        for role in ('client1','client2'):
+            (self.output/(role+'-launch.log')).write_text('selected capture')
+        partial=dict(evidenceComplete=False,proxyCoverageComplete=True,sampledDrawCoverageComplete=False,
+                     activeFrozenPhaseCount=2,failures=['four phases have no active paired draws'])
+        def load(path):
+            report=partial if path.name=='analyze-observer.py' else dict(evidenceComplete=True)
+            return SimpleNamespace(analyze=lambda root:report)
+        with patch.object(carts,'complete',return_value=True),patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',side_effect=load):
+            report=carts.verify(self.output,self.selection,{})
+        self.assertIn('Incomplete native observer association evidence',report['issues'])
+        self.assertEqual(report['evidence']['observerAssociation'],partial)
+        self.assertTrue(all(row['status']=='failed' and not row['outcome']['evidenceComplete'] for row in report['outcomes']))
+        saved=list((self.output/'analysis').rglob('mp-observer-association.json'))
+        self.assertEqual(len(saved),1);self.assertEqual(json.loads(saved[0].read_text()),partial)
+
     def test_native_time_sampling_requires_separate_host_optin_and_stages_clients_only(self):
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         self.options.update(cart_time_alignment=True)

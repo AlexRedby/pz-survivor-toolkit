@@ -261,7 +261,11 @@ class ObserverAssociationEvidence(unittest.TestCase):
         original=copy.deepcopy(self.timeline)
         for missing in ('body','cart','both'):
             self.timeline=[row for row in original if not (row['captureId']==2 and (missing=='both' or row['part']==missing))]
-            with self.subTest(missing=missing),self.assertRaises(ValueError):self.analyze()
+            with self.subTest(missing=missing):
+                report=self.analyze()
+                self.assertFalse(report['evidenceComplete']);self.assertFalse(report['sampledDrawCoverageComplete'])
+                self.assertTrue(report['proxyCoverageComplete']);self.assertEqual(report['activeFrozenPhaseCount'],5)
+                self.assertEqual(len(report['failures']),1)
 
     def test_frozen_body_or_cart_cannot_advance_any_association_field(self):
         original=copy.deepcopy(self.timeline)
