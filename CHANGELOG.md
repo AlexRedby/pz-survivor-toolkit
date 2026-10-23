@@ -57,6 +57,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.238
+
+- **Wishlist / vehicle mechanics:** Offer replacement-part wishes only for slots with a native installation operation. Fixed parts such as the vanilla glovebox no longer offer Add to wishlist; replaceable parts remain eligible when tools or skills are missing, including modded installable gloveboxes.
+
 ### 0.1.237
 
 - **Action queue / televisions:** Preserve queued work when VHS ejection replicates before native completion. Require the empty television, one newly returned cassette with the expected media index and a correlated Host receipt; retain native effects without replaying them.
