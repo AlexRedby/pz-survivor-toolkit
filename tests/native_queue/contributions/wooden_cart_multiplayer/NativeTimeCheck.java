@@ -25,7 +25,24 @@ public final class NativeTimeCheck {
         try{Main.nativeTimeBody(buffer,begin,end);throw new AssertionError("Invalid body span accepted");}
         catch(IllegalArgumentException expected){}
     }
+    private static void checkAdmissionNumbers(java.nio.file.Path sources)throws Exception {
+        var platform=se.krka.kahlua.j2se.J2SEPlatform.getInstance();
+        var environment=platform.newEnvironment();
+        var thread=new se.krka.kahlua.vm.KahluaThread(platform,environment);thread.debugOwnerThread=Thread.currentThread();
+        String probe=java.nio.file.Files.readString(sources.resolve("action-admission.lua"));
+        String functions=probe.substring(probe.indexOf("local function integerText"),probe.indexOf("local function emit"));
+        String json=java.nio.file.Files.readString(sources.resolve("json.lua"));
+        String script="local J=(function()\n"+json+"\nend)()\n"+functions
+            +"\nlocal mono,maximum,wall=...;return encodeRow({monoNs=mono,maximum=maximum,negative=-maximum,wallMs=wall,zero=0,cart=-2147483648})";
+        var closure=se.krka.kahlua.luaj.compiler.LuaCompiler.loadstring(script,"cart-admission-numbers",environment);
+        Object[] result=thread.pcall(closure,new Object[]{253716934852789d,9007199254740991d,1792720134545d});
+        check(result.length==2 && Boolean.TRUE.equals(result[0]),"Actual Kahlua admission encoder failed: "+Arrays.toString(result));
+        String encoded=(String)result[1];
+        for(String exact:new String[]{"\"monoNs\":253716934852789","\"maximum\":9007199254740991","\"negative\":-9007199254740991", "\"wallMs\":1792720134545","\"zero\":0","\"cart\":-2147483648"})
+            check(encoded.contains(exact),"Actual Kahlua admission counter lost precision: "+encoded);
+    }
     public static void main(String[] args)throws Exception {
+        checkAdmissionNumbers(java.nio.file.Path.of(args[0]));
         check(Main.actionAdmissionKind("ToolkitWoodCartPickup") && !Main.actionAdmissionKind("ISWalkToTimedAction"),"Unrelated action admitted");
         check(Main.actionAdmissionCanAccept("pending","Accept",true,true,true,"exact-token"),"Actual accepted action refused");
         check(!Main.actionAdmissionCanAccept("terminal","Accept",true,true,true,"exact-token"),"Retired action reopened");

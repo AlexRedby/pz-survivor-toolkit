@@ -5,15 +5,28 @@ local J=require 'CartMPJSON'
 local M={}
 local module='CartActionAdmissionProbe'
 -- Native counters cross Kahlua as doubles. Emit safe integers in decimal so
--- tostring's short/scientific representation cannot lose receipt precision.
+-- tostring's scientific representation cannot lose receipt precision. Native
+-- Kahlua modulo narrows its quotient to int; its formatter can round 2^53-1.
+local function integerText(value)
+ assert(value==value and math.abs(value)<=9007199254740991 and math.floor(value)==value,'Admission log requires exact safe integers')
+ local negative=value<0;if negative then value=-value end
+ if value==0 then return '0' end
+ local digits={}
+ while value>0 do
+  local quotient=math.floor(value/10)
+  digits[#digits+1]=string.char(48+(value-quotient*10));value=quotient
+ end
+ local text=negative and '-' or ''
+ for i=#digits,1,-1 do text=text..digits[i] end
+ return text
+end
 local function encodeRow(row)
  local parts={}
  for key,value in pairs(row) do
   assert(type(key)=='string','Admission log key must be text')
   local encoded
   if type(value)=='number' then
-   assert(value==value and math.abs(value)<=9007199254740991 and value%1==0,'Admission log requires exact safe integers')
-   encoded=string.format('%.0f',value)
+   encoded=integerText(value)
   else
    assert(type(value)=='string' or type(value)=='boolean','Admission log requires scalar fields')
    encoded=J.encode(value)

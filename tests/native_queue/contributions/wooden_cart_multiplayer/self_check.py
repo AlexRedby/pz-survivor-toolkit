@@ -1026,7 +1026,7 @@ public final class ModelProbeCheck {
         extra_checks=[HERE/'NativeTimeCheck.java',HERE/'ClockTimeCheck.java']
         subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),*map(str,extra_checks)],check=True)
         for name,marker in [('NativeTimeCheck','NATIVE_TIME_CHECK_PASS'),('ClockTimeCheck','CLOCK_TIME_CHECK_PASS')]:
-            result=subprocess.run([str(java),'-cp',classpath,name],capture_output=True,text=True,
+            result=subprocess.run([str(java),'-cp',classpath,name,str(HERE)],cwd=game,capture_output=True,text=True,
                 env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_RUNTIME_FILE=str(root/'runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'commands.txt')),timeout=30)
             assert result.returncode==0 and marker in result.stdout,result.stdout+'\n'+result.stderr
         timeline_check=root/'TimelineNativeCheck.java'
