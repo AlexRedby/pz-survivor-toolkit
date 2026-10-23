@@ -357,7 +357,8 @@ if isServer() then
 end
 local account=assert(read('smoke-user.txt'),'Owned native user scalar missing')
 assert(account=='client1' or account=='client2','Foreign lifecycle profile');role=account
-local resuming=read(REJOIN)=='pending'
+local rejoinCheckpoint=read(REJOIN)
+local resuming=rejoinCheckpoint=='pending' or rejoinCheckpoint=='connecting'
 assert(not resuming or role=='client2','Host cannot rejoin')
 local started,done,since=false,false,nil
 local spec,owner,receiver,current,old,inflight=nil,nil,nil,nil,nil,nil
@@ -367,7 +368,7 @@ local nextBindAt,rejoinCreationAdvanced=0,false
 local bindingSince,bindingSamples=nil,{}
 local equipSent,equipResends,serverEquipPendingSince=false,0,nil
 local corpseKnown,absentSent,deathLogged=false,false,false
-local exitAt,exitStage,rejoining=nil,nil,false
+local exitAt,exitStage,rejoining=nil,nil,rejoinCheckpoint=='connecting'
 local phaseBeforeReset=resuming and 2 or nil
 local function send(command,args)
  args=args or {};args.phase=phase;args.ownerID=spec and spec.ownerID or old and old.id or -1
@@ -530,7 +531,10 @@ Events.OnCreatePlayer.Add(function(index,p)
 end)
 Events.OnGameStart.Add(function()
  started=true;since=now();lastHello=0
- if resuming then emit('native-rejoin',{ownerID=getPlayer() and getPlayer():getOnlineID(),nativeConnected=true,checkpoint='pending',phase=3}) end
+ if resuming then
+  assert(read(REJOIN)=='connecting','Native rejoin lacks its owned connecting checkpoint')
+  emit('native-rejoin',{ownerID=getPlayer() and getPlayer():getOnlineID(),nativeConnected=true,checkpoint='connecting',phase=3})
+ end
 end)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~=MODULE then return end
@@ -673,7 +677,9 @@ local function connectAgain()
   receiver:unavailable();replay('unavailable-replay',old.reply,old.payload,nil,{nativeLifetimeAbsent=cartLeaseLifetime(old.actor)==nil,nativeMenu=true,nilIngress=true})
  end
  rejoining=true;started=false;spec=nil;owner=nil;receiver=nil;current=nil;inflight=nil;phase=0;ack=false;preparing=false;transition=nil;lastHello=0;lastPulse=0
- emit('native-reconnect',{phase=3,nativeConnectToServer=true,checkpoint='pending'})
+ -- serverConnect can reload Lua before OnGameStart; persist ownership before calling it.
+ write(REJOIN,'connecting')
+ emit('native-reconnect',{phase=3,nativeConnectToServer=true,checkpoint='connecting'})
  ConnectToServer.instance:connect(menu,'Cart lifecycle rejoin','client2','smoke-local-only','127.0.0.1','',tostring(C.port),'',false,true,1)
 end
 local function rejoinCreationTick()

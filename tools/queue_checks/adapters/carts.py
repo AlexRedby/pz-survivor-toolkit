@@ -165,6 +165,22 @@ def _intake(project, suite):
     return Path(project) / 'tests/native_queue/contributions' / suite
 
 
+def window_start_counts(selection):
+    """The isolated guest menu rejoin produces a second native game start."""
+    options = selection.get('options', {})
+    incompatible = ('cart_timeline', 'cart_time_alignment', 'cart_fast_motion', 'cart_actions',
+                    'cart_hotkey_setdown', 'cart_lease_control', 'cart_lease_lifetimes',
+                    'cart_action_admission', 'cart_observer_association', 'cart_inventory_equip')
+    if (selection.get('suite') == MP and selection.get('cases') == ['lease_lifecycle']
+            and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
+            and type(selection.get('clients')) is int and selection['clients'] == 2
+            and selection.get('languages') == ['EN', 'RU'] and isinstance(options, dict)
+            and options.get('mp_host') is True and all(options.get(flag, False) is False for flag in incompatible)
+            and 'cart_wall_exit' not in options and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'):
+        return {'client2': 2}
+    return {}
+
+
 def validate(selection):
     suite = selection['suite']
     options = selection.get('options', {})

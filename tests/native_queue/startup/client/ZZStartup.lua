@@ -24,7 +24,7 @@ Events.OnMainMenuEnter.Add(function()
   local reader=getFileReader('cart-lease-lifecycle-rejoin.txt',false)
   local checkpoint=reader and reader:readLine()
   if reader then reader:close() end
-  if checkpoint=='pending' then return end
+  if checkpoint=='pending' or checkpoint=='connecting' then return end
  end
  if host and user=='client1' then
   if hostOwner then return end

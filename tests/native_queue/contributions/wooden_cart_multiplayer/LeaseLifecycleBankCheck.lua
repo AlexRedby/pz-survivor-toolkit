@@ -5,6 +5,8 @@ local source=readSource('lease-lifecycle.lua')
 local protocol=readSource('lease-protocol.lua')
 mockRace=arg[2]=='resnapshot';mockRaceCertified=arg[3]~='uncertified';mockDelayedHostDeath=arg[4]=='delayed-death'
 mockLocalMissingFromOnline=arg[5]=='missing-local';mockRespawnLifetimeDelay=arg[6]=='delayed-lifetime'
+local mockRejoinReset=arg[7]=='rejoin-reset'
+local nativeConnectCalls=0
 local time,serial=10000,10
 local queue,envs,logs,files={},{},{},{}
 local guestGeneration=1
@@ -127,10 +129,19 @@ local function makeEnv(name)
   guest.square=nil;conn2.active=false;e.inGame=false;e.MainScreen.instance.inGame=false;e.menuVisible=true
  end}
  e.ConnectToServer={instance={connect=function()
+  nativeConnectCalls=nativeConnectCalls+1;assert(nativeConnectCalls==1,'Duplicate native rejoin across Lua reset')
+  assert(e.files['cart-lease-lifecycle-rejoin.txt']=='connecting','Native connect preceded persistent checkpoint')
+  local nextEnv=e
+  if mockRejoinReset then
+   nextEnv=makeEnv(name);envs[name]=nextEnv
+   nextEnv.inGame=false;nextEnv.MainScreen.instance.inGame=false;nextEnv.menuVisible=true
+   assert(load(source,'fixture-reset','t',nextEnv))()
+   fire(nextEnv,'OnMainMenuEnter');fire(nextEnv,'OnPreUIDraw')
+  end
   guestGeneration=guestGeneration+1
   local inv=guest.inventory;guest=actor('client2',4,inv);conn2={active=true};envs.client1.remoteItem=nil;envs.client1.remoteRevision=nil
-  e.inGame=true;e.MainScreen.instance.inGame=true;e.menuVisible=false
-  fire(e,'OnCreatePlayer',0,guest);fire(e,'OnGameStart')
+  nextEnv.inGame=true;nextEnv.MainScreen.instance.inGame=true;nextEnv.menuVisible=false
+  fire(nextEnv,'OnCreatePlayer',0,guest);fire(nextEnv,'OnGameStart')
  end}}
  return e
 end
@@ -198,7 +209,8 @@ for tick=1,1000 do
   end
   assert(equipCount==3,'Fixture repeated native equip without authoritative setup necessity')
   if mockRespawnLifetimeDelay then assert(waits[1] and waits[2] and waits[5],'Missing bounded respawn binding wait diagnostics') end
-  print('LIFECYCLE_STATE_MACHINE_MOCK_PASS ticks='..tick..' roles=3 phases=3 hostPulseAfterDeathOneSecond=true noncePreserved=true receiptRace='..tostring(mockRace==true)..' delayedHostDeath='..tostring(mockDelayedHostDeath==true));return
+  assert(nativeConnectCalls==1,'Native rejoin count differs')
+  print('LIFECYCLE_STATE_MACHINE_MOCK_PASS ticks='..tick..' roles=3 phases=3 hostPulseAfterDeathOneSecond=true noncePreserved=true receiptRace='..tostring(mockRace==true)..' delayedHostDeath='..tostring(mockDelayedHostDeath==true)..' rejoinLuaReset='..tostring(mockRejoinReset)..' nativeConnectCalls='..nativeConnectCalls);return
  end
 end
 for _,log in ipairs(logs) do print(log.role..' '..log.text) end

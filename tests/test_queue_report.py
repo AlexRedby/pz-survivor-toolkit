@@ -64,6 +64,36 @@ class ViewportEvidenceTests(unittest.TestCase):
             (root / 'client1-launch.log').write_text(marker * 2)
             self.assertTrue(report.window_size_evidence(root, dict(selection, kind='sp', clients=1))['issues'])
 
+    def test_cart_lifecycle_rejoin_checks_both_guest_viewports_and_isolates_other_cases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = {'suite': 'wooden_cart_multiplayer', 'cases': ['lease_lifecycle'], 'kind': 'mp',
+                         'mode': 'toolkit', 'clients': 2, 'languages': ['EN', 'RU'],
+                         'options': {'mp_host': True}, 'window_size': [1600, 900]}
+            marker = '[QUEUE_TEST] WINDOW_SIZE width=1600 height=900\n'
+            host, guest = root/'client1-launch.log', root/'client2-launch.log'
+            host.write_text(marker); guest.write_text(marker*2)
+            evidence = report.window_size_evidence(root, selection)
+            self.assertFalse(evidence['issues'])
+            self.assertEqual(evidence['startup_observations']['client2'], [[1600, 900], [1600, 900]])
+            for text in ('', marker, marker*3, marker+'[QUEUE_TEST] WINDOW_SIZE width=1280 height=900\n',
+                         '[QUEUE_TEST] WINDOW_SIZE width=1280 height=900\n'+marker):
+                guest.write_text(text)
+                with self.subTest(text=text):
+                    self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+            self.assertEqual({}, report.adapters.get(selection['suite']).window_start_counts(dict(selection, clients=True)))
+            guest.write_text(marker*2); host.write_text(marker*2)
+            self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+            host.write_text(marker)
+            for changes in ({'cases': ['owner_observer_motion']}, {'cases': ['lease_lifecycle', 'owner_observer_motion']},
+                            {'suite': 'wooden_cart_motion'}, {'kind': 'sp'}, {'mode': 'native'}, {'clients': 3},
+                            {'languages': ['RU', 'EN']}, {'options': {'mp_host': False}},
+                            {'options': {'mp_host': True, 'cart_actions': True}},
+                            {'options': {'mp_host': True, 'cart_variant': 'metal-wheelbarrow'}},
+                            {'options': {'mp_host': True, 'cart_wall_exit': 'front'}}):
+                with self.subTest(changes=changes):
+                    self.assertTrue(report.window_size_evidence(root, dict(selection, **changes))['issues'])
+
     def test_adapter_start_count_declaration_cannot_disable_or_misroute_viewport_checks(self):
         from types import SimpleNamespace
         selection = {'suite': 'health', 'kind': 'mp', 'window_size': [1280, 900]}

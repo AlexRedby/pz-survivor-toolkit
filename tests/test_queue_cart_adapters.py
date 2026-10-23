@@ -670,7 +670,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
 local source=SOURCE
 for _,case in ipairs({'lease_lifecycle','owner_observer_motion'}) do
  for _,user in ipairs({'client1','client2'}) do
-  for _,checkpoint in ipairs({'pending','verified','absent'}) do
+  for _,checkpoint in ipairs({'pending','connecting','verified','absent'}) do
    local callbacks,connects,hosts={},0,0
    package.loaded.QueueTestSelection=nil
    package.preload.QueueTestSelection=function()return {kind='mp',cases={case},options={mp_host=true},resources={heap_mib=2048}}end
@@ -689,7 +689,7 @@ for _,case in ipairs({'lease_lifecycle','owner_observer_motion'}) do
    ConnectToServer={instance={connect=function()connects=connects+1 end}};MainScreen={instance={}}
    assert(loadfile(source))();callbacks.OnMainMenuEnter()
    if user=='client1' then assert(hosts==1 and connects==0)
-   elseif case=='lease_lifecycle' and checkpoint=='pending' then assert(connects==0 and hosts==0)
+   elseif case=='lease_lifecycle' and (checkpoint=='pending' or checkpoint=='connecting') then assert(connects==0 and hosts==0)
    else assert(connects==1 and hosts==0) end
   end
  end

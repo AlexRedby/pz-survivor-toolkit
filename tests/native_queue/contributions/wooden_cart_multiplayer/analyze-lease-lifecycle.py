@@ -115,7 +115,34 @@ def analyze(root):
         _,snapshots,_=L['native_trace'](filtered,(proc,actor,conn,revision),owner,cart,cutoff-1)
         require(revision in snapshots and max(snapshots)==revision,'Native token is not the current complete mutation/parse state')
         require(not any(n<cutoff and r.get('event')=='retire' for n,r in actor_rows),'Retired native actor readmitted')
-        require(all(r.get('connectionEpoch')==conn and r.get('ownerID')==owner for _,r in actor_rows if r.get('event')=='retire'),'Native tombstone targets wrong connection/actor ID')
+        retired=[(n,r) for n,r in actor_rows if r.get('event')=='retire']
+        require(all(integer(r,'connectionEpoch',1,MAX)==conn and type(r.get('ownerID')) is int and r['ownerID'] in (owner,-1) for _,r in retired),'Native tombstone targets wrong connection/actor ID')
+        detached=[(n,r) for n,r in retired if r['ownerID']==-1]
+        if detached:
+            # Native Exit clears the mutable OnlineID before removing its transport.
+            # The original actor/connection remain the identity fence throughout.
+            exits=[(n,r) for n,r in get(role,'native-exit',2) if r.get('ownerID')==owner and r.get('nativeExitToMenu') is True
+                   and token(text(r,'lifetime',160))[:3]==(proc,actor,conn)]
+            require(len(exits)==1,'Detached tombstone lacks exact native menu exit')
+            exit_line=exits[0][0];first_detached=detached[0][0]
+            clears=[(i,n,r) for i,(n,r) in enumerate(actor_rows) if exit_line<n<first_detached and r.get('event')=='mutation-enter' and r.get('reason')=='online-id']
+            require(len(clears)==1,'Detached tombstone lacks unique native OnlineID clear')
+            index,entry_line,entry=clears[0]
+            require(index>0 and index+1<len(actor_rows),'Incomplete native OnlineID clear')
+            end_line,end=actor_rows[index+1];prior=actor_rows[index-1][1]
+            require(end.get('event')=='mutation-exit' and end.get('reason')=='online-id' and entry_line<end_line<first_detached
+                    and entry.get('ownerID')==owner and end.get('ownerID')==-1 and entry.get('depth')==1 and end.get('depth')==0
+                    and integer(entry,'mutationSerial',1,MAX)==end.get('mutationSerial')
+                    and integer(entry,'revision',2,MAX)==end.get('revision')==prior.get('revision')+1
+                    and entry.get('hardRevision')==end.get('hardRevision')==entry['revision'],'Unpaired or foreign native OnlineID clear')
+            stable=('connectionEpoch','oldPrimaryEpoch','oldSecondaryEpoch','primaryEpoch','secondaryEpoch','primaryID','secondaryID')
+            require(all(entry.get(k)==end.get(k) for k in stable) and all(entry.get(k)==prior.get(k) for k in ('primaryEpoch','secondaryEpoch','primaryID','secondaryID'))
+                    and (entry.get('oldPrimaryEpoch'),entry.get('oldSecondaryEpoch'))==(entry.get('primaryEpoch'),entry.get('secondaryEpoch'))
+                    and prior.get('retired') is False and entry.get('connectionEpoch')==conn
+                    and all(r.get('success') is True and r.get('retired') is False and r.get('poisoned') is False
+                            and r.get('parseSerial')==r.get('ingressGeneration')==0 for r in (entry,end)), 'Native OnlineID clear changed equipment/authority scope')
+            require(all(n>end_line and r.get('revision')>=entry['revision'] and r.get('hardRevision')>=entry['revision'] for n,r in detached),'Detached native tombstone predates its hard clear')
+            require(all(r.get('ownerID')==-1 for n,r in retired if n>end_line),'Native detached actor regained an OnlineID')
         return (proc,actor,conn,revision),actor_rows
     phase_data=[];tokens={r:[] for r in ROLES};sources={};completed_chains=0;prepared={}
     for phase in (1,2,3):
@@ -163,7 +190,7 @@ def analyze(root):
                 native_binding(role,text(bound,'lifetime',160),owner,cart,bound_line)
                 if receipt['event']=='receipt-resnapshot':
                     before=token(text(receipt,'before',160));after=token(text(receipt,'after',160))
-                    require(receipt.get('before')==bound.get('lifetime') and receipt.get('lifetime')==receipt.get('after')
+                    require(receipt.get('before')==bound.get('lifetime') and ('lifetime' not in receipt or receipt['lifetime']==receipt.get('after'))
                             and before[:3]==after[:3] and after[3]>before[3] and receipt.get('nativeCertified') is True
                             and receipt.get('freshNativeProof') is False,'Old echo became fresh native proof')
                     _,trace=native_binding(role,receipt['after'],owner,cart,receipt_line)
@@ -205,9 +232,23 @@ def analyze(root):
             # Server death may replicate before the diagnostic Transition control.
             # Clients already retained the exact old native binding at Prepare.
             start=one(role,'prepare',phase)[0] if role!='server' else transition_line
-            removed_line,removed=one(role,'native-removed',phase)
+            removals=get(role,'native-removed',phase);raw_reset_removal=False
+            if not removals and role=='client2' and phase==2:
+                # The native menu Lua reset can precede the next fixture tick.
+                # Exact immutable native actor/transport hooks survive that reset.
+                exit_line,exit_row=one(role,'native-exit',2)
+                require(exit_row.get('nativeExitToMenu') is True and exit_row.get('ownerID')==phase_data[phase-1]['ownerID']
+                        and token(text(exit_row,'lifetime',160))[:3]==tokens[role][phase-1][:3],'Reset removal lacks exact native Exit incarnation')
+                reconnects=get(role,'native-reconnect',3);require(reconnects,'Reset removal lacks next native reconnect')
+                next_connect=min(n for n,_ in reconnects)
+                scope=sources[role,phase];conn=tokens[role][phase-1][2]
+                transport=[n for n,r in scope if exit_line<n<next_connect and r.get('event')=='retire' and r.get('reason')=='connection-remove' and r.get('connectionEpoch')==conn]
+                hooks=[n for n,r in scope if exit_line<n<next_connect and r.get('event')=='retire' and r.get('reason')=='actor-remove' and r.get('connectionEpoch')==conn]
+                require(transport and hooks and min(transport)<min(hooks),'Reset removal lacks ordered exact transport/actor native hooks')
+                removed_line=min(hooks);removed=None;raw_reset_removal=True
+            else:removed_line,removed=one(role,'native-removed',phase)
             require(start<removed_line,'Native removal precedes transition')
-            require(removed.get('ownerID')==phase_data[phase-1]['ownerID'],'Removed wrong native actor')
+            if removed is not None:require(removed.get('ownerID')==phase_data[phase-1]['ownerID'],'Removed wrong native actor')
             if phase==1:require(removed.get('nativeCorpse') is True and removed.get('nativeRemovalWitness')=='new-native-corpse' and integer(removed,'corpseCount',1,100)>=1,'No native player corpse')
             if role!='server':
                 _,change=one(role,'transition',phase+1)
@@ -216,7 +257,7 @@ def analyze(root):
                         and change.get('sameTransport')==(phase==1 or role=='client1'),'Fixture transition differs from native epochs')
             oldscope=sources[role,phase]
             retires=[(n,r) for n,r in oldscope if r.get('event')=='retire']
-            require(any(start<n<removed_line and r.get('reason')=='actor-remove' for n,r in retires),'Missing original native actor removal hook')
+            require(any(start<n and (n<=removed_line if raw_reset_removal else n<removed_line) and r.get('reason')=='actor-remove' for n,r in retires),'Missing original native actor removal hook')
             if phase==1:
                 death_line,death=one(role,'native-death',phase)
                 require(start<death_line<removed_line and death.get('nativeLifetimeAbsent') is True and death.get('eventSource')=='OnCharacterDeath','Native death did not revoke before callback')
@@ -275,8 +316,10 @@ def analyze(root):
     require({'post-death','profession','character'}<=panels,'Native visible respawn panels not advanced')
     kill=one('client2','native-kill',1)[1];require(kill.get('programmaticNativeKill') is True,'Missing native Kill trigger')
     require(one('client2','native-exit',2)[1].get('nativeExitToMenu') is True,'No native menu exit')
-    require(one('client2','native-reconnect',3)[1].get('nativeConnectToServer') is True,'No real menu reconnect')
-    require(one('client2','native-rejoin',3)[1].get('nativeConnected') is True,'No native rejoin event')
+    reconnect=one('client2','native-reconnect',3)[1]
+    require(reconnect.get('nativeConnectToServer') is True and reconnect.get('checkpoint')=='connecting','No checkpointed real menu reconnect')
+    rejoin=one('client2','native-rejoin',3)[1]
+    require(rejoin.get('nativeConnected') is True and rejoin.get('checkpoint')=='connecting','No checkpointed native rejoin event')
     require((root/'client2/Lua/cart-lease-lifecycle-rejoin.txt').read_text()=='verified','Rejoin checkpoint incomplete')
     return dict(schema=1,diagnosticOnly=True,evidenceComplete=True,nativeLifecycleVerified=True,animationEquivalencePass=False,
                 phases=phase_data,nativeBirths={role:[dict(oldActorEpoch=w['row']['oldActorEpoch'],newActorEpoch=w['row']['newActorEpoch'],connectionEpoch=w['row']['connectionEpoch'],promoted=w['baselineLine'] is not None) for w in births[role].values()] for role in ROLES},settledNativeChains=completed_chains,nativeEpochs={r:[list(t) for t in ts] for r,ts in tokens.items()},

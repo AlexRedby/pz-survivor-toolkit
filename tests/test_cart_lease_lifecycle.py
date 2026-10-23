@@ -98,8 +98,8 @@ def fixture():
                 emit('client2','native-create',phase,ownerID=owner+1,index=0,eventSource='OnCreatePlayer',newNativeActor=True)
             else:
                 emit('client2','native-exit',phase,ownerID=owner,lifetime=lifetime('client2',phase),nativeExitToMenu=True)
-                emit('client2','native-reconnect',3,nativeConnectToServer=True,checkpoint='pending')
-                emit('client2','native-rejoin',3,nativeConnected=True,checkpoint='pending')
+                emit('client2','native-reconnect',3,nativeConnectToServer=True,checkpoint='connecting')
+                emit('client2','native-rejoin',3,nativeConnected=True,checkpoint='connecting')
     for role in ROLES[1:]:
         emit(role,'final-ack',3,ownerID=9,cart=403,lifetime=lifetime(role,3),guarded=True)
         emit('server','final-ack',3,ownerID=9,requester=role,lifetime=lifetime(role,3),guarded=True)
@@ -148,6 +148,21 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
             result=subprocess.run([shutil.which('luajit'),str(base/'LeaseLifecycleBankCheck.lua'),str(base),mode,'certified','delayed-death'],capture_output=True,text=True,timeout=15)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             self.assertIn('delayedHostDeath=true',result.stdout)
+
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT required for actual lifecycle controller')
+    def test_actual_controller_rejoin_lua_reset_keeps_one_native_connect(self):
+        base=ROOT/ANALYZER.parent
+        command=[shutil.which('luajit'),str(base/'LeaseLifecycleBankCheck.lua'),str(base),'normal','certified','normal','normal','normal','rejoin-reset']
+        result=subprocess.run(command,capture_output=True,text=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('LIFECYCLE_STATE_MACHINE_MOCK_PASS',result.stdout)
+        self.assertIn('rejoinLuaReset=true nativeConnectCalls=1',result.stdout)
+    def test_rejoin_events_require_persisted_connecting_checkpoint(self):
+        original=copy.deepcopy(self.rows)
+        for event in ('native-reconnect','native-rejoin'):
+            for value in ('pending','verified',None):
+                self.rows=copy.deepcopy(original);self.row('client2',event,3)['checkpoint']=value
+                with self.subTest(event=event,value=value),self.assertRaises(ValueError):self.analyze()
 
     def test_early_authority_close_does_not_claim_local_native_death(self):
         row=self.row('client1','unavailable-replay',1)
@@ -350,6 +365,51 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
                 self.rows=copy.deepcopy(original);self.row(role,event,marker=marker)[field]=1
                 with self.subTest(role=role,marker=marker),self.assertRaises(ValueError):self.analyze()
 
+    def detach_fixture(self):
+        role='client2';rows=self.rows[role]
+        exit_index=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r['event']=='native-exit')
+        exit_entry=rows.pop(exit_index)
+        index=next(i for i,(m,r) in enumerate(rows) if m==NATIVE and r['event']=='retire' and r['actorEpoch']==12)
+        base=copy.deepcopy(next(r for m,r in rows if m==NATIVE and r['event']=='baseline' and r['actorEpoch']==12))
+        entry=copy.deepcopy(base);entry.update(event='mutation-enter',reason='online-id',revision=2,hardRevision=2,mutationSerial=1,depth=1)
+        end=copy.deepcopy(entry);end.update(event='mutation-exit',ownerID=-1,depth=0)
+        rows[index:index]=[exit_entry,(NATIVE,entry),(NATIVE,end)]
+        retired=[(i,r) for i,(m,r) in enumerate(rows) if m==NATIVE and r['event']=='retire' and r['actorEpoch']==12]
+        for _,r in retired:r.update(ownerID=-1,revision=2,hardRevision=2)
+        rows[retired[0][0]],rows[retired[1][0]]=rows[retired[1][0]],rows[retired[0][0]]
+        for role_rows in self.rows.values():
+            for i,(m,r) in enumerate(role_rows):
+                if m==MARKER:r['wall']=1000+i*10
+                elif m==NATIVE:r['monoNs']=(i+1)*1000000
+    def test_native_exit_clears_only_mutable_id_with_exact_hard_setter_pair(self):
+        self.detach_fixture();self.assertTrue(self.analyze()['evidenceComplete']);original=copy.deepcopy(self.rows)
+        variants=[('entry','ownerID',999),('exit','ownerID',0),('exit','connectionEpoch',999),('exit','mutationSerial',999),
+                  ('exit','hardRevision',1),('exit','depth',1),('exit','primaryEpoch',999)]
+        for which,field,value in variants:
+            self.rows=copy.deepcopy(original)
+            rows=[r for m,r in self.rows['client2'] if m==NATIVE and r.get('reason')=='online-id']
+            rows[which=='exit'][field]=value
+            with self.subTest(which=which,field=field),self.assertRaises(ValueError):self.analyze()
+    def test_cleared_tombstone_without_native_setter_pair_cannot_pass(self):
+        self.detach_fixture();self.rows['client2']=[(m,r) for m,r in self.rows['client2'] if not(m==NATIVE and r.get('reason')=='online-id')]
+        with self.assertRaises(ValueError):self.analyze()
+    def test_menu_lua_reset_uses_exact_raw_hooks_when_local_row_cannot_run(self):
+        self.detach_fixture();self.remove('client2','native-removed',2)
+        self.assertTrue(self.analyze()['evidenceComplete']);original=copy.deepcopy(self.rows)
+        for reason in ('actor-remove','connection-remove'):
+            self.rows=copy.deepcopy(original);self.rows['client2']=[(m,r) for m,r in self.rows['client2'] if not(m==NATIVE and r.get('actorEpoch')==12 and r.get('reason')==reason)]
+            with self.subTest(reason=reason),self.assertRaises(ValueError):self.analyze()
+        self.rows=copy.deepcopy(original);self.remove('client2','native-exit',2)
+        with self.assertRaises(ValueError):self.analyze()
+    def test_native_menu_reset_fallback_does_not_allow_duplicate_reconnect(self):
+        self.detach_fixture();self.remove('client2','native-removed',2);rows=self.rows['client2']
+        pos=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r['event']=='native-reconnect')
+        rows.insert(pos+1,(MARKER,copy.deepcopy(rows[pos][1])))
+        for i,(m,r) in enumerate(rows):
+            if m==MARKER:r['wall']=1000+i*10
+            elif m==NATIVE:r['monoNs']=(i+1)*1000000
+        with self.assertRaisesRegex(ValueError,'expected one native-reconnect'):self.analyze()
+
     def receipt_resnapshot_fixture(self):
         """Host Bound races with real, exactly certified same-ID remote Equip parsing."""
         role='client1';old='1|native-client1|11|201|1';new='1|native-client1|11|201|3'
@@ -366,7 +426,8 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
                    beforeRevision=1,afterRevision=3,directCalls=2,genericCalls=0,certified=True),
         ]
         receipt=self.row(role,'receipt',1);receipt.update(event='receipt-resnapshot',before=old,after=new,
-            lifetime=new,nativeCertified=True,freshNativeProof=False)
+            nativeCertified=True,freshNativeProof=False)
+        receipt.pop('lifetime',None) # Frozen fixture logs no fresh lifetime for the retired response.
         at=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r is receipt);rows[at:at]=mutations
         fresh=[]
         for event in ('request','bound','receipt'):
@@ -393,7 +454,7 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
                 if marker==NATIVE:row['monoNs']=(i+1)*1000000
         return old,new
     def test_receipt_resnapshot_settles_old_echo_then_requires_fresh_native_retry(self):
-        self.receipt_resnapshot_fixture();result=self.analyze()
+        self.receipt_resnapshot_fixture();self.assertNotIn('lifetime',self.row('client1','receipt-resnapshot',1));result=self.analyze()
         self.assertTrue(result['evidenceComplete'])
         self.assertEqual(result['settledNativeChains'],6,'Resnapshot receipt must not count as a fresh native proof')
     def test_receipt_resnapshot_without_fresh_retry_does_not_complete_phase(self):
@@ -412,7 +473,7 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
         self.receipt_resnapshot_fixture();original=copy.deepcopy(self.rows)
         for field,value in (('nativeCertified',False),('guarded',False),('freshNativeProof',True),
                 ('before','1|native-client1|11|201|2'),('after','1|native-client1|11|201|4'),
-                ('lifetime','1|native-client1|11|201|1')):
+                ('lifetime','1|native-client1|11|201|1'),('lifetime',None)):
             self.rows=copy.deepcopy(original);self.row('client1','receipt-resnapshot',1)[field]=value
             with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
     def test_stale_normal_receipt_cannot_count_as_new_native_proof(self):
