@@ -18,15 +18,24 @@ internal class CartLocomotionBlend() {
         x = targetX
         y = targetY
         val radius = Math.hypot(targetX.toDouble(), targetY.toDouble())
-        if (forwardGait < WALK || forwardGait > SPRINT || !radius.isFinite() ||
-            radius < 1e-6 || !(targetY > 1e-6f)) {
+        if (
+            forwardGait < WALK ||
+                forwardGait > SPRINT ||
+                !radius.isFinite() ||
+                radius < 1e-6 ||
+                !(targetY > 1e-6f)
+        ) {
             gait = 0
             return
         }
         // Interpolate the direction, not the Cartesian coordinates: opposite steering
         // must pass through a full forward stride rather than a shorter idle blend.
         val target = Math.atan2(targetX.toDouble(), targetY.toDouble())
-        if (gait != forwardGait) { angle = target; gait = forwardGait; return }
+        if (gait != forwardGait) {
+            angle = target
+            gait = forwardGait
+            return
+        }
         if (seconds.isFinite() && seconds > 0)
             angle += (target - angle) * -Math.expm1(-Math.min(.1, seconds) / RESPONSE_SECONDS)
         // Both angles are in the forward half-plane; there is no wrapped/sign-flip path.

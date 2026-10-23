@@ -9,12 +9,16 @@ import zombie.network.GameClient
 /** Read the authoritative native cooldown without reconstructing its random starting value. */
 object MedicineCooldown {
     @JvmField
-    internal val SUPPORTED = BytecodeSupport.supports("zombie/characters/IsoGameCharacter.class",
-        "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
+    internal val SUPPORTED =
+        BytecodeSupport.supports(
+            "zombie/characters/IsoGameCharacter.class",
+            "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
+        )
 
-    private val timerField: Field? = if (SUPPORTED) {
-        Accessor.findField(IsoGameCharacter::class.java, "effectiveEdibleBuffTimer")
-    } else null
+    private val timerField: Field? =
+        if (SUPPORTED) {
+            Accessor.findField(IsoGameCharacter::class.java, "effectiveEdibleBuffTimer")
+        } else null
 
     @JvmStatic
     @LuaMethod(name = "toolkitMedicineCooldown", global = true)

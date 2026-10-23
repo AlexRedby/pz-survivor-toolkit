@@ -42,7 +42,9 @@ internal object CartObserverPose {
         return angles.copyOf(count)
     }
 
-    /** Recover a slightly predicted-overlapping actor cap without crossing the physical wall core. */
+    /**
+     * Recover a slightly predicted-overlapping actor cap without crossing the physical wall core.
+     */
     private fun anchor(query: CartFootprint.Query, raw: Pose): Pose? {
         if (!query.blocked(raw.x, raw.y, raw.x, raw.y)) return raw
         // Native oracles inflate the actor by .3. A clear point within .1 stays on its local side.
@@ -59,7 +61,10 @@ internal object CartObserverPose {
                     high -= 2 * Math.max(Math.ulp(raw.x.toFloat()), Math.ulp(raw.y.toFloat()))
                     candidate = rounded(raw.x + dx * high, raw.y + dy * high, raw.heading)
                 }
-                if (distance(raw, candidate) > ANCHOR_RECOVERY || query.blocked(candidate.x, candidate.y, candidate.x, candidate.y)) {
+                if (
+                    distance(raw, candidate) > ANCHOR_RECOVERY ||
+                        query.blocked(candidate.x, candidate.y, candidate.x, candidate.y)
+                ) {
                     low = high
                     continue
                 }
@@ -67,9 +72,15 @@ internal object CartObserverPose {
                     val mid = (low + high) / 2
                     val probe = rounded(raw.x + dx * mid, raw.y + dy * mid, raw.heading)
                     if (query.blocked(probe.x, probe.y, probe.x, probe.y)) low = mid
-                    else { high = mid; candidate = probe }
+                    else {
+                        high = mid
+                        candidate = probe
+                    }
                 }
-                if (distance(raw, candidate) <= nearest) { best = candidate; nearest = distance(raw, candidate) }
+                if (distance(raw, candidate) <= nearest) {
+                    best = candidate
+                    nearest = distance(raw, candidate)
+                }
                 break
             }
         }
@@ -77,7 +88,13 @@ internal object CartObserverPose {
     }
 
     /** Closest sampled outward ray, refined against the same native footprint oracle. */
-    private fun project(query: CartFootprint.Query, raw: Pose, previous: Pose?, anchor: Pose, front: Double): Pose? {
+    private fun project(
+        query: CartFootprint.Query,
+        raw: Pose,
+        previous: Pose?,
+        anchor: Pose,
+        front: Double,
+    ): Pose? {
         if (clear(query, raw, front)) return raw
         var best: Pose? = null
         var bestDistance = MAX_OFFSET + .001
@@ -97,34 +114,64 @@ internal object CartObserverPose {
                     high -= 2 * Math.max(Math.ulp(raw.x.toFloat()), Math.ulp(raw.y.toFloat()))
                     candidate = rounded(raw.x + dx * high, raw.y + dy * high, raw.heading)
                 }
-                if (distance(raw, candidate) <= MAX_OFFSET && !query.blocked(anchor.x, anchor.y, candidate.x, candidate.y) &&
-                    clear(query, candidate, front)) { found = candidate; break }
+                if (
+                    distance(raw, candidate) <= MAX_OFFSET &&
+                        !query.blocked(anchor.x, anchor.y, candidate.x, candidate.y) &&
+                        clear(query, candidate, front)
+                ) {
+                    found = candidate
+                    break
+                }
                 low = high
             }
             var accepted = found ?: continue
             repeat(10) {
                 val mid = (low + high) / 2
                 val candidate = rounded(raw.x + dx * mid, raw.y + dy * mid, raw.heading)
-                if (!query.blocked(anchor.x, anchor.y, candidate.x, candidate.y) && clear(query, candidate, front)) {
+                if (
+                    !query.blocked(anchor.x, anchor.y, candidate.x, candidate.y) &&
+                        clear(query, candidate, front)
+                ) {
                     high = mid
                     accepted = candidate
                 } else low = mid
             }
             // A subpixel margin avoids a rounding-driven contact toggle every frame.
-            val padded = rounded(raw.x + dx * (high + .003), raw.y + dy * (high + .003), raw.heading)
-            if (distance(raw, padded) <= MAX_OFFSET && !query.blocked(anchor.x, anchor.y, padded.x, padded.y) &&
-                clear(query, padded, front)) accepted = padded
+            val padded =
+                rounded(raw.x + dx * (high + .003), raw.y + dy * (high + .003), raw.heading)
+            if (
+                distance(raw, padded) <= MAX_OFFSET &&
+                    !query.blocked(anchor.x, anchor.y, padded.x, padded.y) &&
+                    clear(query, padded, front)
+            )
+                accepted = padded
             val distance = distance(raw, accepted)
-            if (distance < bestDistance) { best = accepted; bestDistance = distance }
+            if (distance < bestDistance) {
+                best = accepted
+                bestDistance = distance
+            }
         }
         return best
     }
 
     private fun step(query: CartFootprint.Query, from: Pose, target: Pose, front: Double): Pose {
-        val fraction = CartFootprint.rigidLimit(query, from.x, from.y, from.heading,
-            target.x - from.x, target.y - from.y, target.heading, front)
-        val result = rounded(from.x + (target.x - from.x) * fraction, from.y + (target.y - from.y) * fraction,
-            from.heading + CartSteeringMath.wrap(target.heading - from.heading) * fraction)
+        val fraction =
+            CartFootprint.rigidLimit(
+                query,
+                from.x,
+                from.y,
+                from.heading,
+                target.x - from.x,
+                target.y - from.y,
+                target.heading,
+                front,
+            )
+        val result =
+            rounded(
+                from.x + (target.x - from.x) * fraction,
+                from.y + (target.y - from.y) * fraction,
+                from.heading + CartSteeringMath.wrap(target.heading - from.heading) * fraction,
+            )
         return if (clear(query, result, front)) result else from
     }
 
@@ -137,18 +184,39 @@ internal object CartObserverPose {
             rawPrevious = null
         }
 
-        fun update(query: CartFootprint.Query?, x: Double, y: Double, heading: Double, front: Double, seconds: Double): Pose? {
-            if (query == null || !(x + y + heading + front + seconds).isFinite() || front < 1 || front > 2 || seconds < 0) {
+        fun update(
+            query: CartFootprint.Query?,
+            x: Double,
+            y: Double,
+            heading: Double,
+            front: Double,
+            seconds: Double,
+        ): Pose? {
+            if (
+                query == null ||
+                    !(x + y + heading + front + seconds).isFinite() ||
+                    front < 1 ||
+                    front > 2 ||
+                    seconds < 0
+            ) {
                 clear()
                 return null
             }
             val raw = rounded(x, y, heading)
             var previous = accepted
             val anchor = anchor(query, raw)
-            if (anchor == null) { clear(); return null }
+            if (anchor == null) {
+                clear()
+                return null
+            }
             // A teleport, new geometry or larger gait envelope invalidates the old anchor.
-            if (previous != null && (distance(previous, raw) > MAX_OFFSET || query.blocked(anchor.x, anchor.y, previous.x, previous.y) ||
-                    !CartObserverPose.clear(query, previous, front))) previous = null
+            if (
+                previous != null &&
+                    (distance(previous, raw) > MAX_OFFSET ||
+                        query.blocked(anchor.x, anchor.y, previous.x, previous.y) ||
+                        !CartObserverPose.clear(query, previous, front))
+            )
+                previous = null
             var target: Pose?
             if (previous != null && rawPrevious != null) {
                 val previousRaw = rawPrevious ?: throw NullPointerException()
@@ -160,25 +228,47 @@ internal object CartObserverPose {
                 // Only free cosmetic release is rate-limited; native travel remains unrestricted.
                 if (offset > 1e-9) decay = Math.max(decay, 1 - RELEASE_SPEED * dt / offset)
                 target = rounded(raw.x + dx * decay, raw.y + dy * decay, raw.heading)
-                if (distance(raw, target) > MAX_OFFSET || !CartObserverPose.clear(query, target, front)) {
-                    target = if (raw == rawPrevious) previous else project(query, raw, previous, anchor, front)
+                if (
+                    distance(raw, target) > MAX_OFFSET ||
+                        !CartObserverPose.clear(query, target, front)
+                ) {
+                    target =
+                        if (raw == rawPrevious) previous
+                        else project(query, raw, previous, anchor, front)
                 }
             } else target = project(query, raw, null, anchor, front)
-            if (target == null) { clear(); return null }
+            if (target == null) {
+                clear()
+                return null
+            }
             var result = target
             if (previous != null) {
                 result = step(query, previous, target, front)
                 if (cost(result, target, front) > 1e-10) {
                     // Try both safe orders when rotation pushes the long nose through a corner.
-                    val translated = step(query, previous, rounded(target.x, target.y, previous.heading), front)
+                    val translated =
+                        step(query, previous, rounded(target.x, target.y, previous.heading), front)
                     val translationFirst = step(query, translated, target, front)
-                    val rotated = step(query, previous, rounded(previous.x, previous.y, target.heading), front)
+                    val rotated =
+                        step(
+                            query,
+                            previous,
+                            rounded(previous.x, previous.y, target.heading),
+                            front,
+                        )
                     val rotationFirst = step(query, rotated, target, front)
-                    if (cost(translationFirst, target, front) < cost(result, target, front)) result = translationFirst
-                    if (cost(rotationFirst, target, front) < cost(result, target, front)) result = rotationFirst
+                    if (cost(translationFirst, target, front) < cost(result, target, front))
+                        result = translationFirst
+                    if (cost(rotationFirst, target, front) < cost(result, target, front))
+                        result = rotationFirst
                 }
             }
-            if (distance(raw, result) > MAX_OFFSET || !CartObserverPose.clear(query, result, front)) { clear(); return null }
+            if (
+                distance(raw, result) > MAX_OFFSET || !CartObserverPose.clear(query, result, front)
+            ) {
+                clear()
+                return null
+            }
             accepted = result
             rawPrevious = raw
             return result

@@ -1,7 +1,7 @@
 package net.alexredby.pztoolkitjavapatches
 
-import java.util.Collections
 import java.util.ArrayList
+import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.function.Predicate
 import zombie.characters.IsoPlayer
@@ -26,8 +26,18 @@ internal object CartAnimationBlend {
             val animation = player.getAnimationPlayer()
             if (animation != null && animation.hasSkinningData()) {
                 val spine = animation.getSkinningData().boneIndices["Bip01_Spine"]
-                if (spine != null && spine >= 0 && spine < animation.getModelTransformsCount() && animation.getMultiTrack() != null) {
-                    val weight = fastWeight(animation.getMultiTrack().getTracks(), animation.getSkinningData().getBoneAt(spine), fast::contains)
+                if (
+                    spine != null &&
+                        spine >= 0 &&
+                        spine < animation.getModelTransformsCount() &&
+                        animation.getMultiTrack() != null
+                ) {
+                    val weight =
+                        fastWeight(
+                            animation.getMultiTrack().getTracks(),
+                            animation.getSkinningData().getBoneAt(spine),
+                            fast::contains,
+                        )
                     if (weight.isFinite()) return weight
                 }
             }
@@ -43,13 +53,17 @@ internal object CartAnimationBlend {
     }
 
     /**
-     * Model-space Spine still contains an outgoing pelvis/root transform after
-     * an incoming masked Walk completely owns the local Spine. Keep the largest
-     * native fast share along that chain until every contributor has retired.
-     * This is presence, not a summed pose weight or a geometric clearance bound.
+     * Model-space Spine still contains an outgoing pelvis/root transform after an incoming masked
+     * Walk completely owns the local Spine. Keep the largest native fast share along that chain
+     * until every contributor has retired. This is presence, not a summed pose weight or a
+     * geometric clearance bound.
      */
     @JvmStatic
-    fun fastWeight(tracks: List<AnimationTrack?>?, spine: SkinningBone?, fast: Predicate<AnimationTrack>?): Float {
+    fun fastWeight(
+        tracks: List<AnimationTrack?>?,
+        spine: SkinningBone?,
+        fast: Predicate<AnimationTrack>?,
+    ): Float {
         if (spine == null) return Float.NaN
         var weight = 0f
         var bone: SkinningBone? = spine
@@ -75,21 +89,43 @@ internal object CartAnimationBlend {
         }
         val fast = Collections.newSetFromMap(IdentityHashMap<AnimationTrack, Boolean>())
         for (node in nodes) {
-            val fastNode = when (node.getName() ?: throw NullPointerException()) {
-                "ToolkitCartPivotRun", "ToolkitCartPivotSprint", "ToolkitWoodCartBraceRun", "ToolkitWoodCartBraceSprint",
-                "ToolkitCartRun", "ToolkitCartSprint", "ToolkitCartRunLeft", "ToolkitCartRunRight", "ToolkitCartSprintLeft", "ToolkitCartSprintRight" -> true
-                else -> false
-            }
+            val fastNode =
+                when (node.getName() ?: throw NullPointerException()) {
+                    "ToolkitCartPivotRun",
+                    "ToolkitCartPivotSprint",
+                    "ToolkitWoodCartBraceRun",
+                    "ToolkitWoodCartBraceSprint",
+                    "ToolkitCartRun",
+                    "ToolkitCartSprint",
+                    "ToolkitCartRunLeft",
+                    "ToolkitCartRunRight",
+                    "ToolkitCartSprintLeft",
+                    "ToolkitCartSprintRight" -> true
+                    else -> false
+                }
             if (fastNode) for (track in node.getMainAnimationTracks()) fast.add(track)
-            val transitionOwner = fastNode || when (node.getName() ?: throw NullPointerException()) {
-                "ToolkitCartIdle", "ToolkitCartIdleLeft", "ToolkitCartIdleRight", "ToolkitCartWalk", "ToolkitCartWalkLeft", "ToolkitCartWalkRight",
-                "ToolkitCartPivotWalk", "ToolkitWoodCartPivotWalk" -> true
-                else -> false
-            }
+            val transitionOwner =
+                fastNode ||
+                    when (node.getName() ?: throw NullPointerException()) {
+                        "ToolkitCartIdle",
+                        "ToolkitCartIdleLeft",
+                        "ToolkitCartIdleRight",
+                        "ToolkitCartWalk",
+                        "ToolkitCartWalkLeft",
+                        "ToolkitCartWalkRight",
+                        "ToolkitCartPivotWalk",
+                        "ToolkitWoodCartPivotWalk" -> true
+                        else -> false
+                    }
             val transition = node.getTransitionInTrack()
             if (transitionOwner && transition != null) {
                 val name = transition.getName()
-                if (CartLegPace.brakeClip(name) || "Bob_Cart_WalkToRun".equals(name) || "Bob_Cart_WalkToSprint".equals(name)) fast.add(transition)
+                if (
+                    CartLegPace.brakeClip(name) ||
+                        "Bob_Cart_WalkToRun".equals(name) ||
+                        "Bob_Cart_WalkToSprint".equals(name)
+                )
+                    fast.add(transition)
             }
         }
         // The shared upper brace is identical in Walk and fast gaits. Promoting
@@ -100,24 +136,33 @@ internal object CartAnimationBlend {
     }
 
     /**
-     * The caller supplies a valid skeleton bone index. Returns NaN when native
-     * allocation cannot be established. Non-fast tracks still consume the same
-     * bone's budget; a fast identity absent from tracks is not rendered.
-     * Node activity/isPlaying do not replace native blend weights.
+     * The caller supplies a valid skeleton bone index. Returns NaN when native allocation cannot be
+     * established. Non-fast tracks still consume the same bone's budget; a fast identity absent
+     * from tracks is not rendered. Node activity/isPlaying do not replace native blend weights.
      *
-     * This matches the normal-frame B42.21 allocator. The private first-frame
-     * underweight normalization flag is deliberately not guessed. A Spine-local
-     * share does not describe ancestor masks or prove complete geometric clearance.
+     * This matches the normal-frame B42.21 allocator. The private first-frame underweight
+     * normalization flag is deliberately not guessed. A Spine-local share does not describe
+     * ancestor masks or prove complete geometric clearance.
      */
     @JvmStatic
-    fun fastWeight(tracks: List<AnimationTrack?>?, bone: Int, fast: Predicate<AnimationTrack>?): Float {
+    fun fastWeight(
+        tracks: List<AnimationTrack?>?,
+        bone: Int,
+        fast: Predicate<AnimationTrack>?,
+    ): Float {
         if (tracks == null || bone < 0 || fast == null) return Float.NaN
         val scratch = entries.get()
         try {
             for (track in tracks) {
                 if (track == null) return Float.NaN
                 val weight = track.getBlendWeight()
-                if (!weight.isFinite() || weight < 0 || track.getLayerIdx() < 0 || track.getLayerIdx() >= 16) return Float.NaN
+                if (
+                    !weight.isFinite() ||
+                        weight < 0 ||
+                        track.getLayerIdx() < 0 ||
+                        track.getLayerIdx() >= 16
+                )
+                    return Float.NaN
                 if (weight >= MIN_WEIGHT) {
                     val mask = track.getBoneWeight(bone)
                     if (!mask.isFinite() || mask < 0) return Float.NaN
@@ -130,10 +175,16 @@ internal object CartAnimationBlend {
             while (i >= 0 && remaining > MIN_WEIGHT) {
                 val entry = scratch.get(i)
                 val mask = entry.getTrack().getBoneWeight(bone)
-                if (mask <= MIN_WEIGHT) { i--; continue }
+                if (mask <= MIN_WEIGHT) {
+                    i--
+                    continue
+                }
                 val raw = entry.getBlendWeight() * mask
                 if (!raw.isFinite()) return Float.NaN
-                if (raw <= MIN_WEIGHT) { i--; continue }
+                if (raw <= MIN_WEIGHT) {
+                    i--
+                    continue
+                }
                 val effective = Math.max(0f, Math.min(remaining, raw))
                 remaining = Math.max(0f, remaining - raw)
                 if (fast.test(entry.getTrack())) weight += effective

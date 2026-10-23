@@ -14,12 +14,18 @@ import zombie.network.packets.NetTimedActionPacket
 object MedicalTimedActions {
     private val current = ThreadLocal<Scope>()
 
-    class Scope(previous: Scope?, packet: NetTimedAction?, reader: ByteBufferReader?, active: Boolean) {
+    class Scope(
+        previous: Scope?,
+        packet: NetTimedAction?,
+        reader: ByteBufferReader?,
+        active: Boolean,
+    ) {
         @JvmField val previous = previous
         @JvmField val packet = packet
         @JvmField val reader = reader
         @JvmField val buffer: ByteBuffer? = (reader ?: throw NullPointerException()).bb
-        @JvmField val previousArgs = Accessor.tryGet<PZNetKahluaTableImpl>(packet, "actionArgs", null)
+        @JvmField
+        val previousArgs = Accessor.tryGet<PZNetKahluaTableImpl>(packet, "actionArgs", null)
         @JvmField val active = active
         @JvmField var loading: PZNetKahluaTableImpl? = null
         @JvmField var loaded = false
@@ -28,6 +34,7 @@ object MedicalTimedActions {
     class Arguments(scope: Scope, table: PZNetKahluaTableImpl?) {
         @JvmField val scope = scope
         @JvmField val previous = scope.loading
+
         init {
             scope.loading = table
         }
@@ -46,9 +53,13 @@ object MedicalTimedActions {
     }
 
     private fun incoming(scope: Scope?, reader: ByteBufferReader?): Boolean =
-        scope != null && scope.active && GameServer.server && scope.reader === reader
-            && scope.buffer === (reader ?: throw NullPointerException()).bb
-            && Accessor.tryGet<TransactionState>(scope.packet, "state", null) === TransactionState.Request
+        scope != null &&
+            scope.active &&
+            GameServer.server &&
+            scope.reader === reader &&
+            scope.buffer === (reader ?: throw NullPointerException()).bb &&
+            Accessor.tryGet<TransactionState>(scope.packet, "state", null) ===
+                TransactionState.Request
 
     @JvmStatic
     fun beginArguments(table: PZNetKahluaTableImpl?, reader: ByteBufferReader?): Arguments? {
@@ -68,12 +79,23 @@ object MedicalTimedActions {
     }
 
     @JvmStatic
-    fun beforeValue(table: PZNetKahluaTableImpl?, reader: ByteBufferReader?, connection: IConnection?, type: Byte) {
+    fun beforeValue(
+        table: PZNetKahluaTableImpl?,
+        reader: ByteBufferReader?,
+        connection: IConnection?,
+        type: Byte,
+    ) {
         val scope = current.get()
-        if (type.toInt() != 10 || !incoming(scope, reader) || (scope ?: throw NullPointerException()).loading !== table) return
+        if (
+            type.toInt() != 10 ||
+                !incoming(scope, reader) ||
+                (scope ?: throw NullPointerException()).loading !== table
+        )
+            return
         val doctor = Accessor.tryGet<PlayerID>(scope.packet, "playerId", null)
         if (doctor == null || !doctor.isConsistent(connection)) return
-        // B42.21 BodyPart is PlayerID + int index; inspect a duplicate without consuming the native decoder's input.
+        // B42.21 BodyPart is PlayerID + int index; inspect a duplicate without consuming the native
+        // decoder's input.
         val bytes = (reader ?: throw NullPointerException()).bb
         val probe = ByteBufferReader(bytes.duplicate().order(bytes.order()))
         val patient = PlayerID()
@@ -91,7 +113,8 @@ object MedicalTimedActions {
             packet.action = null
             val args = Accessor.tryGet<PZNetKahluaTableImpl>(packet, "actionArgs", null)
             if (args != null && args !== scope.previousArgs) args.wipe()
-            // ZomboidNetData bounds this buffer to one datagram; discard it and let native processServer send Reject.
+            // ZomboidNetData bounds this buffer to one datagram; discard it and let native
+            // processServer send Reject.
             val buffer = scope.buffer ?: throw NullPointerException()
             buffer.position(buffer.limit())
             return true

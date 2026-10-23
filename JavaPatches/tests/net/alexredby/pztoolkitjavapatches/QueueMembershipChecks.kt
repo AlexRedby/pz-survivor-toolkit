@@ -14,15 +14,30 @@ object QueueMembershipChecks {
         val environment = platform.newEnvironment()
         val thread = KahluaThread(platform, environment)
         thread.debugOwnerThread = Thread.currentThread()
-        Files.newBufferedReader(root.resolve(
-                "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueMembership.lua")).use { reader ->
-            environment.rawset("TestQueueMembership", thread.call(
-                    LuaCompiler.loadis(reader, "ActionQueueMembership.lua", environment), emptyArray<Any?>()))
+        Files.newBufferedReader(
+                root.resolve(
+                    "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueMembership.lua",
+                ),
+            )
+            .use { reader ->
+                environment.rawset(
+                    "TestQueueMembership",
+                    thread.call(
+                        LuaCompiler.loadis(reader, "ActionQueueMembership.lua", environment),
+                        emptyArray<Any?>(),
+                    ),
+                )
+            }
+        Files.newBufferedReader(root.resolve("tests/test_action_queue_membership.lua")).use { reader
+            ->
+            thread.call(
+                LuaCompiler.loadis(reader, "test_action_queue_membership.lua", environment),
+                emptyArray<Any?>(),
+            )
         }
-        Files.newBufferedReader(root.resolve("tests/test_action_queue_membership.lua")).use { reader ->
-            thread.call(LuaCompiler.loadis(reader, "test_action_queue_membership.lua", environment), emptyArray<Any?>())
-        }
-        System.out.println("QUEUE_MEMBERSHIP_CHECKS_PASS (same Lua helper and vectors in native Kahlua)")
+        System.out.println(
+            "QUEUE_MEMBERSHIP_CHECKS_PASS (same Lua helper and vectors in native Kahlua)",
+        )
         kotlin.system.exitProcess(0)
     }
 }

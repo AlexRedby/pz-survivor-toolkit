@@ -14,13 +14,28 @@ object UITextFitChecks {
         val environment = platform.newEnvironment()
         val thread = KahluaThread(platform, environment)
         thread.debugOwnerThread = Thread.currentThread()
-        thread.call(LuaCompiler.loadstring("require=function() end; PZSurvivorToolkit={}",
-                "bootstrap", environment), emptyArray<Any?>())
-        Files.newBufferedReader(root.resolve(
-                "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/UIStyle.lua")).use { reader ->
-            environment.rawset("TestUIStyle", thread.call(
-                    LuaCompiler.loadis(reader, "UIStyle.lua", environment), emptyArray<Any?>()))
-        }
+        thread.call(
+            LuaCompiler.loadstring(
+                "require=function() end; PZSurvivorToolkit={}",
+                "bootstrap",
+                environment,
+            ),
+            emptyArray<Any?>(),
+        )
+        Files.newBufferedReader(
+                root.resolve(
+                    "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/UIStyle.lua",
+                ),
+            )
+            .use { reader ->
+                environment.rawset(
+                    "TestUIStyle",
+                    thread.call(
+                        LuaCompiler.loadis(reader, "UIStyle.lua", environment),
+                        emptyArray<Any?>(),
+                    ),
+                )
+            }
         // Kahlua's compiler corrupts non-ASCII literals; game labels arrive from Java intact.
         environment.rawset("TestNbsp", "\u00a0")
         environment.rawset("TestEmoji", "😀")
@@ -28,9 +43,14 @@ object UITextFitChecks {
         environment.rawset("TestCyrillic", "Ж")
         environment.rawset("TestCjk", "洗")
         Files.newBufferedReader(root.resolve("tests/test_ui_text_fit.lua")).use { reader ->
-            thread.call(LuaCompiler.loadis(reader, "test_ui_text_fit.lua", environment), emptyArray<Any?>())
+            thread.call(
+                LuaCompiler.loadis(reader, "test_ui_text_fit.lua", environment),
+                emptyArray<Any?>(),
+            )
         }
-        System.out.println("UI_TEXT_FIT_CHECKS_PASS (same Lua helper and vectors in native UTF16 Kahlua)")
+        System.out.println(
+            "UI_TEXT_FIT_CHECKS_PASS (same Lua helper and vectors in native UTF16 Kahlua)",
+        )
         kotlin.system.exitProcess(0)
     }
 }

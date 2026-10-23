@@ -1,9 +1,9 @@
-# Kotlin migration: remaining game checks
+# Cart game regression follow-up
 
 Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host profiles and saves, without installing into the user's game. Current preflight resolves 43 IDs; required local sources are missing for VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. Follow the native runner's AeroSpace placement and owned-window/focus gates.
 
-- [ ] Verify remaining migration-specific cart pose/contact and split-wheel GPU behavior in isolated full-pack SP captures where headless native matrices, palette/slot lifecycle checks and source-equivalence review do not establish actual rendering. Preserve the separate visual-design gaps; check held/world continuity and GL state restoration without changing gameplay.
-- [ ] Verify remaining migration-specific SP/Host cart input/action effects and two-client owner/observer presentation with the full pack. Preserve native authority, exact cart/cargo identity, cancellation/recovery deadlines and existing SP-only guards; parser/rate/reset tests and native JVM regressions do not establish live Host delivery or GPU presentation.
+- [ ] Verify cart pose/contact and split-wheel GPU behavior in isolated full-pack SP captures where headless native matrices, palette/slot lifecycle checks and source-equivalence review do not establish actual rendering. Preserve the separate visual-design gaps; check held/world continuity and GL state restoration without changing gameplay.
+- [ ] Verify SP/Host cart input/action effects and two-client owner/observer presentation with the full pack. Preserve native authority, exact cart/cargo identity, cancellation/recovery deadlines and existing SP-only guards; parser/rate/reset tests and native JVM regressions do not establish live Host delivery or GPU presentation.
 
 # Nick's Turn Off Fridges selection
 

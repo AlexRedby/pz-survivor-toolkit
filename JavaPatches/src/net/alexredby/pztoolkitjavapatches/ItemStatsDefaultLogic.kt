@@ -4,11 +4,14 @@ import java.lang.reflect.Field
 import zombie.network.packets.ItemStatsPacket
 
 internal object ItemStatsDefaultLogic {
-    private class Fields(val floats: Array<Field>, val integers: Array<Field>, val poisonDetectionLevel: Field)
+    private class Fields(
+        val floats: Array<Field>,
+        val integers: Array<Field>,
+        val poisonDetectionLevel: Field,
+    )
 
     private val fields = load()
-    @JvmField
-    val supported = fields != null
+    @JvmField val supported = fields != null
 
     private fun fields(type: Class<*>, vararg names: String): Array<Field> =
         Array(names.size) { index ->
@@ -19,14 +22,37 @@ internal object ItemStatsDefaultLogic {
         }
 
     private fun load(): Fields? {
-        if (!BytecodeSupport.supports("zombie/network/packets/ItemStatsPacket.class",
-            "1b2cd2f150e418d8266cdee8ab671210f8676bf9fd02f596eb5265f1389eaa8a")) return null
+        if (
+            !BytecodeSupport.supports(
+                "zombie/network/packets/ItemStatsPacket.class",
+                "1b2cd2f150e418d8266cdee8ab671210f8676bf9fd02f596eb5265f1389eaa8a",
+            )
+        )
+            return null
         try {
-            return Fields(fields(java.lang.Float.TYPE, "cookingTime", "minutesToCook", "minutesToBurn", "hungChange",
-                "calories", "proteins", "lipids", "carbohydrates", "thirstChange", "painReduction",
-                "endChange", "stressChange", "fatigueChange", "unhappyChange", "boredomChange", "baseHunger"),
+            return Fields(
+                fields(
+                    java.lang.Float.TYPE,
+                    "cookingTime",
+                    "minutesToCook",
+                    "minutesToBurn",
+                    "hungChange",
+                    "calories",
+                    "proteins",
+                    "lipids",
+                    "carbohydrates",
+                    "thirstChange",
+                    "painReduction",
+                    "endChange",
+                    "stressChange",
+                    "fatigueChange",
+                    "unhappyChange",
+                    "boredomChange",
+                    "baseHunger",
+                ),
                 fields(Integer.TYPE, "fluReduction", "foodSicknessChange", "fertilizedTime"),
-                fields(Integer.TYPE, "poisonDetectionLevel")[0])
+                fields(Integer.TYPE, "poisonDetectionLevel")[0],
+            )
         } catch (error: ReflectiveOperationException) {
             disabled(error)
         } catch (error: RuntimeException) {

@@ -25,21 +25,32 @@ object QueueManagerChecks {
     class Connection : UdpConnection(null, 0, 0) {
         var replies = 0
         lateinit var bytes: ByteBuffer
+
         override fun startPacket(): ByteBufferWriter {
             bytes.clear()
             return ByteBufferWriter(bytes)
         }
-        override fun endPacket(priority: Int, reliability: Int, channel: Byte) { replies++ }
+
+        override fun endPacket(priority: Int, reliability: Int, channel: Byte) {
+            replies++
+        }
     }
 
     private class Probe : Action() {
         override fun getDescription() = "queue-manager-check"
+
         override fun getDuration() = 1f
-        override fun start() { }
-        override fun stop() { }
+
+        override fun start() {}
+
+        override fun stop() {}
+
         override fun isValid() = true
-        override fun update() { }
+
+        override fun update() {}
+
         override fun perform() = true
+
         override fun isUsingTimeout() = false
     }
 
@@ -50,9 +61,10 @@ object QueueManagerChecks {
     private fun field(type: Class<*>, name: String): Field =
         type.getDeclaredField(name).apply { isAccessible = true }
 
-    private fun player(id: Short): IsoPlayer = (unsafe.allocateInstance(IsoPlayer::class.java) as IsoPlayer).apply {
-        onlineId = id
-    }
+    private fun player(id: Short): IsoPlayer =
+        (unsafe.allocateInstance(IsoPlayer::class.java) as IsoPlayer).apply {
+            onlineId = id
+        }
 
     private fun connection(vararg players: IsoPlayer): Connection =
         (unsafe.allocateInstance(Connection::class.java) as Connection).apply {
@@ -65,19 +77,21 @@ object QueueManagerChecks {
         require(Accessor.trySet(target, "player", player), "fixture owner")
     }
 
-    private fun transaction(player: IsoPlayer?, id: Byte): ItemTransactionPacket = ItemTransactionPacket().apply {
-        this.id = id
-        state = Transaction.TransactionState.Accept
-        if (player != null) owner(playerId, player)
-        TransactionManager.add(this)
-    }
+    private fun transaction(player: IsoPlayer?, id: Byte): ItemTransactionPacket =
+        ItemTransactionPacket().apply {
+            this.id = id
+            state = Transaction.TransactionState.Accept
+            if (player != null) owner(playerId, player)
+            TransactionManager.add(this)
+        }
 
-    private fun action(player: IsoPlayer, id: Byte, state: Transaction.TransactionState): Probe = Probe().apply {
-        this.id = id
-        this.state = state
-        owner(playerId, player)
-        ActionManager.add(this)
-    }
+    private fun action(player: IsoPlayer, id: Byte, state: Transaction.TransactionState): Probe =
+        Probe().apply {
+            this.id = id
+            this.state = state
+            owner(playerId, player)
+            ActionManager.add(this)
+        }
 
     private fun reject(id: Byte, connection: Connection?): ItemTransactionPacket {
         val bytes = ByteBuffer.allocate(2)
@@ -87,15 +101,20 @@ object QueueManagerChecks {
         bytes.flip()
         return ItemTransactionPacket().apply {
             parse(ByteBufferReader(bytes), connection)
-            require(!bytes.hasRemaining() && playerId.getPlayer() == null && entries.isEmpty(),
-                "Reject must contain only the native byte id and state")
+            require(
+                !bytes.hasRemaining() && playerId.getPlayer() == null && entries.isEmpty(),
+                "Reject must contain only the native byte id and state",
+            )
             require(isConsistent(connection), "native Reject consistency changed")
         }
     }
 
     private fun cleanScope() {
-        require((field(QueueManagers::class.java, "rejectScope").get(null) as ThreadLocal<*>).get() == null,
-            "incoming Reject ownership leaked outside packet processing")
+        require(
+            (field(QueueManagers::class.java, "rejectScope").get(null) as ThreadLocal<*>).get() ==
+                null,
+            "incoming Reject ownership leaked outside packet processing",
+        )
     }
 
     @JvmStatic
@@ -103,10 +122,18 @@ object QueueManagerChecks {
         zombie.core.random.RandStandard.INSTANCE.init()
         zombie.core.random.RandLua.INSTANCE.init()
         unsafe = field(Unsafe::class.java, "theUnsafe").get(null) as Unsafe
-        transactions = Accessor.tryGet<ConcurrentLinkedQueue<Transaction>>(TransactionManager::class.java, "transactions", null)
-            ?: throw AssertionError("native queues inaccessible")
-        actions = Accessor.tryGet<ConcurrentLinkedQueue<Action>>(ActionManager::class.java, "actions", null)
-            ?: throw AssertionError("native queues inaccessible")
+        transactions =
+            Accessor.tryGet<ConcurrentLinkedQueue<Transaction>>(
+                TransactionManager::class.java,
+                "transactions",
+                null,
+            ) ?: throw AssertionError("native queues inaccessible")
+        actions =
+            Accessor.tryGet<ConcurrentLinkedQueue<Action>>(
+                ActionManager::class.java,
+                "actions",
+                null,
+            ) ?: throw AssertionError("native queues inaccessible")
         GameServer.server = true
         GameClient.client = false
         val first = player(19)
@@ -118,16 +145,31 @@ object QueueManagerChecks {
         transaction(first, ID)
         transaction(second, ID)
         reject(ID, firstConnection).processServer(null, firstConnection)
-        require(transactions.isEmpty(), "original engine no longer reproduces cross-owner cancellation")
+        require(
+            transactions.isEmpty(),
+            "original engine no longer reproduces cross-owner cancellation",
+        )
         val unrelated = action(second, ID, Transaction.TransactionState.Accept)
         val query = PlayerID()
         owner(query, first)
-        require(ActionManager.isDone(query, ID), "original engine no longer reproduces missing-action completion")
+        require(
+            ActionManager.isDone(query, ID),
+            "original engine no longer reproduces missing-action completion",
+        )
         actions.clear()
-        require(!ActionManager.isDone(query, ID), "original empty-queue completion semantics changed")
+        require(
+            !ActionManager.isDone(query, ID),
+            "original empty-queue completion semantics changed",
+        )
 
-        PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", QueueManagerChecks::class.java.classLoader)
-        require(QueueManagers.ITEM_SUPPORTED && QueueManagers.ACTION_SUPPORTED, "unsupported native managers")
+        PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            QueueManagerChecks::class.java.classLoader,
+        )
+        require(
+            QueueManagers.ITEM_SUPPORTED && QueueManagers.ACTION_SUPPORTED,
+            "unsupported native managers",
+        )
         val own = transaction(first, ID)
         val other = transaction(second, ID)
         val splitOwn = transaction(split, ID)
@@ -143,9 +185,14 @@ object QueueManagerChecks {
         reject(111, firstConnection).processServer(null, firstConnection)
         require(transactions.size == 5, "unknown id canceled a transaction")
         reject(ID, firstConnection).processServer(null, firstConnection)
-        require(own !in transactions && splitOwn !in transactions, "owned/split-screen cancellation failed")
-        require(other in transactions && orphan in transactions && differentId in transactions,
-            "owned cancellation removed a foreign, ownerless, or different-id transaction")
+        require(
+            own !in transactions && splitOwn !in transactions,
+            "owned/split-screen cancellation failed",
+        )
+        require(
+            other in transactions && orphan in transactions && differentId in transactions,
+            "owned cancellation removed a foreign, ownerless, or different-id transaction",
+        )
         reject(ID, firstConnection).processServer(null, firstConnection)
         require(transactions.size == 3, "duplicate Reject canceled an unrelated transaction")
         cleanScope()
@@ -154,26 +201,37 @@ object QueueManagerChecks {
         try {
             invalid.processServer(null, firstConnection)
             throw AssertionError("native validation failure disappeared")
-        } catch (_: NullPointerException) { }
+        } catch (_: NullPointerException) {}
         require(transactions.size == 3, "invalid packet reached removal")
         cleanScope()
-        for (state in arrayOf(Transaction.TransactionState.Accept, Transaction.TransactionState.Done)) {
+        for (state in
+            arrayOf(Transaction.TransactionState.Accept, Transaction.TransactionState.Done)) {
             val packet = ItemTransactionPacket()
             packet.id = ID
             packet.state = state
             packet.processServer(null, firstConnection)
-            require(packet.state == state && transactions.size == 3, "non-Reject packet behavior changed")
+            require(
+                packet.state == state && transactions.size == 3,
+                "non-Reject packet behavior changed",
+            )
             cleanScope()
         }
         val request = ItemTransactionPacket()
         request.id = ID
         request.state = Transaction.TransactionState.Request
         request.processServer(null, firstConnection)
-        require(request.state == Transaction.TransactionState.Reject && firstConnection.replies == 1 && transactions.size == 3,
-            "native invalid-Request rejection/reply changed")
+        require(
+            request.state == Transaction.TransactionState.Reject &&
+                firstConnection.replies == 1 &&
+                transactions.size == 3,
+            "native invalid-Request rejection/reply changed",
+        )
         cleanScope()
         TransactionManager.removeItemTransaction(ID, true)
-        require(transactions.size == 1 && differentId in transactions, "direct server manager semantics changed or scope leaked")
+        require(
+            transactions.size == 1 && differentId in transactions,
+            "direct server manager semantics changed or scope leaked",
+        )
         GameServer.server = false
         GameClient.client = true
         transaction(first, ID)
@@ -189,7 +247,10 @@ object QueueManagerChecks {
         pending.state = Transaction.TransactionState.Done
         require(ActionManager.isDone(query, ID), "completed action lost completion")
         val duplicate = action(first, ID, Transaction.TransactionState.Request)
-        require(!ActionManager.isDone(query, ID), "mixed duplicate states lost native all-match semantics")
+        require(
+            !ActionManager.isDone(query, ID),
+            "mixed duplicate states lost native all-match semantics",
+        )
         duplicate.state = Transaction.TransactionState.Done
         require(ActionManager.isDone(query, ID), "all completed matching actions failed")
         actions.remove(pending)
@@ -200,6 +261,8 @@ object QueueManagerChecks {
         require(ActionManager.isDone(query, 127), "signed/positive id lookup changed")
         actions.clear()
         transactions.clear()
-        println("QUEUE_MANAGER_CHECKS_PASS (original failures, native Reject wire, connection ownership, split screen, validation, scope cleanup, non-Reject/client behavior, missing-action completion)")
+        println(
+            "QUEUE_MANAGER_CHECKS_PASS (original failures, native Reject wire, connection ownership, split screen, validation, scope cleanup, non-Reject/client behavior, missing-action completion)",
+        )
     }
 }

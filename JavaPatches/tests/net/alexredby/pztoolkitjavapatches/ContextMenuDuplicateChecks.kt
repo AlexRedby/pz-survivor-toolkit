@@ -14,18 +14,33 @@ object ContextMenuDuplicateChecks {
         val environment = platform.newEnvironment()
         val thread = KahluaThread(platform, environment)
         thread.debugOwnerThread = Thread.currentThread()
-        Files.newBufferedReader(root.resolve(
-                "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ContextMenuDuplicates.lua")).use { reader ->
-            environment.rawset("TestContextMenuDuplicates", thread.call(
-                    LuaCompiler.loadis(reader, "ContextMenuDuplicates.lua", environment), emptyArray<Any?>()))
-        }
+        Files.newBufferedReader(
+                root.resolve(
+                    "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ContextMenuDuplicates.lua",
+                ),
+            )
+            .use { reader ->
+                environment.rawset(
+                    "TestContextMenuDuplicates",
+                    thread.call(
+                        LuaCompiler.loadis(reader, "ContextMenuDuplicates.lua", environment),
+                        emptyArray<Any?>(),
+                    ),
+                )
+            }
         // Java maps equate empty lists, while Lua compares these userdata by identity.
         environment.rawset("TestUserdataA", java.util.ArrayList<Any?>())
         environment.rawset("TestUserdataB", java.util.ArrayList<Any?>())
-        Files.newBufferedReader(root.resolve("tests/test_context_menu_duplicates.lua")).use { reader ->
-            thread.call(LuaCompiler.loadis(reader, "test_context_menu_duplicates.lua", environment), emptyArray<Any?>())
+        Files.newBufferedReader(root.resolve("tests/test_context_menu_duplicates.lua")).use { reader
+            ->
+            thread.call(
+                LuaCompiler.loadis(reader, "test_context_menu_duplicates.lua", environment),
+                emptyArray<Any?>(),
+            )
         }
-        System.out.println("CONTEXT_MENU_DUPLICATE_CHECKS_PASS (same Lua helper and vectors in native Kahlua)")
+        System.out.println(
+            "CONTEXT_MENU_DUPLICATE_CHECKS_PASS (same Lua helper and vectors in native Kahlua)",
+        )
         kotlin.system.exitProcess(0)
     }
 }

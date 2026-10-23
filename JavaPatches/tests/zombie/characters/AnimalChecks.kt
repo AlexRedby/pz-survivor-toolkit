@@ -1,12 +1,12 @@
 package zombie.characters
 
 import java.util.ArrayList
+import net.alexredby.pztoolkitjavapatches.Main
 import sun.misc.Unsafe
 import zombie.characters.animals.IsoAnimal
 import zombie.network.GameClient
 import zombie.network.packets.character.AnimalPacket
 import zombie.vehicles.BaseVehicle
-import net.alexredby.pztoolkitjavapatches.Main
 
 object AnimalChecks {
     @JvmField var unsafe: Unsafe? = null
@@ -28,12 +28,20 @@ object AnimalChecks {
     }
 
     @JvmStatic
-    fun animal(): Animal = (unsafe ?: throw NullPointerException()).allocateInstance(Animal::class.java) as Animal
+    fun animal(): Animal =
+        (unsafe ?: throw NullPointerException()).allocateInstance(Animal::class.java) as Animal
 
     @JvmStatic
     fun trailer(animal: Animal, other: Animal): BaseVehicle {
-        val vehicle = (unsafe ?: throw NullPointerException()).allocateInstance(BaseVehicle::class.java) as BaseVehicle
-        set(BaseVehicle::class.java, vehicle, "animals", ArrayList(java.util.List.of(animal, other)))
+        val vehicle =
+            (unsafe ?: throw NullPointerException()).allocateInstance(BaseVehicle::class.java)
+                as BaseVehicle
+        set(
+            BaseVehicle::class.java,
+            vehicle,
+            "animals",
+            ArrayList(java.util.List.of(animal, other)),
+        )
         vehicle.setCurrentTotalAnimalSize(6f)
         animal.setVehicle(vehicle)
         other.setVehicle(vehicle)
@@ -42,7 +50,9 @@ object AnimalChecks {
 
     @JvmStatic
     fun ai(animal: IsoGameCharacter?): NetworkPlayerAI {
-        val ai = (unsafe ?: throw NullPointerException()).allocateInstance(NetworkPlayerAI::class.java) as NetworkPlayerAI
+        val ai =
+            (unsafe ?: throw NullPointerException()).allocateInstance(NetworkPlayerAI::class.java)
+                as NetworkPlayerAI
         set(NetworkCharacterAI::class.java, ai, "character", animal)
         return ai
     }
@@ -68,13 +78,26 @@ object AnimalChecks {
             val packet = AnimalPacket()
             packet.location = location
             Main.AnimalTrailerLocation.enter(ai, packet)
-            require(animal.getVehicle() == null && !vehicle.getAnimals().contains(animal), "stale trailer membership retained")
-            require(vehicle.getAnimals().size == 1 && vehicle.getAnimals()[0] === other && other.getVehicle() === vehicle,
-                "unrelated animal changed")
+            require(
+                animal.getVehicle() == null && !vehicle.getAnimals().contains(animal),
+                "stale trailer membership retained",
+            )
+            require(
+                vehicle.getAnimals().size == 1 &&
+                    vehicle.getAnimals()[0] === other &&
+                    other.getVehicle() === vehicle,
+                "unrelated animal changed",
+            )
             require(vehicle.getCurrentTotalAnimalSize() == 3f, "capacity not recomputed")
-            require(animal.onlineId.toInt() == 42 && animal.animalId == 123, "animal identity changed")
+            require(
+                animal.onlineId.toInt() == 42 && animal.animalId == 123,
+                "animal identity changed",
+            )
             Main.AnimalTrailerLocation.enter(ai, packet)
-            require(vehicle.getAnimals().size == 1 && vehicle.getCurrentTotalAnimalSize() == 3f, "repeat snapshot changed capacity")
+            require(
+                vehicle.getAnimals().size == 1 && vehicle.getCurrentTotalAnimalSize() == 3f,
+                "repeat snapshot changed capacity",
+            )
         }
         for (location in byteArrayOf(2, -1, 4)) {
             val animal = animal()
@@ -83,8 +106,12 @@ object AnimalChecks {
             val packet = AnimalPacket()
             packet.location = location
             Main.AnimalTrailerLocation.enter(ai(animal), packet)
-            require(animal.getVehicle() === vehicle && vehicle.getAnimals().size == 2 && vehicle.getCurrentTotalAnimalSize() == 6f,
-                "trailer or unknown location mutated")
+            require(
+                animal.getVehicle() === vehicle &&
+                    vehicle.getAnimals().size == 2 &&
+                    vehicle.getCurrentTotalAnimalSize() == 6f,
+                "trailer or unknown location mutated",
+            )
         }
         val animal = animal()
         val other = animal()
@@ -93,11 +120,22 @@ object AnimalChecks {
         packet.location = 3
         GameClient.client = false
         Main.AnimalTrailerLocation.enter(ai(animal), packet)
-        require(animal.getVehicle() === vehicle && vehicle.getAnimals().size == 2, "server behavior changed")
+        require(
+            animal.getVehicle() === vehicle && vehicle.getAnimals().size == 2,
+            "server behavior changed",
+        )
         GameClient.client = true
-        Main.AnimalTrailerLocation.enter(ai((unsafe ?: throw NullPointerException()).allocateInstance(IsoPlayer::class.java) as IsoPlayer), packet)
+        Main.AnimalTrailerLocation.enter(
+            ai(
+                (unsafe ?: throw NullPointerException()).allocateInstance(IsoPlayer::class.java)
+                    as IsoPlayer,
+            ),
+            packet,
+        )
         Main.AnimalTrailerLocation.enter(ai(animal), null)
         require(!Main.AnimalTrailerLocation.disabled, "valid snapshots disabled reconciliation")
-        println("ANIMAL_CHECKS_PASS (world/hutch/item, identity, duplicate membership, capacity, repeat, trailer/unknown, server/player guards)")
+        println(
+            "ANIMAL_CHECKS_PASS (world/hutch/item, identity, duplicate membership, capacity, repeat, trailer/unknown, server/player guards)",
+        )
     }
 }

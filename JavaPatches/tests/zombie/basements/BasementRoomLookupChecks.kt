@@ -24,7 +24,9 @@ object BasementRoomLookupChecks {
     fun room(index: Int, name: String, z: Int, vararg rectangles: IntArray): RoomDef {
         val room = RoomDef(RoomID.makeID(25, 34, index), name)
         room.level = z
-        for (rect in rectangles) room.rects.add(RoomDef.RoomRect(rect[0], rect[1], rect[2], rect[3]))
+        for (rect in rectangles) room.rects.add(
+            RoomDef.RoomRect(rect[0], rect[1], rect[2], rect[3]),
+        )
         room.CalculateBounds()
         room.metaId = room.calculateMetaID(25, 34)
         return room
@@ -40,14 +42,17 @@ object BasementRoomLookupChecks {
 
     @JvmStatic
     fun flags(room: RoomDef): Int =
-        (if (room.explored) 1 else 0) or (if (room.lightsActive) 2 else 0) or
-            (if (room.doneSpawn) 4 else 0) or (if (room.isRoofFixed()) 8 else 0)
+        (if (room.explored) 1 else 0) or
+            (if (room.lightsActive) 2 else 0) or
+            (if (room.doneSpawn) 4 else 0) or
+            (if (room.isRoofFixed()) 8 else 0)
 
     @JvmStatic
-    fun save(grid: IsoMetaGrid): ByteBuffer = ByteBuffer.allocate(4096).apply {
-        grid.savePart(this, 0, false)
-        flip()
-    }
+    fun save(grid: IsoMetaGrid): ByteBuffer =
+        ByteBuffer.allocate(4096).apply {
+            grid.savePart(this, 0, false)
+            flip()
+        }
 
     @JvmStatic
     fun loadRoomSection(grid: IsoMetaGrid, bytes: ByteBuffer) {
@@ -89,8 +94,17 @@ object BasementRoomLookupChecks {
             destination.rooms[prefix.id] = prefix
             destination.roomByMetaId.put(prefix.metaId, prefix)
             receiving.id = previousID
-            moved.add(room(8, "livingroom", 0, intArrayOf(6631, 8704, 7, 3), intArrayOf(6631, 8707, 9, 2),
-                intArrayOf(6636, 8709, 4, 3), intArrayOf(6634, 8712, 5, 2)))
+            moved.add(
+                room(
+                    8,
+                    "livingroom",
+                    0,
+                    intArrayOf(6631, 8704, 7, 3),
+                    intArrayOf(6631, 8707, 9, 2),
+                    intArrayOf(6636, 8709, 4, 3),
+                    intArrayOf(6634, 8712, 5, 2),
+                ),
+            )
             moved.add(room(9, "bathroom", 0, intArrayOf(6634, 8709, 2, 3)))
             moved.add(room(10, "bedroom", 0, intArrayOf(6631, 8709, 3, 4)))
             moved.add(room(11, "bedroom", 0, intArrayOf(6634, 8714, 5, 3)))
@@ -110,29 +124,74 @@ object BasementRoomLookupChecks {
                 source.rooms[room.id] = room
                 source.roomByMetaId.put(room.metaId, room)
             }
-            if (missingSourceIndex >= 0) source.roomByMetaId.remove(moved[missingSourceIndex].metaId)
+            if (missingSourceIndex >= 0)
+                source.roomByMetaId.remove(moved[missingSourceIndex].metaId)
             previous = BasementRoomLookup.beforeMerge(receiving, true)
-            val basement = room(0, "hunterstorage", -1, intArrayOf(6632, 8703, 7, 5), intArrayOf(6632, 8708, 6, 6))
+            val basement =
+                room(
+                    0,
+                    "hunterstorage",
+                    -1,
+                    intArrayOf(6632, 8703, 7, 5),
+                    intArrayOf(6632, 8708, 6, 6),
+                )
             basement.building = incoming
             incoming.rooms.add(basement)
             incoming.CalculateBounds(ArrayList())
-            Basements::class.java.getDeclaredMethod("mergeBuildings", BuildingDef::class.java, BuildingDef::class.java)
-                .apply { isAccessible = true }.invoke(Basements(), incoming, receiving)
-            require(BuildingID.getCellY(receiving.id) == 33, "native building did not cross cell boundary")
+            Basements::class
+                .java
+                .getDeclaredMethod(
+                    "mergeBuildings",
+                    BuildingDef::class.java,
+                    BuildingDef::class.java,
+                )
+                .apply { isAccessible = true }
+                .invoke(Basements(), incoming, receiving)
+            require(
+                BuildingID.getCellY(receiving.id) == 33,
+                "native building did not cross cell boundary",
+            )
             for (room in moved) {
-                require(room in destination.roomList && destination.rooms[room.id] === room &&
-                    (if (woven && moved.indexOf(room) != missingSourceIndex) destination.roomByMetaId.get(room.metaId) === room
-                    else !destination.roomByMetaId.containsKey(room.metaId)) && room !in source.roomList &&
-                    !source.roomByMetaId.containsKey(room.metaId), "native cross-cell omission not reproduced")
+                require(
+                    room in destination.roomList &&
+                        destination.rooms[room.id] === room &&
+                        (if (woven && moved.indexOf(room) != missingSourceIndex)
+                            destination.roomByMetaId.get(room.metaId) === room
+                        else !destination.roomByMetaId.containsKey(room.metaId)) &&
+                        room !in source.roomList &&
+                        !source.roomByMetaId.containsKey(room.metaId),
+                    "native cross-cell omission not reproduced",
+                )
             }
-            require(destination.roomByMetaId.get(basement.metaId) === basement, "native incoming room index changed")
-            require(moved[0].metaId == 231L && moved[1].metaId == 327914L && moved[2].metaId == 327911L &&
-                moved[3].metaId == 655594L, "actual header room IDs changed")
+            require(
+                destination.roomByMetaId.get(basement.metaId) === basement,
+                "native incoming room index changed",
+            )
+            require(
+                moved[0].metaId == 231L &&
+                    moved[1].metaId == 327914L &&
+                    moved[2].metaId == 327911L &&
+                    moved[3].metaId == 655594L,
+                "actual header room IDs changed",
+            )
         }
     }
 
-    private fun state(room: RoomDef): List<Any?> = listOf(room.metaId, room.name, room.level, room.x, room.y,
-        room.x2, room.y2, room.area, room.building, ArrayList(room.rects), ArrayList(room.objects), flags(room))
+    private fun state(room: RoomDef): List<Any?> =
+        listOf(
+            room.metaId,
+            room.name,
+            room.level,
+            room.x,
+            room.y,
+            room.x2,
+            room.y2,
+            room.area,
+            room.building,
+            ArrayList(room.rects),
+            ArrayList(room.objects),
+            flags(room),
+        )
 
     @JvmStatic
     fun roundTrips() {
@@ -156,22 +215,43 @@ object BasementRoomLookupChecks {
             for (room in fixture.moved) chunk.addSpawnedRoom(room.id)
             val roomIDs = fixture.moved.map { it.id }.toLongArray()
             val roomState = fixture.moved.map { state(it) }
-            require(BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 4, "wrong repair count")
-            require(cell.roomList == roomList && cell.rooms == runtimeRooms && cell.buildings == buildings &&
-                cell.buildingByMetaId == buildingIndex && cell.isoRooms == roomCache && cell.isoBuildings == buildingCache,
-                "repair changed native layout/IDs/caches")
-            require(allRoomIDs.contentEquals(cell.roomList.map { it.id }.toLongArray()), "repair shifted another room's runtime ID")
+            require(
+                BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 4,
+                "wrong repair count",
+            )
+            require(
+                cell.roomList == roomList &&
+                    cell.rooms == runtimeRooms &&
+                    cell.buildings == buildings &&
+                    cell.buildingByMetaId == buildingIndex &&
+                    cell.isoRooms == roomCache &&
+                    cell.isoBuildings == buildingCache,
+                "repair changed native layout/IDs/caches",
+            )
+            require(
+                allRoomIDs.contentEquals(cell.roomList.map { it.id }.toLongArray()),
+                "repair shifted another room's runtime ID",
+            )
             for ((i, room) in fixture.moved.withIndex()) {
-                require(room.id == roomIDs[i] && chunk.isSpawnedRoom(room.id), "repair invalidated native spawn receipt")
+                require(
+                    room.id == roomIDs[i] && chunk.isSpawnedRoom(room.id),
+                    "repair invalidated native spawn receipt",
+                )
                 require(roomState[i] == state(room), "repair changed room metadata/state")
                 require(cell.roomByMetaId.get(room.metaId) === room, "moved room not indexed")
             }
             require(beforeSave == save(fixture.grid), "repair changed serialized bytes")
-            require(BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 0, "repair not idempotent")
+            require(
+                BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 0,
+                "repair not idempotent",
+            )
             for (room in fixture.moved) flags(room, 0)
             loadRoomSection(fixture.grid, beforeSave)
             for ((i, room) in fixture.moved.withIndex()) {
-                require(flags(room) == (flagState xor i), "native old-format room flags not restored")
+                require(
+                    flags(room) == (flagState xor i),
+                    "native old-format room flags not restored",
+                )
             }
         }
     }
@@ -180,11 +260,23 @@ object BasementRoomLookupChecks {
     fun guards() {
         var fixture = Fixture(false)
         val cell = fixture.destination
-        require(BasementRoomLookup.repair(fixture.receiving, fixture.previous, false) == 0 && cell.roomByMetaId.size() == 2,
-            "unsupported native bytecode modified")
-        require(BasementRoomLookup.beforeMerge(fixture.receiving, false) == null, "unsupported snapshot created")
-        require(BasementRoomLookup.repair(fixture.receiving, BasementRoomLookup.beforeMerge(fixture.receiving, true), true) == 0 &&
-            cell.roomByMetaId.size() == 2, "same-cell missing index modified")
+        require(
+            BasementRoomLookup.repair(fixture.receiving, fixture.previous, false) == 0 &&
+                cell.roomByMetaId.size() == 2,
+            "unsupported native bytecode modified",
+        )
+        require(
+            BasementRoomLookup.beforeMerge(fixture.receiving, false) == null,
+            "unsupported snapshot created",
+        )
+        require(
+            BasementRoomLookup.repair(
+                fixture.receiving,
+                BasementRoomLookup.beforeMerge(fixture.receiving, true),
+                true,
+            ) == 0 && cell.roomByMetaId.size() == 2,
+            "same-cell missing index modified",
+        )
         val collision = room(90, "hall", 0, intArrayOf(6631, 8704, 1, 1))
         collision.metaId = fixture.moved[0].metaId
         cell.roomList.add(collision)
@@ -196,28 +288,48 @@ object BasementRoomLookupChecks {
         cell.roomList.remove(fixture.moved[2])
         cell.rooms[fixture.moved[3].id] = existing
         val beforeIndex = gnu.trove.map.hash.TLongObjectHashMap(cell.roomByMetaId)
-        require(BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 0 && cell.roomByMetaId == beforeIndex &&
-            flags(fixture.moved[0]) == 1 && flags(collision) == 14, "ambiguous/existing/mismatched room was assigned or flags merged")
+        require(
+            BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 0 &&
+                cell.roomByMetaId == beforeIndex &&
+                flags(fixture.moved[0]) == 1 &&
+                flags(collision) == 14,
+            "ambiguous/existing/mismatched room was assigned or flags merged",
+        )
         fixture = Fixture(false)
         for (room in fixture.moved) room.userDefined = true
-        require(BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 0 &&
-            fixture.destination.roomByMetaId.size() == 2, "custom user-defined room modified")
+        require(
+            BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 0 &&
+                fixture.destination.roomByMetaId.size() == 2,
+            "custom user-defined room modified",
+        )
         fixture = Fixture(false, 0)
-        require(BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 3 &&
-            !fixture.destination.roomByMetaId.containsKey(fixture.moved[0].metaId), "prior missing source index created")
+        require(
+            BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 3 &&
+                !fixture.destination.roomByMetaId.containsKey(fixture.moved[0].metaId),
+            "prior missing source index created",
+        )
         fixture = Fixture(true)
-        require(BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 5, "moved emptyoutside room omitted")
+        require(
+            BasementRoomLookup.repair(fixture.receiving, fixture.previous, true) == 5,
+            "moved emptyoutside room omitted",
+        )
     }
 
     @JvmStatic
     fun woven() {
         Main.main(emptyArray())
-        PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", BasementRoomLookupChecks::class.java.classLoader)
+        PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            BasementRoomLookupChecks::class.java.classLoader,
+        )
         for (role in 0 until 3) {
             zombie.network.GameServer.server = role == 1
             zombie.network.GameClient.client = role == 2
             val fixture = Fixture(false, -1, true)
-            require(fixture.destination.roomByMetaId.size() == 6, "woven native merge did not restore exactly4 entries")
+            require(
+                fixture.destination.roomByMetaId.size() == 6,
+                "woven native merge did not restore exactly4 entries",
+            )
             for ((i, room) in fixture.moved.withIndex()) flags(room, 15 xor i)
             val bytes = save(fixture.grid)
             for (room in fixture.moved) flags(room, 0)
@@ -229,18 +341,25 @@ object BasementRoomLookupChecks {
         zombie.network.GameServer.server = false
         zombie.network.GameClient.client = false
         val missing = Fixture(false, 0, true)
-        require(missing.destination.roomByMetaId.size() == 5 && !missing.destination.roomByMetaId.containsKey(missing.moved[0].metaId),
-            "woven merge created a deliberately missing source index")
+        require(
+            missing.destination.roomByMetaId.size() == 5 &&
+                !missing.destination.roomByMetaId.containsKey(missing.moved[0].metaId),
+            "woven merge created a deliberately missing source index",
+        )
     }
 
     @JvmStatic
     fun main(args: Array<String>) {
-        System.getProperty("pz.test.cache")?.let { zombie.ZomboidFileSystem.instance.setCacheDir(it) }
+        System.getProperty("pz.test.cache")?.let {
+            zombie.ZomboidFileSystem.instance.setCacheDir(it)
+        }
         zombie.core.random.RandStandard.INSTANCE.init()
         roundTrips()
         guards()
         woven()
-        println("BASEMENT_ROOM_LOOKUP_CHECKS_PASS (native cross-cell omission, missing-only repair, all16 flags," +
-            " byte-identical save, IDs/layout/caches/spawn receipts, unsupported/same-cell/custom/collision guards, emptyoutside, woven SP/server/client)")
+        println(
+            "BASEMENT_ROOM_LOOKUP_CHECKS_PASS (native cross-cell omission, missing-only repair, all16 flags," +
+                " byte-identical save, IDs/layout/caches/spawn receipts, unsupported/same-cell/custom/collision guards, emptyoutside, woven SP/server/client)",
+        )
     }
 }

@@ -11,9 +11,13 @@ import zombie.vehicles.BaseVehicle
 /** Opt-in diagnostics; never changes vehicle state or packet delivery. */
 internal object VehicleSyncTraceLogic {
     @JvmField val enabled = java.lang.Boolean.getBoolean("pz.vehicle.trace")
-    @JvmField val supported = Main.VEHICLE_OWNERSHIP_SUPPORTED
-        && BytecodeSupport.supports("zombie/network/packets/vehicle/VehiclePhysicsPacket.class",
-            "c3103be5b9bacad57747f49b94bff441ff6b530315885ed30c93dc05c13da2c4")
+    @JvmField
+    val supported =
+        Main.VEHICLE_OWNERSHIP_SUPPORTED &&
+            BytecodeSupport.supports(
+                "zombie/network/packets/vehicle/VehiclePhysicsPacket.class",
+                "c3103be5b9bacad57747f49b94bff441ff6b530315885ed30c93dc05c13da2c4",
+            )
     private val last = HashMap<String, Long>()
     private var started = 0L
     private var records = 0
@@ -40,16 +44,38 @@ internal object VehicleSyncTraceLogic {
         val vehicle = car ?: throw NullPointerException()
         val driver = vehicle.getDriver()
         val local = if (GameClient.client) IsoPlayer.getInstance() else null
-        println("[VEHICLE_SYNC] t=" + System.currentTimeMillis()
-            + " side=" + (if (GameServer.server) "server" else if (GameClient.client) "client" else "sp")
-            + " event=" + event + " vehicle=" + vehicle.getId()
-            + " local=" + (if (local == null) -1 else local.getOnlineID().toInt())
-            + " driver=" + (if (driver == null) -1 else driver.getOnlineID().toInt())
-            + " owner=" + vehicle.netPlayerId + " auth=" + vehicle.netPlayerAuthorization
-            + " pos=" + vehicle.getX() + "," + vehicle.getY() + "," + vehicle.getZ()
-            + " towing=" + (if (vehicle.getVehicleTowing() == null) -1 else vehicle.getVehicleTowing().getId().toInt())
-            + " towedBy=" + (if (vehicle.getVehicleTowedBy() == null) -1 else vehicle.getVehicleTowedBy().getId().toInt())
-            + " " + detail)
+        println(
+            "[VEHICLE_SYNC] t=" +
+                System.currentTimeMillis() +
+                " side=" +
+                (if (GameServer.server) "server" else if (GameClient.client) "client" else "sp") +
+                " event=" +
+                event +
+                " vehicle=" +
+                vehicle.getId() +
+                " local=" +
+                (if (local == null) -1 else local.getOnlineID().toInt()) +
+                " driver=" +
+                (if (driver == null) -1 else driver.getOnlineID().toInt()) +
+                " owner=" +
+                vehicle.netPlayerId +
+                " auth=" +
+                vehicle.netPlayerAuthorization +
+                " pos=" +
+                vehicle.getX() +
+                "," +
+                vehicle.getY() +
+                "," +
+                vehicle.getZ() +
+                " towing=" +
+                (if (vehicle.getVehicleTowing() == null) -1
+                else vehicle.getVehicleTowing().getId().toInt()) +
+                " towedBy=" +
+                (if (vehicle.getVehicleTowedBy() == null) -1
+                else vehicle.getVehicleTowedBy().getId().toInt()) +
+                " " +
+                detail,
+        )
     }
 
     @JvmStatic
@@ -66,7 +92,14 @@ internal object VehicleSyncTraceLogic {
     @JvmStatic
     fun seat(car: BaseVehicle?, player: IsoPlayer?, entering: Boolean) {
         if (VehicleSyncTrace.due("seat", car))
-            VehicleSyncTrace.log("seat", car, "actor=" + (player ?: throw NullPointerException()).getOnlineID() + " entering=" + entering)
+            VehicleSyncTrace.log(
+                "seat",
+                car,
+                "actor=" +
+                    (player ?: throw NullPointerException()).getOnlineID() +
+                    " entering=" +
+                    entering,
+            )
     }
 
     @JvmStatic
@@ -82,8 +115,16 @@ internal object VehicleSyncTraceLogic {
         val sample = packet ?: throw NullPointerException()
         val car = sample.getVehicle()
         if (VehicleSyncTrace.due("receiveServer", car))
-            VehicleSyncTrace.log("receiveServer", car, "allowed=" + car.hasAuthorization(sender)
-                + " sample=" + sample.getX() + "," + sample.getY())
+            VehicleSyncTrace.log(
+                "receiveServer",
+                car,
+                "allowed=" +
+                    car.hasAuthorization(sender) +
+                    " sample=" +
+                    sample.getX() +
+                    "," +
+                    sample.getY(),
+            )
     }
 
     @JvmStatic
@@ -91,7 +132,15 @@ internal object VehicleSyncTraceLogic {
         val sample = packet ?: throw NullPointerException()
         val car = sample.getVehicle()
         if (VehicleSyncTrace.due("receiveClient", car))
-            VehicleSyncTrace.log("receiveClient", car, "ignoredAsOwner=" + car.hasAuthorization(sender)
-                + " sample=" + sample.getX() + "," + sample.getY())
+            VehicleSyncTrace.log(
+                "receiveClient",
+                car,
+                "ignoredAsOwner=" +
+                    car.hasAuthorization(sender) +
+                    " sample=" +
+                    sample.getX() +
+                    "," +
+                    sample.getY(),
+            )
     }
 }

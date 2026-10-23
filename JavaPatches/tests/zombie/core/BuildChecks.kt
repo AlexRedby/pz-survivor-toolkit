@@ -37,13 +37,19 @@ object BuildChecks {
     class Connection : UdpConnection(null, 0, 0) {
         lateinit var bytes: ByteBuffer
         lateinit var messages: ArrayList<KahluaTable>
+
         override fun startPacket(): ByteBufferWriter {
             bytes.clear()
             return ByteBufferWriter(bytes)
         }
+
         override fun isFullyConnected(): Boolean = false
+
         override fun endPacket(priority: Int, reliability: Int, channel: Byte) {
-            require(reliability == 3 && channel.toInt() == 1, "acknowledgements must share native build ordering")
+            require(
+                reliability == 3 && channel.toInt() == 1,
+                "acknowledgements must share native build ordering",
+            )
             bytes.flip()
             val reader = ByteBufferReader(bytes)
             reader.getByte()
@@ -66,7 +72,9 @@ object BuildChecks {
 
     class Build : BuildAction() {
         var performed = 0
+
         override fun getDuration(): Float = 10000f
+
         // Count only native scheduled completion; the actual BuildAction.perform remains woven.
         override fun perform(): Boolean {
             performed++
@@ -97,8 +105,10 @@ object BuildChecks {
     private fun last(state: String): KahluaTable {
         val data = connection.messages.last()
         require(state == data.rawget("state"), "expected $state got ${data.rawget("state")}")
-        require(data.rawget("player") is Double && data.rawget("transaction") is Double,
-            "wire IDs must use Lua numbers")
+        require(
+            data.rawget("player") is Double && data.rawget("transaction") is Double,
+            "wire IDs must use Lua numbers",
+        )
         require(data.rawget("token") is String, "wire token must be a string")
         return data
     }
@@ -115,10 +125,17 @@ object BuildChecks {
         LuaManager.env.rawset("Events", LuaManager.platform.newTable())
         LuaManager.thread = se.krka.kahlua.vm.KahluaThread(LuaManager.platform, LuaManager.env)
         LuaManager.thread.debugOwnerThread = Thread.currentThread()
-        LuaManager.caller = se.krka.kahlua.integration.LuaCaller(se.krka.kahlua.converter.KahluaConverterManager())
+        LuaManager.caller =
+            se.krka.kahlua.integration.LuaCaller(se.krka.kahlua.converter.KahluaConverterManager())
         IsoWorld.instance.currentCell = unsafe.allocateInstance(IsoCell::class.java) as IsoCell
-        require(Accessor.trySet(zombie.network.ServerMap.instance, "grid",
-            unsafe.allocateInstance(zombie.iso.IsoMetaGrid::class.java)), "fixture server grid")
+        require(
+            Accessor.trySet(
+                zombie.network.ServerMap.instance,
+                "grid",
+                unsafe.allocateInstance(zombie.iso.IsoMetaGrid::class.java),
+            ),
+            "fixture server grid",
+        )
         connection = unsafe.allocateInstance(Connection::class.java) as Connection
         connection.bytes = ByteBuffer.allocate(4096)
         connection.messages = ArrayList()
@@ -136,11 +153,17 @@ object BuildChecks {
         ActionManager.stop(baseline)
         require(connection.messages.isEmpty(), "unpatched engine already acknowledged stop")
 
-        PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", BuildChecks::class.java.classLoader)
+        PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            BuildChecks::class.java.classLoader,
+        )
         require(Main.BUILD_SUPPORTED, "unsupported native engine")
         val canceled = build(player, (-126).toByte())
         val started = last("started")
-        require(started.rawget("transaction") == -126.0 && started.rawget("player") == 19.0, "wrong owner/id")
+        require(
+            started.rawget("transaction") == -126.0 && started.rawget("player") == 19.0,
+            "wrong owner/id",
+        )
         val otherPlayer = unsafe.allocateInstance(Player::class.java) as IsoPlayer
         otherPlayer.onlineId = 20
         val other = build(otherPlayer, (-126).toByte())
@@ -155,22 +178,37 @@ object BuildChecks {
         reject.processServer(null, connection)
         canceled.endTime = 0
         ActionManager.update()
-        require(connection.messages.size == messages && canceled.performed == 0, "duplicate reject or late update re-completed canceled build")
-        require(other.state == Transaction.TransactionState.Accept && other.performed == 0, "same byte ID canceled another player's build")
+        require(
+            connection.messages.size == messages && canceled.performed == 0,
+            "duplicate reject or late update re-completed canceled build",
+        )
+        require(
+            other.state == Transaction.TransactionState.Accept && other.performed == 0,
+            "same byte ID canceled another player's build",
+        )
         ActionManager.stop(other)
 
         val completed = build(player, (-126).toByte())
         val secondStart = last("started")
-        require(secondStart.rawget("token") != started.rawget("token"), "reused byte id reused token")
+        require(
+            secondStart.rawget("token") != started.rawget("token"),
+            "reused byte id reused token",
+        )
         completed.endTime = 0
         ActionManager.update()
         terminal = last("completed")
-        require(terminal.rawget("token") == secondStart.rawget("token") && completed.performed == 1, "completion lost identity")
+        require(
+            terminal.rawget("token") == secondStart.rawget("token") && completed.performed == 1,
+            "completion lost identity",
+        )
         messages = connection.messages.size
         reject.processServer(null, connection)
         completed.stop()
         ActionManager.update()
-        require(connection.messages.size == messages && completed.performed == 1, "completed build emitted cancellation or replayed")
+        require(
+            connection.messages.size == messages && completed.performed == 1,
+            "completed build emitted cancellation or replayed",
+        )
 
         val untracked = Build()
         untracked.stop()
@@ -179,9 +217,17 @@ object BuildChecks {
         GameClient.client = true
         canceled.stop()
         require(connection.messages.size == messages, "client emitted server acknowledgement")
-        field = BuildAcknowledgements::class.java.getDeclaredField("tokens").apply { isAccessible = true }
+        field =
+            BuildAcknowledgements::class.java.getDeclaredField("tokens").apply {
+                isAccessible = true
+            }
         require((field.get(null) as Map<*, *>).isEmpty(), "terminal builds retained tokens")
-        require(!BytecodeSupport.supports("zombie/core/BuildAction.class", "unknown"), "unknown engine fingerprint accepted")
-        println("BUILD_CHECKS_PASS (native reject, completion race, token cleanup, reused byte ID, wire serialization, authority guards)")
+        require(
+            !BytecodeSupport.supports("zombie/core/BuildAction.class", "unknown"),
+            "unknown engine fingerprint accepted",
+        )
+        println(
+            "BUILD_CHECKS_PASS (native reject, completion race, token cleanup, reused byte ID, wire serialization, authority guards)",
+        )
     }
 }

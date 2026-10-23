@@ -11,11 +11,12 @@ import zombie.core.physics.WorldSimulation
 
 object NativeChecks {
     @JvmStatic
-    fun point(time: Long, x: Float): VehicleInterpolationData = VehicleInterpolationData().apply {
-        this.time = time
-        this.x = x
-        qw = 1f
-    }
+    fun point(time: Long, x: Float): VehicleInterpolationData =
+        VehicleInterpolationData().apply {
+            this.time = time
+            this.x = x
+            qw = 1f
+        }
 
     @JvmStatic
     fun set(target: Any?, name: String, value: Any?) {
@@ -26,7 +27,8 @@ object NativeChecks {
     @JvmStatic
     fun vehicle(): BaseVehicle {
         val field = Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val car = (field.get(null) as Unsafe).allocateInstance(BaseVehicle::class.java) as BaseVehicle
+        val car =
+            (field.get(null) as Unsafe).allocateInstance(BaseVehicle::class.java) as BaseVehicle
         val transform = Transform()
         transform.setIdentity()
         set(car, "jniTransform", transform)
@@ -45,14 +47,23 @@ object NativeChecks {
         val frozen = resumed - 500
         interpolation.buffer.add(point(frozen - 100, 0f))
         interpolation.buffer.add(point(frozen, 0f))
-        if (!interpolation.interpolationDataGet(pose, engine, frozen - 50, interpolation)) throw AssertionError("initial bracket")
-        if (!interpolation.interpolationDataGet(pose, engine, frozen + 1, interpolation)) throw AssertionError("starvation freeze")
-        if (!interpolation.wasNull || !interpolation.buffer.isEmpty()) throw AssertionError("native recovery state")
-        interpolation.interpolationDataAdd(vehicle(), point(resumed + 500, 10f), resumed + interpolation.delay)
+        if (!interpolation.interpolationDataGet(pose, engine, frozen - 50, interpolation))
+            throw AssertionError("initial bracket")
+        if (!interpolation.interpolationDataGet(pose, engine, frozen + 1, interpolation))
+            throw AssertionError("starvation freeze")
+        if (!interpolation.wasNull || !interpolation.buffer.isEmpty())
+            throw AssertionError("native recovery state")
+        interpolation.interpolationDataAdd(
+            vehicle(),
+            point(resumed + 500, 10f),
+            resumed + interpolation.delay,
+        )
         val seed = interpolation.buffer.first().time
-        if (!interpolation.interpolationDataGet(pose, engine, seed + 1, interpolation)) throw AssertionError("first recovery frame")
+        if (!interpolation.interpolationDataGet(pose, engine, seed + 1, interpolation))
+            throw AssertionError("first recovery frame")
         val first = pose[0]
-        if (!interpolation.interpolationDataGet(pose, engine, seed + 34, interpolation)) throw AssertionError("second recovery frame")
+        if (!interpolation.interpolationDataGet(pose, engine, seed + 34, interpolation))
+            throw AssertionError("second recovery frame")
         return floatArrayOf(first, pose[0])
     }
 
@@ -66,7 +77,11 @@ object NativeChecks {
         interpolation.lastBuf1 = cache
         interpolation.lastTime = 1234
         interpolation.interpolationDataAdd(vehicle(), point(now + 500, 10f), now)
-        if (interpolation.lastBuf1 !== cache || interpolation.lastTime != 1234L || !interpolation.buffer.contains(first))
+        if (
+            interpolation.lastBuf1 !== cache ||
+                interpolation.lastTime != 1234L ||
+                !interpolation.buffer.contains(first)
+        )
             throw AssertionError("nonempty buffer/cache unexpectedly reset")
     }
 
@@ -78,10 +93,15 @@ object NativeChecks {
         WorldSimulation.instance.offsetX = 0f
         WorldSimulation.instance.offsetY = 0f
         val baseline = run()
-        if (!(baseline[0] > baseline[1])) throw AssertionError("baseline did not reproduce backward step")
-        PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", NativeChecks::class.java.classLoader)
+        if (!(baseline[0] > baseline[1]))
+            throw AssertionError("baseline did not reproduce backward step")
+        PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            NativeChecks::class.java.classLoader,
+        )
         Main.main(emptyArray())
-        if (!Main.ZOMBIE_SUPPORTED || !Main.VEHICLE_SUPPORTED) throw AssertionError("unsupported native engine")
+        if (!Main.ZOMBIE_SUPPORTED || !Main.VEHICLE_SUPPORTED)
+            throw AssertionError("unsupported native engine")
         if (BytecodeSupport.supports("zombie/vehicles/VehicleInterpolation.class", "unknown"))
             throw AssertionError("unknown engine fingerprint accepted")
         val patched = run() // Actual woven helper prefix; no manual clearLast here.
@@ -92,6 +112,8 @@ object NativeChecks {
         zombie.network.GameClient.client = false
         val server = run()
         if (!(server[0] > server[1])) throw AssertionError("client patch changed server behavior")
-        println("NATIVE_CHECKS_PASS (recovery, nonempty buffer, server guard, unsupported fingerprint)")
+        println(
+            "NATIVE_CHECKS_PASS (recovery, nonempty buffer, server guard, unsupported fingerprint)",
+        )
     }
 }

@@ -9,8 +9,13 @@ object HutchCleanup {
     fun begin(hutch: IsoHutch, supported: Boolean): HashMap<Int, IsoAnimal?>? {
         val original = hutch.animalInside
         // Do not reinterpret custom map behavior or guess after an engine update.
-        if (!supported || original == null || original.javaClass != HashMap::class.java
-            || !original.containsValue(null)) return null
+        if (
+            !supported ||
+                original == null ||
+                original.javaClass != HashMap::class.java ||
+                !original.containsValue(null)
+        )
+            return null
 
         // B42.21 iterates every value without checking for empty slots. Give only this
         // native unload call a non-null snapshot; keep the original slots and map identity.

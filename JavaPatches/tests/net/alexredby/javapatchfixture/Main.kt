@@ -26,14 +26,17 @@ object Main {
             packet.speedMod = encoded
             z.getNetworkCharacterAI().parse(packet)
             val expected = if (patched) encoded / 1000.0f else encoded.toFloat()
-            if (z.getSpeedMod() != expected) throw AssertionError("remote decode " + z.getSpeedMod() + " expected " + expected)
+            if (z.getSpeedMod() != expected)
+                throw AssertionError("remote decode " + z.getSpeedMod() + " expected " + expected)
             z.setOwner(GameClient.connection)
             z.setSpeedMod(0.25f)
             z.getNetworkCharacterAI().parse(packet)
             if (z.getSpeedMod() != 0.25f) throw AssertionError("owned zombie changed")
             if (packet.speedMod != encoded) throw AssertionError("wire packet changed")
         }
-        return "packet850=" + (if (patched) "0.85" else "850") + ", four values checked, owned unchanged, packet unchanged"
+        return "packet850=" +
+            (if (patched) "0.85" else "850") +
+            ", four values checked, owned unchanged, packet unchanged"
     }
 
     @JvmStatic

@@ -33,12 +33,19 @@ object MedicineCooldownChecks {
         GameClient.client = false
 
         // Discover and activate the built bridge before any direct call or constant reference.
-        PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", MedicineCooldownChecks::class.java.classLoader)
-        val bridge = Exposer.getClassesWithGlobalLuaMethod()
-            .firstOrNull { it.name == "net.alexredby.pztoolkitjavapatches.MedicineCooldown" }
-            ?: throw AssertionError("ZombieBuddy did not discover the annotated bridge")
-        verify(Path.of(bridge.protectionDomain.codeSource.location.toURI()) ==
-            Path.of(System.getProperty("pz.test.patch.jar")), "bridge did not come from the built JAR")
+        PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            MedicineCooldownChecks::class.java.classLoader,
+        )
+        val bridge =
+            Exposer.getClassesWithGlobalLuaMethod().firstOrNull {
+                it.name == "net.alexredby.pztoolkitjavapatches.MedicineCooldown"
+            } ?: throw AssertionError("ZombieBuddy did not discover the annotated bridge")
+        verify(
+            Path.of(bridge.protectionDomain.codeSource.location.toURI()) ==
+                Path.of(System.getProperty("pz.test.patch.jar")),
+            "bridge did not come from the built JAR",
+        )
         LuaManager.platform = J2SEPlatform()
         LuaManager.env = LuaManager.platform.newTable()
         val converters = KahluaConverterManager()
@@ -49,36 +56,68 @@ object MedicineCooldownChecks {
         val thread = KahluaThread(LuaManager.platform, LuaManager.env)
         thread.debugOwnerThread = Thread.currentThread()
         LuaManager.thread = thread
-        verify(thread.call(function, arrayOf<Any?>(player)) == 57.25,
-            "real Kahlua bridge did not return the exact native value")
-        verify(thread.call(function, arrayOf<Any?>(null)) == null,
-            "Kahlua did not preserve a missing character as nil")
+        verify(
+            thread.call(function, arrayOf<Any?>(player)) == 57.25,
+            "real Kahlua bridge did not return the exact native value",
+        )
+        verify(
+            thread.call(function, arrayOf<Any?>(null)) == null,
+            "Kahlua did not preserve a missing character as nil",
+        )
         GameClient.client = true
-        verify(thread.call(function, arrayOf<Any?>(player)) == null, "Kahlua did not preserve unavailable as nil")
+        verify(
+            thread.call(function, arrayOf<Any?>(player)) == null,
+            "Kahlua did not preserve unavailable as nil",
+        )
         GameClient.client = false
         verify(timer.getFloat(player) == 57.25f, "Lua bridge changed native cooldown")
 
         verify(MedicineCooldown.SUPPORTED, "current native character hash is unsupported")
-        for (value in floatArrayOf(0f, -0.0f, .03125f, 123.456f, 280f, Float.MAX_VALUE, -1f,
-                Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+        for (value in
+            floatArrayOf(
+                0f,
+                -0.0f,
+                .03125f,
+                123.456f,
+                280f,
+                Float.MAX_VALUE,
+                -1f,
+                Float.NaN,
+                Float.POSITIVE_INFINITY,
+                Float.NEGATIVE_INFINITY,
+            )) {
             timer.setFloat(player, value)
             val result = MedicineCooldown.cooldown(player)
-            verify(if (value.isFinite() && value >= 0f) result?.toRawBits() == value.toDouble().toRawBits() else result == null,
-                "native cooldown was estimated, rounded or accepted invalid data: $value")
-            verify(timer.getFloat(player).toRawBits() == value.toRawBits(), "getter changed native cooldown")
+            verify(
+                if (value.isFinite() && value >= 0f)
+                    result?.toRawBits() == value.toDouble().toRawBits()
+                else result == null,
+                "native cooldown was estimated, rounded or accepted invalid data: $value",
+            )
+            verify(
+                timer.getFloat(player).toRawBits() == value.toRawBits(),
+                "getter changed native cooldown",
+            )
         }
         timer.setFloat(player, 57.25f)
         verify(MedicineCooldown.read(player, false) == null, "unsupported bytecode exposed a value")
         verify(MedicineCooldown.cooldown(null) == null, "null character exposed a value")
         GameServer.server = true
-        verify(MedicineCooldown.cooldown(player) == 57.25,
-            "authoritative Host server did not expose its exact cooldown")
+        verify(
+            MedicineCooldown.cooldown(player) == 57.25,
+            "authoritative Host server did not expose its exact cooldown",
+        )
         GameClient.client = true
-        verify(MedicineCooldown.cooldown(player) == null, "MP client exposed a non-authoritative cooldown")
+        verify(
+            MedicineCooldown.cooldown(player) == null,
+            "MP client exposed a non-authoritative cooldown",
+        )
         verify(timer.getFloat(player) == 57.25f, "unavailable reads changed native cooldown")
         GameClient.client = false
         GameServer.server = false
-        println("MEDICINE_COOLDOWN_CHECKS_PASS (native field, no writes, invalid/unsupported/client/nil, ZombieBuddy scan and Kahlua)")
+        println(
+            "MEDICINE_COOLDOWN_CHECKS_PASS (native field, no writes, invalid/unsupported/client/nil, ZombieBuddy scan and Kahlua)",
+        )
         kotlin.system.exitProcess(0)
     }
 }

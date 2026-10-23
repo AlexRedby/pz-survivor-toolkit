@@ -1,11 +1,11 @@
 package zombie.network.packets
 
 import java.nio.ByteBuffer
+import net.alexredby.pztoolkitjavapatches.Main
 import sun.misc.Unsafe
 import zombie.characters.IsoPlayer
 import zombie.core.network.ByteBufferReader
 import zombie.network.GameClient
-import net.alexredby.pztoolkitjavapatches.Main
 
 object EquipmentChecks {
     class LocalPlayer : IsoPlayer(null) {
@@ -14,7 +14,10 @@ object EquipmentChecks {
 
     class CountingPacket : EquipPacket() {
         @JvmField var acknowledgements = 0
-        override fun sendToServer(type: zombie.network.PacketTypes.PacketType?) { acknowledgements++ }
+
+        override fun sendToServer(type: zombie.network.PacketTypes.PacketType?) {
+            acknowledgements++
+        }
     }
 
     @JvmStatic
@@ -70,14 +73,22 @@ object EquipmentChecks {
         Main.EquipmentParsed.exit(counted, unread, null)
         counted.processClient(null)
         require(counted.acknowledgements == 1, "vanilla did not acknowledge incomplete equipment")
-        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", EquipmentChecks::class.java.classLoader)
+        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            EquipmentChecks::class.java.classLoader,
+        )
         Main.EquipmentParsed.exit(counted, unread, null)
         counted.processClient(null)
         require(counted.acknowledgements == 1, "woven prefix acknowledged incomplete equipment")
         Main.EquipmentParsed.exit(counted, complete, null)
         counted.processClient(null)
-        require(counted.acknowledgements == 2, "woven prefix blocked valid equipment acknowledgement")
+        require(
+            counted.acknowledgements == 2,
+            "woven prefix blocked valid equipment acknowledgement",
+        )
         require(unread.bb.position() == 0, "inspection consumed packet data")
-        println("EQUIPMENT_CHECKS_PASS (vanilla versus woven acknowledgement, incomplete local ack, complete, repeat, reused/different packet, remote/server guards)")
+        println(
+            "EQUIPMENT_CHECKS_PASS (vanilla versus woven acknowledgement, incomplete local ack, complete, repeat, reused/different packet, remote/server guards)",
+        )
     }
 }

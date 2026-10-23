@@ -3,12 +3,12 @@ package zombie.scripting.entity.components.fluids
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Random
-import zombie.scripting.ScriptBucketCollection
 import zombie.core.random.RandAbstract
 import zombie.core.random.RandStandard
 import zombie.entity.ComponentType
 import zombie.entity.components.fluids.Fluid
 import zombie.entity.components.fluids.FluidContainer
+import zombie.scripting.ScriptBucketCollection
 import zombie.scripting.ScriptLoadMode
 import zombie.scripting.ScriptManager
 import zombie.scripting.ScriptParser
@@ -25,7 +25,11 @@ object FoodReplacementOutputChecks {
 
     class CountedRandom : Random(12345L) {
         @JvmField var draws = 0
-        override fun next(bits: Int): Int { draws++; return super.next(bits) }
+
+        override fun next(bits: Int): Int {
+            draws++
+            return super.next(bits)
+        }
     }
 
     @JvmStatic
@@ -49,12 +53,20 @@ object FoodReplacementOutputChecks {
         item.setModule(module)
         item.InitLoadPP(name)
         item.Load(name, body.toString())
-        require(item.getItemType() === ItemType.NORMAL && item.getCount() == 1 && !item.getObsolete(),
-            name + " is no longer a single normal output")
-        require(item.getLuaCreate() == null && item.getItemConfig() == null && item.getItemConfigKey() == null,
-            name + " gained a factory callback/configuration")
-        require(item.getReplaceOnUse() == null && item.getReplaceOnDeplete() == null,
-            name + " gained a replacement")
+        require(
+            item.getItemType() === ItemType.NORMAL && item.getCount() == 1 && !item.getObsolete(),
+            name + " is no longer a single normal output",
+        )
+        require(
+            item.getLuaCreate() == null &&
+                item.getItemConfig() == null &&
+                item.getItemConfigKey() == null,
+            name + " gained a factory callback/configuration",
+        )
+        require(
+            item.getReplaceOnUse() == null && item.getReplaceOnDeplete() == null,
+            name + " gained a replacement",
+        )
         return item
     }
 
@@ -63,14 +75,20 @@ object FoodReplacementOutputChecks {
         val components = item.getComponentScripts()
         require(components.size == 1, item.getName() + " component count changed")
         val component = components[0]
-        require(component.javaClass === FluidContainerScript::class.java
-            && component === item.getComponentScriptFor(ComponentType.FluidContainer),
-            item.getName() + " sole component is not the native fluid script")
+        require(
+            component.javaClass === FluidContainerScript::class.java &&
+                component === item.getComponentScriptFor(ComponentType.FluidContainer),
+            item.getName() + " sole component is not the native fluid script",
+        )
         val fluid = component as FluidContainerScript
-        require(fluid.getInitialFluids() == null || fluid.getInitialFluids().isEmpty(),
-            item.getName() + " gained initial fluid")
-        require(java.lang.Float.isFinite(fluid.getCapacity()) && fluid.getCapacity() > 0,
-            item.getName() + " capacity is invalid")
+        require(
+            fluid.getInitialFluids() == null || fluid.getInitialFluids().isEmpty(),
+            item.getName() + " gained initial fluid",
+        )
+        require(
+            java.lang.Float.isFinite(fluid.getCapacity()) && fluid.getCapacity() > 0,
+            item.getName() + " capacity is invalid",
+        )
         return fluid
     }
 
@@ -80,8 +98,12 @@ object FoodReplacementOutputChecks {
 
     @JvmStatic
     fun empty(container: FluidContainer, capacity: Float, name: String?) {
-        require(container.isEmpty() && container.getAmount() == 0f && container.getCapacity() == capacity,
-            name + " was not initialized empty at its script capacity")
+        require(
+            container.isEmpty() &&
+                container.getAmount() == 0f &&
+                container.getCapacity() == capacity,
+            name + " was not initialized empty at its script capacity",
+        )
     }
 
     @JvmStatic
@@ -91,8 +113,14 @@ object FoodReplacementOutputChecks {
         parent.setModule(ScriptManager.instance.moduleMap["Base"])
         parent.InitLoadPP("FoodOutputProbe")
         script.setParent(parent)
-        script.load(ScriptParser.parse("component FluidContainer { Capacity = 0.3, InitialPercentMin = 0.2, InitialPercentMax = 0.8, "
-            + fluids + " }").getBlock("component", "FluidContainer"))
+        script.load(
+            ScriptParser.parse(
+                    "component FluidContainer { Capacity = 0.3, InitialPercentMin = 0.2, InitialPercentMax = 0.8, " +
+                        fluids +
+                        " }",
+                )
+                .getBlock("component", "FluidContainer"),
+        )
         script.OnScriptsLoaded(ScriptLoadMode.Init)
         return script
     }
@@ -101,17 +129,28 @@ object FoodReplacementOutputChecks {
     fun loadFluids() {
         // Use the complete shipped definition set so native initialization guards remain active.
         val module = ScriptModule()
-        module.Load(ScriptLoadMode.Init, "Base", Files.readString(Path.of("media/scripts/generated/fluids.txt")))
+        module.Load(
+            ScriptLoadMode.Init,
+            "Base",
+            Files.readString(Path.of("media/scripts/generated/fluids.txt")),
+        )
         module.fluidDefinitionScripts.LoadScripts(ScriptLoadMode.Init)
-        require(!module.fluidDefinitionScripts.isHasLoadErrors(), "native fluid definitions failed to load")
+        require(
+            !module.fluidDefinitionScripts.isHasLoadErrors(),
+            "native fluid definitions failed to load",
+        )
         ScriptManager.instance.moduleMap["Base"] = module
         ScriptManager.instance.moduleList.add(module)
         val collections = ScriptManager::class.java.getDeclaredField("bucketCollectionList")
         collections.setAccessible(true)
-        for (collection in collections.get(ScriptManager.instance) as List<*>)
-            (collection as ScriptBucketCollection<*>).registerModule(module)
+        for (collection in collections.get(ScriptManager.instance) as List<*>) (collection
+                as ScriptBucketCollection<*>)
+            .registerModule(module)
         Fluid.Init(ScriptLoadMode.Init)
-        require(Fluid.FluidsInitialized() && Fluid.Get("Water") != null, "native water initialization failed")
+        require(
+            Fluid.FluidsInitialized() && Fluid.Get("Water") != null,
+            "native water initialization failed",
+        )
     }
 
     @JvmStatic
@@ -130,8 +169,14 @@ object FoodReplacementOutputChecks {
         val can = nativeItem(nativeItems, module, "TinCanEmpty")
         val bowl = nativeItem(nativeItems, module, "Bowl")
         val pan = nativeItem(nativeItems, module, "RoastingPan")
-        require(!pan.hasComponents() && pan.getComponentScripts().isEmpty(), "plain roasting pan gained components")
-        require(can.getActualWeight() == 0.2f && bowl.getActualWeight() == 0.5f, "native shell weight changed")
+        require(
+            !pan.hasComponents() && pan.getComponentScripts().isEmpty(),
+            "plain roasting pan gained components",
+        )
+        require(
+            can.getActualWeight() == 0.2f && bowl.getActualWeight() == 0.5f,
+            "native shell weight changed",
+        )
         val canScript = emptyScript(can)
         val bowlScript = emptyScript(bowl)
         val random = RandAbstract::class.java.getDeclaredField("rand")
@@ -154,18 +199,32 @@ object FoodReplacementOutputChecks {
                 FluidContainer.DisposeContainer(container)
             }
             val filledScript = probe("Fluids { fluid = Water:1.0, }")
-            require(!filledScript.getInitialFluids().isEmpty(), "nonempty control lost its initial fluid")
+            require(
+                !filledScript.getInitialFluids().isEmpty(),
+                "nonempty control lost its initial fluid",
+            )
             val before = counted.draws
             val filled = create(filledScript)
-            require(counted.draws > before, "ranged nonempty control did not exercise initial-amount RNG")
-            require(!filled.isEmpty() && filled.getAmount() > 0 && filled.getAmount() <= filled.getCapacity(),
-                "nonempty control did not create real native fluid")
+            require(
+                counted.draws > before,
+                "ranged nonempty control did not exercise initial-amount RNG",
+            )
+            require(
+                !filled.isEmpty() &&
+                    filled.getAmount() > 0 &&
+                    filled.getAmount() <= filled.getCapacity(),
+                "nonempty control did not create real native fluid",
+            )
             FluidContainer.DisposeContainer(filled)
             val reused = create(canScript)
             require(reused === filled, "fixture did not reuse the released native component")
             empty(reused, canScript.getCapacity(), "reused can")
             FluidContainer.DisposeContainer(reused)
-            println("FOOD_REPLACEMENT_OUTPUT_CHECKS_PASS (native TinCanEmpty/Bowl, plain RoastingPan, exact component identity, nil/empty fluids, zero empty RNG draws, ranged filled control, clean pool reuse)")
-        } finally { random.set(RandStandard.INSTANCE, previous) }
+            println(
+                "FOOD_REPLACEMENT_OUTPUT_CHECKS_PASS (native TinCanEmpty/Bowl, plain RoastingPan, exact component identity, nil/empty fluids, zero empty RNG draws, ranged filled control, clean pool reuse)",
+            )
+        } finally {
+            random.set(RandStandard.INSTANCE, previous)
+        }
     }
 }

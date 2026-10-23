@@ -16,122 +16,613 @@ object CartGripTest {
     private fun pose(values: Array<out Matrix4f?>?, index: Int): Matrix4f =
         (values ?: throw NullPointerException())[index] ?: throw NullPointerException()
 
-    private fun copyPoses(values: Array<out Matrix4f?>?, count: Int = (values ?: throw NullPointerException()).size): Array<Matrix4f> =
-        Array(count) { Matrix4f(pose(values, it)) }
+    private fun copyPoses(
+        values: Array<out Matrix4f?>?,
+        count: Int = (values ?: throw NullPointerException()).size,
+    ): Array<Matrix4f> = Array(count) { Matrix4f(pose(values, it)) }
 
     private class HandoffPlayer : zombie.characters.IsoPlayer(null) {
-        override fun getAdvancedAnimator(): zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator? = null
+        override fun getAdvancedAnimator():
+            zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator? = null
     }
 
-    private fun skeleton(names: Array<String>, parents: List<Int>, offsets: List<org.lwjgl.util.vector.Matrix4f>): SkinningData {
+    private fun skeleton(
+        names: Array<String>,
+        parents: List<Int>,
+        offsets: List<org.lwjgl.util.vector.Matrix4f>,
+    ): SkinningData {
         val indices = HashMap<String, Int>()
         for (i in 0 until names.size) indices.put(names[i], i)
         return SkinningData(HashMap(), offsets, offsets, offsets, parents, indices)
     }
 
     private fun nativeHandlePoses(): Array<FloatArray> {
-        return arrayOf(floatArrayOf(1.4521669e-06f, 0.9981916f, 0.060114563f, 0f, 1.0000002f, -1.9386694e-06f, 1.1680957e-07f, 0f, 2.0447396e-07f, 0.060114548f, -0.99819183f, 0f, -4.6785718e-07f, 0.5619899f, 0.010946241f, 1f),
-            floatArrayOf(0.22074102f, -0.96914154f, -0.10972244f, 0f, 0.9438717f, 0.24060604f, -0.2263077f, 0f, 0.245724f, -0.053608667f, 0.9678573f, 0f, 0.099654004f, 0.7496011f, 0.037673183f, 1f),
-            floatArrayOf(-0.23472725f, 0.006653134f, -0.9720396f, 0f, 0.94387156f, 0.24063396f, -0.22627845f, 0f, 0.2324011f, -0.97059363f, -0.06276309f, 0f, 0.12990883f, 0.6167684f, 0.022634603f, 1f),
-            floatArrayOf(0.021503776f, -0.0014302081f, -0.9997688f, 0f, 0.99298733f, 0.11630844f, 0.021191625f, 0f, 0.11625216f, -0.9932127f, 0.003921243f, 0f, 0.09773772f, 0.6176799f, -0.110594966f, 1f),
-            floatArrayOf(-0.46738097f, -0.27832007f, -0.8391033f, 0f, 0.7144472f, 0.44011968f, -0.54393053f, 0f, 0.52069277f, -0.8537176f, -0.0068584834f, 0f, 0.07550589f, 0.6151214f, -0.16876407f, 1f),
-            floatArrayOf(0.037895966f, -0.5487234f, -0.8351459f, 0f, 0.99307954f, 0.11365253f, -0.02961228f, 0f, 0.11116614f, -0.8282434f, 0.5492327f, 0f, 0.099545844f, 0.61752886f, -0.19481423f, 1f),
-            floatArrayOf(-0.26295483f, -0.95945466f, -0.101500414f, 0f, 0.9419383f, -0.27806738f, 0.18823288f, 0f, -0.20882466f, -0.046110272f, 0.9768661f, 0f, -0.09930119f, 0.7483584f, 0.03767302f, 1f),
-            floatArrayOf(0.19763497f, 0.0060330657f, -0.980258f, 0f, 0.941936f, -0.27809924f, 0.1881972f, 0f, -0.2714733f, -0.96053404f, -0.060644936f, 0f, -0.13534217f, 0.61685395f, 0.02376148f, 1f),
-            floatArrayOf(-0.021503098f, -0.009127207f, -0.99972796f, 0f, 0.9929871f, -0.11647228f, -0.020294784f, 0f, -0.11625524f, -0.99315256f, 0.011567622f, 0f, -0.10825461f, 0.617681f, -0.11059443f, 1f),
-            floatArrayOf(0.4673793f, -0.2847743f, -0.83693594f, 0f, 0.7144465f, -0.43592146f, 0.54730225f, 0f, -0.5206954f, -0.8537431f, -0.00028474675f, 0f, -0.08602331f, 0.6146745f, -0.16874194f, 1f),
-            floatArrayOf(-0.037896737f, -0.55513775f, -0.8308956f, 0f, 0.9930795f, -0.11342328f, 0.030486476f, 0f, -0.111166954f, -0.82398903f, 0.5555941f, 0f, -0.11006309f, 0.6169446f, -0.1945371f, 1f),
-            floatArrayOf(0.11579696f, -0.99196726f, 0.050919585f, 0f, -0.9932541f, -0.11596133f, -0.000285426f, 0f, 0.006187858f, -0.05054301f, -0.998703f, 0f, 0.055224918f, 0.51036054f, 0.010862686f, 1f),
-            floatArrayOf(-0.1157871f, -0.9919687f, 0.050918005f, 0f, -0.9932564f, 0.1159451f, 0.00014129901f, 0f, -0.006043833f, -0.050558247f, -0.9987031f, 0f, -0.055225775f, 0.51036084f, 0.010862409f, 1f))
+        return arrayOf(
+            floatArrayOf(
+                1.4521669e-06f,
+                0.9981916f,
+                0.060114563f,
+                0f,
+                1.0000002f,
+                -1.9386694e-06f,
+                1.1680957e-07f,
+                0f,
+                2.0447396e-07f,
+                0.060114548f,
+                -0.99819183f,
+                0f,
+                -4.6785718e-07f,
+                0.5619899f,
+                0.010946241f,
+                1f,
+            ),
+            floatArrayOf(
+                0.22074102f,
+                -0.96914154f,
+                -0.10972244f,
+                0f,
+                0.9438717f,
+                0.24060604f,
+                -0.2263077f,
+                0f,
+                0.245724f,
+                -0.053608667f,
+                0.9678573f,
+                0f,
+                0.099654004f,
+                0.7496011f,
+                0.037673183f,
+                1f,
+            ),
+            floatArrayOf(
+                -0.23472725f,
+                0.006653134f,
+                -0.9720396f,
+                0f,
+                0.94387156f,
+                0.24063396f,
+                -0.22627845f,
+                0f,
+                0.2324011f,
+                -0.97059363f,
+                -0.06276309f,
+                0f,
+                0.12990883f,
+                0.6167684f,
+                0.022634603f,
+                1f,
+            ),
+            floatArrayOf(
+                0.021503776f,
+                -0.0014302081f,
+                -0.9997688f,
+                0f,
+                0.99298733f,
+                0.11630844f,
+                0.021191625f,
+                0f,
+                0.11625216f,
+                -0.9932127f,
+                0.003921243f,
+                0f,
+                0.09773772f,
+                0.6176799f,
+                -0.110594966f,
+                1f,
+            ),
+            floatArrayOf(
+                -0.46738097f,
+                -0.27832007f,
+                -0.8391033f,
+                0f,
+                0.7144472f,
+                0.44011968f,
+                -0.54393053f,
+                0f,
+                0.52069277f,
+                -0.8537176f,
+                -0.0068584834f,
+                0f,
+                0.07550589f,
+                0.6151214f,
+                -0.16876407f,
+                1f,
+            ),
+            floatArrayOf(
+                0.037895966f,
+                -0.5487234f,
+                -0.8351459f,
+                0f,
+                0.99307954f,
+                0.11365253f,
+                -0.02961228f,
+                0f,
+                0.11116614f,
+                -0.8282434f,
+                0.5492327f,
+                0f,
+                0.099545844f,
+                0.61752886f,
+                -0.19481423f,
+                1f,
+            ),
+            floatArrayOf(
+                -0.26295483f,
+                -0.95945466f,
+                -0.101500414f,
+                0f,
+                0.9419383f,
+                -0.27806738f,
+                0.18823288f,
+                0f,
+                -0.20882466f,
+                -0.046110272f,
+                0.9768661f,
+                0f,
+                -0.09930119f,
+                0.7483584f,
+                0.03767302f,
+                1f,
+            ),
+            floatArrayOf(
+                0.19763497f,
+                0.0060330657f,
+                -0.980258f,
+                0f,
+                0.941936f,
+                -0.27809924f,
+                0.1881972f,
+                0f,
+                -0.2714733f,
+                -0.96053404f,
+                -0.060644936f,
+                0f,
+                -0.13534217f,
+                0.61685395f,
+                0.02376148f,
+                1f,
+            ),
+            floatArrayOf(
+                -0.021503098f,
+                -0.009127207f,
+                -0.99972796f,
+                0f,
+                0.9929871f,
+                -0.11647228f,
+                -0.020294784f,
+                0f,
+                -0.11625524f,
+                -0.99315256f,
+                0.011567622f,
+                0f,
+                -0.10825461f,
+                0.617681f,
+                -0.11059443f,
+                1f,
+            ),
+            floatArrayOf(
+                0.4673793f,
+                -0.2847743f,
+                -0.83693594f,
+                0f,
+                0.7144465f,
+                -0.43592146f,
+                0.54730225f,
+                0f,
+                -0.5206954f,
+                -0.8537431f,
+                -0.00028474675f,
+                0f,
+                -0.08602331f,
+                0.6146745f,
+                -0.16874194f,
+                1f,
+            ),
+            floatArrayOf(
+                -0.037896737f,
+                -0.55513775f,
+                -0.8308956f,
+                0f,
+                0.9930795f,
+                -0.11342328f,
+                0.030486476f,
+                0f,
+                -0.111166954f,
+                -0.82398903f,
+                0.5555941f,
+                0f,
+                -0.11006309f,
+                0.6169446f,
+                -0.1945371f,
+                1f,
+            ),
+            floatArrayOf(
+                0.11579696f,
+                -0.99196726f,
+                0.050919585f,
+                0f,
+                -0.9932541f,
+                -0.11596133f,
+                -0.000285426f,
+                0f,
+                0.006187858f,
+                -0.05054301f,
+                -0.998703f,
+                0f,
+                0.055224918f,
+                0.51036054f,
+                0.010862686f,
+                1f,
+            ),
+            floatArrayOf(
+                -0.1157871f,
+                -0.9919687f,
+                0.050918005f,
+                0f,
+                -0.9932564f,
+                0.1159451f,
+                0.00014129901f,
+                0f,
+                -0.006043833f,
+                -0.050558247f,
+                -0.9987031f,
+                0f,
+                -0.055225775f,
+                0.51036084f,
+                0.010862409f,
+                1f,
+            ),
+        )
     }
 
     private fun nativeShoulderChain(): Array<Matrix4f> {
         // Native held04 idle input, wall1792618760550: Spine1 and independent L/R clavicles.
-        return arrayOf(Matrix4f().set(1.0767264e-06f, 0.9784272f, 0.20659232f, 0f, 1.0000002f, -5.477755e-07f, -4.875876e-06f, 0f, -4.756036e-06f, 0.20659228f, -0.9784274f, 0f, -7.377877e-07f, 0.66845214f, 0.012061209f, 1f),
-        Matrix4f().set(0.98848903f, -0.15127265f, -0.0017120652f, 0f, 0.14833315f, 0.9669147f, 0.20753457f, 0f, -0.02973952f, -0.20540014f, 0.97822344f, 0f, 0.014465561f, 0.7718781f, 0.03406075f, 1f),
-        Matrix4f().set(-0.98613524f, -0.16591176f, -0.0027908683f, 0f, 0.1627165f, -0.96355295f, -0.21233734f, 0f, 0.03254084f, -0.20984788f, 0.97719014f, 0f, -0.014466048f, 0.77187806f, 0.034060687f, 1f))
+        return arrayOf(
+            Matrix4f()
+                .set(
+                    1.0767264e-06f,
+                    0.9784272f,
+                    0.20659232f,
+                    0f,
+                    1.0000002f,
+                    -5.477755e-07f,
+                    -4.875876e-06f,
+                    0f,
+                    -4.756036e-06f,
+                    0.20659228f,
+                    -0.9784274f,
+                    0f,
+                    -7.377877e-07f,
+                    0.66845214f,
+                    0.012061209f,
+                    1f,
+                ),
+            Matrix4f()
+                .set(
+                    0.98848903f,
+                    -0.15127265f,
+                    -0.0017120652f,
+                    0f,
+                    0.14833315f,
+                    0.9669147f,
+                    0.20753457f,
+                    0f,
+                    -0.02973952f,
+                    -0.20540014f,
+                    0.97822344f,
+                    0f,
+                    0.014465561f,
+                    0.7718781f,
+                    0.03406075f,
+                    1f,
+                ),
+            Matrix4f()
+                .set(
+                    -0.98613524f,
+                    -0.16591176f,
+                    -0.0027908683f,
+                    0f,
+                    0.1627165f,
+                    -0.96355295f,
+                    -0.21233734f,
+                    0f,
+                    0.03254084f,
+                    -0.20984788f,
+                    0.97719014f,
+                    0f,
+                    -0.014466048f,
+                    0.77187806f,
+                    0.034060687f,
+                    1f,
+                ),
+        )
     }
 
     private fun checkNativeHandles() {
-        // Read-only GPU/reference-pose capture on B42.21; expected centers come from actual handle geometry.
-        val names = arrayOf("Bip01_Spine", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_L_Finger0", "Bip01_L_Finger1", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_R_Finger0", "Bip01_R_Finger1", "Bip01_L_Thigh", "Bip01_R_Thigh", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle")
+        // Read-only GPU/reference-pose capture on B42.21; expected centers come from actual handle
+        // geometry.
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_L_Finger0",
+                "Bip01_L_Finger1",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_R_Finger0",
+                "Bip01_R_Finger1",
+                "Bip01_L_Thigh",
+                "Bip01_R_Thigh",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+            )
         val nativePose = java.util.Arrays.copyOf(nativeHandlePoses(), names.size)
         val shoulders = nativeShoulderChain()
-        for (i in 0 until 3) nativePose[i+13]=shoulders[i].get(FloatArray(16))
-        val nativeCart = arrayOf(floatArrayOf(-5.080325e-10f, -0.00022194229f, -0.0021531826f, 0f, 7.381783e-10f, 0.0016076594f, -0.00016571165f, 0f, 0.104969054f, -6.051497e-08f, -1.0280073e-08f, 0f, -0.0016536561f, 0.0033783615f, -0.44702002f, 1f),
-            floatArrayOf(76.5f, -4.1037783e-05f, -9.11952e-06f, 0f, 2.8023098e-05f, 30.694286f, 70.07218f, 0f, -2.4333809e-05f, -70.07218f, 30.694283f, -0f, -0.0060535767f, 0.16740987f, -0.41188842f, 1f),
-            floatArrayOf(0.0091743395f, -4.9214974e-09f, -1.0936676e-09f, 0f, 2.9182563e-09f, 0.008403477f, -0.0036810448f, 0f, 3.3606993e-09f, 0.003681045f, 0.008403477f, 0f, 0.21714664f, 0.25123572f, -0.8401939f, 1f))
+        for (i in 0 until 3) nativePose[i + 13] = shoulders[i].get(FloatArray(16))
+        val nativeCart =
+            arrayOf(
+                floatArrayOf(
+                    -5.080325e-10f,
+                    -0.00022194229f,
+                    -0.0021531826f,
+                    0f,
+                    7.381783e-10f,
+                    0.0016076594f,
+                    -0.00016571165f,
+                    0f,
+                    0.104969054f,
+                    -6.051497e-08f,
+                    -1.0280073e-08f,
+                    0f,
+                    -0.0016536561f,
+                    0.0033783615f,
+                    -0.44702002f,
+                    1f,
+                ),
+                floatArrayOf(
+                    76.5f,
+                    -4.1037783e-05f,
+                    -9.11952e-06f,
+                    0f,
+                    2.8023098e-05f,
+                    30.694286f,
+                    70.07218f,
+                    0f,
+                    -2.4333809e-05f,
+                    -70.07218f,
+                    30.694283f,
+                    -0f,
+                    -0.0060535767f,
+                    0.16740987f,
+                    -0.41188842f,
+                    1f,
+                ),
+                floatArrayOf(
+                    0.0091743395f,
+                    -4.9214974e-09f,
+                    -1.0936676e-09f,
+                    0f,
+                    2.9182563e-09f,
+                    0.008403477f,
+                    -0.0036810448f,
+                    0f,
+                    3.3606993e-09f,
+                    0.003681045f,
+                    0.008403477f,
+                    0f,
+                    0.21714664f,
+                    0.25123572f,
+                    -0.8401939f,
+                    1f,
+                ),
+            )
         val models = arrayOf("ShoppingCartModel", "WheelbarrowWood", "WheelbarrowMetal")
-        val centers = arrayOf(floatArrayOf(0.083346f, 0.58887534f, -0.18080575f, -0.086654f),
-            floatArrayOf(0.12570822f, 0.57380583f, -0.13731986f, -0.13781538f),
-            floatArrayOf(0.14916556f, 0.61160583f, -0.16874814f, -0.14684275f))
+        val centers =
+            arrayOf(
+                floatArrayOf(0.083346f, 0.58887534f, -0.18080575f, -0.086654f),
+                floatArrayOf(0.12570822f, 0.57380583f, -0.13731986f, -0.13781538f),
+                floatArrayOf(0.14916556f, 0.61160583f, -0.16874814f, -0.14684275f),
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
-        val actor = skeleton(names, listOf(-1, 14, 1, 2, 3, 3, 15, 6, 7, 8, 8, 0, 0, 0, 13, 13), offsets)
+        val actor =
+            skeleton(names, listOf(-1, 14, 1, 2, 3, 3, 15, 6, 7, 8, 8, 0, 0, 0, 13, 13), offsets)
         // Wooden gait includes Spine1/chest bend and is checked with the native captures below.
-        for (model in intArrayOf(0, 2)) for (female in booleanArrayOf(false, true)) for (lean in floatArrayOf(-0.1f, 0f, 0.1f)) {
+        for (model in intArrayOf(0, 2)) for (female in booleanArrayOf(false, true)) for (lean in
+            floatArrayOf(-0.1f, 0f, 0.1f)) {
             val delta = Matrix4f().translation(0.01f, 0.03f, 0f).rotateZ(lean)
             val pitched = Matrix4f().set(nativeCart[model])
             CartGrounding.lowerHandles(pitched, models[model])
             // Ground the current metal calibration while keeping the captured torso fixed.
-            if (model==2 && !CartGrounding.alignWheelbarrow(pitched, CartWheelbarrow.METAL, 0f, 0f, 0f, Matrix4f())) throw AssertionError("metal grounding refused")
+            if (
+                model == 2 &&
+                    !CartGrounding.alignWheelbarrow(
+                        pitched,
+                        CartWheelbarrow.METAL,
+                        0f,
+                        0f,
+                        0f,
+                        Matrix4f(),
+                    )
+            )
+                throw AssertionError("metal grounding refused")
             val cart = delta.mul(pitched, Matrix4f())
             val poses = arrayOfNulls<Matrix4f>(names.size)
-            for (i in 0 until poses.size) poses[i]=delta.mul(Matrix4f().set(nativePose[i]), Matrix4f())
+            for (i in 0 until poses.size) poses[i] =
+                delta.mul(Matrix4f().set(nativePose[i]), Matrix4f())
             val before = copyPoses(poses)
             val handleDelta = Matrix4f(cart).mul(Matrix4f().set(nativeCart[model]).invert())
-            if (!CartGrip.grip(poses, actor, models[model], female, delta, cart)) throw AssertionError("native handles unreachable: "+models[model]+" female="+female+" bank="+lean)
+            if (!CartGrip.grip(poses, actor, models[model], female, delta, cart))
+                throw AssertionError(
+                    "native handles unreachable: " +
+                        models[model] +
+                        " female=" +
+                        female +
+                        " bank=" +
+                        lean,
+                )
             for (side in 0 until 2) {
-                val upper: Int = if (side==0) 1 else 6
-                val forearm: Int = upper+1
-                val hand: Int = upper+2
+                val upper: Int = if (side == 0) 1 else 6
+                val forearm: Int = upper + 1
+                val hand: Int = upper + 2
                 val shape = CartGrip.grasp(female, models[model])
-                val actual = pose(poses, hand).transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
+                val actual =
+                    pose(poses, hand).transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
                 val c = centers[model]
-                val station = Vector3f(if (side==0) c[0] else c[3], c[1], c[2])
-                // The transverse palm sits 1.34839 source units farther inside the measured shaft tip.
-                if (model==2) station.fma(-1.34839f*0.0091743395f, Vector3f(0f, 0.4012329f, 0.9159761f))
+                val station = Vector3f(if (side == 0) c[0] else c[3], c[1], c[2])
+                // The transverse palm sits 1.34839 source units farther inside the measured shaft
+                // tip.
+                if (model == 2)
+                    station.fma(-1.34839f * 0.0091743395f, Vector3f(0f, 0.4012329f, 0.9159761f))
                 val expected = handleDelta.transformPosition(station)
-                if (actual.distance(expected)>0.00002f) throw AssertionError("grip missed measured mesh handle: "+models[model])
-                if (model>0) {
+                if (actual.distance(expected) > 0.00002f)
+                    throw AssertionError("grip missed measured mesh handle: " + models[model])
+                if (model > 0) {
                     val inverseDelta = Matrix4f(delta).invert()
-                    val elbow = inverseDelta.transformPosition(pose(poses, forearm).getTranslation(Vector3f()))
-                    val wrist = inverseDelta.transformPosition(pose(poses, hand).getTranslation(Vector3f()))
-                    val shoulder = inverseDelta.transformPosition(pose(poses, upper).getTranslation(Vector3f()))
-                    val forearmAxis = pose(poses, hand).getTranslation(Vector3f()).sub(pose(poses, forearm).getTranslation(Vector3f())).normalize()
-                    val handAxis = pose(poses, hand).transformDirection(Vector3f(1f, 0f, 0f)).normalize()
-                    var bend: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, forearmAxis.dot(handAxis)))).toDouble())))).toFloat()
+                    val elbow =
+                        inverseDelta.transformPosition(
+                            pose(poses, forearm).getTranslation(Vector3f()),
+                        )
+                    val wrist =
+                        inverseDelta.transformPosition(pose(poses, hand).getTranslation(Vector3f()))
+                    val shoulder =
+                        inverseDelta.transformPosition(
+                            pose(poses, upper).getTranslation(Vector3f()),
+                        )
+                    val forearmAxis =
+                        pose(poses, hand)
+                            .getTranslation(Vector3f())
+                            .sub(pose(poses, forearm).getTranslation(Vector3f()))
+                            .normalize()
+                    val handAxis =
+                        pose(poses, hand).transformDirection(Vector3f(1f, 0f, 0f)).normalize()
+                    var bend: Float =
+                        (Math.toDegrees(
+                                (Math.acos(
+                                    (Math.max(-1f, Math.min(1f, forearmAxis.dot(handAxis))))
+                                        .toDouble(),
+                                )),
+                            ))
+                            .toFloat()
                     val forearmPalm = pose(poses, forearm).transformDirection(Vector3f(0f, 0f, 1f))
                     val handPalm = pose(poses, hand).transformDirection(Vector3f(0f, 0f, 1f))
                     forearmPalm.fma(-forearmPalm.dot(forearmAxis), forearmAxis).normalize()
                     handPalm.fma(-handPalm.dot(forearmAxis), forearmAxis).normalize()
-                    var roll: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, forearmPalm.dot(handPalm)))).toDouble())))).toFloat()
-                    var abduction: Float = (Math.toDegrees((Math.atan2((Math.abs(elbow.x-shoulder.x)).toDouble(), (shoulder.y-elbow.y).toDouble())))).toFloat()
-                    var forward: Float = (Math.toDegrees((Math.atan2((elbow.z-wrist.z).toDouble(), (elbow.y-wrist.y).toDouble())))).toFloat()
-                    val flex: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, elbow.sub(shoulder, Vector3f()).normalize().dot(wrist.sub(elbow, Vector3f()).normalize())))).toDouble())))).toFloat()
-                    if (bend>(if (model==2) 35 else 30) || roll>10 || abduction>25 || elbow.y>shoulder.y-0.12f
-                        || (if (model==2) Math.abs(shoulder.z-wrist.z)>0.035f || flex>25 else elbow.z<wrist.z+0.09f)) throw AssertionError("unnatural arm/wrist: "+models[model]+" female="+female+" bank="+lean
-                        +" bend="+bend+" roll="+roll+" abduction="+abduction+" forward="+forward)
+                    var roll: Float =
+                        (Math.toDegrees(
+                                (Math.acos(
+                                    (Math.max(-1f, Math.min(1f, forearmPalm.dot(handPalm))))
+                                        .toDouble(),
+                                )),
+                            ))
+                            .toFloat()
+                    var abduction: Float =
+                        (Math.toDegrees(
+                                (Math.atan2(
+                                    (Math.abs(elbow.x - shoulder.x)).toDouble(),
+                                    (shoulder.y - elbow.y).toDouble(),
+                                )),
+                            ))
+                            .toFloat()
+                    var forward: Float =
+                        (Math.toDegrees(
+                                (Math.atan2(
+                                    (elbow.z - wrist.z).toDouble(),
+                                    (elbow.y - wrist.y).toDouble(),
+                                )),
+                            ))
+                            .toFloat()
+                    val flex: Float =
+                        (Math.toDegrees(
+                                (Math.acos(
+                                    (Math.max(
+                                            -1f,
+                                            Math.min(
+                                                1f,
+                                                elbow
+                                                    .sub(shoulder, Vector3f())
+                                                    .normalize()
+                                                    .dot(wrist.sub(elbow, Vector3f()).normalize()),
+                                            ),
+                                        ))
+                                        .toDouble(),
+                                )),
+                            ))
+                            .toFloat()
+                    if (
+                        bend > (if (model == 2) 35 else 30) ||
+                            roll > 10 ||
+                            abduction > 25 ||
+                            elbow.y > shoulder.y - 0.12f ||
+                            (if (model == 2) Math.abs(shoulder.z - wrist.z) > 0.035f || flex > 25
+                            else elbow.z < wrist.z + 0.09f)
+                    )
+                        throw AssertionError(
+                            "unnatural arm/wrist: " +
+                                models[model] +
+                                " female=" +
+                                female +
+                                " bank=" +
+                                lean +
+                                " bend=" +
+                                bend +
+                                " roll=" +
+                                roll +
+                                " abduction=" +
+                                abduction +
+                                " forward=" +
+                                forward,
+                        )
                     val measuredAxis = Vector3f(0f, 0.4012329f, 0.9159761f)
                     handleDelta.transformDirection(measuredAxis).normalize()
-                    val shaftAngle: Float = (Math.toDegrees((Math.acos((Math.abs(handAxis.dot(measuredAxis))).toDouble())))).toFloat()
-                    val palm = inverseDelta.transformDirection(pose(poses, hand).transformDirection(Vector3f(0f, 0f, 1f))).normalize()
-                    if ((shaftAngle<45 || shaftAngle>70) || palm.x*(if (side==0) -1 else 1)<0.9f || palm.y<0.02f) throw AssertionError("shaft no longer crosses fingers or palm is not inward/up")
+                    val shaftAngle: Float =
+                        (Math.toDegrees(
+                                (Math.acos((Math.abs(handAxis.dot(measuredAxis))).toDouble())),
+                            ))
+                            .toFloat()
+                    val palm =
+                        inverseDelta
+                            .transformDirection(
+                                pose(poses, hand).transformDirection(Vector3f(0f, 0f, 1f)),
+                            )
+                            .normalize()
+                    if (
+                        (shaftAngle < 45 || shaftAngle > 70) ||
+                            palm.x * (if (side == 0) -1 else 1) < 0.9f ||
+                            palm.y < 0.02f
+                    )
+                        throw AssertionError(
+                            "shaft no longer crosses fingers or palm is not inward/up",
+                        )
                 }
                 for (link in arrayOf(intArrayOf(upper, forearm), intArrayOf(forearm, hand))) {
-                    val old: Float = before[link[0]].getTranslation(Vector3f()).distance(before[link[1]].getTranslation(Vector3f()))
-                    val now: Float = pose(poses, link[0]).getTranslation(Vector3f()).distance(pose(poses, link[1]).getTranslation(Vector3f()))
-                    if (Math.abs(old-now)>0.00001f) throw AssertionError("native arm length changed")
+                    val old: Float =
+                        before[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(before[link[1]].getTranslation(Vector3f()))
+                    val now: Float =
+                        pose(poses, link[0])
+                            .getTranslation(Vector3f())
+                            .distance(pose(poses, link[1]).getTranslation(Vector3f()))
+                    if (Math.abs(old - now) > 0.00001f)
+                        throw AssertionError("native arm length changed")
                 }
             }
-            for (i in intArrayOf(0, 11, 12, 13)) if (!pose(poses, i).equals(before[i])) throw AssertionError("native thigh/torso pose changed")
+            for (i in intArrayOf(0, 11, 12, 13)) if (!pose(poses, i).equals(before[i]))
+                throw AssertionError("native thigh/torso pose changed")
         }
-        if (CartGrip.handle("unknown", true, Vector3f())) throw AssertionError("unknown cart accepted")
+        if (CartGrip.handle("unknown", true, Vector3f()))
+            throw AssertionError("unknown cart accepted")
     }
 
     private fun checkCapturedWoodGait() {
         // B42.21 pre-IK native male/female gait captures, before either torso adjustment.
-        val captures = """
+        val captures =
+            """
             0,1.4423347e-06,0.99829906,0.058303982,0.0,1.0000002,-1.9285176e-06,1.1793861e-07,0.0,2.023753e-07,0.05830397,-0.9982993,0.0,-4.678571e-07,0.56199,0.010946239,1.0,1.3777465e-06,0.98164886,0.19069776,0.0,1.0000002,-9.3554576e-07,-4.8634874e-06,0.0,-4.686763e-06,0.19069768,-0.98164916,0.0,-7.0655557e-07,0.66827184,0.017237516,1.0,0.9649846,-0.2623006,1.6689302e-06,0.0,0.25747448,0.9472213,0.19098859,0.0,-0.05009864,-0.18430106,0.9815896,0.0,0.0156696,0.7727697,0.037544496,1.0,-0.96098584,-0.2765918,-0.00016569346,0.0,0.27150273,-0.9431788,-0.19156903,0.0,0.052830894,-0.18414052,0.9814767,0.0,-0.015669968,0.77276975,0.037544463,1.0,0.21945554,-0.9696251,-0.107981235,0.0,0.9443475,0.23891637,-0.22610499,0.0,0.24503674,-0.0523521,0.96809655,0.0,0.09970702,0.74992716,0.03754436,1.0,-0.23382765,0.0042183623,-0.9722661,0.0,0.9443473,0.23894426,-0.22607586,0.0,0.2313623,-0.97102123,-0.05985467,0.0,0.12978548,0.6170283,0.022744492,1.0,0.021503372,-0.0019336939,-0.99976397,0.0,0.9929849,0.11632186,0.021132922,0.0,0.11625167,-0.9932069,0.0044222176,0.0,0.09773775,0.617606,-0.11051613,1.0,-0.2615239,-0.9599612,-0.10036559,0.0,0.94250333,-0.2764091,0.18783802,0.0,-0.2080601,-0.045470886,0.977056,0.0,-0.09935942,0.74868304,0.037529327,1.0,0.19662818,0.0042962134,-0.98046637,0.0,0.9425012,-0.27644104,0.18780251,0.0,-0.27023226,-0.9610187,-0.05840463,0.0,-0.13520427,0.6171091,0.023773313,1.0,-0.021502584,-0.009015858,-0.9997256,0.0,0.9929847,-0.11647311,-0.020307507,0.0,-0.11625553,-0.9931504,0.0114578605,0.0,-0.10825472,0.61769795,-0.110611126,1.0
             0,1.419542e-06,0.9985134,0.054508965,0.0,1.0000002,-1.9024812e-06,7.30646e-08,0.0,1.506645e-07,0.054508954,-0.99851364,0.0,-4.678571e-07,0.56199,0.010946241,1.0,1.3599406e-06,0.98140657,0.19194089,0.0,1.0000002,-9.0265354e-07,-4.9079736e-06,0.0,-4.734987e-06,0.19194084,-0.9814068,0.0,-7.089778e-07,0.66829515,0.01683349,1.0,0.9672671,-0.25373396,-0.00029752403,0.0,0.24905966,0.94918334,0.19238515,0.0,-0.048534792,-0.18616393,0.9813087,0.0,0.015576809,0.7727076,0.03727377,1.0,-0.9633952,-0.26806054,-0.00050109625,0.0,0.26312238,-0.9452494,-0.19303647,0.0,0.05127433,-0.18610418,0.9811815,0.0,-0.0155772045,0.7727075,0.037273742,1.0,0.21684831,-0.97046554,-0.105574206,0.0,0.9453027,0.23575534,-0.22540328,0.0,0.24364065,-0.050922886,0.9685167,0.0,0.099813074,0.750611,0.0372476,1.0,-0.231982,0.00028514862,-0.9727086,0.0,0.9453026,0.23578341,-0.22537434,0.0,0.22927807,-0.9717934,-0.054963633,0.0,0.12953421,0.6175969,0.022777587,1.0,0.021507213,-0.0017440915,-0.9997553,0.0,0.9929771,0.1163273,0.021159904,0.0,0.11625404,-0.99319756,0.004237473,0.0,0.0977394,0.61763555,-0.11054364,1.0,-0.25860313,-0.9609855,-0.09805228,0.0,0.94364893,-0.2730287,0.18702842,0.0,-0.20650478,-0.04415898,0.9774388,0.0,-0.09947655,0.7493637,0.037229422,1.0,0.19450717,0.00045204908,-0.9808909,0.0,0.9436466,-0.27306083,0.186993,0.0,-0.26775172,-0.96199,-0.05353887,0.0,-0.13492098,0.6176494,0.023790449,1.0,-0.021558737,-0.008938432,-0.9997175,0.0,0.99297816,-0.11650975,-0.020371359,0.0,-0.116285816,-0.9931429,0.011387438,0.0,-0.10826214,0.6177114,-0.11065215,1.0
             0,1.312825e-06,0.99932927,0.036623713,0.0,1.0000002,-1.7949084e-06,1.1909083e-07,0.0,1.6728154e-07,0.036623698,-0.9993295,0.0,-4.6785715e-07,0.56199,0.010946242,1.0,1.2431408e-06,0.9802436,0.19779404,0.0,1.0000002,-7.6424635e-07,-4.860642e-06,0.0,-4.7077674e-06,0.19779399,-0.98024386,0.0,-7.203411e-07,0.6683834,0.0149293225,1.0,0.9770277,-0.21310699,-0.0011355951,0.0,0.20911388,0.9576621,0.19787288,0.0,-0.041080784,-0.19356485,0.98022616,0.0,0.015136793,0.7723972,0.035995036,1.0,-0.97375757,-0.22757898,-0.0017840192,0.0,0.22332321,-0.95397323,-0.20015377,0.0,0.043849178,-0.19529977,0.9797623,0.0,-0.015137213,0.77239734,0.035994943,1.0,0.2059372,-0.97406745,-0.093706876,0.0,0.9492069,0.22212161,-0.22286355,0.0,0.2378987,-0.043051086,0.9703347,0.0,0.100222856,0.75383884,0.03589584,1.0,-0.22405761,-0.020017542,-0.97436816,0.0,0.9492066,0.22215033,-0.22283524,0.0,0.2209163,-0.9748048,-0.03077373,0.0,0.12844862,0.62033117,0.02305244,1.0,0.021494856,-0.0020676851,-0.99976456,0.0,0.99298644,0.11632534,0.02110793,0.0,0.11625336,-0.99320704,0.004553467,0.0,0.09773998,0.617587,-0.1104963,1.0,-0.2462644,-0.9652084,-0.0878953,0.0,0.9483392,-0.25868708,0.18366922,0.0,-0.2000165,-0.038122974,0.97905,0.0,-0.099938825,0.7525791,0.035838895,1.0,0.18557823,-0.017109416,-0.9824788,0.0,0.948337,-0.25871992,0.18363449,0.0,-0.25732756,-0.9657994,-0.031787425,0.0,-0.1336923,0.6202859,0.023792073,1.0,-0.02149551,-0.0073577464,-0.99973994,0.0,0.99298614,-0.116440035,-0.02049283,0.0,-0.11625736,-0.99316895,0.009808868,0.0,-0.108257204,0.6179409,-0.1108682,1.0
@@ -156,8 +647,21 @@ object CartGripTest {
             1,1.3600713e-06,0.9990024,0.044661246,0.0,1.0000002,-1.8439096e-06,1.2619694e-07,0.0,1.8712444e-07,0.04466124,-0.99900264,0.0,-4.678572e-07,0.5619899,0.0109462375,1.0,1.2887092e-06,0.9807706,0.19516458,0.0,1.0000002,-8.33932e-07,-4.80865e-06,0.0,-4.6464916e-06,0.19516453,-0.9807708,0.0,-7.1531264e-07,0.66834795,0.015785055,1.0,0.972853,-0.231421,-0.00078085065,0.0,0.22711633,0.9540953,0.19524267,0.0,-0.04443841,-0.19011989,0.9807539,0.0,0.01533506,0.7725404,0.036570217,1.0,-0.96931165,-0.245831,-0.0012674853,0.0,0.24126281,-0.9502796,-0.19687794,0.0,0.04719448,-0.191142,0.98042685,0.0,-0.015335498,0.77254057,0.036570128,1.0,0.21057037,-0.9725769,-0.09875833,0.0,0.94757575,0.22790027,-0.22396772,0.0,0.24033308,-0.046419837,0.96957934,0.0,0.10005754,0.75238705,0.036501933,1.0,-0.22748488,-0.010945149,-0.97371817,0.0,0.9475756,0.22792868,-0.22393909,0.0,0.22438887,-0.97361463,-0.041479014,0.0,0.12891844,0.6190835,0.022966087,1.0,0.021494364,-0.0020894706,-0.99976474,0.0,0.9929864,0.116325215,0.021104965,0.0,0.11625292,-0.9932073,0.004575014,0.0,0.097739965,0.6175828,-0.11049348,1.0,-0.25154167,-0.963437,-0.09227653,0.0,0.9463652,-0.2648151,0.18511237,0.0,-0.20278041,-0.04076363,0.97837514,0.0,-0.09974997,0.7511327,0.03645906,1.0,0.18947694,-0.009072959,-0.98184186,0.0,0.94636285,-0.26484767,0.18507737,0.0,-0.26171672,-0.96424615,-0.04159616,0.0,-0.13422668,0.6190824,0.023811698,1.0,-0.021494789,-0.008055121,-0.99973494,0.0,0.99298614,-0.116454534,-0.02041098,0.0,-0.116257794,-0.993162,0.010501683,0.0,-0.10825726,0.61783886,-0.110761285,1.0
             1,1.198721e-06,0.99983996,0.017899886,0.0,1.0000002,-1.6782546e-06,1.3988563e-07,0.0,1.6136676e-07,0.017899878,-0.9998402,0.0,-4.6785703e-07,0.56199,0.01094624,1.0,1.1182167e-06,0.9789894,0.20391114,0.0,1.0000002,-6.2062315e-07,-4.7934946e-06,0.0,-4.663463e-06,0.20391108,-0.97898966,0.0,-7.324891e-07,0.66843945,0.012935884,1.0,0.98541015,-0.17018646,-0.0016447119,0.0,0.16692352,0.9645372,0.20445906,0.0,-0.033209927,-0.2017507,0.97887284,0.0,0.014671303,0.7720403,0.034651604,1.0,-0.982776,-0.18478109,-0.0026034117,0.0,0.18125966,-0.9611046,-0.20838094,0.0,0.036002968,-0.20526375,0.9780437,0.0,-0.014671768,0.7720405,0.034651555,1.0,0.19685717,-0.9768969,-0.083178245,0.0,0.95230216,0.21069667,-0.2207431,0.0,0.23316886,-0.035755828,0.97177804,0.0,0.10048742,0.7572197,0.034508087,1.0,-0.21690512,-0.0413253,-0.9753151,0.0,0.9523019,0.21072608,-0.2207155,0.0,0.21464516,-0.97666925,-0.006353393,0.0,0.12746868,0.62332416,0.023107663,1.0,0.02149536,-0.0015777946,-0.9997652,0.0,0.99298626,0.11631526,0.021165326,0.0,0.11625388,-0.993209,0.0040668547,0.0,0.09774025,0.61765957,-0.11057073,1.0,-0.23570701,-0.968607,-0.07900563,0.0,0.9521513,-0.24644703,0.18075538,0.0,-0.19455169,-0.032619663,0.9803492,0.0,-0.10025883,0.7559493,0.034424122,1.0,0.17735335,-0.035988927,-0.98348707,0.0,0.9521489,-0.24648067,0.18072134,0.0,-0.24891357,-0.9684777,-0.009447455,0.0,-0.13256511,0.6231904,0.02359578,1.0,-0.021495529,-0.005171776,-0.99975353,0.0,0.9929862,-0.11639464,-0.020747302,0.0,-0.1162572,-0.993188,0.0076372325,0.0,-0.10825741,0.61825776,-0.11120278,1.0
             1,1.4040172e-06,0.9986516,0.05191699,0.0,1.0000002,-1.886705e-06,7.6063316e-08,0.0,1.4915543e-07,0.05191698,-0.99865186,0.0,-4.678571e-07,0.56198996,0.01094624,1.0,1.3432043e-06,0.98124033,0.19278947,0.0,1.0000002,-8.847169e-07,-4.8912143e-06,0.0,-4.7208214e-06,0.19278942,-0.9812405,0.0,-7.106307e-07,0.66831005,0.016557522,1.0,0.9687903,-0.24787924,-0.0004229732,0.0,0.24329577,0.9505429,0.19306551,0.0,-0.047455154,-0.18714307,0.98118466,0.0,0.015513288,0.7726646,0.037088692,1.0,-0.96500516,-0.26222864,-0.0007163286,0.0,0.25738102,-0.94663167,-0.19401886,0.0,0.050199464,-0.18741369,0.98099715,0.0,-0.015513665,0.7726647,0.03708861,1.0,0.21513543,-0.9710637,-0.10368383,0.0,0.9459342,0.23359665,-0.22503595,0.0,0.24274471,-0.049664646,0.96881706,0.0,0.09988204,0.75107795,0.037051577,1.0,-0.23077473,-0.002718076,-0.97300154,0.0,0.94593394,0.23362483,-0.2250071,0.0,0.22792828,-0.9723215,-0.051343583,0.0,0.12936854,0.617982,0.022840649,1.0,0.021496803,-0.0019125342,-0.99976516,0.0,0.9929867,0.11632086,0.021128118,0.0,0.11625212,-0.99320835,0.004399568,0.0,0.09773915,0.61760885,-0.11052075,1.0,-0.25668943,-0.9616657,-0.096481495,0.0,0.9443952,-0.27079344,0.18651928,0.0,-0.20549579,-0.043238863,0.977702,0.0,-0.09955313,0.74982876,0.03702554,1.0,0.1931954,-0.0019124746,-0.98115736,0.0,0.9443929,-0.27082568,0.18648395,0.0,-0.2660783,-0.9626256,-0.05051616,0.0,-0.13473548,0.61802137,0.023801893,1.0,-0.021496505,-0.008597702,-0.9997307,0.0,0.99298644,-0.11646371,-0.020349609,0.0,-0.11625599,-0.99315673,0.011040837,0.0,-0.10825633,0.6177592,-0.11067732,1.0
-            """.trimIndent()
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand")
+            """
+                .trimIndent()
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8), offsets)
@@ -168,103 +672,277 @@ object CartGripTest {
             val nativePoses = arrayOfNulls<Matrix4f>(names.size)
             for (i in 0 until names.size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[1+i*16+j])
-                nativePoses[i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[1 + i * 16 + j])
+                nativePoses[i] = Matrix4f().set(values)
             }
             for (tick in -84..84) for (sample in 0 until 3) {
-                var bank: Float = (Math.toRadians((tick/12.0))).toFloat()
-                var pressure: Float = Math.abs(bank)+sample*((Math.toRadians((7).toDouble())).toFloat()-Math.abs(bank))/2
-                val cart = Matrix4f().set(floatArrayOf(76.5f, -4.1037783e-5f, -9.11952e-6f, 0f, 2.8023098e-5f, 30.694286f, 70.07218f, 0f, -2.4333809e-5f, -70.07218f, 30.694283f, 0f, -0.0060535767f, 0.16740987f, -0.41188842f, 1f))
+                var bank: Float = (Math.toRadians((tick / 12.0))).toFloat()
+                var pressure: Float =
+                    Math.abs(bank) +
+                        sample * ((Math.toRadians((7).toDouble())).toFloat() - Math.abs(bank)) / 2
+                val cart =
+                    Matrix4f()
+                        .set(
+                            floatArrayOf(
+                                76.5f,
+                                -4.1037783e-5f,
+                                -9.11952e-6f,
+                                0f,
+                                2.8023098e-5f,
+                                30.694286f,
+                                70.07218f,
+                                0f,
+                                -2.4333809e-5f,
+                                -70.07218f,
+                                30.694283f,
+                                0f,
+                                -0.0060535767f,
+                                0.16740987f,
+                                -0.41188842f,
+                                1f,
+                            ),
+                        )
                 val delta = Matrix4f()
                 CartGrounding.lowerHandles(cart, "WheelbarrowWood")
-                if (!CartGrounding.alignWood(cart, bank, pressure, 0f, delta)) throw AssertionError("captured wood grounding rejected")
-                val palette = FloatBuffer.allocate(names.size*16)
-                for (pose in nativePoses) PZMath.convertMatrix(Matrix4f(pose).transpose(), org.lwjgl.util.vector.Matrix4f()).store(palette)
+                if (!CartGrounding.alignWood(cart, bank, pressure, 0f, delta))
+                    throw AssertionError("captured wood grounding rejected")
+                val palette = FloatBuffer.allocate(names.size * 16)
+                for (pose in nativePoses) PZMath.convertMatrix(
+                        Matrix4f(pose).transpose(),
+                        org.lwjgl.util.vector.Matrix4f(),
+                    )
+                    .store(palette)
                 val poses = CartGrip.livePoses(actor, actor, palette, delta, false, pressure)
-                if (poses==null) throw AssertionError("captured wood torso rejected")
+                if (poses == null) throw AssertionError("captured wood torso rejected")
                 val before = copyPoses(poses, names.size)
-                if (!pose(poses, 0).equals(pose(nativePoses, 0), 0.000001f)) throw AssertionError("captured native hip anchor changed")
+                if (!pose(poses, 0).equals(pose(nativePoses, 0), 0.000001f))
+                    throw AssertionError("captured native hip anchor changed")
                 for (i in 1 until names.size) {
                     val parent: Int = actor.getBoneAt(i).parent.index
-                    val old: Float = pose(nativePoses, parent).getTranslation(Vector3f()).distance(pose(nativePoses, i).getTranslation(Vector3f()))
-                    val now: Float = pose(poses, parent).getTranslation(Vector3f()).distance(pose(poses, i).getTranslation(Vector3f()))
-                    if (Math.abs(old-now)>0.00001f) throw AssertionError("captured torso link stretched: "+names[i])
-                    if (tick==0 && sample==0 && !pose(poses, i).equals(pose(nativePoses, i), 0.000001f)) throw AssertionError("straight wooden pose changed the native gait: "+names[i])
+                    val old: Float =
+                        pose(nativePoses, parent)
+                            .getTranslation(Vector3f())
+                            .distance(pose(nativePoses, i).getTranslation(Vector3f()))
+                    val now: Float =
+                        pose(poses, parent)
+                            .getTranslation(Vector3f())
+                            .distance(pose(poses, i).getTranslation(Vector3f()))
+                    if (Math.abs(old - now) > 0.00001f)
+                        throw AssertionError("captured torso link stretched: " + names[i])
+                    if (
+                        tick == 0 &&
+                            sample == 0 &&
+                            !pose(poses, i).equals(pose(nativePoses, i), 0.000001f)
+                    )
+                        throw AssertionError(
+                            "straight wooden pose changed the native gait: " + names[i],
+                        )
                 }
-                if (!CartGrip.grip(poses, actor, "WheelbarrowWood", female, delta, cart, pressure)) throw AssertionError("captured native wood grip unreachable: frame="+frame+" bank="+bank+" pressure="+pressure)
-                if (tick==0 && sample==0) {
+                if (!CartGrip.grip(poses, actor, "WheelbarrowWood", female, delta, cart, pressure))
+                    throw AssertionError(
+                        "captured native wood grip unreachable: frame=" +
+                            frame +
+                            " bank=" +
+                            bank +
+                            " pressure=" +
+                            pressure,
+                    )
+                if (tick == 0 && sample == 0) {
                     val contact = copyPoses(poses, names.size)
                     for (amount in floatArrayOf(0f, 0.5f, 1f)) {
                         val released = copyPoses(before)
-                        if (!CartGrip.releasePose(released, actor, contact, amount)) throw AssertionError("captured pickup hand release refused")
-                        if (amount==0f || amount==1f) for (i in 0 until released.size) if (!released[i].equals(if (amount==1f) contact[i] else before[i], 0.00001f)) throw AssertionError("free pickup release endpoint jumped")
-                        if (!CartGrip.transitionGrip(released, actor, female, delta, cart, 1f, 1f)) throw AssertionError("moving recovery lost an already held handle")
-                        for (i in 0 until released.size) if (!released[i].isFinite()) throw AssertionError("captured moving grip became nonfinite")
+                        if (!CartGrip.releasePose(released, actor, contact, amount))
+                            throw AssertionError("captured pickup hand release refused")
+                        if (amount == 0f || amount == 1f)
+                            for (i in 0 until released.size) if (
+                                !released[i].equals(
+                                    if (amount == 1f) contact[i] else before[i],
+                                    0.00001f,
+                                )
+                            )
+                                throw AssertionError("free pickup release endpoint jumped")
+                        if (!CartGrip.transitionGrip(released, actor, female, delta, cart, 1f, 1f))
+                            throw AssertionError("moving recovery lost an already held handle")
+                        for (i in 0 until released.size) if (!released[i].isFinite())
+                            throw AssertionError("captured moving grip became nonfinite")
                         for (hand in intArrayOf(6, 9)) {
                             val shape = CartGrip.grasp(female, "WheelbarrowWood")
-                            var palm = released[hand].transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
+                            var palm =
+                                released[hand].transformPosition(
+                                    Vector3f(shape.palmX, 0f, shape.palmDepth),
+                                )
                             val handle = Vector3f()
-                            CartGrip.handle("WheelbarrowWood", hand==6, handle)
+                            CartGrip.handle("WheelbarrowWood", hand == 6, handle)
                             cart.transformPosition(handle)
-                            if (palm.distance(handle)>0.00002f) throw AssertionError("moving contact palm left its handle")
+                            if (palm.distance(handle) > 0.00002f)
+                                throw AssertionError("moving contact palm left its handle")
                         }
                     }
                 }
                 for (side in 0 until 2) {
-                    val upper: Int = if (side==0) 4 else 7
-                    val forearm: Int = upper+1
-                    val hand: Int = upper+2
+                    val upper: Int = if (side == 0) 4 else 7
+                    val forearm: Int = upper + 1
+                    val hand: Int = upper + 2
                     val shoulder = pose(poses, upper).getTranslation(Vector3f())
                     val elbow = pose(poses, forearm).getTranslation(Vector3f())
                     val wrist = pose(poses, hand).getTranslation(Vector3f())
-                    val length: Float = before[upper].getTranslation(Vector3f()).distance(before[forearm].getTranslation(Vector3f())) +
-                        before[forearm].getTranslation(Vector3f()).distance(before[hand].getTranslation(Vector3f()))
-                    var reserve: Float = length-shoulder.distance(wrist)
-                    if (reserve<(if (pressure<=Math.toRadians((3).toDouble())) 0.004f else 0.0025f)) throw AssertionError("captured native wood grip has insufficient reach reserve: frame="
-                        +frame+" bank="+bank+" pressure="+pressure+" reserve="+reserve)
+                    val length: Float =
+                        before[upper]
+                            .getTranslation(Vector3f())
+                            .distance(before[forearm].getTranslation(Vector3f())) +
+                            before[forearm]
+                                .getTranslation(Vector3f())
+                                .distance(before[hand].getTranslation(Vector3f()))
+                    var reserve: Float = length - shoulder.distance(wrist)
+                    if (
+                        reserve <
+                            (if (pressure <= Math.toRadians((3).toDouble())) 0.004f else 0.0025f)
+                    )
+                        throw AssertionError(
+                            "captured native wood grip has insufficient reach reserve: frame=" +
+                                frame +
+                                " bank=" +
+                                bank +
+                                " pressure=" +
+                                pressure +
+                                " reserve=" +
+                                reserve,
+                        )
                     val shape = CartGrip.grasp(female, "WheelbarrowWood")
-                    val actual = pose(poses, hand).transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
+                    val actual =
+                        pose(poses, hand)
+                            .transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
                     var expected = Vector3f()
-                    CartGrip.handle("WheelbarrowWood", side==0, expected)
+                    CartGrip.handle("WheelbarrowWood", side == 0, expected)
                     cart.transformPosition(expected)
-                    if (actual.distance(expected)>0.00002f) throw AssertionError("captured native wood palm missed handle")
+                    if (actual.distance(expected) > 0.00002f)
+                        throw AssertionError("captured native wood palm missed handle")
                     for (link in arrayOf(intArrayOf(upper, forearm), intArrayOf(forearm, hand))) {
-                        val old: Float = before[link[0]].getTranslation(Vector3f()).distance(before[link[1]].getTranslation(Vector3f()))
-                        val now: Float = pose(poses, link[0]).getTranslation(Vector3f()).distance(pose(poses, link[1]).getTranslation(Vector3f()))
-                        if (Math.abs(old-now)>0.00001f) throw AssertionError("captured native wood arm stretched")
+                        val old: Float =
+                            before[link[0]]
+                                .getTranslation(Vector3f())
+                                .distance(before[link[1]].getTranslation(Vector3f()))
+                        val now: Float =
+                            pose(poses, link[0])
+                                .getTranslation(Vector3f())
+                                .distance(pose(poses, link[1]).getTranslation(Vector3f()))
+                        if (Math.abs(old - now) > 0.00001f)
+                            throw AssertionError("captured native wood arm stretched")
                     }
                     val forearmAxis = Vector3f(wrist).sub(elbow).normalize()
-                    val handAxis = pose(poses, hand).transformDirection(Vector3f(1f, 0f, 0f)).normalize()
-                    var bend: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, forearmAxis.dot(handAxis)))).toDouble())))).toFloat()
+                    val handAxis =
+                        pose(poses, hand).transformDirection(Vector3f(1f, 0f, 0f)).normalize()
+                    var bend: Float =
+                        (Math.toDegrees(
+                                (Math.acos(
+                                    (Math.max(-1f, Math.min(1f, forearmAxis.dot(handAxis))))
+                                        .toDouble(),
+                                )),
+                            ))
+                            .toFloat()
                     val forearmPalm = pose(poses, forearm).transformDirection(Vector3f(0f, 0f, 1f))
                     val handPalm = pose(poses, hand).transformDirection(Vector3f(0f, 0f, 1f))
                     forearmPalm.fma(-forearmPalm.dot(forearmAxis), forearmAxis).normalize()
                     handPalm.fma(-handPalm.dot(forearmAxis), forearmAxis).normalize()
-                    var roll: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, forearmPalm.dot(handPalm)))).toDouble())))).toFloat()
-                    var abduction: Float = (Math.toDegrees((Math.atan2((Math.abs(elbow.x-shoulder.x)).toDouble(), (shoulder.y-elbow.y).toDouble())))).toFloat()
-                    var forward: Float = (Math.toDegrees((Math.atan2((elbow.z-wrist.z).toDouble(), (elbow.y-wrist.y).toDouble())))).toFloat()
-                    // On a bank reversal, forward handle pressure can outlast the actual roll; retain contact and native link lengths.
-                    if ((pressure<=Math.toRadians((3).toDouble()) && (bend>33 || abduction>30 || forward>40))
-                        || bend>50 || roll>10 || abduction>55 || elbow.y>shoulder.y-0.085f || forward<0 || forward>50) throw AssertionError("unnatural captured wood arm: frame="+frame+" bank="+bank+" pressure="+pressure+" bend="+bend
-                        +" roll="+roll+" abduction="+abduction+" forward="+forward)
-                    var shaft = Vector3f(if (side==0) 0.13444413f else -0.13444413f, 0.98614604f, -0.09716362f)
+                    var roll: Float =
+                        (Math.toDegrees(
+                                (Math.acos(
+                                    (Math.max(-1f, Math.min(1f, forearmPalm.dot(handPalm))))
+                                        .toDouble(),
+                                )),
+                            ))
+                            .toFloat()
+                    var abduction: Float =
+                        (Math.toDegrees(
+                                (Math.atan2(
+                                    (Math.abs(elbow.x - shoulder.x)).toDouble(),
+                                    (shoulder.y - elbow.y).toDouble(),
+                                )),
+                            ))
+                            .toFloat()
+                    var forward: Float =
+                        (Math.toDegrees(
+                                (Math.atan2(
+                                    (elbow.z - wrist.z).toDouble(),
+                                    (elbow.y - wrist.y).toDouble(),
+                                )),
+                            ))
+                            .toFloat()
+                    // On a bank reversal, forward handle pressure can outlast the actual roll;
+                    // retain contact and native link lengths.
+                    if (
+                        (pressure <= Math.toRadians((3).toDouble()) &&
+                            (bend > 33 || abduction > 30 || forward > 40)) ||
+                            bend > 50 ||
+                            roll > 10 ||
+                            abduction > 55 ||
+                            elbow.y > shoulder.y - 0.085f ||
+                            forward < 0 ||
+                            forward > 50
+                    )
+                        throw AssertionError(
+                            "unnatural captured wood arm: frame=" +
+                                frame +
+                                " bank=" +
+                                bank +
+                                " pressure=" +
+                                pressure +
+                                " bend=" +
+                                bend +
+                                " roll=" +
+                                roll +
+                                " abduction=" +
+                                abduction +
+                                " forward=" +
+                                forward,
+                        )
+                    var shaft =
+                        Vector3f(
+                            if (side == 0) 0.13444413f else -0.13444413f,
+                            0.98614604f,
+                            -0.09716362f,
+                        )
                     cart.transformDirection(shaft).normalize()
-                    val shaftAngle: Float = (Math.toDegrees((Math.acos((Math.abs(handAxis.dot(shaft))).toDouble())))).toFloat()
+                    val shaftAngle: Float =
+                        (Math.toDegrees((Math.acos((Math.abs(handAxis.dot(shaft))).toDouble()))))
+                            .toFloat()
                     val t: Float = CartSteeringMath.woodenTurnAmount(pressure)
-                    var palm = pose(poses, hand).transformDirection(Vector3f(0f, 0f, 1f)).normalize()
+                    var palm =
+                        pose(poses, hand).transformDirection(Vector3f(0f, 0f, 1f)).normalize()
                     val unbankedPalm = Matrix4f(delta).invert().transformDirection(palm).normalize()
-                    if (Math.abs(shaftAngle-(65-10*t))>1 || unbankedPalm.x*(if (side==0) -1 else 1)<0.9f || unbankedPalm.y<0.02f) throw AssertionError("wooden shaft/grip: frame="+frame+" bank="+bank+" pressure="+pressure+" shaft="+shaftAngle+" expected="+(65-10*t)+" palm="+palm)
+                    if (
+                        Math.abs(shaftAngle - (65 - 10 * t)) > 1 ||
+                            unbankedPalm.x * (if (side == 0) -1 else 1) < 0.9f ||
+                            unbankedPalm.y < 0.02f
+                    )
+                        throw AssertionError(
+                            "wooden shaft/grip: frame=" +
+                                frame +
+                                " bank=" +
+                                bank +
+                                " pressure=" +
+                                pressure +
+                                " shaft=" +
+                                shaftAngle +
+                                " expected=" +
+                                (65 - 10 * t) +
+                                " palm=" +
+                                palm,
+                        )
                 }
-                if (!pose(poses, 0).equals(before[0])) throw AssertionError("captured native wood hip anchor changed by IK")
+                if (!pose(poses, 0).equals(before[0]))
+                    throw AssertionError("captured native wood hip anchor changed by IK")
             }
             frame++
         }
-        if (frame!=24) throw AssertionError("missing native gait fixtures")
+        if (frame != 24) throw AssertionError("missing native gait fixtures")
     }
 
     private fun checkCapturedWoodRunning() {
-        // Native Run transitions plus six actual Sprint failures; fixture shifts preserve each measured gait response.
-        val captures = """
+        // Native Run transitions plus six actual Sprint failures; fixture shifts preserve each
+        // measured gait response.
+        val captures =
+            """
             male-walk-before,0,-0.0,1.0,5.1721696e-07,0.0,0.0,-5.1721696e-07,1.0,0.0,0.0,0.0,0.0,1.0,0.0,1.7679401e-08,-0.02607891,0.0,1.0,76.5,1.7221464e-07,-1.4673389e-05,0.0,1.7279497e-05,20.771942,73.62592,0.0,1.3746763e-05,-73.625916,20.771938,0.0,-0.006053623,0.09717937,-0.34652746,1.0,0.038807478,0.94314104,-0.33012167,0.0,0.99749863,-0.017031817,0.06860204,0.0,0.059078813,-0.33195817,-0.9414428,0.0,0.0026425605,0.55417126,0.0075318078,1.0,0.027852928,0.9867181,-0.16004008,0.0,0.997499,-0.017031208,0.0685971,0.0,0.064960316,-0.16155042,-0.9847246,0.0,0.0067688613,0.6546136,-0.02753663,1.0,0.966768,-0.21382563,0.14013083,0.0,0.23288922,0.96270293,-0.137716,0.0,-0.105457336,0.16577412,0.980508,0.0,0.024558896,0.7589463,-0.043369927,1.0,-0.9962288,-0.08542556,-0.015166801,0.0,0.08137526,-0.9806262,0.17818855,0.0,-0.030094765,0.17628224,0.9838796,0.0,-0.00513095,0.7594531,-0.04541191,1.0,0.15442766,-0.96783924,0.19859199,0.0,0.9837142,0.13191037,-0.122089155,0.0,0.09196632,0.21421176,0.9724474,0.0,0.10875166,0.7403251,-0.031166757,1.0,-0.11508485,-0.059305746,-0.99158293,0.0,0.9837122,0.13194835,-0.12206324,0.0,0.13807563,-0.9894807,0.043154724,0.0,0.12991746,0.60767114,-0.003947208,1.0,0.10529242,-0.09778359,-0.98962134,0.0,0.99015534,0.102598876,0.095211275,0.0,0.092222735,-0.9899048,0.10762401,0.0,0.11414471,0.5995419,-0.13985525,1.0,-0.2283865,-0.96116304,0.15493774,0.0,0.9492503,-0.18449526,0.2547255,0.0,-0.2162473,0.20525055,0.9545206,0.0,-0.09188949,0.7520141,-0.046733662,1.0,0.2336936,-0.12815028,-0.96382827,0.0,0.94925046,-0.18453698,0.2546952,0.0,-0.2105006,-0.9744353,0.07852179,0.0,-0.123192385,0.6202753,-0.025497355,1.0,0.062014878,-0.10441279,-0.9925987,0.0,0.98820704,-0.1330794,0.07573945,0.0,-0.14000207,-0.9855904,0.0949287,0.0,-0.091162525,0.602711,-0.1576014,1.0,0.0033704638,-0.9793234,-0.20227897,0.0,-0.9994821,-0.009775601,0.030674297,0.0,-0.032017548,0.20207074,-0.97884816,0.0,0.055638358,0.5002887,0.010754941,1.0,0.019536003,-0.9414771,0.33651385,0.0,-0.9994821,-0.009775594,0.030674301,0.0,-0.025589598,-0.3369389,-0.94117945,0.0,0.05643886,0.2676995,-0.03728632,1.0,0.005801468,-0.99244994,0.12252216,0.0,-0.999493,-0.009592249,-0.030372825,0.0,0.03131861,-0.122283906,-0.99200153,0.0,0.060479704,0.07296342,0.032318555,1.0,-0.011082314,-0.9999258,-0.005203845,0.0,-0.9993669,0.010899931,0.033865396,0.0,-0.033806212,0.0055757477,-0.99941355,0.0,-0.054720916,0.5028421,0.013872365,1.0,0.002591461,-0.9270778,0.37486163,0.0,-0.99936676,0.010899931,0.0338654,0.0,-0.035481855,-0.37471217,-0.92646265,0.0,-0.05735296,0.26535976,0.012636449,1.0,-0.008663098,-0.9760909,0.21719311,0.0,-0.99681336,0.025653463,0.075529784,0.0,-0.079295665,-0.2158468,-0.9732028,0.0,-0.056816943,0.07360205,0.0901732,1.0
             male-enter,0,-0.06805831656,1.0,1.9428964e-07,0.0,0.0,-1.9428964e-07,1.0,0.0,0.0,0.0,0.0,1.0,0.0,6.4638446e-09,-0.02607891,0.0,1.0,76.5,-2.4531726e-05,-1.4673389e-05,0.0,2.3987324e-05,20.771942,73.62592,0.0,-1.0029056e-05,-73.625916,20.771938,0.0,-0.0060535944,0.097179376,-0.34652668,1.0,0.017457869,0.8001521,-0.5995439,0.0,0.9991329,-0.036627725,-0.0197902,0.0,-0.037795004,-0.5986785,-0.8000979,0.0,-0.0001205348,0.58299255,-0.037672997,1.0,0.022294115,0.87218153,-0.48867503,0.0,0.9991327,-0.036629803,-0.019794583,0.0,-0.035164434,-0.48780984,-0.87224185,0.0,0.0017409185,0.6682334,-0.10143818,1.0,0.9807952,-0.17068101,0.09438579,0.0,0.19503374,0.8544423,-0.48155093,0.0,0.0015443482,0.4907113,0.8713217,0.0,0.019799246,0.760521,-0.15377562,1.0,-0.9857958,0.08908714,0.14237186,0.0,-0.0042018974,-0.8605361,0.509373,0.0,0.1678945,0.5015394,0.8486873,0.0,-0.011569754,0.76167095,-0.15315424,1.0,0.28270742,-0.74249613,0.6072708,0.0,0.9527131,0.14381541,-0.2676846,0.0,0.11141956,0.6542311,0.7480434,0.0,0.10521335,0.74565715,-0.14555615,1.0,-0.1827809,-0.43244117,-0.88294256,0.0,0.9527096,0.14385001,-0.2676779,0.0,0.24276607,-0.89011437,0.3856979,0.0,0.14396141,0.64388907,-0.062322244,1.0,0.034042474,-0.49989158,-0.8654198,0.0,0.9171025,-0.32851487,0.22583525,0.0,-0.3971954,-0.80136645,0.44726843,0.0,0.11890994,0.5846177,-0.18333997,1.0,-0.25145677,-0.94236296,0.22073168,0.0,0.94699323,-0.19243973,0.25723642,0.0,-0.19993234,0.2737151,0.94080156,0.0,-0.09741946,0.76942915,-0.14075626,1.0,0.23639937,-0.124659255,-0.9636264,0.0,0.94699293,-0.1924677,0.2572175,0.0,-0.21753111,-0.97335345,0.07255243,0.0,-0.13188455,0.64026725,-0.110502176,1.0,0.22864576,-0.23471549,-0.944791,0.0,0.8916824,0.4399561,0.106494404,0.0,0.3906706,-0.86680335,0.3098861,0.0,-0.09948351,0.6231813,-0.2425786,1.0,-0.0035414249,-0.8784306,-0.47785923,0.0,-0.99996126,-0.00077584386,0.008837055,0.0,-0.008133648,0.4778719,-0.87839293,0.0,0.054971427,0.5359588,-0.031606413,1.0,-0.0017658174,-0.95882404,-0.2840001,0.0,-0.9999613,-0.0007758364,0.008837063,0.0,-0.00869367,0.28400463,-0.95878446,0.0,0.054130353,0.3273316,-0.14509794,1.0,-0.004892401,-0.8847454,-0.46605143,0.0,-0.9947105,0.052127246,-0.08851539,0.0,0.10260725,0.46315312,-0.8803197,0.0,0.05376511,0.12900744,-0.20384082,1.0,-0.0009333044,-0.98402244,0.17804706,0.0,-0.999938,0.0028999597,0.010785078,0.0,-0.011129175,-0.17802574,-0.9839637,0.0,-0.055191,0.53767157,-0.02435314,1.0,0.010683134,-0.03316926,0.99939334,0.0,-0.99993795,0.0028999727,0.010785066,0.0,-0.003255817,-0.99944645,-0.033136047,0.0,-0.05541266,0.3039663,0.017933019,1.0,0.00880861,0.22563718,0.9741724,0.0,-0.9999604,0.0034402674,0.008244867,0.0,-0.0014909074,-0.97420627,0.22565861,0.0,-0.053202953,0.29710552,0.22464857,1.0
             male-worst-native-run,0,-0.12,1.0,2.2389651e-05,0.0,0.0,-2.2389651e-05,1.0,0.0,0.0,0.0,0.0,1.0,0.0,7.631771e-07,-0.026078366,0.0,1.0,76.5,0.0016734136,-1.4673389e-05,0.0,-0.00043705344,20.771942,73.62592,0.0,0.0016241247,-73.625916,20.771938,0.0,-0.0060555735,0.097179785,-0.34657863,1.0,0.011239797,0.7741453,-0.6329038,0.0,0.9986037,-0.04128783,-0.03277906,0.0,-0.05150433,-0.63164985,-0.7735318,0.0,3.9022172e-05,0.5895077,-0.046216577,1.0,0.017894283,0.85058606,-0.5255249,0.0,0.99860543,-0.04124996,-0.03277527,0.0,-0.049552493,-0.52420294,-0.85014254,0.0,0.0012357589,0.6719825,-0.11353574,1.0,0.9606591,-0.23484476,0.14819565,0.0,0.27770233,0.8143231,-0.509659,0.0,-0.0009922867,0.5307601,0.847509,0.0,0.018812459,0.76189643,-0.16999784,1.0,-0.99574685,0.04447533,0.08051937,0.0,0.007945863,-0.8305248,0.55690527,0.0,0.09163878,0.55517423,0.82664293,0.0,-0.0125295175,0.7631911,-0.16896935,1.0,0.26629668,-0.78012836,0.56609106,0.0,0.9610306,0.26001716,-0.093769975,0.0,-0.07404475,0.5690041,0.8189813,0.0,0.10247327,0.74144465,-0.15709238,1.0,-0.05738953,-0.14402108,-0.9878994,0.0,0.96101934,0.26006567,-0.09375019,0.0,0.2704154,-0.9547767,0.12348308,0.0,0.13897198,0.6345186,-0.07950264,1.0,0.21756479,-0.2545038,-0.942272,0.0,0.96953845,0.16754748,0.17860064,0.0,0.11241244,-0.95243394,0.28320855,0.0,0.13110715,0.6147785,-0.2149058,1.0,-0.114186466,-0.96200824,0.24793722,0.0,0.94184136,-0.025452787,0.33505207,0.0,-0.3160204,0.2717726,0.9089735,0.0,-0.09924625,0.76706433,-0.1619582,1.0,0.3212046,-0.22429387,-0.9200448,0.0,0.94184893,-0.025496986,0.33502784,0.0,-0.0985952,-0.9741715,0.2030748,0.0,-0.11489658,0.63520986,-0.12797523,1.0,0.17539147,-0.26385543,-0.9484614,0.0,0.977495,-0.067934245,0.19965595,0.0,-0.11710593,-0.9621503,0.24601641,0.0,-0.07087233,0.6044678,-0.2540783,1.0,0.0005957037,-0.86139184,-0.50794417,0.0,-1.0000013,-0.00042080134,-0.00045896322,0.0,0.0001808703,0.5079442,-0.861391,0.0,0.05506127,0.5367941,-0.036137342,1.0,0.00052339584,-0.9675595,-0.2526504,0.0,-1.0000014,-0.00042078644,-0.0004589483,0.0,0.00033707544,0.25265032,-0.9675585,0.0,0.055202756,0.33221358,-0.15677404,1.0,3.4378045e-05,-0.9093451,-0.4160471,0.0,-0.99363273,0.04684986,-0.10248031,0.0,0.112680875,0.4134007,-0.903551,0.0,0.055311013,0.1320826,-0.20903252,1.0,0.0021818653,-0.98273635,0.1850073,0.0,-0.99998736,-0.0012500808,0.00514997,0.0,-0.0048302454,-0.18501627,-0.9827247,0.0,-0.055170853,0.5389864,-0.029991338,1.0,0.0051944256,-0.038083058,0.99926203,0.0,-0.9999873,-0.0012500808,0.005149968,0.0,0.0010534786,-0.9992754,-0.038089212,0.0,-0.05465266,0.30558658,0.013947849,1.0,-0.009570165,0.24436946,0.9696362,0.0,-0.999953,-0.0045442027,-0.008724589,0.0,0.0022747887,-0.9696733,0.24440074,0.0,-0.053578254,0.29770944,0.22063631,1.0
@@ -283,165 +961,352 @@ object CartGripTest {
             female-sprint-right,1,-0.04999998001398152,0.9987364,-0.050255395,0.0,0.0,0.050255395,0.9987364,0.0,0.0,0.0,0.0,1.0,0.0,-0.0017209402,-0.025430106,0.0,1.0,76.403336,-3.844577,-1.4673389e-05,0.0,1.0439302,20.745693,73.62592,0.0,-3.7001238,-73.53288,20.771938,0.0,-0.0015724734,0.09797665,-0.4115262479664443,1.0,-0.0114209205,0.97789013,-0.20881009,0.0,0.99538034,-0.008790381,-0.0956087,0.0,-0.09533022,-0.20893744,-0.9732721,0.0,-0.0022142197,0.5287522,-0.031855404,1.0,0.07742201,0.78518116,-0.614408,0.0,0.8005447,-0.41627324,-0.431098,0.0,-0.59425104,-0.45848468,-0.6608013,0.0,0.0075997068,0.6324493,-0.054026805,1.0,0.9122978,-0.32870975,-0.24425995,0.0,0.110861175,0.7724,-0.62538695,0.0,0.3942368,0.5434602,0.7411,0.0,0.02842344,0.7095134,-0.12622297,1.0,-0.77590686,0.41962975,0.47104052,0.0,-0.036714356,-0.7754522,0.63033813,0.0,0.62977743,0.47178966,0.61708486,0.0,0.003264675,0.72259724,-0.11267466,1.0,0.16701232,-0.9858872,-0.011606663,0.0,0.6723942,0.12249963,-0.72998685,0.0,0.7211057,0.11411254,0.68336356,0.0,0.10787186,0.68088746,-0.14749457,1.0,-0.6977121,-0.22440456,-0.68032384,0.0,0.67239416,0.122499585,-0.7299868,0.0,0.2471516,-0.96676654,0.065418765,0.0,0.13076288,0.54575974,-0.1490854,1.0,-0.8283923,-0.24569246,-0.50338984,0.0,0.18002537,-0.96777254,0.17609131,0.0,-0.53043115,0.05524987,0.84592646,0.0,0.03513301,0.5150024,-0.24233195,1.0,0.061100263,-0.37492532,0.925034,0.0,0.91404694,-0.35128155,-0.20275217,0.0,0.40096626,0.85792017,0.32124236,0.0,-0.06430709,0.7591418,-0.071654215,1.0,-0.3648526,-0.49363708,-0.7894323,0.0,0.91402584,-0.35134223,-0.20274177,0.0,-0.17727979,-0.79553485,0.57938373,0.0,-0.05593222,0.70775396,0.055132776,1.0,-0.47294062,-0.25915074,-0.84211904,0.0,0.8235998,-0.46960786,-0.31802797,0.0,-0.31304878,-0.8439811,0.43553042,0.0,-0.10594019,0.6400955,-0.0530682,1.0,0.060610186,-0.93601555,0.34670106,0.0,-0.9973328,-0.042642966,0.059227478,0.0,-0.04065349,-0.34936622,-0.93610436,0.0,0.053839657,0.47659785,-0.01967984,1.0,0.05186028,0.15691006,0.9862508,0.0,-0.99733293,-0.04264297,0.05922748,0.0,0.051349893,-0.98669213,0.15428025,0.0,0.0682346,0.2542942,0.06266163,1.0,0.047777727,0.11699432,0.991983,0.0,-0.9844069,-0.16280371,0.06661395,0.0,0.1692917,-0.97969776,0.10739177,0.0,0.078961425,0.28674966,0.26665878,1.0,-0.057614435,-0.67354643,-0.73689145,0.0,-0.9977977,0.014668729,0.06460576,0.0,-0.032706197,0.73899364,-0.6729169,0.0,-0.05594928,0.47790748,-0.02833494,1.0,-0.017892212,-0.99860466,-0.04960075,0.0,-0.99779767,0.01466874,0.06460577,0.0,-0.06378861,0.050650574,-0.9966774,0.0,-0.069632724,0.31794024,-0.20334661,1.0,0.013071705,-0.9633955,-0.26774815,0.0,-0.99192125,-0.046273045,0.11806986,0.0,-0.126138,0.26404497,-0.9562272,0.0,-0.07333356,0.11138786,-0.21360607,1.0
             female-sprint-right-rare-9553,1,-0.049999995574197605,0.9987556,-0.04987353,0.0,0.0,0.04987353,0.9987556,0.0,0.0,0.0,0.0,1.0,0.0,-0.0017078011,-0.02543538,0.0,1.0,76.4048,-3.8153644,-1.4673389e-05,0.0,1.0359981,20.746092,73.62592,0.0,-3.6720088,-73.534294,20.771938,0.0,-0.0016065189,0.09797143,-0.4115262479664443,1.0,-0.017069947,0.98838204,-0.15103249,0.0,0.99009687,-0.0043418617,-0.14031714,0.0,-0.13934244,-0.15193182,-0.97852004,0.0,-0.009347398,0.53276867,-0.018687585,1.0,0.07835177,0.85311216,-0.51581174,0.0,0.84435797,-0.33186656,-0.42062366,0.0,-0.5300191,-0.40257314,-0.74633443,0.0,-0.00010359008,0.6376408,-0.034701414,1.0,0.905985,-0.32495403,-0.2712854,0.0,0.13777283,0.8323301,-0.53688544,0.0,0.40026152,0.4490344,0.7988486,0.0,0.02150787,0.7232647,-0.09623487,1.0,-0.8224249,0.33157766,0.46224767,0.0,-0.039210204,-0.8436761,0.53541887,0.0,0.56751966,0.4222169,0.70686156,0.0,-0.0050281547,0.7336956,-0.083015196,1.0,0.20197368,-0.97087497,0.1288765,0.0,0.78168136,0.08051978,-0.61845887,0.0,0.59006816,0.22565272,0.7751777,0.0,0.10040653,0.6949657,-0.119859956,1.0,-0.4327559,-0.6440418,-0.6308192,0.0,0.7816813,0.08051975,-0.6184589,0.0,0.44910604,-0.76074135,0.46859014,0.0,0.1280894,0.56189567,-0.10219599,1.0,-0.5269185,-0.61931574,-0.58206964,0.0,0.34753132,-0.7819843,0.5174195,0.0,-0.77561486,0.070350245,0.62727416,0.0,0.06877492,0.47362202,-0.18865725,1.0,-0.0033124685,-0.47491643,0.8800248,0.0,0.9332738,-0.3175328,-0.16784726,0.0,0.3591493,0.82074827,0.4442785,0.0,-0.076651014,0.76257205,-0.042760476,1.0,-0.3042861,-0.4506155,-0.839259,0.0,0.93325377,-0.31759325,-0.16784358,0.0,-0.19090952,-0.8343149,0.5171782,0.0,-0.07710471,0.6974793,0.077857435,1.0,-0.4071779,-0.18038218,-0.8953593,0.0,0.8628639,-0.39737484,-0.31234404,0.0,-0.29945126,-0.8997536,0.3174478,0.0,-0.11881123,0.6357175,-0.03717287,1.0,0.05602594,-0.9176675,0.39338064,0.0,-0.9975328,-0.034758464,0.060987286,0.0,-0.04229272,-0.395827,-0.91735137,0.0,0.059194602,0.47465608,-0.020556292,1.0,0.066574946,-0.19298586,0.9789412,0.0,-0.99753296,-0.034758464,0.060987275,0.0,0.022256674,-0.9805863,-0.19482376,0.0,0.07250078,0.25671008,0.07287159,1.0,0.03959939,0.012224242,0.9991416,0.0,-0.9848976,-0.16818938,0.041092705,0.0,0.16854694,-0.9856795,0.005379513,0.0,0.08627119,0.21679273,0.27535674,1.0,-0.06743902,-0.6590552,-0.7490664,0.0,-0.99761444,0.03341702,0.060414575,0.0,-0.01478479,0.75135356,-0.6597356,0.0,-0.050492644,0.47428814,-0.030683514,1.0,-0.019694649,-0.9764419,0.21488519,0.0,-0.99761444,0.033417016,0.060414582,0.0,-0.06617199,-0.21318293,-0.97476965,0.0,-0.066509426,0.31776258,-0.20858678,1.0,0.027389916,-0.99951965,0.014581144,0.0,-0.9907498,-0.025204463,0.13334462,0.0,-0.13291278,-0.018098786,-0.9909631,0.0,-0.070583075,0.11579438,-0.16413973,1.0
             female-sprint-right-rare-12885,1,-0.049999995574197605,0.9989663,-0.04545803,0.0,0.0,0.04545803,0.9989663,0.0,0.0,0.0,0.0,1.0,0.0,-0.001555943,-0.025495782,0.0,1.0,76.42092,-3.4775786,-1.4673389e-05,0.0,0.9442796,20.750467,73.62592,0.0,-3.3469133,-73.549805,20.771938,0.0,-0.0020001833,0.09791027,-0.4115262479664443,1.0,-0.016066723,0.98643315,-0.1633801,0.0,0.99124414,-0.005704297,-0.13191858,0.0,-0.13106066,-0.16406912,-0.97770435,0.0,-0.007800269,0.53203154,-0.02172816,1.0,0.069161974,0.8404304,-0.5374893,0.0,0.83719265,-0.3418951,-0.4268682,0.0,-0.5425173,-0.4204591,-0.7272484,0.0,0.0005573705,0.63676983,-0.039057977,1.0,0.9094897,-0.3173013,-0.2686053,0.0,0.12238286,0.82182974,-0.55643487,0.0,0.39730498,0.47319922,0.78627783,0.0,0.021077637,0.7208856,-0.10299755,1.0,-0.8145517,0.34261024,0.46810606,0.0,-0.02969518,-0.8305236,0.55619144,0.0,0.5793294,0.4391462,0.6866782,0.0,-0.005233139,0.7316318,-0.08958185,1.0,0.20820552,-0.97330016,0.0966392,0.0,0.7557436,0.09736735,-0.64758945,0.0,0.62088865,0.20786631,0.75583756,0.0,0.10028148,0.6932529,-0.12638935,1.0,-0.49352598,-0.5653158,-0.66094756,0.0,0.7557435,0.09736736,-0.6475894,0.0,0.43044662,-0.8191089,0.37918025,0.0,0.12881857,0.5598505,-0.11314376,1.0,-0.5977623,-0.55017287,-0.5830879,0.0,0.33402348,-0.8321232,0.4427199,0.0,-0.7287723,0.06987629,0.6811822,0.0,0.06117478,0.48236722,-0.20373459,1.0,0.03934701,-0.455042,0.88960016,0.0,0.9380061,-0.2900133,-0.18983282,0.0,0.34437686,0.84192026,0.4154207,0.0,-0.07617043,0.7614691,-0.04881695,1.0,-0.3047751,-0.42907566,-0.8502976,0.0,0.9379876,-0.29007575,-0.18982905,0.0,-0.16519871,-0.8554247,0.49087548,0.0,-0.07077701,0.6991004,0.0731134,1.0,-0.4223361,-0.20030381,-0.88403064,0.0,0.8575628,-0.40422392,-0.3181024,0.0,-0.2936282,-0.8924589,0.34249148,0.0,-0.11255061,0.64029074,-0.04342988,1.0,0.1332401,-0.987564,0.0834619,0.0,-0.9809212,-0.119376644,0.15343606,0.0,-0.14156435,-0.10231344,-0.98462814,0.0,0.047562342,0.4816682,-0.016951457,1.0,0.18838462,-0.38879126,0.9018615,0.0,-0.98092127,-0.119376644,0.15343606,0.0,0.048006613,-0.9135603,-0.40386233,0.0,0.07920688,0.24712168,0.0028707231,1.0,0.16812275,-0.40151456,0.90029,0.0,-0.9553051,-0.2916449,0.048327785,0.0,0.24316038,-0.8681768,-0.43260098,0.0,0.11817253,0.1667037,0.18941265,1.0,-0.14168444,-0.82403773,-0.548532,0.0,-0.9846744,0.0603981,0.1636057,0.0,-0.10168714,0.5633061,-0.81996775,0.0,-0.062059283,0.48074996,-0.009830666,1.0,-0.03592471,-0.988243,0.14861158,0.0,-0.9846744,0.060398098,0.16360569,0.0,-0.17065802,-0.14045626,-0.97526866,0.0,-0.09570935,0.28504103,-0.14010704,1.0,-0.0060266443,-0.9880937,-0.15373482,0.0,-0.9853356,-0.020347392,0.1694053,0.0,-0.17051645,0.15250166,-0.97348267,0.0,-0.103140034,0.08063188,-0.10936807,1.0
-            """.trimIndent()
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot")
+            """
+                .trimIndent()
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
-        val actor = skeleton(names, listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8, 0, 10, 11, 0, 13, 14), offsets)
+        val actor =
+            skeleton(names, listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8, 0, 10, 11, 0, 13, 14), offsets)
         var frames: Int = 0
         for (line in captures.trim().split("\n")) for (sample in 0 until 3) {
             val cells = line.split(",")
             val label = cells[0]
             val female: Boolean = cells[1].equals("1")
             val gaitShift: Float = java.lang.Float.parseFloat(cells[2])
-            val bank: Float = (Math.atan2((java.lang.Float.parseFloat(cells[4])).toDouble(), (java.lang.Float.parseFloat(cells[3])).toDouble())).toFloat()
-            val pressure: Float = Math.abs(bank)+sample*((Math.toRadians((7).toDouble())).toFloat()-Math.abs(bank))/2
-            val matrices = arrayOfNulls<Matrix4f>(names.size+2)
+            val bank: Float =
+                (Math.atan2(
+                        (java.lang.Float.parseFloat(cells[4])).toDouble(),
+                        (java.lang.Float.parseFloat(cells[3])).toDouble(),
+                    ))
+                    .toFloat()
+            val pressure: Float =
+                Math.abs(bank) +
+                    sample * ((Math.toRadians((7).toDouble())).toFloat() - Math.abs(bank)) / 2
+            val matrices = arrayOfNulls<Matrix4f>(names.size + 2)
             for (i in 0 until matrices.size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[3+i*16+j])
-                matrices[i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[3 + i * 16 + j])
+                matrices[i] = Matrix4f().set(values)
             }
             val delta = pose(matrices, 0)
             val cart = pose(matrices, 1)
-            // Keep each captured bank/pitch/floor transform while retaining the larger forward clearance through a reversal.
-            cart.m32(cart.m32()+gaitShift+CartSteeringMath.woodenShift(pressure, 0f)-CartSteeringMath.woodenShift(bank, 0f))
+            // Keep each captured bank/pitch/floor transform while retaining the larger forward
+            // clearance through a reversal.
+            cart.m32(
+                cart.m32() + gaitShift + CartSteeringMath.woodenShift(pressure, 0f) -
+                    CartSteeringMath.woodenShift(bank, 0f),
+            )
             val poses = java.util.Arrays.copyOfRange(matrices, 2, matrices.size)
             val pivot = pose(poses, 1).getTranslation(Vector3f())
-            val bendChange: Float = 14*(CartSteeringMath.woodenTurnAmount(pressure)-CartSteeringMath.woodenTurnAmount(bank)) +
-                6*(CartSteeringMath.woodenBankExtra(pressure)-CartSteeringMath.woodenBankExtra(bank))
-            val change = Matrix4f().translation(pivot).rotateX(-(Math.toRadians((bendChange).toDouble())).toFloat())
-                .translate(-pivot.x, -pivot.y, -pivot.z)
+            val bendChange: Float =
+                14 *
+                    (CartSteeringMath.woodenTurnAmount(pressure) -
+                        CartSteeringMath.woodenTurnAmount(bank)) +
+                    6 *
+                        (CartSteeringMath.woodenBankExtra(pressure) -
+                            CartSteeringMath.woodenBankExtra(bank))
+            val change =
+                Matrix4f()
+                    .translation(pivot)
+                    .rotateX(-(Math.toRadians((bendChange).toDouble())).toFloat())
+                    .translate(-pivot.x, -pivot.y, -pivot.z)
             for (i in 1 until 10) change.mul(pose(poses, i), pose(poses, i))
             val before = copyPoses(poses)
-            if (!CartGrip.grip(poses, actor, "WheelbarrowWood", female, delta, cart, pressure)) throw AssertionError("native wooden Run grip unreachable: "+label)
+            if (!CartGrip.grip(poses, actor, "WheelbarrowWood", female, delta, cart, pressure))
+                throw AssertionError("native wooden Run grip unreachable: " + label)
             for (side in 0 until 2) {
-                val upper: Int = if (side==0) 4 else 7
-                val forearm: Int = upper+1
-                val hand: Int = upper+2
+                val upper: Int = if (side == 0) 4 else 7
+                val forearm: Int = upper + 1
+                val hand: Int = upper + 2
                 val shoulder = pose(poses, upper).getTranslation(Vector3f())
                 val elbow = pose(poses, forearm).getTranslation(Vector3f())
                 val wrist = pose(poses, hand).getTranslation(Vector3f())
                 var length: Float = 0f
                 for (link in arrayOf(intArrayOf(upper, forearm), intArrayOf(forearm, hand))) {
-                    val old: Float = before[link[0]].getTranslation(Vector3f()).distance(before[link[1]].getTranslation(Vector3f()))
-                    val now: Float = pose(poses, link[0]).getTranslation(Vector3f()).distance(pose(poses, link[1]).getTranslation(Vector3f()))
-                    if (Math.abs(old-now)>0.00001f) throw AssertionError("native Run arm stretched: "+label)
-                    length+=old
+                    val old: Float =
+                        before[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(before[link[1]].getTranslation(Vector3f()))
+                    val now: Float =
+                        pose(poses, link[0])
+                            .getTranslation(Vector3f())
+                            .distance(pose(poses, link[1]).getTranslation(Vector3f()))
+                    if (Math.abs(old - now) > 0.00001f)
+                        throw AssertionError("native Run arm stretched: " + label)
+                    length += old
                 }
-                if (length-shoulder.distance(wrist)<(if (label.contains("-sprint-")) 0.008f else 0.004f)) throw AssertionError("native gait has insufficient reach reserve: "+label)
+                if (
+                    length - shoulder.distance(wrist) <
+                        (if (label.contains("-sprint-")) 0.008f else 0.004f)
+                )
+                    throw AssertionError("native gait has insufficient reach reserve: " + label)
                 val shape = CartGrip.grasp(female, "WheelbarrowWood")
-                val palm = pose(poses, hand).transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
+                val palm =
+                    pose(poses, hand).transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
                 val handle = Vector3f()
-                CartGrip.handle("WheelbarrowWood", side==0, handle)
+                CartGrip.handle("WheelbarrowWood", side == 0, handle)
                 cart.transformPosition(handle)
-                if (palm.distance(handle)>0.00002f) throw AssertionError("native Run palm missed handle: "+label)
+                if (palm.distance(handle) > 0.00002f)
+                    throw AssertionError("native Run palm missed handle: " + label)
                 val forearmAxis = Vector3f(wrist).sub(elbow).normalize()
-                val handAxis = pose(poses, hand).transformDirection(Vector3f(1f, 0f, 0f)).normalize()
-                var bend: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, forearmAxis.dot(handAxis)))).toDouble())))).toFloat()
-                var abduction: Float = (Math.toDegrees((Math.atan2((Math.abs(elbow.x-shoulder.x)).toDouble(), (shoulder.y-elbow.y).toDouble())))).toFloat()
-                var forward: Float = (Math.toDegrees((Math.atan2((elbow.z-wrist.z).toDouble(), (elbow.y-wrist.y).toDouble())))).toFloat()
+                val handAxis =
+                    pose(poses, hand).transformDirection(Vector3f(1f, 0f, 0f)).normalize()
+                var bend: Float =
+                    (Math.toDegrees(
+                            (Math.acos(
+                                (Math.max(-1f, Math.min(1f, forearmAxis.dot(handAxis)))).toDouble(),
+                            )),
+                        ))
+                        .toFloat()
+                var abduction: Float =
+                    (Math.toDegrees(
+                            (Math.atan2(
+                                (Math.abs(elbow.x - shoulder.x)).toDouble(),
+                                (shoulder.y - elbow.y).toDouble(),
+                            )),
+                        ))
+                        .toFloat()
+                var forward: Float =
+                    (Math.toDegrees(
+                            (Math.atan2(
+                                (elbow.z - wrist.z).toDouble(),
+                                (elbow.y - wrist.y).toDouble(),
+                            )),
+                        ))
+                        .toFloat()
                 val forearmPalm = pose(poses, forearm).transformDirection(Vector3f(0f, 0f, 1f))
                 val handPalm = pose(poses, hand).transformDirection(Vector3f(0f, 0f, 1f))
                 forearmPalm.fma(-forearmPalm.dot(forearmAxis), forearmAxis).normalize()
                 handPalm.fma(-handPalm.dot(forearmAxis), forearmAxis).normalize()
-                val roll: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, forearmPalm.dot(handPalm)))).toDouble())))).toFloat()
-                // Run keeps its native forward torso gait; its measured arm posture differs from the walking grip.
+                val roll: Float =
+                    (Math.toDegrees(
+                            (Math.acos(
+                                (Math.max(-1f, Math.min(1f, forearmPalm.dot(handPalm)))).toDouble(),
+                            )),
+                        ))
+                        .toFloat()
+                // Run keeps its native forward torso gait; its measured arm posture differs from
+                // the walking grip.
                 val sprint: Boolean = label.contains("-sprint-")
-                // Held pressure can outlast the roll during an S-turn; the arms must reach without stretching or losing contact.
-                if (bend>(if (sprint) 47 else if (sample==0) 43 else 46) || roll>10 || abduction>(if (sprint || sample>0) 41 else 39)
-                    || forward< -3 || forward>(if (sample>0) 57 else if (sprint) 56 else 55)) throw AssertionError("unnatural native Run arm: "+label+" bend="+bend+" abduction="+abduction+" forward="+forward)
+                // Held pressure can outlast the roll during an S-turn; the arms must reach without
+                // stretching or losing contact.
+                if (
+                    bend > (if (sprint) 47 else if (sample == 0) 43 else 46) ||
+                        roll > 10 ||
+                        abduction > (if (sprint || sample > 0) 41 else 39) ||
+                        forward < -3 ||
+                        forward > (if (sample > 0) 57 else if (sprint) 56 else 55)
+                )
+                    throw AssertionError(
+                        "unnatural native Run arm: " +
+                            label +
+                            " bend=" +
+                            bend +
+                            " abduction=" +
+                            abduction +
+                            " forward=" +
+                            forward,
+                    )
             }
-            for (i in intArrayOf(0, 10, 11, 12, 13, 14, 15)) if (!pose(poses, i).equals(before[i])) throw AssertionError("native Run hip/leg pose changed: "+label+" bone="+names[i])
-            if (sample==0) frames++
+            for (i in intArrayOf(0, 10, 11, 12, 13, 14, 15)) if (!pose(poses, i).equals(before[i]))
+                throw AssertionError(
+                    "native Run hip/leg pose changed: " + label + " bone=" + names[i],
+                )
+            if (sample == 0) frames++
         }
-        if (frames!=18) throw AssertionError("missing native Run/Sprint/transition fixtures")
+        if (frames != 18) throw AssertionError("missing native Run/Sprint/transition fixtures")
     }
 
     private fun checkCapturedSprintStartup() {
-        // B42.21 common-runner reversal capture, seq 10168..10172; 10170 formerly exceeded the 30-degree clavicle limit.
-        val captures = """
+        // B42.21 common-runner reversal capture, seq 10168..10172; 10170 formerly exceeded the
+        // 30-degree clavicle limit.
+        val captures =
+            """
             10168,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,-0.02607891,0.0,1.0,76.5,-3.9394883e-05,-1.4673389e-05,0.0,2.8023098e-05,20.771942,73.62592,0.0,-2.4333809e-05,-73.625916,20.771938,0.0,-0.0060535767,0.097179376,-0.443236,1.0,0.024154939,0.9995286,-0.018944744,0.0,0.99969345,-0.024252962,-0.0049698334,0.0,-0.0054269377,-0.018818868,-0.999808,0.0,0.016503248,0.5568019,-0.011252388,1.0,0.039656103,0.9916443,0.122754544,0.0,0.99638283,-0.030003741,-0.07950394,0.0,-0.0751565,0.12546334,-0.9892473,0.0,0.019081194,0.66322505,-0.013187599,1.0,0.98613936,-0.16297525,-0.031121057,0.0,0.16555983,0.97888404,0.119901694,0.0,0.010922953,-0.1233921,0.9922982,0.0,0.037823737,0.7677151,-0.0013027734,1.0,-0.9902848,-0.102429375,0.09404319,0.0,0.08934312,-0.9869265,-0.13414097,0.0,0.106553696,-0.124435656,0.9864897,0.0,0.008630364,0.76866794,0.001104048,1.0,0.2114165,-0.97119635,-0.10991622,0.0,0.9282736,0.2347205,-0.2884695,0.0,0.30595997,-0.041045114,0.95115954,0.0,0.12370324,0.75352234,-0.0040132776,1.0,-0.29818428,0.0063053668,-0.954488,0.0,0.928275,0.23474537,-0.28844464,0.0,0.22224301,-0.9720367,-0.07585053,0.0,0.15268022,0.6204082,-0.019078404,1.0,-0.106469035,-0.014511138,-0.9942105,0.0,0.9920164,-0.0695155,-0.10521941,0.0,-0.06758586,-0.9974757,0.02179648,0.0,0.111811295,0.6212719,-0.14990234,1.0,-0.30297598,-0.94509166,0.12250377,0.0,0.9453189,-0.28175524,0.16427496,0.0,-0.12073879,0.16557647,0.978778,0.0,-0.07761045,0.7597484,0.00929329,1.0,0.119506665,-0.16931435,-0.97828984,0.0,0.94531274,-0.2817915,0.16424839,0.0,-0.30348343,-0.94441843,0.1263791,0.0,-0.11913683,0.63021255,0.026084095,1.0,-0.055813726,-0.10467738,-0.99293894,0.0,0.99773705,-0.043192334,-0.051530033,0.0,-0.03749337,-0.9935678,0.10685125,0.0,-0.10275757,0.6070061,-0.1080021,1.0,0.057983052,-0.99503344,0.08091044,0.0,-0.99821544,-0.05894632,-0.00956401,0.0,0.014285893,-0.080211475,-0.9966753,0.0,0.063016884,0.4993552,-0.009600527,1.0,0.053369567,-0.9522745,0.30054185,0.0,-0.99821794,-0.058925487,-0.009445041,0.0,0.026703823,-0.2995021,-0.9537219,0.0,0.076785505,0.26303497,0.009614607,1.0,-0.04408999,-0.9769337,0.20894188,0.0,-0.99850965,0.036357973,-0.040703975,0.0,0.032168373,-0.21042511,-0.97708046,0.0,0.08782308,0.066065505,0.071779,1.0,-0.014581516,-0.9977631,-0.06523333,0.0,-0.9997857,0.013590902,0.015601264,0.0,-0.01467976,0.06544686,-0.99774796,0.0,-0.031701487,0.50233334,-0.0057775346,1.0,-0.010706425,-0.98506004,0.17187649,0.0,-0.99978554,0.013589129,0.015604932,0.0,-0.017707452,-0.17167252,-0.98499477,0.0,-0.035164922,0.26536486,-0.021270383,1.0,0.09393909,-0.9951833,0.028016567,0.0,-0.995167,-0.0930551,0.03135036,0.0,-0.028592266,-0.030826136,-0.9991155,0.0,-0.037380017,0.061614096,0.014280667,1.0
             10169,1.0,7.629859e-12,0.0,0.0,-7.629859e-12,1.0,0.0,0.0,0.0,0.0,1.0,0.0,1.9897835e-13,-0.02607891,0.0,1.0,76.5,-3.93943e-05,-1.4673389e-05,0.0,2.802294e-05,20.771942,73.62592,0.0,-2.4333247e-05,-73.625916,20.771938,0.0,-0.0060535767,0.097179376,-0.4832238,1.0,0.03910163,0.9982514,-0.04432886,0.0,0.9991778,-0.039536074,-0.008971114,0.0,-0.010707938,-0.04394157,-0.9989766,0.0,0.024255874,0.5522014,-0.027982322,1.0,0.064846046,0.9967613,0.04755598,0.0,0.9873087,-0.057161655,-0.1481688,0.0,-0.14497052,0.0565606,-0.9878179,0.0,0.028431084,0.65849364,-0.03262233,1.0,0.983126,-0.1731953,-0.05887749,0.0,0.1758462,0.9834667,0.043258246,0.0,0.05041188,-0.05288177,0.99732745,0.0,0.04984519,0.76319695,-0.02980795,1.0,-0.983342,-0.05579001,0.17299077,0.0,0.04584431,-0.9970864,-0.060966406,0.0,0.17588796,-0.052020233,0.9830345,0.0,0.020628538,0.7649892,-0.025274497,1.0,0.22690174,-0.9634709,-0.14226463,0.0,0.899309,0.26334378,-0.3491325,0.0,0.3738435,-0.048721112,0.9262112,0.0,0.13546231,0.7481141,-0.03493561,1.0,-0.37486553,0.053161107,-0.9255536,0.0,0.89931136,0.26336482,-0.34911016,0.0,0.22519906,-0.9632302,-0.14653474,0.0,0.16656162,0.61605877,-0.054434597,1.0,-0.23142172,-0.018816978,-0.97267133,0.0,0.9507286,-0.2163887,-0.22201493,0.0,-0.2062977,-0.9761257,0.06796698,0.0,0.1151825,0.6233448,-0.18129277,1.0,-0.31657204,-0.9109562,0.26446366,0.0,0.9474597,-0.29018795,0.13457654,0.0,-0.045849282,0.29317185,0.9549595,0.0,-0.06500768,0.7601313,-0.010209989,1.0,0.067272276,-0.2304466,-0.97075665,0.0,0.94745094,-0.29022676,0.13455367,0.0,-0.3127472,-0.92879635,0.19881272,0.0,-0.10839756,0.6352741,0.026038095,1.0,-0.1008548,-0.14955023,-0.98359686,0.0,0.9946659,-0.036648653,-0.09641767,0.0,-0.021628352,-0.98807466,0.15244871,0.0,-0.09917754,0.6036887,-0.10701558,1.0,0.057983052,-0.99503344,0.08091044,0.0,-0.99821544,-0.05894632,-0.00956401,0.0,0.014285893,-0.080211475,-0.9966753,0.0,0.063016884,0.4993552,-0.009600527,1.0,0.053369567,-0.9522745,0.30054185,0.0,-0.99821794,-0.058925487,-0.009445041,0.0,0.026703823,-0.2995021,-0.9537219,0.0,0.076785505,0.26303497,0.009614607,1.0,-0.04408999,-0.9769337,0.20894188,0.0,-0.99850965,0.036357973,-0.040703975,0.0,0.032168373,-0.21042511,-0.97708046,0.0,0.08782308,0.066065505,0.071779,1.0,-0.014581516,-0.9977631,-0.06523333,0.0,-0.9997857,0.013590902,0.015601264,0.0,-0.01467976,0.06544686,-0.99774796,0.0,-0.031701487,0.50233334,-0.0057775346,1.0,-0.010706425,-0.98506004,0.17187649,0.0,-0.99978554,0.013589129,0.015604932,0.0,-0.017707452,-0.17167252,-0.98499477,0.0,-0.035164922,0.26536486,-0.021270383,1.0,0.09393909,-0.9951833,0.028016567,0.0,-0.995167,-0.0930551,0.03135036,0.0,-0.028592266,-0.030826136,-0.9991155,0.0,-0.037380017,0.061614096,0.014280667,1.0
             10170,1.0,4.8298362e-11,0.0,0.0,-4.8298362e-11,1.0,0.0,0.0,0.0,0.0,1.0,0.0,1.2595683e-12,-0.02607891,0.0,1.0,76.5,-3.9391187e-05,-1.4673389e-05,0.0,2.8022094e-05,20.771942,73.62592,0.0,-2.4330253e-05,-73.625916,20.771938,0.0,-0.0060535767,0.097179376,-0.51148015,1.0,0.051567294,0.9952449,-0.08263622,0.0,0.9984936,-0.05293391,-0.014434181,0.0,-0.018739777,-0.08176733,-0.99647534,0.0,0.027578821,0.5458677,-0.046269808,1.0,0.08575029,0.99455184,-0.05927551,0.0,0.96570146,-0.09760313,-0.24061203,0.0,-0.24508654,-0.036609877,-0.96880984,0.0,0.033089522,0.6518463,-0.05499191,1.0,0.97809833,-0.182554,-0.099988505,0.0,0.17685045,0.98220134,-0.06328372,0.0,0.109761536,0.04421459,0.9929743,0.0,0.05655456,0.7557844,-0.06503113,1.0,-0.9613708,0.010639265,0.2750505,0.0,0.0022820951,-0.99891037,0.046615683,0.0,0.27524668,0.045442622,0.96029896,0.0,0.02764553,0.7588505,-0.05757603,1.0,0.24325907,-0.9503214,-0.19420326,0.0,0.8478622,0.30557993,-0.43330234,0.0,0.47112086,-0.059252925,0.8800766,0.0,0.14173365,0.73988646,-0.07373896,1.0,-0.48447466,0.11450324,-0.8672793,0.0,0.8478659,0.30559608,-0.43328366,0.0,0.21542458,-0.9452514,-0.24513683,0.0,0.17507502,0.6096335,-0.10035674,1.0,-0.41637543,-0.013186261,-0.90909714,0.0,0.8359961,-0.3986185,-0.37711263,0.0,-0.3574103,-0.9170221,0.17699873,0.0,0.10867256,0.62532735,-0.21922785,1.0,-0.2998429,-0.84314144,0.44632635,0.0,0.9522292,-0.29291543,0.08637192,0.0,0.057912163,0.450903,0.8906922,0.0,-0.056077328,0.75977767,-0.033623498,1.0,-0.007019028,-0.3036558,-0.95275605,0.0,0.9522178,-0.29295745,0.08635433,0.0,-0.30533895,-0.90662545,0.29120278,0.0,-0.09717413,0.6442152,0.02755104,1.0,-0.16815685,-0.20592403,-0.9640118,0.0,0.9857596,-0.036205426,-0.16421652,0.0,-0.0010864286,-0.9778983,0.2090798,0.0,-0.09813674,0.6025958,-0.10303548,1.0,-0.050081365,-0.9577413,0.2832401,0.0,-0.99808073,0.037646495,-0.04918038,0.0,0.036438983,-0.28515938,-0.95778775,0.0,0.056399766,0.4667478,-0.042762056,1.0,-0.061325632,-0.49210975,0.86837125,0.0,-0.9980818,0.037685305,-0.049129777,0.0,-0.008547493,-0.86971813,-0.49347627,0.0,0.0445043,0.23928428,0.0245068,1.0,-0.109699644,-0.47833347,0.8713003,0.0,-0.99324656,0.01942281,-0.1143904,0.0,0.0377937,-0.87796444,-0.47723323,0.0,0.031818897,0.13749588,0.20412156,1.0,0.14362183,-0.8570139,-0.49487537,0.0,-0.98658097,-0.16323432,-0.0036382861,0.0,-0.07766269,0.48875695,-0.868957,0.0,-0.01542728,0.4719373,-0.056073368,1.0,0.16255271,-0.9840597,0.07214362,0.0,-0.98658067,-0.16323572,-0.00363673,0.0,0.015355055,-0.07058442,-0.9973881,0.0,0.01868274,0.26839656,-0.17360613,1.0,0.23831715,-0.9668941,-0.09122646,0.0,-0.9689254,-0.24311844,0.04558078,0.0,-0.06625068,0.077528894,-0.994787,0.0,0.05230499,0.06485265,-0.15868393,1.0
             10171,1.0,2.1244667e-10,0.0,0.0,-2.1244667e-10,1.0,0.0,0.0,0.0,0.0,1.0,0.0,5.540376e-12,-0.02607891,0.0,1.0,76.5,-3.9378632e-05,-1.4673389e-05,0.0,2.8018685e-05,20.771942,73.62592,0.0,-2.4318168e-05,-73.625916,20.771938,0.0,-0.0060535767,0.097179376,-0.5126294,1.0,0.053879667,0.9895856,-0.13348627,0.0,0.9981298,-0.05724086,-0.021467455,0.0,-0.028884823,-0.13208,-0.99081874,0.0,0.023518508,0.5383353,-0.059599973,1.0,0.08795183,0.9772789,-0.19285156,0.0,0.9278222,-0.15082629,-0.3411713,0.0,-0.3625063,-0.14892527,-0.9200063,0.0,0.029285049,0.6437194,-0.0737409,1.0,0.9704724,-0.18850249,-0.1505009,0.0,0.15764683,0.9679014,-0.19574375,0.0,0.18256813,0.16623798,0.9690381,0.0,0.05258434,0.74508536,-0.09961702,1.0,-0.91924477,0.09050457,0.38314244,0.0,-0.01973752,-0.9825883,0.18474798,0.0,0.39319152,0.16226636,0.90502524,0.0,0.024473717,0.7498394,-0.08896286,1.0,0.2454768,-0.9370195,-0.24846953,0.0,0.7754915,0.3436116,-0.5296645,0.0,0.5816824,-0.06266571,0.81099916,0.0,0.13709924,0.7286695,-0.11272377,1.0,-0.60473216,0.16324353,-0.77951974,0.0,0.77549565,0.34362265,-0.529651,0.0,0.18139848,-0.9248115,-0.33439434,0.0,0.17074457,0.6002397,-0.14677937,1.0,-0.62763864,-0.0073394794,-0.7784705,0.0,0.625282,-0.6004586,-0.4984701,0.0,-0.4637804,-0.79962283,0.38146007,0.0,0.08785924,0.62261397,-0.25362203,1.0,-0.22010106,-0.7499552,0.6237976,0.0,0.96085835,-0.27697486,0.0060397354,0.0,0.1682465,0.6007106,0.7815631,0.0,-0.055580653,0.7577218,-0.055596996,1.0,-0.09879136,-0.3628196,-0.92660856,0.0,0.96084493,-0.27702156,0.0060279784,0.0,-0.25887716,-0.88973165,0.37598053,0.0,-0.0857479,0.65493166,0.029902026,1.0,-0.25500393,-0.24578622,-0.9351808,0.0,0.9669343,-0.06814622,-0.24575233,0.0,-0.003326289,-0.9669264,0.25503647,0.0,-0.09928885,0.6052031,-0.097100616,1.0,-0.050081365,-0.9577413,0.2832401,0.0,-0.99808073,0.037646495,-0.04918038,0.0,0.036438983,-0.28515938,-0.95778775,0.0,0.056399766,0.4667478,-0.042762056,1.0,-0.061325632,-0.49210975,0.86837125,0.0,-0.9980818,0.037685305,-0.049129777,0.0,-0.008547493,-0.86971813,-0.49347627,0.0,0.0445043,0.23928428,0.0245068,1.0,-0.109699644,-0.47833347,0.8713003,0.0,-0.99324656,0.01942281,-0.1143904,0.0,0.0377937,-0.87796444,-0.47723323,0.0,0.031818897,0.13749588,0.20412156,1.0,0.14362183,-0.8570139,-0.49487537,0.0,-0.98658097,-0.16323432,-0.0036382861,0.0,-0.07766269,0.48875695,-0.868957,0.0,-0.01542728,0.4719373,-0.056073368,1.0,0.16255271,-0.9840597,0.07214362,0.0,-0.98658067,-0.16323572,-0.00363673,0.0,0.015355055,-0.07058442,-0.9973881,0.0,0.01868274,0.26839656,-0.17360613,1.0,0.23831715,-0.9668941,-0.09122646,0.0,-0.9689254,-0.24311844,0.04558078,0.0,-0.06625068,0.077528894,-0.994787,0.0,0.05230499,0.06485265,-0.15868393,1.0
             10172,1.0,7.62239e-10,0.0,0.0,-7.62239e-10,1.0,0.0,0.0,0.0,0.0,1.0,0.0,1.9878356e-11,-0.02607891,0.0,1.0,76.5,-3.9336574e-05,-1.4673389e-05,0.0,2.8007265e-05,20.771942,73.62592,0.0,-2.4277688e-05,-73.625916,20.771938,0.0,-0.0060535767,0.097179376,-0.491582,1.0,0.04351892,0.9822083,-0.18268512,0.0,0.9983154,-0.049776997,-0.029809594,0.0,-0.038372643,-0.18108006,-0.98271984,0.0,0.015741782,0.5320279,-0.061882794,1.0,0.06750205,0.94630724,-0.31614402,0.0,0.88253874,-0.20442978,-0.4234785,0.0,-0.46536958,-0.25042364,-0.8489522,0.0,0.020413872,0.63663423,-0.08126729,1.0,0.96173203,-0.18689576,-0.20035331,0.0,0.11609026,0.94031286,-0.31989917,0.0,0.24818236,0.28439814,0.9260256,0.0,0.041042406,0.73396814,-0.121547356,1.0,-0.86785114,0.1664491,0.46811214,0.0,-0.012394521,-0.9491696,0.31452176,0.0,0.49666926,0.26715598,0.8258009,0.0,0.013985348,0.7404045,-0.108311296,1.0,0.23563692,-0.9261398,-0.29451838,0.0,0.6932306,0.3725712,-0.6169464,0.0,0.6811072,-0.058793705,0.72981966,0.0,0.12479603,0.7176921,-0.13899545,1.0,-0.708936,0.19840339,-0.676791,0.0,0.69323426,0.37257788,-0.6169382,0.0,0.1297545,-0.90654415,-0.4016737,0.0,0.15709275,0.59075344,-0.17936264,1.0,-0.79919255,0.007918547,-0.6010232,0.0,0.3854679,-0.7604741,-0.52258396,0.0,-0.46120074,-0.64932054,0.6047129,0.0,0.05992481,0.61794686,-0.27212512,1.0,-0.106547,-0.65394855,0.748999,0.0,0.9608003,-0.26162148,-0.091744155,0.0,0.25594974,0.70986366,0.6561887,0.0,-0.06159338,0.7549005,-0.06754571,1.0,-0.1945205,-0.40022075,-0.89553607,0.0,0.9607856,-0.26167312,-0.09175041,0.0,-0.19761695,-0.87826586,0.43542704,0.0,-0.07619659,0.6652692,0.035113662,1.0,-0.34597105,-0.2581675,-0.9020272,0.0,0.9374553,-0.13455746,-0.32104814,0.0,-0.03848984,-0.956684,0.2885734,0.0,-0.102858484,0.61041445,-0.08763018,1.0,-0.050081365,-0.9577413,0.2832401,0.0,-0.99808073,0.037646495,-0.04918038,0.0,0.036438983,-0.28515938,-0.95778775,0.0,0.056399766,0.4667478,-0.042762056,1.0,-0.061325632,-0.49210975,0.86837125,0.0,-0.9980818,0.037685305,-0.049129777,0.0,-0.008547493,-0.86971813,-0.49347627,0.0,0.0445043,0.23928428,0.0245068,1.0,-0.109699644,-0.47833347,0.8713003,0.0,-0.99324656,0.01942281,-0.1143904,0.0,0.0377937,-0.87796444,-0.47723323,0.0,0.031818897,0.13749588,0.20412156,1.0,0.14362183,-0.8570139,-0.49487537,0.0,-0.98658097,-0.16323432,-0.0036382861,0.0,-0.07766269,0.48875695,-0.868957,0.0,-0.01542728,0.4719373,-0.056073368,1.0,0.16255271,-0.9840597,0.07214362,0.0,-0.98658067,-0.16323572,-0.00363673,0.0,0.015355055,-0.07058442,-0.9973881,0.0,0.01868274,0.26839656,-0.17360613,1.0,0.23831715,-0.9668941,-0.09122646,0.0,-0.9689254,-0.24311844,0.04558078,0.0,-0.06625068,0.077528894,-0.994787,0.0,0.05230499,0.06485265,-0.15868393,1.0
-            """.trimIndent()
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot")
+            """
+                .trimIndent()
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
-        val actor = skeleton(names, listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8, 0, 10, 11, 0, 13, 14), offsets)
+        val actor =
+            skeleton(names, listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8, 0, 10, 11, 0, 13, 14), offsets)
         var frames: Int = 0
         for (line in captures.trim().split("\n")) {
             val cells = line.split(",")
             var sequence = cells[0]
-            val captured = arrayOfNulls<Matrix4f>(names.size+2)
+            val captured = arrayOfNulls<Matrix4f>(names.size + 2)
             for (i in 0 until captured.size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[1+i*16+j])
-                captured[i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[1 + i * 16 + j])
+                captured[i] = Matrix4f().set(values)
             }
             val delta = Matrix4f(pose(captured, 0))
             val cart = Matrix4f(pose(captured, 1))
             val poses = java.util.Arrays.copyOfRange(captured, 2, captured.size)
             val before = copyPoses(poses)
-            if (!CartGrip.grip(poses, actor, "WheelbarrowWood", true, delta, cart)) throw AssertionError("native Sprint startup grip refused: sequence="+sequence)
-            for (pose in poses) if (!(pose ?: throw NullPointerException()).isFinite()) throw AssertionError("nonfinite Sprint startup pose")
+            if (!CartGrip.grip(poses, actor, "WheelbarrowWood", true, delta, cart))
+                throw AssertionError("native Sprint startup grip refused: sequence=" + sequence)
+            for (pose in poses) if (!(pose ?: throw NullPointerException()).isFinite())
+                throw AssertionError("nonfinite Sprint startup pose")
             for (side in 0 until 2) {
-                val clavicle: Int = side+2
-                val upper: Int = if (side==0) 4 else 7
-                val forearm: Int = upper+1
-                val hand: Int = upper+2
+                val clavicle: Int = side + 2
+                val upper: Int = if (side == 0) 4 else 7
+                val forearm: Int = upper + 1
+                val hand: Int = upper + 2
                 val pivot = before[clavicle].getTranslation(Vector3f())
-                if (!pose(poses, clavicle).getTranslation(Vector3f()).equals(pivot, 0.000001f)) throw AssertionError("Sprint startup clavicle anchor moved: "+sequence)
+                if (!pose(poses, clavicle).getTranslation(Vector3f()).equals(pivot, 0.000001f))
+                    throw AssertionError("Sprint startup clavicle anchor moved: " + sequence)
                 val from = before[upper].getTranslation(Vector3f()).sub(pivot).normalize()
                 val to = pose(poses, upper).getTranslation(Vector3f()).sub(pivot).normalize()
-                val turn: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, from.dot(to)))).toDouble())))).toFloat()
-                if (turn>35.01f) throw AssertionError("Sprint startup clavicle limit exceeded: "+turn)
-                for (link in arrayOf(intArrayOf(clavicle, upper), intArrayOf(upper, forearm), intArrayOf(forearm, hand))) {
-                    val old: Float = before[link[0]].getTranslation(Vector3f()).distance(before[link[1]].getTranslation(Vector3f()))
-                    val now: Float = pose(poses, link[0]).getTranslation(Vector3f()).distance(pose(poses, link[1]).getTranslation(Vector3f()))
-                    if (Math.abs(old-now)>0.00001f) throw AssertionError("Sprint startup arm stretched: "+sequence)
+                val turn: Float =
+                    (Math.toDegrees(
+                            (Math.acos((Math.max(-1f, Math.min(1f, from.dot(to)))).toDouble())),
+                        ))
+                        .toFloat()
+                if (turn > 35.01f)
+                    throw AssertionError("Sprint startup clavicle limit exceeded: " + turn)
+                for (link in
+                    arrayOf(
+                        intArrayOf(clavicle, upper),
+                        intArrayOf(upper, forearm),
+                        intArrayOf(forearm, hand),
+                    )) {
+                    val old: Float =
+                        before[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(before[link[1]].getTranslation(Vector3f()))
+                    val now: Float =
+                        pose(poses, link[0])
+                            .getTranslation(Vector3f())
+                            .distance(pose(poses, link[1]).getTranslation(Vector3f()))
+                    if (Math.abs(old - now) > 0.00001f)
+                        throw AssertionError("Sprint startup arm stretched: " + sequence)
                 }
-                val length: Float = before[upper].getTranslation(Vector3f()).distance(before[forearm].getTranslation(Vector3f())) +
-                    before[forearm].getTranslation(Vector3f()).distance(before[hand].getTranslation(Vector3f()))
-                var reserve: Float = length-pose(poses, upper).getTranslation(Vector3f()).distance(pose(poses, hand).getTranslation(Vector3f()))
-                if (reserve<0.0035f) throw AssertionError("Sprint startup lost elbow reserve: "+sequence+" reserve="+reserve)
+                val length: Float =
+                    before[upper]
+                        .getTranslation(Vector3f())
+                        .distance(before[forearm].getTranslation(Vector3f())) +
+                        before[forearm]
+                            .getTranslation(Vector3f())
+                            .distance(before[hand].getTranslation(Vector3f()))
+                var reserve: Float =
+                    length -
+                        pose(poses, upper)
+                            .getTranslation(Vector3f())
+                            .distance(pose(poses, hand).getTranslation(Vector3f()))
+                if (reserve < 0.0035f)
+                    throw AssertionError(
+                        "Sprint startup lost elbow reserve: " + sequence + " reserve=" + reserve,
+                    )
                 val target = Matrix4f()
-                if (!CartGrip.target("WheelbarrowWood", side==0, true, delta, cart, target) || !pose(poses, hand).equals(target, 0.00002f)) throw AssertionError("Sprint startup wrist missed target: "+sequence)
+                if (
+                    !CartGrip.target("WheelbarrowWood", side == 0, true, delta, cart, target) ||
+                        !pose(poses, hand).equals(target, 0.00002f)
+                )
+                    throw AssertionError("Sprint startup wrist missed target: " + sequence)
                 val shape = CartGrip.grasp(true, "WheelbarrowWood")
-                val palm = pose(poses, hand).transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
+                val palm =
+                    pose(poses, hand).transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
                 val handle = Vector3f()
-                CartGrip.handle("WheelbarrowWood", side==0, handle)
+                CartGrip.handle("WheelbarrowWood", side == 0, handle)
                 cart.transformPosition(handle)
-                if (palm.distance(handle)>0.00002f) throw AssertionError("Sprint startup palm missed handle: "+sequence)
+                if (palm.distance(handle) > 0.00002f)
+                    throw AssertionError("Sprint startup palm missed handle: " + sequence)
             }
-            for (i in intArrayOf(0, 1, 10, 11, 12, 13, 14, 15)) if (!pose(poses, i).equals(before[i])) throw AssertionError("Sprint startup native torso/leg changed: "+names[i])
-            if (!delta.equals(pose(captured, 0)) || !cart.equals(pose(captured, 1))) throw AssertionError("Sprint startup cart transform changed")
+            for (i in intArrayOf(0, 1, 10, 11, 12, 13, 14, 15)) if (
+                !pose(poses, i).equals(before[i])
+            )
+                throw AssertionError("Sprint startup native torso/leg changed: " + names[i])
+            if (!delta.equals(pose(captured, 0)) || !cart.equals(pose(captured, 1)))
+                throw AssertionError("Sprint startup cart transform changed")
             val unreachable = copyPoses(before)
             val target = Matrix4f()
             CartGrip.target("WheelbarrowWood", false, true, delta, cart, target)
             val pivot = before[3].getTranslation(Vector3f())
             val shoulder = before[7].getTranslation(Vector3f()).sub(pivot)
             val goal = target.getTranslation(Vector3f()).sub(pivot)
-            Quaternionf().rotationAxis((Math.toRadians((45).toDouble())).toFloat(), shoulder.cross(goal, Vector3f()).normalize()).transform(goal)
+            Quaternionf()
+                .rotationAxis(
+                    (Math.toRadians((45).toDouble())).toFloat(),
+                    shoulder.cross(goal, Vector3f()).normalize(),
+                )
+                .transform(goal)
             target.setTranslation(goal.add(pivot))
-            if (CartGrip.reach(unreachable, actor, "Bip01_R_Hand", target, delta, true)) throw AssertionError("genuinely unreachable Sprint startup target accepted")
-            for (i in 0 until unreachable.size) if (!unreachable[i].equals(before[i])) throw AssertionError("unreachable Sprint startup target changed pose: "+names[i])
+            if (CartGrip.reach(unreachable, actor, "Bip01_R_Hand", target, delta, true))
+                throw AssertionError("genuinely unreachable Sprint startup target accepted")
+            for (i in 0 until unreachable.size) if (!unreachable[i].equals(before[i]))
+                throw AssertionError("unreachable Sprint startup target changed pose: " + names[i])
             frames++
         }
-        if (frames!=5) throw AssertionError("missing native Sprint startup frames")
+        if (frames != 5) throw AssertionError("missing native Sprint startup frames")
     }
 
     private fun checkCapturedMetalSprintStops() {
-        // Native04 B42.21 metal male Sprint/stop inputs captured before grip; exclude the initial teleport frame.
+        // Native04 B42.21 metal male Sprint/stop inputs captured before grip; exclude the initial
+        // teleport frame.
         // Two male-empty stop boundaries and one male-full stop at wall 1792524972879.
-        val captures = """
+        val captures =
+            """
             1792524955012,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,-0.036413297,0.0,1.0,0.0091743395,-4.721393e-09,-1.7679642e-09,0.0,2.9182563e-09,0.008833999,-0.002475683,0.0,3.3606993e-09,0.0024756836,0.008833999,0.0,0.21714664,0.22126661,-0.86248994,1.0,0.008574096,0.9704942,0.24094626,0.0,0.9999562,-0.007893937,-0.0037671253,0.0,-0.0017470605,0.24097489,-0.9705252,0.0,9.32666e-05,0.5252645,-0.015430979,1.0,0.08778832,0.99273455,-0.08224247,0.0,0.8224014,-0.11880785,-0.5563564,0.0,-0.5620836,-0.018793965,-0.82685685,0.0,0.0010540065,0.6286041,0.010294737,1.0,0.95022625,-0.10844951,-0.2920597,0.0,0.08823577,0.9927491,-0.08158394,0.0,0.29878634,0.051750142,0.9529079,0.0,0.0233249,0.7324434,-0.0072050313,1.0,-0.79971105,-0.08784146,0.5939198,0.0,0.079343505,-0.99601996,-0.040464386,0.0,0.595109,0.014763388,0.8034981,0.0,-0.0018749041,0.73562413,0.009974058,1.0,0.18712145,-0.9461094,-0.26428783,0.0,0.84143865,0.2932127,-0.4538779,0.0,0.50690764,-0.13745394,0.8509614,0.0,0.106076345,0.722999,-0.032639354,1.0,-0.52475345,0.6437223,-0.55699307,0.0,0.84143853,0.29321265,-0.45387787,0.0,-0.1288554,-0.706851,-0.69551575,0.0,0.13172346,0.59332335,-0.06886308,1.0,-0.65161914,0.7542441,-0.08057256,0.0,-0.33235762,-0.37937775,-0.86347824,0.0,-0.6818503,-0.5358907,0.4978976,0.0,0.05979985,0.6815532,-0.14520577,1.0,-0.22082546,-0.9261406,0.30577004,0.0,0.8916956,-0.318712,-0.3213852,0.0,0.3950985,0.20168301,0.89621615,0.0,-0.07151982,0.7279749,0.061696015,1.0,-0.40818247,-0.25927883,-0.87529355,0.0,0.8916752,-0.31875136,-0.32140315,0.0,-0.19567665,-0.91167825,0.3613087,0.0,-0.1017863,0.60103655,0.10360555,1.0,-0.58562744,-0.22101295,-0.77985305,0.0,0.8080347,-0.23524213,-0.54012054,0.0,-0.06408785,-0.9464669,0.3163569,0.0,-0.15773305,0.5654995,-0.016363382,1.0
             1792524959945,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,-0.036413297,0.0,1.0,0.0091743395,-4.721393e-09,-1.7679642e-09,0.0,2.9182563e-09,0.008833999,-0.002475683,0.0,3.3606993e-09,0.0024756836,0.008833999,0.0,0.21714664,0.22126661,-0.87889504,1.0,0.0015476418,0.9990671,0.043159194,0.0,0.99999905,-0.0015321977,-0.00040100608,0.0,-0.00033452085,0.043159775,-0.9990684,0.0,0.00059344084,0.5614097,0.010526945,1.0,0.0010296941,0.98325896,0.18221112,0.0,0.9999939,-0.00038934825,-0.0035523977,0.0,-0.003422061,0.18221359,-0.9832533,0.0,0.00075812836,0.66777486,0.01520584,1.0,0.96904606,-0.24687725,-0.0014885738,0.0,0.24301955,0.9528081,0.18192965,0.0,-0.04349588,-0.17665987,0.9833107,0.0,0.016388506,0.772343,0.03455683,1.0,-0.96559715,-0.2599771,0.005909484,0.0,0.254473,-0.9493437,-0.1843655,0.0,0.05354095,-0.17651889,0.9828405,0.0,-0.014649594,0.7723534,0.034666914,1.0,0.21456417,-0.9723044,-0.09266746,0.0,0.94680816,0.23035327,-0.22470504,0.0,0.2398279,-0.039524645,0.9700108,0.0,0.10077956,0.7508435,0.03442688,1.0,-0.22595683,-0.021168455,-0.9739074,0.0,0.9468078,0.23038155,-0.22467694,0.0,0.22912677,-0.9728702,-0.0320139,0.0,0.13018772,0.61757743,0.021725953,1.0,0.023994643,-0.024066538,-0.99942243,0.0,0.9949595,0.09794299,0.02152886,0.0,0.097368725,-0.9949012,0.026295245,0.0,0.099218704,0.6146756,-0.1117596,1.0,-0.25662494,-0.96258765,-0.08699985,0.0,0.9452269,-0.2687415,0.18526995,0.0,-0.20171902,-0.034689687,0.97882944,0.0,-0.09874068,0.74971354,0.035180833,1.0,0.18971816,-0.009436227,-0.98179394,0.0,0.94522464,-0.2687741,0.1852349,0.0,-0.26562843,-0.96315736,-0.042071916,0.0,-0.13391405,0.6177796,0.023256779,1.0,-0.024494391,-0.01571855,-0.999577,0.0,0.9928895,-0.11689991,-0.022492299,0.0,-0.11649683,-0.9930197,0.018470198,0.0,-0.10791158,0.6164864,-0.11130962,1.0
             1792524972879,1.0,-1.267207e-19,0.0,0.0,1.267207e-19,1.0,0.0,0.0,0.0,0.0,1.0,0.0,-4.6143184e-21,-0.036413297,0.0,1.0,0.0091743395,-4.721393e-09,-1.7679642e-09,0.0,2.9182563e-09,0.008833999,-0.002475683,0.0,3.3606993e-09,0.0024756836,0.008833999,0.0,0.21714664,0.22126661,-0.8788934,1.0,0.00090516004,0.99983585,0.018099375,0.0,0.9999895,-0.0008236339,-0.004528902,0.0,-0.0045132623,0.018103331,-0.9998261,0.0,0.0005109301,0.5613375,0.010640556,1.0,0.0017711986,0.98181105,0.1898523,0.0,0.99997246,-0.00036795318,-0.007427885,0.0,-0.0072229886,0.18986024,-0.9817847,0.0,0.00060754246,0.66778666,0.0126514435,1.0,0.98180944,-0.18974613,-0.0068861246,0.0,0.18760926,0.9638976,0.18895592,0.0,-0.029216006,-0.18681058,0.98196185,0.0,0.015705429,0.7718244,0.032766137,1.0,-0.97867703,-0.20523167,0.0073270723,0.0,0.1999201,-0.9602357,-0.19485195,0.0,0.04702901,-0.18923523,0.9807906,0.0,-0.014101088,0.7718283,0.032987427,1.0,0.19994156,-0.97665334,-0.07856667,0.0,0.95067096,0.21277997,-0.22572125,0.0,0.2371687,-0.029560119,0.97101897,0.0,0.101207964,0.7553004,0.03216617,1.0,-0.21995485,-0.050589517,-0.97419786,0.0,0.9506708,0.21280912,-0.22569403,0.0,0.21873644,-0.9757836,0.0012855828,0.0,0.12861188,0.62143826,0.021397874,1.0,0.018973043,-0.023554742,-0.9995429,0.0,0.9950352,0.09813824,0.016574796,0.0,0.09770353,-0.9948944,0.025299788,0.0,0.09846552,0.6145038,-0.11212745,1.0,-0.24132243,-0.9677802,-0.07170374,0.0,0.95181894,-0.25046283,0.1769279,0.0,-0.18918936,-0.025549918,0.9815939,0.0,-0.099331245,0.7539561,0.033624835,1.0,0.17397991,-0.033921577,-0.9841508,0.0,0.95181656,-0.25049642,0.17689377,0.0,-0.25251704,-0.96751434,-0.011294201,0.0,-0.13240713,0.6213106,0.023797274,1.0,-0.028721603,-0.014156848,-0.9994731,0.0,0.99279004,-0.11677989,-0.026875226,0.0,-0.116325535,-0.9930484,0.017408878,0.0,-0.10856182,0.61666137,-0.11109218,1.0
-            """.trimIndent()
-        val names = arrayOf("Dummy01", "Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand")
+            """
+                .trimIndent()
+        val names =
+            arrayOf(
+                "Dummy01",
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 2, 3, 5, 6, 4, 8, 9), offsets)
@@ -454,65 +1319,141 @@ object CartGripTest {
             val captured = arrayOfNulls<Matrix4f>(12)
             for (i in 0 until captured.size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[1+i*16+j])
-                captured[i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[1 + i * 16 + j])
+                captured[i] = Matrix4f().set(values)
             }
             val delta = Matrix4f(pose(captured, 0))
             val cart = Matrix4f(pose(captured, 1))
             val poses = arrayOfNulls<Matrix4f>(names.size)
-            // The probe contains torso/arms only; a separate root sentinel protects against global translation.
-            poses[0]=Matrix4f().translation(3f, 4f, 5f)
-            for (i in 1 until poses.size) poses[i]=Matrix4f(pose(captured, i+1))
+            // The probe contains torso/arms only; a separate root sentinel protects against global
+            // translation.
+            poses[0] = Matrix4f().translation(3f, 4f, 5f)
+            for (i in 1 until poses.size) poses[i] = Matrix4f(pose(captured, i + 1))
             val before = copyPoses(poses)
-            if (!capturedMetalGrip(poses, actor, "WheelbarrowMetal", false, delta, cart, 0f)) throw AssertionError("captured metal Sprint/stop grip refused: wall="+wall)
-            for (pose in poses) if (!(pose ?: throw NullPointerException()).isFinite()) throw AssertionError("nonfinite metal Sprint/stop pose: "+wall)
+            if (!capturedMetalGrip(poses, actor, "WheelbarrowMetal", false, delta, cart, 0f))
+                throw AssertionError("captured metal Sprint/stop grip refused: wall=" + wall)
+            for (pose in poses) if (!(pose ?: throw NullPointerException()).isFinite())
+                throw AssertionError("nonfinite metal Sprint/stop pose: " + wall)
             val inverseDelta = Matrix4f(delta).invert()
             for (side in 0 until 2) {
-                val clavicle: Int = side+3
-                val upper: Int = if (side==0) 5 else 8
-                val forearm: Int = upper+1
-                val hand: Int = upper+2
+                val clavicle: Int = side + 3
+                val upper: Int = if (side == 0) 5 else 8
+                val forearm: Int = upper + 1
+                val hand: Int = upper + 2
                 val pivot = before[clavicle].getTranslation(Vector3f())
-                if (!pose(poses, clavicle).getTranslation(Vector3f()).equals(pivot, 0.000001f)) throw AssertionError("metal stop moved clavicle anchor: "+wall)
+                if (!pose(poses, clavicle).getTranslation(Vector3f()).equals(pivot, 0.000001f))
+                    throw AssertionError("metal stop moved clavicle anchor: " + wall)
                 val from = before[upper].getTranslation(Vector3f()).sub(pivot).normalize()
                 val to = pose(poses, upper).getTranslation(Vector3f()).sub(pivot).normalize()
-                var turn: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, from.dot(to)))).toDouble())))).toFloat()
-                if (turn>35.01f) throw AssertionError("metal stop exceeded bounded clavicle assist: "+wall+" turn="+turn)
-                assisted = assisted || turn>0.01f
-                for (link in arrayOf(intArrayOf(clavicle, upper), intArrayOf(upper, forearm), intArrayOf(forearm, hand))) {
-                    val old: Float = before[link[0]].getTranslation(Vector3f()).distance(before[link[1]].getTranslation(Vector3f()))
-                    val now: Float = pose(poses, link[0]).getTranslation(Vector3f()).distance(pose(poses, link[1]).getTranslation(Vector3f()))
-                    if (Math.abs(old-now)>0.00001f) throw AssertionError("metal stop stretched clavicle/arm: "+wall)
+                var turn: Float =
+                    (Math.toDegrees(
+                            (Math.acos((Math.max(-1f, Math.min(1f, from.dot(to)))).toDouble())),
+                        ))
+                        .toFloat()
+                if (turn > 35.01f)
+                    throw AssertionError(
+                        "metal stop exceeded bounded clavicle assist: " + wall + " turn=" + turn,
+                    )
+                assisted = assisted || turn > 0.01f
+                for (link in
+                    arrayOf(
+                        intArrayOf(clavicle, upper),
+                        intArrayOf(upper, forearm),
+                        intArrayOf(forearm, hand),
+                    )) {
+                    val old: Float =
+                        before[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(before[link[1]].getTranslation(Vector3f()))
+                    val now: Float =
+                        pose(poses, link[0])
+                            .getTranslation(Vector3f())
+                            .distance(pose(poses, link[1]).getTranslation(Vector3f()))
+                    if (Math.abs(old - now) > 0.00001f)
+                        throw AssertionError("metal stop stretched clavicle/arm: " + wall)
                 }
                 val target = Matrix4f()
-                if (!capturedMetalTarget("WheelbarrowMetal", side==0, false, delta, cart, target, 0f) || !pose(poses, hand).equals(target, 0.00002f)) throw AssertionError("metal stop wrist missed its own calibrated target: "+wall)
-                val shoulder = inverseDelta.transformPosition(pose(poses, upper).getTranslation(Vector3f()))
-                val elbow = inverseDelta.transformPosition(pose(poses, forearm).getTranslation(Vector3f()))
-                var abduction: Float = (Math.toDegrees((Math.atan2((Math.abs(elbow.x-shoulder.x)).toDouble(), (shoulder.y-elbow.y).toDouble())))).toFloat()
-                // These retain native Sprint/braking torso motion; use checkCapturedWoodRunning's dynamic 41-degree envelope.
-                // The separate neutral metal capture in checkNativeHandles keeps its existing 25-degree limit.
-                if (abduction>41) throw AssertionError("metal stop exceeded native dynamic elbow envelope: "+wall+" abduction="+abduction)
-                abductions.append(wall).append(if (side==0) "/L=" else "/R=").append(abduction).append(' ')
+                if (
+                    !capturedMetalTarget(
+                        "WheelbarrowMetal",
+                        side == 0,
+                        false,
+                        delta,
+                        cart,
+                        target,
+                        0f,
+                    ) || !pose(poses, hand).equals(target, 0.00002f)
+                )
+                    throw AssertionError(
+                        "metal stop wrist missed its own calibrated target: " + wall,
+                    )
+                val shoulder =
+                    inverseDelta.transformPosition(pose(poses, upper).getTranslation(Vector3f()))
+                val elbow =
+                    inverseDelta.transformPosition(pose(poses, forearm).getTranslation(Vector3f()))
+                var abduction: Float =
+                    (Math.toDegrees(
+                            (Math.atan2(
+                                (Math.abs(elbow.x - shoulder.x)).toDouble(),
+                                (shoulder.y - elbow.y).toDouble(),
+                            )),
+                        ))
+                        .toFloat()
+                // These retain native Sprint/braking torso motion; use checkCapturedWoodRunning's
+                // dynamic 41-degree envelope.
+                // The separate neutral metal capture in checkNativeHandles keeps its existing
+                // 25-degree limit.
+                if (abduction > 41)
+                    throw AssertionError(
+                        "metal stop exceeded native dynamic elbow envelope: " +
+                            wall +
+                            " abduction=" +
+                            abduction,
+                    )
+                abductions
+                    .append(wall)
+                    .append(if (side == 0) "/L=" else "/R=")
+                    .append(abduction)
+                    .append(' ')
             }
-            for (i in intArrayOf(0, 1, 2)) if (!pose(poses, i).equals(before[i])) throw AssertionError("metal stop moved native root/torso: "+wall+" bone="+names[i])
-            if (!delta.equals(pose(captured, 0)) || !cart.equals(pose(captured, 1))) throw AssertionError("metal stop mutated input cart/body delta: "+wall)
+            for (i in intArrayOf(0, 1, 2)) if (!pose(poses, i).equals(before[i]))
+                throw AssertionError(
+                    "metal stop moved native root/torso: " + wall + " bone=" + names[i],
+                )
+            if (!delta.equals(pose(captured, 0)) || !cart.equals(pose(captured, 1)))
+                throw AssertionError("metal stop mutated input cart/body delta: " + wall)
             frames++
         }
-        if (frames!=3 || !assisted) throw AssertionError("missing captured metal shoulder-assist stop coverage")
-        println("CART_METAL_SPRINT_STOP_ABDUCTION "+abductions)
+        if (frames != 3 || !assisted)
+            throw AssertionError("missing captured metal shoulder-assist stop coverage")
+        println("CART_METAL_SPRINT_STOP_ABDUCTION " + abductions)
     }
 
     private fun checkCapturedMetalMovingStance() {
         // B42.21 native entry poses: empty/full Run startup and a banked Sprint.
         // The old .3 movement shift made these two Run targets unreachable.
-        val fixture = java.nio.file.Path.of(System.getProperty("pz.test.project", "."))
-            .resolve("JavaPatches/tests/fixtures/metal-moving-stance.csv")
+        val fixture =
+            java.nio.file.Path.of(System.getProperty("pz.test.project", "."))
+                .resolve("JavaPatches/tests/fixtures/metal-moving-stance.csv")
         var lines: List<String>
-        try{lines=java.nio.file.Files.readAllLines(fixture)
+        try {
+            lines = java.nio.file.Files.readAllLines(fixture)
+        } catch (error: java.io.IOException) {
+            throw AssertionError("missing native metal stance fixture", error)
         }
-        catch (error: java.io.IOException) {throw AssertionError("missing native metal stance fixture", error)
-        }
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand")
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8), offsets)
@@ -524,83 +1465,199 @@ object CartGripTest {
             if (line.isBlank() || line.startsWith("#")) continue
             val cells = line.split(",")
             val label = cells[0]
-            if (cells.size!=2+12*16 || !(cells[1].equals("true") || cells[1].equals("false"))) throw AssertionError("invalid native metal fixture: "+label)
+            if (cells.size != 2 + 12 * 16 || !(cells[1].equals("true") || cells[1].equals("false")))
+                throw AssertionError("invalid native metal fixture: " + label)
             val legacyFailure: Boolean = java.lang.Boolean.parseBoolean(cells[1])
             val captured = arrayOfNulls<Matrix4f>(12)
             for (i in 0 until captured.size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[2+i*16+j])
-                captured[i]=Matrix4f().set(values)
-                if (!pose(captured, i).isFinite()) throw AssertionError("nonfinite native metal fixture: "+label)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[2 + i * 16 + j])
+                captured[i] = Matrix4f().set(values)
+                if (!pose(captured, i).isFinite())
+                    throw AssertionError("nonfinite native metal fixture: " + label)
             }
             val before = java.util.Arrays.copyOfRange(captured, 2, captured.size)
             if (legacyFailure) {
                 val old = copyPoses(before)
-                if (capturedMetalGrip(old, actor, profile.model(), false, pose(captured, 0), pose(captured, 1), 0f)) throw AssertionError("old .3 metal stance no longer reproduces unreachable Run: "+label)
+                if (
+                    capturedMetalGrip(
+                        old,
+                        actor,
+                        profile.model(),
+                        false,
+                        pose(captured, 0),
+                        pose(captured, 1),
+                        0f,
+                    )
+                )
+                    throw AssertionError(
+                        "old .3 metal stance no longer reproduces unreachable Run: " + label,
+                    )
                 legacyFailures++
             }
-            var bank: Float = (Math.atan2((pose(captured, 1).m01()).toDouble(), (pose(captured, 1).m00()).toDouble())).toFloat()
-            if (Math.abs(bank)<0.00001f) bank = 0f
+            var bank: Float =
+                (Math.atan2(
+                        (pose(captured, 1).m01()).toDouble(),
+                        (pose(captured, 1).m00()).toDouble(),
+                    ))
+                    .toFloat()
+            if (Math.abs(bank) < 0.00001f) bank = 0f
             // Native attachment's float residual is not a steering bank.
             val pressure: Float = Math.abs(bank)
             val cart = profile.held(Matrix4f())
-            val totalShift: Float = (pose(captured, 1).m32()-cart.m32())/0.3f
-            val gait: Float = totalShift-CartSteeringMath.woodenShift(pressure, 0f)
+            val totalShift: Float = (pose(captured, 1).m32() - cart.m32()) / 0.3f
+            val gait: Float = totalShift - CartSteeringMath.woodenShift(pressure, 0f)
             val delta = Matrix4f()
-            if (!CartGrounding.alignWheelbarrow(cart, profile, bank, pressure, gait, delta)) throw AssertionError("captured metal moving stance rejected: "+label)
+            if (!CartGrounding.alignWheelbarrow(cart, profile, bank, pressure, gait, delta))
+                throw AssertionError("captured metal moving stance rejected: " + label)
             val expectedCart = Matrix4f(cart)
             val expectedDelta = Matrix4f(delta)
             val poses = copyPoses(before)
-            if (!CartGrip.grip(poses, actor, profile.model(), false, delta, cart, pressure)) throw AssertionError("native metal moving grip refused: "+label)
+            if (!CartGrip.grip(poses, actor, profile.model(), false, delta, cart, pressure))
+                throw AssertionError("native metal moving grip refused: " + label)
             for (side in 0 until 2) {
-                val clavicle: Int = side+2
-                val upper: Int = if (side==0) 4 else 7
-                val forearm: Int = upper+1
-                val hand: Int = upper+2
+                val clavicle: Int = side + 2
+                val upper: Int = if (side == 0) 4 else 7
+                val forearm: Int = upper + 1
+                val hand: Int = upper + 2
                 val target = Matrix4f()
-                if (!CartGrip.target(profile.model(), side==0, false, delta, cart, target, pressure)
-                    || !poses[hand].equals(target, 0.00002f)) throw AssertionError("native metal moving wrist missed target: "+label)
-                for (link in arrayOf(intArrayOf(clavicle, upper), intArrayOf(upper, forearm), intArrayOf(forearm, hand))) {
-                    val old: Float = pose(before, link[0]).getTranslation(Vector3f()).distance(pose(before, link[1]).getTranslation(Vector3f()))
-                    val now: Float = poses[link[0]].getTranslation(Vector3f()).distance(poses[link[1]].getTranslation(Vector3f()))
-                    if (Math.abs(old-now)>0.00001f) throw AssertionError("native metal moving arm stretched: "+label)
+                if (
+                    !CartGrip.target(
+                        profile.model(),
+                        side == 0,
+                        false,
+                        delta,
+                        cart,
+                        target,
+                        pressure,
+                    ) || !poses[hand].equals(target, 0.00002f)
+                )
+                    throw AssertionError("native metal moving wrist missed target: " + label)
+                for (link in
+                    arrayOf(
+                        intArrayOf(clavicle, upper),
+                        intArrayOf(upper, forearm),
+                        intArrayOf(forearm, hand),
+                    )) {
+                    val old: Float =
+                        pose(before, link[0])
+                            .getTranslation(Vector3f())
+                            .distance(pose(before, link[1]).getTranslation(Vector3f()))
+                    val now: Float =
+                        poses[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(poses[link[1]].getTranslation(Vector3f()))
+                    if (Math.abs(old - now) > 0.00001f)
+                        throw AssertionError("native metal moving arm stretched: " + label)
                 }
             }
-            for (i in intArrayOf(0, 1)) if (!poses[i].equals(pose(before, i))) throw AssertionError("native metal moving torso changed: "+label+"/"+names[i])
-            if (!cart.equals(expectedCart) || !delta.equals(expectedDelta)) throw AssertionError("native metal moving grip mutated transform: "+label)
-            banked = banked || pressure>0.1f
+            for (i in intArrayOf(0, 1)) if (!poses[i].equals(pose(before, i)))
+                throw AssertionError("native metal moving torso changed: " + label + "/" + names[i])
+            if (!cart.equals(expectedCart) || !delta.equals(expectedDelta))
+                throw AssertionError("native metal moving grip mutated transform: " + label)
+            banked = banked || pressure > 0.1f
             frames++
         }
-        if (frames!=3 || legacyFailures!=2 || !banked) throw AssertionError("missing native metal Run/Sprint stance coverage")
+        if (frames != 3 || legacyFailures != 2 || !banked)
+            throw AssertionError("missing native metal Run/Sprint stance coverage")
     }
 
-    private fun capturedMetalTarget(model: String, left: Boolean, female: Boolean, delta: Matrix4f, cart: Matrix4f, target: Matrix4f, pressure: Float): Boolean {
+    private fun capturedMetalTarget(
+        model: String,
+        left: Boolean,
+        female: Boolean,
+        delta: Matrix4f,
+        cart: Matrix4f,
+        target: Matrix4f,
+        pressure: Float,
+    ): Boolean {
         // Historical captures used beta40 and the original closed-grip station/depth.
-        // Reconstruct their wrist target independently; current angle has separate live/captured-stance gates.
+        // Reconstruct their wrist target independently; current angle has separate
+        // live/captured-stance gates.
         val axis = cart.transformDirection(Vector3f(0f, 0f, 1f)).normalize()
         val down = cart.transformDirection(Vector3f(0f, -1f, 0f)).normalize()
         val inward = down.cross(axis, Vector3f()).normalize().mul(if (left) 1f else -1f)
         val radial: Float = (Math.toRadians((5).toDouble())).toFloat()
         val beta: Float = (Math.toRadians((40).toDouble())).toFloat()
-        val x = down.mul((Math.cos((radial).toDouble())).toFloat(), Vector3f()).fma((Math.sin((radial).toDouble())).toFloat(), inward)
-        var z = inward.mul((Math.cos((radial).toDouble())).toFloat(), Vector3f()).fma(-(Math.sin((radial).toDouble())).toFloat(), down)
-        x.mul((Math.cos((beta).toDouble())).toFloat()).fma(-(Math.sin((beta).toDouble())).toFloat(), axis).normalize()
+        val x =
+            down
+                .mul((Math.cos((radial).toDouble())).toFloat(), Vector3f())
+                .fma((Math.sin((radial).toDouble())).toFloat(), inward)
+        var z =
+            inward
+                .mul((Math.cos((radial).toDouble())).toFloat(), Vector3f())
+                .fma(-(Math.sin((radial).toDouble())).toFloat(), down)
+        x.mul((Math.cos((beta).toDouble())).toFloat())
+            .fma(-(Math.sin((beta).toDouble())).toFloat(), axis)
+            .normalize()
         val y = z.cross(x, Vector3f()).normalize()
-        z=x.cross(y, Vector3f()).normalize()
-        target.identity().m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z)
+        z = x.cross(y, Vector3f()).normalize()
+        target
+            .identity()
+            .m00(x.x)
+            .m01(x.y)
+            .m02(x.z)
+            .m10(y.x)
+            .m11(y.y)
+            .m12(y.z)
+            .m20(z.x)
+            .m21(z.y)
+            .m22(z.z)
         val point = Vector3f()
         if (!CartGrip.handle(model, left, point)) return false
         cart.transformPosition(point)
-        return target.setTranslation(point.fma(-(if (female) 0.056f else 0.057f), x).fma(-(if (female) 0.025f else 0.022f), z)).isFinite()
+        return target
+            .setTranslation(
+                point
+                    .fma(-(if (female) 0.056f else 0.057f), x)
+                    .fma(-(if (female) 0.025f else 0.022f), z),
+            )
+            .isFinite()
     }
 
-    private fun capturedMetalGrip(poses: Array<out Matrix4f?>, actor: SkinningData, model: String, female: Boolean, delta: Matrix4f, cart: Matrix4f, pressure: Float): Boolean {
-        val solve = CartGrip::class.java.getDeclaredMethod("reach", Array<Matrix4f>::class.java, SkinningData::class.java, String::class.java, Matrix4f::class.java, Matrix4f::class.java, Boolean::class.javaPrimitiveType!!, Float::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!)
+    private fun capturedMetalGrip(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        model: String,
+        female: Boolean,
+        delta: Matrix4f,
+        cart: Matrix4f,
+        pressure: Float,
+    ): Boolean {
+        val solve =
+            CartGrip::class
+                .java
+                .getDeclaredMethod(
+                    "reach",
+                    Array<Matrix4f>::class.java,
+                    SkinningData::class.java,
+                    String::class.java,
+                    Matrix4f::class.java,
+                    Matrix4f::class.java,
+                    Boolean::class.javaPrimitiveType!!,
+                    Float::class.javaPrimitiveType!!,
+                    Boolean::class.javaPrimitiveType!!,
+                    Boolean::class.javaPrimitiveType!!,
+                )
         solve.setAccessible(true)
         for (left in booleanArrayOf(true, false)) {
             val target = Matrix4f()
-            if (!capturedMetalTarget(model, left, female, delta, cart, target, pressure)
-                || !(solve.invoke(null, poses, actor, "Bip01_"+(if (left) "L" else "R")+"_Hand", target, delta, false, 1f, false, true) as Boolean)) return false
+            if (
+                !capturedMetalTarget(model, left, female, delta, cart, target, pressure) ||
+                    !(solve.invoke(
+                        null,
+                        poses,
+                        actor,
+                        "Bip01_" + (if (left) "L" else "R") + "_Hand",
+                        target,
+                        delta,
+                        false,
+                        1f,
+                        false,
+                        true,
+                    ) as Boolean)
+            )
+                return false
         }
         return true
     }
@@ -608,12 +1665,28 @@ object CartGripTest {
     private fun checkCapturedHostMetalBraking() {
         // Actual native03 Host owner draw inputs, captures 1612/1613 at +18788/+18822ms.
         // Both draws rejected the old grip, so these palettes retain the native braking pose.
-        // Pressure is recovered from captured cart Z minus the fixed held Z and native Spine fast-shift.
-        val captures = """
+        // Pressure is recovered from captured cart Z minus the fixed held Z and native Spine
+        // fast-shift.
+        val captures =
+            """
             1612,0.06738482,0.009172703,-0.000173264,-1.7679642e-09,0.0,0.0001668348,0.008832423,-0.002475683,0.0,4.675715e-05,0.0024752421,0.008833999,0.0,0.22113569,0.21780579,-0.9294316,1.0,0.0061430354,0.9685689,0.24864702,0.0,0.9999754,-0.0056360997,-0.002732776,0.0,-0.0012393631,0.24866386,-0.96858495,0.0,6.6632405e-05,0.5248219,-0.015072212,1.0,0.0865318,0.9935807,-0.07281871,0.0,0.8202669,-0.11253025,-0.5607957,0.0,-0.5653888,-0.01120344,-0.8247394,0.0,0.0007688593,0.62795585,0.011473407,1.0,0.9507837,-0.104414,-0.2917177,0.0,0.08698182,0.9935894,-0.072161816,0.0,0.2973794,0.04323347,0.9537731,0.0,0.022872452,0.731984,-0.0050926628,1.0,-0.7849965,-0.14930229,0.6012209,0.0,0.12523112,-0.988719,-0.082033284,0.0,0.6066856,0.010895061,0.79483825,0.0,-0.0027616834,0.73539513,0.012462833,1.0,0.18679294,-0.944445,-0.27040622,0.0,0.8386195,0.29666722,-0.45684162,0.0,0.51167977,-0.14143503,0.84744674,0.0,0.10567239,0.722891,-0.030497223,1.0,-0.5269899,0.6540446,-0.54267377,0.0,0.83861935,0.29666716,-0.45684156,0.0,-0.13780257,-0.69584906,-0.7048338,0.0,0.13127449,0.59344345,-0.067559555,1.0,-0.65043354,0.75759345,-0.05453463,0.0,-0.34467372,-0.35837495,-0.86761373,0.0,-0.6768508,-0.5455376,0.49422926,0.0,0.0590443,0.68308806,-0.14193955,1.0,-0.24384643,-0.9259293,0.28838283,0.0,0.8875901,-0.3329022,-0.31834194,0.0,0.39075896,0.17834389,0.903027,0.0,-0.07112518,0.7223936,0.06482065,1.0,-0.40162635,-0.22087377,-0.8887449,0.0,0.88756895,-0.33294043,-0.31836143,0.0,-0.22558272,-0.91670066,0.32976058,0.0,-0.10454695,0.59548414,0.10434708,1.0,-0.5887321,-0.20812878,-0.78104466,0.0,0.8056677,-0.22916046,-0.5462305,0.0,-0.065296486,-0.9508641,0.30259657,0.0,-0.15959515,0.5652109,-0.017465532,1.0
             1613,0.057266455,0.009173451,-0.00012764637,-1.7679642e-09,0.0,0.00012290946,0.008833144,-0.002475683,0.0,3.4447297e-05,0.002475444,0.008833999,0.0,0.22009288,0.21872438,-0.9251811,1.0,-0.0013377165,0.9615258,0.2747082,0.0,0.99998814,8.2707964e-05,0.0045844167,0.0,0.004386853,0.27471274,-0.9615157,0.0,-0.00027681113,0.52125,-0.012291849,1.0,0.084233895,0.9961041,-0.026087396,0.0,0.8277643,-0.08452313,-0.5546715,0.0,-0.5547147,0.02512809,-0.8316591,0.0,-0.00037218333,0.6236313,0.017029554,1.0,0.95682156,-0.09169318,-0.2757997,0.0,0.08784995,0.9957761,-0.026351161,0.0,0.27704728,0.0009812868,0.96083695,0.0,0.021604529,0.7283682,0.0055356543,1.0,-0.79377323,-0.1722831,0.5833021,0.0,0.124126196,-0.9847448,-0.12193593,0.0,0.59541035,-0.024386486,0.80304873,0.0,-0.004204138,0.7308533,0.02286462,1.0,0.18631686,-0.9466666,-0.26282597,0.0,0.8394052,0.2924142,-0.45813486,0.0,0.510554,-0.13525957,0.84911853,0.0,0.104930386,0.72038305,-0.018482633,1.0,-0.5241578,0.65834475,-0.5401906,0.0,0.839405,0.2924142,-0.45813483,0.0,-0.14365911,-0.69358116,-0.7058852,0.0,0.1304672,0.5906311,-0.054506034,1.0,-0.6466892,0.76189315,-0.03570576,0.0,-0.35485503,-0.3419764,-0.8701116,0.0,-0.67516756,-0.55004525,0.49152637,0.0,0.05862513,0.68086517,-0.12854563,1.0,-0.24130487,-0.93937933,0.24359392,0.0,0.8931222,-0.3131538,-0.32290006,0.0,0.37960696,0.13964179,0.914546,0.0,-0.07333201,0.71585035,0.073662,1.0,-0.39078552,-0.18457389,-0.90178317,0.0,0.8931014,-0.31319138,-0.32292143,0.0,-0.22282942,-0.93157953,0.28723514,0.0,-0.10640534,0.5870975,0.10704954,1.0,-0.5779637,-0.17440204,-0.79720455,0.0,0.8134131,-0.20173334,-0.5455822,0.0,-0.065673366,-0.9637865,0.2584563,0.0,-0.15996769,0.5617996,-0.016550094,1.0
-            """.trimIndent()
-        val names = arrayOf("Dummy01", "Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand")
+            """
+                .trimIndent()
+        val names =
+            arrayOf(
+                "Dummy01",
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 2, 3, 5, 6, 4, 8, 9), offsets)
@@ -623,33 +1696,74 @@ object CartGripTest {
             var capture = cells[0]
             val pressure: Float = java.lang.Float.parseFloat(cells[1])
             val values = FloatArray(16)
-            for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[2+j])
+            for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[2 + j])
             val cart = Matrix4f().set(values)
             val capturedCart = Matrix4f(cart)
             val nativePoses = arrayOfNulls<Matrix4f>(names.size)
-            nativePoses[0]=Matrix4f().translation(3f, 4f, 5f)
+            nativePoses[0] = Matrix4f().translation(3f, 4f, 5f)
             for (i in 1 until nativePoses.size) {
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[2+i*16+j])
-                nativePoses[i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[2 + i * 16 + j])
+                nativePoses[i] = Matrix4f().set(values)
             }
-            val bank: Float = (Math.atan2((cart.m01()).toDouble(), (cart.m00()).toDouble())).toFloat()
-            val gait: Float = CartLegPace.woodenBodyShift(0f, pose(nativePoses, 1).m30(), pose(nativePoses, 1).m32())
-            // Historical capture proves the former 35-degree shoulder refusal; keep its original cart placement.
-            if (Math.abs(-0.8108315f
-                +CartSteeringMath.woodenShift(pressure, gait)-cart.m32())>0.000001f) throw AssertionError("Host braking pressure/cart reconstruction mismatch: "+capture)
+            val bank: Float =
+                (Math.atan2((cart.m01()).toDouble(), (cart.m00()).toDouble())).toFloat()
+            val gait: Float =
+                CartLegPace.woodenBodyShift(
+                    0f,
+                    pose(nativePoses, 1).m30(),
+                    pose(nativePoses, 1).m32(),
+                )
+            // Historical capture proves the former 35-degree shoulder refusal; keep its original
+            // cart placement.
+            if (
+                Math.abs(
+                    -0.8108315f + CartSteeringMath.woodenShift(pressure, gait) - cart.m32(),
+                ) > 0.000001f
+            )
+                throw AssertionError(
+                    "Host braking pressure/cart reconstruction mismatch: " + capture,
+                )
             val delta = Matrix4f().rotateZ(bank)
             val capturedDelta = Matrix4f(delta)
-            val palette = FloatBuffer.allocate(names.size*16)
-            for (pose in nativePoses) PZMath.convertMatrix(Matrix4f(pose).transpose(), org.lwjgl.util.vector.Matrix4f()).store(palette)
+            val palette = FloatBuffer.allocate(names.size * 16)
+            for (pose in nativePoses) PZMath.convertMatrix(
+                    Matrix4f(pose).transpose(),
+                    org.lwjgl.util.vector.Matrix4f(),
+                )
+                .store(palette)
             val live = CartGrip.livePoses(actor, actor, palette, delta, true, pressure)
-            if (live==null) throw AssertionError("Host braking live palette refused: "+capture)
+            if (live == null) throw AssertionError("Host braking live palette refused: " + capture)
             val before = copyPoses(live, names.size)
-            // The historical cap proof above retains its original grip; also replay the current held calibration.
+            // The historical cap proof above retains its original grip; also replay the current
+            // held calibration.
             val currentCart = CartWheelbarrow.METAL.held(Matrix4f())
             val currentDelta = Matrix4f()
-            if (!CartGrounding.alignWheelbarrow(currentCart, CartWheelbarrow.METAL, bank, pressure, gait, currentDelta)) throw AssertionError("current Host calibration refused")
+            if (
+                !CartGrounding.alignWheelbarrow(
+                    currentCart,
+                    CartWheelbarrow.METAL,
+                    bank,
+                    pressure,
+                    gait,
+                    currentDelta,
+                )
+            )
+                throw AssertionError("current Host calibration refused")
             val currentPose = copyPoses(before)
-            if (!CartGrip.grip(currentPose, actor, "WheelbarrowMetal", false, currentDelta, currentCart, pressure)) throw AssertionError("current metal hand surface lost actual Host braking reach: "+capture)
+            if (
+                !CartGrip.grip(
+                    currentPose,
+                    actor,
+                    "WheelbarrowMetal",
+                    false,
+                    currentDelta,
+                    currentCart,
+                    pressure,
+                )
+            )
+                throw AssertionError(
+                    "current metal hand surface lost actual Host braking reach: " + capture,
+                )
             val target = Matrix4f()
             capturedMetalTarget("WheelbarrowMetal", false, false, delta, cart, target, pressure)
             val pivot = before[4].getTranslation(Vector3f())
@@ -657,186 +1771,380 @@ object CartGripTest {
             val from = shoulder.sub(pivot, Vector3f())
             val goal = target.getTranslation(Vector3f())
             val direction = goal.sub(pivot, Vector3f())
-            val shifted = Quaternionf().rotationAxis((Math.toRadians((35).toDouble())).toFloat(), from.cross(direction, Vector3f()).normalize())
-                .transform(from, Vector3f()).add(pivot)
-            val length: Float = shoulder.distance(before[9].getTranslation(Vector3f())) +
-                before[9].getTranslation(Vector3f()).distance(before[10].getTranslation(Vector3f()))
-            var missing: Float = shifted.distance(goal)-length
-            if (missing<0.0015f) throw AssertionError("Host fixture no longer proves physical 35-degree refusal: "+capture+" missing="+missing)
-            // Generic callers retain the original anatomical cap and refuse before changing this arm.
+            val shifted =
+                Quaternionf()
+                    .rotationAxis(
+                        (Math.toRadians((35).toDouble())).toFloat(),
+                        from.cross(direction, Vector3f()).normalize(),
+                    )
+                    .transform(from, Vector3f())
+                    .add(pivot)
+            val length: Float =
+                shoulder.distance(before[9].getTranslation(Vector3f())) +
+                    before[9]
+                        .getTranslation(Vector3f())
+                        .distance(before[10].getTranslation(Vector3f()))
+            var missing: Float = shifted.distance(goal) - length
+            if (missing < 0.0015f)
+                throw AssertionError(
+                    "Host fixture no longer proves physical 35-degree refusal: " +
+                        capture +
+                        " missing=" +
+                        missing,
+                )
+            // Generic callers retain the original anatomical cap and refuse before changing this
+            // arm.
             val generic = copyPoses(before)
-            if (CartGrip.reach(generic, actor, "Bip01_R_Hand", target, delta, false)) throw AssertionError("Host metal exception leaked into generic reach: "+capture)
-            for (i in 0 until generic.size) if (!generic[i].equals(before[i])) throw AssertionError("unreachable generic reach mutated pose: "+capture)
+            if (CartGrip.reach(generic, actor, "Bip01_R_Hand", target, delta, false))
+                throw AssertionError("Host metal exception leaked into generic reach: " + capture)
+            for (i in 0 until generic.size) if (!generic[i].equals(before[i]))
+                throw AssertionError("unreachable generic reach mutated pose: " + capture)
             val poses = copyPoses(before)
-            if (!capturedMetalGrip(poses, actor, "WheelbarrowMetal", false, delta, cart, pressure)) throw AssertionError("native Host metal braking grip refused: "+capture)
+            if (!capturedMetalGrip(poses, actor, "WheelbarrowMetal", false, delta, cart, pressure))
+                throw AssertionError("native Host metal braking grip refused: " + capture)
             var rightReserve: Float = 0f
             for (side in 0 until 2) {
-                val clavicle: Int = side+3
-                val upper: Int = if (side==0) 5 else 8
-                val forearm: Int = upper+1
-                val hand: Int = upper+2
+                val clavicle: Int = side + 3
+                val upper: Int = if (side == 0) 5 else 8
+                val forearm: Int = upper + 1
+                val hand: Int = upper + 2
                 val anchor = before[clavicle].getTranslation(Vector3f())
                 val oldAxis = before[upper].getTranslation(Vector3f()).sub(anchor).normalize()
                 val axis = poses[upper].getTranslation(Vector3f()).sub(anchor).normalize()
-                var turn: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, oldAxis.dot(axis)))).toDouble())))).toFloat()
-                if (turn>40.01f || side==1 && turn<35.1f) throw AssertionError("Host metal clavicle outside verified envelope: "+capture+" turn="+turn)
-                if (!poses[clavicle].getTranslation(Vector3f()).equals(anchor, 0.000001f)) throw AssertionError("Host metal moved clavicle anchor: "+capture)
-                for (link in arrayOf(intArrayOf(clavicle, upper), intArrayOf(upper, forearm), intArrayOf(forearm, hand))) {
-                    val old: Float = before[link[0]].getTranslation(Vector3f()).distance(before[link[1]].getTranslation(Vector3f()))
-                    val now: Float = poses[link[0]].getTranslation(Vector3f()).distance(poses[link[1]].getTranslation(Vector3f()))
-                    if (Math.abs(old-now)>0.000001f) throw AssertionError("Host metal stretched arm: "+capture)
+                var turn: Float =
+                    (Math.toDegrees(
+                            (Math.acos(
+                                (Math.max(-1f, Math.min(1f, oldAxis.dot(axis)))).toDouble(),
+                            )),
+                        ))
+                        .toFloat()
+                if (turn > 40.01f || side == 1 && turn < 35.1f)
+                    throw AssertionError(
+                        "Host metal clavicle outside verified envelope: " +
+                            capture +
+                            " turn=" +
+                            turn,
+                    )
+                if (!poses[clavicle].getTranslation(Vector3f()).equals(anchor, 0.000001f))
+                    throw AssertionError("Host metal moved clavicle anchor: " + capture)
+                for (link in
+                    arrayOf(
+                        intArrayOf(clavicle, upper),
+                        intArrayOf(upper, forearm),
+                        intArrayOf(forearm, hand),
+                    )) {
+                    val old: Float =
+                        before[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(before[link[1]].getTranslation(Vector3f()))
+                    val now: Float =
+                        poses[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(poses[link[1]].getTranslation(Vector3f()))
+                    if (Math.abs(old - now) > 0.000001f)
+                        throw AssertionError("Host metal stretched arm: " + capture)
                 }
-                capturedMetalTarget("WheelbarrowMetal", side==0, false, delta, cart, target, pressure)
-                if (!poses[hand].equals(target, 0.00002f)) throw AssertionError("Host metal wrist missed target: "+capture)
+                capturedMetalTarget(
+                    "WheelbarrowMetal",
+                    side == 0,
+                    false,
+                    delta,
+                    cart,
+                    target,
+                    pressure,
+                )
+                if (!poses[hand].equals(target, 0.00002f))
+                    throw AssertionError("Host metal wrist missed target: " + capture)
                 val palm = poses[hand].transformPosition(Vector3f(0.057f, 0f, 0.022f))
                 val handle = Vector3f()
-                CartGrip.handle("WheelbarrowMetal", side==0, handle)
+                CartGrip.handle("WheelbarrowMetal", side == 0, handle)
                 cart.transformPosition(handle)
-                if (palm.distance(handle)>0.000001f) throw AssertionError("Host metal palm missed handle: "+capture)
-                if (side==1) rightReserve=length-poses[upper].getTranslation(Vector3f()).distance(poses[hand].getTranslation(Vector3f()))
+                if (palm.distance(handle) > 0.000001f)
+                    throw AssertionError("Host metal palm missed handle: " + capture)
+                if (side == 1)
+                    rightReserve =
+                        length -
+                            poses[upper]
+                                .getTranslation(Vector3f())
+                                .distance(poses[hand].getTranslation(Vector3f()))
             }
-            if (rightReserve<0.003f || rightReserve>0.0051f) throw AssertionError("Host metal lost natural elbow reserve: "+capture+" reserve="+rightReserve)
-            for (i in intArrayOf(0, 1, 2)) if (!poses[i].equals(before[i])) throw AssertionError("Host metal changed native root/torso: "+capture+" bone="+names[i])
-            if (!cart.equals(capturedCart) || !delta.equals(capturedDelta)) throw AssertionError("Host metal moved cart/body delta")
-            // Traverse both the old 35-degree corner and the new hard cap without a late fallback jump.
+            if (rightReserve < 0.003f || rightReserve > 0.0051f)
+                throw AssertionError(
+                    "Host metal lost natural elbow reserve: " +
+                        capture +
+                        " reserve=" +
+                        rightReserve,
+                )
+            for (i in intArrayOf(0, 1, 2)) if (!poses[i].equals(before[i]))
+                throw AssertionError(
+                    "Host metal changed native root/torso: " + capture + " bone=" + names[i],
+                )
+            if (!cart.equals(capturedCart) || !delta.equals(capturedDelta))
+                throw AssertionError("Host metal moved cart/body delta")
+            // Traverse both the old 35-degree corner and the new hard cap without a late fallback
+            // jump.
             var previous: Array<Matrix4f>? = null
             var previousTurn: Float = 0f
             var below35: Boolean = false
             var above35: Boolean = false
             var capped: Boolean = false
             for (tick in 1000 downTo 0) {
-                val movingCart = Matrix4f(cart).m32(cart.m32()+tick*0.00002f)
+                val movingCart = Matrix4f(cart).m32(cart.m32() + tick * 0.00002f)
                 val sample = copyPoses(before)
-                if (!capturedMetalGrip(sample, actor, "WheelbarrowMetal", false, delta, movingCart, pressure)) throw AssertionError("Host metal reach continuity refused: "+capture+" tick="+tick)
+                if (
+                    !capturedMetalGrip(
+                        sample,
+                        actor,
+                        "WheelbarrowMetal",
+                        false,
+                        delta,
+                        movingCart,
+                        pressure,
+                    )
+                )
+                    throw AssertionError(
+                        "Host metal reach continuity refused: " + capture + " tick=" + tick,
+                    )
                 val axis = sample[8].getTranslation(Vector3f()).sub(pivot).normalize()
-                var turn: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, from.dot(axis)/from.length()))).toDouble())))).toFloat()
-                below35 = below35 || turn<34.9f
-                above35 = above35 || turn>35.1f
-                capped = capped || turn>39.99f
-                if (turn>40.01f || previous!=null && (Math.abs(turn-previousTurn)>0.1f
-                    || sample[9].getTranslation(Vector3f()).distance(previous[9].getTranslation(Vector3f()))>0.0003f)) throw AssertionError("Host metal shoulder/elbow jumped at cap: "+capture+" tick="+tick)
-                previous=sample
-                previousTurn=turn
+                var turn: Float =
+                    (Math.toDegrees(
+                            (Math.acos(
+                                (Math.max(-1f, Math.min(1f, from.dot(axis) / from.length())))
+                                    .toDouble(),
+                            )),
+                        ))
+                        .toFloat()
+                below35 = below35 || turn < 34.9f
+                above35 = above35 || turn > 35.1f
+                capped = capped || turn > 39.99f
+                if (
+                    turn > 40.01f ||
+                        previous != null &&
+                            (Math.abs(turn - previousTurn) > 0.1f ||
+                                sample[9]
+                                    .getTranslation(Vector3f())
+                                    .distance(previous[9].getTranslation(Vector3f())) > 0.0003f)
+                )
+                    throw AssertionError(
+                        "Host metal shoulder/elbow jumped at cap: " + capture + " tick=" + tick,
+                    )
+                previous = sample
+                previousTurn = turn
             }
-            if (!below35 || !above35 || !capped) throw AssertionError("Host metal cap continuity range missing")
+            if (!below35 || !above35 || !capped)
+                throw AssertionError("Host metal cap continuity range missing")
             val impossible = copyPoses(before)
-            if (capturedMetalGrip(impossible, actor, "WheelbarrowMetal", false, delta, Matrix4f(cart).m32(cart.m32()-1), pressure)) throw AssertionError("physically unreachable metal target accepted")
-            for (i in 0 until impossible.size) if (!impossible[i].equals(before[i])) throw AssertionError("physically unreachable metal target mutated pose")
-            println("CART_HOST_METAL_BRAKING capture="+capture+" missingAt35="+missing+" reserveAt40="+rightReserve)
+            if (
+                capturedMetalGrip(
+                    impossible,
+                    actor,
+                    "WheelbarrowMetal",
+                    false,
+                    delta,
+                    Matrix4f(cart).m32(cart.m32() - 1),
+                    pressure,
+                )
+            )
+                throw AssertionError("physically unreachable metal target accepted")
+            for (i in 0 until impossible.size) if (!impossible[i].equals(before[i]))
+                throw AssertionError("physically unreachable metal target mutated pose")
+            println(
+                "CART_HOST_METAL_BRAKING capture=" +
+                    capture +
+                    " missingAt35=" +
+                    missing +
+                    " reserveAt40=" +
+                    rightReserve,
+            )
             frames++
         }
-        if (frames!=2) throw AssertionError("missing actual native Host metal braking failures")
+        if (frames != 2) throw AssertionError("missing actual native Host metal braking failures")
     }
 
-    private fun checkMeshClearance(hand: Matrix4f, finger: Matrix4f, female: Boolean, model: String) {
-        // Actual weighted MaleBody/FemaleBody.x vertices, expressed in each bone's bind coordinates.
-        val palm = if (female) arrayOf(floatArrayOf(0.0020998f, -0.0091214f, 0.0071902f),
-            floatArrayOf(0.0014231f, -0.0076770f, -0.0063046f),
-            floatArrayOf(0.0016326f, 0.0178379f, 0.0075661f),
-            floatArrayOf(0.0020998f, -0.0091214f, 0.0071902f),
-            floatArrayOf(0.0007937f, 0.0184254f, -0.0038792f),
-            floatArrayOf(0.0283567f, 0.0249755f, 0.0133053f),
-            floatArrayOf(0.0616472f, -0.0226788f, 0.0060821f),
-            floatArrayOf(0.0706890f, 0.0282415f, 0.0130508f),
-            floatArrayOf(0.0294907f, -0.0224944f, 0.0138331f),
-            floatArrayOf(0.0747490f, 0.0294749f, 0.0043946f),
-            floatArrayOf(0.0312226f, 0.0277455f, -0.0067923f),
-            floatArrayOf(0.0328328f, -0.0213634f, -0.0117772f),
-            floatArrayOf(0.0697984f, -0.0171041f, -0.0078210f),
-            floatArrayOf(0.0294907f, -0.0224944f, 0.0138331f),
-            floatArrayOf(0.0697984f, -0.0171041f, -0.0078210f),
-            floatArrayOf(0.0730657f, -0.0277366f, 0.0092307f),
-            floatArrayOf(0.0676227f, -0.0221999f, -0.0045658f),
-            floatArrayOf(0.0676227f, -0.0221999f, -0.0045658f)) else arrayOf(floatArrayOf(-0.0047011f, -0.0166808f, 0.0149844f),
-            floatArrayOf(-0.0062986f, -0.0140933f, -0.0107094f),
-            floatArrayOf(-0.0065602f, 0.0228221f, 0.0122680f),
-            floatArrayOf(-0.0047011f, -0.0166808f, 0.0149844f),
-            floatArrayOf(-0.0061939f, 0.0234710f, -0.0065123f),
-            floatArrayOf(0.0248656f, 0.0219624f, 0.0259086f),
-            floatArrayOf(0.0557897f, -0.0245963f, 0.0030804f),
-            floatArrayOf(0.0605094f, 0.0264435f, 0.0156451f),
-            floatArrayOf(0.0267577f, -0.0275660f, 0.0219811f),
-            floatArrayOf(0.0685401f, 0.0286272f, -0.0024884f),
-            floatArrayOf(0.0240095f, 0.0266243f, -0.0116279f),
-            floatArrayOf(0.0250810f, -0.0250940f, -0.0167333f),
-            floatArrayOf(0.0632623f, -0.0203972f, -0.0148921f),
-            floatArrayOf(0.0267577f, -0.0275660f, 0.0219811f),
-            floatArrayOf(0.0632623f, -0.0203972f, -0.0148921f))
-        val tips = if (female) arrayOf(floatArrayOf(0.0403683f, -0.0188581f, -0.0047107f),
-            floatArrayOf(0.0255160f, 0.0224891f, 0.0088530f),
-            floatArrayOf(0.0370694f, -0.0205719f, 0.0048154f),
-            floatArrayOf(0.0288193f, 0.0237946f, 0.0000331f),
-            floatArrayOf(0.0403683f, -0.0188581f, -0.0047107f),
-            floatArrayOf(0.0288193f, 0.0237946f, 0.0000331f)) else arrayOf(floatArrayOf(0.0433459f, -0.0198121f, -0.0046032f),
-            floatArrayOf(0.0184177f, 0.0220647f, 0.0250893f),
-            floatArrayOf(0.0323905f, -0.0227227f, 0.0142481f),
-            floatArrayOf(0.0292507f, 0.0244001f, 0.0064256f),
-            floatArrayOf(0.0433459f, -0.0198121f, -0.0046032f),
-            floatArrayOf(0.0292507f, 0.0244001f, 0.0064256f))
+    private fun checkMeshClearance(
+        hand: Matrix4f,
+        finger: Matrix4f,
+        female: Boolean,
+        model: String,
+    ) {
+        // Actual weighted MaleBody/FemaleBody.x vertices, expressed in each bone's bind
+        // coordinates.
+        val palm =
+            if (female)
+                arrayOf(
+                    floatArrayOf(0.0020998f, -0.0091214f, 0.0071902f),
+                    floatArrayOf(0.0014231f, -0.0076770f, -0.0063046f),
+                    floatArrayOf(0.0016326f, 0.0178379f, 0.0075661f),
+                    floatArrayOf(0.0020998f, -0.0091214f, 0.0071902f),
+                    floatArrayOf(0.0007937f, 0.0184254f, -0.0038792f),
+                    floatArrayOf(0.0283567f, 0.0249755f, 0.0133053f),
+                    floatArrayOf(0.0616472f, -0.0226788f, 0.0060821f),
+                    floatArrayOf(0.0706890f, 0.0282415f, 0.0130508f),
+                    floatArrayOf(0.0294907f, -0.0224944f, 0.0138331f),
+                    floatArrayOf(0.0747490f, 0.0294749f, 0.0043946f),
+                    floatArrayOf(0.0312226f, 0.0277455f, -0.0067923f),
+                    floatArrayOf(0.0328328f, -0.0213634f, -0.0117772f),
+                    floatArrayOf(0.0697984f, -0.0171041f, -0.0078210f),
+                    floatArrayOf(0.0294907f, -0.0224944f, 0.0138331f),
+                    floatArrayOf(0.0697984f, -0.0171041f, -0.0078210f),
+                    floatArrayOf(0.0730657f, -0.0277366f, 0.0092307f),
+                    floatArrayOf(0.0676227f, -0.0221999f, -0.0045658f),
+                    floatArrayOf(0.0676227f, -0.0221999f, -0.0045658f),
+                )
+            else
+                arrayOf(
+                    floatArrayOf(-0.0047011f, -0.0166808f, 0.0149844f),
+                    floatArrayOf(-0.0062986f, -0.0140933f, -0.0107094f),
+                    floatArrayOf(-0.0065602f, 0.0228221f, 0.0122680f),
+                    floatArrayOf(-0.0047011f, -0.0166808f, 0.0149844f),
+                    floatArrayOf(-0.0061939f, 0.0234710f, -0.0065123f),
+                    floatArrayOf(0.0248656f, 0.0219624f, 0.0259086f),
+                    floatArrayOf(0.0557897f, -0.0245963f, 0.0030804f),
+                    floatArrayOf(0.0605094f, 0.0264435f, 0.0156451f),
+                    floatArrayOf(0.0267577f, -0.0275660f, 0.0219811f),
+                    floatArrayOf(0.0685401f, 0.0286272f, -0.0024884f),
+                    floatArrayOf(0.0240095f, 0.0266243f, -0.0116279f),
+                    floatArrayOf(0.0250810f, -0.0250940f, -0.0167333f),
+                    floatArrayOf(0.0632623f, -0.0203972f, -0.0148921f),
+                    floatArrayOf(0.0267577f, -0.0275660f, 0.0219811f),
+                    floatArrayOf(0.0632623f, -0.0203972f, -0.0148921f),
+                )
+        val tips =
+            if (female)
+                arrayOf(
+                    floatArrayOf(0.0403683f, -0.0188581f, -0.0047107f),
+                    floatArrayOf(0.0255160f, 0.0224891f, 0.0088530f),
+                    floatArrayOf(0.0370694f, -0.0205719f, 0.0048154f),
+                    floatArrayOf(0.0288193f, 0.0237946f, 0.0000331f),
+                    floatArrayOf(0.0403683f, -0.0188581f, -0.0047107f),
+                    floatArrayOf(0.0288193f, 0.0237946f, 0.0000331f),
+                )
+            else
+                arrayOf(
+                    floatArrayOf(0.0433459f, -0.0198121f, -0.0046032f),
+                    floatArrayOf(0.0184177f, 0.0220647f, 0.0250893f),
+                    floatArrayOf(0.0323905f, -0.0227227f, 0.0142481f),
+                    floatArrayOf(0.0292507f, 0.0244001f, 0.0064256f),
+                    floatArrayOf(0.0433459f, -0.0198121f, -0.0046032f),
+                    floatArrayOf(0.0292507f, 0.0244001f, 0.0064256f),
+                )
         var wood: Boolean = "WheelbarrowWood".equals(model)
         val shape = CartGrip.grasp(female, model)
         val relative = Matrix4f(hand).invert().mul(finger)
         for (part in 0 until 2) {
             var closest: Float = Float.POSITIVE_INFINITY
-            for (vertex in if (part==0) palm else tips) {
+            for (vertex in if (part == 0) palm else tips) {
                 val point = Vector3f(vertex[0], vertex[1], vertex[2])
-                if (part==1) relative.transformPosition(point)
-                var x: Float = point.x-shape.palmX
-                val z: Float = point.z-shape.palmDepth
-                if (wood) x=0.9063078f*x+0.4226183f*point.y
+                if (part == 1) relative.transformPosition(point)
+                var x: Float = point.x - shape.palmX
+                val z: Float = point.z - shape.palmDepth
+                if (wood) x = 0.9063078f * x + 0.4226183f * point.y
                 // Project the diagonal underhand grip into the measured shaft cross-section.
-                var clearance: Float = if (wood) Math.max(Math.abs(0.9961947f*x-0.08715574f*z)-0.01579f, Math.abs(0.08715574f*x+0.9961947f*z)-0.0125f) else (Math.hypot((x).toDouble(), (z).toDouble())).toFloat()-0.0128f
-                closest=Math.min(closest, clearance)
+                var clearance: Float =
+                    if (wood)
+                        Math.max(
+                            Math.abs(0.9961947f * x - 0.08715574f * z) - 0.01579f,
+                            Math.abs(0.08715574f * x + 0.9961947f * z) - 0.0125f,
+                        )
+                    else (Math.hypot((x).toDouble(), (z).toDouble())).toFloat() - 0.0128f
+                closest = Math.min(closest, clearance)
             }
-            if (closest<-0.0025f || closest>0.0025f) throw AssertionError("mesh lost handle surface contact: part="+part+" female="+female+" wood="+wood+" clearance="+closest)
+            if (closest < -0.0025f || closest > 0.0025f)
+                throw AssertionError(
+                    "mesh lost handle surface contact: part=" +
+                        part +
+                        " female=" +
+                        female +
+                        " wood=" +
+                        wood +
+                        " clearance=" +
+                        closest,
+                )
         }
     }
 
     private fun checkWoodThumb(hand: Matrix4f, thumb: Matrix4f, female: Boolean, side: String) {
         // Native thumb vertices in bind coordinates; the right-hand mesh mirrors local Y.
-        val vertices = if (female) arrayOf(floatArrayOf(0.0065814f, 0.0081348f, -0.0031218f),
-            floatArrayOf(0.0161162f, -0.0130958f, 0.0085766f),
-            floatArrayOf(0.016562f, -0.0098148f, -0.006701f),
-            floatArrayOf(0.0169611f, 0.002113f, 0.007204f),
-            floatArrayOf(0.0337963f, 0.0062153f, 0.0009176f),
-            floatArrayOf(0.0342135f, -0.0059551f, -0.0015731f),
-            floatArrayOf(0.0347263f, -0.0053323f, 0.0078769f),
-            floatArrayOf(0.0369234f, 0.0037346f, 0.0088547f)) else arrayOf(floatArrayOf(0.0026303f, 0.0052141f, -0.0097699f),
-            floatArrayOf(0.0117025f, -0.0146732f, -0.0140302f),
-            floatArrayOf(0.0161775f, -0.0020761f, 0.0094413f),
-            floatArrayOf(0.0165286f, -0.0198129f, 0.0108953f),
-            floatArrayOf(0.02937f, 0.0045533f, -0.006813f),
-            floatArrayOf(0.0304491f, -0.0101035f, -0.0091006f),
-            floatArrayOf(0.0312257f, -0.0092361f, 0.0025076f),
-            floatArrayOf(0.0333949f, 0.0017564f, 0.0030381f))
+        val vertices =
+            if (female)
+                arrayOf(
+                    floatArrayOf(0.0065814f, 0.0081348f, -0.0031218f),
+                    floatArrayOf(0.0161162f, -0.0130958f, 0.0085766f),
+                    floatArrayOf(0.016562f, -0.0098148f, -0.006701f),
+                    floatArrayOf(0.0169611f, 0.002113f, 0.007204f),
+                    floatArrayOf(0.0337963f, 0.0062153f, 0.0009176f),
+                    floatArrayOf(0.0342135f, -0.0059551f, -0.0015731f),
+                    floatArrayOf(0.0347263f, -0.0053323f, 0.0078769f),
+                    floatArrayOf(0.0369234f, 0.0037346f, 0.0088547f),
+                )
+            else
+                arrayOf(
+                    floatArrayOf(0.0026303f, 0.0052141f, -0.0097699f),
+                    floatArrayOf(0.0117025f, -0.0146732f, -0.0140302f),
+                    floatArrayOf(0.0161775f, -0.0020761f, 0.0094413f),
+                    floatArrayOf(0.0165286f, -0.0198129f, 0.0108953f),
+                    floatArrayOf(0.02937f, 0.0045533f, -0.006813f),
+                    floatArrayOf(0.0304491f, -0.0101035f, -0.0091006f),
+                    floatArrayOf(0.0312257f, -0.0092361f, 0.0025076f),
+                    floatArrayOf(0.0333949f, 0.0017564f, 0.0030381f),
+                )
         val local = Matrix4f(hand).invert().mul(thumb)
         val shape = CartGrip.grasp(female, "WheelbarrowWood")
         val mirror: Float = if ("L".equals(side)) 1f else -1f
         var closest: Float = Float.POSITIVE_INFINITY
         for (vertex in vertices) {
-            val point = local.transformPosition(Vector3f(vertex[0], mirror*vertex[1], vertex[2]))
-            val x: Float = 0.9063078f*(point.x-shape.palmX)+0.4226183f*mirror*point.y
-            val z: Float = point.z-shape.palmDepth
-            closest=Math.min(closest, Math.max(Math.abs(0.9961947f*x-0.08715574f*z)-0.01579f, Math.abs(0.08715574f*x+0.9961947f*z)-0.0125f))
+            val point = local.transformPosition(Vector3f(vertex[0], mirror * vertex[1], vertex[2]))
+            val x: Float = 0.9063078f * (point.x - shape.palmX) + 0.4226183f * mirror * point.y
+            val z: Float = point.z - shape.palmDepth
+            closest =
+                Math.min(
+                    closest,
+                    Math.max(
+                        Math.abs(0.9961947f * x - 0.08715574f * z) - 0.01579f,
+                        Math.abs(0.08715574f * x + 0.9961947f * z) - 0.0125f,
+                    ),
+                )
         }
-        if (Math.abs(closest)>0.0025f) throw AssertionError("wood thumb misses shaft surface: "+closest)
+        if (Math.abs(closest) > 0.0025f)
+            throw AssertionError("wood thumb misses shaft surface: " + closest)
     }
 
     private fun checkFingers() {
-        for (side in arrayOf("L", "R")) for (female in booleanArrayOf(false, true)) for (model in arrayOf("ShoppingCartModel", "WheelbarrowWood", "WheelbarrowMetal")) {
-            val names = arrayOf("Bip01_Spine", "Bip01_"+side+"_Hand", "Bip01_"+side+"_Finger0", "Bip01_"+side+"_Finger1")
+        for (side in arrayOf("L", "R")) for (female in booleanArrayOf(false, true)) for (model in
+            arrayOf("ShoppingCartModel", "WheelbarrowWood", "WheelbarrowMetal")) {
+            val names =
+                arrayOf(
+                    "Bip01_Spine",
+                    "Bip01_" + side + "_Hand",
+                    "Bip01_" + side + "_Finger0",
+                    "Bip01_" + side + "_Finger1",
+                )
             val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
             for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
             val actor = skeleton(names, listOf(-1, 0, 1, 1), offsets)
             val hand = Matrix4f().translation(0.14f, 0.6f, -0.15f).rotateZ(0.1f).rotateY(0.5f)
             val sign: Float = if ("L".equals(side)) -1f else 1f
             // Native MaleBody/FemaleBody.x inverse-binds: these knuckles coincide in both meshes.
-            val poses: Array<Matrix4f> = arrayOf(Matrix4f(), hand, Matrix4f(hand).translate(0.0576815f, sign*0.023606f, -0.000272f), Matrix4f(hand).translate(0.084102f, 0f, 0f).rotateY(-0.1444f))
-            poses[2].m00(0.82926f).m01(sign*0.51426f).m02(0.21881f)
-                .m10(-sign*0.55854f).m11(0.74910f).m12(sign*0.35621f)
-                .m20(0.01927f).m21(-sign*0.41760f).m22(0.90843f)
+            val poses: Array<Matrix4f> =
+                arrayOf(
+                    Matrix4f(),
+                    hand,
+                    Matrix4f(hand).translate(0.0576815f, sign * 0.023606f, -0.000272f),
+                    Matrix4f(hand).translate(0.084102f, 0f, 0f).rotateY(-0.1444f),
+                )
+            poses[2]
+                .m00(0.82926f)
+                .m01(sign * 0.51426f)
+                .m02(0.21881f)
+                .m10(-sign * 0.55854f)
+                .m11(0.74910f)
+                .m12(sign * 0.35621f)
+                .m20(0.01927f)
+                .m21(-sign * 0.41760f)
+                .m22(0.90843f)
             // The measured thumb basis is relative to the palm, including its native twist.
-            val thumbLocal = Matrix4f(poses[2]).setTranslation(0.0576815f, sign*0.023606f, -0.000272f)
+            val thumbLocal =
+                Matrix4f(poses[2]).setTranslation(0.0576815f, sign * 0.023606f, -0.000272f)
             hand.mul(thumbLocal, poses[2])
             val fingerKnuckle = poses[3].getTranslation(Vector3f())
             val thumbKnuckle = poses[2].getTranslation(Vector3f())
@@ -844,616 +2152,1932 @@ object CartGripTest {
             val underhand: Boolean = model.startsWith("Wheelbarrow")
             CartGrip.closeFingers(poses, actor, side, shape, underhand)
             if (model.equals("WheelbarrowMetal")) {
-                // The user rejected clearance obtained by opening the fist: keep its accepted closure.
-                val closed = Matrix4f().rotationY(if (female) -1.7f else -1.5f)
-                    .setTranslation(0.084102f, 0f, 0f)
+                // The user rejected clearance obtained by opening the fist: keep its accepted
+                // closure.
+                val closed =
+                    Matrix4f()
+                        .rotationY(if (female) -1.7f else -1.5f)
+                        .setTranslation(0.084102f, 0f, 0f)
                 val relative = Matrix4f(hand).invert().mul(poses[3])
-                if (!relative.equals(closed, 0.00001f)) throw AssertionError("metal grip opened the accepted closed fist")
+                if (!relative.equals(closed, 0.00001f))
+                    throw AssertionError("metal grip opened the accepted closed fist")
                 relative.set(hand).invert().mul(poses[2])
-                if (!relative.equals(thumbLocal, 0.00001f)) throw AssertionError("metal grip changed the native thumb instead of the wrist angle")
+                if (!relative.equals(thumbLocal, 0.00001f))
+                    throw AssertionError(
+                        "metal grip changed the native thumb instead of the wrist angle",
+                    )
             }
-            // Metal uses exact finite-shaft contacts, including thumb, in CartMetalGripSurfaceChecks.
+            // Metal uses exact finite-shaft contacts, including thumb, in
+            // CartMetalGripSurfaceChecks.
             if (!model.equals("WheelbarrowMetal")) checkMeshClearance(hand, poses[3], female, model)
             if (model.equals("WheelbarrowWood")) checkWoodThumb(hand, poses[2], female, side)
-            if (poses[3].getTranslation(Vector3f()).distance(fingerKnuckle)>0.000001f
-                || poses[2].getTranslation(Vector3f()).distance(thumbKnuckle)>0.000001f) throw AssertionError("finger closure moved a knuckle")
+            if (
+                poses[3].getTranslation(Vector3f()).distance(fingerKnuckle) > 0.000001f ||
+                    poses[2].getTranslation(Vector3f()).distance(thumbKnuckle) > 0.000001f
+            )
+                throw AssertionError("finger closure moved a knuckle")
             // Independent mesh measurements: centroids of vertices weighted to each native finger.
-            val fingerVertex = if (female) Vector3f(0.0334934f, -sign*0.001965f, 0.0007189f) else Vector3f(0.0326669f, -sign*0.0014197f, 0.0071637f)
-            val thumbVertex = if (female) Vector3f(0.0247165f, sign*0.0018487f, 0.00267f) else Vector3f(0.0216679f, sign*0.0056741f, -0.0020086f)
+            val fingerVertex =
+                if (female) Vector3f(0.0334934f, -sign * 0.001965f, 0.0007189f)
+                else Vector3f(0.0326669f, -sign * 0.0014197f, 0.0071637f)
+            val thumbVertex =
+                if (female) Vector3f(0.0247165f, sign * 0.0018487f, 0.00267f)
+                else Vector3f(0.0216679f, sign * 0.0056741f, -0.0020086f)
             val inverse = Matrix4f(hand).invert()
             val finger = inverse.transformPosition(poses[3].transformPosition(fingerVertex))
             val thumb = inverse.transformPosition(poses[2].transformPosition(thumbVertex))
             val depth: Float = shape.palmDepth
-            val radial: Float = (Math.hypot((finger.x-shape.palmX).toDouble(), (finger.z-depth).toDouble())).toFloat()
-            if (!model.equals("WheelbarrowMetal") && (radial<0.01f || radial>0.04f || finger.x<=shape.palmX || (!underhand && thumb.x>=shape.palmX+0.005f))) throw AssertionError("native finger meshes do not enclose the grip: female="+female+" side="+side)
+            val radial: Float =
+                (Math.hypot((finger.x - shape.palmX).toDouble(), (finger.z - depth).toDouble()))
+                    .toFloat()
+            if (
+                !model.equals("WheelbarrowMetal") &&
+                    (radial < 0.01f ||
+                        radial > 0.04f ||
+                        finger.x <= shape.palmX ||
+                        (!underhand && thumb.x >= shape.palmX + 0.005f))
+            )
+                throw AssertionError(
+                    "native finger meshes do not enclose the grip: female=" +
+                        female +
+                        " side=" +
+                        side,
+                )
             if (underhand && model.equals("WheelbarrowWood")) {
-                val thumbAxis = Matrix4f(hand).invert().mul(poses[2]).transformDirection(Vector3f(1f, 0f, 0f)).normalize()
-                val shaft = if (model.equals("WheelbarrowWood")) Vector3f(0.4226183f, sign*0.9063078f, 0f) else Vector3f(0.6427876f, sign*0.7660444f, 0f)
-                if (thumbAxis.dot(shaft)<(if (model.equals("WheelbarrowWood")) 0.95f else 0.90f)) throw AssertionError("underhand thumb does not follow the shaft")
+                val thumbAxis =
+                    Matrix4f(hand)
+                        .invert()
+                        .mul(poses[2])
+                        .transformDirection(Vector3f(1f, 0f, 0f))
+                        .normalize()
+                val shaft =
+                    if (model.equals("WheelbarrowWood")) Vector3f(0.4226183f, sign * 0.9063078f, 0f)
+                    else Vector3f(0.6427876f, sign * 0.7660444f, 0f)
+                if (thumbAxis.dot(shaft) < (if (model.equals("WheelbarrowWood")) 0.95f else 0.90f))
+                    throw AssertionError("underhand thumb does not follow the shaft")
             }
-            val palette = FloatBuffer.allocate(names.size*16)
+            val palette = FloatBuffer.allocate(names.size * 16)
             val shader = arrayOfNulls<org.lwjgl.util.vector.Matrix4f>(names.size)
-            if (CartGrip.skin(palette, shader, actor, actor, poses)!=names.size) throw AssertionError("finger palette not updated")
+            if (CartGrip.skin(palette, shader, actor, actor, poses) != names.size)
+                throw AssertionError("finger palette not updated")
             for (i in 0 until names.size) {
                 val raw = org.lwjgl.util.vector.Matrix4f()
                 val view = palette.duplicate()
-                view.position(i*16)
+                view.position(i * 16)
                 raw.load(view)
-                if (!PZMath.convertMatrix(raw, Matrix4f()).transpose().equals(poses[i], 0.00001f)
-                    || !PZMath.convertMatrix(shader[i], Matrix4f()).equals(PZMath.convertMatrix(raw, Matrix4f()))) throw AssertionError("body/clothing finger palette disagrees")
+                if (
+                    !PZMath.convertMatrix(raw, Matrix4f()).transpose().equals(poses[i], 0.00001f) ||
+                        !PZMath.convertMatrix(shader[i], Matrix4f())
+                            .equals(PZMath.convertMatrix(raw, Matrix4f()))
+                )
+                    throw AssertionError("body/clothing finger palette disagrees")
             }
         }
     }
 
     private fun checkReach() {
-        val names = arrayOf("Bip01_Spine", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_L_Finger1", "Bip01_L_Thigh", "Bip01_L_Calf")
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_L_Finger1",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 0, 5), offsets)
         for (lean in floatArrayOf(-0.1f, 0f, 0.1f)) {
             val delta = Matrix4f().translation(0f, 0.03f, 0f).rotateZ(lean)
-            val poses: Array<Matrix4f> = arrayOf(Matrix4f().translation(0f, 0.5f, 0f), Matrix4f().translation(0.10f, 0.75f, 0.04f), Matrix4f().translation(0.13f, 0.62f, 0.02f), Matrix4f().translation(0.10f, 0.62f, -0.11f), Matrix4f().translation(0.10f, 0.62f, -0.16f), Matrix4f().translation(0.08f, 0.4f, 0f), Matrix4f().translation(0.08f, 0.2f, 0.04f))
+            val poses: Array<Matrix4f> =
+                arrayOf(
+                    Matrix4f().translation(0f, 0.5f, 0f),
+                    Matrix4f().translation(0.10f, 0.75f, 0.04f),
+                    Matrix4f().translation(0.13f, 0.62f, 0.02f),
+                    Matrix4f().translation(0.10f, 0.62f, -0.11f),
+                    Matrix4f().translation(0.10f, 0.62f, -0.16f),
+                    Matrix4f().translation(0.08f, 0.4f, 0f),
+                    Matrix4f().translation(0.08f, 0.2f, 0.04f),
+                )
             for (pose in poses) delta.mul(pose, pose)
             var before = copyPoses(poses)
-            val upper: Float = poses[1].getTranslation(Vector3f()).distance(poses[2].getTranslation(Vector3f()))
-            val lower: Float = poses[2].getTranslation(Vector3f()).distance(poses[3].getTranslation(Vector3f()))
+            val upper: Float =
+                poses[1].getTranslation(Vector3f()).distance(poses[2].getTranslation(Vector3f()))
+            val lower: Float =
+                poses[2].getTranslation(Vector3f()).distance(poses[3].getTranslation(Vector3f()))
             val relative = Matrix4f(poses[3]).invert().mul(poses[4])
-            val goal = delta.mul(Matrix4f().translation(0.15f, 0.58f, -0.13f).rotateY(0.3f), Matrix4f())
-            if (!CartGrip.reach(poses, actor, "Bip01_L_Hand", goal, null, false)) throw AssertionError("reachable grip rejected")
-            if (!poses[3].equals(goal, 0.00001f)) throw AssertionError("palm missed independent target")
-            if (Math.abs(upper-poses[1].getTranslation(Vector3f()).distance(poses[2].getTranslation(Vector3f())))>0.00001f
-                || Math.abs(lower-poses[2].getTranslation(Vector3f()).distance(poses[3].getTranslation(Vector3f())))>0.00001f) throw AssertionError("reach stretched an arm link")
-            if (!Matrix4f(poses[3]).invert().mul(poses[4]).equals(relative, 0.00001f)) throw AssertionError("reach detached finger from hand")
-            for (i in intArrayOf(0, 5, 6)) if (!poses[i].equals(before[i])) throw AssertionError("reach changed native torso/leg")
-            before=copyPoses(poses)
-            if (CartGrip.reach(poses, actor, "Bip01_L_Hand", Matrix4f().translation(5f, 5f, 5f), null, false)) throw AssertionError("unreachable target accepted")
-            for (i in 0 until poses.size) if (!poses[i].equals(before[i])) throw AssertionError("failed reach changed poses")
+            val goal =
+                delta.mul(Matrix4f().translation(0.15f, 0.58f, -0.13f).rotateY(0.3f), Matrix4f())
+            if (!CartGrip.reach(poses, actor, "Bip01_L_Hand", goal, null, false))
+                throw AssertionError("reachable grip rejected")
+            if (!poses[3].equals(goal, 0.00001f))
+                throw AssertionError("palm missed independent target")
+            if (
+                Math.abs(
+                    upper -
+                        poses[1]
+                            .getTranslation(Vector3f())
+                            .distance(poses[2].getTranslation(Vector3f())),
+                ) > 0.00001f ||
+                    Math.abs(
+                        lower -
+                            poses[2]
+                                .getTranslation(Vector3f())
+                                .distance(poses[3].getTranslation(Vector3f())),
+                    ) > 0.00001f
+            )
+                throw AssertionError("reach stretched an arm link")
+            if (!Matrix4f(poses[3]).invert().mul(poses[4]).equals(relative, 0.00001f))
+                throw AssertionError("reach detached finger from hand")
+            for (i in intArrayOf(0, 5, 6)) if (!poses[i].equals(before[i]))
+                throw AssertionError("reach changed native torso/leg")
+            before = copyPoses(poses)
+            if (
+                CartGrip.reach(
+                    poses,
+                    actor,
+                    "Bip01_L_Hand",
+                    Matrix4f().translation(5f, 5f, 5f),
+                    null,
+                    false,
+                )
+            )
+                throw AssertionError("unreachable target accepted")
+            for (i in 0 until poses.size) if (!poses[i].equals(before[i]))
+                throw AssertionError("failed reach changed poses")
         }
     }
 
     private fun checkTransitionReachContinuity() {
-        val names = arrayOf("Bip01_Spine", "Bip01_L_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_L_Finger1", "Bip01_L_Thigh")
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_L_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_L_Finger1",
+                "Bip01_L_Thigh",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 4, 0), offsets)
-        val nativePoses: Array<Matrix4f> = arrayOf(Matrix4f().translation(0f, 0.5f, 0f), Matrix4f().translation(0.02f, 0.81f, 0.04f), Matrix4f().translation(0.10f, 0.8f, 0.04f), Matrix4f().translation(0.15f, 0.62f, 0.02f), Matrix4f().translation(0.10f, 0.50f, -0.11f).rotateXYZ(0.15f, -0.2f, 0.35f), Matrix4f().translation(0.10f, 0.50f, -0.15f), Matrix4f().translation(0.08f, 0.4f, 0f))
-        val cart = Matrix4f().set(76.5f, -3.9394883e-5f, -1.4673389e-5f, 0f, 2.8023098e-5f, 20.771942f, 73.62592f, 0f, -2.4333809e-5f, -73.625916f, 20.771938f, 0f, -0.0060535767f, 0.097179376f, -0.34652624f, 1f)
+        val nativePoses: Array<Matrix4f> =
+            arrayOf(
+                Matrix4f().translation(0f, 0.5f, 0f),
+                Matrix4f().translation(0.02f, 0.81f, 0.04f),
+                Matrix4f().translation(0.10f, 0.8f, 0.04f),
+                Matrix4f().translation(0.15f, 0.62f, 0.02f),
+                Matrix4f().translation(0.10f, 0.50f, -0.11f).rotateXYZ(0.15f, -0.2f, 0.35f),
+                Matrix4f().translation(0.10f, 0.50f, -0.15f),
+                Matrix4f().translation(0.08f, 0.4f, 0f),
+            )
+        val cart =
+            Matrix4f()
+                .set(
+                    76.5f,
+                    -3.9394883e-5f,
+                    -1.4673389e-5f,
+                    0f,
+                    2.8023098e-5f,
+                    20.771942f,
+                    73.62592f,
+                    0f,
+                    -2.4333809e-5f,
+                    -73.625916f,
+                    20.771938f,
+                    0f,
+                    -0.0060535767f,
+                    0.097179376f,
+                    -0.34652624f,
+                    1f,
+                )
         for (female in booleanArrayOf(false, true)) {
             val grip = Matrix4f()
-            if (!CartGrip.target("WheelbarrowWood", true, female, Matrix4f(), cart, grip)) throw AssertionError("measured cart grip target rejected")
+            if (!CartGrip.target("WheelbarrowWood", true, female, Matrix4f(), cart, grip))
+                throw AssertionError("measured cart grip target rejected")
             var full: Array<Matrix4f>? = null
-            for (weight in floatArrayOf(0f, 0.000001f, 0.00001f, 0.0001f, 0.001f, 0.01f, 0.1f, 0.5f, 0.9f, 0.99999f, 1f)) {
+            for (weight in
+                floatArrayOf(
+                    0f,
+                    0.000001f,
+                    0.00001f,
+                    0.0001f,
+                    0.001f,
+                    0.01f,
+                    0.1f,
+                    0.5f,
+                    0.9f,
+                    0.99999f,
+                    1f,
+                )) {
                 val poses = copyPoses(nativePoses)
                 val target = Matrix4f()
-                if (!CartTransitionMath.blend(nativePoses[4], grip, (CartTransitionMath.smooth((weight).toDouble())), target)
-                    || !CartGrip.reach(poses, actor, "Bip01_L_Hand", target, Matrix4f(), true, weight)) throw AssertionError("transition reach rejected weight="+weight)
-                if (!poses[4].equals(target, 0.00001f)) throw AssertionError("transition wrist left blended grip")
+                if (
+                    !CartTransitionMath.blend(
+                        nativePoses[4],
+                        grip,
+                        (CartTransitionMath.smooth((weight).toDouble())),
+                        target,
+                    ) ||
+                        !CartGrip.reach(
+                            poses,
+                            actor,
+                            "Bip01_L_Hand",
+                            target,
+                            Matrix4f(),
+                            true,
+                            weight,
+                        )
+                )
+                    throw AssertionError("transition reach rejected weight=" + weight)
+                if (!poses[4].equals(target, 0.00001f))
+                    throw AssertionError("transition wrist left blended grip")
                 for (i in 1 until 4) {
-                    val before: Float = nativePoses[i].getTranslation(Vector3f()).distance(nativePoses[i+1].getTranslation(Vector3f()))
-                    val after: Float = poses[i].getTranslation(Vector3f()).distance(poses[i+1].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.00001f) throw AssertionError("transition stretched arm at "+weight)
+                    val before: Float =
+                        nativePoses[i]
+                            .getTranslation(Vector3f())
+                            .distance(nativePoses[i + 1].getTranslation(Vector3f()))
+                    val after: Float =
+                        poses[i]
+                            .getTranslation(Vector3f())
+                            .distance(poses[i + 1].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.00001f)
+                        throw AssertionError("transition stretched arm at " + weight)
                 }
-                if (weight==0f) for (i in 0 until poses.size) {
-                    if (!poses[i].equals(nativePoses[i])) throw AssertionError("zero reach changed native pose")
-                }
-                if (weight>0 && weight<=0.001f) for (i in 1..5) {
-                    if (!poses[i].equals(nativePoses[i], weight*8+0.000002f)) throw AssertionError("epsilon reach jumps elbow/pronation at "+weight+" bone="+names[i])
-                }
-                if (!poses[0].equals(nativePoses[0]) || !poses[6].equals(nativePoses[6])) throw AssertionError("transition touched torso/leg")
+                if (weight == 0f)
+                    for (i in 0 until poses.size) {
+                        if (!poses[i].equals(nativePoses[i]))
+                            throw AssertionError("zero reach changed native pose")
+                    }
+                if (weight > 0 && weight <= 0.001f)
+                    for (i in 1..5) {
+                        if (!poses[i].equals(nativePoses[i], weight * 8 + 0.000002f))
+                            throw AssertionError(
+                                "epsilon reach jumps elbow/pronation at " +
+                                    weight +
+                                    " bone=" +
+                                    names[i],
+                            )
+                    }
+                if (!poses[0].equals(nativePoses[0]) || !poses[6].equals(nativePoses[6]))
+                    throw AssertionError("transition touched torso/leg")
                 val fingerLocal = Matrix4f(poses[4]).invert().mul(poses[5])
-                if (!fingerLocal.equals(Matrix4f(nativePoses[4]).invert().mul(nativePoses[5]), 0.00001f)) throw AssertionError("transition detached finger before grip interpolation")
-                if (weight==1f) full=poses
+                if (
+                    !fingerLocal.equals(
+                        Matrix4f(nativePoses[4]).invert().mul(nativePoses[5]),
+                        0.00001f,
+                    )
+                )
+                    throw AssertionError("transition detached finger before grip interpolation")
+                if (weight == 1f) full = poses
             }
             val original = copyPoses(nativePoses)
-            if (!CartGrip.reach(original, actor, "Bip01_L_Hand", grip, Matrix4f(), true)) throw AssertionError("existing full grip rejected")
-            for (i in 0 until original.size) if (!original[i].equals(pose(full, i))) throw AssertionError("transition changed existing full-weight solver")
-            if (!pose(full, 4).equals(grip, 0.00001f)) throw AssertionError("full transition missed measured grip")
+            if (!CartGrip.reach(original, actor, "Bip01_L_Hand", grip, Matrix4f(), true))
+                throw AssertionError("existing full grip rejected")
+            for (i in 0 until original.size) if (!original[i].equals(pose(full, i)))
+                throw AssertionError("transition changed existing full-weight solver")
+            if (!pose(full, 4).equals(grip, 0.00001f))
+                throw AssertionError("full transition missed measured grip")
         }
     }
 
     private fun checkAuthoredGripHandoff() {
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_L_Finger0", "Bip01_L_Finger1", "Bip01_R_Clavicle", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_R_Finger0", "Bip01_R_Finger1", "Bip01_L_Thigh", "Bip01_R_Thigh")
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_L_Finger0",
+                "Bip01_L_Finger1",
+                "Bip01_R_Clavicle",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_R_Finger0",
+                "Bip01_R_Finger1",
+                "Bip01_L_Thigh",
+                "Bip01_R_Thigh",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
-        val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 4, 5, 5, 1, 8, 9, 10, 11, 11, 0, 0), offsets)
+        val actor =
+            skeleton(names, listOf(-1, 0, 1, 2, 3, 4, 5, 5, 1, 8, 9, 10, 11, 11, 0, 0), offsets)
         val nativePose = arrayOfNulls<Matrix4f>(names.size)
         val captured = nativeHandlePoses()
         val nativeIndices: IntArray = intArrayOf(0, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15)
-        for (i in 0 until captured.size) nativePose[nativeIndices[i]]=Matrix4f().set(captured[i])
-        // Retain the real native shoulder chain; a handoff fixture without clavicles cannot use native arm reach.
+        for (i in 0 until captured.size) nativePose[nativeIndices[i]] = Matrix4f().set(captured[i])
+        // Retain the real native shoulder chain; a handoff fixture without clavicles cannot use
+        // native arm reach.
         val shoulders = nativeShoulderChain()
-        nativePose[1]=shoulders[0]
-        nativePose[2]=shoulders[1]
-        nativePose[8]=shoulders[2]
+        nativePose[1] = shoulders[0]
+        nativePose[2] = shoulders[1]
+        nativePose[8] = shoulders[2]
         val frames = ArrayList<Keyframe>()
         for (i in 0 until names.size) {
             val parent = actor.getBoneAt(i).parent
-            val local = if (parent==null) Matrix4f(pose(nativePose, i)) else Matrix4f(pose(nativePose, parent.index)).invert().mul(pose(nativePose, i))
+            val local =
+                if (parent == null) Matrix4f(pose(nativePose, i))
+                else Matrix4f(pose(nativePose, parent.index)).invert().mul(pose(nativePose, i))
             val rotation = local.getUnnormalizedRotation(Quaternionf()).normalize()
-            val frame = Keyframe(org.lwjgl.util.vector.Vector3f(local.m30(), local.m31(), local.m32()), org.lwjgl.util.vector.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w), org.lwjgl.util.vector.Vector3f(1f, 1f, 1f))
-            frame.bone=i
-            frame.boneName=names[i]
-            frame.time=0f
+            val frame =
+                Keyframe(
+                    org.lwjgl.util.vector.Vector3f(local.m30(), local.m31(), local.m32()),
+                    org.lwjgl.util.vector.Quaternion(
+                        rotation.x,
+                        rotation.y,
+                        rotation.z,
+                        rotation.w,
+                    ),
+                    org.lwjgl.util.vector.Vector3f(1f, 1f, 1f),
+                )
+            frame.bone = i
+            frame.boneName = names[i]
+            frame.time = 0f
             frames.add(frame)
         }
         val clip = AnimationClip(1f, frames, "Bob_Cart_Idle", true)
         for (profile in arrayOf(CartWheelbarrow.WOOD, CartWheelbarrow.METAL)) {
             val model = profile.model()
             val cart = profile.held(Matrix4f())
-            // Authored samples already contain the male closure; the rendered cart may have another placement.
+            // Authored samples already contain the male closure; the rendered cart may have another
+            // placement.
             val baked = copyPoses(nativePose)
-            if (!CartGrip.grip(baked, actor, model, false, Matrix4f(), cart)) throw AssertionError("authored handoff fixture grip unreachable: "+model)
+            if (!CartGrip.grip(baked, actor, model, false, Matrix4f(), cart))
+                throw AssertionError("authored handoff fixture grip unreachable: " + model)
             val dynamicCart = Matrix4f(cart).translateLocal(0f, 0f, 0.01f)
             val unsafeField = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe")
             unsafeField.setAccessible(true)
             val unsafe = (unsafeField.get(null) as sun.misc.Unsafe)
             val owner = zombie.core.skinnedmodel.model.ModelInstance()
-            owner.model=(unsafe.allocateInstance(zombie.core.skinnedmodel.model.Model::class.java) as zombie.core.skinnedmodel.model.Model)
-            owner.model.tag=actor
-            owner.animPlayer=(unsafe.allocateInstance(zombie.core.skinnedmodel.animation.AnimationPlayer::class.java) as zombie.core.skinnedmodel.animation.AnimationPlayer)
-            val actorField = zombie.core.skinnedmodel.animation.AnimationPlayer::class.java.getDeclaredField("skinningData")
+            owner.model =
+                (unsafe.allocateInstance(zombie.core.skinnedmodel.model.Model::class.java)
+                    as zombie.core.skinnedmodel.model.Model)
+            owner.model.tag = actor
+            owner.animPlayer =
+                (unsafe.allocateInstance(
+                    zombie.core.skinnedmodel.animation.AnimationPlayer::class.java,
+                ) as zombie.core.skinnedmodel.animation.AnimationPlayer)
+            val actorField =
+                zombie.core.skinnedmodel.animation.AnimationPlayer::class
+                    .java
+                    .getDeclaredField("skinningData")
             actorField.setAccessible(true)
             actorField.set(owner.animPlayer, actor)
             val body = zombie.core.skinnedmodel.model.ModelInstanceRenderData()
-            body.modelInstance=owner
-            body.matrixPalette=FloatBuffer.allocate(names.size*16)
+            body.modelInstance = owner
+            body.matrixPalette = FloatBuffer.allocate(names.size * 16)
             val slot = zombie.core.skinnedmodel.model.ModelSlotRenderData()
             slot.modelData.add(body)
             val player = (unsafe.allocateInstance(HandoffPlayer::class.java) as HandoffPlayer)
-            player.setDescriptor((unsafe.allocateInstance(zombie.characters.SurvivorDesc::class.java) as zombie.characters.SurvivorDesc))
-            slot.character=player
+            player.setDescriptor(
+                (unsafe.allocateInstance(zombie.characters.SurvivorDesc::class.java)
+                    as zombie.characters.SurvivorDesc),
+            )
+            slot.character = player
             for (female in booleanArrayOf(false, true)) {
                 player.setFemale(female)
                 val held = copyPoses(nativePose)
-                if (!CartGrip.grip(held, actor, model, female, Matrix4f(), dynamicCart)) throw AssertionError("normal handoff fixture grip unreachable")
-                // Procedural full contact and its epsilon boundary must land on the steady model-specific grip.
+                if (!CartGrip.grip(held, actor, model, female, Matrix4f(), dynamicCart))
+                    throw AssertionError("normal handoff fixture grip unreachable")
+                // Procedural full contact and its epsilon boundary must land on the steady
+                // model-specific grip.
                 for (reach in floatArrayOf(0.99999f, 1f)) {
                     val contact = copyPoses(nativePose)
-                    if (!CartGrip.transitionGrip(contact, actor, female, Matrix4f(), dynamicCart, reach, 1f, null, model)) throw AssertionError("model-specific full contact rejected: "+model+" female="+female)
-                    for (hand in intArrayOf(5, 11)) for (bone in hand..hand+2) if (!contact[bone].equals(held[bone], 0.00003f)) throw AssertionError("transition/held wrist or thumb discontinuity: "+model+" bone="+names[bone]+" reach="+reach)
-                    for (bone in intArrayOf(0, 14, 15, 1)) if (!contact[bone].equals(pose(nativePose, bone), 0.000002f)) throw AssertionError("full contact changed native torso/leg: "+model+" bone="+names[bone])
+                    if (
+                        !CartGrip.transitionGrip(
+                            contact,
+                            actor,
+                            female,
+                            Matrix4f(),
+                            dynamicCart,
+                            reach,
+                            1f,
+                            null,
+                            model,
+                        )
+                    )
+                        throw AssertionError(
+                            "model-specific full contact rejected: " + model + " female=" + female,
+                        )
+                    for (hand in intArrayOf(5, 11)) for (bone in hand..hand + 2) if (
+                        !contact[bone].equals(held[bone], 0.00003f)
+                    )
+                        throw AssertionError(
+                            "transition/held wrist or thumb discontinuity: " +
+                                model +
+                                " bone=" +
+                                names[bone] +
+                                " reach=" +
+                                reach,
+                        )
+                    for (bone in intArrayOf(0, 14, 15, 1)) if (
+                        !contact[bone].equals(pose(nativePose, bone), 0.000002f)
+                    )
+                        throw AssertionError(
+                            "full contact changed native torso/leg: " +
+                                model +
+                                " bone=" +
+                                names[bone],
+                        )
                 }
                 var previous: Array<Matrix4f>? = null
                 for (reach in floatArrayOf(0.5f, 0.99999f, 1f)) {
                     CartGrip.skin(body.matrixPalette, null, actor, actor, baked, true)
                     body.matrixPalette.position(7)
-                    if (!CartGrip.authoredTransition(slot, owner, clip, Matrix4f(), dynamicCart, reach, 1f, null, 0f, model)) throw AssertionError("authored handoff rejected female="+female+" reach="+reach)
-                    if (body.matrixPalette.position()!=7) throw AssertionError("authored handoff moved palette cursor")
-                    val actual = CartGrip.livePoses(actor, actor, body.matrixPalette, Matrix4f(), true)
-                    if (actual==null) throw AssertionError("authored handoff palette invalid")
+                    if (
+                        !CartGrip.authoredTransition(
+                            slot,
+                            owner,
+                            clip,
+                            Matrix4f(),
+                            dynamicCart,
+                            reach,
+                            1f,
+                            null,
+                            0f,
+                            model,
+                        )
+                    )
+                        throw AssertionError(
+                            "authored handoff rejected female=" + female + " reach=" + reach,
+                        )
+                    if (body.matrixPalette.position() != 7)
+                        throw AssertionError("authored handoff moved palette cursor")
+                    val actual =
+                        CartGrip.livePoses(actor, actor, body.matrixPalette, Matrix4f(), true)
+                    if (actual == null) throw AssertionError("authored handoff palette invalid")
                     for (hand in intArrayOf(5, 11)) {
                         val expected = Matrix4f()
-                        if (!CartTransitionMath.blend(baked[hand], held[hand], (CartTransitionMath.smooth((reach).toDouble())), expected)
-                            || !pose(actual, hand).equals(expected, 0.00002f)) throw AssertionError("authored wrist skipped continuous reach female="+female+" reach="+reach)
-                        if (reach==1f) for (bone in hand..hand+2) {
-                            if (!pose(actual, bone).equals(held[bone], 0.00002f)) throw AssertionError("authored hand differs from held endpoint: "+names[bone]+" female="+female)
-                            if (previous==null || !pose(actual, bone).equals(previous[bone], 0.00003f)) throw AssertionError("authored hand snaps at full reach: "+names[bone]+" female="+female)
-                        }
+                        if (
+                            !CartTransitionMath.blend(
+                                baked[hand],
+                                held[hand],
+                                (CartTransitionMath.smooth((reach).toDouble())),
+                                expected,
+                            ) || !pose(actual, hand).equals(expected, 0.00002f)
+                        )
+                            throw AssertionError(
+                                "authored wrist skipped continuous reach female=" +
+                                    female +
+                                    " reach=" +
+                                    reach,
+                            )
+                        if (reach == 1f)
+                            for (bone in hand..hand + 2) {
+                                if (!pose(actual, bone).equals(held[bone], 0.00002f))
+                                    throw AssertionError(
+                                        "authored hand differs from held endpoint: " +
+                                            names[bone] +
+                                            " female=" +
+                                            female,
+                                    )
+                                if (
+                                    previous == null ||
+                                        !pose(actual, bone).equals(previous[bone], 0.00003f)
+                                )
+                                    throw AssertionError(
+                                        "authored hand snaps at full reach: " +
+                                            names[bone] +
+                                            " female=" +
+                                            female,
+                                    )
+                            }
                     }
-                    for (bone in intArrayOf(0, 14, 15, 1)) if (!pose(actual, bone).equals(pose(nativePose, bone), 0.000002f)) throw AssertionError("authored handoff changed torso/lower body: "+names[bone])
-                    previous=copyPoses(actual, names.size)
+                    for (bone in intArrayOf(0, 14, 15, 1)) if (
+                        !pose(actual, bone).equals(pose(nativePose, bone), 0.000002f)
+                    )
+                        throw AssertionError(
+                            "authored handoff changed torso/lower body: " + names[bone],
+                        )
+                    previous = copyPoses(actual, names.size)
                 }
-                // Native blend-out still carries baked closure after the action stops owning the render.
+                // Native blend-out still carries baked closure after the action stops owning the
+                // render.
                 for (outgoingWeight in floatArrayOf(1f, 0.5f, 0f)) {
                     val mixed = copyPoses(nativePose)
-                    if (!CartGrip.releasePose(mixed, actor, baked, outgoingWeight)) throw AssertionError("native outgoing clip blend rejected")
+                    if (!CartGrip.releasePose(mixed, actor, baked, outgoingWeight))
+                        throw AssertionError("native outgoing clip blend rejected")
                     CartGrip.skin(body.matrixPalette, null, actor, actor, mixed, true)
                     body.matrixPalette.position(7)
-                    if (!CartGrip.render(slot, owner, clip, Matrix4f(), model, dynamicCart)) throw AssertionError("held render rejected outgoing clip weight="+outgoingWeight)
-                    if (body.matrixPalette.position()!=7) throw AssertionError("held render moved palette cursor")
-                    val actual = CartGrip.livePoses(actor, actor, body.matrixPalette, Matrix4f(), true)
-                    if (actual==null) throw AssertionError("held render palette invalid")
-                    for (hand in intArrayOf(5, 11)) for (bone in hand..hand+2) if (!pose(actual, bone).equals(held[bone], 0.00002f)) throw AssertionError("held grip recomposed outgoing closure: "+names[bone]
-                        +" female="+female+" outgoingWeight="+outgoingWeight)
-                    for (bone in intArrayOf(0, 14, 15, 1)) if (!pose(actual, bone).equals(pose(nativePose, bone), 0.000002f)) throw AssertionError("held handoff changed torso/lower body: "+names[bone])
+                    if (!CartGrip.render(slot, owner, clip, Matrix4f(), model, dynamicCart))
+                        throw AssertionError(
+                            "held render rejected outgoing clip weight=" + outgoingWeight,
+                        )
+                    if (body.matrixPalette.position() != 7)
+                        throw AssertionError("held render moved palette cursor")
+                    val actual =
+                        CartGrip.livePoses(actor, actor, body.matrixPalette, Matrix4f(), true)
+                    if (actual == null) throw AssertionError("held render palette invalid")
+                    for (hand in intArrayOf(5, 11)) for (bone in hand..hand + 2) if (
+                        !pose(actual, bone).equals(held[bone], 0.00002f)
+                    )
+                        throw AssertionError(
+                            "held grip recomposed outgoing closure: " +
+                                names[bone] +
+                                " female=" +
+                                female +
+                                " outgoingWeight=" +
+                                outgoingWeight,
+                        )
+                    for (bone in intArrayOf(0, 14, 15, 1)) if (
+                        !pose(actual, bone).equals(pose(nativePose, bone), 0.000002f)
+                    )
+                        throw AssertionError(
+                            "held handoff changed torso/lower body: " + names[bone],
+                        )
                 }
             }
         }
     }
 
     private fun checkTransitionShoulders() {
-        // B42.21 pre-IK right-arm inputs and unchanged wrist targets from every failed Run/Sprint transition.
+        // B42.21 pre-IK right-arm inputs and unchanged wrist targets from every failed Run/Sprint
+        // transition.
         // Each row is clavicle/shoulder/elbow/wrist xyz, followed by the column-major grip target.
-        val captures = arrayOf(// male-empty-run-switch fast-start 1134ms (capture 1012)
-            floatArrayOf(0.018394262f, 0.76465493f, -0.14888711f, -0.06853013f, 0.7619485f, -0.14431328f, -0.104048744f, 0.63227063f, -0.11770508f, -0.05672278f, 0.61350936f, -0.2449615f, 0.135090927f, -0.989525277f, -0.0508936909f, 0f, 0.0853483206f, 0.0627947207f, -0.994370397f, 0f, 0.987150498f, 0.129986728f, 0.0929373177f, 0f, -0.164988425f, 0.513805025f, -0.0619898319f, 1f), // male-empty-run-switch fast-start 1151ms (capture 1013)
-            floatArrayOf(0.01109831f, 0.75849766f, -0.16994315f, -0.074962474f, 0.7642568f, -0.15792415f, -0.11214995f, 0.6356598f, -0.1284981f, -0.073510125f, 0.6168677f, -0.2586509f, 0.135090937f, -0.989525273f, -0.0508937334f, 0f, 0.0853483144f, 0.0627947636f, -0.994370395f, 0f, 0.987150497f, 0.129986734f, 0.0929373177f, 0f, -0.164988429f, 0.513805024f, -0.0741881895f, 1f), // male-full-run-switch stop 10668ms (capture 5710)
-            floatArrayOf(0.024058845f, 0.76382357f, -0.13528045f, -0.061653078f, 0.76229274f, -0.11994468f, -0.10159251f, 0.6510595f, -0.050534658f, -0.09849093f, 0.57165766f, -0.16221006f, 0.135113137f, -0.989517563f, -0.0509846399f, 0f, 0.0853350489f, 0.0628864687f, -0.994365738f, 0f, 0.987148606f, 0.130001097f, 0.0929373177f, 0f, -0.164996217f, 0.51380266f, -0.0652017297f, 1f), // male-full-run-switch stop 10686ms (capture 5711)
-            floatArrayOf(0.02465702f, 0.77041316f, -0.10495143f, -0.06015388f, 0.7705024f, -0.08517311f, -0.099977985f, 0.655565f, -0.022012724f, -0.10451979f, 0.5821135f, -0.13764112f, 0.135111887f, -0.989517997f, -0.0509795193f, 0f, 0.0853357962f, 0.0628813031f, -0.994366001f, 0f, 0.987148712f, 0.130000288f, 0.0929373177f, 0f, -0.164995779f, 0.513802788f, -0.0540890113f, 1f), // male-full-run-switch stop 10701ms (capture 5712)
-            floatArrayOf(0.018712163f, 0.77562696f, -0.06907295f, -0.066866994f, 0.770645f, -0.053727455f, -0.1053686f, 0.6468465f, -0.009259498f, -0.101806775f, 0.58938646f, -0.13364382f, 0.135110443f, -0.989518499f, -0.050973609f, 0f, 0.0853366588f, 0.0628753409f, -0.994366304f, 0f, 0.987148835f, 0.129999355f, 0.0929373177f, 0f, -0.164995272f, 0.513802949f, -0.0444584864f, 1f), // female-empty-cancel-switch fast-start 1117ms (capture 11724)
-            floatArrayOf(0.024553727f, 0.76256007f, -0.12600741f, -0.062265106f, 0.7579398f, -0.120985284f, -0.09707053f, 0.6281067f, -0.094191626f, -0.050810356f, 0.60269696f, -0.22068374f, 0.135090923f, -0.989525278f, -0.0508936751f, 0f, 0.085348323f, 0.0627947047f, -0.994370398f, 0f, 0.987150498f, 0.129986725f, 0.0929373177f, 0f, -0.168937026f, 0.513285079f, -0.054218782f, 1f), // female-full-run-switch fast-start 1117ms (capture 14157)
-            floatArrayOf(0.02340648f, 0.764709f, -0.1257449f, -0.06340962f, 0.7594522f, -0.12133855f, -0.09816131f, 0.6293623f, -0.09574808f, -0.050506324f, 0.60572684f, -0.22206636f, 0.135090922f, -0.989525279f, -0.0508936719f, 0f, 0.0853483234f, 0.0627947015f, -0.994370398f, 0f, 0.987150498f, 0.129986725f, 0.0929373177f, 0f, -0.168937026f, 0.513285079f, -0.0544346122f, 1f), // female-full-run-switch fast-start 1134ms (capture 14158)
-            floatArrayOf(0.018492209f, 0.75473136f, -0.15916151f, -0.06823672f, 0.7554544f, -0.1513105f, -0.10125956f, 0.62600815f, -0.120665565f, -0.055894308f, 0.60335296f, -0.24800248f, 0.135090928f, -0.989525277f, -0.050893694f, 0f, 0.0853483202f, 0.0627947238f, -0.994370397f, 0f, 0.987150498f, 0.129986728f, 0.0929373177f, 0f, -0.168937027f, 0.513285078f, -0.065544621f, 1f), // female-full-cancel-switch reverse-transition 5186ms (capture 16070)
-            floatArrayOf(0.017456409f, 0.77012783f, -0.13563327f, -0.067840755f, 0.77460694f, -0.1186507f, -0.113471486f, 0.6739624f, -0.037567556f, -0.118373506f, 0.59912026f, -0.1522871f, 0.135103836f, -0.989520794f, -0.0509465513f, 0f, 0.0853406074f, 0.0628480455f, -0.99436769f, 0f, 0.987149398f, 0.129995079f, 0.0929373177f, 0f, -0.168941552f, 0.513283666f, -0.0544516738f, 1f), // female-full-cancel-switch reverse-transition 5204ms (capture 16071)
-            floatArrayOf(0.022039033f, 0.7765671f, -0.09532859f, -0.06401731f, 0.77518034f, -0.08204409f, -0.10876448f, 0.6584753f, -0.025798868f, -0.104669735f, 0.60351783f, -0.15129326f, 0.135108189f, -0.989519282f, -0.0509643762f, 0f, 0.0853380062f, 0.0628660271f, -0.994366777f, 0f, 0.987149027f, 0.129997896f, 0.0929373177f, 0f, -0.168943078f, 0.513283194f, -0.0448273734f, 1f), // female-full-cancel-switch reverse-transition 5219ms (capture 16072)
-            floatArrayOf(0.015968379f, 0.77799666f, -0.052151464f, -0.07032908f, 0.77153987f, -0.042396773f, -0.11183737f, 0.64564f, -0.0075804116f, -0.101457536f, 0.60666484f, -0.1385732f, 0.135110581f, -0.989518451f, -0.0509741742f, 0f, 0.0853365763f, 0.0628759111f, -0.994366275f, 0f, 0.987148823f, 0.129999444f, 0.0929373177f, 0f, -0.168943916f, 0.513282935f, -0.0366767345f, 1f))
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_Neck", "Bip01_R_Clavicle", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_R_Finger1", "Bip01_L_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_Head")
+        val captures =
+            arrayOf( // male-empty-run-switch fast-start 1134ms (capture 1012)
+                floatArrayOf(
+                    0.018394262f,
+                    0.76465493f,
+                    -0.14888711f,
+                    -0.06853013f,
+                    0.7619485f,
+                    -0.14431328f,
+                    -0.104048744f,
+                    0.63227063f,
+                    -0.11770508f,
+                    -0.05672278f,
+                    0.61350936f,
+                    -0.2449615f,
+                    0.135090927f,
+                    -0.989525277f,
+                    -0.0508936909f,
+                    0f,
+                    0.0853483206f,
+                    0.0627947207f,
+                    -0.994370397f,
+                    0f,
+                    0.987150498f,
+                    0.129986728f,
+                    0.0929373177f,
+                    0f,
+                    -0.164988425f,
+                    0.513805025f,
+                    -0.0619898319f,
+                    1f,
+                ), // male-empty-run-switch fast-start 1151ms (capture 1013)
+                floatArrayOf(
+                    0.01109831f,
+                    0.75849766f,
+                    -0.16994315f,
+                    -0.074962474f,
+                    0.7642568f,
+                    -0.15792415f,
+                    -0.11214995f,
+                    0.6356598f,
+                    -0.1284981f,
+                    -0.073510125f,
+                    0.6168677f,
+                    -0.2586509f,
+                    0.135090937f,
+                    -0.989525273f,
+                    -0.0508937334f,
+                    0f,
+                    0.0853483144f,
+                    0.0627947636f,
+                    -0.994370395f,
+                    0f,
+                    0.987150497f,
+                    0.129986734f,
+                    0.0929373177f,
+                    0f,
+                    -0.164988429f,
+                    0.513805024f,
+                    -0.0741881895f,
+                    1f,
+                ), // male-full-run-switch stop 10668ms (capture 5710)
+                floatArrayOf(
+                    0.024058845f,
+                    0.76382357f,
+                    -0.13528045f,
+                    -0.061653078f,
+                    0.76229274f,
+                    -0.11994468f,
+                    -0.10159251f,
+                    0.6510595f,
+                    -0.050534658f,
+                    -0.09849093f,
+                    0.57165766f,
+                    -0.16221006f,
+                    0.135113137f,
+                    -0.989517563f,
+                    -0.0509846399f,
+                    0f,
+                    0.0853350489f,
+                    0.0628864687f,
+                    -0.994365738f,
+                    0f,
+                    0.987148606f,
+                    0.130001097f,
+                    0.0929373177f,
+                    0f,
+                    -0.164996217f,
+                    0.51380266f,
+                    -0.0652017297f,
+                    1f,
+                ), // male-full-run-switch stop 10686ms (capture 5711)
+                floatArrayOf(
+                    0.02465702f,
+                    0.77041316f,
+                    -0.10495143f,
+                    -0.06015388f,
+                    0.7705024f,
+                    -0.08517311f,
+                    -0.099977985f,
+                    0.655565f,
+                    -0.022012724f,
+                    -0.10451979f,
+                    0.5821135f,
+                    -0.13764112f,
+                    0.135111887f,
+                    -0.989517997f,
+                    -0.0509795193f,
+                    0f,
+                    0.0853357962f,
+                    0.0628813031f,
+                    -0.994366001f,
+                    0f,
+                    0.987148712f,
+                    0.130000288f,
+                    0.0929373177f,
+                    0f,
+                    -0.164995779f,
+                    0.513802788f,
+                    -0.0540890113f,
+                    1f,
+                ), // male-full-run-switch stop 10701ms (capture 5712)
+                floatArrayOf(
+                    0.018712163f,
+                    0.77562696f,
+                    -0.06907295f,
+                    -0.066866994f,
+                    0.770645f,
+                    -0.053727455f,
+                    -0.1053686f,
+                    0.6468465f,
+                    -0.009259498f,
+                    -0.101806775f,
+                    0.58938646f,
+                    -0.13364382f,
+                    0.135110443f,
+                    -0.989518499f,
+                    -0.050973609f,
+                    0f,
+                    0.0853366588f,
+                    0.0628753409f,
+                    -0.994366304f,
+                    0f,
+                    0.987148835f,
+                    0.129999355f,
+                    0.0929373177f,
+                    0f,
+                    -0.164995272f,
+                    0.513802949f,
+                    -0.0444584864f,
+                    1f,
+                ), // female-empty-cancel-switch fast-start 1117ms (capture 11724)
+                floatArrayOf(
+                    0.024553727f,
+                    0.76256007f,
+                    -0.12600741f,
+                    -0.062265106f,
+                    0.7579398f,
+                    -0.120985284f,
+                    -0.09707053f,
+                    0.6281067f,
+                    -0.094191626f,
+                    -0.050810356f,
+                    0.60269696f,
+                    -0.22068374f,
+                    0.135090923f,
+                    -0.989525278f,
+                    -0.0508936751f,
+                    0f,
+                    0.085348323f,
+                    0.0627947047f,
+                    -0.994370398f,
+                    0f,
+                    0.987150498f,
+                    0.129986725f,
+                    0.0929373177f,
+                    0f,
+                    -0.168937026f,
+                    0.513285079f,
+                    -0.054218782f,
+                    1f,
+                ), // female-full-run-switch fast-start 1117ms (capture 14157)
+                floatArrayOf(
+                    0.02340648f,
+                    0.764709f,
+                    -0.1257449f,
+                    -0.06340962f,
+                    0.7594522f,
+                    -0.12133855f,
+                    -0.09816131f,
+                    0.6293623f,
+                    -0.09574808f,
+                    -0.050506324f,
+                    0.60572684f,
+                    -0.22206636f,
+                    0.135090922f,
+                    -0.989525279f,
+                    -0.0508936719f,
+                    0f,
+                    0.0853483234f,
+                    0.0627947015f,
+                    -0.994370398f,
+                    0f,
+                    0.987150498f,
+                    0.129986725f,
+                    0.0929373177f,
+                    0f,
+                    -0.168937026f,
+                    0.513285079f,
+                    -0.0544346122f,
+                    1f,
+                ), // female-full-run-switch fast-start 1134ms (capture 14158)
+                floatArrayOf(
+                    0.018492209f,
+                    0.75473136f,
+                    -0.15916151f,
+                    -0.06823672f,
+                    0.7554544f,
+                    -0.1513105f,
+                    -0.10125956f,
+                    0.62600815f,
+                    -0.120665565f,
+                    -0.055894308f,
+                    0.60335296f,
+                    -0.24800248f,
+                    0.135090928f,
+                    -0.989525277f,
+                    -0.050893694f,
+                    0f,
+                    0.0853483202f,
+                    0.0627947238f,
+                    -0.994370397f,
+                    0f,
+                    0.987150498f,
+                    0.129986728f,
+                    0.0929373177f,
+                    0f,
+                    -0.168937027f,
+                    0.513285078f,
+                    -0.065544621f,
+                    1f,
+                ), // female-full-cancel-switch reverse-transition 5186ms (capture 16070)
+                floatArrayOf(
+                    0.017456409f,
+                    0.77012783f,
+                    -0.13563327f,
+                    -0.067840755f,
+                    0.77460694f,
+                    -0.1186507f,
+                    -0.113471486f,
+                    0.6739624f,
+                    -0.037567556f,
+                    -0.118373506f,
+                    0.59912026f,
+                    -0.1522871f,
+                    0.135103836f,
+                    -0.989520794f,
+                    -0.0509465513f,
+                    0f,
+                    0.0853406074f,
+                    0.0628480455f,
+                    -0.99436769f,
+                    0f,
+                    0.987149398f,
+                    0.129995079f,
+                    0.0929373177f,
+                    0f,
+                    -0.168941552f,
+                    0.513283666f,
+                    -0.0544516738f,
+                    1f,
+                ), // female-full-cancel-switch reverse-transition 5204ms (capture 16071)
+                floatArrayOf(
+                    0.022039033f,
+                    0.7765671f,
+                    -0.09532859f,
+                    -0.06401731f,
+                    0.77518034f,
+                    -0.08204409f,
+                    -0.10876448f,
+                    0.6584753f,
+                    -0.025798868f,
+                    -0.104669735f,
+                    0.60351783f,
+                    -0.15129326f,
+                    0.135108189f,
+                    -0.989519282f,
+                    -0.0509643762f,
+                    0f,
+                    0.0853380062f,
+                    0.0628660271f,
+                    -0.994366777f,
+                    0f,
+                    0.987149027f,
+                    0.129997896f,
+                    0.0929373177f,
+                    0f,
+                    -0.168943078f,
+                    0.513283194f,
+                    -0.0448273734f,
+                    1f,
+                ), // female-full-cancel-switch reverse-transition 5219ms (capture 16072)
+                floatArrayOf(
+                    0.015968379f,
+                    0.77799666f,
+                    -0.052151464f,
+                    -0.07032908f,
+                    0.77153987f,
+                    -0.042396773f,
+                    -0.11183737f,
+                    0.64564f,
+                    -0.0075804116f,
+                    -0.101457536f,
+                    0.60666484f,
+                    -0.1385732f,
+                    0.135110581f,
+                    -0.989518451f,
+                    -0.0509741742f,
+                    0f,
+                    0.0853365763f,
+                    0.0628759111f,
+                    -0.994366275f,
+                    0f,
+                    0.987148823f,
+                    0.129999444f,
+                    0.0929373177f,
+                    0f,
+                    -0.168943916f,
+                    0.513282935f,
+                    -0.0366767345f,
+                    1f,
+                ),
+            )
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_Neck",
+                "Bip01_R_Clavicle",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_R_Finger1",
+                "Bip01_L_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_Head",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 4, 5, 6, 2, 8, 0, 10, 0, 12, 2), offsets)
         for (capture in captures) {
             val nativePoses = arrayOfNulls<Matrix4f>(names.size)
-            for (i in 0 until names.size) nativePoses[i]=Matrix4f().translation(0.01f*i, 0.5f, 0.02f*i)
-            for (i in 0 until 4) pose(nativePoses, i+3).setTranslation(capture[i*3], capture[i*3+1], capture[i*3+2])
+            for (i in 0 until names.size) nativePoses[i] =
+                Matrix4f().translation(0.01f * i, 0.5f, 0.02f * i)
+            for (i in 0 until 4) pose(nativePoses, i + 3)
+                .setTranslation(capture[i * 3], capture[i * 3 + 1], capture[i * 3 + 2])
             pose(nativePoses, 7).set(pose(nativePoses, 6)).translate(0f, 0f, -0.04f)
             val fingerLocal = Matrix4f(pose(nativePoses, 6)).invert().mul(pose(nativePoses, 7))
             val capturedTarget = Matrix4f().set(java.util.Arrays.copyOfRange(capture, 12, 28))
             val shoulder = pose(nativePoses, 4).getTranslation(Vector3f())
-            val length: Float = shoulder.distance(pose(nativePoses, 5).getTranslation(Vector3f())) +
-                pose(nativePoses, 5).getTranslation(Vector3f()).distance(pose(nativePoses, 6).getTranslation(Vector3f()))
+            val length: Float =
+                shoulder.distance(pose(nativePoses, 5).getTranslation(Vector3f())) +
+                    pose(nativePoses, 5)
+                        .getTranslation(Vector3f())
+                        .distance(pose(nativePoses, 6).getTranslation(Vector3f()))
             val direction = capturedTarget.getTranslation(Vector3f()).sub(shoulder).normalize()
-            if (shoulder.distance(capturedTarget.getTranslation(Vector3f()))<=length) throw AssertionError("transition fixture no longer reproduces native overreach")
+            if (shoulder.distance(capturedTarget.getTranslation(Vector3f())) <= length)
+                throw AssertionError("transition fixture no longer reproduces native overreach")
             for (weight in floatArrayOf(0f, 0.000001f, 0.01f, 0.1f, 0.5f, 0.9f, 1f)) {
                 val intermediate = Matrix4f()
                 val eased = copyPoses(nativePoses)
-                if (!CartTransitionMath.blend(pose(nativePoses, 6), capturedTarget, (CartTransitionMath.smooth((weight).toDouble())), intermediate)
-                    || !CartGrip.reach(eased, actor, "Bip01_R_Hand", intermediate, Matrix4f(), true, weight)) throw AssertionError("weighted clavicle failed during captured overreach at "+weight)
-                if (!eased[6].equals(intermediate, 0.00001f)) throw AssertionError("weighted shoulder lost grip")
+                if (
+                    !CartTransitionMath.blend(
+                        pose(nativePoses, 6),
+                        capturedTarget,
+                        (CartTransitionMath.smooth((weight).toDouble())),
+                        intermediate,
+                    ) ||
+                        !CartGrip.reach(
+                            eased,
+                            actor,
+                            "Bip01_R_Hand",
+                            intermediate,
+                            Matrix4f(),
+                            true,
+                            weight,
+                        )
+                )
+                    throw AssertionError(
+                        "weighted clavicle failed during captured overreach at " + weight,
+                    )
+                if (!eased[6].equals(intermediate, 0.00001f))
+                    throw AssertionError("weighted shoulder lost grip")
                 for (i in 3 until 6) {
-                    val before: Float = pose(nativePoses, i).getTranslation(Vector3f()).distance(pose(nativePoses, i+1).getTranslation(Vector3f()))
-                    val after: Float = eased[i].getTranslation(Vector3f()).distance(eased[i+1].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.00001f) throw AssertionError("weighted shoulder stretched a link")
+                    val before: Float =
+                        pose(nativePoses, i)
+                            .getTranslation(Vector3f())
+                            .distance(pose(nativePoses, i + 1).getTranslation(Vector3f()))
+                    val after: Float =
+                        eased[i]
+                            .getTranslation(Vector3f())
+                            .distance(eased[i + 1].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.00001f)
+                        throw AssertionError("weighted shoulder stretched a link")
                 }
             }
             var previous: Vector3f? = null
-            // Sweep across the correction onset and full extension in 0.1mm increments, then replay the actual failure.
+            // Sweep across the correction onset and full extension in 0.1mm increments, then replay
+            // the actual failure.
             for (sample in 0..231) {
                 val target = Matrix4f(capturedTarget)
-                if (sample<231) target.setTranslation(Vector3f(shoulder).fma(length-0.015f+sample*0.0001f, direction))
+                if (sample < 231)
+                    target.setTranslation(
+                        Vector3f(shoulder).fma(length - 0.015f + sample * 0.0001f, direction),
+                    )
                 val poses = copyPoses(nativePoses)
-                if (!CartGrip.reach(poses, actor, "Bip01_R_Hand", target, Matrix4f(), true)) throw AssertionError("transition shoulder could not reach fixed grip")
-                if (!poses[6].equals(target, 0.00001f)) throw AssertionError("transition wrist target moved")
+                if (!CartGrip.reach(poses, actor, "Bip01_R_Hand", target, Matrix4f(), true))
+                    throw AssertionError("transition shoulder could not reach fixed grip")
+                if (!poses[6].equals(target, 0.00001f))
+                    throw AssertionError("transition wrist target moved")
                 for (i in 3 until 6) {
-                    val before: Float = pose(nativePoses, i).getTranslation(Vector3f()).distance(pose(nativePoses, i+1).getTranslation(Vector3f()))
-                    val after: Float = poses[i].getTranslation(Vector3f()).distance(poses[i+1].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.00001f) throw AssertionError("transition stretched clavicle or arm")
+                    val before: Float =
+                        pose(nativePoses, i)
+                            .getTranslation(Vector3f())
+                            .distance(pose(nativePoses, i + 1).getTranslation(Vector3f()))
+                    val after: Float =
+                        poses[i]
+                            .getTranslation(Vector3f())
+                            .distance(poses[i + 1].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.00001f)
+                        throw AssertionError("transition stretched clavicle or arm")
                 }
-                for (i in intArrayOf(0, 1, 2, 8, 9, 10, 11, 12, 13, 14)) if (!poses[i].equals(pose(nativePoses, i))) throw AssertionError("transition altered native torso, head, opposite shoulder or legs")
-                if (!poses[3].getTranslation(Vector3f()).equals(pose(nativePoses, 3).getTranslation(Vector3f()))) throw AssertionError("transition translated clavicle pivot")
-                if (!Matrix4f(poses[6]).invert().mul(poses[7]).equals(fingerLocal, 0.00001f)) throw AssertionError("transition detached fingers")
+                for (i in intArrayOf(0, 1, 2, 8, 9, 10, 11, 12, 13, 14)) if (
+                    !poses[i].equals(pose(nativePoses, i))
+                )
+                    throw AssertionError(
+                        "transition altered native torso, head, opposite shoulder or legs",
+                    )
+                if (
+                    !poses[3]
+                        .getTranslation(Vector3f())
+                        .equals(pose(nativePoses, 3).getTranslation(Vector3f()))
+                )
+                    throw AssertionError("transition translated clavicle pivot")
+                if (!Matrix4f(poses[6]).invert().mul(poses[7]).equals(fingerLocal, 0.00001f))
+                    throw AssertionError("transition detached fingers")
                 val actual = poses[4].getTranslation(Vector3f())
-                if (sample<=50 && actual.distance(shoulder)>0.000001f) throw AssertionError("shoulder changed before reach reserve was exhausted")
-                if (sample<231 && previous!=null && actual.distance(previous)>0.0003f) throw AssertionError("shoulder correction snapped across full extension")
-                previous=actual
+                if (sample <= 50 && actual.distance(shoulder) > 0.000001f)
+                    throw AssertionError("shoulder changed before reach reserve was exhausted")
+                if (sample < 231 && previous != null && actual.distance(previous) > 0.0003f)
+                    throw AssertionError("shoulder correction snapped across full extension")
+                previous = actual
             }
             val rejected = copyPoses(nativePoses)
-            if (CartGrip.reach(rejected, actor, "Bip01_R_Hand", Matrix4f().translation(5f, 5f, 5f), Matrix4f(), true)) throw AssertionError("unreachable shoulder target accepted")
-            for (i in 0 until rejected.size) if (!rejected[i].equals(pose(nativePoses, i))) throw AssertionError("rejected shoulder target changed native pose")
+            if (
+                CartGrip.reach(
+                    rejected,
+                    actor,
+                    "Bip01_R_Hand",
+                    Matrix4f().translation(5f, 5f, 5f),
+                    Matrix4f(),
+                    true,
+                )
+            )
+                throw AssertionError("unreachable shoulder target accepted")
+            for (i in 0 until rejected.size) if (!rejected[i].equals(pose(nativePoses, i)))
+                throw AssertionError("rejected shoulder target changed native pose")
         }
     }
 
     private fun checkLivePoses() {
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_L_Hand", "Bip01_R_Hand", "Bip01_Head", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot")
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_L_Hand",
+                "Bip01_R_Hand",
+                "Bip01_Head",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+            )
         var offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 1, 1, 0, 6, 7, 0, 9, 10), offsets)
-        val remapped = arrayOf(names[11], names[3], names[5], names[1], names[0], names[4], names[2], names[6], names[7], names[8], names[9], names[10])
-        offsets=ArrayList()
-        for (i in 0 until names.size) offsets.add(PZMath.convertMatrix(Matrix4f().translation(0.1f*i, -0.03f*i, 0.02f*i).rotateY(0.07f*i).transpose(), org.lwjgl.util.vector.Matrix4f()))
+        val remapped =
+            arrayOf(
+                names[11],
+                names[3],
+                names[5],
+                names[1],
+                names[0],
+                names[4],
+                names[2],
+                names[6],
+                names[7],
+                names[8],
+                names[9],
+                names[10],
+            )
+        offsets = ArrayList()
+        for (i in 0 until names.size) offsets.add(
+            PZMath.convertMatrix(
+                Matrix4f()
+                    .translation(0.1f * i, -0.03f * i, 0.02f * i)
+                    .rotateY(0.07f * i)
+                    .transpose(),
+                org.lwjgl.util.vector.Matrix4f(),
+            ),
+        )
         val body = skeleton(remapped, java.util.Collections.nCopies(names.size, -1), offsets)
-        val palette = FloatBuffer.allocate(names.size*16)
-        for (phase in floatArrayOf(-0.5f, 0f, 0.5f)) for (bank in floatArrayOf(-0.5f, -0.18f, 0f, 0.18f, 0.5f)) {
+        val palette = FloatBuffer.allocate(names.size * 16)
+        for (phase in floatArrayOf(-0.5f, 0f, 0.5f)) for (bank in
+            floatArrayOf(-0.5f, -0.18f, 0f, 0.18f, 0.5f)) {
             val expected = arrayOfNulls<Matrix4f>(names.size)
             for (i in 0 until names.size) {
-                expected[i]=Matrix4f().translation(0.02f*i, 0.5f+0.01f*phase, -0.03f*i).rotateZ(0.05f*phase*i)
+                expected[i] =
+                    Matrix4f()
+                        .translation(0.02f * i, 0.5f + 0.01f * phase, -0.03f * i)
+                        .rotateZ(0.05f * phase * i)
                 val index: Int = (body.boneIndices.get(names[i]) ?: throw NullPointerException())
-                val raw = PZMath.convertMatrix(Matrix4f(pose(expected, i)).transpose(), org.lwjgl.util.vector.Matrix4f())
+                val raw =
+                    PZMath.convertMatrix(
+                        Matrix4f(pose(expected, i)).transpose(),
+                        org.lwjgl.util.vector.Matrix4f(),
+                    )
                 org.lwjgl.util.vector.Matrix4f.mul(body.boneOffset.get(index), raw, raw)
-                palette.position(index*16)
+                palette.position(index * 16)
                 raw.store(palette)
             }
             val before = palette.array().copyOf()
             palette.position(7)
             val delta = Matrix4f().translation(0.07f, 0.025f, -0.03f).rotateZ(bank)
             val actual = CartGrip.livePoses(actor, body, palette, delta)
-            if (actual==null) throw AssertionError("live upper body rejected")
-            if (!pose(actual, 0).equals(pose(expected, 0), 0.00001f)) throw AssertionError("native hip anchor changed")
+            if (actual == null) throw AssertionError("live upper body rejected")
+            if (!pose(actual, 0).equals(pose(expected, 0), 0.00001f))
+                throw AssertionError("native hip anchor changed")
             for (i in 1 until 6) {
                 val parent = actor.getBoneAt(i).parent
-                val old: Float = pose(expected, i).getTranslation(Vector3f()).distance(pose(expected, parent.index).getTranslation(Vector3f()))
-                val now: Float = pose(actual, i).getTranslation(Vector3f()).distance(pose(actual, parent.index).getTranslation(Vector3f()))
-                if (Math.abs(old-now)>0.00001f) throw AssertionError("torso detached or stretched: "+names[i])
-                if (parent.index!=0 && !Matrix4f(pose(actual, parent.index)).invert().mul(pose(actual, i))
-                    .equals(Matrix4f(pose(expected, parent.index)).invert().mul(pose(expected, i)), 0.00001f)) throw AssertionError("native torso/shoulder motion lost: "+names[i])
+                val old: Float =
+                    pose(expected, i)
+                        .getTranslation(Vector3f())
+                        .distance(pose(expected, parent.index).getTranslation(Vector3f()))
+                val now: Float =
+                    pose(actual, i)
+                        .getTranslation(Vector3f())
+                        .distance(pose(actual, parent.index).getTranslation(Vector3f()))
+                if (Math.abs(old - now) > 0.00001f)
+                    throw AssertionError("torso detached or stretched: " + names[i])
+                if (
+                    parent.index != 0 &&
+                        !Matrix4f(pose(actual, parent.index))
+                            .invert()
+                            .mul(pose(actual, i))
+                            .equals(
+                                Matrix4f(pose(expected, parent.index))
+                                    .invert()
+                                    .mul(pose(expected, i)),
+                                0.00001f,
+                            )
+                )
+                    throw AssertionError("native torso/shoulder motion lost: " + names[i])
                 val response = Matrix4f(pose(actual, i)).mul(Matrix4f(pose(expected, i)).invert())
-                val roll: Float = (Math.atan2((-response.m10()).toDouble(), (response.m00()).toDouble())).toFloat()
-                val pitch: Float = (Math.atan2((response.m21()).toDouble(), (response.m22()).toDouble())).toFloat()
-                val turn: Float = (Math.sin((Math.min(1.0, Math.abs(bank)/Math.toRadians(2.5))*Math.PI/2))).toFloat()
+                val roll: Float =
+                    (Math.atan2((-response.m10()).toDouble(), (response.m00()).toDouble()))
+                        .toFloat()
+                val pitch: Float =
+                    (Math.atan2((response.m21()).toDouble(), (response.m22()).toDouble())).toFloat()
+                val turn: Float =
+                    (Math.sin((Math.min(1.0, Math.abs(bank) / Math.toRadians(2.5)) * Math.PI / 2)))
+                        .toFloat()
                 val extra: Float = CartSteeringMath.woodenBankExtra(bank)
-                if (Math.abs(roll-Math.max(-Math.toRadians((16).toDouble()), Math.min(Math.toRadians((16).toDouble()), ((2.1f+0.2f*extra)*bank).toDouble())))>0.00001f
-                    || Math.abs(pitch-Math.toRadians((14*turn+6*extra).toDouble()))>0.00001f
-                    || (bank==0f && !pose(actual, i).equals(pose(expected, i), 0.00001f))) throw AssertionError("torso bank is unbounded or does not return to native gait")
+                if (
+                    Math.abs(
+                        roll -
+                            Math.max(
+                                -Math.toRadians((16).toDouble()),
+                                Math.min(
+                                    Math.toRadians((16).toDouble()),
+                                    ((2.1f + 0.2f * extra) * bank).toDouble(),
+                                ),
+                            ),
+                    ) > 0.00001f ||
+                        Math.abs(pitch - Math.toRadians((14 * turn + 6 * extra).toDouble())) >
+                            0.00001f ||
+                        (bank == 0f && !pose(actual, i).equals(pose(expected, i), 0.00001f))
+                )
+                    throw AssertionError(
+                        "torso bank is unbounded or does not return to native gait",
+                    )
             }
-            if (palette.position()!=7 || !java.util.Arrays.equals(palette.array(), before)) throw AssertionError("live pose capture changed the native palette")
+            if (palette.position() != 7 || !java.util.Arrays.equals(palette.array(), before))
+                throw AssertionError("live pose capture changed the native palette")
             val clothing = FloatBuffer.wrap(before.copyOf())
             clothing.position(7)
             val shader = arrayOfNulls<org.lwjgl.util.vector.Matrix4f>(names.size)
-            if (CartGrip.skin(clothing, shader, body, actor, actual)!=6 || clothing.position()!=7) throw AssertionError("live clothing mapping/cursor changed")
+            if (
+                CartGrip.skin(clothing, shader, body, actor, actual) != 6 ||
+                    clothing.position() != 7
+            )
+                throw AssertionError("live clothing mapping/cursor changed")
             for (i in 0 until names.size) {
                 val index: Int = (body.boneIndices.get(names[i]) ?: throw NullPointerException())
-                if (i>=6) {
-                    for (value in 0 until 16) if (clothing.get(index*16+value)!=before[index*16+value]) throw AssertionError("live clothing changed native thigh gait")
+                if (i >= 6) {
+                    for (value in 0 until 16) if (
+                        clothing.get(index * 16 + value) != before[index * 16 + value]
+                    )
+                        throw AssertionError("live clothing changed native thigh gait")
                     continue
                 }
                 val raw = org.lwjgl.util.vector.Matrix4f()
                 val view = clothing.duplicate()
-                view.position(index*16)
+                view.position(index * 16)
                 raw.load(view)
-                val decoded = PZMath.convertMatrix(raw, Matrix4f()).transpose()
-                    .mul(PZMath.convertMatrix(body.boneOffset.get(index), Matrix4f()).transpose().invert())
-                if (!decoded.equals(pose(actual, i), 0.00001f)
-                    || !PZMath.convertMatrix(shader[index], Matrix4f()).equals(PZMath.convertMatrix(raw, Matrix4f()))) throw AssertionError("live remapped clothing pose disagrees: "+names[i])
+                val decoded =
+                    PZMath.convertMatrix(raw, Matrix4f())
+                        .transpose()
+                        .mul(
+                            PZMath.convertMatrix(body.boneOffset.get(index), Matrix4f())
+                                .transpose()
+                                .invert(),
+                        )
+                if (
+                    !decoded.equals(pose(actual, i), 0.00001f) ||
+                        !PZMath.convertMatrix(shader[index], Matrix4f())
+                            .equals(PZMath.convertMatrix(raw, Matrix4f()))
+                )
+                    throw AssertionError("live remapped clothing pose disagrees: " + names[i])
             }
         }
         val full = CartGrip.livePoses(actor, body, palette, Matrix4f(), true)
-        if (full==null) throw AssertionError("full transition palette rejected")
-        val fullClothing = FloatBuffer.allocate(names.size*16)
+        if (full == null) throw AssertionError("full transition palette rejected")
+        val fullClothing = FloatBuffer.allocate(names.size * 16)
         fullClothing.position(7)
         val fullShader = arrayOfNulls<org.lwjgl.util.vector.Matrix4f>(names.size)
-        if (CartGrip.skin(fullClothing, fullShader, body, actor, full, true)!=names.size || fullClothing.position()!=7) throw AssertionError("full transition clothing palette/cursor changed")
+        if (
+            CartGrip.skin(fullClothing, fullShader, body, actor, full, true) != names.size ||
+                fullClothing.position() != 7
+        )
+            throw AssertionError("full transition clothing palette/cursor changed")
         for (i in 0 until names.size) {
             val index: Int = (body.boneIndices.get(names[i]) ?: throw NullPointerException())
             val nativeRaw = org.lwjgl.util.vector.Matrix4f()
             val original = palette.duplicate()
-            original.position(index*16)
+            original.position(index * 16)
             nativeRaw.load(original)
-            val nativePose = PZMath.convertMatrix(nativeRaw, Matrix4f()).transpose()
-                .mul(PZMath.convertMatrix(body.boneOffset.get(index), Matrix4f()).transpose().invert())
-            if (!pose(full, i).equals(nativePose, 0.00001f)) throw AssertionError("full capture lost native pelvis/leg pose: "+names[i])
+            val nativePose =
+                PZMath.convertMatrix(nativeRaw, Matrix4f())
+                    .transpose()
+                    .mul(
+                        PZMath.convertMatrix(body.boneOffset.get(index), Matrix4f())
+                            .transpose()
+                            .invert(),
+                    )
+            if (!pose(full, i).equals(nativePose, 0.00001f))
+                throw AssertionError("full capture lost native pelvis/leg pose: " + names[i])
             val raw = org.lwjgl.util.vector.Matrix4f()
             val view = fullClothing.duplicate()
-            view.position(index*16)
+            view.position(index * 16)
             raw.load(view)
-            val decoded = PZMath.convertMatrix(raw, Matrix4f()).transpose()
-                .mul(PZMath.convertMatrix(body.boneOffset.get(index), Matrix4f()).transpose().invert())
-            if (!decoded.equals(pose(full, i), 0.00001f) || !PZMath.convertMatrix(fullShader[index], Matrix4f()).equals(PZMath.convertMatrix(raw, Matrix4f()))) throw AssertionError("full transition remapped skin/shader disagrees: "+names[i])
+            val decoded =
+                PZMath.convertMatrix(raw, Matrix4f())
+                    .transpose()
+                    .mul(
+                        PZMath.convertMatrix(body.boneOffset.get(index), Matrix4f())
+                            .transpose()
+                            .invert(),
+                    )
+            if (
+                !decoded.equals(pose(full, i), 0.00001f) ||
+                    !PZMath.convertMatrix(fullShader[index], Matrix4f())
+                        .equals(PZMath.convertMatrix(raw, Matrix4f()))
+            )
+                throw AssertionError("full transition remapped skin/shader disagrees: " + names[i])
         }
-        val footIndex: Int = (body.boneIndices.get("Bip01_L_Foot") ?: throw NullPointerException())*16
+        val footIndex: Int =
+            (body.boneIndices.get("Bip01_L_Foot") ?: throw NullPointerException()) * 16
         val footValue: Float = palette.get(footIndex)
         palette.put(footIndex, Float.NaN)
-        if (CartGrip.livePoses(actor, body, palette, Matrix4f())==null
-            || CartGrip.livePoses(actor, body, palette, Matrix4f(), true)!=null) throw AssertionError("normal/full leg palette validation is not isolated")
+        if (
+            CartGrip.livePoses(actor, body, palette, Matrix4f()) == null ||
+                CartGrip.livePoses(actor, body, palette, Matrix4f(), true) != null
+        )
+            throw AssertionError("normal/full leg palette validation is not isolated")
         palette.put(footIndex, footValue)
         palette.limit(16)
-        if (CartGrip.livePoses(actor, body, palette, Matrix4f())!=null || palette.position()!=7) throw AssertionError("truncated live palette accepted or cursor changed")
+        if (CartGrip.livePoses(actor, body, palette, Matrix4f()) != null || palette.position() != 7)
+            throw AssertionError("truncated live palette accepted or cursor changed")
         palette.limit(palette.capacity())
-        palette.put((body.boneIndices.get(names[0]) ?: throw NullPointerException())*16, Float.NaN)
-        if (CartGrip.livePoses(actor, body, palette, Matrix4f())!=null) throw AssertionError("non-finite live pose accepted")
+        palette.put(
+            (body.boneIndices.get(names[0]) ?: throw NullPointerException()) * 16,
+            Float.NaN,
+        )
+        if (CartGrip.livePoses(actor, body, palette, Matrix4f()) != null)
+            throw AssertionError("non-finite live pose accepted")
     }
 
     private fun checkTransitionFeet() {
-        val names = arrayOf("Bip01_Spine", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_L_Toe0", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot", "Bip01_R_Toe0", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand")
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_L_Toe0",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+                "Bip01_R_Toe0",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
-        val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 0, 5, 6, 7, 0, 9, 10, 0, 12, 13), offsets)
+        val actor =
+            skeleton(names, listOf(-1, 0, 1, 2, 3, 0, 5, 6, 7, 0, 9, 10, 0, 12, 13), offsets)
         // FK of installed B42.21 Idle -> IdleLooting_Low local-quaternion blend at weight .5.
-        val legs = arrayOf(floatArrayOf(0.0419115031f, -0.663097744f, -0.747358554f, 0f, -0.99786869f, -0.0652259341f, 0.00191205823f, 0f, -0.0500150413f, 0.745685564f, -0.664418193f, 0f, 0.0582248804f, 0.356009938f, 0.0792231038f, 1f), // Bip01_L_Thigh
-            floatArrayOf(0.0594622987f, -0.896843377f, 0.438333427f, 0f, -0.99786869f, -0.0652259341f, 0.00191205823f, 0f, 0.0268758905f, -0.437512897f, -0.898810409f, 0f, 0.0681788623f, 0.198524224f, -0.0982745528f, 1f), // Bip01_L_Calf
-            floatArrayOf(0.00821408269f, -0.99996585f, 0.000910252311f, 0f, -0.999909551f, -0.00820391876f, 0.0106576471f, 0f, -0.0106498155f, -0.000997712775f, -0.999942791f, 0f, 0.0804781037f, 0.0130202429f, -0.00760922854f, 1f), // Bip01_L_Foot
-            floatArrayOf(-0.0106498155f, -0.000997712775f, -0.999942791f, 0f, -0.999909551f, -0.00820391876f, 0.0106576471f, 0f, -0.00821408269f, 0.99996585f, -0.000910252311f, 0f, 0.0803074026f, -0.0524168226f, -0.0739959211f, 1f), // Bip01_L_Toe0
-            floatArrayOf(-0.0932105959f, -0.970621983f, -0.221821439f, 0f, -0.99511509f, 0.0980968826f, -0.0110887397f, 0f, 0.0325229662f, 0.219704273f, -0.975024251f, 0f, -0.0522251196f, 0.356010048f, 0.0792232446f, 1f), // Bip01_R_Thigh
-            floatArrayOf(-0.0541896937f, -0.448887354f, 0.891943732f, 0f, -0.99511509f, 0.0980968826f, -0.0110887397f, 0f, -0.0825193045f, -0.888187562f, -0.452010419f, 0f, -0.0743626362f, 0.125487327f, 0.0265406529f, 1f), // Bip01_R_Calf
-            floatArrayOf(-0.0369611221f, -0.75860352f, 0.650503324f, 0f, -0.999225101f, 0.019241789f, -0.0343358615f, 0f, 0.0135304576f, -0.651268342f, -0.758726877f, 0f, -0.0855712866f, 0.0326390183f, 0.211031186f, 1f), // Bip01_R_Foot
-            floatArrayOf(0.0342894229f, -0.00273827272f, -0.999408194f, 0f, -0.999225101f, 0.019241789f, -0.0343358615f, 0f, 0.0193244226f, 0.99981111f, -0.00207636099f, 0f, -0.0870884471f, -0.060229951f, 0.203139139f, 1f), // Bip01_R_Toe0
-        )
+        val legs =
+            arrayOf(
+                floatArrayOf(
+                    0.0419115031f,
+                    -0.663097744f,
+                    -0.747358554f,
+                    0f,
+                    -0.99786869f,
+                    -0.0652259341f,
+                    0.00191205823f,
+                    0f,
+                    -0.0500150413f,
+                    0.745685564f,
+                    -0.664418193f,
+                    0f,
+                    0.0582248804f,
+                    0.356009938f,
+                    0.0792231038f,
+                    1f,
+                ), // Bip01_L_Thigh
+                floatArrayOf(
+                    0.0594622987f,
+                    -0.896843377f,
+                    0.438333427f,
+                    0f,
+                    -0.99786869f,
+                    -0.0652259341f,
+                    0.00191205823f,
+                    0f,
+                    0.0268758905f,
+                    -0.437512897f,
+                    -0.898810409f,
+                    0f,
+                    0.0681788623f,
+                    0.198524224f,
+                    -0.0982745528f,
+                    1f,
+                ), // Bip01_L_Calf
+                floatArrayOf(
+                    0.00821408269f,
+                    -0.99996585f,
+                    0.000910252311f,
+                    0f,
+                    -0.999909551f,
+                    -0.00820391876f,
+                    0.0106576471f,
+                    0f,
+                    -0.0106498155f,
+                    -0.000997712775f,
+                    -0.999942791f,
+                    0f,
+                    0.0804781037f,
+                    0.0130202429f,
+                    -0.00760922854f,
+                    1f,
+                ), // Bip01_L_Foot
+                floatArrayOf(
+                    -0.0106498155f,
+                    -0.000997712775f,
+                    -0.999942791f,
+                    0f,
+                    -0.999909551f,
+                    -0.00820391876f,
+                    0.0106576471f,
+                    0f,
+                    -0.00821408269f,
+                    0.99996585f,
+                    -0.000910252311f,
+                    0f,
+                    0.0803074026f,
+                    -0.0524168226f,
+                    -0.0739959211f,
+                    1f,
+                ), // Bip01_L_Toe0
+                floatArrayOf(
+                    -0.0932105959f,
+                    -0.970621983f,
+                    -0.221821439f,
+                    0f,
+                    -0.99511509f,
+                    0.0980968826f,
+                    -0.0110887397f,
+                    0f,
+                    0.0325229662f,
+                    0.219704273f,
+                    -0.975024251f,
+                    0f,
+                    -0.0522251196f,
+                    0.356010048f,
+                    0.0792232446f,
+                    1f,
+                ), // Bip01_R_Thigh
+                floatArrayOf(
+                    -0.0541896937f,
+                    -0.448887354f,
+                    0.891943732f,
+                    0f,
+                    -0.99511509f,
+                    0.0980968826f,
+                    -0.0110887397f,
+                    0f,
+                    -0.0825193045f,
+                    -0.888187562f,
+                    -0.452010419f,
+                    0f,
+                    -0.0743626362f,
+                    0.125487327f,
+                    0.0265406529f,
+                    1f,
+                ), // Bip01_R_Calf
+                floatArrayOf(
+                    -0.0369611221f,
+                    -0.75860352f,
+                    0.650503324f,
+                    0f,
+                    -0.999225101f,
+                    0.019241789f,
+                    -0.0343358615f,
+                    0f,
+                    0.0135304576f,
+                    -0.651268342f,
+                    -0.758726877f,
+                    0f,
+                    -0.0855712866f,
+                    0.0326390183f,
+                    0.211031186f,
+                    1f,
+                ), // Bip01_R_Foot
+                floatArrayOf(
+                    0.0342894229f,
+                    -0.00273827272f,
+                    -0.999408194f,
+                    0f,
+                    -0.999225101f,
+                    0.019241789f,
+                    -0.0343358615f,
+                    0f,
+                    0.0193244226f,
+                    0.99981111f,
+                    -0.00207636099f,
+                    0f,
+                    -0.0870884471f,
+                    -0.060229951f,
+                    0.203139139f,
+                    1f,
+                ), // Bip01_R_Toe0
+            )
         val nativePose = arrayOfNulls<Matrix4f>(names.size)
-        nativePose[0]=Matrix4f().translation(0.003f, 0.3547495f, 0.079361f)
-        for (i in 0 until legs.size) nativePose[i+1]=Matrix4f().set(legs[i])
-        nativePose[9]=Matrix4f().translation(0.10f, 0.39f, 0f)
-        nativePose[10]=Matrix4f().translation(0.11f, 0.28f, -0.08f)
-        nativePose[11]=Matrix4f().translation(0.12f, 0.20f, -0.15f).rotateY(0.3f)
-        nativePose[12]=Matrix4f().translation(-0.10f, 0.39f, 0f)
-        nativePose[13]=Matrix4f().translation(-0.11f, 0.28f, -0.08f)
-        nativePose[14]=Matrix4f().translation(-0.12f, 0.20f, -0.15f).rotateY(-0.3f)
+        nativePose[0] = Matrix4f().translation(0.003f, 0.3547495f, 0.079361f)
+        for (i in 0 until legs.size) nativePose[i + 1] = Matrix4f().set(legs[i])
+        nativePose[9] = Matrix4f().translation(0.10f, 0.39f, 0f)
+        nativePose[10] = Matrix4f().translation(0.11f, 0.28f, -0.08f)
+        nativePose[11] = Matrix4f().translation(0.12f, 0.20f, -0.15f).rotateY(0.3f)
+        nativePose[12] = Matrix4f().translation(-0.10f, 0.39f, 0f)
+        nativePose[13] = Matrix4f().translation(-0.11f, 0.28f, -0.08f)
+        nativePose[14] = Matrix4f().translation(-0.12f, 0.20f, -0.15f).rotateY(-0.3f)
         val reversedKnee = copyPoses(nativePose)
         reversedKnee[1].identity().translation(0f, 0.50f, 0f)
         reversedKnee[2].identity().translation(0f, 0.25f, 0.10f)
         reversedKnee[3].identity()
         reversedKnee[4].identity().translation(0f, 0f, -0.10f)
         val footTarget = Matrix4f(reversedKnee[3])
-        if (!CartGrip.reach(reversedKnee, actor, "Bip01_L_Foot", footTarget, null, false)
-            || Math.abs(reversedKnee[2].m32()+0.10f)>0.00001f) throw AssertionError("planted leg retained a backward knee pole")
-        if (!reversedKnee[3].equals(footTarget, 0.00001f)
-            || !reversedKnee[4].equals(Matrix4f().translation(0f, 0f, -0.10f), 0.00001f)) throw AssertionError("forward knee correction moved the planted foot/toes")
-        for (upper in intArrayOf(1, 2)) if (Math.abs(reversedKnee[upper].getTranslation(Vector3f())
-            .distance(reversedKnee[upper+1].getTranslation(Vector3f()))-(Math.hypot(0.25, 0.10)).toFloat())>0.00001f) throw AssertionError("forward knee correction stretched a leg link")
+        if (
+            !CartGrip.reach(reversedKnee, actor, "Bip01_L_Foot", footTarget, null, false) ||
+                Math.abs(reversedKnee[2].m32() + 0.10f) > 0.00001f
+        )
+            throw AssertionError("planted leg retained a backward knee pole")
+        if (
+            !reversedKnee[3].equals(footTarget, 0.00001f) ||
+                !reversedKnee[4].equals(Matrix4f().translation(0f, 0f, -0.10f), 0.00001f)
+        )
+            throw AssertionError("forward knee correction moved the planted foot/toes")
+        for (upper in intArrayOf(1, 2)) if (
+            Math.abs(
+                reversedKnee[upper]
+                    .getTranslation(Vector3f())
+                    .distance(reversedKnee[upper + 1].getTranslation(Vector3f())) -
+                    (Math.hypot(0.25, 0.10)).toFloat(),
+            ) > 0.00001f
+        )
+            throw AssertionError("forward knee correction stretched a leg link")
         val hinged = copyPoses(nativePose)
-        if (!CartGrip.bendTransitionTorso(hinged, actor, (Math.toRadians((83).toDouble())).toFloat())) throw AssertionError("shallow pickup hinge rejected")
-        for (i in 1..8) if (!hinged[i].equals(pose(nativePose, i))) throw AssertionError("hip hinge rotated a native thigh branch or planted foot")
-        if (!hinged[0].getTranslation(Vector3f()).equals(pose(nativePose, 0).getTranslation(Vector3f()), 0.00001f)) throw AssertionError("hip hinge moved its pivot")
-        for (link in arrayOf(intArrayOf(0, 9), intArrayOf(9, 10), intArrayOf(10, 11), intArrayOf(0, 12), intArrayOf(12, 13), intArrayOf(13, 14))) {
-            val before: Float = pose(nativePose, link[0]).getTranslation(Vector3f()).distance(pose(nativePose, link[1]).getTranslation(Vector3f()))
-            val after: Float = hinged[link[0]].getTranslation(Vector3f()).distance(hinged[link[1]].getTranslation(Vector3f()))
-            if (Math.abs(before-after)>0.00001f) throw AssertionError("hip hinge stretched the torso or an arm")
+        if (
+            !CartGrip.bendTransitionTorso(
+                hinged,
+                actor,
+                (Math.toRadians((83).toDouble())).toFloat(),
+            )
+        )
+            throw AssertionError("shallow pickup hinge rejected")
+        for (i in 1..8) if (!hinged[i].equals(pose(nativePose, i)))
+            throw AssertionError("hip hinge rotated a native thigh branch or planted foot")
+        if (
+            !hinged[0]
+                .getTranslation(Vector3f())
+                .equals(pose(nativePose, 0).getTranslation(Vector3f()), 0.00001f)
+        )
+            throw AssertionError("hip hinge moved its pivot")
+        for (link in
+            arrayOf(
+                intArrayOf(0, 9),
+                intArrayOf(9, 10),
+                intArrayOf(10, 11),
+                intArrayOf(0, 12),
+                intArrayOf(12, 13),
+                intArrayOf(13, 14),
+            )) {
+            val before: Float =
+                pose(nativePose, link[0])
+                    .getTranslation(Vector3f())
+                    .distance(pose(nativePose, link[1]).getTranslation(Vector3f()))
+            val after: Float =
+                hinged[link[0]]
+                    .getTranslation(Vector3f())
+                    .distance(hinged[link[1]].getTranslation(Vector3f()))
+            if (Math.abs(before - after) > 0.00001f)
+                throw AssertionError("hip hinge stretched the torso or an arm")
         }
         for (link in intArrayOf(9, 10, 12, 13)) {
-            val before = pose(nativePose, link+1).getTranslation(Vector3f()).sub(pose(nativePose, link).getTranslation(Vector3f()))
-            val after = hinged[link+1].getTranslation(Vector3f()).sub(hinged[link].getTranslation(Vector3f()))
-            if (!before.equals(after, 0.00001f)) throw AssertionError("hip hinge carried a relaxed arm backward")
+            val before =
+                pose(nativePose, link + 1)
+                    .getTranslation(Vector3f())
+                    .sub(pose(nativePose, link).getTranslation(Vector3f()))
+            val after =
+                hinged[link + 1]
+                    .getTranslation(Vector3f())
+                    .sub(hinged[link].getTranslation(Vector3f()))
+            if (!before.equals(after, 0.00001f))
+                throw AssertionError("hip hinge carried a relaxed arm backward")
         }
         val invalidHinge = copyPoses(nativePose)
-        if (CartGrip.bendTransitionTorso(invalidHinge, actor, Float.NaN)
-            || CartGrip.bendTransitionTorso(invalidHinge, actor, 2f)) throw AssertionError("invalid hip hinge accepted")
-        for (i in 0 until invalidHinge.size) if (!invalidHinge[i].equals(pose(nativePose, i))) throw AssertionError("invalid hip hinge changed the input pose")
+        if (
+            CartGrip.bendTransitionTorso(invalidHinge, actor, Float.NaN) ||
+                CartGrip.bendTransitionTorso(invalidHinge, actor, 2f)
+        )
+            throw AssertionError("invalid hip hinge accepted")
+        for (i in 0 until invalidHinge.size) if (!invalidHinge[i].equals(pose(nativePose, i)))
+            throw AssertionError("invalid hip hinge changed the input pose")
         val clips = arrayOfNulls<AnimationClip>(3)
         for (endpoint in 0 until 3) {
             val frames = ArrayList<Keyframe>()
             for (i in 0 until names.size) {
-                // Only reference toe heights are used; make their difference observable in the lift test.
-                val position = org.lwjgl.util.vector.Vector3f(0f, if (names[i].endsWith("Toe0")) (if (endpoint==2) 2f else 0.006f*endpoint) else 0f, 0f)
-                val frame = Keyframe(position, org.lwjgl.util.vector.Quaternion(), org.lwjgl.util.vector.Vector3f(1f, 1f, 1f))
-                frame.bone=i
-                frame.boneName=names[i]
-                frame.time=0f
+                // Only reference toe heights are used; make their difference observable in the lift
+                // test.
+                val position =
+                    org.lwjgl.util.vector.Vector3f(
+                        0f,
+                        if (names[i].endsWith("Toe0"))
+                            (if (endpoint == 2) 2f else 0.006f * endpoint)
+                        else 0f,
+                        0f,
+                    )
+                val frame =
+                    Keyframe(
+                        position,
+                        org.lwjgl.util.vector.Quaternion(),
+                        org.lwjgl.util.vector.Vector3f(1f, 1f, 1f),
+                    )
+                frame.bone = i
+                frame.boneName = names[i]
+                frame.time = 0f
                 frames.add(frame)
             }
-            clips[endpoint]=AnimationClip(1f, frames, if (endpoint==0) "Bob_Idle" else "Bob_Cart_Idle", true)
+            clips[endpoint] =
+                AnimationClip(1f, frames, if (endpoint == 0) "Bob_Idle" else "Bob_Cart_Idle", true)
         }
         for (lift in floatArrayOf(0f, 0.25f, 0.5f, 1f)) {
             val poses = copyPoses(nativePose)
-            if (!CartGrip.groundFeet(poses, actor, clips[0], clips[1], lift)) throw AssertionError("native blended legs cannot reach the reference floor at lift="+lift)
+            if (!CartGrip.groundFeet(poses, actor, clips[0], clips[1], lift))
+                throw AssertionError(
+                    "native blended legs cannot reach the reference floor at lift=" + lift,
+                )
             for (toe in intArrayOf(4, 8)) {
-                val foot: Int = toe-1
-                val calf: Int = toe-2
-                val thigh: Int = toe-3
-                if (Math.abs(poses[toe].m31()-0.006f*lift)>0.00001f) throw AssertionError("blended toe missed reference height")
+                val foot: Int = toe - 1
+                val calf: Int = toe - 2
+                val thigh: Int = toe - 3
+                if (Math.abs(poses[toe].m31() - 0.006f * lift) > 0.00001f)
+                    throw AssertionError("blended toe missed reference height")
                 val expected = Matrix4f(pose(nativePose, foot))
-                expected.m31(expected.m31()+0.006f*lift-pose(nativePose, toe).m31())
-                if (!poses[foot].equals(expected, 0.00001f)) throw AssertionError("floor correction changed native ankle X/Z or foot orientation")
-                if (!poses[thigh].getTranslation(Vector3f()).equals(pose(nativePose, thigh).getTranslation(Vector3f()), 0.00001f)) throw AssertionError("floor correction moved the native hip pivot")
-                for (link in arrayOf(intArrayOf(thigh, calf), intArrayOf(calf, foot), intArrayOf(foot, toe))) {
-                    val before: Float = pose(nativePose, link[0]).getTranslation(Vector3f()).distance(pose(nativePose, link[1]).getTranslation(Vector3f()))
-                    val after: Float = poses[link[0]].getTranslation(Vector3f()).distance(poses[link[1]].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.00001f) throw AssertionError("floor correction stretched a leg/toe link")
+                expected.m31(expected.m31() + 0.006f * lift - pose(nativePose, toe).m31())
+                if (!poses[foot].equals(expected, 0.00001f))
+                    throw AssertionError(
+                        "floor correction changed native ankle X/Z or foot orientation",
+                    )
+                if (
+                    !poses[thigh]
+                        .getTranslation(Vector3f())
+                        .equals(pose(nativePose, thigh).getTranslation(Vector3f()), 0.00001f)
+                )
+                    throw AssertionError("floor correction moved the native hip pivot")
+                for (link in
+                    arrayOf(
+                        intArrayOf(thigh, calf),
+                        intArrayOf(calf, foot),
+                        intArrayOf(foot, toe),
+                    )) {
+                    val before: Float =
+                        pose(nativePose, link[0])
+                            .getTranslation(Vector3f())
+                            .distance(pose(nativePose, link[1]).getTranslation(Vector3f()))
+                    val after: Float =
+                        poses[link[0]]
+                            .getTranslation(Vector3f())
+                            .distance(poses[link[1]].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.00001f)
+                        throw AssertionError("floor correction stretched a leg/toe link")
                 }
-                if (!Matrix4f(poses[foot]).invert().mul(poses[toe])
-                    .equals(Matrix4f(pose(nativePose, foot)).invert().mul(pose(nativePose, toe)), 0.00001f)) throw AssertionError("toe detached from native foot")
+                if (
+                    !Matrix4f(poses[foot])
+                        .invert()
+                        .mul(poses[toe])
+                        .equals(
+                            Matrix4f(pose(nativePose, foot)).invert().mul(pose(nativePose, toe)),
+                            0.00001f,
+                        )
+                )
+                    throw AssertionError("toe detached from native foot")
             }
-            for (i in intArrayOf(0, 9, 10, 11, 12, 13, 14)) if (!poses[i].equals(pose(nativePose, i))) throw AssertionError("foot grounding changed the native pelvis or arms")
+            for (i in intArrayOf(0, 9, 10, 11, 12, 13, 14)) if (
+                !poses[i].equals(pose(nativePose, i))
+            )
+                throw AssertionError("foot grounding changed the native pelvis or arms")
             val grounded = copyPoses(poses)
             val wrist = Matrix4f(pose(nativePose, 11)).setTranslation(0.13f, 0.262f, -0.16f)
-            if (!CartGrip.reach(poses, actor, "Bip01_L_Hand", wrist, null, false) || !poses[11].equals(wrist, 0.00001f)) throw AssertionError("hand IK lost its wrist target after foot grounding")
-            for (i in 0 until 9) if (!poses[i].equals(grounded[i])) throw AssertionError("hand IK changed grounded legs")
+            if (
+                !CartGrip.reach(poses, actor, "Bip01_L_Hand", wrist, null, false) ||
+                    !poses[11].equals(wrist, 0.00001f)
+            )
+                throw AssertionError("hand IK lost its wrist target after foot grounding")
+            for (i in 0 until 9) if (!poses[i].equals(grounded[i]))
+                throw AssertionError("hand IK changed grounded legs")
             for (upper in intArrayOf(9, 10)) {
-                val before: Float = pose(nativePose, upper).getTranslation(Vector3f()).distance(pose(nativePose, upper+1).getTranslation(Vector3f()))
-                val after: Float = poses[upper].getTranslation(Vector3f()).distance(poses[upper+1].getTranslation(Vector3f()))
-                if (Math.abs(before-after)>0.00001f) throw AssertionError("hand IK stretched an arm")
+                val before: Float =
+                    pose(nativePose, upper)
+                        .getTranslation(Vector3f())
+                        .distance(pose(nativePose, upper + 1).getTranslation(Vector3f()))
+                val after: Float =
+                    poses[upper]
+                        .getTranslation(Vector3f())
+                        .distance(poses[upper + 1].getTranslation(Vector3f()))
+                if (Math.abs(before - after) > 0.00001f)
+                    throw AssertionError("hand IK stretched an arm")
             }
-            // An already grounded endpoint, including a sub-threshold delta, must stay bit-for-bit native.
+            // An already grounded endpoint, including a sub-threshold delta, must stay bit-for-bit
+            // native.
             for (toe in intArrayOf(4, 8)) {
-                val correction: Float = 0.006f*lift-poses[toe].m31()+0.00001f
-                poses[toe-1].m31(poses[toe-1].m31()+correction)
-                poses[toe].m31(poses[toe].m31()+correction)
+                val correction: Float = 0.006f * lift - poses[toe].m31() + 0.00001f
+                poses[toe - 1].m31(poses[toe - 1].m31() + correction)
+                poses[toe].m31(poses[toe].m31() + correction)
             }
             val endpoint = copyPoses(poses)
-            if (!CartGrip.groundFeet(poses, actor, clips[0], clips[1], lift)) throw AssertionError("grounded endpoint rejected")
-            for (i in 0 until poses.size) if (!poses[i].equals(endpoint[i])) throw AssertionError("grounded endpoint changed")
+            if (!CartGrip.groundFeet(poses, actor, clips[0], clips[1], lift))
+                throw AssertionError("grounded endpoint rejected")
+            for (i in 0 until poses.size) if (!poses[i].equals(endpoint[i]))
+                throw AssertionError("grounded endpoint changed")
         }
-        for (shiftX in floatArrayOf(-0.04f, 0f, 0.04f)) for (shiftZ in floatArrayOf(0.03f, 0.05f, 0.15f, 0.20f, 0.22f)) for (shiftY in floatArrayOf(0f, -0.025f, -0.04f)) {
+        for (shiftX in floatArrayOf(-0.04f, 0f, 0.04f)) for (shiftZ in
+            floatArrayOf(0.03f, 0.05f, 0.15f, 0.20f, 0.22f)) for (shiftY in
+            floatArrayOf(0f, -0.025f, -0.04f)) {
             val poses = copyPoses(nativePose)
-            if (!CartGrip.groundFeet(poses, actor, clips[0], clips[1], 0f, shiftX, shiftY, shiftZ)) throw AssertionError("balanced squat cannot reach the planted feet")
+            if (!CartGrip.groundFeet(poses, actor, clips[0], clips[1], 0f, shiftX, shiftY, shiftZ))
+                throw AssertionError("balanced squat cannot reach the planted feet")
             for (foot in intArrayOf(3, 7)) {
                 val expected = Matrix4f(pose(nativePose, foot))
-                expected.m31(expected.m31()-pose(nativePose, foot+1).m31())
-                if (!poses[foot].equals(expected, 0.00001f)) throw AssertionError("stance shift slid or twisted a planted foot")
-                for (upper in intArrayOf(foot-2, foot-1)) {
-                    val before: Float = pose(nativePose, upper).getTranslation(Vector3f()).distance(pose(nativePose, upper+1).getTranslation(Vector3f()))
-                    val after: Float = poses[upper].getTranslation(Vector3f()).distance(poses[upper+1].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.00001f) throw AssertionError("stance shift stretched a leg")
+                expected.m31(expected.m31() - pose(nativePose, foot + 1).m31())
+                if (!poses[foot].equals(expected, 0.00001f))
+                    throw AssertionError("stance shift slid or twisted a planted foot")
+                for (upper in intArrayOf(foot - 2, foot - 1)) {
+                    val before: Float =
+                        pose(nativePose, upper)
+                            .getTranslation(Vector3f())
+                            .distance(pose(nativePose, upper + 1).getTranslation(Vector3f()))
+                    val after: Float =
+                        poses[upper]
+                            .getTranslation(Vector3f())
+                            .distance(poses[upper + 1].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.00001f)
+                        throw AssertionError("stance shift stretched a leg")
                 }
             }
-            for (torso in intArrayOf(0, 9, 10, 11, 12, 13, 14)) if (!poses[torso].equals(Matrix4f(pose(nativePose, torso)).translateLocal(shiftX, shiftY, shiftZ), 0.00001f)) throw AssertionError("stance shift distorted the torso or arms")
+            for (torso in intArrayOf(0, 9, 10, 11, 12, 13, 14)) if (
+                !poses[torso].equals(
+                    Matrix4f(pose(nativePose, torso)).translateLocal(shiftX, shiftY, shiftZ),
+                    0.00001f,
+                )
+            )
+                throw AssertionError("stance shift distorted the torso or arms")
         }
         for (frame in 0..6) {
             val current = copyPoses(nativePose)
             for (foot in intArrayOf(3, 7)) {
-                val height: Float = (if (foot==3) 0.01f else 0.02f)+frame*0.002f
-                current[foot].m31(current[foot].m31()+height)
-                current[foot+1].m31(current[foot+1].m31()+height)
+                val height: Float = (if (foot == 3) 0.01f else 0.02f) + frame * 0.002f
+                current[foot].m31(current[foot].m31() + height)
+                current[foot + 1].m31(current[foot + 1].m31() + height)
             }
             val poses = copyPoses(current)
             val shiftX: Float = -0.032f
             val shiftY: Float = -0.008f
             val shiftZ: Float = 0.016f
-            if (!CartGrip.groundFeet(poses, actor, null, null, 0f, shiftX, shiftY, shiftZ, true)) throw AssertionError("current elevated walking feet cannot support the recovery clearance shift")
+            if (!CartGrip.groundFeet(poses, actor, null, null, 0f, shiftX, shiftY, shiftZ, true))
+                throw AssertionError(
+                    "current elevated walking feet cannot support the recovery clearance shift",
+                )
             for (foot in intArrayOf(3, 7)) {
-                if (!poses[foot].equals(current[foot], 0.00001f) || !poses[foot+1].equals(current[foot+1], 0.00001f)) throw AssertionError("current-foot recovery changed a walking ankle/toe matrix or forced idle floor height")
-                for (upper in intArrayOf(foot-2, foot-1)) {
-                    val before: Float = current[upper].getTranslation(Vector3f()).distance(current[upper+1].getTranslation(Vector3f()))
-                    val after: Float = poses[upper].getTranslation(Vector3f()).distance(poses[upper+1].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.00001f) throw AssertionError("current-foot recovery stretched a leg")
+                if (
+                    !poses[foot].equals(current[foot], 0.00001f) ||
+                        !poses[foot + 1].equals(current[foot + 1], 0.00001f)
+                )
+                    throw AssertionError(
+                        "current-foot recovery changed a walking ankle/toe matrix or forced idle floor height",
+                    )
+                for (upper in intArrayOf(foot - 2, foot - 1)) {
+                    val before: Float =
+                        current[upper]
+                            .getTranslation(Vector3f())
+                            .distance(current[upper + 1].getTranslation(Vector3f()))
+                    val after: Float =
+                        poses[upper]
+                            .getTranslation(Vector3f())
+                            .distance(poses[upper + 1].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.00001f)
+                        throw AssertionError("current-foot recovery stretched a leg")
                 }
             }
-            for (torso in intArrayOf(0, 9, 10, 11, 12, 13, 14)) if (!poses[torso].equals(Matrix4f(current[torso]).translateLocal(shiftX, shiftY, shiftZ), 0.00001f)) throw AssertionError("current-foot recovery bent the pelvis/torso or arms instead of translating the whole body")
+            for (torso in intArrayOf(0, 9, 10, 11, 12, 13, 14)) if (
+                !poses[torso].equals(
+                    Matrix4f(current[torso]).translateLocal(shiftX, shiftY, shiftZ),
+                    0.00001f,
+                )
+            )
+                throw AssertionError(
+                    "current-foot recovery bent the pelvis/torso or arms instead of translating the whole body",
+                )
             val endpoint = copyPoses(current)
-            if (!CartGrip.groundFeet(endpoint, actor, null, null, 0f, 0f, 0f, 0f, true)) throw AssertionError("zero recovery shift required idle reference clips")
-            for (i in 0 until endpoint.size) if (!endpoint[i].equals(current[i])) throw AssertionError("zero recovery shift changed a native walking endpoint")
+            if (!CartGrip.groundFeet(endpoint, actor, null, null, 0f, 0f, 0f, 0f, true))
+                throw AssertionError("zero recovery shift required idle reference clips")
+            for (i in 0 until endpoint.size) if (!endpoint[i].equals(current[i]))
+                throw AssertionError("zero recovery shift changed a native walking endpoint")
         }
         val rejected = copyPoses(nativePose)
         // A reference floor two units above the actor cannot be reached by either native leg.
-        if (CartGrip.groundFeet(rejected, actor, clips[0], clips[2], 1f)) throw AssertionError("unreachable grounded leg accepted")
-        for (i in 0 until rejected.size) if (!rejected[i].equals(pose(nativePose, i))) throw AssertionError("rejected leg target changed native pose")
+        if (CartGrip.groundFeet(rejected, actor, clips[0], clips[2], 1f))
+            throw AssertionError("unreachable grounded leg accepted")
+        for (i in 0 until rejected.size) if (!rejected[i].equals(pose(nativePose, i)))
+            throw AssertionError("rejected leg target changed native pose")
         val unchanged = copyPoses(nativePose)
-        if (CartGrip.groundFeet(unchanged, actor, clips[0], clips[1], Float.NaN)
-            || CartGrip.groundFeet(unchanged, actor, null, clips[1], 0f)) throw AssertionError("missing/invalid foot reference accepted")
-        for (shiftY in floatArrayOf(Float.NaN, 0.01f, -0.09f)) if (CartGrip.groundFeet(unchanged, actor, clips[0], clips[1], 0f, 0f, shiftY, 0f)) throw AssertionError("invalid transition hip lowering accepted")
-        for (i in 0 until unchanged.size) if (!unchanged[i].equals(pose(nativePose, i))) throw AssertionError("invalid foot reference changed native pose")
+        if (
+            CartGrip.groundFeet(unchanged, actor, clips[0], clips[1], Float.NaN) ||
+                CartGrip.groundFeet(unchanged, actor, null, clips[1], 0f)
+        )
+            throw AssertionError("missing/invalid foot reference accepted")
+        for (shiftY in floatArrayOf(Float.NaN, 0.01f, -0.09f)) if (
+            CartGrip.groundFeet(unchanged, actor, clips[0], clips[1], 0f, 0f, shiftY, 0f)
+        )
+            throw AssertionError("invalid transition hip lowering accepted")
+        for (i in 0 until unchanged.size) if (!unchanged[i].equals(pose(nativePose, i)))
+            throw AssertionError("invalid foot reference changed native pose")
     }
 
     private fun checkRunningHead() {
         // Actual hierarchy: shoulders branch from Neck, while HeadNub/hats follow Head.
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_Neck", "Bip01_Head", "Bip01_HeadNub", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_Hand", "Bip01_R_Hand", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot")
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_Neck",
+                "Bip01_Head",
+                "Bip01_HeadNub",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_Hand",
+                "Bip01_R_Hand",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         val frames = ArrayList<Keyframe>()
         for (i in 0 until names.size) {
             offsets.add(org.lwjgl.util.vector.Matrix4f())
             val q = org.joml.Quaternionf()
-            if (i==1) q.rotateY(0.2f)
-            if (i==2) q.rotateZ(0.4f)
-            val frame = Keyframe(org.lwjgl.util.vector.Vector3f(0.01f*i, 0.03f, -0.02f*i), org.lwjgl.util.vector.Quaternion(q.x, q.y, q.z, q.w), org.lwjgl.util.vector.Vector3f(1f, 1f, 1f))
-            frame.bone=i
-            frame.boneName=names[i]
-            frame.time=0f
-            if (i!=3) frames.add(frame)
+            if (i == 1) q.rotateY(0.2f)
+            if (i == 2) q.rotateZ(0.4f)
+            val frame =
+                Keyframe(
+                    org.lwjgl.util.vector.Vector3f(0.01f * i, 0.03f, -0.02f * i),
+                    org.lwjgl.util.vector.Quaternion(q.x, q.y, q.z, q.w),
+                    org.lwjgl.util.vector.Vector3f(1f, 1f, 1f),
+                )
+            frame.bone = i
+            frame.boneName = names[i]
+            frame.time = 0f
+            if (i != 3) frames.add(frame)
         }
         // Uneven keys without duplicated endpoints: circular weights are .2/.3/.3/.2.
         val times = floatArrayOf(0.1f, 0.3f, 0.7f, 0.9f)
         val angles = floatArrayOf(-0.4f, -0.1f, 0.2f, -0.4f)
         for (i in 0 until times.size) {
             val q = org.joml.Quaternionf().rotationX(angles[i])
-            if (i==1) q.set(-q.x, -q.y, -q.z, -q.w)
+            if (i == 1) q.set(-q.x, -q.y, -q.z, -q.w)
             // q and -q describe the same orientation.
-            val frame = Keyframe(org.lwjgl.util.vector.Vector3f(0.03f, 0.03f, -0.06f), org.lwjgl.util.vector.Quaternion(q.x, q.y, q.z, q.w), org.lwjgl.util.vector.Vector3f(1f, 1f, 1f))
-            frame.bone=3
-            frame.boneName=names[3]
-            frame.time=times[i]
+            val frame =
+                Keyframe(
+                    org.lwjgl.util.vector.Vector3f(0.03f, 0.03f, -0.06f),
+                    org.lwjgl.util.vector.Quaternion(q.x, q.y, q.z, q.w),
+                    org.lwjgl.util.vector.Vector3f(1f, 1f, 1f),
+                )
+            frame.bone = 3
+            frame.boneName = names[3]
+            frame.time = times[i]
             frames.add(frame)
         }
-        val meanAngle: Float = ((2*Math.atan2((0.4*Math.sin(-0.2)+0.3*Math.sin(-0.05)+0.3*Math.sin(0.1)), (0.4*Math.cos(-0.2)+0.3*Math.cos(-0.05)+0.3*Math.cos(0.1))))).toFloat()
-        val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 2, 2, 5, 6, 0, 9, 10, 0, 12, 13), offsets)
+        val meanAngle: Float =
+            ((2 *
+                    Math.atan2(
+                        (0.4 * Math.sin(-0.2) + 0.3 * Math.sin(-0.05) + 0.3 * Math.sin(0.1)),
+                        (0.4 * Math.cos(-0.2) + 0.3 * Math.cos(-0.05) + 0.3 * Math.cos(0.1)),
+                    )))
+                .toFloat()
+        val actor =
+            skeleton(names, listOf(-1, 0, 1, 2, 3, 2, 2, 5, 6, 0, 9, 10, 0, 12, 13), offsets)
         val reference = AnimationClip(1f, frames, "Bob_Cart_Run", true)
-        val originalKeys = reference.getKeyframes()
-            .map { frame -> frame.time.toString()+":"+frame.rotation+":"+frame.position+":"+frame.scale }
-        val missingHead = AnimationClip(1f, frames.filter { frame -> frame.bone != 3 }, "MissingHead", true)
+        val originalKeys =
+            reference.getKeyframes().map { frame ->
+                frame.time.toString() +
+                    ":" +
+                    frame.rotation +
+                    ":" +
+                    frame.position +
+                    ":" +
+                    frame.scale
+            }
+        val missingHead =
+            AnimationClip(1f, frames.filter { frame -> frame.bone != 3 }, "MissingHead", true)
         val changingNeckFrames = ArrayList(frames)
-        val neckEnd = Keyframe(org.lwjgl.util.vector.Vector3f(), org.lwjgl.util.vector.Quaternion(0f, 0f, (Math.sin(0.3)).toFloat(), (Math.cos(0.3)).toFloat()), org.lwjgl.util.vector.Vector3f(1f, 1f, 1f))
-        neckEnd.bone=2
-        neckEnd.boneName=names[2]
-        neckEnd.time=1f
+        val neckEnd =
+            Keyframe(
+                org.lwjgl.util.vector.Vector3f(),
+                org.lwjgl.util.vector.Quaternion(
+                    0f,
+                    0f,
+                    (Math.sin(0.3)).toFloat(),
+                    (Math.cos(0.3)).toFloat(),
+                ),
+                org.lwjgl.util.vector.Vector3f(1f, 1f, 1f),
+            )
+        neckEnd.bone = 2
+        neckEnd.boneName = names[2]
+        neckEnd.time = 1f
         changingNeckFrames.add(neckEnd)
         val changingNeck = AnimationClip(1f, changingNeckFrames, "ChangingNeck", true)
-        val wrongHierarchy = skeleton(names, listOf(-1, 0, 1, 1, 3, 2, 2, 5, 6, 0, 9, 10, 0, 12, 13), offsets)
+        val wrongHierarchy =
+            skeleton(names, listOf(-1, 0, 1, 1, 3, 2, 2, 5, 6, 0, 9, 10, 0, 12, 13), offsets)
         val hatLocal = Matrix4f().translation(0.01f, 0.06f, 0.02f).rotateZ(0.13f)
-        for (bank in floatArrayOf(-0.05236f, 0f, 0.05236f)) for (weight in floatArrayOf(0f, 0.25f, 0.5f, 1f)) {
+        for (bank in floatArrayOf(-0.05236f, 0f, 0.05236f)) for (weight in
+            floatArrayOf(0f, 0.25f, 0.5f, 1f)) {
             var negative: Matrix4f? = null
             for (phase in floatArrayOf(-0.61f, 0f, 0.61f)) {
                 val poses = arrayOfNulls<Matrix4f>(names.size)
-                for (i in 0 until poses.size) poses[i]=Matrix4f().translation(0.02f*i, 0.5f-0.01f*i, 0.03f*i).rotateX(0.01f*i)
+                for (i in 0 until poses.size) poses[i] =
+                    Matrix4f()
+                        .translation(0.02f * i, 0.5f - 0.01f * i, 0.03f * i)
+                        .rotateX(0.01f * i)
                 pose(poses, 1).translation(0.1f, 0.7f, -0.1f).rotateYXZ(0.4f, -0.23f, bank)
-                // Independent chest-relative authored orientation, including the reference Neck rotation.
-                val target = Matrix4f(pose(poses, 1)).rotateZ(0.4f).rotateX(meanAngle).setTranslation(0.04f, 0.85f, -0.06f)
+                // Independent chest-relative authored orientation, including the reference Neck
+                // rotation.
+                val target =
+                    Matrix4f(pose(poses, 1))
+                        .rotateZ(0.4f)
+                        .rotateX(meanAngle)
+                        .setTranslation(0.04f, 0.85f, -0.06f)
                 pose(poses, 3).set(target).rotateY(phase)
                 pose(poses, 3).mul(hatLocal, pose(poses, 4))
                 val before = copyPoses(poses)
                 for (unavailable in arrayOf(null, missingHead, changingNeck)) {
                     CartGrip.calmRunningHead(poses, actor, unavailable, weight)
-                    for (i in 0 until poses.size) if (!pose(poses, i).equals(before[i])) throw AssertionError("missing head reference changed native pose")
+                    for (i in 0 until poses.size) if (!pose(poses, i).equals(before[i]))
+                        throw AssertionError("missing head reference changed native pose")
                 }
                 CartGrip.calmRunningHead(poses, wrongHierarchy, reference, weight)
-                for (i in 0 until poses.size) if (!pose(poses, i).equals(before[i])) throw AssertionError("head neutral cache reused across different actor hierarchies")
+                for (i in 0 until poses.size) if (!pose(poses, i).equals(before[i]))
+                    throw AssertionError(
+                        "head neutral cache reused across different actor hierarchies",
+                    )
                 CartGrip.calmRunningHead(poses, actor, reference, weight)
-                var expected = Matrix4f(target).rotateY(phase*(1-0.75f*weight))
-                if (!pose(poses, 3).equals(expected, 0.000001f)) throw AssertionError("head sway did not retain the requested native fraction: weight="+weight
-                    +" phase="+phase+" expected="+expected+" actual="+pose(poses, 3))
-                if (!pose(poses, 3).getTranslation(Vector3f()).equals(before[3].getTranslation(Vector3f()))) throw AssertionError("head smoothing moved its origin")
-                for (i in 0 until poses.size) if ((weight==0f || (i!=3 && i!=4)) && !pose(poses, i).equals(before[i])) throw AssertionError("head smoothing changed native neck/shoulder/hip/hand/leg: "+names[i])
-                if (!Matrix4f(pose(poses, 3)).invert().mul(pose(poses, 4)).equals(hatLocal, 0.000001f)) throw AssertionError("head smoothing detached a head descendant/hat: weight="+weight+" phase="+phase
-                    +" relative="+Matrix4f(pose(poses, 3)).invert().mul(pose(poses, 4)))
-                if (phase<0) negative=Matrix4f(pose(poses, 3))
-                if (phase>0 && (negative ?: throw NullPointerException()).equals(pose(poses, 3), 0.001f)) throw AssertionError("running head was frozen")
+                var expected = Matrix4f(target).rotateY(phase * (1 - 0.75f * weight))
+                if (!pose(poses, 3).equals(expected, 0.000001f))
+                    throw AssertionError(
+                        "head sway did not retain the requested native fraction: weight=" +
+                            weight +
+                            " phase=" +
+                            phase +
+                            " expected=" +
+                            expected +
+                            " actual=" +
+                            pose(poses, 3),
+                    )
+                if (
+                    !pose(poses, 3)
+                        .getTranslation(Vector3f())
+                        .equals(before[3].getTranslation(Vector3f()))
+                )
+                    throw AssertionError("head smoothing moved its origin")
+                for (i in 0 until poses.size) if (
+                    (weight == 0f || (i != 3 && i != 4)) && !pose(poses, i).equals(before[i])
+                )
+                    throw AssertionError(
+                        "head smoothing changed native neck/shoulder/hip/hand/leg: " + names[i],
+                    )
+                if (
+                    !Matrix4f(pose(poses, 3))
+                        .invert()
+                        .mul(pose(poses, 4))
+                        .equals(hatLocal, 0.000001f)
+                )
+                    throw AssertionError(
+                        "head smoothing detached a head descendant/hat: weight=" +
+                            weight +
+                            " phase=" +
+                            phase +
+                            " relative=" +
+                            Matrix4f(pose(poses, 3)).invert().mul(pose(poses, 4)),
+                    )
+                if (phase < 0) negative = Matrix4f(pose(poses, 3))
+                if (
+                    phase > 0 &&
+                        (negative ?: throw NullPointerException()).equals(pose(poses, 3), 0.001f)
+                )
+                    throw AssertionError("running head was frozen")
             }
         }
-        if (!reference.getKeyframes()
-            .map { frame -> frame.time.toString()+":"+frame.rotation+":"+frame.position+":"+frame.scale }.equals(originalKeys)) throw AssertionError("head neutral calculation mutated shared animation keys")
+        if (
+            !reference
+                .getKeyframes()
+                .map { frame ->
+                    frame.time.toString() +
+                        ":" +
+                        frame.rotation +
+                        ":" +
+                        frame.position +
+                        ":" +
+                        frame.scale
+                }
+                .equals(originalKeys)
+        )
+            throw AssertionError("head neutral calculation mutated shared animation keys")
     }
 
     private fun checkNativeHeight() {
@@ -1462,34 +4086,60 @@ object CartGripTest {
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2), offsets)
         val before = arrayOfNulls<Matrix4f>(names.size)
-        for (i in 0 until before.size) before[i]=Matrix4f().translation(0.1f*i, 0.2f*i, -0.15f*i)
-            .rotateXYZ(0.1f*i, -0.2f*i, 0.3f*i)
+        for (i in 0 until before.size) before[i] =
+            Matrix4f()
+                .translation(0.1f * i, 0.2f * i, -0.15f * i)
+                .rotateXYZ(0.1f * i, -0.2f * i, 0.3f * i)
         for (correction in floatArrayOf(0f, -0.067f, 0.067f, -0.2f, 0.2f)) {
             val poses = copyPoses(before)
-            if (!CartGrip.nativeHeight(poses, actor, correction)) throw AssertionError("bounded native height correction refused")
+            if (!CartGrip.nativeHeight(poses, actor, correction))
+                throw AssertionError("bounded native height correction refused")
             for (i in 0 until poses.size) {
-                val expected = Matrix4f(pose(before, i)).m31(pose(before, i).m31()+correction)
-                if (!poses[i].equals(expected, 0.000001f)) throw AssertionError("height correction changed orientation, scale or horizontal position: "+names[i])
-                if (i>0) {
-                    val previousLocal = Matrix4f(pose(before, i-1)).invert().mul(pose(before, i))
-                    val actualLocal = Matrix4f(poses[i-1]).invert().mul(poses[i])
-                    if (!actualLocal.equals(previousLocal, 0.000001f)) throw AssertionError("native height correction stretched or rotated a bone link")
+                val expected = Matrix4f(pose(before, i)).m31(pose(before, i).m31() + correction)
+                if (!poses[i].equals(expected, 0.000001f))
+                    throw AssertionError(
+                        "height correction changed orientation, scale or horizontal position: " +
+                            names[i],
+                    )
+                if (i > 0) {
+                    val previousLocal = Matrix4f(pose(before, i - 1)).invert().mul(pose(before, i))
+                    val actualLocal = Matrix4f(poses[i - 1]).invert().mul(poses[i])
+                    if (!actualLocal.equals(previousLocal, 0.000001f))
+                        throw AssertionError(
+                            "native height correction stretched or rotated a bone link",
+                        )
                 }
             }
         }
-        for (target in floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, -0.2001f, 0.2001f)) {
+        for (target in
+            floatArrayOf(
+                Float.NaN,
+                Float.POSITIVE_INFINITY,
+                Float.NEGATIVE_INFINITY,
+                -0.2001f,
+                0.2001f,
+            )) {
             val poses = copyPoses(before)
-            if (CartGrip.nativeHeight(poses, actor, target)) throw AssertionError("unsafe native height correction accepted")
-            for (i in 0 until poses.size) if (!poses[i].equals(pose(before, i))) throw AssertionError("rejected native height correction mutated bone "+names[i])
+            if (CartGrip.nativeHeight(poses, actor, target))
+                throw AssertionError("unsafe native height correction accepted")
+            for (i in 0 until poses.size) if (!poses[i].equals(pose(before, i)))
+                throw AssertionError("rejected native height correction mutated bone " + names[i])
         }
         val poses = copyPoses(before)
-        val missingSpine = skeleton(arrayOf("Root", "Upper", "Forearm", "Hand"), listOf(-1, 0, 1, 2), offsets)
-        if (CartGrip.nativeHeight(poses, missingSpine, 0.067f)) throw AssertionError("height correction accepted a missing native anchor")
-        for (i in 0 until poses.size) if (!poses[i].equals(pose(before, i))) throw AssertionError("missing anchor mutated bone poses")
+        val missingSpine =
+            skeleton(arrayOf("Root", "Upper", "Forearm", "Hand"), listOf(-1, 0, 1, 2), offsets)
+        if (CartGrip.nativeHeight(poses, missingSpine, 0.067f))
+            throw AssertionError("height correction accepted a missing native anchor")
+        for (i in 0 until poses.size) if (!poses[i].equals(pose(before, i)))
+            throw AssertionError("missing anchor mutated bone poses")
         poses[0].m31(Float.NaN)
         val invalid = poses.map { it.get(FloatArray(16)) }.toTypedArray()
-        if (CartGrip.nativeHeight(poses, actor, 0.067f)) throw AssertionError("nonfinite native height anchor accepted")
-        for (i in 0 until poses.size) if (!java.util.Arrays.equals(invalid[i], poses[i].get(FloatArray(16)))) throw AssertionError("invalid anchor correction mutated bone poses")
+        if (CartGrip.nativeHeight(poses, actor, 0.067f))
+            throw AssertionError("nonfinite native height anchor accepted")
+        for (i in 0 until poses.size) if (
+            !java.util.Arrays.equals(invalid[i], poses[i].get(FloatArray(16)))
+        )
+            throw AssertionError("invalid anchor correction mutated bone poses")
     }
 
     private fun checkRecoveryPosture() {
@@ -1498,179 +4148,593 @@ object CartGripTest {
         val startCopy = Quaternionf(start.rotation)
         val canonicalCopy = Quaternionf(canonical.rotation)
         val first = CartGrip.recoverPosture(start, canonical, canonical, 1f)
-        if (first==null || Math.abs(first.height-start.height)>0.0000001f
-            || Math.abs((first.rotation ?: throw NullPointerException()).dot(start.rotation))<0.9999999f) throw AssertionError("recovery calibration changed its first native posture")
+        if (
+            first == null ||
+                Math.abs(first.height - start.height) > 0.0000001f ||
+                Math.abs((first.rotation ?: throw NullPointerException()).dot(start.rotation)) <
+                    0.9999999f
+        )
+            throw AssertionError("recovery calibration changed its first native posture")
         val endpoint = CartGrip.Posture(0.562f, Quaternionf().rotationXYZ(-0.1f, 0.12f, 0.02f))
         val last = CartGrip.recoverPosture(start, canonical, endpoint, 0f)
-        if (last==null || last.height!=endpoint.height || Math.abs((last.rotation ?: throw NullPointerException()).dot(endpoint.rotation))<0.9999999f) throw AssertionError("recovery retained native calibration at the canonical endpoint")
-        if (!(start.rotation ?: throw NullPointerException()).equals(startCopy) || !(canonical.rotation ?: throw NullPointerException()).equals(canonicalCopy)
-            || first.rotation===start.rotation || last.rotation===endpoint.rotation) throw AssertionError("posture calibration mutated or borrowed a shared quaternion")
-        val negated = CartGrip.Posture(start.height, Quaternionf(-start.rotation.x, -start.rotation.y, -start.rotation.z, -start.rotation.w))
+        if (
+            last == null ||
+                last.height != endpoint.height ||
+                Math.abs((last.rotation ?: throw NullPointerException()).dot(endpoint.rotation)) <
+                    0.9999999f
+        )
+            throw AssertionError("recovery retained native calibration at the canonical endpoint")
+        if (
+            !(start.rotation ?: throw NullPointerException()).equals(startCopy) ||
+                !(canonical.rotation ?: throw NullPointerException()).equals(canonicalCopy) ||
+                first.rotation === start.rotation ||
+                last.rotation === endpoint.rotation
+        )
+            throw AssertionError("posture calibration mutated or borrowed a shared quaternion")
+        val negated =
+            CartGrip.Posture(
+                start.height,
+                Quaternionf(
+                    -start.rotation.x,
+                    -start.rotation.y,
+                    -start.rotation.z,
+                    -start.rotation.w,
+                ),
+            )
         val middle = CartGrip.recoverPosture(start, canonical, endpoint, 0.5f)
         val same = CartGrip.recoverPosture(negated, canonical, endpoint, 0.5f)
-        if (Math.abs(((middle ?: throw NullPointerException()).rotation ?: throw NullPointerException()).dot((same ?: throw NullPointerException()).rotation))<0.9999999f) throw AssertionError("recovery calibration took the long quaternion path")
+        if (
+            Math.abs(
+                ((middle ?: throw NullPointerException()).rotation ?: throw NullPointerException())
+                    .dot((same ?: throw NullPointerException()).rotation),
+            ) < 0.9999999f
+        )
+            throw AssertionError("recovery calibration took the long quaternion path")
         var previous: CartGrip.Posture = first
         for (i in 1..100) {
-            val t: Float = i/100f
-            val reference = CartGrip.Posture(canonical.height+(endpoint.height-canonical.height)*t, Quaternionf(canonical.rotation).slerp(endpoint.rotation, t))
-            val now = CartGrip.recoverPosture(start, canonical, reference, 1-t)
-            if (now==null || !(now.rotation ?: throw NullPointerException()).isFinite() || Math.abs(now.rotation.lengthSquared()-1)>0.000001f
-                || Math.abs(now.height-previous.height)>0.001f
-                || Math.abs(now.rotation.dot(previous.rotation))<0.99999f) throw AssertionError("canonical recovery posture jumped or became nonfinite")
-            previous=now
+            val t: Float = i / 100f
+            val reference =
+                CartGrip.Posture(
+                    canonical.height + (endpoint.height - canonical.height) * t,
+                    Quaternionf(canonical.rotation).slerp(endpoint.rotation, t),
+                )
+            val now = CartGrip.recoverPosture(start, canonical, reference, 1 - t)
+            if (
+                now == null ||
+                    !(now.rotation ?: throw NullPointerException()).isFinite() ||
+                    Math.abs(now.rotation.lengthSquared() - 1) > 0.000001f ||
+                    Math.abs(now.height - previous.height) > 0.001f ||
+                    Math.abs(now.rotation.dot(previous.rotation)) < 0.99999f
+            )
+                throw AssertionError("canonical recovery posture jumped or became nonfinite")
+            previous = now
         }
-        for (amount in floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, -0.001f, 1.001f)) if (CartGrip.recoverPosture(start, canonical, endpoint, amount)!=null) throw AssertionError("invalid posture calibration fraction accepted")
-        for (bad in arrayOf(null, CartGrip.Posture(Float.NaN, Quaternionf()), CartGrip.Posture(0f, null), CartGrip.Posture(0f, Quaternionf(0f, 0f, 0f, 0f)), CartGrip.Posture(0f, Quaternionf(Float.NaN, 0f, 0f, 1f)), CartGrip.Posture(0f, Quaternionf(Float.MAX_VALUE, 0f, 0f, 1f)))) {
-            if (CartGrip.recoverPosture(bad, canonical, endpoint, 1f)!=null
-                || CartGrip.recoverPosture(start, bad, endpoint, 1f)!=null
-                || CartGrip.recoverPosture(start, canonical, bad, 1f)!=null) throw AssertionError("invalid native/reference posture accepted")
+        for (amount in floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, -0.001f, 1.001f)) if (
+            CartGrip.recoverPosture(start, canonical, endpoint, amount) != null
+        )
+            throw AssertionError("invalid posture calibration fraction accepted")
+        for (bad in
+            arrayOf(
+                null,
+                CartGrip.Posture(Float.NaN, Quaternionf()),
+                CartGrip.Posture(0f, null),
+                CartGrip.Posture(0f, Quaternionf(0f, 0f, 0f, 0f)),
+                CartGrip.Posture(0f, Quaternionf(Float.NaN, 0f, 0f, 1f)),
+                CartGrip.Posture(0f, Quaternionf(Float.MAX_VALUE, 0f, 0f, 1f)),
+            )) {
+            if (
+                CartGrip.recoverPosture(bad, canonical, endpoint, 1f) != null ||
+                    CartGrip.recoverPosture(start, bad, endpoint, 1f) != null ||
+                    CartGrip.recoverPosture(start, canonical, bad, 1f) != null
+            )
+                throw AssertionError("invalid native/reference posture accepted")
         }
     }
 
     private fun checkRecoveryRotation() {
-        val names = arrayOf("Bip01", "Bip01_Spine", "Bip01_Spine1", "Bip01_R_Clavicle", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_R_Finger1", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_R_Thigh", "Bip01_R_Calf")
+        val names =
+            arrayOf(
+                "Bip01",
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_R_Clavicle",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_R_Finger1",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 4, 5, 6, 1, 8, 1, 10), offsets)
         val before = arrayOfNulls<Matrix4f>(names.size)
-        for (i in 0 until before.size) before[i]=Matrix4f().translation(0.03f*i, 0.5f+0.02f*i, -0.01f*i)
-            .rotateXYZ(0.01f*i, -0.02f*i, 0.03f*i)
+        for (i in 0 until before.size) before[i] =
+            Matrix4f()
+                .translation(0.03f * i, 0.5f + 0.02f * i, -0.01f * i)
+                .rotateXYZ(0.01f * i, -0.02f * i, 0.03f * i)
         val current = pose(before, 2).getUnnormalizedRotation(Quaternionf()).normalize()
         val pivot = pose(before, 1).getTranslation(Vector3f())
         for (angle in floatArrayOf(0f, -0.15f, 0.15f, -0.349f, 0.349f)) {
             val correction = Quaternionf().rotationAxis(angle, Vector3f(1f, 2f, 3f).normalize())
             val target = Quaternionf(correction).mul(current)
             val poses = copyPoses(before)
-            if (!CartGrip.nativeRotation(poses, actor, target)) throw AssertionError("bounded recovery posture refused")
-            val change = Matrix4f().translation(pivot).rotate(correction).translate(-pivot.x, -pivot.y, -pivot.z)
+            if (!CartGrip.nativeRotation(poses, actor, target))
+                throw AssertionError("bounded recovery posture refused")
+            val change =
+                Matrix4f()
+                    .translation(pivot)
+                    .rotate(correction)
+                    .translate(-pivot.x, -pivot.y, -pivot.z)
             for (i in 0 until poses.size) {
-                val upper: Boolean = i>=1 && i<=7
-                val expected = if (upper) change.mul(pose(before, i), Matrix4f()) else pose(before, i)
-                if (!poses[i].equals(expected, 0.000001f)) throw AssertionError("recovery rotation changed a leg/root or distorted upper bone: "+names[i])
-                if (i>=2 && i<=7) {
-                    val local = Matrix4f(pose(before, i-1)).invert().mul(pose(before, i))
-                    if (!Matrix4f(poses[i-1]).invert().mul(poses[i]).equals(local, 0.000001f)) throw AssertionError("recovery rotation stretched or twisted a local bone link")
+                val upper: Boolean = i >= 1 && i <= 7
+                val expected =
+                    if (upper) change.mul(pose(before, i), Matrix4f()) else pose(before, i)
+                if (!poses[i].equals(expected, 0.000001f))
+                    throw AssertionError(
+                        "recovery rotation changed a leg/root or distorted upper bone: " + names[i],
+                    )
+                if (i >= 2 && i <= 7) {
+                    val local = Matrix4f(pose(before, i - 1)).invert().mul(pose(before, i))
+                    if (!Matrix4f(poses[i - 1]).invert().mul(poses[i]).equals(local, 0.000001f))
+                        throw AssertionError(
+                            "recovery rotation stretched or twisted a local bone link",
+                        )
                 }
             }
-            if (!poses[1].getTranslation(Vector3f()).equals(pivot)) throw AssertionError("recovery moved its spine pivot")
-            if (Math.abs(poses[2].getUnnormalizedRotation(Quaternionf()).normalize().dot(target))<0.999999f) throw AssertionError("recovery did not reach canonical chest orientation")
+            if (!poses[1].getTranslation(Vector3f()).equals(pivot))
+                throw AssertionError("recovery moved its spine pivot")
+            if (
+                Math.abs(poses[2].getUnnormalizedRotation(Quaternionf()).normalize().dot(target)) <
+                    0.999999f
+            )
+                throw AssertionError("recovery did not reach canonical chest orientation")
         }
-        for (target in arrayOf(null, Quaternionf(0f, 0f, 0f, 0f), Quaternionf(Float.NaN, 0f, 0f, 1f), Quaternionf().rotationX(0.350f).mul(current), Quaternionf().rotationY(-0.350f).mul(current))) {
+        for (target in
+            arrayOf(
+                null,
+                Quaternionf(0f, 0f, 0f, 0f),
+                Quaternionf(Float.NaN, 0f, 0f, 1f),
+                Quaternionf().rotationX(0.350f).mul(current),
+                Quaternionf().rotationY(-0.350f).mul(current),
+            )) {
             val poses = copyPoses(before)
-            if (CartGrip.nativeRotation(poses, actor, target)) throw AssertionError("unsafe recovery orientation accepted")
-            for (i in 0 until poses.size) if (!poses[i].equals(pose(before, i))) throw AssertionError("rejected recovery orientation mutated native bones")
+            if (CartGrip.nativeRotation(poses, actor, target))
+                throw AssertionError("unsafe recovery orientation accepted")
+            for (i in 0 until poses.size) if (!poses[i].equals(pose(before, i)))
+                throw AssertionError("rejected recovery orientation mutated native bones")
         }
         val broken = copyPoses(before)
         broken[6].m31(Float.NaN)
         val original = broken.map { it.get(FloatArray(16)) }.toTypedArray()
-        if (CartGrip.nativeRotation(broken, actor, Quaternionf().rotationX(0.1f).mul(current))) throw AssertionError("recovery accepted a nonfinite upper body")
-        for (i in 0 until broken.size) if (!java.util.Arrays.equals(original[i], broken[i].get(FloatArray(16)))) throw AssertionError("invalid upper body was partially rotated")
+        if (CartGrip.nativeRotation(broken, actor, Quaternionf().rotationX(0.1f).mul(current)))
+            throw AssertionError("recovery accepted a nonfinite upper body")
+        for (i in 0 until broken.size) if (
+            !java.util.Arrays.equals(original[i], broken[i].get(FloatArray(16)))
+        )
+            throw AssertionError("invalid upper body was partially rotated")
     }
 
     private fun checkLateRecoveryReach() {
-        // Native33 failed arm/target at setdown p=.6063169, plus the preceding observed clavicle-to-shoulder offset.
-        // The missing failed clavicle/root are reconstructed anchors, so this checks geometry rather than a full frame replay.
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_R_Clavicle", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand")
+        // Native33 failed arm/target at setdown p=.6063169, plus the preceding observed
+        // clavicle-to-shoulder offset.
+        // The missing failed clavicle/root are reconstructed anchors, so this checks geometry
+        // rather than a full frame replay.
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_R_Clavicle",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 4), offsets)
-        val nativePoses = arrayOf(Matrix4f().translation(0f, 0.4996f, 0.169f), Matrix4f().translation(0f, 0.56f, 0.09f), Matrix4f().translation(-0.01438938f, 0.62748386f, 0.003435921f),
-        Matrix4f().set(floatArrayOf(-0.23096856f, -0.97005546f, -0.07512277f, 0f, 0.95380545f, -0.24099244f, 0.17938115f, 0f, -0.19211398f, -0.030220956f, 0.98090625f, 0f, -0.10029138f, 0.61632586f, 0.012404621f, 1f)),
-        Matrix4f().set(floatArrayOf(0.17374115f, -0.04449612f, -0.98378485f, 0f, 0.9538033f, -0.24102634f, 0.1793474f, 0f, -0.24509694f, -0.9694972f, 0.0005644858f, 0f, -0.13194816f, 0.48336843f, 0.0021084845f, 1f)),
-        Matrix4f().set(floatArrayOf(-0.021295473f, -0.0020800233f, -0.9997703f, 0f, 0.9930215f, -0.116063744f, -0.020910319f, 0f, -0.11599202f, -0.99323887f, 0.0045372546f, 0f, -0.108135544f, 0.47726992f, -0.13273081f, 1f)))
-        val target = Matrix4f().set(floatArrayOf(0.12924546f, -0.9377757f, -0.32229277f, 0f, 0.09246594f, 0.33500016f, -0.9376701f, 0f, 0.9872922f, 0.09138861f, 0.13000941f, 0f, -0.16470511f, 0.3156233f, 0.012414888f, 1f))
+        val nativePoses =
+            arrayOf(
+                Matrix4f().translation(0f, 0.4996f, 0.169f),
+                Matrix4f().translation(0f, 0.56f, 0.09f),
+                Matrix4f().translation(-0.01438938f, 0.62748386f, 0.003435921f),
+                Matrix4f()
+                    .set(
+                        floatArrayOf(
+                            -0.23096856f,
+                            -0.97005546f,
+                            -0.07512277f,
+                            0f,
+                            0.95380545f,
+                            -0.24099244f,
+                            0.17938115f,
+                            0f,
+                            -0.19211398f,
+                            -0.030220956f,
+                            0.98090625f,
+                            0f,
+                            -0.10029138f,
+                            0.61632586f,
+                            0.012404621f,
+                            1f,
+                        ),
+                    ),
+                Matrix4f()
+                    .set(
+                        floatArrayOf(
+                            0.17374115f,
+                            -0.04449612f,
+                            -0.98378485f,
+                            0f,
+                            0.9538033f,
+                            -0.24102634f,
+                            0.1793474f,
+                            0f,
+                            -0.24509694f,
+                            -0.9694972f,
+                            0.0005644858f,
+                            0f,
+                            -0.13194816f,
+                            0.48336843f,
+                            0.0021084845f,
+                            1f,
+                        ),
+                    ),
+                Matrix4f()
+                    .set(
+                        floatArrayOf(
+                            -0.021295473f,
+                            -0.0020800233f,
+                            -0.9997703f,
+                            0f,
+                            0.9930215f,
+                            -0.116063744f,
+                            -0.020910319f,
+                            0f,
+                            -0.11599202f,
+                            -0.99323887f,
+                            0.0045372546f,
+                            0f,
+                            -0.108135544f,
+                            0.47726992f,
+                            -0.13273081f,
+                            1f,
+                        ),
+                    ),
+            )
+        val target =
+            Matrix4f()
+                .set(
+                    floatArrayOf(
+                        0.12924546f,
+                        -0.9377757f,
+                        -0.32229277f,
+                        0f,
+                        0.09246594f,
+                        0.33500016f,
+                        -0.9376701f,
+                        0f,
+                        0.9872922f,
+                        0.09138861f,
+                        0.13000941f,
+                        0f,
+                        -0.16470511f,
+                        0.3156233f,
+                        0.012414888f,
+                        1f,
+                    ),
+                )
         val bounded = copyPoses(nativePoses)
-        if (!CartGrip.reach(bounded, actor, "Bip01_R_Hand", target, Matrix4f(), true, 0.91494614f)
-            || !bounded[5].equals(target, 0.00001f)) throw AssertionError("late recovery grip did not use the reachable bounded shoulder")
-        for (i in 0 until 2) if (!bounded[i].equals(nativePoses[i])) throw AssertionError("bounded shoulder changed late recovery torso")
+        if (
+            !CartGrip.reach(
+                bounded,
+                actor,
+                "Bip01_R_Hand",
+                target,
+                Matrix4f(),
+                true,
+                0.91494614f,
+            ) || !bounded[5].equals(target, 0.00001f)
+        )
+            throw AssertionError("late recovery grip did not use the reachable bounded shoulder")
+        for (i in 0 until 2) if (!bounded[i].equals(nativePoses[i]))
+            throw AssertionError("bounded shoulder changed late recovery torso")
         val corrected = copyPoses(nativePoses)
-        if (!CartGrip.nativeRotation(corrected, actor, Quaternionf().rotationX(-0.15f))
-            || !CartGrip.reach(corrected, actor, "Bip01_R_Hand", target, Matrix4f(), true, 0.91494614f)
-            || !corrected[5].equals(target, 0.00001f)) throw AssertionError("bounded canonical torso rotation did not recover the fixed late wrist target")
+        if (
+            !CartGrip.nativeRotation(corrected, actor, Quaternionf().rotationX(-0.15f)) ||
+                !CartGrip.reach(
+                    corrected,
+                    actor,
+                    "Bip01_R_Hand",
+                    target,
+                    Matrix4f(),
+                    true,
+                    0.91494614f,
+                ) ||
+                !corrected[5].equals(target, 0.00001f)
+        )
+            throw AssertionError(
+                "bounded canonical torso rotation did not recover the fixed late wrist target",
+            )
         for (poses in arrayOf(bounded, corrected)) for (i in 2 until 5) {
-            val old: Float = nativePoses[i].getTranslation(Vector3f()).distance(nativePoses[i+1].getTranslation(Vector3f()))
-            val now: Float = poses[i].getTranslation(Vector3f()).distance(poses[i+1].getTranslation(Vector3f()))
-            if (Math.abs(old-now)>0.000001f) throw AssertionError("late recovery stretched a clavicle or arm link")
+            val old: Float =
+                nativePoses[i]
+                    .getTranslation(Vector3f())
+                    .distance(nativePoses[i + 1].getTranslation(Vector3f()))
+            val now: Float =
+                poses[i]
+                    .getTranslation(Vector3f())
+                    .distance(poses[i + 1].getTranslation(Vector3f()))
+            if (Math.abs(old - now) > 0.000001f)
+                throw AssertionError("late recovery stretched a clavicle or arm link")
         }
     }
 
     private fun checkObserverSetdownReach() {
-        // Wood14 observer at p=.624692: recorded arm after native torso/feet; wrist target stays world-fixed.
-        val captured = arrayOf(floatArrayOf(-0.9487953f, -0.20362298f, 0.24150652f, 0.0f, 0.31538776f, -0.567464f, 0.7606023f, 0.0f, -0.017830037f, 0.79782426f, 0.60262764f, 0.0f, -0.016427126f, 0.61491513f, 0.0031603873f, 1.0f),
-            floatArrayOf(-0.29495448f, -0.9362686f, 0.19078737f, 0.0f, 0.9542375f, -0.29892772f, 0.008279979f, 0.0f, 0.049278103f, 0.18449903f, 0.9815972f, 0.0f, -0.09905384f, 0.5971824f, 0.024192333f, 1.0f),
-            floatArrayOf(-0.28923056f, -0.92960966f, -0.22840413f, 0.0f, 0.9542376f, -0.29892772f, 0.008279994f, 0.0f, -0.0759747f, -0.21555659f, 0.9735319f, 0.0f, -0.139481f, 0.46885562f, 0.050342053f, 1.0f),
-            floatArrayOf(-0.040389985f, -0.99234974f, -0.1166476f, 0.0f, 0.22303532f, 0.104839385f, -0.9691502f, 0.0f, 0.9739641f, -0.065158896f, 0.21709466f, 0.0f, -0.17912342f, 0.34144145f, 0.019036502f, 1.0f),
-            floatArrayOf(0.1263721f, -0.94340503f, -0.3066218f, 0.0f, 0.09390722f, 0.319089f, -0.9430607f, 0.0f, 0.98752797f, 0.09038263f, 0.1289165f, 0.0f, -0.1730556f, 0.31565022f, -0.08863373f, 1.0f))
-        val names = arrayOf("Bip01", "Bip01_Pelvis", "Bip01_Spine", "Bip01_Spine1", "Bip01_Neck", "Bip01_R_Clavicle", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_L_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Hand", "Bip01_L_Foot", "Bip01_R_Foot")
+        // Wood14 observer at p=.624692: recorded arm after native torso/feet; wrist target stays
+        // world-fixed.
+        val captured =
+            arrayOf(
+                floatArrayOf(
+                    -0.9487953f,
+                    -0.20362298f,
+                    0.24150652f,
+                    0.0f,
+                    0.31538776f,
+                    -0.567464f,
+                    0.7606023f,
+                    0.0f,
+                    -0.017830037f,
+                    0.79782426f,
+                    0.60262764f,
+                    0.0f,
+                    -0.016427126f,
+                    0.61491513f,
+                    0.0031603873f,
+                    1.0f,
+                ),
+                floatArrayOf(
+                    -0.29495448f,
+                    -0.9362686f,
+                    0.19078737f,
+                    0.0f,
+                    0.9542375f,
+                    -0.29892772f,
+                    0.008279979f,
+                    0.0f,
+                    0.049278103f,
+                    0.18449903f,
+                    0.9815972f,
+                    0.0f,
+                    -0.09905384f,
+                    0.5971824f,
+                    0.024192333f,
+                    1.0f,
+                ),
+                floatArrayOf(
+                    -0.28923056f,
+                    -0.92960966f,
+                    -0.22840413f,
+                    0.0f,
+                    0.9542376f,
+                    -0.29892772f,
+                    0.008279994f,
+                    0.0f,
+                    -0.0759747f,
+                    -0.21555659f,
+                    0.9735319f,
+                    0.0f,
+                    -0.139481f,
+                    0.46885562f,
+                    0.050342053f,
+                    1.0f,
+                ),
+                floatArrayOf(
+                    -0.040389985f,
+                    -0.99234974f,
+                    -0.1166476f,
+                    0.0f,
+                    0.22303532f,
+                    0.104839385f,
+                    -0.9691502f,
+                    0.0f,
+                    0.9739641f,
+                    -0.065158896f,
+                    0.21709466f,
+                    0.0f,
+                    -0.17912342f,
+                    0.34144145f,
+                    0.019036502f,
+                    1.0f,
+                ),
+                floatArrayOf(
+                    0.1263721f,
+                    -0.94340503f,
+                    -0.3066218f,
+                    0.0f,
+                    0.09390722f,
+                    0.319089f,
+                    -0.9430607f,
+                    0.0f,
+                    0.98752797f,
+                    0.09038263f,
+                    0.1289165f,
+                    0.0f,
+                    -0.1730556f,
+                    0.31565022f,
+                    -0.08863373f,
+                    1.0f,
+                ),
+            )
+        val names =
+            arrayOf(
+                "Bip01",
+                "Bip01_Pelvis",
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_Neck",
+                "Bip01_R_Clavicle",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_L_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Hand",
+                "Bip01_L_Foot",
+                "Bip01_R_Foot",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 3, 4, 5, 6, 7, 4, 9, 10, 2, 2), offsets)
         val start = arrayOfNulls<Matrix4f>(names.size)
-        for (i in 0 until start.size) start[i]=Matrix4f().translation(0.01f*i, 0.5f, 0.02f*i)
-        for (i in 0 until 4) pose(start, i+5).set(captured[i])
+        for (i in 0 until start.size) start[i] = Matrix4f().translation(0.01f * i, 0.5f, 0.02f * i)
+        for (i in 0 until 4) pose(start, i + 5).set(captured[i])
         val fixed = Matrix4f().set(captured[4])
         val shoulder = pose(start, 6).getTranslation(Vector3f())
         val direction = fixed.getTranslation(Vector3f()).sub(shoulder).normalize()
         var previous: Vector3f? = null
         // Cross the old 30-degree limit and retain 1mm beyond the captured target in 0.1mm steps.
         for (sample in -1..90) {
-            val target = Matrix4f(fixed).translateLocal(Vector3f(direction).mul(if (sample<0) 0f else -0.008f+sample*0.0001f))
+            val target =
+                Matrix4f(fixed)
+                    .translateLocal(
+                        Vector3f(direction).mul(if (sample < 0) 0f else -0.008f + sample * 0.0001f),
+                    )
             val poses = copyPoses(start)
-            if (!CartGrip.reach(poses, actor, "Bip01_R_Hand", target, Matrix4f(), true, 0.8045307f)) throw AssertionError("observer setdown cannot reach captured fixed wrist: sample="+sample)
-            if (!poses[8].equals(target, 0.000001f)) throw AssertionError("observer setdown moved its wrist target")
+            if (!CartGrip.reach(poses, actor, "Bip01_R_Hand", target, Matrix4f(), true, 0.8045307f))
+                throw AssertionError(
+                    "observer setdown cannot reach captured fixed wrist: sample=" + sample,
+                )
+            if (!poses[8].equals(target, 0.000001f))
+                throw AssertionError("observer setdown moved its wrist target")
             for (i in 5 until 8) {
-                val before: Float = pose(start, i).getTranslation(Vector3f()).distance(pose(start, i+1).getTranslation(Vector3f()))
-                val after: Float = poses[i].getTranslation(Vector3f()).distance(poses[i+1].getTranslation(Vector3f()))
-                if (Math.abs(before-after)>0.000001f) throw AssertionError("observer setdown stretched a link")
+                val before: Float =
+                    pose(start, i)
+                        .getTranslation(Vector3f())
+                        .distance(pose(start, i + 1).getTranslation(Vector3f()))
+                val after: Float =
+                    poses[i]
+                        .getTranslation(Vector3f())
+                        .distance(poses[i + 1].getTranslation(Vector3f()))
+                if (Math.abs(before - after) > 0.000001f)
+                    throw AssertionError("observer setdown stretched a link")
             }
-            for (i in intArrayOf(0, 1, 2, 3, 4, 9, 10, 11, 12, 13)) if (!poses[i].equals(pose(start, i))) throw AssertionError("observer setdown changed native root, torso, opposite arm or feet")
-            if (!poses[5].getTranslation(Vector3f()).equals(pose(start, 5).getTranslation(Vector3f()))) throw AssertionError("observer setdown moved clavicle pivot")
+            for (i in intArrayOf(0, 1, 2, 3, 4, 9, 10, 11, 12, 13)) if (
+                !poses[i].equals(pose(start, i))
+            )
+                throw AssertionError(
+                    "observer setdown changed native root, torso, opposite arm or feet",
+                )
+            if (
+                !poses[5]
+                    .getTranslation(Vector3f())
+                    .equals(pose(start, 5).getTranslation(Vector3f()))
+            )
+                throw AssertionError("observer setdown moved clavicle pivot")
             val actual = poses[6].getTranslation(Vector3f())
-            if (sample>0 && actual.distance(previous)>0.0003f) throw AssertionError("observer setdown shoulder snapped at its rotation limit")
+            if (sample > 0 && actual.distance(previous) > 0.0003f)
+                throw AssertionError("observer setdown shoulder snapped at its rotation limit")
             val pivot = pose(start, 5).getTranslation(Vector3f())
-            val turn: Float = (Math.toDegrees((Math.acos((Math.max(-1f, Math.min(1f, shoulder.sub(pivot, Vector3f()).normalize().dot(actual.sub(pivot, Vector3f()).normalize())))).toDouble())))).toFloat()
-            if (turn>35.01f) throw AssertionError("observer setdown clavicle limit exceeded")
-            previous=actual
+            val turn: Float =
+                (Math.toDegrees(
+                        (Math.acos(
+                            (Math.max(
+                                    -1f,
+                                    Math.min(
+                                        1f,
+                                        shoulder
+                                            .sub(pivot, Vector3f())
+                                            .normalize()
+                                            .dot(actual.sub(pivot, Vector3f()).normalize()),
+                                    ),
+                                ))
+                                .toDouble(),
+                        )),
+                    ))
+                    .toFloat()
+            if (turn > 35.01f) throw AssertionError("observer setdown clavicle limit exceeded")
+            previous = actual
         }
         val rejected = copyPoses(start)
-        if (CartGrip.reach(rejected, actor, "Bip01_R_Hand", Matrix4f().translation(5f, 5f, 5f), Matrix4f(), true, 0.8045307f)) throw AssertionError("observer setdown accepted an unreachable wrist")
-        for (i in 0 until start.size) if (!rejected[i].equals(pose(start, i))) throw AssertionError("rejected observer setdown changed native pose")
+        if (
+            CartGrip.reach(
+                rejected,
+                actor,
+                "Bip01_R_Hand",
+                Matrix4f().translation(5f, 5f, 5f),
+                Matrix4f(),
+                true,
+                0.8045307f,
+            )
+        )
+            throw AssertionError("observer setdown accepted an unreachable wrist")
+        for (i in 0 until start.size) if (!rejected[i].equals(pose(start, i)))
+            throw AssertionError("rejected observer setdown changed native pose")
     }
 
     private fun checkMovingUnreachableTargets() {
-        // Native39 refused world-fixed LHand and idle-floor RFoot targets after the owner had begun walking.
-        val captures = """
+        // Native39 refused world-fixed LHand and idle-floor RFoot targets after the owner had begun
+        // walking.
+        val captures =
+            """
             -0.06796998,-0.9251077,-0.37357047,0.0,0.15771584,-0.37969154,0.9115696,0.0,-0.98514205,0.0030412355,0.17171156,0.0,0.1502846,0.32451946,0.13160507,1.0,0.16026844,-0.98569894,-0.05194971,0.0,0.974743,0.16634372,-0.14898148,0.0,0.15549338,-0.026761651,0.9874701,0.0,0.10721406,0.60547173,-0.005737528,1.0,-0.17243154,0.13695958,-0.975441,0.0,0.9747426,0.16637504,-0.14894857,0.0,0.14188498,-0.976491,-0.16218829,0.0,0.12918031,0.4703699,-0.012857601,1.0,0.033911876,0.1530641,-0.9876222,0.0,0.99182844,0.11640856,0.05209408,0.0,0.12293688,-0.9813224,-0.14786524,0.0,0.10554758,0.48914108,-0.14655347,1.0
             -0.008512766,-0.9850376,-0.17213112,0.0,-0.99691856,-0.0050632292,0.07827763,0.0,-0.077977866,0.17226712,-0.9819597,0.0,-0.052257888,0.054321684,-0.066870876,1.0,0.007937454,-0.92044026,-0.39080375,0.0,-0.9979747,0.017374635,-0.061191108,0.0,0.06311275,0.39049795,-0.91843873,0.0,-0.06715133,0.45650974,0.14770676,1.0,-0.022433117,-0.9962994,0.08297592,0.0,-0.99797463,0.017374627,-0.0611911,0.0,0.05952292,-0.08418049,-0.9946717,0.0,-0.06526619,0.2379052,0.054890886,1.0,-0.008512766,-0.9850376,-0.17213112,0.0,-0.99691856,-0.0050632292,0.07827763,0.0,-0.077977866,0.17226712,-0.9819597,0.0,-0.06990627,0.031829648,0.07205369,1.0
-            """.trimIndent()
+            """
+                .trimIndent()
         var frame: Int = 0
         for (line in captures.trim().split("\n")) {
             val cells = line.split(",")
             val recorded = arrayOfNulls<Matrix4f>(4)
             for (i in 0 until recorded.size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[i*16+j])
-                recorded[i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[i * 16 + j])
+                recorded[i] = Matrix4f().set(values)
             }
-            val side = if (frame==0) "L" else "R"
-            val end = if (frame==0) "Hand" else "Foot"
-            val names = if (frame==0) arrayOf("Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand") else arrayOf("Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot", "Bip01_R_Toe0")
+            val side = if (frame == 0) "L" else "R"
+            val end = if (frame == 0) "Hand" else "Foot"
+            val names =
+                if (frame == 0) arrayOf("Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand")
+                else arrayOf("Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot", "Bip01_R_Toe0")
             val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
             for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
-            val actor = skeleton(names, if (frame==0) listOf(-1, 0, 1) else listOf(-1, 0, 1, 2), offsets)
+            val actor =
+                skeleton(names, if (frame == 0) listOf(-1, 0, 1) else listOf(-1, 0, 1, 2), offsets)
             val start = arrayOfNulls<Matrix4f>(names.size)
-            for (i in 0 until 3) start[i]=pose(recorded, i+1)
-            if (frame==1) start[3]=Matrix4f(pose(start, 2)).translate(0.05f, 0f, 0f)
+            for (i in 0 until 3) start[i] = pose(recorded, i + 1)
+            if (frame == 1) start[3] = Matrix4f(pose(start, 2)).translate(0.05f, 0f, 0f)
             val refused = copyPoses(start)
-            if (CartGrip.reach(refused, actor, "Bip01_"+side+"_"+end, pose(recorded, 0), if (frame==0) Matrix4f() else null, frame==0, 0.8015352f)) throw AssertionError("Native39 unreachable moving target no longer reproduced")
-            val walk = start.map { m -> Matrix4f().rotateX(0.3f).mul(m ?: throw NullPointerException()) }.toTypedArray()
+            if (
+                CartGrip.reach(
+                    refused,
+                    actor,
+                    "Bip01_" + side + "_" + end,
+                    pose(recorded, 0),
+                    if (frame == 0) Matrix4f() else null,
+                    frame == 0,
+                    0.8015352f,
+                )
+            )
+                throw AssertionError("Native39 unreachable moving target no longer reproduced")
+            val walk =
+                start
+                    .map { m -> Matrix4f().rotateX(0.3f).mul(m ?: throw NullPointerException()) }
+                    .toTypedArray()
             for (amount in floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)) {
                 val poses = copyPoses(walk)
-                if (!CartGrip.releasePose(poses, actor, start, amount)) throw AssertionError("walking chain release refused")
+                if (!CartGrip.releasePose(poses, actor, start, amount))
+                    throw AssertionError("walking chain release refused")
                 for (i in 1 until poses.size) {
-                    val before: Float = pose(start, i).getTranslation(Vector3f()).distance(pose(start, i-1).getTranslation(Vector3f()))
-                    val after: Float = poses[i].getTranslation(Vector3f()).distance(poses[i-1].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.000001f || !poses[i].isFinite()) throw AssertionError("Native39 moving chain stretched or became nonfinite")
+                    val before: Float =
+                        pose(start, i)
+                            .getTranslation(Vector3f())
+                            .distance(pose(start, i - 1).getTranslation(Vector3f()))
+                    val after: Float =
+                        poses[i]
+                            .getTranslation(Vector3f())
+                            .distance(poses[i - 1].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.000001f || !poses[i].isFinite())
+                        throw AssertionError("Native39 moving chain stretched or became nonfinite")
                 }
             }
             frame++
@@ -1678,11 +4742,14 @@ object CartGripTest {
     }
 
     private fun checkMovingRootTranslation() {
-        // Native40 pickup start and Native39 unmodified walking endpoint: translation moves from Pelvis to Bip01.
-        val captures = """
+        // Native40 pickup start and Native39 unmodified walking endpoint: translation moves from
+        // Pelvis to Bip01.
+        val captures =
+            """
             1.0,0.0,0.0,0.0,0.0,-3.5762787e-07,-1.0,0.0,0.0,1.0,-3.5762787e-07,0.0,-0.0018964171,-0.00853876,0.045540053,1.0,0.99191964,-0.0014311157,-0.1268599,0.0,0.0012597367,0.9999982,-0.0014310479,0.0,0.12686172,0.0012596817,0.99191964,0.0,-0.0016533823,-0.050956547,0.047626544,1.0,0.001260084,0.99999833,-0.0014311526,0.0,0.9999994,-0.0012602825,4.4435263e-05,0.0,4.2632222e-05,-0.0014312315,-0.9999992,0.0,0.00030612387,0.49896812,0.05674094,1.0,0.0012580663,0.9925004,-0.12223618,0.0,0.9999993,-0.0012365954,0.00025362443,0.0,0.00010055534,-0.12223646,-0.9925013,0.0,0.00037030727,0.55059737,0.05675116,1.0
             1.0,0.0,0.0,0.0,0.0,-1.66893e-06,-1.0000006,0.0,0.0,1.0000006,-1.66893e-06,0.0,0.0,0.0,0.0,1.0,0.067276,-0.14975822,-0.98643184,0.0,-0.0006234944,0.9886652,-0.15013976,0.0,0.99773425,0.01071584,0.0664201,0.0,0.0055837436,0.49661073,0.012290092,1.0,-0.019843813,0.98827523,-0.15139171,0.0,0.9975369,0.029759804,0.06351682,0.0,0.06727737,-0.14975847,-0.98643166,0.0,0.0055837445,0.4966107,0.012290083,1.0,-0.011075109,0.99992806,0.004724447,0.0,0.99772173,0.010735996,0.06660427,0.0,0.066548645,0.0054512923,-0.997769,0.0,0.0055461274,0.5476564,0.0046222033,1.0
-            """.trimIndent()
+            """
+                .trimIndent()
         val names = arrayOf("Dummy01", "Bip01", "Bip01_Pelvis", "Bip01_Spine")
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
@@ -1693,8 +4760,8 @@ object CartGripTest {
             val cells = line.split(",")
             for (i in 0 until names.size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[i*16+j])
-                endpoints[row][i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[i * 16 + j])
+                endpoints[row][i] = Matrix4f().set(values)
             }
             row++
         }
@@ -1702,107 +4769,257 @@ object CartGripTest {
         val high: Float = Math.max(pose(endpoints[0], 3).m31(), pose(endpoints[1], 3).m31())
         var previous: Vector3f? = null
         for (step in 0..120) {
-            val amount: Float = 1-step/120f
+            val amount: Float = 1 - step / 120f
             val poses = copyPoses(endpoints[1])
-            if (!CartGrip.releasePose(poses, actor, endpoints[0], amount)) throw AssertionError("animated root release refused")
-            if (step==0 || step==120) for (i in 0 until poses.size) if (!poses[i].equals(pose(endpoints[if (step==0) 0 else 1], i), 0.00001f)) throw AssertionError("animated root endpoint jumped")
+            if (!CartGrip.releasePose(poses, actor, endpoints[0], amount))
+                throw AssertionError("animated root release refused")
+            if (step == 0 || step == 120)
+                for (i in 0 until poses.size) if (
+                    !poses[i].equals(pose(endpoints[if (step == 0) 0 else 1], i), 0.00001f)
+                )
+                    throw AssertionError("animated root endpoint jumped")
             var spine = poses[3].getTranslation(Vector3f())
-            if (spine.y<low-0.005f || spine.y>high+0.005f || previous!=null && previous.distance(spine)>0.005f) throw AssertionError("animated root length normalization displaced the spine: step="+step+" spine="+spine)
-            previous=spine
-            val nativeLength: Float = pose(endpoints[0], 2).getTranslation(Vector3f()).distance(pose(endpoints[0], 3).getTranslation(Vector3f()))*amount +
-                pose(endpoints[1], 2).getTranslation(Vector3f()).distance(pose(endpoints[1], 3).getTranslation(Vector3f()))*(1-amount)
-            if (Math.abs(poses[2].getTranslation(Vector3f()).distance(spine)-nativeLength)>0.000001f) throw AssertionError("animated root release stretched the anatomical spine link")
+            if (
+                spine.y < low - 0.005f ||
+                    spine.y > high + 0.005f ||
+                    previous != null && previous.distance(spine) > 0.005f
+            )
+                throw AssertionError(
+                    "animated root length normalization displaced the spine: step=" +
+                        step +
+                        " spine=" +
+                        spine,
+                )
+            previous = spine
+            val nativeLength: Float =
+                pose(endpoints[0], 2)
+                    .getTranslation(Vector3f())
+                    .distance(pose(endpoints[0], 3).getTranslation(Vector3f())) * amount +
+                    pose(endpoints[1], 2)
+                        .getTranslation(Vector3f())
+                        .distance(pose(endpoints[1], 3).getTranslation(Vector3f())) * (1 - amount)
+            if (
+                Math.abs(poses[2].getTranslation(Vector3f()).distance(spine) - nativeLength) >
+                    0.000001f
+            )
+                throw AssertionError("animated root release stretched the anatomical spine link")
         }
     }
 
     private fun checkMovingRecovery() {
-        // Native39 male/full late setdown, first post-stop pose and restored walking pose, without game state mutation.
-        val captures = """
+        // Native39 male/full late setdown, first post-stop pose and restored walking pose, without
+        // game state mutation.
+        val captures =
+            """
             76.5153,0.0,0.0,0.0,0.0,-1.24659255e-05,76.5153,0.0,0.0,-76.515305,-1.2465925e-05,0.0,-0.0059846193,0.002857726,-0.41662216,1.0,-7.3838773e-06,0.9931056,-0.117230594,0.0,1.0,3.2583407e-06,-3.5623754e-05,0.0,-3.4906265e-05,-0.117230535,-0.9931056,0.0,0.003068854,0.5492204,0.033796407,1.0,-8.21145e-05,0.9977529,0.067013584,0.0,1.0,0.00010567563,-0.0003478744,0.0,-0.00035408032,0.0670136,-0.99775285,0.0,0.0030680937,0.6549606,0.021397896,1.0,0.946618,-0.32145604,-0.024097051,0.0,0.32234937,0.9444816,0.06361268,0.0,0.0023104644,-0.0679846,0.9976844,0.0,0.018774264,0.76120245,0.028527573,1.0,-0.94656754,-0.3216532,-0.023443785,0.0,0.32250202,-0.9444146,-0.063835435,0.0,-0.0016078964,-0.067985184,0.99768597,0.0,-0.012654752,0.76119953,0.028538471,1.0,0.17002314,-0.95075774,0.25914064,0.0,0.98053604,0.18942568,0.051647075,0.0,-0.09819172,0.24531549,0.9644585,0.0,0.10121158,0.7332083,0.0264291,1.0,0.1956541,-0.96467036,-0.17644243,0.0,0.98053586,0.18942562,0.051647056,0.0,-0.016399752,-0.18311317,0.98295563,0.0,0.12451502,0.60289544,0.06194735,1.0,-0.07968485,-0.993669,-0.079207614,0.0,0.0062465547,-0.0799559,0.99677837,0.0,-0.99679935,0.07893357,0.012578402,0.0,0.15133196,0.4706759,0.037763856,1.0,-0.20215754,-0.951321,0.23264255,0.0,0.97432405,-0.2194053,-0.050540455,0.0,0.09912306,0.21645203,0.9712492,0.0,-0.09508766,0.73318815,0.026496863,1.0,-0.22456813,-0.9631458,-0.14805877,0.0,0.9743241,-0.21940535,-0.05054047,0.0,0.016192853,-0.15560699,0.9876872,0.0,-0.12279567,0.6027981,0.05838326,1.0,0.0527198,-0.9973113,-0.050913382,0.0,0.0025800793,0.05111961,-0.9986887,0.0,0.9986048,0.05251974,0.005268201,0.0,-0.15357526,0.47078744,0.038090058,1.0,0.028390631,-0.98027974,-0.19546779,0.0,-0.9995773,-0.027849004,-0.0055195186,0.0,-3.2891054e-05,0.19554867,-0.98069483,0.0,0.05829385,0.49758938,0.033847325,1.0,0.02823782,-0.96434367,0.26307666,0.0,-0.9994983,-0.03064219,-0.005039883,0.0,0.012921605,-0.26280296,-0.96476287,0.0,0.065036625,0.26477304,-0.012576266,1.0,-8.8551315e-06,-0.999981,0.0003180793,0.0,-0.99998003,9.027775e-06,0.0006693368,0.0,-0.0006691506,-0.00031647348,-1.0000002,0.0,0.07087736,0.0653074,0.04183872,1.0,-0.0006750984,-8.856431e-05,-1.0000002,0.0,-0.99998003,1.4978345e-05,0.0006752861,0.0,1.4957739e-05,0.9999808,-9.017637e-05,0.0,0.07083232,-8.53862e-05,-0.024590505,1.0,-0.049219258,-0.9815011,-0.18502617,0.0,-0.9987755,0.04929532,0.004191801,0.0,0.005006759,0.18500593,-0.9827255,0.0,-0.052156128,0.49758938,0.033847526,1.0,-0.04802365,-0.95752853,0.28431275,0.0,-0.99867946,0.051227413,0.0038388688,0.0,-0.018240336,-0.2837529,-0.9587245,0.0,-0.0638457,0.26448295,-0.010096172,1.0,-0.001246338,-0.9998499,0.017305363,0.0,-0.99999833,0.0012246758,-0.0012612774,0.0,0.0012399824,-0.01730682,-0.99985,0.0,-0.07377899,0.06642683,0.048711352,1.0,0.0012533087,-0.00018720262,-0.9999993,0.0,-0.99999833,0.0012326394,-0.0012534524,0.0,0.001232889,0.99999917,-0.00018573382,0.0,-0.07377807,-8.641437e-05,-0.016597385,1.0
             76.5,-3.9394883e-05,-1.4673389e-05,0.0,2.8023098e-05,20.771942,73.62592,0.0,-2.4333809e-05,-73.625916,20.771938,0.0,-0.0060535767,0.097179376,-0.34652624,1.0,-0.024349742,0.9525491,-0.30341235,0.0,0.9996874,0.021461764,-0.012848678,0.0,-0.0057272636,-0.30363053,-0.95277375,0.0,-0.001970284,0.55650204,0.00862667,1.0,-0.022731315,0.9938342,-0.10852965,0.0,0.9996874,0.02146125,-0.012853702,0.0,-0.010445351,-0.108788095,-0.9940109,0.0,-0.004562661,0.6579436,-0.023597099,1.0,0.99319714,-0.11259146,0.029695392,0.0,0.11514839,0.98759997,-0.10671056,0.0,-0.017312614,0.109403856,0.9938462,0.0,0.0074759694,0.7633425,-0.035096467,1.0,-0.9826181,-0.17522824,0.061296888,0.0,0.18079676,-0.9782413,0.10177523,0.0,0.042129297,0.11108857,0.9929179,0.0,-0.021377817,0.7627342,-0.03472932,1.0,0.34456265,-0.81761926,0.4612757,0.0,0.93470037,0.25313625,-0.24951416,0.0,0.0872419,0.51712763,0.8514499,0.0,0.093970284,0.7535373,-0.032510765,1.0,0.08525657,-0.9314603,-0.35371208,0.0,0.041794688,-0.351349,0.93531126,0.0,-0.9954817,-0.09452454,0.0089742765,0.0,0.14119637,0.6414728,0.030712891,1.0,-0.13509181,-0.98952526,-0.05089362,0.0,0.0853488,-0.062794775,0.9943706,0.0,-0.9871505,0.12998755,0.09293785,0.0,0.152881,0.5138049,-0.01776652,1.0,-0.35994747,-0.7932881,0.49105382,0.0,0.9329157,-0.3001993,0.1988714,0.0,-0.010348078,0.5296949,0.8481262,0.0,-0.106951274,0.74747455,-0.029392079,1.0,-0.06349191,-0.91155875,-0.406241,0.0,0.032706793,0.4049431,-0.91375774,0.0,0.9974473,-0.07130305,0.004103031,0.0,-0.15628597,0.638745,0.037912898,1.0,0.1350909,-0.9895252,-0.05089363,0.0,0.08534834,0.06279465,-0.99437034,0.0,0.9871506,0.12998675,0.092937335,0.0,-0.16498837,0.5138049,-0.017766438,1.0,0.009742975,-0.9955209,-0.09404959,0.0,-0.9999513,-0.009534627,-0.0026615541,0.0,0.0017527393,0.09407074,-0.99556494,0.0,0.05435614,0.50622267,0.012233773,1.0,0.008738302,-0.9765078,0.21530998,0.0,-0.9999513,-0.00953462,-0.0026615523,0.0,0.0046518464,-0.21527635,-0.97654307,0.0,0.0566701,0.26978648,-0.010103,1.0,-0.0006952407,-0.9999915,-0.0043094456,0.0,-0.9981298,0.0009576548,-0.06112674,0.0,0.06113011,0.004258707,-0.9981216,0.0,0.058477525,0.06780465,0.03443193,1.0,0.061104737,-0.015350085,-0.99801415,0.0,-0.9981298,0.00095765153,-0.061126757,0.0,0.0018937518,0.99988264,-0.015262691,0.0,0.06249418,0.0027151927,-0.03217497,1.0,-0.019104153,-0.99270386,-0.11906547,0.0,-0.9998156,0.01922948,9.860657e-05,0.0,0.0021915073,0.119045295,-0.9928874,0.0,-0.05603402,0.5038117,0.012411137,1.0,-0.017087549,-0.89079446,0.45408744,0.0,-0.9998155,0.019229487,9.8608434e-05,0.0,-0.008819681,-0.45400196,-0.89095813,0.0,-0.06057127,0.26804456,-0.01586692,1.0,0.004273128,-0.95376086,0.30053994,0.0,-0.9999424,-0.0011029817,0.010716016,0.0,-0.009889053,-0.30056846,-0.95370996,0.0,-0.064105675,0.08379173,0.07805698,1.0,-0.009889066,-0.30056706,-0.95371103,0.0,-0.9999424,-0.0011029814,0.010716016,0.0,-0.0042731143,0.95376194,-0.30053854,0.0,-0.06448346,0.0014687479,0.03433016,1.0
-            """.trimIndent()
-        val names = arrayOf("Bip01_Spine", "Bip01_Spine1", "Bip01_L_Clavicle", "Bip01_R_Clavicle", "Bip01_L_UpperArm", "Bip01_L_Forearm", "Bip01_L_Hand", "Bip01_R_UpperArm", "Bip01_R_Forearm", "Bip01_R_Hand", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_L_Toe0", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot", "Bip01_R_Toe0")
+            """
+                .trimIndent()
+        val names =
+            arrayOf(
+                "Bip01_Spine",
+                "Bip01_Spine1",
+                "Bip01_L_Clavicle",
+                "Bip01_R_Clavicle",
+                "Bip01_L_UpperArm",
+                "Bip01_L_Forearm",
+                "Bip01_L_Hand",
+                "Bip01_R_UpperArm",
+                "Bip01_R_Forearm",
+                "Bip01_R_Hand",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_L_Toe0",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+                "Bip01_R_Toe0",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
-        val actor = skeleton(names, listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8, 0, 10, 11, 12, 0, 14, 15, 16), offsets)
-        val endpoints = Array(2) { arrayOfNulls<Matrix4f>(names.size+1) }
+        val actor =
+            skeleton(
+                names,
+                listOf(-1, 0, 1, 1, 2, 4, 5, 3, 7, 8, 0, 10, 11, 12, 0, 14, 15, 16),
+                offsets,
+            )
+        val endpoints = Array(2) { arrayOfNulls<Matrix4f>(names.size + 1) }
         var frame: Int = 0
         for (line in captures.trim().split("\n")) {
             val cells = line.split(",")
             for (i in 0 until endpoints[frame].size) {
                 val values = FloatArray(16)
-                for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[i*16+j])
-                endpoints[frame][i]=Matrix4f().set(values)
+                for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[i * 16 + j])
+                endpoints[frame][i] = Matrix4f().set(values)
             }
             frame++
         }
         val start = java.util.Arrays.copyOfRange(endpoints[0], 1, endpoints[0].size)
         val nativeWalk = java.util.Arrays.copyOfRange(endpoints[1], 1, endpoints[1].size)
         for (step in 0..60) {
-            val amount: Float = ((1-CartTransitionMath.smooth((step/60.0)))).toFloat()
+            val amount: Float = ((1 - CartTransitionMath.smooth((step / 60.0)))).toFloat()
             val poses = copyPoses(nativeWalk)
-            if (!CartGrip.releasePose(poses, actor, start, amount)) throw AssertionError("moving joint release refused")
-            if (step==0 || step==60) for (i in 0 until poses.size) if (!poses[i].equals(if (step==0) pose(start, i) else pose(nativeWalk, i), 0.00001f)) throw AssertionError("moving release endpoint jumped")
+            if (!CartGrip.releasePose(poses, actor, start, amount))
+                throw AssertionError("moving joint release refused")
+            if (step == 0 || step == 60)
+                for (i in 0 until poses.size) if (
+                    !poses[i].equals(
+                        if (step == 0) pose(start, i) else pose(nativeWalk, i),
+                        0.00001f,
+                    )
+                )
+                    throw AssertionError("moving release endpoint jumped")
             val cart = Matrix4f()
-            if (!CartTransitionMath.blend(pose(endpoints[1], 0), pose(endpoints[0], 0), (amount).toDouble(), cart)
-                || !CartGrip.transitionGrip(poses, actor, false, Matrix4f(), cart, 1-amount, 1-amount)) throw AssertionError("moving held recovery lost its actual cart grip at step "+step)
-            if (step==0) for (i in 0 until poses.size) if (!poses[i].equals(pose(start, i), 0.00001f)) throw AssertionError("released hands snapped to the low cart on first moving frame")
+            if (
+                !CartTransitionMath.blend(
+                    pose(endpoints[1], 0),
+                    pose(endpoints[0], 0),
+                    (amount).toDouble(),
+                    cart,
+                ) ||
+                    !CartGrip.transitionGrip(
+                        poses,
+                        actor,
+                        false,
+                        Matrix4f(),
+                        cart,
+                        1 - amount,
+                        1 - amount,
+                    )
+            )
+                throw AssertionError(
+                    "moving held recovery lost its actual cart grip at step " + step,
+                )
+            if (step == 0)
+                for (i in 0 until poses.size) if (!poses[i].equals(pose(start, i), 0.00001f))
+                    throw AssertionError(
+                        "released hands snapped to the low cart on first moving frame",
+                    )
             for (i in 0 until poses.size) {
                 val parent = actor.getBoneAt(i).parent
-                if (!poses[i].isFinite()) throw AssertionError("moving release produced a nonfinite pose")
-                if (parent!=null) {
-                    val before: Float = pose(start, i).getTranslation(Vector3f()).distance(pose(start, parent.index).getTranslation(Vector3f()))
-                    val endpoint: Float = pose(nativeWalk, i).getTranslation(Vector3f()).distance(pose(nativeWalk, parent.index).getTranslation(Vector3f()))
-                    var expected: Float = before*amount+endpoint*(1-amount)
-                    val after: Float = poses[i].getTranslation(Vector3f()).distance(poses[parent.index].getTranslation(Vector3f()))
-                    if (Math.abs(expected-after)>0.00001f) throw AssertionError("moving release stretched "+names[i]+" step="+step+" expected="+expected+" actual="+after)
+                if (!poses[i].isFinite())
+                    throw AssertionError("moving release produced a nonfinite pose")
+                if (parent != null) {
+                    val before: Float =
+                        pose(start, i)
+                            .getTranslation(Vector3f())
+                            .distance(pose(start, parent.index).getTranslation(Vector3f()))
+                    val endpoint: Float =
+                        pose(nativeWalk, i)
+                            .getTranslation(Vector3f())
+                            .distance(pose(nativeWalk, parent.index).getTranslation(Vector3f()))
+                    var expected: Float = before * amount + endpoint * (1 - amount)
+                    val after: Float =
+                        poses[i]
+                            .getTranslation(Vector3f())
+                            .distance(poses[parent.index].getTranslation(Vector3f()))
+                    if (Math.abs(expected - after) > 0.00001f)
+                        throw AssertionError(
+                            "moving release stretched " +
+                                names[i] +
+                                " step=" +
+                                step +
+                                " expected=" +
+                                expected +
+                                " actual=" +
+                                after,
+                        )
                 }
             }
             for (side in 0 until 2) {
-                val hand: Int = if (side==0) 6 else 9
+                val hand: Int = if (side == 0) 6 else 9
                 val shape = CartGrip.grasp(false, "WheelbarrowWood")
                 val palm = poses[hand].transformPosition(Vector3f(shape.palmX, 0f, shape.palmDepth))
                 val handle = Vector3f()
-                CartGrip.handle("WheelbarrowWood", side==0, handle)
+                CartGrip.handle("WheelbarrowWood", side == 0, handle)
                 cart.transformPosition(handle)
-                if (step==60 && palm.distance(handle)>0.00002f) throw AssertionError("moving palm missed rendered handle")
+                if (step == 60 && palm.distance(handle) > 0.00002f)
+                    throw AssertionError("moving palm missed rendered handle")
             }
-            // Pickup release uses the same local interpolation without holding the hands at the world cart.
+            // Pickup release uses the same local interpolation without holding the hands at the
+            // world cart.
             val free = copyPoses(nativeWalk)
-            val elapsed: Double = (0.4+0.2*0.88)*step/60
-            val pickupAmount: Float = (CartTransitionMath.recoveryRelease((CartTransitionMath.recover(0.88, (elapsed), false)), 0.88, true)).toFloat()
-            if (!CartGrip.releasePose(free, actor, start, pickupAmount)) throw AssertionError("free walking release refused")
+            val elapsed: Double = (0.4 + 0.2 * 0.88) * step / 60
+            val pickupAmount: Float =
+                (CartTransitionMath.recoveryRelease(
+                        (CartTransitionMath.recover(0.88, (elapsed), false)),
+                        0.88,
+                        true,
+                    ))
+                    .toFloat()
+            if (!CartGrip.releasePose(free, actor, start, pickupAmount))
+                throw AssertionError("free walking release refused")
             val before = copyPoses(free)
             val clearance: Float = (CartTransitionMath.recoveryClearance(0.88, (elapsed))).toFloat()
-            val shiftX: Float = -0.18f*clearance
-            val shiftY: Float = -0.04f*clearance
-            val shiftZ: Float = 0.12f*clearance
-            if (!CartGrip.groundFeet(free, actor, null, null, 0f, shiftX, shiftY, shiftZ, true)) throw AssertionError("captured walking recovery cannot reach this frame's foot targets at step "+step)
+            val shiftX: Float = -0.18f * clearance
+            val shiftY: Float = -0.04f * clearance
+            val shiftZ: Float = 0.12f * clearance
+            if (!CartGrip.groundFeet(free, actor, null, null, 0f, shiftX, shiftY, shiftZ, true))
+                throw AssertionError(
+                    "captured walking recovery cannot reach this frame's foot targets at step " +
+                        step,
+                )
             for (foot in intArrayOf(12, 16)) {
-                if (!free[foot].equals(before[foot], 0.00001f) || !free[foot+1].equals(before[foot+1], 0.00001f)) throw AssertionError("captured pickup recovery froze a seed foot instead of retaining this frame's walking foot")
-                for (upper in intArrayOf(foot-2, foot-1)) {
-                    val length: Float = before[upper].getTranslation(Vector3f()).distance(before[upper+1].getTranslation(Vector3f()))
-                    if (Math.abs(length-free[upper].getTranslation(Vector3f()).distance(free[upper+1].getTranslation(Vector3f())))>0.00001f) throw AssertionError("captured pickup clearance shift stretched a leg link")
+                if (
+                    !free[foot].equals(before[foot], 0.00001f) ||
+                        !free[foot + 1].equals(before[foot + 1], 0.00001f)
+                )
+                    throw AssertionError(
+                        "captured pickup recovery froze a seed foot instead of retaining this frame's walking foot",
+                    )
+                for (upper in intArrayOf(foot - 2, foot - 1)) {
+                    val length: Float =
+                        before[upper]
+                            .getTranslation(Vector3f())
+                            .distance(before[upper + 1].getTranslation(Vector3f()))
+                    if (
+                        Math.abs(
+                            length -
+                                free[upper]
+                                    .getTranslation(Vector3f())
+                                    .distance(free[upper + 1].getTranslation(Vector3f())),
+                        ) > 0.00001f
+                    )
+                        throw AssertionError("captured pickup clearance shift stretched a leg link")
                 }
-                if (clearance>0) {
-                    val relative = Matrix4f(free[foot-2]).invert().mul(free[foot-1])
-                    val flexion: Double = Math.atan2((relative.m20()-relative.m02()).toDouble(), (relative.m00()+relative.m22()).toDouble())
-                    if (flexion<-0.0001) throw AssertionError("captured pickup clearance shift inverted a walking knee")
+                if (clearance > 0) {
+                    val relative = Matrix4f(free[foot - 2]).invert().mul(free[foot - 1])
+                    val flexion: Double =
+                        Math.atan2(
+                            (relative.m20() - relative.m02()).toDouble(),
+                            (relative.m00() + relative.m22()).toDouble(),
+                        )
+                    if (flexion < -0.0001)
+                        throw AssertionError(
+                            "captured pickup clearance shift inverted a walking knee",
+                        )
                 }
             }
-            for (upper in 0 until 10) if (!free[upper].equals(Matrix4f(before[upper]).translateLocal(shiftX, shiftY, shiftZ), 0.00001f)) throw AssertionError("captured pickup clearance shift changed upper-body shape")
+            for (upper in 0 until 10) if (
+                !free[upper].equals(
+                    Matrix4f(before[upper]).translateLocal(shiftX, shiftY, shiftZ),
+                    0.00001f,
+                )
+            )
+                throw AssertionError("captured pickup clearance shift changed upper-body shape")
         }
         for (amount in floatArrayOf(Float.NaN, -0.1f, 1.1f)) {
             val poses = copyPoses(nativeWalk)
-            if (CartGrip.releasePose(poses, actor, start, amount)) throw AssertionError("invalid walking release accepted")
-            for (i in 0 until poses.size) if (!poses[i].equals(pose(nativeWalk, i))) throw AssertionError("invalid release changed native input")
+            if (CartGrip.releasePose(poses, actor, start, amount))
+                throw AssertionError("invalid walking release accepted")
+            for (i in 0 until poses.size) if (!poses[i].equals(pose(nativeWalk, i)))
+                throw AssertionError("invalid release changed native input")
         }
     }
 
     private fun checkMovingToeOffKnees() {
-        // Native01 male/full sprint, after the setdown recovery ended: 1792516229754 / 1792516229806.
-        // Both feet cross their horizontal toe direction while the native calf hinges remain forward.
-        val captures = """
+        // Native01 male/full sprint, after the setdown recovery ended: 1792516229754 /
+        // 1792516229806.
+        // Both feet cross their horizontal toe direction while the native calf hinges remain
+        // forward.
+        val captures =
+            """
             -0.004217811,-0.88537914,-0.4648228,0,-0.99997395,0.0057173297,-0.0018164888,0,0.0042790207,0.4648117,-0.8853947,0,0.049448144,0.49696115,-0.049741548,1
             -0.0044222176,-0.49512842,0.86880416,0,-0.99997395,0.005717337,-0.0018164963,0,-0.0040674377,-0.86878896,-0.49514002,0,0.048446435,0.28668368,-0.16013695,1
             -0.00013502123,-0.37822857,0.92570764,0,-0.998805,-0.045045104,-0.018536093,0,0.048708655,-0.9246042,-0.37776855,0,0.047531728,0.1842708,0.019567374,1
@@ -1819,38 +5036,90 @@ object CartGripTest {
             0.04143381,-0.6065845,0.79393107,0,-0.999106,-0.01927004,0.037417687,0,-0.0073983492,-0.7947786,-0.6068543,0,-0.05200119,0.28252566,0.010577587,1
             -0.055308875,-0.42989692,0.90117747,0,-0.99802727,0.050419882,-0.037202008,0,-0.029444415,-0.90146303,-0.4318497,0,-0.043430977,0.15705909,0.1747951,1
             0.029201495,-0.99311674,-0.113390654,0,-0.9989,-0.024854045,-0.039569084,0,0.03647735,0.114414394,-0.9927618,0,-0.049003266,0.06905323,0.20501137,1
-            """.trimIndent()
-        val names = arrayOf("Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_L_Toe0", "Bip01_R_Thigh", "Bip01_R_Calf", "Bip01_R_Foot", "Bip01_R_Toe0")
+            """
+                .trimIndent()
+        val names =
+            arrayOf(
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_L_Toe0",
+                "Bip01_R_Thigh",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+                "Bip01_R_Toe0",
+            )
         val offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         for (name in names) offsets.add(org.lwjgl.util.vector.Matrix4f())
         val actor = skeleton(names, listOf(-1, 0, 1, 2, -1, 4, 5, 6), offsets)
         val lines = captures.trim().split("\n")
         val nativeFrames = Array(2) { arrayOfNulls<Matrix4f>(names.size) }
         for (frame in 0 until 2) for (i in 0 until names.size) {
-            val cells = lines[frame*names.size+i].trim().split(",")
+            val cells = lines[frame * names.size + i].trim().split(",")
             val values = FloatArray(16)
-            for (j in 0 until 16) values[j]=java.lang.Float.parseFloat(cells[j])
-            nativeFrames[frame][i]=Matrix4f().set(values)
+            for (j in 0 until 16) values[j] = java.lang.Float.parseFloat(cells[j])
+            nativeFrames[frame][i] = Matrix4f().set(values)
         }
         for (foot in intArrayOf(2, 6)) {
-            val before: Float = pose(nativeFrames[0], foot+1).m32()-pose(nativeFrames[0], foot).m32()
-            val after: Float = pose(nativeFrames[1], foot+1).m32()-pose(nativeFrames[1], foot).m32()
-            if (before*after>=0) throw AssertionError("captured sprint toe-off did not cross the horizontal toe pole")
+            val before: Float =
+                pose(nativeFrames[0], foot + 1).m32() - pose(nativeFrames[0], foot).m32()
+            val after: Float =
+                pose(nativeFrames[1], foot + 1).m32() - pose(nativeFrames[1], foot).m32()
+            if (before * after >= 0)
+                throw AssertionError(
+                    "captured sprint toe-off did not cross the horizontal toe pole",
+                )
         }
-        for (nativePose in nativeFrames) for (clearance in floatArrayOf(0f, 0.01f, 0.1f, 0.2f, 0.24f)) {
+        for (nativePose in nativeFrames) for (clearance in
+            floatArrayOf(0f, 0.01f, 0.1f, 0.2f, 0.24f)) {
             val poses = copyPoses(nativePose)
-            if (!CartGrip.groundFeet(poses, actor, null, null, 0f, -0.18f*clearance, -0.04f*clearance, 0.12f*clearance, true)) throw AssertionError("captured sprint clearance solve refused")
-            if (clearance==0f) for (i in 0 until poses.size) if (!poses[i].equals(nativePose[i])) throw AssertionError("zero clearance changed a native sprint leg")
+            if (
+                !CartGrip.groundFeet(
+                    poses,
+                    actor,
+                    null,
+                    null,
+                    0f,
+                    -0.18f * clearance,
+                    -0.04f * clearance,
+                    0.12f * clearance,
+                    true,
+                )
+            )
+                throw AssertionError("captured sprint clearance solve refused")
+            if (clearance == 0f)
+                for (i in 0 until poses.size) if (!poses[i].equals(nativePose[i]))
+                    throw AssertionError("zero clearance changed a native sprint leg")
             for (foot in intArrayOf(2, 6)) {
-                if (!poses[foot].equals(nativePose[foot], 0.00001f) || !poses[foot+1].equals(nativePose[foot+1], 0.00001f)) throw AssertionError("moving knee correction changed the native airborne foot/toe target")
-                for (upper in intArrayOf(foot-2, foot-1)) {
-                    val before: Float = pose(nativePose, upper).getTranslation(Vector3f()).distance(pose(nativePose, upper+1).getTranslation(Vector3f()))
-                    val after: Float = poses[upper].getTranslation(Vector3f()).distance(poses[upper+1].getTranslation(Vector3f()))
-                    if (Math.abs(before-after)>0.00001f) throw AssertionError("moving knee correction stretched a native leg")
+                if (
+                    !poses[foot].equals(nativePose[foot], 0.00001f) ||
+                        !poses[foot + 1].equals(nativePose[foot + 1], 0.00001f)
+                )
+                    throw AssertionError(
+                        "moving knee correction changed the native airborne foot/toe target",
+                    )
+                for (upper in intArrayOf(foot - 2, foot - 1)) {
+                    val before: Float =
+                        pose(nativePose, upper)
+                            .getTranslation(Vector3f())
+                            .distance(pose(nativePose, upper + 1).getTranslation(Vector3f()))
+                    val after: Float =
+                        poses[upper]
+                            .getTranslation(Vector3f())
+                            .distance(poses[upper + 1].getTranslation(Vector3f()))
+                    if (Math.abs(before - after) > 0.00001f)
+                        throw AssertionError("moving knee correction stretched a native leg")
                 }
-                val relative = Matrix4f(poses[foot-2]).invert().mul(poses[foot-1])
-                val flexion: Double = Math.atan2((relative.m20()-relative.m02()).toDouble(), (relative.m00()+relative.m22()).toDouble())
-                if (flexion<-0.0001) throw AssertionError("sprint toe-off reversed anatomical knee flexion: "+flexion)
+                val relative = Matrix4f(poses[foot - 2]).invert().mul(poses[foot - 1])
+                val flexion: Double =
+                    Math.atan2(
+                        (relative.m20() - relative.m02()).toDouble(),
+                        (relative.m00() + relative.m22()).toDouble(),
+                    )
+                if (flexion < -0.0001)
+                    throw AssertionError(
+                        "sprint toe-off reversed anatomical knee flexion: " + flexion,
+                    )
             }
         }
     }
@@ -1860,33 +5129,59 @@ object CartGripTest {
         unsafeField.setAccessible(true)
         val unsafe = (unsafeField.get(null) as sun.misc.Unsafe)
         val inverseBind = Matrix4f().translation(0.3f, -0.7f, 0.2f).rotateXYZ(0.2f, -0.1f, 0.4f)
-        val offset = PZMath.convertMatrix(Matrix4f(inverseBind).transpose(), org.lwjgl.util.vector.Matrix4f())
+        val offset =
+            PZMath.convertMatrix(
+                Matrix4f(inverseBind).transpose(),
+                org.lwjgl.util.vector.Matrix4f(),
+            )
         val actor = skeleton(arrayOf("Bip01_Spine"), listOf(-1), listOf(offset))
         val owner = zombie.core.skinnedmodel.model.ModelInstance()
-        owner.model=(unsafe.allocateInstance(zombie.core.skinnedmodel.model.Model::class.java) as zombie.core.skinnedmodel.model.Model)
-        owner.model.tag=actor
+        owner.model =
+            (unsafe.allocateInstance(zombie.core.skinnedmodel.model.Model::class.java)
+                as zombie.core.skinnedmodel.model.Model)
+        owner.model.tag = actor
         // There is deliberately no live AnimationPlayer: the render palette owns this pose.
         val body = zombie.core.skinnedmodel.model.ModelInstanceRenderData()
-        body.modelInstance=owner
-        body.matrixPalette=FloatBuffer.allocate(16)
+        body.modelInstance = owner
+        body.matrixPalette = FloatBuffer.allocate(16)
         val slot = zombie.core.skinnedmodel.model.ModelSlotRenderData()
         slot.modelData.add(body)
         val result = Vector3f()
-        for (pose in arrayOf(Matrix4f().translation(0.012f, 0.54f, -0.06f).rotateY(0.5f), Matrix4f().translation(-0.02f, 0.51f, 0.003f).rotateZ(-0.2f))) {
+        for (pose in
+            arrayOf(
+                Matrix4f().translation(0.012f, 0.54f, -0.06f).rotateY(0.5f),
+                Matrix4f().translation(-0.02f, 0.51f, 0.003f).rotateZ(-0.2f),
+            )) {
             body.matrixPalette.clear()
-            PZMath.convertMatrix(Matrix4f(pose).mul(inverseBind).transpose(), org.lwjgl.util.vector.Matrix4f())
+            PZMath.convertMatrix(
+                    Matrix4f(pose).mul(inverseBind).transpose(),
+                    org.lwjgl.util.vector.Matrix4f(),
+                )
                 .store(body.matrixPalette)
             val before = body.matrixPalette.array().copyOf()
             body.matrixPalette.position(7)
-            if (!CartGrip.nativeSpine(slot, owner, result) || result.distance(pose.getTranslation(Vector3f()))>1e-6f) throw AssertionError("displayed Spine ignored inverse bind or retained an older snapshot: "+result)
-            if (body.matrixPalette.position()!=7 || !java.util.Arrays.equals(before, body.matrixPalette.array())) throw AssertionError("displayed Spine read changed its render palette")
+            if (
+                !CartGrip.nativeSpine(slot, owner, result) ||
+                    result.distance(pose.getTranslation(Vector3f())) > 1e-6f
+            )
+                throw AssertionError(
+                    "displayed Spine ignored inverse bind or retained an older snapshot: " + result,
+                )
+            if (
+                body.matrixPalette.position() != 7 ||
+                    !java.util.Arrays.equals(before, body.matrixPalette.array())
+            )
+                throw AssertionError("displayed Spine read changed its render palette")
         }
         body.matrixPalette.put(0, Float.NaN)
-        if (CartGrip.nativeSpine(slot, owner, result) || body.matrixPalette.position()!=7) throw AssertionError("non-finite render palette accepted or cursor changed")
+        if (CartGrip.nativeSpine(slot, owner, result) || body.matrixPalette.position() != 7)
+            throw AssertionError("non-finite render palette accepted or cursor changed")
         body.matrixPalette.limit(15)
-        if (CartGrip.nativeSpine(slot, owner, result) || body.matrixPalette.position()!=7) throw AssertionError("truncated render palette accepted or cursor changed")
+        if (CartGrip.nativeSpine(slot, owner, result) || body.matrixPalette.position() != 7)
+            throw AssertionError("truncated render palette accepted or cursor changed")
         slot.modelData.clear()
-        if (CartGrip.nativeSpine(slot, owner, result)) throw AssertionError("missing displayed body accepted")
+        if (CartGrip.nativeSpine(slot, owner, result))
+            throw AssertionError("missing displayed body accepted")
     }
 
     @JvmStatic
@@ -1916,54 +5211,96 @@ object CartGripTest {
         checkLivePoses()
         checkTransitionFeet()
         checkRunningHead()
-        val names = arrayOf("Dummy01", "Bip01", "Bip01_Spine", "Bip01_R_Hand", "Bip01_L_Hand", "Bip01_R_Thigh", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_L_Toe0", "Bip01_R_Calf", "Bip01_R_Foot", "Bip01_R_Toe0")
+        val names =
+            arrayOf(
+                "Dummy01",
+                "Bip01",
+                "Bip01_Spine",
+                "Bip01_R_Hand",
+                "Bip01_L_Hand",
+                "Bip01_R_Thigh",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_L_Toe0",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+                "Bip01_R_Toe0",
+            )
         var offsets = ArrayList<org.lwjgl.util.vector.Matrix4f>()
         val frames = ArrayList<Keyframe>()
-        val positions = arrayOf(floatArrayOf(0f, 0f, 0f),
-            floatArrayOf(0f, 0f, 0f),
-            floatArrayOf(0f, 0.5f, 0f),
-            floatArrayOf(0.2f, 0.3f, -0.2f),
-            floatArrayOf(-0.2f, 0.3f, -0.2f),
-            floatArrayOf(0.1f, -0.4f, 0f),
-            floatArrayOf(-0.1f, -0.4f, 0f),
-            floatArrayOf(0f, -0.2f, 0f),
-            floatArrayOf(0f, -0.2f, 0.05f),
-            floatArrayOf(0f, 0f, 0.05f),
-            floatArrayOf(0f, -0.2f, 0f),
-            floatArrayOf(0f, -0.2f, 0.05f),
-            floatArrayOf(0f, 0f, 0.05f))
+        val positions =
+            arrayOf(
+                floatArrayOf(0f, 0f, 0f),
+                floatArrayOf(0f, 0f, 0f),
+                floatArrayOf(0f, 0.5f, 0f),
+                floatArrayOf(0.2f, 0.3f, -0.2f),
+                floatArrayOf(-0.2f, 0.3f, -0.2f),
+                floatArrayOf(0.1f, -0.4f, 0f),
+                floatArrayOf(-0.1f, -0.4f, 0f),
+                floatArrayOf(0f, -0.2f, 0f),
+                floatArrayOf(0f, -0.2f, 0.05f),
+                floatArrayOf(0f, 0f, 0.05f),
+                floatArrayOf(0f, -0.2f, 0f),
+                floatArrayOf(0f, -0.2f, 0.05f),
+                floatArrayOf(0f, 0f, 0.05f),
+            )
         for (i in 0 until names.size) {
             offsets.add(org.lwjgl.util.vector.Matrix4f())
-            val frame = Keyframe(org.lwjgl.util.vector.Vector3f(positions[i][0], positions[i][1], positions[i][2]), org.lwjgl.util.vector.Quaternion(), org.lwjgl.util.vector.Vector3f(if (i==0) 0.01f else 1f, 1f, 1f))
-            frame.bone=i
-            frame.boneName=names[i]
-            frame.time=0f
+            val frame =
+                Keyframe(
+                    org.lwjgl.util.vector.Vector3f(
+                        positions[i][0],
+                        positions[i][1],
+                        positions[i][2],
+                    ),
+                    org.lwjgl.util.vector.Quaternion(),
+                    org.lwjgl.util.vector.Vector3f(if (i == 0) 0.01f else 1f, 1f, 1f),
+                )
+            frame.bone = i
+            frame.boneName = names[i]
+            frame.time = 0f
             frames.add(frame)
         }
         // Captured B42.21 hierarchy: both thighs are children of Spine, not Pelvis/Bip01.
         val actor = skeleton(names, listOf(-1, 0, 1, 2, 2, 2, 2, 6, 7, 8, 5, 10, 11), offsets)
         val clip = AnimationClip(1f, frames, "Bob_Cart_Idle", true)
-        val remapped = arrayOf("Bip01_R_Thigh", "Bip01_L_Hand", "Dummy01", "Bip01_Spine", "Bip01_R_Hand", "Bip01", "Bip01_L_Thigh", "Bip01_L_Calf", "Bip01_L_Foot", "Bip01_L_Toe0", "Bip01_R_Calf", "Bip01_R_Foot", "Bip01_R_Toe0")
-        offsets=ArrayList()
+        val remapped =
+            arrayOf(
+                "Bip01_R_Thigh",
+                "Bip01_L_Hand",
+                "Dummy01",
+                "Bip01_Spine",
+                "Bip01_R_Hand",
+                "Bip01",
+                "Bip01_L_Thigh",
+                "Bip01_L_Calf",
+                "Bip01_L_Foot",
+                "Bip01_L_Toe0",
+                "Bip01_R_Calf",
+                "Bip01_R_Foot",
+                "Bip01_R_Toe0",
+            )
+        offsets = ArrayList()
         for (i in 0 until remapped.size) {
             val offset = org.lwjgl.util.vector.Matrix4f()
-            offset.m03=(-(1+i)).toFloat()
-            offset.m13=(-0.5f*i)
-            offset.m23=(0.1f*i)
+            offset.m03 = (-(1 + i)).toFloat()
+            offset.m13 = (-0.5f * i)
+            offset.m23 = (0.1f * i)
             offsets.add(offset)
         }
         val clothing = skeleton(remapped, java.util.Collections.nCopies(remapped.size, -1), offsets)
-        val palette = FloatBuffer.allocate(remapped.size*16)
-        val otherActor = FloatBuffer.allocate(remapped.size*16)
+        val palette = FloatBuffer.allocate(remapped.size * 16)
+        val otherActor = FloatBuffer.allocate(remapped.size * 16)
         val shaderPalette = arrayOfNulls<org.lwjgl.util.vector.Matrix4f>(remapped.size)
         for (i in 0 until remapped.size) {
             val moving = org.lwjgl.util.vector.Matrix4f()
-            moving.m03=(40+i).toFloat()
-            moving.m13=(50+i).toFloat()
-            palette.position(i*16)
+            moving.m03 = (40 + i).toFloat()
+            moving.m13 = (50 + i).toFloat()
+            palette.position(i * 16)
             moving.store(palette)
-            shaderPalette[i]=org.lwjgl.util.vector.Matrix4f(moving)
-            otherActor.position(i*16)
+            shaderPalette[i] = org.lwjgl.util.vector.Matrix4f(moving)
+            otherActor.position(i * 16)
             moving.store(otherActor)
         }
         val untouched = palette.array().copyOf()
@@ -1972,41 +5309,66 @@ object CartGripTest {
             for (index in nativeBones) {
                 val moving = org.lwjgl.util.vector.Matrix4f()
                 moving.rotate(phase, org.lwjgl.util.vector.Vector3f(1f, 0f, 0f))
-                moving.m03=(40+index+phase)
-                moving.m13=(50+index-phase)
-                palette.position(index*16)
+                moving.m03 = (40 + index + phase)
+                moving.m13 = (50 + index - phase)
+                palette.position(index * 16)
                 moving.store(palette)
                 (shaderPalette[index] ?: throw NullPointerException()).load(moving)
             }
             val nativePose = palette.array().copyOf()
-            val delta = Matrix4f().translation(0f, 0.008f, 0f).rotateZ(lean).translate(0f, -0.008f, 0f).translate(0f, 0.12f, 0f)
+            val delta =
+                Matrix4f()
+                    .translation(0f, 0.008f, 0f)
+                    .rotateZ(lean)
+                    .translate(0f, -0.008f, 0f)
+                    .translate(0f, 0.12f, 0f)
             val poses = CartGrip.poses(clip, actor, delta)
-            if (poses==null) throw AssertionError("authored grip pose rejected")
+            if (poses == null) throw AssertionError("authored grip pose rejected")
             palette.position(5)
             val changed: Int = CartGrip.skin(palette, shaderPalette, clothing, actor, poses)
             for (index in nativeBones) {
                 val expected = org.lwjgl.util.vector.Matrix4f()
                 val view = palette.duplicate()
-                view.position(index*16)
+                view.position(index * 16)
                 expected.load(view)
-                for (i in 0 until 16) if (palette.get(index*16+i)!=nativePose[index*16+i]) throw AssertionError("native walking chain frozen: "+remapped[index]+" phase="+phase)
-                if (!PZMath.convertMatrix(shaderPalette[index], Matrix4f()).equals(PZMath.convertMatrix(expected, Matrix4f()))) throw AssertionError("native shader walking chain changed: "+remapped[index])
+                for (i in 0 until 16) if (palette.get(index * 16 + i) != nativePose[index * 16 + i])
+                    throw AssertionError(
+                        "native walking chain frozen: " + remapped[index] + " phase=" + phase,
+                    )
+                if (
+                    !PZMath.convertMatrix(shaderPalette[index], Matrix4f())
+                        .equals(PZMath.convertMatrix(expected, Matrix4f()))
+                )
+                    throw AssertionError("native shader walking chain changed: " + remapped[index])
             }
-            if (changed!=3 || palette.position()!=5) throw AssertionError("upper-body mapping or palette cursor changed")
+            if (changed != 3 || palette.position() != 5)
+                throw AssertionError("upper-body mapping or palette cursor changed")
             for (index in intArrayOf(1, 4)) {
                 val raw = org.lwjgl.util.vector.Matrix4f()
                 val view = palette.duplicate()
-                view.position(index*16)
+                view.position(index * 16)
                 raw.load(view)
                 val skin = PZMath.convertMatrix(raw, Matrix4f()).transpose()
-                val hand = skin.transformPosition(Vector3f((1+index).toFloat(), 0.5f*index, -0.1f*index))
-                val handle = delta.transformPosition(Vector3f(if (index==1) -0.2f else 0.2f, 0.8f, -0.2f))
-                if (hand.distance(handle)>0.00001f) throw AssertionError("hand left cart handle at lean "+lean)
-                if (!PZMath.convertMatrix(shaderPalette[index], Matrix4f()).equals(PZMath.convertMatrix(raw, Matrix4f()))) throw AssertionError("instanced and ordinary renderer palettes disagree")
+                val hand =
+                    skin.transformPosition(
+                        Vector3f((1 + index).toFloat(), 0.5f * index, -0.1f * index),
+                    )
+                val handle =
+                    delta.transformPosition(Vector3f(if (index == 1) -0.2f else 0.2f, 0.8f, -0.2f))
+                if (hand.distance(handle) > 0.00001f)
+                    throw AssertionError("hand left cart handle at lean " + lean)
+                if (
+                    !PZMath.convertMatrix(shaderPalette[index], Matrix4f())
+                        .equals(PZMath.convertMatrix(raw, Matrix4f()))
+                )
+                    throw AssertionError("instanced and ordinary renderer palettes disagree")
             }
-            if (!java.util.Arrays.equals(otherActor.array(), untouched)) throw AssertionError("another actor was changed")
+            if (!java.util.Arrays.equals(otherActor.array(), untouched))
+                throw AssertionError("another actor was changed")
         }
-        if (frames.get(0).scale.x!=0.01f) throw AssertionError("shared clip scale changed")
-        println("CART_GRIP_PASS (live wooden torso/shoulders, anchored gait grip, natural arms/wrists, measured mesh contact, clothing, bank, walking legs, render isolation)")
+        if (frames.get(0).scale.x != 0.01f) throw AssertionError("shared clip scale changed")
+        println(
+            "CART_GRIP_PASS (live wooden torso/shoulders, anchored gait grip, natural arms/wrists, measured mesh contact, clothing, bank, walking legs, render isolation)",
+        )
     }
 }

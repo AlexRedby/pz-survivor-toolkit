@@ -58,10 +58,12 @@ object VehicleOwnershipChecks {
         val car = car(1)
         seat(car, driver)
 
-        // Original collision/seat/release methods reproduce the stale authority without a network overlay.
+        // Original collision/seat/release methods reproduce the stale authority without a network
+        // overlay.
         car.authorizationServerCollide(0, true)
         car.authorizationServerOnSeat(driver, true)
-        if (car.netPlayerId.toInt() != 0) throw AssertionError("baseline collision owner was replaced")
+        if (car.netPlayerId.toInt() != 0)
+            throw AssertionError("baseline collision owner was replaced")
         car.authorizationServerCollide((-1).toShort(), false)
         if (car.netPlayerId.toInt() != -1) throw AssertionError("baseline late release")
         VehicleOwnership.reconcile(car, false)
@@ -70,7 +72,10 @@ object VehicleOwnershipChecks {
         owned(car, 4)
         NativeChecks.set(car, "timeSinceLastAuth", 3f)
         VehicleOwnership.reconcile(car, true)
-        val timer = BaseVehicle::class.java.getDeclaredField("timeSinceLastAuth").apply { isAccessible = true }
+        val timer =
+            BaseVehicle::class.java.getDeclaredField("timeSinceLastAuth").apply {
+                isAccessible = true
+            }
         if (timer.getFloat(car) != 3f) throw AssertionError("unchanged owner refreshed every frame")
 
         car.netPlayerId = 0
@@ -112,13 +117,18 @@ object VehicleOwnershipChecks {
         trailer.netPlayerAuthorization = BaseVehicle.Authorization.LocalCollide
         trailer.netPlayerId = 0
         VehicleOwnership.reconcile(car, true)
-        if (car.netPlayerId.toInt() != 0 || trailer.netPlayerId.toInt() != 0
-            || car.netPlayerAuthorization !== BaseVehicle.Authorization.LocalCollide)
+        if (
+            car.netPlayerId.toInt() != 0 ||
+                trailer.netPlayerId.toInt() != 0 ||
+                car.netPlayerAuthorization !== BaseVehicle.Authorization.LocalCollide
+        )
             throw AssertionError("idle collision/towing authority changed")
         seat(car, driver)
         NativeChecks.set(car, "vehicleTowing", null)
         VehicleOwnership.reconcile(trailer, true)
         if (trailer.netPlayerId.toInt() != 0) throw AssertionError("asymmetric towing link changed")
-        println("VEHICLE_OWNERSHIP_CHECKS_PASS (native race, unsupported/client/dead/disconnected/asymmetric guards, idempotency, towing, idle collision)")
+        println(
+            "VEHICLE_OWNERSHIP_CHECKS_PASS (native race, unsupported/client/dead/disconnected/asymmetric guards, idempotency, towing, idle collision)",
+        )
     }
 }

@@ -14,11 +14,20 @@ object InventoryMembershipChecks {
         val environment = platform.newEnvironment()
         val thread = KahluaThread(platform, environment)
         thread.debugOwnerThread = Thread.currentThread()
-        Files.newBufferedReader(root.resolve(
-                "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/InventoryMembership.lua")).use { reader ->
-            environment.rawset("TestInventoryMembership", thread.call(
-                    LuaCompiler.loadis(reader, "InventoryMembership.lua", environment), emptyArray<Any?>()))
-        }
+        Files.newBufferedReader(
+                root.resolve(
+                    "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/InventoryMembership.lua",
+                ),
+            )
+            .use { reader ->
+                environment.rawset(
+                    "TestInventoryMembership",
+                    thread.call(
+                        LuaCompiler.loadis(reader, "InventoryMembership.lua", environment),
+                        emptyArray<Any?>(),
+                    ),
+                )
+            }
         val first = zombie.inventory.ItemContainer()
         val second = zombie.inventory.ItemContainer()
         val nativeContainers = java.util.ArrayList<zombie.inventory.ItemContainer>()
@@ -29,9 +38,14 @@ object InventoryMembershipChecks {
         environment.rawset("TestReachableContainerA", first)
         environment.rawset("TestReachableContainerB", second)
         Files.newBufferedReader(root.resolve("tests/test_inventory_membership.lua")).use { reader ->
-            thread.call(LuaCompiler.loadis(reader, "test_inventory_membership.lua", environment), emptyArray<Any?>())
+            thread.call(
+                LuaCompiler.loadis(reader, "test_inventory_membership.lua", environment),
+                emptyArray<Any?>(),
+            )
         }
-        System.out.println("INVENTORY_MEMBERSHIP_CHECKS_PASS (same Lua helper and vectors in native Kahlua)")
+        System.out.println(
+            "INVENTORY_MEMBERSHIP_CHECKS_PASS (same Lua helper and vectors in native Kahlua)",
+        )
         kotlin.system.exitProcess(0)
     }
 }

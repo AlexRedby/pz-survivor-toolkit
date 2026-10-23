@@ -59,9 +59,12 @@ object MannequinZoneChecks {
         val entries = objects.iterator()
         while (entries.advance()) {
             val row = entries.value as KahluaTable
-            if (java.lang.Double.valueOf(13583.0).equals(row.rawget("x"))
-                && java.lang.Double.valueOf(1299.0).equals(row.rawget("y"))
-                && "Mannequin" == row.rawget("type")) return row
+            if (
+                java.lang.Double.valueOf(13583.0).equals(row.rawget("x")) &&
+                    java.lang.Double.valueOf(1299.0).equals(row.rawget("y")) &&
+                    "Mannequin" == row.rawget("type")
+            )
+                return row
         }
         throw AssertionError("Native mannequin row absent")
     }
@@ -74,7 +77,9 @@ object MannequinZoneChecks {
 
     private fun snapshot(instance: IsoMannequin): Map<String, Any?> {
         val result = LinkedHashMap<String, Any?>()
-        for (field in IsoMannequin::class.java.declaredFields) if (!Modifier.isStatic(field.modifiers)) {
+        for (field in IsoMannequin::class.java.declaredFields) if (
+            !Modifier.isStatic(field.modifiers)
+        ) {
             field.isAccessible = true
             result[field.name] = field.get(instance)
         }
@@ -99,7 +104,10 @@ object MannequinZoneChecks {
         val previous = files.put(key, modified.toString())
         try {
             Files.writeString(modified, "-- modified asset")
-            require(zombie.ZomboidFileSystem.instance.getString(file) == modified.toString(), "Asset override fixture not active")
+            require(
+                zombie.ZomboidFileSystem.instance.getString(file) == modified.toString(),
+                "Asset override fixture not active",
+            )
             MannequinZoneData.loaded(FILE, null, true)
             require(row.rawget("properties") == null, "Modified asset normalized: $file")
         } finally {
@@ -112,47 +120,80 @@ object MannequinZoneChecks {
         val errors = intArrayOf(0)
         val registrations = intArrayOf(0)
         val luaLog = table()
-        luaLog.rawset("error", JavaFunction { frame, _ ->
-            require(frame.get(1).toString().contains("Mannequin zone missing properties"), "Unexpected native diagnostic")
-            errors[0]++
-            0
-        })
+        luaLog.rawset(
+            "error",
+            JavaFunction { frame, _ ->
+                require(
+                    frame.get(1).toString().contains("Mannequin zone missing properties"),
+                    "Unexpected native diagnostic",
+                )
+                errors[0]++
+                0
+            },
+        )
         val debug = table()
         debug.rawset("Lua", luaLog)
         LuaManager.env.rawset("DebugType", debug)
         val world = table()
-        world.rawset("registerMannequinZone", JavaFunction { frame, _ ->
-            register(grid, frame.get(8) as KahluaTable?, true)
-            registrations[0]++
-            0
-        })
-        LuaManager.env.rawset("getWorld", JavaFunction { frame, _ ->
-            frame.push(world)
-            1
-        })
+        world.rawset(
+            "registerMannequinZone",
+            JavaFunction { frame, _ ->
+                register(grid, frame.get(8) as KahluaTable?, true)
+                registrations[0]++
+                0
+            },
+        )
+        LuaManager.env.rawset(
+            "getWorld",
+            JavaFunction { frame, _ ->
+                frame.push(world)
+                1
+            },
+        )
         var handler = Files.readString(Path.of("media/lua/server/metazones/metazoneHandler.lua"))
-        handler = handler.substring(0, handler.indexOf("local function handleRoomTone")) + "\nreturn handleMannequinZone"
+        handler =
+            handler.substring(0, handler.indexOf("local function handleRoomTone")) +
+                "\nreturn handleMannequinZone"
         val thread = KahluaThread(LuaManager.platform, LuaManager.env)
-        val function = thread.call(LuaCompiler.loadis(StringReader(handler), "native-handler", LuaManager.env), null, null, null)
+        val function =
+            thread.call(
+                LuaCompiler.loadis(StringReader(handler), "native-handler", LuaManager.env),
+                null,
+                null,
+                null,
+            )
         thread.call(function, FILE, loadSource(source), null)
-        require(errors[0] == 1 && registrations[0] == 0, "Original malformed zone did not retain native error")
+        require(
+            errors[0] == 1 && registrations[0] == 0,
+            "Original malformed zone did not retain native error",
+        )
         repair(source)
         thread.call(function, FILE, findRow(), null)
-        require(errors[0] == 1 && registrations[0] == 1, "Normalized row did not use native registration")
+        require(
+            errors[0] == 1 && registrations[0] == 1,
+            "Normalized row did not use native registration",
+        )
         val unknown = loadSource(source)
         unknown.rawset("x", 13584.0)
         MannequinZoneData.loaded(FILE, null, true)
         thread.call(function, FILE, unknown, null)
-        require(errors[0] == 2 && registrations[0] == 1, "Unknown malformed zone diagnostic suppressed")
+        require(
+            errors[0] == 2 && registrations[0] == 1,
+            "Unknown malformed zone diagnostic suppressed",
+        )
         grid.getCellData(53, 5).mannequinZones.clear()
     }
 
     private fun woven(grid: IsoMetaGrid, mannequin: IsoMannequin, fromZone: Method) {
-        PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", MannequinZoneChecks::class.java.classLoader)
+        PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            MannequinZoneChecks::class.java.classLoader,
+        )
         require(MannequinZoneData.SUPPORTED, "Native engine hashes changed")
         LuaManager.thread = KahluaThread(LuaManager.platform, LuaManager.env)
         LuaManager.thread.debugOwnerThread = Thread.currentThread()
-        LuaManager.caller = se.krka.kahlua.integration.LuaCaller(se.krka.kahlua.converter.KahluaConverterManager())
+        LuaManager.caller =
+            se.krka.kahlua.integration.LuaCaller(se.krka.kahlua.converter.KahluaConverterManager())
         LuaManager.loaded.remove(FILE)
         LuaManager.env.rawset("objects", table())
         LuaManager.RunLua(FILE, true)
@@ -164,10 +205,16 @@ object MannequinZoneChecks {
         val custom = table()
         custom.rawset("Outfit", "CostumeWizard")
         val later = register(grid, custom, false)
-        require(zones[0] === later && zones[1] === repaired, "Actual registration hook masked later custom zone")
+        require(
+            zones[0] === later && zones[1] === repaired,
+            "Actual registration hook masked later custom zone",
+        )
         set(mannequin, IsoMannequin::class.java, "outfit", null)
         fromZone.invoke(mannequin)
-        require("CostumeWizard" == snapshot(mannequin)["outfit"], "Woven native zone application changed custom outfit")
+        require(
+            "CostumeWizard" == snapshot(mannequin)["outfit"],
+            "Woven native zone application changed custom outfit",
+        )
         val stale = table()
         stale.rawset("name", "")
         stale.rawset("type", "Mannequin")
@@ -192,8 +239,10 @@ object MannequinZoneChecks {
         zombie.ZomboidFileSystem.instance.base.set(Path.of(".").toFile())
         Core.gameMap = "Muldraugh, KY"
         val grid = grid()
-        val unsafeField = Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val world = (unsafeField.get(null) as Unsafe).allocateInstance(IsoWorld::class.java) as IsoWorld
+        val unsafeField =
+            Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
+        val world =
+            (unsafeField.get(null) as Unsafe).allocateInstance(IsoWorld::class.java) as IsoWorld
         set(world, IsoWorld::class.java, "metaGrid", grid)
         IsoWorld.instance = world
         val source = Files.readString(Path.of(FILE))
@@ -220,9 +269,15 @@ object MannequinZoneChecks {
         val square = IsoGridSquare(null, null, 13583, 1299, 0)
         val mannequin = IsoMannequin(null, square, sprite)
         square.objects.add(mannequin)
-        val fromSprite = IsoMannequin::class.java.getDeclaredMethod("getPropertiesFromSprite").apply { isAccessible = true }
+        val fromSprite =
+            IsoMannequin::class.java.getDeclaredMethod("getPropertiesFromSprite").apply {
+                isAccessible = true
+            }
         fromSprite.invoke(mannequin)
-        val fromZone = IsoMannequin::class.java.getDeclaredMethod("getPropertiesFromZone").apply { isAccessible = true }
+        val fromZone =
+            IsoMannequin::class.java.getDeclaredMethod("getPropertiesFromZone").apply {
+                isAccessible = true
+            }
         val original = snapshot(mannequin)
         fromZone.invoke(mannequin)
         require(original == snapshot(mannequin), "Empty baseline changed")
@@ -240,7 +295,10 @@ object MannequinZoneChecks {
         fromZone.invoke(mannequin)
         require("Police_SWAT" == snapshot(mannequin)["outfit"], "Native custom outfit not applied")
         val second = register(grid, custom, true)
-        require(zones[0] === first && zones[1] === second && zones[2] === repaired, "Custom order changed")
+        require(
+            zones[0] === first && zones[1] === second && zones[2] === repaired,
+            "Custom order changed",
+        )
         val untracked = register(grid, table(), true)
         require(zones[2] === untracked && zones[3] === repaired, "Untracked empty zone reordered")
         zones.clear()
@@ -253,7 +311,10 @@ object MannequinZoneChecks {
         properties.rawset("Outfit", "Police_SWAT")
         val changed = register(grid, properties, true)
         val after = register(grid, table(), true)
-        require(zones[0] === changed && zones[1] === after, "Changed properties treated as no override")
+        require(
+            zones[0] === changed && zones[1] === after,
+            "Changed properties treated as no override",
+        )
         zones.clear()
         val invalid = loadSource(source)
         invalid.rawset("x", 13584.0)

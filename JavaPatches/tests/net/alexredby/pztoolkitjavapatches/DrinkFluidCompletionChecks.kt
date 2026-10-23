@@ -5,9 +5,9 @@ import java.nio.file.Path
 import se.krka.kahlua.j2se.J2SEPlatform
 import se.krka.kahlua.luaj.compiler.LuaCompiler
 import se.krka.kahlua.vm.JavaFunction
-import se.krka.kahlua.vm.LuaClosure
 import se.krka.kahlua.vm.KahluaTable
 import se.krka.kahlua.vm.KahluaThread
+import se.krka.kahlua.vm.LuaClosure
 import se.krka.kahlua.vm.Prototype
 
 /** Executes the same source-based Lua regressions with the game's table semantics. */
@@ -34,30 +34,59 @@ object DrinkFluidCompletionChecks {
         thread.debugOwnerThread = Thread.currentThread()
         environment.rawset("ProjectRoot", root.toString())
         environment.rawset("NativeActionRoot", Path.of("media/lua").toAbsolutePath().toString())
-        environment.rawset("NativeReadText", JavaFunction { frame, _ ->
-            try { frame.push(Files.readString(Path.of(frame.get(0) as String?))); 1 }
-            catch (error: Exception) { throw RuntimeException(error) }
-        })
-        environment.rawset("NativeFilenameOfClosure", JavaFunction { frame, _ ->
-            val closure = frame.get(0)
-            frame.push(if (closure is LuaClosure) closure.prototype.filename else null)
-            1
-        })
-        environment.rawset("loadstring", JavaFunction { frame, count ->
-            try {
-                frame.push(compile(frame.get(0) as String?, if (count > 1) frame.get(1) as String? else "=(loadstring)", environment))
+        environment.rawset(
+            "NativeReadText",
+            JavaFunction { frame, _ ->
+                try {
+                    frame.push(Files.readString(Path.of(frame.get(0) as String?)))
+                    1
+                } catch (error: Exception) {
+                    throw RuntimeException(error)
+                }
+            },
+        )
+        environment.rawset(
+            "NativeFilenameOfClosure",
+            JavaFunction { frame, _ ->
+                val closure = frame.get(0)
+                frame.push(if (closure is LuaClosure) closure.prototype.filename else null)
                 1
-            } catch (error: Exception) { throw RuntimeException(error) }
-        })
-        environment.rawset("loadfile", JavaFunction { frame, _ ->
-            try {
-                val path = frame.get(0) as String?
-                frame.push(compile(Files.readString(Path.of(path)), path, environment))
-                1
-            } catch (error: Exception) { throw RuntimeException(error) }
-        })
+            },
+        )
+        environment.rawset(
+            "loadstring",
+            JavaFunction { frame, count ->
+                try {
+                    frame.push(
+                        compile(
+                            frame.get(0) as String?,
+                            if (count > 1) frame.get(1) as String? else "=(loadstring)",
+                            environment,
+                        ),
+                    )
+                    1
+                } catch (error: Exception) {
+                    throw RuntimeException(error)
+                }
+            },
+        )
+        environment.rawset(
+            "loadfile",
+            JavaFunction { frame, _ ->
+                try {
+                    val path = frame.get(0) as String?
+                    frame.push(compile(Files.readString(Path.of(path)), path, environment))
+                    1
+                } catch (error: Exception) {
+                    throw RuntimeException(error)
+                }
+            },
+        )
         val path = root.resolve("tests/test_drink_fluid_boundary.lua")
-        thread.call(compile(Files.readString(path), path.toString(), environment), emptyArray<Any?>())
+        thread.call(
+            compile(Files.readString(path), path.toString(), environment),
+            emptyArray<Any?>(),
+        )
         if (!true.equals(environment.rawget("TestDrinkFluidBoundaryPassed"))) {
             throw AssertionError("Drink boundary vectors did not reach their completion marker")
         }

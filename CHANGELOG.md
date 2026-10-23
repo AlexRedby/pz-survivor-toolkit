@@ -1071,6 +1071,11 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.49
+
+- **Kotlin boundaries:** Migrate the read-only crafting, fluid, item-stat, fence and vehicle-trace patch facades to Kotlin while preserving static JVM entry points, patch annotations and class monitors. Retain Java where advice writes back into instrumented arguments/locals/results and where bootstrap tests must start without the mod runtime.
+- **Kotlin style:** Apply a pinned Kotlin-language formatting profile to handwritten runtime and regression sources, add a repeatable format check and simplify safe nullable state reads. Preserve generated numeric tables, native identities, wire data, arithmetic order and initialization behavior.
+
 ### 0.1.48
 
 - **Kotlin pilot:** Port the TV/Radio video-path helper to Kotlin while retaining its Java patch wrapper and existing path/cache guards. Build mixed Java/Kotlin sources with the pinned Kotlin 2.3.0 compiler and bundle its standard library in a private package beside the game's Kotlin 1.4.10; keep early font bootstrap Java-only. Add late-JAR runtime loading coverage alongside the native video-path regression.

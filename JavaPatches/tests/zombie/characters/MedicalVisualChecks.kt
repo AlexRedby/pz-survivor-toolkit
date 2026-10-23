@@ -37,11 +37,18 @@ object MedicalVisualChecks {
         var local = false
         var failNotification = false
         var notifications = 0
+
         override fun isLocalPlayer(): Boolean = local
-        override fun getECSComponentMap(): HashMap<Class<out ECSComponent>, ECSComponent> = HashMap()
+
+        override fun getECSComponentMap(): HashMap<Class<out ECSComponent>, ECSComponent> =
+            HashMap()
+
         override fun getWornItems(): WornItems = worn
+
         override fun getInventory(): ItemContainer = inventoryData
+
         override fun resetModelNextFrame() {}
+
         override fun onWornItemsChanged() {
             notifications++
             if (failNotification) throw IllegalStateException("native cleanup sentinel")
@@ -51,8 +58,11 @@ object MedicalVisualChecks {
     class Visual : Clothing(null, null, null, null as String?, null, null) {
         lateinit var fullTypeData: String
         lateinit var itemVisual: ItemVisual
+
         override fun getFullType(): String = fullTypeData
+
         override fun getBodyLocation(): ItemBodyLocation = ItemBodyLocation.BANDAGE
+
         override fun getVisual(): ItemVisual = itemVisual
     }
 
@@ -61,26 +71,41 @@ object MedicalVisualChecks {
         lateinit var sent: MutableList<List<Int>>
         lateinit var active: SyncClothingPacket
         lateinit var outgoing: ByteBuffer
+
         override fun isReady(): Boolean = readyForPackets
+
         override fun getPacket(type: PacketType): INetworkPacket {
             require(type == PacketType.SyncClothing, "unexpected packet")
             active = SyncClothingPacket()
             return active
         }
+
         override fun startPacket(): ByteBufferWriter {
             outgoing = ByteBuffer.allocate(4096)
             return ByteBufferWriter(outgoing)
         }
+
         override fun isLimitExceeded(type: PacketType): Boolean = false
+
         override fun isHashEquals(type: PacketType, hash: Int?): Boolean = false
-        override fun cancelPacket() { throw AssertionError("native clothing serialization failed") }
+
+        override fun cancelPacket() {
+            throw AssertionError("native clothing serialization failed")
+        }
+
         override fun endPacket(priority: Int, reliability: Int, ordering: Byte) {
             outgoing.flip()
-            require(outgoing.get() == 134.toByte() && outgoing.short == PacketType.SyncClothing.id, "wrong native packet header")
+            require(
+                outgoing.get() == 134.toByte() && outgoing.short == PacketType.SyncClothing.id,
+                "wrong native packet header",
+            )
             outgoing.short
             outgoing.get()
             val descriptions = get(SyncClothingPacket::class.java, active, "items") as ArrayList<*>
-            require(java.lang.Byte.toUnsignedInt(outgoing.get()) == descriptions.size, "native wire count differs")
+            require(
+                java.lang.Byte.toUnsignedInt(outgoing.get()) == descriptions.size,
+                "native wire count differs",
+            )
             val ids = ArrayList<Int>()
             for (item in descriptions) ids.add(get(item!!.javaClass, item, "itemId") as Int)
             sent.add(ids)
@@ -137,7 +162,10 @@ object MedicalVisualChecks {
     private fun removed(p: Patient, models: Any, item: InventoryItem) {
         val before = p.notifications
         remove.invoke(models, p, item.fullType)
-        require(!p.worn.contains(item) && !p.inventoryData.items.contains(item), "native visual removal lost")
+        require(
+            !p.worn.contains(item) && !p.inventoryData.items.contains(item),
+            "native visual removal lost",
+        )
         require(p.notifications == before + 1, "native cleanup notification lost")
     }
 
@@ -153,27 +181,52 @@ object MedicalVisualChecks {
         GameClient.client = true
         GameClient.connection = connection
         val type = Class.forName("zombie.characters.IsoGameCharacter\$Bandages")
-        remove = type.getDeclaredMethod("removeBandageModel", IsoGameCharacter::class.java, String::class.java).apply { isAccessible = true }
+        remove =
+            type
+                .getDeclaredMethod(
+                    "removeBandageModel",
+                    IsoGameCharacter::class.java,
+                    String::class.java,
+                )
+                .apply { isAccessible = true }
         require(Main.MEDICAL_VISUALS_SUPPORTED, "unsupported native removal baseline")
         val original = patient()
         val item = visual(original, 100)
         val nativeModels = models(item)
         removed(original, nativeModels, item)
         require(connection.sent.isEmpty(), "native removal unexpectedly synced")
-        PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", MedicalVisualChecks::class.java.classLoader)
+        PatchEngine.applyPatches(
+            "net.alexredby.pztoolkitjavapatches",
+            MedicalVisualChecks::class.java.classLoader,
+        )
         val p = patient()
         val one = visual(p, 101)
         val two = visual(p, 102)
         val keep = visual(p, 103)
         val first = models(one)
         val second = models(two)
-        require(MedicalVisuals.before(first, p, one.fullTypeData, false) == null, "unsupported code accepted")
-        require(MedicalVisuals.before(first, p, one.fullTypeData, true) === one, "direct before failed")
+        require(
+            MedicalVisuals.before(first, p, one.fullTypeData, false) == null,
+            "unsupported code accepted",
+        )
+        require(
+            MedicalVisuals.before(first, p, one.fullTypeData, true) === one,
+            "direct before failed",
+        )
         removed(p, first, one)
-        require(connection.sent == listOf(listOf(102, 103)), "first native clothing snapshot wrong: ${connection.sent}")
+        require(
+            connection.sent == listOf(listOf(102, 103)),
+            "first native clothing snapshot wrong: ${connection.sent}",
+        )
         removed(p, second, two)
-        require(connection.sent == listOf(listOf(102, 103), listOf(103)), "duplicate model removal snapshot wrong")
-        require(p.worn.contains(keep) && p.inventoryData.items.contains(keep), "unrelated model removed")
+        require(
+            connection.sent == listOf(listOf(102, 103), listOf(103)),
+            "duplicate model removal snapshot wrong",
+        )
+        require(
+            p.worn.contains(keep) && p.inventoryData.items.contains(keep),
+            "unrelated model removed",
+        )
         remove.invoke(first, p, "Base.NotPresent")
         remove.invoke(first, p, one.fullTypeData)
         require(connection.sent.size == 2, "missing/already removed model sent a snapshot")
@@ -197,10 +250,20 @@ object MedicalVisualChecks {
             remove.invoke(models(partialItem), partial, partialItem.fullTypeData)
             throw AssertionError("native failure suppressed")
         } catch (expected: InvocationTargetException) {
-            require(expected.cause is IllegalStateException && expected.cause!!.message == "native cleanup sentinel", "unexpected native failure")
+            require(
+                expected.cause is IllegalStateException &&
+                    expected.cause!!.message == "native cleanup sentinel",
+                "unexpected native failure",
+            )
         }
-        require(!partial.worn.contains(partialItem) && !partial.inventoryData.items.contains(partialItem)
-            && connection.sent.size == 2, "failed cleanup changed native effects or sent a partial snapshot")
-        println("MEDICAL_VISUAL_CHECKS_PASS (native missing sync, woven exact ordered IDs, duplicates, cleanup/failure, no-op, remote/SP/server/disconnected/unsupported guards)")
+        require(
+            !partial.worn.contains(partialItem) &&
+                !partial.inventoryData.items.contains(partialItem) &&
+                connection.sent.size == 2,
+            "failed cleanup changed native effects or sent a partial snapshot",
+        )
+        println(
+            "MEDICAL_VISUAL_CHECKS_PASS (native missing sync, woven exact ordered IDs, duplicates, cleanup/failure, no-op, remote/SP/server/disconnected/unsupported guards)",
+        )
     }
 }

@@ -7,7 +7,13 @@ import zombie.characters.CharacterTimedActions.LuaTimedActionNew
 object ActionCompletion {
     private val current = ThreadLocal<Scope>()
 
-    class Scope(previous: Scope?, action: KahluaTable?, callback: Any?, finish: Any?, phase: String?) {
+    class Scope(
+        previous: Scope?,
+        action: KahluaTable?,
+        callback: Any?,
+        finish: Any?,
+        phase: String?,
+    ) {
         @JvmField val previous = previous
         @JvmField val action = action
         @JvmField val callback = callback
@@ -28,7 +34,14 @@ object ActionCompletion {
         val action: KahluaTable? = (nativeAction ?: throw NullPointerException()).getTable()
         val result = LuaManager.caller.pcall(LuaManager.thread, begin, action, phase)
         if (result.size < 2 || !true.equals(result[0]) || !true.equals(result[1])) return null
-        val scope = Scope(current.get(), action, (action ?: throw NullPointerException()).rawget(phase), finish, phase)
+        val scope =
+            Scope(
+                current.get(),
+                action,
+                (action ?: throw NullPointerException()).rawget(phase),
+                finish,
+                phase,
+            )
         current.set(scope)
         return scope
     }
@@ -46,9 +59,17 @@ object ActionCompletion {
     @JvmStatic
     fun observe(callback: Any?, argument: Any?, result: Array<out Any?>?) {
         val scope = current.get()
-        if (scope != null && scope.callback != null && scope.callback === callback && scope.action === argument
-            && (result == null || result.isEmpty() || !true.equals(result[0])
-                || "complete" == scope.phase && result.size > 1 && false.equals(result[1]))) scope.failed = true
+        if (
+            scope != null &&
+                scope.callback != null &&
+                scope.callback === callback &&
+                scope.action === argument &&
+                (result == null ||
+                    result.isEmpty() ||
+                    !true.equals(result[0]) ||
+                    "complete" == scope.phase && result.size > 1 && false.equals(result[1]))
+        )
+            scope.failed = true
     }
 
     @JvmStatic
@@ -56,7 +77,12 @@ object ActionCompletion {
         if (scope == null) return
         if (scope.previous == null) current.remove() else current.set(scope.previous)
         if (scope.finish != null)
-            LuaManager.caller.pcall(LuaManager.thread, scope.finish, scope.action, scope.phase,
-                failure == null && !scope.failed)
+            LuaManager.caller.pcall(
+                LuaManager.thread,
+                scope.finish,
+                scope.action,
+                scope.phase,
+                failure == null && !scope.failed,
+            )
     }
 }

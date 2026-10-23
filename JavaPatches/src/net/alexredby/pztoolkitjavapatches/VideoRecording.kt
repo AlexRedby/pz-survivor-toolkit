@@ -6,11 +6,11 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
+import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL15
 import org.lwjgl.opengl.GL21
 import org.lwjgl.opengl.GL30
-import org.lwjgl.glfw.GLFW
 import org.lwjgl.system.MemoryUtil
 import org.lwjglx.opengl.Display
 import se.krka.kahlua.integration.annotations.LuaMethod
@@ -24,18 +24,28 @@ object VideoRecording {
     private var current: Session? = null
 
     init {
-        Runtime.getRuntime().addShutdownHook(Thread({
-            val session = synchronized(VideoRecording::class.java) {
-                val session = current
-                if (session == null || !session.active()) return@Thread
-                session.stop(null)
-                session
-            }
-            try { session.worker!!.join(4_000) }
-            catch (_: InterruptedException) { Thread.currentThread().interrupt() }
-            val process = session.process
-            if (process != null && process.isAlive()) process.destroyForcibly()
-        }, "toolkit-video-shutdown"))
+        Runtime.getRuntime()
+            .addShutdownHook(
+                Thread(
+                    {
+                        val session =
+                            synchronized(VideoRecording::class.java) {
+                                val session = current
+                                if (session == null || !session.active()) return@Thread
+                                session.stop(null)
+                                session
+                            }
+                        try {
+                            session.worker!!.join(4_000)
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                        }
+                        val process = session.process
+                        if (process != null && process.isAlive()) process.destroyForcibly()
+                    },
+                    "toolkit-video-shutdown",
+                ),
+            )
     }
 
     @JvmStatic
@@ -44,19 +54,31 @@ object VideoRecording {
     fun start(directory: String?, ffmpeg: String?): Boolean {
         if (current?.active() == true) return false
         try {
-            if (!Main.VIDEO_SUPPORTED) throw IllegalStateException("Unsupported B42.21 display bytecode")
+            if (!Main.VIDEO_SUPPORTED)
+                throw IllegalStateException("Unsupported B42.21 display bytecode")
             val root = Path.of(ZomboidFileSystem.instance.getCacheDir()).toRealPath()
             var output = Path.of(directory)
-            if (!output.isAbsolute() || !output.normalize().startsWith(root) || output.normalize().equals(root))
-                throw IllegalArgumentException("Output must be an absolute subdirectory of this profile: $root")
+            if (
+                !output.isAbsolute() ||
+                    !output.normalize().startsWith(root) ||
+                    output.normalize().equals(root)
+            )
+                throw IllegalArgumentException(
+                    "Output must be an absolute subdirectory of this profile: $root",
+                )
             // Resolve existing parents before creating anything, including symlink escapes.
             var parent = output.normalize()
             while (!Files.exists(parent)) parent = parent.getParent()
-            if (!parent.toRealPath().startsWith(root)) throw IllegalArgumentException("Output escapes profile through symlink")
+            if (!parent.toRealPath().startsWith(root))
+                throw IllegalArgumentException("Output escapes profile through symlink")
             Files.createDirectories(output)
             output = output.toRealPath()
             if (!output.startsWith(root)) throw IllegalArgumentException("Output escapes profile")
-            if (ffmpeg == null || !Path.of(ffmpeg).isAbsolute() || !Files.isExecutable(Path.of(ffmpeg)))
+            if (
+                ffmpeg == null ||
+                    !Path.of(ffmpeg).isAbsolute() ||
+                    !Files.isExecutable(Path.of(ffmpeg))
+            )
                 throw IllegalArgumentException("Pass the absolute executable path to FFmpeg")
             val session = Session(output, ffmpeg)
             current = session
@@ -108,7 +130,8 @@ object VideoRecording {
         val session = current
         if (session == null || !session.active() || session.stopped != 0L) return
         try {
-            val width = IntArray(1); val height = IntArray(1)
+            val width = IntArray(1)
+            val height = IntArray(1)
             GLFW.glfwGetFramebufferSize(Display.getWindow(), width, height)
             session.capture(width[0], height[0], System.nanoTime())
         } catch (error: Throwable) {
@@ -118,17 +141,24 @@ object VideoRecording {
 
     @JvmStatic
     @JvmName("slot")
-    internal fun slot(elapsed: Long): Long = Math.max(0L, elapsed) / 1_000_000_000L * FPS +
-        Math.max(0L, elapsed) % 1_000_000_000L * FPS / 1_000_000_000L
+    internal fun slot(elapsed: Long): Long =
+        Math.max(0L, elapsed) / 1_000_000_000L * FPS +
+            Math.max(0L, elapsed) % 1_000_000_000L * FPS / 1_000_000_000L
+
     @JvmStatic
     @JvmName("frameCount")
-    internal fun frameCount(elapsed: Long): Long = slot(elapsed) +
-        if (Math.max(0L, elapsed) % 1_000_000_000L * FPS % 1_000_000_000L == 0L) 0 else 1
+    internal fun frameCount(elapsed: Long): Long =
+        slot(elapsed) +
+            if (Math.max(0L, elapsed) % 1_000_000_000L * FPS % 1_000_000_000L == 0L) 0 else 1
 
     @JvmRecord
     private data class Frame(val bytes: ByteArray?, val slot: Long) {
-        override fun equals(other: Any?): Boolean = other is Frame && bytes === other.bytes && slot == other.slot
-        override fun hashCode(): Int = 31 * System.identityHashCode(bytes) + java.lang.Long.hashCode(slot)
+        override fun equals(other: Any?): Boolean =
+            other is Frame && bytes === other.bytes && slot == other.slot
+
+        override fun hashCode(): Int =
+            31 * System.identityHashCode(bytes) + java.lang.Long.hashCode(slot)
+
         override fun toString(): String = "Frame[bytes=$bytes, slot=$slot]"
     }
 
@@ -158,33 +188,50 @@ object VideoRecording {
             this.executable = executable
             worker = Thread(::encode, "toolkit-video-encoder").apply { isDaemon = true }
         }
+
         constructor(error: String) {
-            this.error = error; state = "failed"; file = null; log = null; executable = ""; worker = null
+            this.error = error
+            state = "failed"
+            file = null
+            log = null
+            executable = ""
+            worker = null
         }
-        fun active(): Boolean = state.equals("starting") || state.equals("recording") || state.equals("stopping")
+
+        fun active(): Boolean =
+            state.equals("starting") || state.equals("recording") || state.equals("stopping")
 
         fun stop(reason: String?) {
             if (reason != null) error = reason
             if (stopped != 0L) return
             stopped = System.nanoTime()
             state = "stopping"
-            val watchdog = Thread({
-                try {
-                    worker!!.join(15_000)
-                    if (worker.isAlive()) {
-                        error = "FFmpeg did not finish within 15 seconds of stop; see $log"
-                        process?.destroyForcibly()
-                        worker.interrupt()
-                    }
-                } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
-            }, "toolkit-video-stop")
+            val watchdog =
+                Thread(
+                    {
+                        try {
+                            worker!!.join(15_000)
+                            if (worker.isAlive()) {
+                                error = "FFmpeg did not finish within 15 seconds of stop; see $log"
+                                process?.destroyForcibly()
+                                worker.interrupt()
+                            }
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                        }
+                    },
+                    "toolkit-video-stop",
+                )
             watchdog.isDaemon = true
             watchdog.start()
         }
 
         fun capture(w: Int, h: Int, now: Long) {
             if (w <= 0 || h <= 0) return
-            if (width != 0 && (w != width || h != height)) { stop("Framebuffer resized during recording"); return }
+            if (width != 0 && (w != width || h != height)) {
+                stop("Framebuffer resized during recording")
+                return
+            }
             val index = slot(now - started)
             if (index <= lastSlot) return
             lastSlot = index
@@ -192,13 +239,17 @@ object VideoRecording {
                 // shortcut: bounded to 4K (four RGBA buffers), revisit for larger test windows.
                 if (w.toLong() * h > 3840L * 2160 || w > 4096 || h > 4096)
                     throw IllegalArgumentException("Framebuffer exceeds 4K capture limit: ${w}x$h")
-                width = w; height = h
+                width = w
+                height = h
                 val bytes = Math.multiplyExact(Math.multiplyExact(w, h), 4)
                 pixels = MemoryUtil.memAlloc(bytes)
                 repeat(3) { free.add(ByteArray(bytes)) }
             }
             val data = free.poll()
-            if (data == null) { dropped++; return }
+            if (data == null) {
+                dropped++
+                return
+            }
             val framebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
             val packBuffer = GL11.glGetInteger(GL21.GL_PIXEL_PACK_BUFFER_BINDING)
             val alignment = GL11.glGetInteger(GL11.GL_PACK_ALIGNMENT)
@@ -243,27 +294,66 @@ object VideoRecording {
                     while (stopped == 0L || !ready.isEmpty()) {
                         val next = ready.poll(100, TimeUnit.MILLISECONDS) ?: continue
                         if (pipe == null) {
-                            process = ProcessBuilder(executable, "-hide_banner", "-loglevel", "warning", "-y",
-                                "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", "${width}x$height",
-                                "-framerate", "30", "-i", "pipe:0", "-an", "-vf", "vflip,pad=ceil(iw/2)*2:ceil(ih/2)*2",
-                                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-                                "-movflags", "+faststart", (file ?: throw NullPointerException()).toString())
-                                .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(log!!.toFile()).start()
+                            process =
+                                ProcessBuilder(
+                                        executable,
+                                        "-hide_banner",
+                                        "-loglevel",
+                                        "warning",
+                                        "-y",
+                                        "-f",
+                                        "rawvideo",
+                                        "-pixel_format",
+                                        "rgba",
+                                        "-video_size",
+                                        "${width}x$height",
+                                        "-framerate",
+                                        "30",
+                                        "-i",
+                                        "pipe:0",
+                                        "-an",
+                                        "-vf",
+                                        "vflip,pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                                        "-c:v",
+                                        "libx264",
+                                        "-preset",
+                                        "veryfast",
+                                        "-crf",
+                                        "18",
+                                        "-pix_fmt",
+                                        "yuv420p",
+                                        "-movflags",
+                                        "+faststart",
+                                        (file ?: throw NullPointerException()).toString(),
+                                    )
+                                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                                    .redirectError(log!!.toFile())
+                                    .start()
                             pipe = process!!.getOutputStream()
                             synchronized(VideoRecording::class.java) {
                                 if (stopped == 0L) state = "recording"
                             }
                         }
-                        while (frames < next.slot) write(pipe, if (previous == null) next.bytes else previous.bytes)
+                        while (frames < next.slot) write(
+                            pipe,
+                            if (previous == null) next.bytes else previous.bytes,
+                        )
                         if (previous != null) free.add(previous.bytes)
                         previous = next
                         write(pipe, next.bytes)
                     }
-                    if (previous == null) throw IllegalStateException("Stopped before any presented frame")
+                    if (previous == null)
+                        throw IllegalStateException("Stopped before any presented frame")
                     while (frames < frameCount(stopped - started)) write(pipe, previous.bytes)
-                } finally { pipe?.close() }
-                if (!process!!.waitFor(10, TimeUnit.SECONDS)) throw IllegalStateException("FFmpeg exit timeout")
-                if (process!!.exitValue() != 0) throw IllegalStateException("FFmpeg exit " + process!!.exitValue() + "; see " + log)
+                } finally {
+                    pipe?.close()
+                }
+                if (!process!!.waitFor(10, TimeUnit.SECONDS))
+                    throw IllegalStateException("FFmpeg exit timeout")
+                if (process!!.exitValue() != 0)
+                    throw IllegalStateException(
+                        "FFmpeg exit " + process!!.exitValue() + "; see " + log,
+                    )
             } catch (failure: Exception) {
                 error = (if (error.isEmpty()) "" else "$error; ") + failure
             } finally {
@@ -271,7 +361,9 @@ object VideoRecording {
                 if (encoder != null && encoder.isAlive()) encoder.destroyForcibly()
                 synchronized(VideoRecording::class.java) {
                     if (pixels != null) MemoryUtil.memFree(pixels)
-                    pixels = null; free.clear(); ready.clear()
+                    pixels = null
+                    free.clear()
+                    ready.clear()
                     state = if (error.isEmpty()) "completed" else "failed"
                 }
                 println("[ToolkitVideo] $state file=$file frames=$frames error=$error")

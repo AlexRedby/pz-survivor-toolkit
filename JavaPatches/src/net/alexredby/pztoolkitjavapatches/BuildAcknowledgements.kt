@@ -31,7 +31,10 @@ object BuildAcknowledgements {
     private fun send(action: BuildAction?, token: String, state: String?) {
         val owner = Accessor.tryGet<PlayerID>(action, "playerId", null)
         val transaction = Accessor.tryGet<Byte>(action, "id", null)
-        if (owner == null || owner.player == null || transaction == null || transaction.toInt() == 0) return
+        if (
+            owner == null || owner.player == null || transaction == null || transaction.toInt() == 0
+        )
+            return
         val args = LuaManager.platform.newTable()
         args.rawset("player", owner.id.toDouble())
         args.rawset("transaction", transaction.toDouble())
@@ -45,7 +48,8 @@ object BuildAcknowledgements {
             writer.putUTF("State")
             writer.putBoolean(true)
             TableNetworkUtils.save(args, writer)
-            // Share BuildAction's ordered channel so an old start cannot attach to a reused byte ID.
+            // Share BuildAction's ordered channel so an old start cannot attach to a reused byte
+            // ID.
             connection.endPacket(1, 3, 1.toByte())
         } catch (error: Exception) {
             connection.cancelPacket()
