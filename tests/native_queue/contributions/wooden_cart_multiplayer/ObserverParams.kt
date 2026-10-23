@@ -150,7 +150,7 @@ object ObserverParams {
         life: OPLife?,
         input: OPCommit?,
         consumer: OPConsumer?,
-        reason: String,
+        reason: String?,
         success: Boolean,
         bound: Boolean,
     ) {
@@ -214,7 +214,7 @@ object ObserverParams {
                 .append(':')
                 .append(
                     if (value is Number || value is Boolean) value
-                    else mpJsonString(value as String),
+                    else mpJsonString(value as String?),
                 )
         }
         System.out.println("[CART_OBSERVER_PARAMS] " + json.append('}'))

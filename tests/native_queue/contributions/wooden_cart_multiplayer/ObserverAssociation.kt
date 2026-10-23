@@ -266,7 +266,7 @@ object ObserverAssociation {
                     (action.chr as IsoPlayer) !== IsoPlayer.getInstance() ||
                     action.getTable() == null ||
                     !(action.getTable().rawget("Type") is String) ||
-                    !actionAdmissionKind((action.getTable().rawget("Type") as String)))
+                    !actionAdmissionKind((action.getTable().rawget("Type") as String?)))
             )
                 return null
             val record =
@@ -1118,7 +1118,7 @@ object ObserverAssociation {
                 .append(':')
                 .append(
                     if (value is Number || value is Boolean) value
-                    else mpJsonString(value as String),
+                    else mpJsonString(value as String?),
                 )
         }
         System.out.println("[CART_OBSERVER] " + json.append('}'))
@@ -1221,7 +1221,7 @@ object ObserverAssociation {
                 .append(':')
                 .append(
                     if (value is Number || value is Boolean) value
-                    else mpJsonString(value as String),
+                    else mpJsonString(value as String?),
                 )
         }
         System.out.println("[CART_OBSERVER] " + json.append('}'))

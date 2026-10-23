@@ -18,7 +18,7 @@ Version labels come from committed component metadata, including changes made wi
 
 - **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
 
-- **Cart Kotlin tooling:** Replace concatenated Java diagnostic fragments with named Kotlin modules and Kotlin native checks. Share the pinned JVM 25 compiler and private runtime with the project; retain minimal Java only for writable instrumentation slots and cold loader verification. Migrate source inventories, staging and direct-source checks together.
+- **Cart Kotlin tooling:** Replace concatenated Java diagnostic fragments with named Kotlin modules and Kotlin native checks. Share the pinned JVM 25 compiler and private runtime with the project; retain minimal Java only for writable instrumentation slots and cold loader verification. Migrate source inventories, staging and direct-source checks together; preserve the shared monitor and nullable native diagnostic values.
 
 - **Guest cart lifecycle fixture:** Add a separate disposable menu-Host death/Coop-respawn/rejoin scenario, exact native transport activity observation, stale admission checks and strict evidence analysis. Distinguish native prebirth preview cleanup from a fresh, exactly registered equipment incarnation while preserving old tombstones. Keep old cart disposition explicit and production animation unchanged.
 

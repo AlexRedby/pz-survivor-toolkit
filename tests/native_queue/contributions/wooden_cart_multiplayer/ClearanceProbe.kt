@@ -312,14 +312,14 @@ object ClearanceProbe {
         if (!(cartId is Number) || (cartId).toInt() <= 0)
             throw IllegalStateException("Native inventory equip has no exact cartId")
         val networkPlayer =
-            stateField(action, "playerId") as zombie.network.fields.character.PlayerID
+            stateField(action, "playerId") as zombie.network.fields.character.PlayerID?
         val transaction = (stateField(action, "transactionId") as Number).toByte()
         val networkAction = zombie.core.ActionManager.getAction(transaction, networkPlayer)
         val networkExact =
             (networkAction != null &&
                 networkAction.action === table &&
                 "ISCartEquipAction".equals(networkAction.type) &&
-                networkPlayer.getID() == player.getOnlineID())
+                networkPlayer!!.getID() == player.getOnlineID())
         val networkDone =
             networkExact && zombie.core.ActionManager.isDone(networkPlayer, transaction)
         val networkRejected =
@@ -366,7 +366,7 @@ object ClearanceProbe {
                 .append(",\"transactionId\":")
                 .append(transaction)
                 .append(",\"networkOwnerID\":")
-                .append(networkPlayer.getID())
+                .append(networkPlayer!!.getID())
                 .append(",\"networkActionPresent\":")
                 .append(networkAction != null)
                 .append(",\"networkActionExact\":")
@@ -656,8 +656,9 @@ object ClearanceProbe {
         // Freeze proxy input provenance with the original native pose and body/cart
         // DrawFrame. This does not exclusively attribute blended skeletal tracks.
         try {
-            return (timelineInputBridge!!.invoke(null, player) as String +
-                (if (OBSERVER_ASSOCIATION) observerBridge!!.invoke(null, player) as String else ""))
+            return (timelineInputBridge!!.invoke(null, player) as String? +
+                (if (OBSERVER_ASSOCIATION) observerBridge!!.invoke(null, player) as String?
+                else ""))
         } catch (error: Throwable) {
             System.err.println("[CART_TIMELINE] ERROR native input bridge " + error)
             return ""
@@ -1662,12 +1663,12 @@ object ClearanceProbe {
     fun reachInput(args: Array<Any?>?): String? {
         if (solve.get() == null) return null
         val actualArgs = args!!
-        val poses = actualArgs[0] as Array<Matrix4f>
-        val actor = actualArgs[1] as SkinningData
+        val poses = actualArgs[0] as Array<Matrix4f>?
+        val actor = actualArgs[1] as SkinningData?
         val row =
             StringBuilder(2048)
                 .append("\"bone\":")
-                .append(jsonString(actualArgs[2] as String))
+                .append(jsonString(actualArgs[2] as String?))
                 .append(",\"wood\":")
                 .append(actualArgs[5])
                 .append(",\"weight\":")
@@ -1675,14 +1676,14 @@ object ClearanceProbe {
                 .append(",\"target\":")
         matrix(row, actualArgs[3] as Matrix4f)
         row.append(",\"poses\":{")
-        var bone = actor.getBone(actualArgs[2] as String)
+        var bone = actor!!.getBone(actualArgs[2] as String?)
         var comma = false
         var i = 0
         while (bone != null && i < 4) {
             if (comma) row.append(',')
             comma = true
             row.append(jsonString(bone.name)).append(':')
-            matrix(row, poses[bone.index])
+            matrix(row, poses!![bone.index])
             i++
             bone = bone.parent
         }

@@ -102,7 +102,9 @@ object ActionAdmission {
 
     private fun actionAdmissionError(error: Throwable) {
         actionAdmissionFailed = true
-        timelineError(IllegalStateException("Native cart admission observation failed", error))
+        timelineError(
+            IllegalStateException("Native cart admission observation failed: $error", error),
+        )
     }
 
     private fun actionAdmissionEnabled(): Boolean {
@@ -710,7 +712,7 @@ object ActionAdmission {
             json.append(',').append(mpJsonString(entry.key)).append(':')
             val value = entry.value
             json.append(
-                if (value is Number || value is Boolean) value else mpJsonString(value as String),
+                if (value is Number || value is Boolean) value else mpJsonString(value as String?),
             )
         }
         System.out.println("[CART_ADMISSION] " + json.append('}'))

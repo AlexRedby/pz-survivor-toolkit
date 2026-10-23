@@ -765,6 +765,19 @@ def check_java(game, jdk, patch, kotlin_home=None):
         subprocess.run([str(javac), '--release', '25', '-cp', classpath, '-d', str(classes),
                         str(HERE / 'ObserverLoaderCheck.java')], check=True, env=clean_environment())
         (root/'Lua').mkdir()
+        for name, marker, flags in [
+                ('ActionAdmissionCheck', 'ACTION_ADMISSION_CHECK_PASS', {}),
+                ('NullableDiagnosticCheck', 'NULLABLE_DIAGNOSTIC_CHECK_PASS',
+                 {'PZ_CART_TIMELINE': 'true', 'PZ_CART_OBSERVER_ASSOCIATION': 'true'})]:
+            result = subprocess.run([str(java), '-javaagent:' + str(game/'ZombieBuddy.jar')
+                + '=config_dir=' + str(root) + ',policy=deny-new,verbosity=1',
+                '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.',
+                '-cp', classpath, 'ObserverLoaderCheck', str(lab), name], cwd=game,
+                env=dict(clean_environment(), PZ_CART_LEASE_CONTROL='true', PZ_CART_ACTION_ADMISSION='true',
+                         PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),
+                         PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt'), **flags),
+                capture_output=True, text=True, timeout=90)
+            assert result.returncode == 0 and marker in result.stdout and 'ERROR' not in result.stdout + result.stderr, result.stdout + '\n' + result.stderr
         result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
             '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'ObserverAssociationCheck'],
             cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_LEASE_CONTROL='true',PZ_CART_ACTION_ADMISSION='true',
@@ -807,7 +820,7 @@ def check_java(game, jdk, patch, kotlin_home=None):
         assert [row['event'] for row in rows]==['publish','variable-write','trace-end'],rows
         assert [row['seq'] for row in rows]==[1,2,3] and all(row['clockReady'] and row['serverNs']>0 for row in rows)
         assert rows[0]['cartID']==42 and rows[1]['serial']==3 and rows[1]['serializedBytes']>0
-    return 'PASS (shared cross-module Main.class monitor, composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API, native diagnostic State marker preservation/unknown-key isolation, mod-load parameter birth/mutation/escape/default and failure cleanup checks, native equipment setters/reentrant OnEquip/load/death-entry/removal/connection tombstones and original Coop birth with immutable old retirement, exact native command serialization/callback receipts, and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
+    return 'PASS (shared cross-module Main.class monitor, nullable pending/native diagnostic JSON and strict wrong-type refusal, composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API, native diagnostic State marker preservation/unknown-key isolation, mod-load parameter birth/mutation/escape/default and failure cleanup checks, native equipment setters/reentrant OnEquip/load/death-entry/removal/connection tombstones and original Coop birth with immutable old retirement, exact native command serialization/callback receipts, and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
 
 
 def main():
