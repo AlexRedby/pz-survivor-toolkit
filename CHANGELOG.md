@@ -35,6 +35,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.234
+
+- **Action queue / P4:** Use shared hotbar cleanup for portable battery radios without media. Keep native device settings, battery processing, UI power transitions and sound cleanup instead of treating radio power as item activation.
+
 ### 0.1.233
 
 - **Action queue / P4:** Use the shared hotbar cleanup contract for stable ordinary non-weapon items as well as weapons. Preserve native hand selection and belt return; devices, unknown components, drying replacements and displaced attachment models remain protected.

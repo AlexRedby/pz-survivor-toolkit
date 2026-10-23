@@ -122,7 +122,7 @@ function Postprocess.verify(state,mode,tidy)
  sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,clothingItem=true,clothingTemporary=true,clothingGel=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
+  clothingB=true,clothingItem=true,clothingTemporary=true,clothingGel=true,hotbarInitial=true,hotbarReplacement=true,hotbarTool=true,belt=true,holster=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)

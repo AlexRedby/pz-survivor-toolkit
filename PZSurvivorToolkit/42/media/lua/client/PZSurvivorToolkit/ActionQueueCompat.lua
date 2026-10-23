@@ -478,7 +478,7 @@ local function nativeHotbarHelpers(hotbar)
         and hotbar and hotbar.isItemAttached == hotbarHelpers.attached and hotbar.setAttachAnim == hotbarHelpers.animate
 end
 local hotbarClassName = getClassSimpleName
-local function normalHotbarComponents(item, script)
+local function passiveHotbarComponents(item, script)
     if not script:hasComponents() then return not item:hasComponents() end
     if not ComponentType or not ComponentType.Attributes or not ComponentType.Script then return false end
     for _, name in ipairs({"componentSize", "getComponentForIndex", "getAttributes", "getComponent", "getEntityScript"}) do
@@ -507,26 +507,43 @@ local function normalHotbarComponents(item, script)
     local first, second = item:getComponentForIndex(0), item:getComponentForIndex(1)
     return first == attributes and second == metadata or first == metadata and second == attributes
 end
-local function normalHotbarItem(item)
+local function hotbarScript(item, class, kind)
     if not instanceof(item, "InventoryItem") or type(hotbarClassName) ~= "function" or getClassSimpleName ~= hotbarClassName
-        or hotbarClassName(item) ~= "ComboItem" then return false end
+        or hotbarClassName(item) ~= class then return end
     for _, name in ipairs({"getScriptItem", "hasComponents", "getFluidContainer", "isWet", "getItemWhenDry"}) do
-        if type(item[name]) ~= "function" then return false end
+        if type(item[name]) ~= "function" then return end
     end
     local script = item:getScriptItem()
-    if not script then return false end
+    if not script then return end
     for _, name in ipairs({"getFullName", "getItemType", "getLuaCreate", "getItemConfig", "getItemConfigKey", "hasComponents"}) do
-        if type(script[name]) ~= "function" then return false end
+        if type(script[name]) ~= "function" then return end
     end
-    -- Native base:normal creates final ComboItem. Attaching registers processing;
-    -- ordinary Attributes (including sharpness) have no update/equipment hooks.
-    if script:getFullName() ~= item:getFullType() or tostring(script:getItemType()) ~= "base:normal"
+    if script:getFullName() ~= item:getFullType() or tostring(script:getItemType()) ~= kind
         or script:getLuaCreate() or script:getItemConfig() or script:getItemConfigKey()
-        or item:getFluidContainer() or item:isWet() or item:getItemWhenDry() then return false end
-    return normalHotbarComponents(item, script)
+        or item:getFluidContainer() or item:isWet() or item:getItemWhenDry() then return end
+    return passiveHotbarComponents(item, script) and script or nil
+end
+local function normalHotbarItem(item)
+    -- Native base:normal creates final ComboItem. Ordinary Attributes (including
+    -- sharpness) and factory Script metadata have no update/equipment hooks.
+    return hotbarScript(item, "ComboItem", "base:normal") ~= nil
+end
+local function radioHotbarItem(item)
+    if not instanceof(item, "Radio") or not hotbarScript(item, "Radio", "base:radio")
+        or type(item.getDeviceData) ~= "function" then return false end
+    local data = item:getDeviceData()
+    if not data or hotbarClassName(data) ~= "DeviceData" then return false end
+    for _, name in ipairs({"getParent", "getIsPortable", "getIsBatteryPowered", "getIsTelevision", "hasMedia", "isPlayingMedia"}) do
+        if type(data[name]) ~= "function" then return false end
+    end
+    -- DeviceData power is separate from InventoryItem activation. Native hand
+    -- removal changes the equipped-radio pointer and its update/audio path;
+    -- do not turn off, reset the battery clock or replace device synchronization.
+    return data:getParent() == item and data:getIsPortable() == true and data:getIsBatteryPowered() == true
+        and data:getIsTelevision() == false and data:hasMedia() == false and data:isPlayingMedia() == false
 end
 local function hotbarItem(item, character)
-    return (instanceof(item, "HandWeapon") or normalHotbarItem(item)) and item:getContainer() == character:getInventory()
+    return (instanceof(item, "HandWeapon") or normalHotbarItem(item) or radioHotbarItem(item)) and item:getContainer() == character:getInventory()
         and not item:canBeActivated() and not item:isBroken() and not isForceDropHeavyItem(item)
         and not character:getWornItems():contains(item)
 end

@@ -51,9 +51,9 @@ class EquipmentTests(unittest.TestCase):
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
                 spec = equipment.HOTBAR_CASES[case]
                 provider = not spec['twoHands']
-                ordinary, prior = bool(spec.get('ordinary')), bool(spec.get('priorSecondary'))
-                effect = dict(case=case, providerItem=957 if provider else False, providerType=('Base.Belt2' if ordinary else 'Base.HolsterDouble') if provider else False,
-                              providerLocation=('base:belt' if ordinary else 'base:beltextra') if provider else False, providerWorn=provider,
+                ordinary, prior, radio = bool(spec.get('ordinary')), bool(spec.get('priorSecondary')), bool(spec.get('radio'))
+                effect = dict(case=case, providerItem=957 if provider else False, providerType=('Base.Belt2' if ordinary or radio else 'Base.HolsterDouble') if provider else False,
+                              providerLocation=('base:belt' if ordinary or radio else 'base:beltextra') if provider else False, providerWorn=provider,
                               id=956, fullType=spec['fullType'], container='root', slotIndex=(7 if case.endswith('left') else 8) if provider else 1,
                               slotType=spec['slotType'], model=spec['model'],
                               attached=tidy, primary=False if tidy else 956, secondary=956 if not tidy and spec['twoHands'] else False, worn=False, producer='onRackGun',
@@ -64,13 +64,32 @@ class EquipmentTests(unittest.TestCase):
                                   secondary=(951 if prior else False) if tidy else (951 if prior else 956),
                                   ordinary=dict(condition=10, sharpness=1.0, hairStyle='CrewCut', hairColor=dict(r=0.2, g=0.3, b=0.4), nonAttachedHair=False,
                                                 secondary=dict(id=951, fullType='Base.Screwdriver', container='root') if prior else False))
+                if radio:
+                    effect.pop('ammoUnchanged')
+                    effect.update(producer='ISCutHair', primary=False, secondary=False if tidy else 956,
+                                  radio={'class': 'Radio', 'deviceClass': 'DeviceData', 'parent': True, 'canonical': True,
+                                         'portable': True, 'batteryPowered': True, 'television': False, 'hasBattery': True,
+                                         'turnedOn': spec['on'] and not tidy, 'power': 0.98 if spec['on'] else 1, 'channel': 88000, 'volume': 0.25 if spec['on'] else equipment.RADIO_OFF_VOLUME,
+                                         'micMuted': True, 'headphones': -1, 'hasMedia': False, 'playingMedia': False,
+                                         'activated': False, 'equippedRadio': not tidy, 'emitter': spec['on'] and not tidy,
+                                         'scissors': dict(id=958, fullType='Base.ScissorsBluntMedical', container='root'),
+                                         'producer': dict(condition=10, sharpness=1.0, hairStyle='CrewCut', hairColor=dict(r=0.2, g=0.3, b=0.4), nonAttachedHair=False, secondary=False)})
                 count = int(enabled and tidy)
-                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956 if not ordinary or prior else False, secondary=(951 if prior else 956) if ordinary else 956 if spec['twoHands'] else False),
+                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956 if not (ordinary or radio) or prior else False, secondary=(951 if prior else 956) if ordinary or radio else 956 if spec['twoHands'] else False),
                               tidyHotbar=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                               sourceSession=18 if tidy else False, sourceCompleted=tidy, attachConnectObserved=tidy,
                                               uiHotbarIdentity=True, unrelatedTailPreserved=True,
                                               sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                     flush=count, legacy=0)))
+                if radio:
+                    result['hotbarCheckpoint']['radio'] = copy.deepcopy(effect['radio'])
+                    result['hotbarCheckpoint']['radio']['turnedOn'] = spec['on']
+                    result['hotbarCheckpoint']['radio']['equippedRadio'] = True
+                    result['hotbarCheckpoint']['radio']['emitter'] = spec['on']
+                    result['tidyHotbar']['radioBaseline'] = dict(copy.deepcopy(effect['radio']), power=1, equippedRadio=False, emitter=False, turnedOn=spec['on'])
+                    result['tidyHotbar']['radioLifecycle'] = dict(heldPointer=True, emitterCreated=spec['on'], emitterCleaned=spec['on'] and tidy)
+                    actions = [dict(kind='ISEquipWeaponAction', id=956), dict(kind='ISCutHair', id=958)] + ([dict(kind='ISUnequipAction', id=956)] if tidy else [])
+                    result['tidyHotbar']['acknowledgements'] = [dict(action, state='completed') for action in actions] if self.selection['kind'] == 'mp' else []
                 if ordinary:
                     result['tidyHotbar']['ordinaryBaseline'] = copy.deepcopy(effect['ordinary'])
                     actions = [dict(kind='ISEquipWeaponAction', id=956), dict(kind='ISCutHair', id=956)] + ([dict(kind='ISUnequipAction', id=956)] if tidy else [])
@@ -268,7 +287,11 @@ class EquipmentTests(unittest.TestCase):
             for case in self.selection['cases']:
                 if case in equipment.HOTBAR_CASES:
                     row = next(row for row in self.records() if row.get('id') == case)
-                    effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.hotbar_effect_keys(case) | ({'ordinaryBaseline'} if equipment.HOTBAR_CASES[case].get('ordinary') else set())}
+                    effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.hotbar_authority_keys(case)}
+                    if equipment.HOTBAR_CASES[case].get('radio'):
+                        effect = copy.deepcopy(effect)
+                        effect['radio']['equippedRadio'] = False
+                        effect['radio']['emitter'] = False
                     with (self.root / 'server-launch.log').open('a') as log:
                         log.write('\n[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(effect) + '\n')
         return equipment.verify(self.root, self.selection, {})
@@ -352,6 +375,52 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                         rows = self.records();value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
                         value['acknowledgements'].pop(1)
                         self.assertTrue(self.verify(self.logs(rows))['issues'])
+
+    def test_radio_hotbar_requires_owned_device_separate_scissors_and_natural_power(self):
+        self.selection.update(cases=['tidy-hotbar-radio-off', 'tidy-hotbar-radio-on'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for case in self.selection['cases']:
+                    for field, change in [('parent', False), ('deviceClass', 'CustomDeviceData'), ('portable', False), ('batteryPowered', False),
+                                          ('television', True), ('channel', 90000), ('volume', 0.5), ('micMuted', False), ('hasMedia', True),
+                                          ('playingMedia', True), ('activated', True), ('equippedRadio', True), ('power', 1.1), ('power', True)]:
+                        rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['radio'][field] = change
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, case, field))
+                    for malformed in (False, [], 'radio', None):
+                        rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['radio'] = malformed
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], ('malformed radio', malformed))
+                        rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['radio']['scissors'] = malformed
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], ('malformed scissors', malformed))
+                    rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                    value['radio']['scissors']['id'] = value['id']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'radio passed as haircut tool')
+                    rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                    value['radio']['producer']['sharpness'] = 0.5
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                    value['radio']['turnedOn'] = True
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'native/UI final radio power-off missing')
+                    rows = self.records(); value = next(row['outcome']['hotbarCheckpoint'] for row in rows if row.get('id') == case)
+                    value['radio']['turnedOn'] = not equipment.HOTBAR_CASES[case]['on']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'incorrect held radio power')
+                    rows = self.records(); value = next(row['outcome']['hotbarCheckpoint'] for row in rows if row.get('id') == case)
+                    value['radio']['equippedRadio'] = False
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    if kind == 'mp':
+                        rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['acknowledgements'][1]['id'] = value['id']
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
+                # Client/server power can differ within their monotonic native ranges.
+                if kind == 'mp':
+                    self.logs(); server = self.root / 'server-launch.log'
+                    server.write_text(server.read_text().replace('"power": 0.98', '"power": 0.99'))
+                    self.assertEqual(self.verify(self.logs())['issues'], [])
 
     def test_tidy_clothing_requires_exact_p4_generation_shared_phases_and_conserved_effects(self):
         self.selection.update(cases=['tidy-clothing'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
@@ -952,11 +1021,11 @@ end
 
     def test_native_item_shape_preflight_runs_once_only_for_selected_ordinary_hotbar_cases(self):
         for cases in (['tidy-hotbar'], ['tidy-hotbar-normal-left'], ['tidy-hotbar-normal-right'],
-                      ['tidy-hotbar-normal-left', 'tidy-hotbar-normal-right']):
+                      ['tidy-hotbar-normal-left', 'tidy-hotbar-normal-right'], ['tidy-hotbar-radio-off'], ['tidy-hotbar-radio-on']):
             self.selection['cases'] = cases
             with patch.object(equipment, '_item_shape_probe') as probe:
                 equipment.stage(ROOT, self.root, None, None, self.selection, {}, {'roles': {}})
-                if any(equipment.HOTBAR_CASES[case].get('ordinary') for case in cases):
+                if any(equipment.HOTBAR_CASES[case].get('ordinary') or equipment.HOTBAR_CASES[case].get('radio') for case in cases):
                     probe.assert_called_once_with(ROOT, self.root, None, None)
                 else:
                     probe.assert_not_called()

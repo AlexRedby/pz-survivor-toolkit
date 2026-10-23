@@ -1008,8 +1008,8 @@ end
 
 -- Real native fromHotbar constructors and unequip effects; P4's generated
 -- queue/authority are still observed only by the separate SP/Host scenario.
-for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-holster-right','tidy-hotbar-normal-left','tidy-hotbar-normal-right'})do
- local ordinary=caseID:find('normal',1,true)~=nil;local prior=caseID=='tidy-hotbar-normal-right'
+for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-holster-right','tidy-hotbar-normal-left','tidy-hotbar-normal-right','tidy-hotbar-radio-off','tidy-hotbar-radio-on'})do
+ local ordinary=caseID:find('normal',1,true)~=nil;local radio=caseID:find('radio',1,true)~=nil;local passive=ordinary or radio;local prior=caseID=='tidy-hotbar-normal-right'
  getClassSimpleName=function(item)return item.javaClass end
  local provider=caseID~='tidy-hotbar' native('shared/TimedActions/ISEquipWeaponAction.lua');native('shared/TimedActions/ISRackFirearm.lua');native('shared/TimedActions/ISCutHair.lua')
  local baseSource=read('shared/TimedActions/ISBaseTimedAction.lua')
@@ -1052,6 +1052,7 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  function player:getTimedActionTimeModifier()return 1.2 end
  function player:getPrimaryHandItem()return self.primary end
  function player:getSecondaryHandItem()return self.secondary end
+ function player:getEquipedRadio()return self.primary and self.primary.javaClass=='Radio'and self.primary or self.secondary and self.secondary.javaClass=='Radio'and self.secondary or nil end
  function player:setPrimaryHandItem(item)self.primary=item end
  function player:setSecondaryHandItem(item)self.secondary=item end
  function player:setAttachedItem(location,item)self.attached[location]=item end
@@ -1087,12 +1088,12 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  end
  getPlayerHotbar=function()return hotbar end;getSpecificPlayer=function()return player end
  Hotbar.prepare(state,function(name,kind)
-  local item=makeItem(kind,state.root);state[name]=item;item.javaClass=ordinary and 'ComboItem'or 'HandWeapon'
-  function item:getAttachmentType()return ordinary and 'Screwdriver'or provider and 'Holster'or 'Rifle'end
+  local item=makeItem(kind,state.root);state[name]=item;item.javaClass=(ordinary or kind=='Base.ScissorsBluntMedical')and 'ComboItem'or radio and kind=='Base.WalkieTalkie2'and 'Radio'or 'HandWeapon'
+  function item:getAttachmentType()return ordinary and 'Screwdriver'or radio and 'Walkie'or provider and 'Holster'or 'Rifle'end
   if kind=='Base.HolsterDouble'then function item:getBodyLocation()return 'base:beltextra'end end
   if kind=='Base.Belt2'then function item:getBodyLocation()return 'base:belt'end end
-  function item:getScriptItem()return {getItemType=function()return 'base:normal'end}end
-  function item:IsWeapon()return not ordinary end
+  function item:getScriptItem()return {getItemType=function()return item.javaClass=='Radio'and 'base:radio'or 'base:normal'end}end
+  function item:IsWeapon()return not passive end
   function item:getCondition()return self.condition or 10 end;function item:getSharpness()return self.sharpness or 1 end
   function item:getCurrentUsesFloat()return 1 end
   function item:canBeActivated()return false end;function item:isForceDropHeavyItem()return false end
@@ -1101,6 +1102,20 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
   function item:getName()return 'Shotgun'end;function item:getUnequipSound()end
   function item:getWorldItem()end
   function item:IsClothing()return false end
+  if radio and kind=='Base.WalkieTalkie2'then
+   local data={javaClass='DeviceData',parent=item,power=1,on=false,channel=0,volume=0.5,mic=false}
+   for name,key in pairs({getParent='parent',getPower='power',getIsTurnedOn='on',getChannel='channel',getDeviceVolume='volume',getMicIsMuted='mic'})do
+    local field=key;data[name]=function(self)return self[field]end
+   end
+   for name,key in pairs({setPower='power',setTurnedOnRaw='on',setIsTurnedOn='on',setChannelRaw='channel',setDeviceVolumeRaw='volume',setMicIsMuted='mic',setHasBattery='battery'})do
+    local field=key;data[name]=function(self,value)self[field]=value end
+   end
+   function data:getIsPortable()return true end;function data:getIsBatteryPowered()return true end
+   function data:getIsTelevision()return false end;function data:hasMedia()return false end;function data:isPlayingMedia()return false end
+   function data:getHasBattery()return self.battery end;function data:getHeadphoneType()return -1 end
+   function data:getEmitter()return self.on and player:getEquipedRadio()==item and self or nil end
+   function item:getDeviceData()return data end;function item:isActivated()return self.activated or false end;function item:setActivated(value)self.activated=value end
+  end
   return item
  end)
  -- Host pauses here for its setup acknowledgement before any action exists.
@@ -1112,24 +1127,31 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  Hotbar.enqueue(state,{queue=function()return queue end,run=function(fn,...)return fn(...)end})
  queue.current=state.rackAction;Hotbar.observe(state,queue,nil,true)
  assert(not state.hotbarProducerStarted,'unstarted native rack counted as producer start');queue.current=nil
- assert(#queue.queue==3 and state.hotbarEquip.twoHands==not provider and state.hotbarEquip.fromHotbar and (ordinary and state.rackAction.item==state.pickup or not ordinary and state.rackAction.gun==state.pickup))
+ assert(#queue.queue==3 and state.hotbarEquip.twoHands==not provider and state.hotbarEquip.fromHotbar and (passive and state.rackAction.item==(state.hotbarTool or state.pickup)or not passive and state.rackAction.gun==state.pickup))
  state.hotbarEquip:setOverrideHandModels(nil,nil)
  player:removeAttachedItem(state.pickup)
- if ordinary then
+ if passive then
   assert(state.hotbarEquip.primary==prior and state.hotbarEquip:complete(),'real native nonweapon hand selection failed')
   assert(state.rackAction:complete()and player.growthReset==1,'real plain CutHair complete failed')
-  assert(state.rackAction.item==state.pickup and state.rackAction.maxTime==100)
+  assert(state.rackAction.item==(state.hotbarTool or state.pickup)and state.rackAction.maxTime==100)
  else player.primary,player.secondary=Hotbar.expectedHands(state,false)end
+ Hotbar.observe(state,{current=nil,queue={}},nil,true)
  assert(not Hotbar.verify(state,false,true).attached)
+ if radio then
+  local data=state.pickup:getDeviceData();local held=data.on
+  data.on=not held
+  assert(not Hotbar.radioReady(state,false),'wrong held radio power must fail readiness')
+  data.on=held;assert(Hotbar.radioReady(state,false))
+ end
  local prefix='[P4TidyUpMeister][P0][S21] '
- local producer=ordinary and 'ISCutHair'or 'ISRackFirearm'
+ local producer=passive and 'ISCutHair'or 'ISRackFirearm'
  local trace='ISReadABook -> ISEquipWeaponAction -> '..producer..' -> ISReadABook'
  local function source(state,omit)
   Hotbar.observeLine(state,prefix..'capture primary=nil secondary='..(prior and 'Base.Screwdriver#'..state.screwdriver:getID()..'@inventory'or 'nil'))
   Hotbar.observeLine(state,prefix..'capture worn=['..(provider and tostring(Hotbar.providerLocation(state))..'='..Hotbar.provider(state):getFullType()..'#'..Hotbar.provider(state):getID()..'@inventory'or '')..'] inventoryCount=4')
   if omit~='equip'then Hotbar.observeLine(state,prefix..'add[add] type=ISEquipWeaponAction item='..state.pickup:getFullType()..'#'..state.pickup:getID()..'@inventory')end
-  if omit~='producer'then Hotbar.observeLine(state,prefix..'add[add] type='..producer..' item='..(ordinary and state.pickup:getFullType()..'#'..state.pickup:getID()..'@inventory'or 'nil'))end
-  if omit~='finish'then Hotbar.observeLine(state,prefix..'finish armed=true cancelled=false prep=true transfer=false operation=true dismantle=nil restoreHands=true restoreWorn='..tostring(ordinary)..' queueRestoreOnCancel=nil actionTotal=4 transferCount=0 counts=[ISEquipWeaponAction=1, ISRackFirearm=1, ISReadABook=2] trace=['..trace..']')end
+  if omit~='producer'then Hotbar.observeLine(state,prefix..'add[add] type='..producer..' item='..(passive and (state.hotbarTool or state.pickup):getFullType()..'#'..(state.hotbarTool or state.pickup):getID()..'@inventory'or 'nil'))end
+  if omit~='finish'then Hotbar.observeLine(state,prefix..'finish armed=true cancelled=false prep=true transfer=false operation=true dismantle=nil restoreHands=true restoreWorn='..tostring(passive)..' queueRestoreOnCancel=nil actionTotal=4 transferCount=0 counts=[ISEquipWeaponAction=1, ISRackFirearm=1, ISReadABook=2] trace=['..trace..']')end
   Hotbar.observeLine(state,prefix..'RESTORE actionTotal=4 trace=['..trace..'] reason=operation:ISReadABook')
  end
  for _,omit in ipairs({'equip','producer','finish'})do state.hotbarP4=nil;source(state,omit);assert(state.hotbarP4.problem,'incomplete native source proof accepted '..omit)end
@@ -1172,6 +1194,16 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  assert(player:getAttachedItems():getItem(state.hotbarLocation)==state.pickup)
  state.hotbarAttachConnect=true -- lifecycle.begin observes this before native perform in the scenario
  cleanup:perform();assert(cleanup:complete());local baselinePrimary,baselineSecondary=Hotbar.expectedHands(state,true);assert(player.primary==baselinePrimary and player.secondary==baselineSecondary)
+ if radio then
+  -- Exercise vanilla's actual inventory-radio window update: native hand
+  -- removal makes it call DeviceData.setIsTurnedOn(false), then close.
+  ISRadioWindow={};ISCollapsableWindow={update=function()end}
+  excerpt(read('client/RadioCom/ISRadioWindow.lua'),'function ISRadioWindow:update()','function ISRadioWindow:prerender()')
+  local window={player=player,device=state.pickup,deviceData=state.pickup:getDeviceData(),deviceType='InventoryItem',
+   getIsVisible=function()return true end,close=function(self)self.closed=true end}
+  ISRadioWindow.update(window)
+  assert(window.closed and not state.pickup:getDeviceData():getIsTurnedOn(),'native radio window did not apply unequip power-off')
+ end
  assert(Hotbar.verify(state,true).attached)
  state.hotbarProducerStarted=true
  Hotbar.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S21')
@@ -1211,9 +1243,56 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  if provider then
   local location,item=Hotbar.providerLocation(state),Hotbar.provider(state)
   player.worn[location]=nil;quietReady(false);player.worn[location]=item
-  assert(state.hotbarIndex==(ordinary and (prior and 13 or 11)or caseID:find('left',1,true)and 7 or 9),'fixture must use the actual dynamic native slot index')
+  assert(state.hotbarIndex==(passive and ((prior or caseID=='tidy-hotbar-radio-on')and 13 or 11)or caseID:find('left',1,true)and 7 or 9),'fixture must use the actual dynamic native slot index')
   local effect=Hotbar.verify(state,true)
   assert(effect.providerItem==item:getID()and effect.providerWorn and effect.secondary==(prior and state.screwdriver:getID()or false))
+ end
+ if radio then
+  local effect=Hotbar.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})
+  assert(effect.radio.class=='Radio'and effect.radio.parent and not effect.radio.equippedRadio and not effect.radio.emitter)
+  assert(effect.radioLifecycle.heldPointer and effect.radioLifecycle.emitterCreated==(caseID=='tidy-hotbar-radio-on'))
+  assert(effect.acknowledgements[2].id==state.hotbarTool:getID()and effect.acknowledgements[2].id~=state.pickup:getID(), 'radio must not be passed as haircut tool')
+  local data=state.pickup:getDeviceData()
+  data.on=true;quietReady(false);data.on=false;quietReady(true)
+  data.parent={};quietReady(false);data.parent=state.pickup
+  data.power=0.8;quietReady(true);data.power=1.1;quietReady(false);data.power=1
+  data.channel=90000;quietReady(false)
+  local savedPrint,diagnostics=print,0
+  print=function(message)
+   if type(message)=='string'and message:find('[EQUIPMENT_TEST] RADIO_STATE ',1,true)then
+    diagnostics=diagnostics+1;assert(message:find('reason=setting:channel',1,true)and message:find('baseline=',1,true)and message:find('current=',1,true))
+   else savedPrint(message)end
+  end
+  assert(not pcall(Hotbar.verify,state,true));assert(not pcall(Hotbar.verify,state,true))
+  print=savedPrint;assert(diagnostics==1,'radio mismatch diagnostic must print current/baseline once')
+  data.channel=88000
+  state.hotbarTool.condition=9;quietReady(false);state.hotbarTool.condition=nil;quietReady(true)
+  state.hotbarRadioDiagnostic=nil;state.hotbarAttachConnect=false
+  local output,assertCalls={},0
+  local savedAssert=assert
+  print=function(line)output[#output+1]=line end
+  assert=function(...)assertCalls=assertCalls+1;return savedAssert(...)end
+  local gates={phase='drain',idleUpdates=6,empty=true}
+  Hotbar.diagnoseWaiting(state,queue,toolkit,true,10000,gates)
+  Hotbar.diagnoseWaiting(state,queue,toolkit,true,10999,gates)
+  local early=#output
+  Hotbar.diagnoseWaiting(state,queue,toolkit,true,11000,gates)
+  Hotbar.diagnoseWaiting(state,queue,toolkit,true,12000,gates)
+  assert=savedAssert;print=savedPrint
+  assert(early==0 and #output==1 and assertCalls==0,'quiet readiness diagnostic must wait grace, print once and call no asserts')
+  assert(output[1]:find('reason=surrounding-readiness',1,true)and output[1]:find('attachConnect=false',1,true)
+   and output[1]:find('baseline=',1,true)and output[1]:find('current=',1,true)and output[1]:find('canonical=true',1,true))
+  state.hotbarAttachConnect=true;quietReady(true)
+  -- A surrounding transaction gate must still be diagnosed when Hotbar.settled
+  -- itself is already true and the normal branch never reaches that check.
+  state.hotbarRadioDiagnostic=nil;state.hotbarRadioGraceAt=nil;gates.finalGate='transactions'
+  output={};assertCalls=0;print=function(line)output[#output+1]=line end
+  assert=function(...)assertCalls=assertCalls+1;return savedAssert(...)end
+  Hotbar.diagnoseWaiting(state,queue,toolkit,true,20000,gates)
+  Hotbar.diagnoseWaiting(state,queue,toolkit,true,21000,gates)
+  Hotbar.diagnoseWaiting(state,queue,toolkit,true,22000,gates)
+  assert=savedAssert;print=savedPrint
+  assert(assertCalls==0 and #output==1 and output[1]:find('finalGate=transactions',1,true)and output[1]:find('settled=true',1,true))
  end
  if ordinary then
   local effect=Hotbar.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})

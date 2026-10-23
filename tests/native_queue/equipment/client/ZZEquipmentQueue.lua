@@ -249,7 +249,10 @@ Events.OnTick.Add(function()
   end
   if state and Bulk.isCase(state.id) then Bulk.observe(state,queue()) end
   if state and Clothing.isCase(state.id)then Clothing.observe(state,queue(),Toolkit,tidy)end
-  if state and Hotbar.isCase(state.id)then Hotbar.observe(state,queue(),Toolkit,tidy)end
+  if state and Hotbar.isCase(state.id)then
+   Hotbar.observe(state,queue(),Toolkit,tidy)
+   Hotbar.diagnoseWaiting(state,queue(),Toolkit,tidy,now,{phase=phase,idleUpdates=idleUpdates,empty=empty(),finalGate=state.hotbarFinalReadinessGate})
+  end
   if state and Selection.kind=='mp' and state.records then
    local action=queue().current
    local record=action and Toolkit.ActionQueueAcknowledgements.capture(action)
@@ -381,7 +384,8 @@ Events.OnTick.Add(function()
    end
    phase='drain'
   elseif phase=='drain' and empty() and idleUpdates>=6 then
-   if Selection.kind=='mp' and not Fixture.transactionsSettled() then return end
+   if Selection.kind=='mp' and not Fixture.transactionsSettled() then state.hotbarFinalReadinessGate='transactions';return end
+   state.hotbarFinalReadinessGate='hotbar'
    Fixture.refresh(state)
    if Clothing.isCase(state.id)and not Clothing.settled(state,Toolkit,tidy)then return end
    if Hotbar.isCase(state.id)and not Hotbar.settled(state,Toolkit,tidy)then return end

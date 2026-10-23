@@ -140,6 +140,12 @@ Add contracts in Definitions/Policy/Operations for each family. Expose only veri
 
 Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.
 
+## Current P4 portable-radio hotbar gate
+
+- [ ] Extend the existing shared hotbar proof only for established native effects; preserve source-owned mandatory cleanup, exact cancellation/transfer dependencies and at-most-once completion. Add positive and conflicting-resource regressions.
+- [ ] Reuse the equipment fixture with independent native controls, exact device/battery/hands/attachment receipts and a following action. Gate the affected lifecycle in selected macOS SP/Host runs on the full mod set with clean client/server logs. Keep flashlight activation/depletion and radio media outside this bounded family.
+- [ ] Reconcile with current main, bump only changed shipped components, record delivery in the changelog and remove completed steps.
+
 ## Remaining families
 
 These families need contract/coverage audits. Missing verification or continued use of legacy completion does not by itself mean their native actions fail.

@@ -7,8 +7,10 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both', 'tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore', 'tidy-headwear-mohawk-hat-restore', 'tidy-headwear-mohawk-hat-remove', 'tidy-headwear-mohawk-full-hat-restore', 'tidy-headwear-mohawk-full-hat-remove', 'tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove', 'tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both', 'tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right', 'tidy-hotbar-normal-left', 'tidy-hotbar-normal-right']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both', 'tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore', 'tidy-headwear-mohawk-hat-restore', 'tidy-headwear-mohawk-hat-remove', 'tidy-headwear-mohawk-full-hat-restore', 'tidy-headwear-mohawk-full-hat-remove', 'tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove', 'tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both', 'tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right', 'tidy-hotbar-normal-left', 'tidy-hotbar-normal-right', 'tidy-hotbar-radio-off', 'tidy-hotbar-radio-on']
 HOTBAR_CASES = {
+    'tidy-hotbar-radio-off': dict(fullType='Base.WalkieTalkie2', slotType='SmallBeltLeft', model='Walkie Belt Left', twoHands=False, radio=True, on=False),
+    'tidy-hotbar-radio-on': dict(fullType='Base.WalkieTalkie2', slotType='SmallBeltRight', model='Walkie Belt Right', twoHands=False, radio=True, on=True),
     'tidy-hotbar': dict(fullType='Base.Shotgun', slotType='Back', model='Rifle On Back with Bag', twoHands=True),
     'tidy-hotbar-holster-left': dict(fullType='Base.Pistol', slotType='HolsterLeft', model='Holster Left', twoHands=False),
     'tidy-hotbar-holster-right': dict(fullType='Base.Pistol', slotType='HolsterRight', model='Holster Right', twoHands=False),
@@ -18,7 +20,7 @@ HOTBAR_CASES = {
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-replace': 1, 'tidy-headwear-hat-exclusive': 1, 'tidy-headwear-full-hat-exclusive': 1, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-clothing-overlap-primary': 2, 'tidy-clothing-overlap-both': 2, 'tidy-clothing-held-primary': 0, 'tidy-clothing-held-secondary': 0, 'tidy-clothing-held-both': 0, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-headwear-hat-restore': 0, 'tidy-headwear-full-hat-restore': 0, 'tidy-headwear-mohawk-hat-restore': 0, 'tidy-headwear-mohawk-hat-remove': 1, 'tidy-headwear-mohawk-full-hat-restore': 0, 'tidy-headwear-mohawk-full-hat-remove': 1, 'tidy-watch-digital-restore': 0, 'tidy-watch-digital-remove': 1, 'tidy-watch-classic-restore': 0, 'tidy-watch-classic-remove': 1, 'tidy-watch-overlap-primary': 2, 'tidy-watch-overlap-secondary': 2, 'tidy-watch-overlap-both': 2, 'tidy-watch-held-primary': 0, 'tidy-watch-held-secondary': 0, 'tidy-watch-held-both': 0, 'tidy-watch-ringing-restore': 0, 'tidy-watch-ringing-remove': 1, 'tidy-watch-ringing-overlap-both': 2, 'tidy-watch-ringing-held-both': 0, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1, 'tidy-hotbar-normal-left': 1, 'tidy-hotbar-normal-right': 1}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-replace': 1, 'tidy-headwear-hat-exclusive': 1, 'tidy-headwear-full-hat-exclusive': 1, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-clothing-overlap-primary': 2, 'tidy-clothing-overlap-both': 2, 'tidy-clothing-held-primary': 0, 'tidy-clothing-held-secondary': 0, 'tidy-clothing-held-both': 0, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-headwear-hat-restore': 0, 'tidy-headwear-full-hat-restore': 0, 'tidy-headwear-mohawk-hat-restore': 0, 'tidy-headwear-mohawk-hat-remove': 1, 'tidy-headwear-mohawk-full-hat-restore': 0, 'tidy-headwear-mohawk-full-hat-remove': 1, 'tidy-watch-digital-restore': 0, 'tidy-watch-digital-remove': 1, 'tidy-watch-classic-restore': 0, 'tidy-watch-classic-remove': 1, 'tidy-watch-overlap-primary': 2, 'tidy-watch-overlap-secondary': 2, 'tidy-watch-overlap-both': 2, 'tidy-watch-held-primary': 0, 'tidy-watch-held-secondary': 0, 'tidy-watch-held-both': 0, 'tidy-watch-ringing-restore': 0, 'tidy-watch-ringing-remove': 1, 'tidy-watch-ringing-overlap-both': 2, 'tidy-watch-ringing-held-both': 0, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1, 'tidy-hotbar-normal-left': 1, 'tidy-hotbar-normal-right': 1, 'tidy-hotbar-radio-off': 1, 'tidy-hotbar-radio-on': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
@@ -64,7 +66,7 @@ SCENARIO_ACTIONS = {
         },
     },
     'tidy-hotbar': {
-        'scope': 'Native onRackGun on empty Shotgun/Pistol or native hotbar equip plus plain CutHair on ordinary belt tools; P4 generates one fromHotbar Unequip back to its exact native slot. Ordinary tools cover secondary selection from empty hands and primary selection preserving a prior secondary. Native attachConnect/model, UI icon, root/worn/hands conservation and independent reading tail.',
+        'scope': 'Native onRackGun on empty Shotgun/Pistol or native hotbar equip plus plain CutHair on ordinary belt tools; P4 generates one fromHotbar Unequip back to its exact native slot. Ordinary tools cover secondary selection from empty hands and primary selection preserving a prior secondary. Portable radio cases seed the installed off-radio UI volume default (0.1) or on-radio volume0.25, and use the native hotbar equip and separate native scissors/plain haircut, preserving DeviceData settings/ownership, natural power consumption, native/UI power-off after return and client equipped-radio pointer. Native attachConnect/model, UI icon, root/worn/hands conservation and independent reading tail.',
         'mods': ['P4TidyUpMeister'],
         'checks': {
             'restore-hotbar': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in HOTBAR_CASES},
@@ -253,7 +255,7 @@ def _item_shape_probe(project, output, game, jdk):
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
-    if any(HOTBAR_CASES.get(case, {}).get('ordinary') for case in selection['cases']):
+    if any((HOTBAR_CASES.get(case, {}).get('ordinary') or HOTBAR_CASES.get(case, {}).get('radio')) for case in selection['cases']):
         _item_shape_probe(project, output, game, jdk)
     probe = _transfer_probe(project, output, game, jdk, locations) if selection['kind'] == 'mp' or selection.get('options', {}).get('belt_walk') else None
     if probe:
@@ -425,14 +427,12 @@ def verify(root, selection, catalog):
                     continue
                 value = next((row.get('outcome', {}).get('tidyHotbar') for row in cases if row.get('id') == case), {})
                 value = value if isinstance(value, dict) else {}
-                expected.append({key: value.get(key) for key in hotbar_effect_keys(case) | ({'ordinaryBaseline'} if HOTBAR_CASES[case].get('ordinary') else set())})
+                expected.append({key: value.get(key) for key in hotbar_authority_keys(case)})
             try:
                 authority = [json.loads(marker) for marker in markers]
             except (ValueError, TypeError):
                 authority = []
-            if (not _strict_equal(authority, expected) or any(not isinstance(value, dict)
-                    or any(type(value.get(key)) is not type(wanted) for key, wanted in expected[index].items())
-                    for index, value in enumerate(authority))):
+            if not _hotbar_authority_equal(authority, expected):
                 issues.append('Exact P4 hotbar server attachment/root/worn/hands receipt missing or inconsistent')
         if clothing_cases:
             import json
@@ -573,7 +573,9 @@ HOTBAR_EFFECT_KEYS = {'case', 'providerItem', 'providerType', 'providerLocation'
 
 
 def hotbar_effect_keys(case):
-    return HOTBAR_EFFECT_KEYS - {'ammoUnchanged'} | {'ordinary'} if HOTBAR_CASES[case].get('ordinary') else HOTBAR_EFFECT_KEYS
+    spec = HOTBAR_CASES[case]
+    return (HOTBAR_EFFECT_KEYS - {'ammoUnchanged'} | {'radio'} if spec.get('radio') else
+            HOTBAR_EFFECT_KEYS - {'ammoUnchanged'} | {'ordinary'} if spec.get('ordinary') else HOTBAR_EFFECT_KEYS)
 
 
 def _ordinary_hotbar_valid(value, prior):
@@ -590,13 +592,70 @@ def _ordinary_hotbar_valid(value, prior):
                  and secondary.get('container') == 'root' if prior else secondary is False))
 
 
+# Java DeviceData stores the source-proven off-UI default as IEEE-754 float32.
+RADIO_OFF_VOLUME = 0.10000000149011612
+
+RADIO_KEYS = {'class', 'deviceClass', 'parent', 'canonical', 'portable', 'batteryPowered', 'television', 'hasBattery', 'turnedOn',
+              'power', 'channel', 'volume', 'micMuted', 'headphones', 'hasMedia', 'playingMedia', 'activated', 'equippedRadio', 'emitter', 'scissors', 'producer'}
+
+
+def _radio_hotbar_valid(value, on, equipped, baseline, powered=None):
+    powered = on and equipped if powered is None else powered
+    expected = dict(class_='Radio', deviceClass='DeviceData', parent=True, canonical=True, portable=True, batteryPowered=True,
+                    television=False, hasBattery=True, turnedOn=powered, channel=88000, volume=0.25 if on else RADIO_OFF_VOLUME, micMuted=True, headphones=-1,
+                    hasMedia=False, playingMedia=False, activated=False, equippedRadio=equipped, emitter=on and equipped)
+    expected['class'] = expected.pop('class_')
+    if not isinstance(value, dict) or set(value) != RADIO_KEYS or not isinstance(baseline, dict) or set(baseline) != RADIO_KEYS:
+        return False
+    if any(type(value.get(key)) is not type(wanted) or value[key] != wanted for key, wanted in expected.items()):
+        return False
+    scissors = value['scissors']
+    if (not isinstance(scissors, dict) or set(scissors) != {'id', 'fullType', 'container'} or type(scissors.get('id')) is not int
+            or scissors['id'] == -1 or scissors.get('fullType') != 'Base.ScissorsBluntMedical' or scissors.get('container') != 'root'
+            or not _ordinary_hotbar_valid(value['producer'], False)):
+        return False
+    if (type(value['power']) not in (int, float) or not math.isfinite(value['power']) or not 0 <= value['power'] <= 1
+            or type(baseline.get('power')) not in (int, float) or baseline['power'] != 1 or baseline['equippedRadio'] is not False or baseline['turnedOn'] is not on):
+        return False
+    stable = RADIO_KEYS - {'power', 'turnedOn', 'equippedRadio', 'emitter'}
+    return all(_strict_equal(value[key], baseline[key]) for key in stable)
+
+
+def hotbar_authority_keys(case):
+    return hotbar_effect_keys(case) | ({'ordinaryBaseline'} if HOTBAR_CASES[case].get('ordinary') else {'radioBaseline'} if HOTBAR_CASES[case].get('radio') else set())
+
+
+def _hotbar_authority_equal(authority, expected):
+    if not isinstance(authority, list) or len(authority) != len(expected):
+        return False
+    import copy
+    for actual, wanted in zip(authority, expected):
+        if not isinstance(actual, dict):
+            return False
+        if HOTBAR_CASES.get(wanted.get('case'), {}).get('radio'):
+            baseline = actual.get('radioBaseline')
+            spec = HOTBAR_CASES[wanted['case']]
+            if not _radio_hotbar_valid(wanted.get('radio'), spec['on'], not wanted.get('attached'), wanted.get('radioBaseline')):
+                return False
+            if not _radio_hotbar_valid(actual.get('radio'), spec['on'], False, baseline, powered=spec['on'] and not wanted.get('attached')):
+                return False
+            actual, wanted = copy.deepcopy(actual), copy.deepcopy(wanted)
+            # Inventory radio power packets can trail the local minute update.
+            actual['radio']['power'] = wanted['radio']['power']
+            wanted['radio']['equippedRadio'] = False
+            wanted['radio']['emitter'] = False
+        if not _strict_equal(actual, wanted):
+            return False
+    return True
+
+
 def _verify_tidy_hotbar(result, selection, case):
     value, checkpoint = result.get('tidyHotbar'), result.get('hotbarCheckpoint')
     tidy = 'P4TidyUpMeister' in selection['mods']
     spec = HOTBAR_CASES[case]
-    ordinary, prior = bool(spec.get('ordinary')), bool(spec.get('priorSecondary'))
+    ordinary, prior, radio = bool(spec.get('ordinary')), bool(spec.get('priorSecondary')), bool(spec.get('radio'))
     effect_keys = hotbar_effect_keys(case)
-    keys = effect_keys | ({'ordinaryBaseline', 'acknowledgements'} if ordinary else set()) | {'nativeGenerated', 'authoritativeRestore', 'sourceSession', 'sourceCompleted',
+    keys = effect_keys | ({'ordinaryBaseline', 'acknowledgements'} if ordinary else {'radioBaseline', 'radioLifecycle', 'acknowledgements'} if radio else set()) | {'nativeGenerated', 'authoritativeRestore', 'sourceSession', 'sourceCompleted',
                                 'attachConnectObserved', 'uiHotbarIdentity', 'sharedCompletion', 'unrelatedTailPreserved'}
     if (not isinstance(value, dict) or set(value) != keys
             or not isinstance(checkpoint, dict) or set(checkpoint) != effect_keys):
@@ -604,16 +663,16 @@ def _verify_tidy_hotbar(result, selection, case):
     provider = not spec['twoHands']
     normal = value.get('ordinary') if isinstance(value.get('ordinary'), dict) else {}
     baseline_secondary = normal.get('secondary', {}).get('id') if ordinary and prior and isinstance(normal.get('secondary'), dict) else False
-    temporary_primary = value.get('id') if not ordinary or prior else False
-    temporary_secondary = value.get('id') if spec['twoHands'] or ordinary and not prior else baseline_secondary
+    temporary_primary = value.get('id') if not (ordinary or radio) or prior else False
+    temporary_secondary = value.get('id') if spec['twoHands'] or (ordinary or radio) and not prior else baseline_secondary
     expected = dict(case=case, fullType=spec['fullType'], container='root', slotType=spec['slotType'], model=spec['model'],
-                    providerType=('Base.Belt2' if ordinary else 'Base.HolsterDouble') if provider else False, providerLocation=('base:belt' if ordinary else 'base:beltextra') if provider else False,
+                    providerType=('Base.Belt2' if ordinary or radio else 'Base.HolsterDouble') if provider else False, providerLocation=('base:belt' if ordinary or radio else 'base:beltextra') if provider else False,
                     providerWorn=provider,
                     attached=tidy, primary=False if tidy else temporary_primary, secondary=baseline_secondary if tidy else temporary_secondary, worn=False,
-                    producer='ISCutHair' if ordinary else 'onRackGun', producerCompleted=True, unrelatedAttachmentsPreserved=True,
+                    producer='ISCutHair' if ordinary or radio else 'onRackGun', producerCompleted=True, unrelatedAttachmentsPreserved=True,
                     nativeGenerated=int(tidy), authoritativeRestore=tidy and selection['kind'] == 'mp', sourceCompleted=tidy,
                     attachConnectObserved=tidy, uiHotbarIdentity=True, unrelatedTailPreserved=True)
-    if not ordinary:
+    if not (ordinary or radio):
         expected['ammoUnchanged'] = True
     if (type(value.get('id')) is not int or value['id'] == -1 or type(result.get('hotbarItem')) is not int
             or result['hotbarItem'] != value['id']
@@ -637,8 +696,27 @@ def _verify_tidy_hotbar(result, selection, case):
         receipts = [dict(action, state='completed') for action in actions] if selection['kind'] == 'mp' else []
         if not _strict_equal(value['acknowledgements'], receipts):
             return ['P4 ordinary hotbar exact native receipts differ']
+    if radio:
+        if not _strict_equal(value.get('radioLifecycle'), dict(heldPointer=True, emitterCreated=spec['on'], emitterCleaned=spec['on'] and tidy)):
+            return ['P4 radio native pointer/emitter lifecycle evidence missing']
+        if not _radio_hotbar_valid(value.get('radio'), spec['on'], not tidy, value.get('radioBaseline')):
+            return ['P4 radio native device ownership/settings/power/producer differ']
+        if value['radio']['scissors']['id'] in (value['id'], provider_id):
+            return ['P4 radio haircut requires a distinct exact scissors identity']
+        if not _radio_hotbar_valid(checkpoint.get('radio'), spec['on'], True, value.get('radioBaseline')):
+            return ['P4 radio checkpoint device ownership/settings/power/producer differ']
+        if value['radio']['power'] > checkpoint['radio']['power']:
+            return ['P4 radio battery power increased during native cleanup']
+        actions = [dict(kind='ISEquipWeaponAction', id=value['id']), dict(kind='ISCutHair', id=value['radio']['scissors']['id'])]
+        if tidy:
+            actions.append(dict(kind='ISUnequipAction', id=value['id']))
+        receipts = [dict(action, state='completed') for action in actions] if selection['kind'] == 'mp' else []
+        if not _strict_equal(value['acknowledgements'], receipts):
+            return ['P4 radio exact separate-scissors native receipts differ']
     before = {key: value[key] for key in effect_keys}
     before.update(attached=False, primary=temporary_primary, secondary=temporary_secondary)
+    if radio:
+        before['radio'] = checkpoint['radio']
     if not _strict_equal(checkpoint, before):
         return ['P4 hotbar detached/held checkpoint differs from exact restored identity']
     count = int(tidy and selection['mode'] == 'toolkit')

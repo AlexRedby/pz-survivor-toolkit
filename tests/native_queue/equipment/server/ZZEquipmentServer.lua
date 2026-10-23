@@ -96,6 +96,10 @@ Events.OnTick.Add(function()
   assert(getTimestampMs()-pending.since<20000,'authoritative equipment state did not converge')
   local idle=Fixture.transactionsSettled()
   local settled=not pending.checkpoint or Fixture.settled(session,Selection.mode,true)
+  -- Equip completion and RadioDeviceDataState0 use separate native paths.
+  -- Keep this request pending until the independently seeded server device
+  -- observes the UI's off transition; never copy client values into authority.
+  if Hotbar.radio(session)and not pending.checkpoint then settled=settled and Hotbar.radioReady(session,pending.tidy)end
   if Clothing.wristwatch(session)then
    local worn=Clothing.removes(session)
    if not pending.checkpoint then worn=Clothing.finalWorn(session,pending.tidy)end

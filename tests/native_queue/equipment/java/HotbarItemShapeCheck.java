@@ -25,7 +25,7 @@ public final class HotbarItemShapeCheck {
     }
 
     private static Item parse(ScriptParser.Block nativeModule, ScriptModule module, String name,
-                              boolean omitFluidIcon) throws Exception {
+                              boolean omitFluidIcon, ItemType expectedType) throws Exception {
         var block = nativeModule.getBlock("item", name);
         require(block != null, "native item missing: " + name);
         // Rendering fields eagerly load textures. Scissors omits only Icon;
@@ -48,7 +48,7 @@ public final class HotbarItemShapeCheck {
         item.InitLoadPP(name);
         item.Load(name, body.toString());
         item.OnScriptsLoaded(ScriptLoadMode.Init);
-        require(item.getFullName().equals("Base." + name) && item.getItemType() == ItemType.NORMAL,
+        require(item.getFullName().equals("Base." + name) && item.getItemType() == expectedType,
                 "native normal script identity/type changed: " + name);
         return item;
     }
@@ -81,7 +81,7 @@ public final class HotbarItemShapeCheck {
             ((ScriptBucketCollection<?>) bucket).registerModule(module);
         var nativeModule = ScriptParser.parse(ScriptParser.stripComments(Files.readString(
                 Path.of("media/scripts/generated/items/normal.txt")))).getBlock("module", "Base");
-        var script = parse(nativeModule, module, "ScissorsBluntMedical", false);
+        var script = parse(nativeModule, module, "ScissorsBluntMedical", false, ItemType.NORMAL);
         var item = script.InstanceItem(null);
         plain(item, script);
         var definitions = script.getComponentScripts();
@@ -110,7 +110,7 @@ public final class HotbarItemShapeCheck {
                 + " scriptComponents=1:AttributesScript itemComponents=2:AttributeContainer,EntityScriptInfo"
                 + " canonical=true owners=true original=" + info.getOriginalScript()
                 + " condition=" + item.getCondition() + " sharpness=" + item.getSharpness());
-        var panScript = parse(nativeModule, module, "RoastingPan", true);
+        var panScript = parse(nativeModule, module, "RoastingPan", true, ItemType.NORMAL);
         var pan = panScript.InstanceItem(null);
         plain(pan, panScript);
         require(!panScript.hasComponents() && panScript.getComponentScripts().isEmpty()
@@ -118,6 +118,30 @@ public final class HotbarItemShapeCheck {
                 "RoastingPan native no-components control changed");
         System.out.println("ROASTING_PAN class=" + pan.getClass().getSimpleName()
                 + " scriptComponents=0 itemComponents=0 entityScript=null");
+        var radioModule = ScriptParser.parse(ScriptParser.stripComments(Files.readString(
+                Path.of("media/scripts/generated/items/radio.txt")))).getBlock("module", "Base");
+        var radioScript = parse(radioModule, module, "WalkieTalkie2", false, ItemType.RADIO);
+        // Radio uses the legacy string constructor which eagerly probes icon textures.
+        // Native headless server mode suppresses only that rendering lookup.
+        boolean wasServer = zombie.network.GameServer.server;
+        InventoryItem radio;
+        try {
+            zombie.network.GameServer.server = true;
+            radio = radioScript.InstanceItem(null);
+        } finally {
+            zombie.network.GameServer.server = wasServer;
+        }
+        require(radio.getClass() == zombie.inventory.types.Radio.class && radio.getScriptItem() == radioScript
+                && radio.getFullType().equals("Base.WalkieTalkie2"), "native radio factory class/identity changed");
+        require(radioScript.getLuaCreate() == null && radioScript.getItemConfig() == null && radioScript.getItemConfigKey() == null
+                && !radioScript.hasComponents() && !radio.hasComponents() && radio.getFluidContainer() == null
+                && !radio.isWet() && radio.getItemWhenDry() == null, "native radio gained unreviewed factory/component effects");
+        var device = ((zombie.inventory.types.Radio) radio).getDeviceData();
+        require(device != null && device.getClass() == zombie.radio.devices.DeviceData.class && device.getParent() == radio
+                && device.getIsPortable() && device.getIsBatteryPowered() && !device.getIsTelevision()
+                && !device.hasMedia() && !device.isPlayingMedia() && !radio.canBeActivated()
+                && radio.getAttachmentType().equals("Walkie"), "native portable radio device/attachment shape changed");
+        System.out.println("RADIO class=Radio script=base:radio device=DeviceData parent=true portable=true battery=true media=false attachment=Walkie");
         System.out.println("HOTBAR_ITEM_SHAPE_CHECK_PASS");
     }
 }

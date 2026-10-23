@@ -2167,12 +2167,13 @@ do
             bar.attachedItems={[index]=weapon}
             assert(expected.name=='Holster'and weapon.attachedModel=='Holster '..(index==2 and 'Left'or 'Right'))
         end
-        if variant=='SmallBeltLeft'or variant=='SmallBeltRight'then
+        local radio=type(variant)=='string'and variant:match('^RadioBelt')~=nil
+        if variant=='SmallBeltLeft'or variant=='SmallBeltRight'or radio then
             bar.availableSlot={nativeSlot('SmallBeltLeft'),nativeSlot('SmallBeltRight')}
-            local index=variant=='SmallBeltLeft'and 1 or 2
+            local index=(variant=='SmallBeltLeft'or radio and variant:find('Left',1,true))and 1 or 2
             local expected=bar.availableSlot[index].def
             weapon.class='ComboItem';weapon.attachment='Screwdriver'
-            weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=index,variant,expected.attachments.Screwdriver
+            weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=index,bar.availableSlot[index].slotType,expected.attachments.Screwdriver
             weapon.script={getFullName=function()return weapon:getFullType()end,getItemType=function()return 'base:normal'end,
                 getLuaCreate=function()end,getItemConfig=function()end,getItemConfigKey=function()end,hasComponents=function()return false end}
             weapon.getScriptItem=function(self)return self.script end
@@ -2195,6 +2196,20 @@ do
                 weapon.getAttributes=function()return weapon.attributes end
                 weapon.getComponent=function(_,kind)if kind==ComponentType.Script then return weapon.metadata end end
                 weapon.getEntityScript=function()return weapon.script end
+            end
+            if radio then
+                weapon.class='Radio';weapon.attachment='Walkie';weapon.attachedModel=expected.attachments.Walkie
+                weapon.script.getItemType=function()return 'base:radio'end
+                weapon.device={class='DeviceData',portable=true,batteryPowered=true,television=false,media=false,playing=false,
+                    on=variant:find('On',1,true)~=nil,power=0.65,channel=88000,volume=0.25}
+                weapon.getDeviceData=function(self)return self.device end
+                local data=weapon.device
+                data.getParent=function()return weapon end
+                data.getIsPortable=function(self)return self.portable end
+                data.getIsBatteryPowered=function(self)return self.batteryPowered end
+                data.getIsTelevision=function(self)return self.television end
+                data.hasMedia=function(self)return self.media end
+                data.isPlayingMedia=function(self)return self.playing end
             end
             bar.attachedItems={[index]=weapon}
         end
@@ -2230,6 +2245,7 @@ do
     local function completeCase(mode,mixed,cancelled,slot,variant)
         local weapon,owner,action=restoreHotbar(mixed,slot,nil,variant)
         local index,slotType=weapon:getAttachedSlot(),weapon:getAttachedSlotType()
+        local device=weapon.device;local powered=device and device.on
         local animation=bar.availableSlot[index].def.animset
         local contract,kind=definitions.inspect(action)
         assert(contract and kind=='compat.tidy-equipment'and contract.items[weapon:getID()]
@@ -2256,19 +2272,24 @@ do
         assert(writes==2 and attached[weapon:getAttachedToModel()]==weapon and weapon:getContainer()==inventory
             and weapon:getAttachedSlot()==index and weapon:getAttachedSlotType()==slotType
             and bar.attachedItems[index]==weapon,'hotbar animation/perform metadata or exact root item changed')
+        if device then
+            assert(weapon:getDeviceData()==device and device:getParent()==weapon and device.on==powered
+                and device.power==0.65 and device.channel==88000 and device.volume==0.25,
+                'native hotbar return changed independent DeviceData settings or battery')
+        end
         assert(lifecycle.flush(queue)=='waiting');removed=true
         assert(lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil)
         isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
         assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
     end
-    for _,variant in ipairs({'Back','HolsterLeft','HolsterRight','SmallBeltLeft','SmallBeltRight'})do
+    for _,variant in ipairs({'Back','HolsterLeft','HolsterRight','SmallBeltLeft','SmallBeltRight','RadioBeltLeftOff','RadioBeltLeftOn','RadioBeltRightOff','RadioBeltRightOn'})do
         for _,mode in ipairs({'sp','mp-early','mp-late'})do
             for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
                 for _,slot in ipairs({'primary','secondary','both'})do completeCase(mode,mixed,cancelled,slot,variant)end
             end end
         end
     end
-    assert(callbacks==180,'hotbar cleanup missed item-family/slot/hand/owner/cancel/effect-order combinations')
+    assert(callbacks==324,'hotbar cleanup missed item-family/slot/hand/owner/cancel/effect-order combinations')
     queue.onCompleted=completed
     for _,variant in ipairs({'HolsterLeft','HolsterRight'})do
         for _,change in ipairs({'other-slot','other-definition','duplicate-type','icon-other-slot','removed-slot'})do
@@ -2344,6 +2365,47 @@ do
         elseif change=='entity-script'then weapon.getEntityScript=function()return {}end
         elseif change=='metadata-index'then weapon.getComponentForIndex=function(_,index)if index==0 then return weapon.attributes end end end
         assert(not definitions.inspect(action),'normal belt cleanup accepted changed attributes '..change)
+    end
+    for _,change in ipairs({'class','script-type','script-id','create','config','config-key','components','fluid','wet','dry-replacement',
+        'missing-getter','missing-device','device-class','parent','portable','battery','tv','media','playing','device-api','live-device','activation'})do
+        local weapon,_,action=restoreHotbar(true,'secondary',nil,'RadioBeltLeftOn')
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','powered radio did not migrate')
+        local data=weapon.device
+        if change=='class'then weapon.class='ComboItem'
+        elseif change=='script-type'then weapon.script.getItemType=function()return 'base:normal'end
+        elseif change=='script-id'then weapon.script.getFullName=function()return 'Base.Other'end
+        elseif change=='create'then weapon.script.getLuaCreate=function()return 'customCreate'end
+        elseif change=='config'then weapon.script.getItemConfig=function()return {}end
+        elseif change=='config-key'then weapon.script.getItemConfigKey=function()return 'customConfig'end
+        elseif change=='components'then weapon.components=true
+        elseif change=='fluid'then weapon.fluid={}
+        elseif change=='wet'then weapon.wet=true
+        elseif change=='dry-replacement'then weapon.dryReplacement='Base.Other'
+        elseif change=='missing-getter'then weapon.getDeviceData=nil
+        elseif change=='missing-device'then weapon.device=nil
+        elseif change=='device-class'then data.class='UnknownDeviceData'
+        elseif change=='parent'then data.getParent=function()return {}end
+        elseif change=='portable'then data.portable=false
+        elseif change=='battery'then data.batteryPowered=false
+        elseif change=='tv'then data.television=true
+        elseif change=='media'then data.media=true
+        elseif change=='playing'then data.playing=true
+        elseif change=='device-api'then data.hasMedia=nil
+        elseif change=='live-device'then
+            local live=setmetatable({device={class='DeviceData'}},{__index=weapon});inventory.values={live}
+        elseif change=='activation'then weapon.activatable=true end
+        assert(not definitions.inspect(action),'radio hotbar cleanup accepted changed '..change)
+    end
+    do
+        local weapon,_,action=restoreHotbar(true,'secondary',nil,'RadioBeltRightOn')
+        -- Autonomous native power changes do not revoke required cleanup. A
+        -- canonical MP item proxy may change without changing inventory identity.
+        weapon.device.power=0;weapon.device.on=false
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','depleted radio lost required cleanup')
+        local live=setmetatable({},{__index=weapon})
+        live.device=setmetatable({getParent=function()return live end},{__index=weapon.device});inventory.values={live}
+        bar.attachedItems[weapon:getAttachedSlot()]=live
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','canonical radio proxy replacement lost cleanup')
     end
     for _,field in ipairs({'reason','fromHotbar','hotbar','clothingAction','stopOnWalk','stopOnRun','animSpeed','onCompleteFunc','animEvent'})do
         local _,_,action=restoreHotbar(true,'primary');local original=action[field]

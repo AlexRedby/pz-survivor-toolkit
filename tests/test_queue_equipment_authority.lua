@@ -761,7 +761,7 @@ do
     if action.Type=='ISEquipWeaponAction'then return {token='provider-token',kind=action.Type,transaction=1,state='completed'}end
    end}}
   local hotbar={isCase=function(value)return value==id end,provider=function()return {}end,install=function()end,
-   observe=function()end,watch=function()watches=watches+1 end,
+   observe=function()end,diagnoseWaiting=function()end,watch=function()watches=watches+1 end,
    enqueue=function(state)
     assert(state==sample);enqueued=enqueued+1
     queue.queue[#queue.queue+1]={Type='ISEquipWeaponAction',item=sample.pickup}
@@ -814,3 +814,42 @@ do
  end
 end
 print('Equipment first-provider client setup: expired heartbeat waits for enqueue tracking, then exact receipt capture proceeds once.')
+
+-- Native equipment acknowledgements can precede RadioDeviceDataState0. Drive
+-- the actual server request loop: no final verifier runs until the independently
+-- owned device observes the arriving off state; retry never copies client data.
+do
+ local tick,command
+ local now,on,reads,checks=0,true,0,0
+ local sent,lines={},{}
+ local player={getUsername=function()return 'client1'end,getCurrentSquare=function()return {}end,
+  setGhostMode=function()end,getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end,
+  getWornItem=function()end,getPrimaryHandItem=function()end,getSecondaryHandItem=function()end}
+ local function item(id)return {getID=function()return id end,getAlreadyReadPages=function()return 0 end}end
+ local sample={id='tidy-hotbar-radio-on',player=player,owned={},hammer=item(1),screwdriver=item(2),front=item(3),tail=item(4)}
+ local fixture={position=function()end,prepare=function()return sample end,descriptor=function()return {}end,
+  transactionsSettled=function()return true end,settled=function()return true end,verify=function()return {}end,refresh=function()end}
+ local hotbar={isCase=function()return true end,provider=function()end,radio=function()return true end,
+  radioReady=function(state,tidy)assert(state==sample and tidy);reads=reads+1;return not on end}
+ local required={QueueTestSelection={cases={sample.id},mode='native',options={}},QueueEquipmentFixture=fixture,
+  QueueEquipmentScene={prepare=function()end,proof=function()end},QueueEquipmentClothing={isCase=function()return false end,wristwatch=function()return false end},
+  QueueEquipmentHotbar=hotbar,QueueEquipmentPostprocess={verify=function(state)assert(state==sample and not on);checks=checks+1;return {hotbar={}}end},
+  QueueHealthEvents={encode=function()return '{}'end}}
+ local env=setmetatable({require=function(name)return assert(required[name],name)end,isServer=function()return true end,
+  Events={OnServerStarted={Add=function()end},OnClientCommand={Add=function(fn)command=fn end},OnTick={Add=function(fn)tick=fn end}},
+  getTimestampMs=function()return now end,getActivatedMods=function()return {contains=function()return true end}end,
+  sendClothing=function()end,sendEquip=function()end,equipmentNativeTransferCount=function()return 0 end,
+  sendServerCommand=function(_,_,name,args)sent[#sent+1]={name=name,args=args}end,print=function(line)lines[#lines+1]=line end},{__index=_G})
+ local chunk=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/server/ZZEquipmentServer.lua'))
+ setfenv(chunk,env);chunk()
+ command('EquipmentQueueTest','Prepare',player,{case=sample.id})
+ command('EquipmentQueueTest','Checkpoint',player,{case=sample.id});tick()
+ assert(sent[1].name=='Prepared'and sent[2].name=='Checkpointed'and checks==0)
+ command('EquipmentQueueTest','Verify',player,{case=sample.id});tick();now=1;tick()
+ assert(#sent==2 and reads==2 and checks==0 and on,'radio state lag must remain pending without changing the device')
+ on=false -- Independent native radio state packet arrival, after equip completion.
+ now=2;tick();tick()
+ assert(#sent==3 and sent[3].name=='Verified'and sent[3].args.passed and reads==3 and checks==1)
+ for _,line in ipairs(lines)do assert(not line:find('FAIL',1,true),'radio state lag failed instead of retrying: '..line)end
+end
+print('Equipment authoritative radio final state: delayed native device packet retries without client-state normalization.')
