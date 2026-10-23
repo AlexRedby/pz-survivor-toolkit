@@ -85,18 +85,16 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
-### Current lifecycle and control-cost work
+### Next native lifecycle scenario
 
-- [ ] Audit actual B42.21 death/new-character and disconnect/reconnect entry points and identify a disposable Host sequence. Preserve owned launch/window/provenance gates; simulated map/slot changes do not close gameplay lifecycle coverage.
-- [ ] Check loss of native actor/connection availability against the executable admission reference. If stale state stays open during the absent interval, add explicit invalidation with replay fences and focused regressions before wiring the native scenario.
-- [ ] Measure native serialized lease-control commands by exact direction/module/command and original guarded callback; report actual serialized bytes and bounded resync bursts separately from IP/UDP/RakNet wire cost. Gate: native serializer checks and a sealed Host capture if the measurement needs live ingress.
-- [ ] Add the smallest verified native lifecycle scenario and require old pending replies/payloads to remain rejected before and after fresh authority. Keep normal menu release, death/respawn and full transport reconnect as separate gates until individually captured.
+- [ ] Add a dedicated guest-as-owner Host fixture: keep client1 hosting while client2 follows actual native death, the visible Respawn/new-character callbacks and OnCreatePlayer, then native pause-menu Exit and ConnectToServer rejoin. Preserve owned launch/window/provenance gates; direct map/slot swaps do not establish gameplay lifecycle coverage.
+- [ ] Prove retirement before/inside death callbacks, through corpse removal and across fresh binds. Respawn must retain the transport and replace the actor; reconnect must replace both. Allow native OnlineID reuse/change, retain original IDs for replay, track ordinary cart/cargo effects, and reject old pending replies/payloads before and after fresh authority without reconstructing or rolling back native outcomes.
 
 ### Remaining native lifetime and traffic gates
 
 - [ ] Extend the verified native-setter release/reacquire and same-ID replacement bank to ordinary menu equip/release, actor removal/respawn and disconnect/reconnect. Keep exact native incarnation and transport provenance, permanent retirement and replay fences. The macOS Host setter/resnapshot bank does not establish these complete gameplay lifetimes.
 - [ ] Extend native action-admission coverage beyond selected Setdown/Pickup completion/cancel/repeat to hotkey Drop, pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
-- [ ] Measure serialized/wire control costs and bounded bind/resync bursts, including the equipment bank's dynamically counted fresh rebinds; the held probe's 24 logical messages and action probe's 12 logical queries are not a payload or production-frequency budget.
+- [ ] Measure RakNet/IP/UDP control costs, retransmissions/lost sends and actual relevant-recipient fan-out for bounded bind/resync bursts. Keep delivered native command serialization separate from wire totals; establish the production codec/rate budget against a matching motion baseline.
 - [ ] Connect the verified admission reference to production motion/action together only after those authority/lifetime and traffic gates pass. Preserve durable high-water fences and native root catch-up; remove the replaced v1 consumers in the same change after verification. Source-time playback remains behind its separate timing gate.
 
 Design and dependencies: [multiplayer presentation plan](docs/CART_MULTIPLAYER.md). Remaining work follows the implemented timing baseline and same-native-render clearance fallback; the current cart protocol remains active.
