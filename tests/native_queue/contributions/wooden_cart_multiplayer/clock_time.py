@@ -113,12 +113,17 @@ def request_report(traces, selected):
                 observedConstantOffsetCompatible=lower <= upper,
                 sampledConstantOffsetIntersectionNs=[lower, upper] if lower <= upper else None,
                 maximumObservedExchangeGapMs=max(((b['processed']-a['processed'])/1e6 for a,b in zip(samples,samples[1:])),default=None)))
+        association_complete = bool(requests) and bool(matched_keys) and set(requests)==matched_keys and not maximum_dropped and not maximum_reply_dropped \
+            and not any(replies[key] for key in ('legacy-unassociated','request-record-missing','unobserved-request'))
+        experiment_complete = selected and len(experiments)>=2 and len(fixture_requests)==len(experiments) and association_complete
         roles[role] = dict(requests=len(requests), requestOrigins=dict(origins), replies=dict(replies),
             fixtureAttempts=len(experiments), fixtureCap=14, droppedRequests=maximum_dropped,
             droppedReplies=maximum_reply_dropped, requestsWithoutObservedReply=len(set(requests)-matched_keys),
-            observedRequestAssociationComplete=bool(requests) and bool(matched_keys) and set(requests)==matched_keys and not maximum_dropped and not maximum_reply_dropped
-                and not any(replies[key] for key in ('legacy-unassociated','request-record-missing','unobserved-request')),
+            observedRequestAssociationComplete=association_complete,
+            experimentCoverageComplete=experiment_complete,
+            fixtureElapsedSpanMs=[experiments[0]['fixtureElapsedMs'],experiments[-1]['fixtureElapsedMs']] if experiments else None,
             sampledEpochCompatibility=intervals)
-    return dict(experimentSelected=selected, roles=roles,
+    return dict(experimentSelected=selected, experimentCoverageComplete=selected and all(role['experimentCoverageComplete'] for role in roles.values()), roles=roles,
+        experimentCoverageContract='At least two bounded active-bank fixture attempts per client, with every observed attempt prepared and exactly associated to an observed reply, and no observed request/reply loss. Reports the actual elapsed span; does not certify whole-bank sampling, clock accuracy or runtime cleanliness.',
         trafficScope='Experiment adds only native TimeSync requests on owned clients, at most14 attempts per client, minimum2s spacing,32s deadline. Normal native retries remain separate and unsuppressed. No production cart payload/rate changes.',
         qualification='Exact echoed t0 plus process/connection epoch associates the exchange. Constant-offset compatibility at sampled exchanges is not an upper drift bound between them, a one-way latency measurement, or a source-image playback clock.')

@@ -55,6 +55,35 @@ class ClockRequestTests(unittest.TestCase):
         self.assertIn('not an upper drift bound',result['qualification'])
         self.assertFalse(result['roles']['client2']['observedRequestAssociationComplete'])
 
+    def test_startup_only_request_matching_does_not_qualify_active_experiment(self):
+        self.rows['client1']=[self.request,self.reply]
+        self.request.update(clockRequestOrigin='native',fixtureRequestOrdinal=0)
+        self.reply['clockRequestOrigin']='native'
+        result=self.report();role=result['roles']['client1']
+        self.assertTrue(role['observedRequestAssociationComplete'])
+        self.assertFalse(role['experimentCoverageComplete'])
+        self.assertFalse(result['experimentCoverageComplete'])
+        self.assertIsNone(role['fixtureElapsedSpanMs'])
+
+    def test_repeated_fixture_coverage_requires_both_clients_and_every_attempt(self):
+        plan=copy.deepcopy(self.plan);plan.update(fixtureRequestOrdinal=2,fixtureRequestMonoNs=2_100_000_000,fixtureElapsedMs=2010)
+        request=copy.deepcopy(self.request);request.update(clockRequestOrdinal=2,fixtureRequestOrdinal=2,
+            clientSendNs=2_110_000_000,observedMonoNs=2_111_000_000,monoNs=2_115_000_000)
+        reply=copy.deepcopy(self.reply);reply.update(clockRequestOrdinal=2,clientSendNs=2_110_000_000,
+            clientProcessNs=2_119_000_000,serverPreparedNs=2_615_000_000)
+        self.rows['client1'] += [plan,request,reply]
+        result=self.report()
+        self.assertTrue(result['roles']['client1']['experimentCoverageComplete'])
+        self.assertEqual(result['roles']['client1']['fixtureElapsedSpanMs'],[0,2010])
+        self.assertFalse(result['experimentCoverageComplete'])
+        self.rows['client2']=copy.deepcopy(self.rows['client1'])
+        self.assertTrue(self.report()['experimentCoverageComplete'])
+        self.rows['client2'].remove(self.rows['client2'][-2])
+        self.assertFalse(self.report()['experimentCoverageComplete'])
+        self.rows['client2']=copy.deepcopy(self.rows['client1'])
+        self.rows['client2'].pop()
+        self.assertFalse(self.report()['experimentCoverageComplete'])
+
     def test_native_retry_before_original_reply_does_not_rebind_cached_clock(self):
         request=copy.deepcopy(self.request);request.update(clientSendNs=110_000_000,observedMonoNs=111_000_000,
             monoNs=112_000_000,clockRequestOrdinal=2,clockRequestOrigin='native')
