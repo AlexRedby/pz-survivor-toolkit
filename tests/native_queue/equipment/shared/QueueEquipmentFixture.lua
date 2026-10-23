@@ -125,7 +125,9 @@ function Fixture.prepare(player,id,ids,options)
  seed('hammer',id:match('^tidy%-') and 'Base.Torch' or 'Base.Hammer');seed('screwdriver','Base.Screwdriver');seed('bag',Slots.isBelt(id) and 'Base.Bag_ALICEpack_Army' or 'Base.Bag_Schoolbag')
  state.location=state.bag:canBeEquipped();assert(state.location and tostring(state.location)~='','fixture bag has no native worn slot')
  player:setWornItem(state.location,state.bag)
- player:setPrimaryHandItem(state.hammer);player:setSecondaryHandItem(state.screwdriver)
+ if not (isClient()and Clothing.desired(state))then
+  player:setPrimaryHandItem(state.hammer);player:setSecondaryHandItem(state.screwdriver)
+ end
  if not isServer() then getPlayerInventory(player:getPlayerNum()):refreshBackpacks() end
  state.source=state.bag:getItemContainer()
  if not isServer() then assert(ISInventoryPaneContextMenu.getContainers(player):contains(state.source),'native menu cannot see worn fixture bag') end
@@ -254,7 +256,7 @@ function Fixture.verify(state,mode,checkpoint)
  assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
   policyChecked=mode=='toolkit',cancelled=cancelled,capacityBarrier=state.id=='bag-capacity' and mode=='toolkit',
-  primary=primary:getID(),secondary=secondary and secondary:getID() or false,bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
+  primary=primary and primary:getID()or false,secondary=secondary and secondary:getID() or false,bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
   capacity=state.effectiveCapacity,weightBefore=state.weightBefore,weightAfterReplacement=state.weightAfterRemoval}
  for key,value in pairs(extra) do outcome[key]=value end
  if state.id=='floor-pickup' then outcome.floorPickup=true;outcome.pickupWorldRemoved=true end

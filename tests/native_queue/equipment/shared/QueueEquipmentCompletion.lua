@@ -350,15 +350,17 @@ function Completion.observe(toolkit,selection)
     -- Host can replicate worn state before client perform; observe exact final
     -- authority after quiescence instead of requiring pre-effect slot absence.
    elseif counter==restores then
+    local spec=Clothing.overlap(state)and Clothing.cleanupMember(state,action)
     local primary=action.item:getID()==state.hammer:getID() and action.item:getFullType()==state.hammer:getFullType()
-    assert(action.Type=='ISUnequipAction' and state.id=='tidy-empty-hands' and action.item:getID()==state.pickup:getID()
-     or primary or action.item:getID()==state.screwdriver:getID() and action.item:getFullType()==state.screwdriver:getFullType(),
+    assert(spec or action.Type=='ISUnequipAction' and state.id=='tidy-empty-hands' and action.item:getID()==state.pickup:getID()
+     or not Clothing.overlap(state)and (primary or action.item:getID()==state.screwdriver:getID()and action.item:getFullType()==state.screwdriver:getFullType()),
      'P4 restored unexpected equipment')
     local queue=ISTimedActionQueue.queues[action.character]
     local decision=toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true)
     assert(not decision.allowed,'shared equipment cleanup must remain protected')
     if action.Type=='ISEquipWeaponAction' then
-     assert(action.primary==primary and not action.twoHands,'P4 restored wrong hand slots')
+     assert(spec and action.primary==spec.primary and action.twoHands==spec.twoHands
+      or not spec and action.primary==primary and not action.twoHands,'P4 restored wrong hand slots')
      restores.equip=restores.equip+1
     elseif action.Type=='ISUnequipAction' then
      local held=action.character:getPrimaryHandItem()
@@ -367,7 +369,7 @@ function Completion.observe(toolkit,selection)
       'P4 removed wrong temporary equipment')
      restores.unequip=restores.unequip+1
     else
-     assert(action.Type=='P4RestoreAction' and action.activated==(primary and not Clothing.overlap(state)),
+     assert(action.Type=='P4RestoreAction' and action.activated==(spec and spec.activated or not spec and primary and not Clothing.overlap(state)),
       'P4 restored wrong activation')
      restores.activation=restores.activation+1
     end

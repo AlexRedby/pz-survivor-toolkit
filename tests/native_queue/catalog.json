@@ -1114,6 +1114,57 @@
           ]
         },
         {
+          "id": "tidy-clothing-held-primary",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "tidy-clothing-held-secondary",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "tidy-clothing-held-both",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
           "id": "tidy-headwear-hat-remove",
           "producer": "inventory",
           "capability": "effect",

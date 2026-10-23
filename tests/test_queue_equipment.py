@@ -72,10 +72,15 @@ class EquipmentTests(unittest.TestCase):
                               unrelatedHandsPreserved=True)
                 if spec.get('overlapHand'):
                     hand = spec['overlapHand']
-                    effect.update(primary=950 if tidy or hand == 'secondary' else 955,
-                                  secondary=951 if tidy or hand == 'primary' else 955, originalPrimary=950, originalSecondary=951)
+                    remove = bool(spec.get('remove'))
+                    original_p = 955 if not remove and hand in ('primary', 'both') else 950
+                    original_s = 955 if not remove and hand in ('secondary', 'both') else 951
+                    checkpoint_p = (955 if remove else False) if hand in ('primary', 'both') else original_p
+                    checkpoint_s = (955 if remove else False) if hand in ('secondary', 'both') else original_s
+                    effect.update(primary=original_p if tidy else checkpoint_p, secondary=original_s if tidy else checkpoint_s,
+                                  originalPrimary=original_p, originalSecondary=original_s)
                 count = int(enabled and tidy)
-                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=bool(spec.get('remove')), **(dict(primary=955 if hand in ('primary', 'both') else 950, secondary=955 if hand in ('secondary', 'both') else 951) if spec.get('overlapHand') else {})),
+                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=bool(spec.get('remove')), **(dict(primary=checkpoint_p, secondary=checkpoint_s) if spec.get('overlapHand') else {})),
                               tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
@@ -85,15 +90,20 @@ class EquipmentTests(unittest.TestCase):
                 if spec.get('overlapHand'):
                     cleanup = []
                     if tidy:
-                        if hand in ('primary', 'both'):
+                        if remove and hand in ('primary', 'both'):
                             cleanup += [dict(kind='ISEquipWeaponAction', id=950, primary=True, twoHands=False), dict(kind='P4RestoreAction', id=950, activated=False)]
-                        if hand in ('secondary', 'both'):
+                        if remove and hand in ('secondary', 'both'):
                             cleanup += [dict(kind='ISEquipWeaponAction', id=951, primary=False, twoHands=False), dict(kind='P4RestoreAction', id=951, activated=False)]
-                        cleanup += [dict(kind='ISUnequipAction', id=955)]
-                    actions = [dict(kind='ISEquipWeaponAction', id=955), dict(kind='ISWearClothing', id=955), dict(kind='ISCutHair', id=False)] + [dict(kind=row['kind'], id=row['id']) for row in cleanup]
-                    hand_count = (2 if hand == 'both' else 1) * count
+                        if remove:
+                            cleanup += [dict(kind='ISUnequipAction', id=955)]
+                        else:
+                            cleanup = [dict(kind='ISEquipWeaponAction', id=955, primary=hand != 'secondary', twoHands=hand == 'both'),
+                                       dict(kind='P4RestoreAction', id=955, activated=False), dict(kind='ISWearClothing', id=955)]
+                    producers = ([dict(kind='ISEquipWeaponAction', id=955), dict(kind='ISWearClothing', id=955)] if remove else [dict(kind='ISUnequipAction', id=955)]) + [dict(kind='ISCutHair', id=False)]
+                    actions = producers + [dict(kind=row['kind'], id=row['id']) for row in cleanup]
+                    hand_count = (2 if remove and hand == 'both' else 1) * count
                     result['tidyClothing']['overlap'] = dict(
-                        intermediate=dict(primary=955 if hand in ('primary', 'both') else 950, secondary=955 if hand in ('secondary', 'both') else 951, worn=955, container='root'), cleanup=cleanup,
+                        intermediate=dict(primary=checkpoint_p, secondary=checkpoint_s, worn=955 if remove else False, container='root'), cleanup=cleanup,
                         acknowledgements=[dict(item, state='completed') for item in actions] if self.selection['kind'] == 'mp' else [],
                         sharedHands=dict(perform=2*hand_count, complete=2*hand_count if self.selection['kind'] == 'sp' else 0,
                                          flush=2*hand_count, legacy=0, equip=hand_count, activation=hand_count, unequip=0))
@@ -193,6 +203,24 @@ class EquipmentTests(unittest.TestCase):
                     with (self.root / 'server-launch.log').open('a') as log:
                         log.write('\n[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(effect) + '\n')
         return equipment.verify(self.root, self.selection, {})
+
+    def test_native_lua_selection_accepts_exact_report_cases_and_rejects_unknown_duplicates(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        ids = ','.join(json.dumps(case) for case in equipment.CASES)
+        source = "local expected={" + ids + "}\n" + r"""
+local config={cases=expected,kind='mp',mode='toolkit',clients=1,languages={'EN'},options={}}
+require=function(name)assert(name=='QueueTestSelection');return config end
+local selected=dofile(arg[1])
+assert(#selected.cases==#expected,'native selection omitted a declared report case')
+for i,id in ipairs(expected)do assert(selected.cases[i]==id,'native/report selection ordering differs')end
+config.cases={'unsupported-case'};assert(not pcall(dofile,arg[1]))
+config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
+"""
+        script = self.root / 'selection-check.lua'; script.write_text(source)
+        result = subprocess.run([lua, str(script), str(ROOT / 'tests/native_queue/equipment/shared/QueueEquipmentSelection.lua')], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_tidy_hotbar_requires_exact_native_effect_session_phases_and_completed_host_receipt(self):
         self.selection.update(cases=['tidy-hotbar'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
@@ -306,14 +334,19 @@ class EquipmentTests(unittest.TestCase):
                     for field in ('primary', 'secondary', 'originalPrimary', 'originalSecondary'):
                         rows = self.records(); value = target(rows)['tidyClothing']; value[field] = float(value[field])
                         self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field, 'float'))
+                    rows = self.records(); value = target(rows)['tidyClothing']; checkpoint = target(rows)['clothingCheckpoint']
+                    value['originalPrimary'] = []; checkpoint['originalPrimary'] = []
+                    if spec['overlapHand'] == 'secondary':
+                        checkpoint['primary'] = []
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (case, 'unhashable baseline'))
                     changes = [lambda p: p['intermediate'].update(primary=999),
                                lambda p: p['intermediate'].update(secondary=999),
-                               lambda p: p['intermediate'].update(worn=False),
+                               lambda p: p['intermediate'].update(worn=False if spec.get('remove') else 955),
                                lambda p: p['cleanup'].reverse(), lambda p: p['cleanup'].pop(),
-                               lambda p: p['cleanup'][0].update(id=955),
+                               lambda p: p['cleanup'][0].update(id=999),
                                lambda p: p['cleanup'][0].update(primary=not p['cleanup'][0]['primary']),
                                lambda p: p['cleanup'][0].update(primary=1),
-                               lambda p: p['cleanup'][0].update(twoHands=True),
+                               lambda p: p['cleanup'][0].update(twoHands=not p['cleanup'][0]['twoHands']),
                                lambda p: p['cleanup'][1].update(activated=True),
                                lambda p: p['sharedHands'].update(perform=True),
                                lambda p: p['sharedHands'].update(complete=99),
@@ -332,9 +365,11 @@ class EquipmentTests(unittest.TestCase):
                 if kind == 'mp':
                     server = self.root / 'server-launch.log'; original = server.read_text()
                     markers = [line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'originalPrimary' in line]
-                    self.assertEqual(len(markers), 3)
+                    self.assertEqual(len(markers), 6)
                     for marker in markers:
-                        server.write_text(original.replace(marker, marker.replace('950', '955')))
+                        prefix, payload = marker.split('CLOTHING_AUTHORITY ', 1)
+                        value = json.loads(payload); value['originalPrimary'] = 999
+                        server.write_text(original.replace(marker, prefix + 'CLOTHING_AUTHORITY ' + json.dumps(value)))
                         self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(original)
 
@@ -898,7 +933,7 @@ end
         script = r'''
 local root=arg[1]
 local function run(kind,fault)
- require=function()end
+ require=function(name)if name=='QueueEquipmentClothing'then return dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentClothing.lua')end end
  isClient=function()return kind=='mp'end
  Events={OnGameStart={Add=function()end}}
  ISQueueActionsAction={start=function()end}
@@ -1072,7 +1107,7 @@ local function run(kind,mode,fault,equipment)
  ISQueueActionsAction={start=function()end}
  isClient=function()return kind=='mp'end
  Events={OnGameStart={Add=function()end}}
- require=function()end
+ require=function(name)if name=='QueueEquipmentClothing'then return dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentClothing.lua')end end
  PZSurvivorToolkit={Settings={actionQueue=function()return enabled end}}
  local lifecycle=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua')
  local toolkit=PZSurvivorToolkit

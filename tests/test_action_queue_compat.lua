@@ -1407,10 +1407,26 @@ do
         elseif kind=='heavy'then sock.fixtureHeavy=true
         elseif kind=='broken'then sock.broken=true
         elseif kind=='activated'then sock.activatable=true;sock.activated=true end
-        if not removal then worn[sock:getBodyLocation()]=sock end
+        local desired=kind and kind:match('^desired%-')
+        if desired then
+            if kind~='desired-both'then
+                local other=item(inventory,14807);inventory.values[#inventory.values+1]=other
+                if kind=='desired-primary'then player.secondary=other else player.primary=other end
+            end
+            assert(ISEquipWeaponAction:new(player,sock,50,kind~='desired-secondary',kind=='desired-both'):complete())
+            assert(ISWearClothing:new(player,sock):complete())
+            writes=0
+        elseif not removal then worn[sock:getBodyLocation()]=sock end
         local captured=TidyFixture.captureSession(player)
-        captured.armed,captured.restoreWorn=true,true;TidyFixture.sessions[player]=captured
+        captured.armed,captured.restoreWorn=true,true;captured.restoreHands=desired and true or captured.restoreHands
+        TidyFixture.sessions[player]=captured
         local owner=tail();local other=mixed and tail()or nil
+        if desired then
+            assert(ISUnequipAction:new(player,sock,50):complete())
+            assert((kind=='desired-secondary'or not player.primary)and (kind=='desired-primary'or not player.secondary)
+                and not worn[sock:getBodyLocation()])
+            writes=0
+        end
         worn=removal and {[sock:getBodyLocation()]=sock}or {}
         if kind and kind:match('^held') then
             -- Reach the overlap through native Wear, rather than directly seeding
@@ -1495,6 +1511,51 @@ do
     end
     assert(callbacks==132,'ordinary clothing/headwear wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
     queue.onCompleted=completed
+    -- A desired held/worn baseline is restored in the opposite direction to
+    -- temporary clothing: native hands first, then Wear retains those hands.
+    -- Inspect the same adopted Wear before and after every native hand effect.
+    local desiredBoundaries=0
+    for _,kind in ipairs({'desired-primary','desired-secondary','desired-both'})do
+    for _,mode in ipairs({'sp','mp-early','mp-late'})do
+    for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
+        local sock,owner,wear=restoreClothing(mixed,kind,false)
+        local equip,activate=queue.queue[1],queue.queue[2]
+        local expectedPrimary=kind~='desired-secondary'and sock or player.primary
+        local expectedSecondary=(kind=='desired-secondary'or kind=='desired-both')and sock or player.secondary
+        assert(equip.Type=='ISEquipWeaponAction'and equip.item==sock
+            and equip.primary==(kind~='desired-secondary')and equip.twoHands==(kind=='desired-both')
+            and activate.Type=='P4RestoreAction'and activate.item==sock and not activate.activated
+            and queue.queue[3]==wear,'actual P4 desired baseline cleanup changed native order/flags')
+        local following=tail()
+        if cancelled then operations.invalidate(owner.toolkitQueueOperation)end
+        isClient=function()return mode~='sp'end
+        for i,action in ipairs({equip,activate,wear})do
+            assert(select(2,definitions.inspect(wear))=='compat.tidy-equipment',
+                'desired Wear lost its source proof across native hand prefix')
+            assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+            local after=({activate,wear,following})[i]
+            local removed=false;action.action={};queue.current=action
+            player.getCharacterActions=function()return list(removed and {}or{action.action})end
+            if mode=='mp-early'then assert(action:complete())end
+            assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+            assert(queue.current==action and queue.queue[1]==action and queue.queue[2]==after)
+            assert(lifecycle.flush(queue)=='waiting','desired clothing advanced before native removal')
+            if mode=='sp'then
+                assert(lifecycle.begin(action,'complete'));assert(action:complete());lifecycle.finish(action,'complete',true)
+            elseif mode=='mp-late'then assert(action:complete())end
+            assert(lifecycle.flush(queue)=='waiting')
+            removed=true
+            assert(lifecycle.flush(queue)=='completed'and queue.current==after and lifecycle.flush(queue)==nil)
+            desiredBoundaries=desiredBoundaries+1
+        end
+        assert(writes==1 and worn[sock:getBodyLocation()]==sock and inventory:getItemById(sock:getID())==sock
+            and player.primary==expectedPrimary and player.secondary==expectedSecondary,
+            'native desired Wear failed to retain exact held/worn/root state')
+        isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
+        assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
+    end end
+    end end
+    assert(desiredBoundaries==108,'desired held/worn ownership and MP-order coverage incomplete')
     for _,field in ipairs({'fromHotbar','clothingAction','stopOnWalk','stopOnRun','item','onCompleteFunc','start'})do
         local sock,_,action=restoreClothing(true)
         local previous=action[field]

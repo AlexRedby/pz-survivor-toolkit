@@ -8,13 +8,13 @@ local modules={QueueEquipmentSlots=load('QueueEquipmentSlots'),QueueEquipmentFlo
 for _,id in ipairs({'hands-chain','hotbar-chain','tidy-hotbar','not-a-case'})do
  local clothing=modules.QueueEquipmentClothing
  assert(not clothing.isCase(id))
- for _,name in ipairs({'overlap','removes','headwear'})do
+ for _,name in ipairs({'overlap','removes','headwear','desired'})do
   local ok,value=pcall(clothing[name],{id=id})
   assert(ok and value==false,'non-clothing predicate raised or matched '..id..' '..name)
  end
  assert(not pcall(clothing.spec,{id=id}),'unknown clothing configuration must remain strict')
 end
-for _,name in ipairs({'overlap','removes','headwear'})do
+for _,name in ipairs({'overlap','removes','headwear','desired'})do
  assert(modules.QueueEquipmentClothing[name]({})==false,'missing case ID must not match a clothing predicate')
 end
 require=function(name) return assert(modules[name],name) end
@@ -51,20 +51,26 @@ state.front=book(9);assert(not Fixture.settled(state,'toolkit',true),'checkpoint
 state.front=book(10);state.tail=book(10)
 -- Checkpoint hands use the same selector as the final clothing proof for
 -- each overlap. The independent read tail can finish only after checkpoint.
-for _,id in ipairs({'tidy-clothing-overlap','tidy-clothing-overlap-primary','tidy-clothing-overlap-both'})do
+for _,id in ipairs({'tidy-clothing-overlap','tidy-clothing-overlap-primary','tidy-clothing-overlap-both',
+ 'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
  local clothing=modules.QueueEquipmentClothing
  local socks={};local sample={id=id,hammer=hammer,screwdriver=screwdriver,clothingItem=socks,
   clothingLocation='base:socks',clothingHair='CrewCut',front=book(10),tail=book(9)}
  local primary,secondary=clothing.expectedHands(sample,false)
  sample.player={getPrimaryHandItem=function()return primary end,getSecondaryHandItem=function()return secondary end,
-  getWornItem=function()return socks end,getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end}end}
+  getWornItem=function()return clothing.removes(sample)and socks or nil end,getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end}end}
  assert(Fixture.settled(sample,'toolkit',true),'selected native overlap must satisfy checkpoint '..id)
  assert(not Fixture.settled(sample,'toolkit'),'overlap must preserve independent unfinished tail '..id)
- local expected=primary;primary=nil;assert(not Fixture.settled(sample,'toolkit',true));primary=expected
- expected=secondary;secondary=nil;assert(not Fixture.settled(sample,'toolkit',true));secondary=expected
+ local expected=primary;primary=primary==socks and hammer or socks;assert(not Fixture.settled(sample,'toolkit',true));primary=expected
+ expected=secondary;secondary=secondary==socks and screwdriver or socks;assert(not Fixture.settled(sample,'toolkit',true));secondary=expected
  sample.tail=book(10);assert(Fixture.settled(sample,'toolkit'))
  local finalPrimary,finalSecondary=clothing.expectedHands(sample,true)
- assert(finalPrimary==hammer and finalSecondary==screwdriver,'P4 hand restore expectation differs '..id)
+ if not clothing.desired(sample)then assert(finalPrimary==hammer and finalSecondary==screwdriver,'P4 hand restore expectation differs '..id)
+ else
+  local slot=clothing.overlapHand(sample)
+  assert(finalPrimary==((slot=='primary'or slot=='both')and socks or hammer)
+   and finalSecondary==((slot=='secondary'or slot=='both')and socks or screwdriver),'P4 desired baseline differs '..id)
+ end
 end
 local inventory={}
 local item={getID=function() return 21 end}
@@ -204,6 +210,43 @@ for _,case in ipairs({{id='tidy-clothing-overlap-primary',activated=false,ok=tru
  local observer=load('QueueEquipmentCompletion').observe(toolkit,{kind='sp',mode='toolkit'})
  observer.watch({id=case.id,hammer=torch,screwdriver=exact(42),baseline={[41]=torch}})
  assert(pcall(lifecycle.begin,action,'perform')==case.ok,'wrong primary baseline activation accepted/rejected '..case.id)
+end
+
+-- Desired held+worn cleanup counts its exact socks Equip/P4 pair as shared
+-- hands; Wear remains the separate clothing completion boundary.
+do
+ ISEquipWeaponAction={Type='ISEquipWeaponAction'};P4RestoreAction={Type='P4RestoreAction'};ISWearClothing={Type='ISWearClothing'}
+ for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+  for _,bad in ipairs({'none','item','primary','twoHands','activation'})do
+   local socks,torch,screw=exact(51),exact(52),exact(53)
+   socks.getBodyLocation=function()return 'base:socks'end
+   local root={};socks.getContainer=function()return root end
+   local player={};local state={id=caseID,clothingItem=socks,clothingLocation='base:socks',clothingRestoreType='ISWearClothing',
+    hammer=torch,screwdriver=screw,player=player,root=root,baseline={[51]=socks,[52]=torch,[53]=screw}}
+   local spec=modules.QueueEquipmentClothing.cleanupSpec(state)
+   local actions={}
+   for _,value in ipairs(spec)do
+    actions[#actions+1]=setmetatable({Type=value.class.Type,item=value.item,primary=value.primary,twoHands=value.twoHands,
+     activated=value.activated,character=player,action={},toolkitQueueOperation={}},value.class)
+   end
+   if bad=='item'then actions[1].item=torch
+   elseif bad=='primary'then actions[1].primary=not actions[1].primary
+   elseif bad=='twoHands'then actions[1].twoHands=not actions[1].twoHands
+   elseif bad=='activation'then actions[2].activated=true end
+   local queue={queue={}};ISTimedActionQueue={queues={[player]=queue}}
+   local lifecycle={begin=function()return true end,current=function()return queue.current end,finish=function()end,flush=function()end}
+   local toolkit={ActionQueueLifecycle=lifecycle,ActionQueueOperations={perform=function()end,deferCompletion=function()end},
+    ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
+    ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end},
+    ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()return false end},ActionQueueAcknowledgements={},
+    ActionQueueTidyIntent={status=function()return true end},ActionQueueCompat={isInstalled=function()return true end,verifySources=function()return true end}}
+   local observer=load('QueueEquipmentCompletion').observe(toolkit,{kind='sp',mode='toolkit'});observer.watch(state)
+   local ok=pcall(function()
+    for _,action in ipairs(actions)do queue.current=action;queue.queue={action};lifecycle.begin(action,'perform')end
+   end)
+   assert(ok==(bad=='none'),'desired shared cleanup accepted/rejected '..caseID..' '..bad)
+  end
+ end
 end
 
 -- Host snapshots can install the authority's fixture clothing before Prepared.
@@ -455,3 +498,50 @@ do
  assert(spProof.authority=='sp'and Scene.available(sp,spProof)and #sync==1,'SP scene must not send a server clothing packet')
 end
 print('Equipment scene checks passed: real helper, starter glasses, root identity, once-only preparation and authority-owned SyncClothing.')
+
+-- Exercise the real Fixture.prepare prefix: adopting the client fixture must
+-- reach clothing validation without overwriting either authority-owned hand.
+do
+ local clothing=modules.QueueEquipmentClothing
+ local prepare=clothing.prepare
+ local originalClient,originalServer=isClient,isServer
+ local itemKinds={front='Base.BookCarpentry1',tail='Base.BookFirstAid1',hammer='Base.Torch',screwdriver='Base.Screwdriver',
+  bag='Base.Bag_Schoolbag',clothingItem='Base.Socks_Ankle'}
+ for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+  local root={items={}}
+  function root:getItems()return {size=function()return #self.items end,get=function(_,i)return self.items[i+1]end}end
+  function root:getCapacity()return 100 end;function root:getEffectiveCapacity()return 100 end
+  local ids={case=caseID,originalWorn={},items={}}
+  local byName={}
+  for name,kind in pairs(itemKinds)do
+   local item={id=#root.items+1,kind=kind}
+   function item:getID()return self.id end;function item:getFullType()return self.kind end
+   function item:getContainer()return root end
+   function item:canBeEquipped()return 'base:back'end
+   function item:getItemContainer()return {}end
+   root.items[#root.items+1]=item;byName[name]=item;ids.items[name]=item.id
+  end
+  local desiredPrimary,desiredSecondary=clothing.expectedHands({id=caseID,hammer=byName.hammer,screwdriver=byName.screwdriver,clothingItem=byName.clothingItem},true)
+  local player={}
+  function player:getInventory()return root end
+  function player:getPrimaryHandItem()return desiredPrimary end;function player:getSecondaryHandItem()return desiredSecondary end
+  function player:setPrimaryHandItem()error('Fixture.prepare repaired desired primary')end
+  function player:setSecondaryHandItem()error('Fixture.prepare repaired desired secondary')end
+  function player:setWornItem(location,item)assert(location=='base:back'and item==byName.bag)end
+  function player:getPlayerNum()return 0 end
+  getPlayerInventory=function()return {refreshBackpacks=function()end}end
+  ISInventoryPaneContextMenu={getContainers=function()return {contains=function()return true end}end}
+  isClient,isServer=function()return true end,function()return false end
+  local reached=false
+  clothing.prepare=function(state)
+   assert(state.player:getPrimaryHandItem()==desiredPrimary and state.player:getSecondaryHandItem()==desiredSecondary)
+   reached=true;error('clothing-prefix-complete')
+  end
+  local ok,problem=pcall(Fixture.prepare,player,caseID,ids)
+  clothing.prepare=prepare
+  assert(not ok and reached and tostring(problem):find('clothing-prefix-complete',1,true),
+   'client desired fixture hand adoption guard failed '..caseID..' '..tostring(problem))
+ end
+ isClient,isServer=originalClient,originalServer
+end
+print('Equipment desired client adoption checks passed: real fixture preparation preserves both authoritative hands.')

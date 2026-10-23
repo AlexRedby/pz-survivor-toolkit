@@ -5,6 +5,9 @@ local cases={
  ['tidy-clothing-overlap']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlapHand='secondary'},
  ['tidy-clothing-overlap-primary']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlapHand='primary'},
  ['tidy-clothing-overlap-both']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlapHand='both'},
+ ['tidy-clothing-held-primary']={fullType='Base.Socks_Ankle',location='base:socks',overlapHand='primary'},
+ ['tidy-clothing-held-secondary']={fullType='Base.Socks_Ankle',location='base:socks',overlapHand='secondary'},
+ ['tidy-clothing-held-both']={fullType='Base.Socks_Ankle',location='base:socks',overlapHand='both'},
  ['tidy-headwear-hat-restore']={fullType='Base.Hat_Beany',location='base:hat',headwear=true},
  ['tidy-headwear-full-hat-restore']={fullType='Base.Hat_BoxingRed',location='base:fullhat',headwear=true},
  ['tidy-headwear-hat-remove']={fullType='Base.Hat_Beany',location='base:hat',remove=true,headwear=true},
@@ -16,22 +19,43 @@ function Clothing.overlapHand(state)return cases[state.id]and cases[state.id].ov
 function Clothing.overlap(state)return Clothing.overlapHand(state)~=nil end
 -- The same native hand expectation serves checkpoint, readiness and final
 -- authority. P4 restores the baseline; ordinary Wear keeps the held item.
+function Clothing.desired(state)return Clothing.overlap(state)and not Clothing.removes(state)end
 function Clothing.expectedHands(state,tidy)
  local hand=Clothing.overlapHand(state)
- return not tidy and (hand=='primary'or hand=='both')and state.clothingItem or state.hammer,
-  not tidy and (hand=='secondary'or hand=='both')and state.clothingItem or state.screwdriver
+ local selected=Clothing.desired(state)and tidy or not Clothing.desired(state)and not tidy
+ local primary,secondary=state.hammer,state.screwdriver
+ if hand=='primary'or hand=='both'then primary=selected and state.clothingItem or nil end
+ if hand=='secondary'or hand=='both'then secondary=selected and state.clothingItem or nil end
+ if not Clothing.desired(state)and tidy then primary,secondary=state.hammer,state.screwdriver end
+ return primary,secondary
+end
+function Clothing.producerActions(state)
+ local result={}
+ if state.clothingEquip then result[#result+1]=state.clothingEquip end
+ result[#result+1]=state.clothingFirst;result[#result+1]=state.clothingProducer
+ return result
 end
 function Clothing.cleanupSpec(state)
  local result={}
- local function hand(item,primary)
-  result[#result+1]={class=ISEquipWeaponAction,item=item,primary=primary,twoHands=false}
+ local function hand(item,primary,twoHands)
+  result[#result+1]={class=ISEquipWeaponAction,item=item,primary=primary,twoHands=twoHands==true}
   result[#result+1]={class=P4RestoreAction,item=item,activated=false}
  end
  local slot=Clothing.overlapHand(state)
- if slot=='primary'or slot=='both'then hand(state.hammer,true)end
- if slot=='secondary'or slot=='both'then hand(state.screwdriver,false)end
- if slot then result[#result+1]={class=ISUnequipAction,item=state.clothingItem}end
+ if Clothing.desired(state)then
+  hand(state.clothingItem,slot~='secondary',slot=='both')
+  result[#result+1]={class=ISWearClothing,item=state.clothingItem}
+ else
+  if slot=='primary'or slot=='both'then hand(state.hammer,true)end
+  if slot=='secondary'or slot=='both'then hand(state.screwdriver,false)end
+  if slot then result[#result+1]={class=ISUnequipAction,item=state.clothingItem}end
+ end
  return result
+end
+function Clothing.cleanupMember(state,action)
+ for _,spec in ipairs(Clothing.cleanupSpec(state))do
+  if getmetatable(action)==spec.class and action.item==spec.item then return spec end
+ end
 end
 local function handActivation(state)
  assert(not state.hammer:isActivated()and not state.screwdriver:isActivated(),
@@ -88,8 +112,9 @@ function Clothing.observeLine(state,line)
  if not session or session<=0 then return end
  local sock=Clothing.spec(state).fullType..'#'..state.clothingItem:getID()..'@'..state.root:getType()
  if Clothing.overlap(state)and message:find('^capture primary=')then
-  local primary=state.hammer:getFullType()..'#'..state.hammer:getID()..'@'..state.root:getType()
-  local secondary=state.screwdriver:getFullType()..'#'..state.screwdriver:getID()..'@'..state.root:getType()
+  local p,s=Clothing.expectedHands(state,true)
+  local primary=p:getFullType()..'#'..p:getID()..'@'..state.root:getType()
+  local secondary=s:getFullType()..'#'..s:getID()..'@'..state.root:getType()
   state.clothingCaptureHands={session=session,valid=message=='capture primary='..primary..' secondary='..secondary}
  end
  local worn=message:match('^capture worn=%[(.-)%] inventoryCount=%d+$')
@@ -108,8 +133,8 @@ function Clothing.observeLine(state,line)
  if message:find('^RESTORE actionTotal=')then
   local trace=message:match(' trace=%[(.-)%] reason=')
   if proof.restore or not proof.hands or not proof.clothing or not proof.producer or not trace
-   or not trace:find((Clothing.overlap(state)and 'ISEquipWeaponAction -> 'or '')..first..' -> ISCutHair',1,true)
-   or Clothing.overlap(state)and not proof.equip then proof.problem='P4 restore missing native clothing producer evidence' end
+   or not trace:find((Clothing.overlap(state)and not Clothing.desired(state)and 'ISEquipWeaponAction -> 'or '')..first..' -> ISCutHair',1,true)
+   or Clothing.overlap(state)and not Clothing.desired(state)and not proof.equip then proof.problem='P4 restore missing native clothing producer evidence' end
   proof.restore=true
  end
 end
@@ -161,7 +186,13 @@ function Clothing.prepare(state,seed)
   assert(Clothing.available(state.player,state.ids),'client has not adopted authoritative clothing setup')
  elseif isServer()then
   state.clothingSetupPending=true;state.clothingSetupPrevious=state.player:getWornItem(state.clothingLocation)
- else state.player:setWornItem(state.clothingLocation,item)end
+ else
+  if Clothing.desired(state)then
+   local primary,secondary=Clothing.expectedHands(state,true)
+   state.player:setPrimaryHandItem(primary);state.player:setSecondaryHandItem(secondary)
+  end
+  state.player:setWornItem(state.clothingLocation,item)
+ end
  local visual=state.player:getHumanVisual()
  state.clothingHair=state.ids and assert(state.ids.clothingHair,'authoritative clothing hair style missing')
   or (state.player:isFemale()and 'Bob'or 'CrewCut')
@@ -202,6 +233,16 @@ function Clothing.available(player,ids)
    end
   end
   if player:getWornItem(item:getBodyLocation())~=expected then return false end
+  if spec.overlapHand and not spec.remove then
+   local primary=root:getItemById(ids.items.hammer);local secondary=root:getItemById(ids.items.screwdriver)
+   if not primary or primary:getFullType()~='Base.Torch'or primary:getContainer()~=root
+    or not secondary or secondary:getFullType()~='Base.Screwdriver'or secondary:getContainer()~=root then return false end
+   if not ids.clothingSetupPending then
+    if spec.overlapHand=='primary'or spec.overlapHand=='both'then primary=item end
+    if spec.overlapHand=='secondary'or spec.overlapHand=='both'then secondary=item end
+   end
+   if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
+  end
  end
  return true
 end
@@ -222,9 +263,16 @@ function Clothing.configure(state,itemID)
   emptyHeadwearSlots(state)
   assert(capacitySafe(state),'authoritative headwear setup lacks conservative root capacity')
  end
+ if Clothing.desired(state)then
+  assert(state.player:getPrimaryHandItem()==state.hammer and state.player:getSecondaryHandItem()==state.screwdriver,
+   'authoritative clothing setup baseline hands changed')
+  local primary,secondary=Clothing.expectedHands(state,true)
+  state.player:setPrimaryHandItem(primary);state.player:setSecondaryHandItem(secondary)
+ end
  state.player:setWornItem(state.clothingLocation,item)
  assert(state.player:getWornItem(state.clothingLocation)==item,'authoritative clothing setup did not wear exact root item')
  state.clothingSetupPending=nil;state.clothingSetupPrevious=nil
+ if Clothing.desired(state)then sendEquip(state.player)end
  sendClothing(state.player,state.clothingLocation,item)
 end
 function Clothing.enqueue(state,helpers)
@@ -233,8 +281,9 @@ function Clothing.enqueue(state,helpers)
  -- than UI explicit-equip intent. The unchanged haircut arms restoreWorn.
  -- Only P4 constructs the eventual wear/unequip cleanup action.
  local remove=Clothing.removes(state)
+ state.clothingEquip=nil
  helpers.run(function()
-  if Clothing.overlap(state)then
+  if Clothing.overlap(state)and not Clothing.desired(state)then
    local hand=Clothing.overlapHand(state)
    handActivation(state)
    state.clothingEquip=ISEquipWeaponAction:new(state.player,state.clothingItem,50,hand~='secondary',hand=='both')
@@ -265,20 +314,19 @@ function Clothing.observe(state,queue,toolkit,tidy)
   if Clothing.overlap(state)then
    local item=assert(state.root:getItemById(state.clothingItem:getID()),'overlap exact socks missing')
    local primary,secondary=Clothing.expectedHands(state,false)
+   local expectedWorn=not Clothing.desired(state)and item or nil
    assert(item:getContainer()==state.root and item:getFullType()==Clothing.spec(state).fullType
-    and state.player:getSecondaryHandItem()==secondary and state.player:getWornItem(state.clothingLocation)==item
-    and state.player:getPrimaryHandItem()==primary,'native Equip then Wear did not create the exact held/worn overlap')
+    and state.player:getSecondaryHandItem()==secondary and state.player:getWornItem(state.clothingLocation)==expectedWorn
+    and state.player:getPrimaryHandItem()==primary,'native clothing actions did not create the exact intermediate hand/worn state')
    handActivation(state)
-   state.clothingOverlap={primary=primary:getID(),secondary=secondary:getID(),worn=item:getID(),container='root'}
+   state.clothingOverlap={primary=primary and primary:getID()or false,secondary=secondary and secondary:getID()or false,
+    worn=not Clothing.desired(state)and item:getID()or false,container='root'}
   end
  end
  if Clothing.overlap(state)and state.clothingP4 and state.clothingP4.restore and not state.clothingCleanup then
   local cleanup={}
   for _,action in ipairs(queue.queue)do
-   local class=getmetatable(action)
-   if (class==ISEquipWeaponAction or class==P4RestoreAction)and action.item
-    and (action.item:getID()==state.hammer:getID()or action.item:getID()==state.screwdriver:getID())
-    or class==ISUnequipAction and action.item and action.item:getID()==state.clothingItem:getID()then
+   if Clothing.cleanupMember(state,action)then
     cleanup[#cleanup+1]=action
    end
   end
@@ -311,7 +359,7 @@ function Clothing.observe(state,queue,toolkit,tidy)
  end
  if Clothing.overlap(state)and isClient()then
   state.clothingReceipts=state.clothingReceipts or {}
-  for _,actions in ipairs({{state.clothingEquip,state.clothingFirst,state.clothingProducer},state.clothingCleanup or {}})do
+  for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
    for _,action in ipairs(actions)do
     if not state.clothingReceipts[action]then state.clothingReceipts[action]=toolkit.ActionQueueAcknowledgements.capture(action)end
    end
@@ -351,7 +399,7 @@ function Clothing.evidence(state,toolkit,tidy,completion,hands)
    overlap.cleanup[#overlap.cleanup+1]=row
   end
   if isClient()then
-   for _,actions in ipairs({{state.clothingEquip,state.clothingFirst,state.clothingProducer},state.clothingCleanup or {}})do
+   for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
     for _,action in ipairs(actions)do
      local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'overlap native acknowledgement not captured')
      assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','overlap native action did not complete authoritatively')
@@ -383,7 +431,7 @@ function Clothing.settled(state,toolkit,tidy)
    or state.hammer:isActivated()or state.screwdriver:isActivated()then return false end
   if not state.clothingOverlap or tidy and not state.clothingCleanup then return false end
   if isClient()then
-   for _,actions in ipairs({{state.clothingEquip,state.clothingFirst,state.clothingProducer},state.clothingCleanup or {}})do
+   for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
     for _,action in ipairs(actions)do
      local receipt=state.clothingReceipts and state.clothingReceipts[action]
      if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
@@ -400,15 +448,16 @@ function Clothing.verify(state,restored)
  assert(restored and player:getWornItem(state.clothingLocation)==live
   or not restored and player:getWornItem(state.clothingLocation)==nil,'exact socks worn slot differs')
  assert(tostring(player:getHumanVisual():getHairModel())==state.clothingHair and not player:getHumanVisual():getNonAttachedHair(),'native haircut changed the requested existing style')
- local primary,secondary=Clothing.expectedHands(state,not restored)
+ local primary,secondary=Clothing.expectedHands(state,Clothing.removes(state)and not restored or not Clothing.removes(state)and restored)
  if Clothing.overlap(state)then handActivation(state)end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,
   'clothing restoration changed unrelated hands')
  local result={id=live:getID(),fullType=live:getFullType(),bodyLocation=tostring(state.clothingLocation),container='root',
   worn=restored,producer='ISCutHair',producerCompleted=true,hairUnchanged=true,hairStyle=state.clothingHair,unrelatedHandsPreserved=true}
  if Clothing.overlap(state)then
-  result.primary=primary:getID();result.secondary=secondary:getID()
-  result.originalPrimary=state.hammer:getID();result.originalSecondary=state.screwdriver:getID()
+  result.primary=primary and primary:getID()or false;result.secondary=secondary and secondary:getID()or false
+  local originalPrimary,originalSecondary=Clothing.expectedHands(state,true)
+  result.originalPrimary=originalPrimary:getID();result.originalSecondary=originalSecondary:getID()
  end
  return result
 end
