@@ -334,3 +334,20 @@ No required dependencies or special load order are listed. The author declares B
 Keeps the visible character seated when holding right mouse to look around or aim inside a vehicle. Selected after `VanillaVehiclesAnimated;AnimatedVehiclePartsFix`, before the lighting mods; `VVA_cullseats` stays disabled so occupants remain visible. The downloaded B42 layer overrides ten vehicle aim nodes and the seat-switch node with `Bob_IdleDriving`; it contains no Lua, Java JAR or item/vehicle scripts and declares no dependencies. The B42.21 `aim_heavy`, `aim_spear` and `aim_chainsaw` nodes are not overridden, so this selection does not establish coverage for every equipped weapon.
 
 The author declares B42 SP/MP support and existing-save compatibility. Multiplayer can occasionally need a restart for animation loading; the author's optional Vehicle Enter/Exit Fix recommendation is not selected. Full-pack macOS B42.21 SP/Host RMB look-around, release, seat switching, armed aiming and second-player presentation remain unverified. Workshop supplies the mod directly; no files are repacked into Toolkit.
+
+## 54 Vehicle Repair Overhaul
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=2757712197) · Workshop `2757712197`
+
+| Selected module | Mod ID | Purpose |
+|---|---|---|
+| Vehicle Repair Overhaul | `VehicleRepairOverhaul` | Vehicle-part repairs, repair recipes and Fix-A-Flat items. |
+| Vehicle Salvage Overhaul | `VehicleSalvageOverhaulB42` | B42 part salvage and removal of whole ordinary vehicles. Requires the base module. |
+
+Load both at the end of the selected list, after the other vehicle mods, with the base first. The downloaded base requires B42.19+; the salvage module requires B42.12+. No additional required dependency is declared. `SimpleAutoParts` is marked incompatible and is not selected. The author's B42 package includes heater/lightbar repair and optional engine-rebuild support; separate companion repair mods are unnecessary. The author declares multiplayer support; full-pack macOS B42.21 SP/Host coexistence is unverified.
+
+The whole-vehicle **Salvage Vehicle** action requires MetalWelding 4, Mechanics 3, a welding mask and 10 BlowTorch uses. It can remove an ordinary vehicle regardless of its condition or whether removable parts remain. Native burnt-wreck dismantling remains separate. **Empty all vehicle containers, remove people and animals, disconnect towing and uninstall any parts you want to keep before salvaging.** The current action does not require empty containers, rescue their contents, preserve installed parts or ask for an extra confirmation; it removes the vehicle after yielding materials/XP.
+
+Keep the upstream sandbox defaults unless deliberately changing the world: engine rebuild, vanilla fixing recipes, repair of fully broken parts and bypassing removal prerequisites are off; diminishing repairs remain enabled; nearby-container and nearby-ground material searches are on. The INI does not modify existing sandbox values.
+
+Known upstream limitation in the downloaded package: the salvage sandbox UI defines `VSO_EnableFullVehicleSalvaging` / `VSO_SalvageTime_*`, but the consumers read `VRO_EnableFullVehicleSalvaging` / `VRO_SalvageTime_*`. Those visible controls therefore do not reliably govern the corresponding behavior; full salvage falls back to enabled. Whole-vehicle action duration is independently `2000 - MetalWelding * 20`. This selection does not patch upstream code. Check real fuel/material/XP changes, repair and salvage menus, VVA parts, reload and a second Host player's view in disposable saves. Removing VRO also removes existing Fix-A-Flat items according to the author.

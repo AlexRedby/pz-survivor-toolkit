@@ -1817,7 +1817,9 @@
         "EURY_DST",
         "Ivmakk_ForagingTooltipExtended",
         "CustomLightSwitch",
-        "NicksTurnOffFridges"
+        "NicksTurnOffFridges",
+        "VehicleRepairOverhaul",
+        "VehicleSalvageOverhaulB42"
       ],
       "scenario_actions": {
         "tv-eject-controls": {
@@ -1874,7 +1876,9 @@
             "EURY_DST",
             "Ivmakk_ForagingTooltipExtended",
             "CustomLightSwitch",
-            "NicksTurnOffFridges"
+            "NicksTurnOffFridges",
+            "VehicleRepairOverhaul",
+            "VehicleSalvageOverhaulB42"
           ],
           "checks": {
             "success-queued": {
@@ -2008,6 +2012,7 @@
         "PlumbedSinkMainsFix",
         "VanillaVehiclesAnimated",
         "AnimatedVehiclePartsFix",
+        "CarRoofFix",
         "NepHighBeams",
         "ReverseDriveLights",
         "ArcheryNexus",
@@ -2015,7 +2020,9 @@
         "EURY_DST",
         "Ivmakk_ForagingTooltipExtended",
         "CustomLightSwitch",
-        "NicksTurnOffFridges"
+        "NicksTurnOffFridges",
+        "VehicleRepairOverhaul",
+        "VehicleSalvageOverhaulB42"
       ],
       "scenario_actions": {
         "cancelled-remainder": {
@@ -2064,6 +2071,7 @@
             "PlumbedSinkMainsFix",
             "VanillaVehiclesAnimated",
             "AnimatedVehiclePartsFix",
+            "CarRoofFix",
             "NepHighBeams",
             "ReverseDriveLights",
             "ArcheryNexus",
@@ -2071,7 +2079,9 @@
             "EURY_DST",
             "Ivmakk_ForagingTooltipExtended",
             "CustomLightSwitch",
-            "NicksTurnOffFridges"
+            "NicksTurnOffFridges",
+            "VehicleRepairOverhaul",
+            "VehicleSalvageOverhaulB42"
           ],
           "checks": {
             "success-queued": {
