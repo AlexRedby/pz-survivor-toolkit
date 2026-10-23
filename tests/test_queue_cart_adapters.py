@@ -53,17 +53,17 @@ class CartAdapterTests(unittest.TestCase):
         return cache
 
     @staticmethod
-    def compiler(command, **kwargs):
-        classes = Path(command[command.index('-d') + 1])
-        for source in [Path(value) for value in command if value.endswith('.java')]:
+    def compiler(jdk, classpath, classes, sources):
+        classes.mkdir(parents=True)
+        for source in map(Path, sources):
             target = classes / ('net/alexredby/cartlab/Main.class' if source.stem == 'Main' else source.stem + '.class')
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b'compiled test class')
-        return SimpleNamespace(returncode=0, stdout='', stderr='')
 
     def stage(self):
-        with patch.object(carts.subprocess, 'run', side_effect=self.compiler) as compiler:
+        with patch.object(carts, '_compile', side_effect=self.compiler) as compiler:
             carts.stage(ROOT, self.output, self.root / 'game', self.root / 'jdk', self.selection, self.locations, self.runtime)
+        self._last_compiler_calls=compiler.call_args_list
         return compiler
 
     def test_entry_contact_repro_is_scoped_to_supported_public_menu_scenes(self):
@@ -94,7 +94,7 @@ class CartAdapterTests(unittest.TestCase):
     def test_sp_stage_builds_three_sealed_agents_and_waits_for_owned_probe_gate(self):
         compiler = self.stage()
         self.assertEqual(compiler.call_count, 2)
-        self.assertTrue(all('--release' in call.args[0] and '25' in call.args[0] for call in compiler.call_args_list))
+        self.assertTrue(all(source.suffix in ('.kt', '.java') for call in compiler.call_args_list for source in map(Path, call.args[3])))
         spec = self.runtime['roles']['client1']
         runtime = Path(spec['env']['PZ_CART_RUNTIME_FILE'])
         text = runtime.read_text()
@@ -446,9 +446,9 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.assertIn('heading=cartLabHeading()', source)
         self.assertIn('acceptedHeading=cartLabSteeringHeading()', source)
         self.assertIn('frame=cartLabFrame()', source)
-        bridge = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/Main.java').read_text()
-        self.assertIn('@LuaMethod(name="cartLabFrame", global=true)', bridge)
-        self.assertIn('return zombie.iso.IsoWorld.instance.getFrameNo();', bridge)
+        bridge = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/Main.kt').read_text()
+        self.assertIn('@LuaMethod(name="cartLabFrame",global=true)', ''.join(bridge.split()))
+        self.assertIn('fun frame() = zombie.iso.IsoWorld.instance.getFrameNo()', bridge)
         self.assertNotIn('setVariable(', source)
         for phase, drive, gait, duration in carts.CONTROL_PHASES:
             self.assertIn("name='" + phase + "',drive=" + str(drive) + ',gait=' + str(gait) + ',duration=' + str(duration), source)
@@ -700,13 +700,13 @@ print('STARTUP_REJOIN_GUARD_PASS')
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('STARTUP_REJOIN_GUARD_PASS',result.stdout)
 
-    def test_mp_stage_composes_original_methods_and_identical_selection(self):
+    def test_mp_stage_compiles_shared_kotlin_modules_and_identical_selection(self):
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
         self.role('client2'); server = self.role('server')
         self.stage()
-        source = (self.output / 'cart-build/Main.java').read_text()
-        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_multiplayer/MPMain.methods').read_text(), source)
-        self.assertEqual(source.count('    public static void main(String[] args)'), 1)
+        source = (self.output / 'cart-build/Main.kt').read_text()
+        self.assertEqual(source.count('Multiplayer.startup()'), 1)
+        self.assertEqual(source.count('fun main(args: Array<String>)'), 1)
         relative = 'mods/ActionQueueTest/42/media/lua/shared/QueueTestSelection.lua'
         self.assertEqual((server / relative).read_bytes(), (self.output / 'client1' / relative).read_bytes())
         for role in ('client1', 'client2'):
@@ -769,9 +769,9 @@ print('STARTUP_REJOIN_GUARD_PASS')
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_LEASE_LIFETIME'],'true')
             path=self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseLifetimes.lua'
             self.assertEqual(path.read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-lifetimes.lua').read_bytes())
-        source=(self.output/'cart-build/Main.java').read_text()
-        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/EquipmentLifetime.methods'
-        self.assertIn(path.read_text(),source);self.assertIn(path,carts.sources(ROOT,self.selection))
+        source=(self.output/'cart-build/Main.kt').read_text()
+        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/EquipmentLifetime.kt'
+        self.assertIn(path, [p for call in self._last_compiler_calls for p in call.args[3]]);self.assertIn(path,carts.sources(ROOT,self.selection))
         for key,value in [('cart_lease_lifetimes','true'),('cart_lease_control',False),('cart_time_alignment',True),('cart_hotkey_setdown',True)]:
             original=dict(self.options);self.options[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
@@ -806,12 +806,12 @@ print('STARTUP_REJOIN_GUARD_PASS')
         self.role('client2');self.role('server');self.stage()
         for role in ('server','client1','client2'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_OBSERVER_ASSOCIATION'],'true')
-        source=(self.output/'cart-build/Main.java').read_text()
-        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/ObserverAssociation.methods'
-        self.assertIn(path.read_text(),source);self.assertIn(path,carts.sources(ROOT,self.selection))
-        params=path.with_name('ObserverParams.methods')
-        self.assertIn(params.read_text(),source);self.assertIn(params,carts.sources(ROOT,self.selection))
-        self.assertIn(path.with_name('ObserverParamsBootstrap.java'),carts.sources(ROOT,self.selection))
+        source=(self.output/'cart-build/Main.kt').read_text()
+        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/ObserverAssociation.kt'
+        self.assertIn(path, [p for call in self._last_compiler_calls for p in call.args[3]]);self.assertIn(path,carts.sources(ROOT,self.selection))
+        params=path.with_name('ObserverParams.kt')
+        self.assertIn(params, [p for call in self._last_compiler_calls for p in call.args[3]]);self.assertIn(params,carts.sources(ROOT,self.selection))
+        self.assertIn(path.with_name('ObserverParamsBootstrap.kt'),carts.sources(ROOT,self.selection))
         for key,value in [('cart_observer_association','true'),('cart_action_admission',False),('cart_actions',False),
                           ('cart_timeline',False),('cart_fast_motion',False),('mp_host',False)]:
             original=dict(self.options);self.options[key]=value
@@ -845,10 +845,10 @@ print('STARTUP_REJOIN_GUARD_PASS')
         for role in ('client1','client2'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TIME_ALIGNMENT'],'true')
         self.assertNotIn('PZ_CART_TIME_ALIGNMENT',self.runtime['roles']['server']['env'])
-        source=(self.output/'cart-build/Main.java').read_text()
-        for name in ('NativeTime.methods','ClockTime.methods'):
+        source=(self.output/'cart-build/Main.kt').read_text()
+        for name in ('NativeTime.kt','ClockTime.kt'):
             path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer'/name
-            self.assertIn(path.read_text(),source)
+            self.assertIn(path, [p for call in self._last_compiler_calls for p in call.args[3]])
             self.assertIn(path,carts.sources(ROOT,self.selection))
         for key,value in [('cart_time_alignment','true'),('mp_host',False),('cart_inventory_equip',True),('cart_actions',True),('cart_wall_exit','front')]:
             original=dict(self.options);self.options[key]=value
@@ -957,7 +957,7 @@ print('STARTUP_REJOIN_GUARD_PASS')
                 self.selection['cases'] = [case]
                 self.options['cart_scenes'] = carts.scene_names(case)[:1]
                 compiler = self.stage()
-                sources = [value for call in compiler.call_args_list for value in call.args[0] if value.endswith('.java')]
+                sources = [str(value) for call in compiler.call_args_list for value in call.args[3] if value.suffix == '.java']
                 self.assertFalse(any(value.endswith('WoodenWheelNativeProbe.java') for value in sources))
                 self.assertTrue(any(value.endswith('GripPoseProbe.java') for value in sources))
                 self.assertTrue(any(value.endswith('ClearanceProbe.java') for value in sources))
@@ -981,7 +981,7 @@ print('STARTUP_REJOIN_GUARD_PASS')
                 self.output = self.root / ('shopping-' + case); self.output.mkdir(); self.role('client1')
                 self.selection['cases'] = [case]; self.options['cart_scenes'] = carts.scene_names(case)[:1]
                 compiler = self.stage()
-                sources = [value for call in compiler.call_args_list for value in call.args[0] if value.endswith('.java')]
+                sources = [str(value) for call in compiler.call_args_list for value in call.args[3] if value.suffix == '.java']
                 self.assertFalse(any(value.endswith('WoodenWheelNativeProbe.java') for value in sources))
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3 if case == 'wheel' else 2)
                 self.assertEqual(any(value.endswith('ShoppingWheelProbe.java') for value in sources), case == 'wheel')

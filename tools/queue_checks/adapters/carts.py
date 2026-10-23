@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 
 from .auxiliary import _load, _path, _write
+from cart_jvm import compile_sources
 
 MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit',
         'SaucedCarts', 'saucedwheelbarrow']
@@ -306,10 +307,12 @@ def validate(selection):
 
 
 def sources(project, selection):
-    paths = [Path(__file__), Path(__file__).with_name('auxiliary.py')]
+    paths = [Path(__file__), Path(__file__).with_name('auxiliary.py'),
+             Path(project)/'tools/cart_jvm.py', Path(project)/'JavaPatches/build.py',
+             Path(project)/'JavaPatches/tools/RelocateKotlin.java']
     for suite in (SP, MP) if selection['suite'] == MP else (SP,):
         paths += [path for path in _intake(project, suite).rglob('*') if path.is_file()
-                  and path.suffix in ('.py', '.lua', '.java', '.json', '.md', '.mf', '.methods')]
+                  and path.suffix in ('.py', '.lua', '.java', '.kt', '.json', '.md', '.mf')]
     if selection['suite'] == SP:
         paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua']
         if selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e'):
@@ -325,12 +328,25 @@ def sources(project, selection):
 
 
 def _compile(jdk, classpath, classes, sources):
-    classes.mkdir(parents=True)
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
-                    *map(str, sources)], check=True, capture_output=True, text=True, timeout=120,
-                   env={key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})
-    if not list(classes.rglob('*.class')):
-        raise ValueError('Cart javac produced no classes')
+    compile_sources(jdk, classpath, classes, sources)
+
+
+def runtime_sources(sp, mp=None):
+    sources = [Path(sp)/'Main.kt', Path(sp)/'MainAdvice.java']
+    if mp is not None:
+        mp = Path(mp)
+        sources += [mp/(name+'.kt') for name in ('Multiplayer', 'NativeTime', 'ClockTime', 'LeaseControl',
+                    'EquipmentLifetime', 'ActionAdmission', 'ObserverAssociation', 'ObserverParams', 'ObserverParamsBootstrap')]
+        sources += sorted(mp.glob('*Advice.java'))
+    return sources
+
+
+def main_source(base, multiplayer):
+    text = Path(base).read_text()
+    anchor = '// CART_LAB_STARTUP'
+    if text.count(anchor) != 1:
+        raise ValueError('CartLab Kotlin startup anchor changed')
+    return text.replace(anchor, 'Multiplayer.startup()' if multiplayer else '')
 
 
 def _jar(path, classes, manifest=None):
@@ -338,7 +354,7 @@ def _jar(path, classes, manifest=None):
     with zipfile.ZipFile(path, 'x', zipfile.ZIP_DEFLATED) as output:
         if manifest:
             output.writestr('META-INF/MANIFEST.MF', manifest.read_bytes())
-        for source in sorted(classes.rglob('*.class')):
+        for source in sorted(path for path in classes.rglob('*') if path.is_file()):
             output.write(source, source.relative_to(classes).as_posix())
 
 
@@ -357,23 +373,17 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     classpath = os.pathsep.join(map(str, (game / 'projectzomboid.jar', game / 'ZombieBuddy.jar', patch)))
     build = output / 'cart-build'
     build.mkdir()
-    main = (sp / 'Main.java').read_text()
-    if selection['suite'] == MP:
-        anchor = '    public static void main(String[] args)'
-        if main.count(anchor) != 1:
-            raise ValueError('CartLab composition anchor changed')
-        main = main.replace(anchor, '\n'.join((mp / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'EquipmentLifetime.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods', 'ObserverParams.methods')) + '\n' + anchor)
-        main = main.replace('public static void main(String[] args) {', 'public static void main(String[] args) { ObserverParamsBootstrap.install();', 1)
-    source = build / 'Main.java'
-    source.write_text(main, encoding='utf-8')
-    _compile(jdk, classpath, build / 'lab-classes', [source, *([mp / 'ObserverParamsBootstrap.java'] if selection['suite'] == MP else [])])
+    source = build / 'Main.kt'
+    source.write_text(main_source(sp/'Main.kt', selection['suite'] == MP), encoding='utf-8')
+    inputs = runtime_sources(sp, mp if selection['suite'] == MP else None)
+    _compile(jdk, classpath, build / 'lab-classes', [source, *inputs[1:]])
     _jar(build / 'CartLab.jar', build / 'lab-classes')
     evidence = sp / 'evidence'
     variant_probes = selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart')
     sp_probes = ('GripPoseProbe', 'ClearanceProbe') if variant_probes else ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')
     if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') == 'shopping-cart' and selection['cases'] == ['wheel']:
         sp_probes += ('ShoppingWheelProbe',)
-    probe_sources = ([mp / 'ClearanceProbe.java'] if selection['suite'] == MP else
+    probe_sources = ([mp / 'ClearanceProbe.kt'] if selection['suite'] == MP else
                      [evidence / (name + '.java') for name in sp_probes])
     if selection.get('options', {}).get('cart_entry_contact_repro'):
         original = evidence / 'ClearanceProbe.java'

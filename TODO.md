@@ -1,7 +1,5 @@
 # Cart branch Kotlin migration
 
-- [ ] Rebase this chat's branch on current origin/main, resolve conflicts against the Kotlin refactor and preserve unrelated main changes.
-- [ ] Move the branch-owned native diagnostics, probes and JVM checks to idiomatic Kotlin using the existing compiler/runtime isolation. Keep only demonstrably necessary writable instrumentation boundaries in minimal Java; migrate all source composition, manifest and direct-source consumers together and remove superseded sources.
 - [ ] Verify Kotlin style, static/JVM/Lua exposure, native weaving and unchanged native/protocol invariants with the affected source/regression and composed native checks. Freeze sources and verify the affected Host paths with the normal owned resource/window/provenance/cleanup gates; keep runtime changes out of the installed game.
 - [ ] Remove completed migration steps, record the actual checks and any concrete remaining Java boundary, and leave the rebased branch clean without pushing or installing.
 

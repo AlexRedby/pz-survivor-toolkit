@@ -9,8 +9,13 @@ import runpy
 import shutil
 import subprocess
 import tempfile
+import sys
+import zipfile
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[3] / "tools"))
+from cart_jvm import compile_sources, clean_environment
+from queue_checks.adapters.carts import main_source, runtime_sources
 
 
 def fixture(root, fast=False, actions=False, variant=None):
@@ -569,18 +574,18 @@ assert(not ok and tostring(err):find('disposable',1,true),'Missing disposable gu
 
 def check_capture_environment(lua):
     client=(HERE/'client.lua').read_text()
-    bridge=(HERE/'MPMain.methods').read_text()
+    bridge=re.sub(r'\s+', '', (HERE/'Multiplayer.kt').read_text()).replace(',)', ')')
     assert "local expectedZoom=user=='client2' and 1 or .25" in client
     assert "assert(cartMPZoom(user=='client2')==expectedZoom" in client
-    assert 'core.setAutoZoom(0,false);' in bridge and 'core.offscreenBuffer.setZoomAndTargetZoom(0,observer?1f:.25f);' in bridge
+    assert 'core.setAutoZoom(0,false)' in bridge and 'core.offscreenBuffer.setZoomAndTargetZoom(0,if(observer)1felse.25f)' in bridge
     assert 'doZoomScroll' not in client
     assert "' zoom='..getCore():getZoom(0)" in client
     assert 'p:getStats():reset(CharacterStat.ENDURANCE)\n    cartLabGait(steps[stage][3]);if not wallSide then cartLabDrive(steps[stage][2]) end' in client
     assert 'setSprinting(' not in client and 'setForceSprint(' not in client
     assert 'setPerkLevelDebug(' not in client and 'setXPToLevel(' not in client
     assert "p:getPerkLevel(Perks.Sprinting)==10" in client and 'Authoritative Sprinting snapshot deadline' in client
-    assert 'zombie.network.GameServer.server || zombie.network.GameClient.client' in bridge
-    assert 'p.getNetworkCharacterAI().updateXpChecker();' in bridge
+    assert 'zombie.network.GameServer.server||zombie.network.GameClient.client' in bridge
+    assert 'p.getNetworkCharacterAI().updateXpChecker()' in bridge
     assert 'INetworkPacket.send(p,zombie.network.PacketTypes.PacketType.PlayerXp,p)' in bridge
     assert 'worldExistedAtStartup' in bridge and 'zombie.network.CoopSlave.instance==null' in bridge
     assert 'cartMPBrace(p,setup.cartId,setup.wallX,setup.y)' in client
@@ -710,7 +715,7 @@ actionsFinished=true;now=now+32;sampleActionPresentation(owner,now,duration+550)
     return 'PASS (short observer progress crossing captured at25ms; motion100ms, phase closure and bank bounds retained; no new sends)'
 
 
-def check_java(game, jdk, patch):
+def check_java(game, jdk, patch, kotlin_home=None):
     if game is None and jdk is None and patch is None:
         return 'SKIPPED (supply --game-java-dir, --jdk, --patch-jar)'
     assert all(value is not None for value in (game, jdk, patch)), 'Supply all three Java dependencies'
@@ -719,375 +724,46 @@ def check_java(game, jdk, patch):
     assert int(re.search(r'javac (\d+)', version)[1]) >= 25
     jars = [(game / 'projectzomboid.jar').resolve(), (game / 'ZombieBuddy.jar').resolve(), patch.resolve()]
     assert all(p.is_file() for p in jars), 'Missing explicit compile JAR'
-    base = (HERE.parent / 'wooden_cart_motion/Main.java').read_text()
-    anchor = '    public static void main(String[] args)'
-    assert base.count(anchor) == 1, 'Java base integration anchor changed'
+    sp = HERE.parent / 'wooden_cart_motion'
     with tempfile.TemporaryDirectory(prefix='cart-mp-compile-') as directory:
         root = Path(directory)
-        main = root / 'Main.java'
-        main.write_text(base.replace(anchor, '\n'.join((HERE / name).read_text() for name in ('MPMain.methods', 'NativeTime.methods', 'ClockTime.methods', 'LeaseControl.methods', 'EquipmentLifetime.methods', 'ActionAdmission.methods', 'ObserverAssociation.methods', 'ObserverParams.methods')) + '\n' + anchor))
-        main.write_text(main.read_text().replace('public static void main(String[] args) {', 'public static void main(String[] args) { ObserverParamsBootstrap.install();', 1))
-        subprocess.run([str(javac), '--release', '25', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ObserverParamsBootstrap.java'), str(HERE / 'ClearanceProbe.java')], check=True)
-        assert (root / 'net/alexredby/cartlab/Main.class').is_file() and (root / 'ClearanceProbe.class').is_file()
-        checks=root/'ModelProbeCheck.java'
-        checks.write_text(r'''
-public final class ModelProbeCheck {
-    private static final class BracePlayer extends zombie.characters.IsoPlayer {
-        boolean local=true,dead;
-        String user="client1";
-        short online;
-        zombie.inventory.InventoryItem primary,secondary;
-        zombie.inventory.ItemContainer inventory;
-        zombie.iso.IsoGridSquare square;
-        BracePlayer(){super(null,null,0,0,0);}
-        @Override public float getX(){return 10;}
-        @Override public float getY(){return 20;}
-        @Override public float getZ(){return 7;}
-        @Override public float getDirectionAngleRadians(){return 0;}
-        @Override public zombie.core.skinnedmodel.animation.AnimationPlayer getAnimationPlayer(){return null;}
-        @Override public boolean isLocalPlayer(){return local;}
-        @Override public boolean isDead(){return dead;}
-        @Override public String getUsername(){return user;}
-        @Override public short getOnlineID(){return online;}
-        @Override public zombie.inventory.InventoryItem getPrimaryHandItem(){return primary;}
-        @Override public zombie.inventory.InventoryItem getSecondaryHandItem(){return secondary;}
-        @Override public zombie.inventory.ItemContainer getInventory(){return inventory;}
-        @Override public zombie.iso.IsoGridSquare getCurrentSquare(){return square;}
-    }
-    private static final class BraceItem extends zombie.inventory.InventoryItem {
-        int identity;
-        String type;
-        zombie.inventory.ItemContainer container;
-        String model;
-        zombie.iso.objects.IsoWorldInventoryObject world;
-        BraceItem(){super("SaucedWheelbarrow","WheelbarrowWood","WheelbarrowWood",(String)null);}
-        @Override public int getID(){return identity;}
-        @Override public String getFullType(){return type;}
-        @Override public zombie.inventory.ItemContainer getContainer(){return container;}
-        @Override public String getStaticModel(){return model;}
-        @Override public zombie.iso.objects.IsoWorldInventoryObject getWorldItem(){return world;}
-    }
-    private static final class BraceWorld extends zombie.iso.objects.IsoWorldInventoryObject {
-        zombie.inventory.InventoryItem item;
-        BraceWorld(){super((zombie.iso.IsoCell)null);}
-        @Override public zombie.inventory.InventoryItem getItem(){return item;}
-    }
-    private static void stateField(Object state,String name,Object value)throws Exception {
-        var field=state.getClass().getDeclaredField(name);field.setAccessible(true);field.set(state,value);
-    }
-    public static void main(String[] args) throws Exception {
-        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
-        var main=Class.forName("net.alexredby.cartlab.Main");
-        var timelinePose=main.getMethod("timelinePose",String.class,String.class);
-        if(!((String)timelinePose.invoke(null,"ToolkitCartPose","1,42,3,0,0,0,1,0,0,0,0,0,0")).contains("\"serial\":3")
-            || !((String)timelinePose.invoke(null,"ToolkitCartActionPose","1,9,42,11,0,0,0,1,2,0,0,0,0,1")).contains("\"actionGeneration\":11")
-            || !((String)timelinePose.invoke(null,"ToolkitCartPose","2,42,3")).contains("shapeError")
-            || timelinePose.invoke(null,"OtherVariable","anything")!=null)throw new AssertionError("Timeline identity/shape guard");
-        // Verify hook names/signatures and actual installed B42 API; no native
-        // socket or game startup is needed for these reflection checks.
-        zombie.characters.IsoGameCharacter.class.getDeclaredMethod("setVariable",String.class,String.class);
-        for(String method:new String[]{"parse","processClient","processServer","write"}) {
-            boolean found=false;
-            for(var candidate:zombie.network.packets.VariableSyncPacket.class.getDeclaredMethods())if(candidate.getName().equals(method))found=true;
-            if(!found)throw new AssertionError("Missing VariableSync hook "+method);
-        }
-        zombie.network.fields.character.Prediction.class.getDeclaredMethod("update");
-        zombie.characters.IsoPlayer.class.getDeclaredMethod("updateRemotePlayer");
-        zombie.GameTime.class.getDeclaredMethod("getServerTimeShiftIsSet");
-        zombie.iso.PlayerCamera.class.getDeclaredMethod("update");
-        for(String name:new String[]{"rightClickX","rightClickY","rightClickTargetX","rightClickTargetY"})
-            if(zombie.iso.PlayerCamera.class.getDeclaredField(name).getType()!=float.class)throw new AssertionError("Native camera pan field changed");
-        zombie.GameTime.class.getDeclaredMethod("syncServerTime",long.class,long.class,long.class);
-        if(zombie.GameTime.class.getDeclaredField("serverTimeShift").getType()!=long.class)throw new AssertionError("Native clock shift changed");
-        zombie.network.packets.service.TimeSyncPacket.class.getDeclaredMethod("processClient",zombie.core.raknet.UdpConnection.class);
-        zombie.core.raknet.UdpConnection.class.getDeclaredMethod("getStatistics");
-        zombie.core.raknet.RakNetPeerInterface.class.getDeclaredMethod("GetNetStatistics",long.class);
-        for(String field:new String[]{"totalActualBytesSent","totalActualBytesReceived","totalUserMessageBytesResent","bytesInResendBuffer","messagesInResendBuffer"})
-            if(zombie.core.znet.ZNetStatistics.class.getDeclaredField(field).getType()!=long.class)throw new AssertionError("Counter changed "+field);
-        var host=main.getDeclaredMethod("padHost");
-        if((boolean)host.invoke(null))throw new AssertionError("Non-server pad mutation permission");
-        var fresh=zombie.network.GameServer.class.getDeclaredField("worldExistedAtStartup");fresh.setAccessible(true);
-        var unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
-        var unsafe=(sun.misc.Unsafe)unsafeField.get(null);
-        boolean previousServer=zombie.network.GameServer.server,previousClient=zombie.network.GameClient.client,previousWorld=fresh.getBoolean(null);
-        String previousName=zombie.network.GameServer.serverName;var previousCoop=zombie.network.CoopSlave.instance;
-        try {
-            zombie.network.GameServer.server=true;zombie.network.GameClient.client=false;
-            zombie.network.GameServer.serverName="queue-smoke";zombie.network.CoopSlave.instance=(zombie.network.CoopSlave)unsafe.allocateInstance(zombie.network.CoopSlave.class);
-            fresh.setBoolean(null,false);
-            if(!(boolean)host.invoke(null))throw new AssertionError("Fresh native Host pad gate refused");
-            fresh.setBoolean(null,true);
-            if((boolean)host.invoke(null))throw new AssertionError("Existing native world allowed pad mutation");
-            fresh.setBoolean(null,false);zombie.network.GameServer.serverName="user-save";
-            if((boolean)host.invoke(null))throw new AssertionError("Foreign native Host allowed pad mutation");
-        } finally {
-            zombie.network.GameServer.server=previousServer;zombie.network.GameClient.client=previousClient;
-            zombie.network.GameServer.serverName=previousName;zombie.network.CoopSlave.instance=previousCoop;fresh.setBoolean(null,previousWorld);
-        }
-        var ownerGuard=main.getDeclaredMethod("mpBraceOwner",zombie.characters.IsoPlayer.class,int.class);ownerGuard.setAccessible(true);
-        var previousPlayer=zombie.characters.IsoPlayer.getInstance();var previousConnection=zombie.network.GameClient.connection;
-        boolean previousHandshake=zombie.network.GameClient.instance.connected;
-        var owner=(BracePlayer)unsafe.allocateInstance(BracePlayer.class);owner.local=true;owner.user="client1";
-        owner.square=(zombie.iso.IsoGridSquare)unsafe.allocateInstance(zombie.iso.IsoGridSquare.class);
-        owner.inventory=(zombie.inventory.ItemContainer)unsafe.allocateInstance(zombie.inventory.ItemContainer.class);
-        var cart=(BraceItem)unsafe.allocateInstance(BraceItem.class);cart.identity=42;cart.type="SaucedWheelbarrow.WheelbarrowWood";cart.container=owner.inventory;
-        owner.primary=owner.secondary=cart;
-        try {
-            zombie.network.GameClient.client=true;zombie.network.GameServer.server=false;zombie.network.GameClient.instance.connected=true;
-            zombie.characters.IsoPlayer.setInstance(owner);
-            zombie.network.GameClient.connection=(zombie.core.raknet.UdpConnection)unsafe.allocateInstance(zombie.core.raknet.UdpConnection.class);
-            if(zombie.network.GameClient.connection.isFullyConnected())throw new AssertionError("Expected native Host transport flag false");
-            if(!(boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Armed exact owner blocked by native Host transport flag");
-            zombie.network.GameClient.instance.connected=false;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Disconnected client sampled");zombie.network.GameClient.instance.connected=true;
-            if((boolean)ownerGuard.invoke(null,owner,43) || (boolean)ownerGuard.invoke(null,null,42))throw new AssertionError("Foreign cart/null owner sampled");
-            owner.local=false;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Remote actor sampled");owner.local=true;
-            owner.user="client2";if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Observer sampled");owner.user="client1";
-            owner.dead=true;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Dead owner sampled");owner.dead=false;
-            owner.online=-1;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Offline actor sampled");owner.online=0;
-            var square=owner.square;owner.square=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Unloaded owner sampled");owner.square=square;
-            owner.secondary=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Unequipped cart sampled");owner.secondary=cart;
-            cart.container=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Non-owned cart sampled");cart.container=owner.inventory;
-            cart.type="SaucedWheelbarrow.WheelbarrowMetal";if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Foreign cart type sampled");cart.type="SaucedWheelbarrow.WheelbarrowWood";
-            zombie.characters.IsoPlayer.setInstance(null);if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Different local instance sampled");zombie.characters.IsoPlayer.setInstance(owner);
-            zombie.network.GameServer.server=true;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Server sampled as local owner");
-            zombie.network.GameServer.server=false;zombie.network.GameClient.client=false;
-            if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Single-player actor sampled");
-        } finally {
-            zombie.characters.IsoPlayer.setInstance(previousPlayer);zombie.network.GameClient.connection=previousConnection;
-            zombie.network.GameClient.instance.connected=previousHandshake;
-            zombie.network.GameServer.server=previousServer;zombie.network.GameClient.client=previousClient;
-        }
-        String raw="quote\"slash\\\n\r\t"+(char)1;
-        for(String[] target:new String[][]{{"ClearanceProbe","jsonString"},{"net.alexredby.cartlab.Main","mpJsonString"}}) {
-            var method=Class.forName(target[0]).getDeclaredMethod(target[1],String.class);method.setAccessible(true);
-            System.out.println(method.invoke(null,raw));
-            if(!"null".equals(method.invoke(null,(Object)null)))throw new AssertionError("null model JSON");
-        }
-        var probe=Class.forName("ClearanceProbe");
-        var preparedWriter=probe.getDeclaredField("output");preparedWriter.setAccessible(true);
-        var cameraWriter=probe.getDeclaredField("cameras");cameraWriter.setAccessible(true);
-        var drawText=new java.io.StringWriter();preparedWriter.set(null,new java.io.BufferedWriter(new java.io.StringWriter()));
-        cameraWriter.set(null,new java.io.BufferedWriter(drawText));
-        var renderSlot=(zombie.core.skinnedmodel.model.ModelSlotRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelSlotRenderData.class);
-        renderSlot.character=owner;renderSlot.x=10.25f;renderSlot.y=20;renderSlot.z=7;renderSlot.animPlayerAngle=(float)(Math.PI/2);renderSlot.squareDepth=.25f;
-        var sourceSlot=(zombie.core.skinnedmodel.ModelManager.ModelSlot)unsafe.allocateInstance(zombie.core.skinnedmodel.ModelManager.ModelSlot.class);sourceSlot.character=owner;
-        ClearanceProbe.rememberNative(renderSlot,sourceSlot);
-        var originalMap=probe.getDeclaredField("nativePoses");originalMap.setAccessible(true);
-        var nativePose=((java.util.Map<?,?>)originalMap.get(null)).get(renderSlot);
-        var originalX=nativePose.getClass().getDeclaredMethod("x");originalX.setAccessible(true);
-        if((float)originalX.invoke(nativePose)!=10)throw new AssertionError("Cosmetic slot coordinate replaced original native capture");
-        var bodyModel=(zombie.core.skinnedmodel.model.ModelInstance)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstance.class);
-        var cartModel=(zombie.core.skinnedmodel.model.ModelInstance)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstance.class);
-        var prepareDraw=probe.getDeclaredMethod("prepareDraw",zombie.core.skinnedmodel.model.ModelSlotRenderData.class,
-            zombie.core.skinnedmodel.model.ModelInstance.class,zombie.core.skinnedmodel.model.ModelInstance.class);prepareDraw.setAccessible(true);
-        prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
-        ClearanceProbe.snapshot(renderSlot); // Already captured slot: no second pose/capture ID.
-        var bodyData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);bodyData.modelInstance=bodyModel;
-        var cartData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);cartData.modelInstance=cartModel;
-        var previousCamera=zombie.core.skinnedmodel.ModelCamera.instance;
-        var camera=(zombie.core.opengl.CharacterModelCamera)unsafe.allocateInstance(zombie.core.opengl.CharacterModelCamera.class);
-        camera.x=10.25f;camera.y=20;camera.z=7;camera.useAngle=(float)(Math.PI/2);camera.useWorldIso=true;
-        try {
-            zombie.core.skinnedmodel.ModelCamera.instance=camera;ClearanceProbe.beginCamera(camera);
-            owner.primary=owner.secondary=null; // Simulation advanced after the prepared held slot.
-            ClearanceProbe.draw(renderSlot,bodyData);ClearanceProbe.draw(renderSlot,bodyData);
-            camera.x=11;ClearanceProbe.draw(renderSlot,cartData);
-            var recorded=drawText.toString();
-            if(recorded.lines().count()!=2 || !recorded.contains("\"part\":\"body\"") || !recorded.contains("\"part\":\"cart\"")
-                || !recorded.contains("\"cameraX\":10.25") || !recorded.contains("\"currentCameraX\":11.0")
-                || recorded.lines().anyMatch(line -> !line.contains("\"preparedPrimary\":42,\"preparedSecondary\":42")
-                    || !line.contains("\"primary\":-1,\"secondary\":-1")))
-                throw new AssertionError("Consumed camera/body/cart draw identity was not independently captured");
-            ClearanceProbe.endCamera();prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
-            try {ClearanceProbe.draw(renderSlot,bodyData);throw new AssertionError("Draw without consumed camera was accepted");}
-            catch(IllegalStateException expected) {}
-        } finally {
-            ClearanceProbe.endCamera();zombie.core.skinnedmodel.ModelCamera.instance=previousCamera;
-            owner.primary=owner.secondary=cart;
-            preparedWriter.set(null,null);cameraWriter.set(null,null);
-        }
-        var traceField=probe.getDeclaredField("solve");traceField.setAccessible(true);
-        var trace=(ThreadLocal<StringBuilder>)traceField.get(null);
-        var outputField=probe.getDeclaredField("solves");outputField.setAccessible(true);
-        var text=new java.io.StringWriter();outputField.set(null,new java.io.BufferedWriter(text));
-        if(ClearanceProbe.reachInput(null)!=null)throw new AssertionError("Unscoped solver diagnostic");
-        for(boolean ok:new boolean[]{true,false}) {
-            trace.set(new StringBuilder("{\"failures\":["));
-            if(!ok) {ClearanceProbe.refusal("reach", "\"bone\":\"Bip01_R_Hand\"");ClearanceProbe.refusal("transitionGrip",null);}
-            ClearanceProbe.finishSolve(ok);
-            if(trace.get()!=null)throw new AssertionError("Solver scope leaked into next frame");
-        }
-        ClearanceProbe.finishSolve(false);System.out.print(text);outputField.set(null,null);
-        var family=probe.getDeclaredMethod("cartFamily",String.class,String.class);family.setAccessible(true);
-        for(String model:new String[]{"ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel"})
-            if(!(boolean)family.invoke(null,"SaucedCarts.ShoppingCart",model))throw new AssertionError("same-family mismatch was filtered");
-        if((boolean)family.invoke(null,"SaucedCarts.ShoppingCart","WheelbarrowWood")
-            || (boolean)family.invoke(null,"Base.Log","ShoppingCartFullModel"))throw new AssertionError("wrong cart family");
-        var capture=probe.getDeclaredMethod("captureModel",zombie.inventory.InventoryItem.class,String.class);capture.setAccessible(true);
-        for(String model:new String[]{"WheelbarrowWood","WheelbarrowMetal"}) {
-            if(!(boolean)capture.invoke(null,null,model))throw new AssertionError("Empty native pickup hands filtered presentation model: "+model);
-            cart.type="SaucedWheelbarrow."+model;
-            if(!(boolean)capture.invoke(null,cart,model))throw new AssertionError("Exact held cart presentation filtered: "+model);
-            String other=model.equals("WheelbarrowWood")?"WheelbarrowMetal":"WheelbarrowWood";
-            if((boolean)capture.invoke(null,cart,other) || (boolean)capture.invoke(null,cart,"ShoppingCartFullModel"))
-                throw new AssertionError("Held item acquired another cart family: "+model);
-        }
-        for(String model:new String[]{"ShoppingCartModel","ShoppingCartFullModel","WheelbarrowMetalExtra","Other.WheelbarrowMetal"})
-            if((boolean)capture.invoke(null,null,model))throw new AssertionError("Unrelated empty-hand model captured: "+model);
-        cart.type="Base.Log";
-        if((boolean)capture.invoke(null,cart,"WheelbarrowMetal"))throw new AssertionError("Foreign held item acquired metal presentation");
-        var transitionItem=probe.getDeclaredMethod("transitionItem",zombie.characters.IsoPlayer.class);transitionItem.setAccessible(true);
-        var transition=Class.forName("net.alexredby.pztoolkitjavapatches.CartTransition");
-        var statesField=transition.getDeclaredField("states");statesField.setAccessible(true);
-        var states=(java.util.Map<Object,Object>)statesField.get(null);var previousState=states.get(owner);
-        var pickup=unsafe.allocateInstance(Class.forName(transition.getName()+"$State"));
-        var world=(BraceWorld)unsafe.allocateInstance(BraceWorld.class);world.item=cart;
-        cart.type="SaucedCarts.ShoppingCart";cart.model="Base.ShoppingCartFullModel";cart.world=world;
-        owner.primary=owner.secondary=null;
-        try {
-            states.remove(owner);
-            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Empty hands inferred an untracked shopping cart");
-            stateField(pickup,"item",cart);stateField(pickup,"world",world);stateField(pickup,"pickup",true);
-            stateField(pickup,"rendered",true);stateField(pickup,"updated",System.nanoTime());states.put(owner,pickup);
-            if(transitionItem.invoke(null,owner)!=cart || !(boolean)capture.invoke(null,cart,"ShoppingCartFullModel"))
-                throw new AssertionError("Exact rendered shopping pickup was not associated");
-            var due=probe.getDeclaredMethod("captureDue",zombie.characters.IsoPlayer.class,zombie.inventory.InventoryItem.class,long.class);due.setAccessible(true);
-            var handsField=probe.getDeclaredField("hands");handsField.setAccessible(true);
-            var seenHands=(java.util.Map<?,?>)handsField.get(null);seenHands.clear();
-            var last=probe.getDeclaredField("last");last.setAccessible(true);
-            long now=System.nanoTime();last.setLong(null,now);
-            stateField(pickup,"updated",now);stateField(pickup,"ik",true);stateField(pickup,"progress",.1f);
-            // Native60Hz observer frames fit a112ms cancellation window; each
-            // must survive even when the prior capture was only16ms earlier.
-            for(int frame=1;frame<=7;frame++) {
-                long frameTime=now+frame*16_000_000L;
-                if(!(boolean)due.invoke(null,owner,cart,frameTime))throw new AssertionError("Short cancel native frame decimated");
-                last.setLong(null,frameTime);
-            }
-            now+=112_000_000L;
-            for(String key:new String[]{"rendered","ik"}) {
-                stateField(pickup,key,false);
-                if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Unsolved transition bypassed cadence: "+key);
-                stateField(pickup,key,true);
-            }
-            stateField(pickup,"recovering",true);
-            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Recovery bypassed active cadence");
-            stateField(pickup,"recovering",false);stateField(pickup,"progress",0f);
-            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Zero progress bypassed cadence");
-            stateField(pickup,"progress",.1f);stateField(pickup,"updated",now-1_000_000_001L);
-            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Stale transition bypassed cadence");
-            stateField(pickup,"updated",now+20_000_000L);
-            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Future transition bypassed cadence");
-            stateField(pickup,"updated",now);world.item=null;
-            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Foreign world item bypassed cadence");
-            world.item=cart;stateField(pickup,"pickup",false);owner.primary=owner.secondary=cart;
-            if(!(boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Exact native drop decimated");
-            owner.secondary=null;
-            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Foreign drop hands bypassed cadence");
-            owner.primary=null;states.remove(owner);
-            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Missing state bypassed cadence");
-            if(!(boolean)due.invoke(null,owner,cart,now+34_000_000L))throw new AssertionError("Ordinary cadence lost");
-            var remember=probe.getDeclaredMethod("rememberHands",zombie.characters.IsoPlayer.class,long.class);remember.setAccessible(true);
-            owner.primary=owner.secondary=cart;remember.invoke(null,owner,now);
-            for(long elapsed:new long[]{0,16_000_000L,250_000_000L,500_000_000L}) {
-                last.setLong(null,now+elapsed);remember.invoke(null,owner,now+elapsed);
-                if(!(boolean)due.invoke(null,owner,cart,now+elapsed))throw new AssertionError("Handoff native slot decimated");
-            }
-            last.setLong(null,now+500_000_001L);
-            if((boolean)due.invoke(null,owner,cart,now+500_000_001L))throw new AssertionError("Handoff window renewed");
-            last.setLong(null,now-1);
-            if((boolean)due.invoke(null,owner,cart,now-1))throw new AssertionError("Future handoff sample accepted");
-            owner.primary=owner.secondary=null;remember.invoke(null,owner,now);last.setLong(null,now);
-            if((boolean)due.invoke(null,owner,cart,now))throw new AssertionError("Missing hands extended handoff capture");
-            seenHands.clear();
-            states.put(owner,pickup);stateField(pickup,"pickup",true);stateField(pickup,"updated",System.nanoTime());
-            stateField(pickup,"rendered",false);
-            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Unrendered shopping state admitted");
-            stateField(pickup,"rendered",true);stateField(pickup,"updated",0L);
-            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Stale shopping state admitted");
-            stateField(pickup,"updated",System.nanoTime());owner.primary=cart;
-            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Nonempty hands used pickup fallback");
-            owner.primary=null;world.item=null;
-            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Replaced world cart acquired transition identity");
-        } finally {if(previousState==null)states.remove(owner);else states.put(owner,previousState);cart.world=null;owner.primary=owner.secondary=cart;}
-        var known=probe.getDeclaredMethod("cartModel",String.class);known.setAccessible(true);
-        if((boolean)known.invoke(null,"ShoppingCartUnknownModel"))throw new AssertionError("unknown attachment");
-    }
-}
-''')
-        classpath=os.pathsep.join([str(root),*map(str,jars)])
-        subprocess.run([str(javac),'--release','25','-cp',classpath,'-d',str(root),str(checks)],check=True)
-        java=jdk/'bin'/('java.exe' if os.name=='nt' else 'java')
-        result=subprocess.run([str(java),'-cp',classpath,'ModelProbeCheck'],capture_output=True,text=True,
-            env=dict(os.environ,PZ_CART_RUNTIME_FILE=str(root/'runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'commands.txt')))
-        assert result.returncode==0,result.stdout+'\n'+result.stderr
-        parsed=[json.loads(line) for line in result.stdout.splitlines()]
-        assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
-        assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-        extra_checks=[HERE/'NativeTimeCheck.java',HERE/'ClockTimeCheck.java',HERE/'ObserverAssociationCheck.java',HERE/'ObserverParamsCheck.java',HERE/'EquipmentLifetimeCheck.java',HERE/'LeaseCostCheck.java']
-        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),*map(str,extra_checks)],check=True)
-        for name,marker in [('NativeTimeCheck','NATIVE_TIME_CHECK_PASS'),('ClockTimeCheck','CLOCK_TIME_CHECK_PASS')]:
-            result=subprocess.run([str(java),'-cp',classpath,name,str(HERE)],cwd=game,capture_output=True,text=True,
-                env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_RUNTIME_FILE=str(root/'runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'commands.txt')),timeout=30)
-            assert result.returncode==0 and marker in result.stdout,result.stdout+'\n'+result.stderr
-        timeline_check=root/'TimelineNativeCheck.java'
-        timeline_check.write_text(r'''
-public final class TimelineNativeCheck {
-    public static class Owner extends zombie.characters.IsoPlayer {
-        Owner(){super(null,null,0,0,0);}
-        @Override public String getUsername(){return "client1";}
-        @Override public short getOnlineID(){return 7;}
-        @Override public boolean isLocalPlayer(){return true;}
-    }
-    public static void main(String[] args)throws Exception {
-        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
-        for(String name:new String[]{"zombie.characters.IsoGameCharacter","zombie.network.packets.VariableSyncPacket",
-            "zombie.network.packets.character.PlayerPacket","zombie.network.fields.character.Prediction",
-            "net.alexredby.pztoolkitjavapatches.CartMotionSync","zombie.network.packets.service.TimeSyncPacket","zombie.GameTime","zombie.iso.PlayerCamera"})Class.forName(name);
-        var field=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);
-        var unsafe=(sun.misc.Unsafe)field.get(null);var owner=(Owner)unsafe.allocateInstance(Owner.class);
-        var pan=(zombie.iso.PlayerCamera)unsafe.allocateInstance(zombie.iso.PlayerCamera.class);
-        pan.offX=10;pan.offY=20;pan.rightClickX=30;pan.rightClickY=40;
-        if(pan.getOffX()!=40 || pan.getOffY()!=60)throw new AssertionError("Native pan offsets not consumed");
-        zombie.network.GameServer.server=true;
-        zombie.ZomboidFileSystem.instance.setCacheDir(java.nio.file.Path.of(System.getenv("PZ_CART_RUNTIME_FILE")).getParent().getParent().toString());
-        String raw="1,42,3,0,0,0,1,0,0,0,0,0,0";
-        net.alexredby.cartlab.Main.timelineVariable(owner,"publish","ToolkitCartPose",raw);
-        var packet=new zombie.network.packets.VariableSyncPacket();
-        packet.key="ToolkitCartPose";packet.value=raw;packet.varType=zombie.network.packets.VariableSyncPacket.VariableType.String;
-        packet.player.setID((short)7);
-        field=zombie.network.fields.character.PlayerID.class.getDeclaredField("player");field.setAccessible(true);field.set(packet.player,owner);
-        packet.write(new zombie.core.network.ByteBufferWriter(java.nio.ByteBuffer.allocate(1024)));
-        net.alexredby.cartlab.Main.timelineStop();
-        net.alexredby.cartlab.Main.timelineVariable(owner,"publish","ToolkitCartPose",raw); // Stop suppresses later diagnostics.
-        field=net.alexredby.cartlab.Main.class.getDeclaredField("timelineThread");field.setAccessible(true);
-        var thread=(Thread)field.get(null);thread.join(2000);
-        if(thread.isAlive())throw new AssertionError("Timeline writer failed to drain");
-        System.out.println("TIMELINE_NATIVE_PASS");
-    }
-}
-''')
-        subprocess.run([str(javac),'--release','25','-cp',classpath,'-d',str(root),str(timeline_check)],check=True)
-        lab=root/'CartLab.jar'
-        subprocess.run([str(jdk/'bin/jar'),'--create','--file',str(lab),'-C',str(root),'net/alexredby/cartlab'],check=True)
-        bootstrap=root/'ObserverLoaderCheck.java'
-        bootstrap.write_text(r'''
-/** Match normal mod loading after core RNG initialization, before test actors exist. */
-public final class ObserverLoaderCheck {
-    public static void main(String[] args)throws Exception {
-        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
-        if(args[1].equals("LeaseCostCheck"))Class.forName("zombie.network.GameServer",true,ObserverLoaderCheck.class.getClassLoader());
-        var phase=Class.forName("me.zed_0xff.zombie_buddy.Loader$Phase");
-        var constant=phase.getDeclaredField("MAIN");constant.setAccessible(true);
-        var loader=Class.forName("me.zed_0xff.zombie_buddy.Loader");
-        var load=loader.getDeclaredMethod("loadJar",java.nio.file.Path.class,String.class,String.class,phase);load.setAccessible(true);
-        if(!Boolean.TRUE.equals(load.invoke(null,java.nio.file.Path.of(args[0]),"net.alexredby.cartlab",java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(java.nio.file.Files.readAllBytes(java.nio.file.Path.of(args[0])))),constant.get(null))))
-            throw new AssertionError("Native mod loader refused CartLab");
-        Class.forName(args[1]).getMethod("main",String[].class).invoke(null,(Object)java.util.Arrays.copyOfRange(args,2,args.length));
-    }
-}
-''')
-        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),str(bootstrap)],check=True)
+        main = root / 'Main.kt'
+        main.write_text(main_source(sp / 'Main.kt', multiplayer=True))
+        sources = runtime_sources(sp, HERE)
+        sources[0] = main
+        sources += [HERE / 'ClearanceProbe.kt', *sorted(HERE.glob('*Check.kt'))]
+        classes = root / 'classes'
+        compile_sources(jdk, os.pathsep.join(map(str, jars)), classes, sources, kotlin_home=kotlin_home)
+        assert (classes / 'net/alexredby/cartlab/Main.class').is_file()
+        assert (classes / 'ClearanceProbe.class').is_file()
+        classpath = os.pathsep.join([str(classes), *map(str, jars)])
+        java = jdk / 'bin' / ('java.exe' if os.name == 'nt' else 'java')
+        env = dict(clean_environment(), PZ_CART_RUNTIME_FILE=str(root / 'runtime.lua'),
+                   PZ_CART_COMMAND_FILE=str(root / 'commands.txt'))
+        monitor = subprocess.run([str(java), '-cp', classpath, 'ModuleMonitorCheck'],
+            capture_output=True, text=True, timeout=15,
+            env=dict(env, PZ_CART_TIMELINE='false', PZ_CART_OBSERVER_ASSOCIATION='false'))
+        assert monitor.returncode == 0 and 'MODULE_MONITOR_CHECK_PASS' in monitor.stdout, monitor.stdout + '\n' + monitor.stderr
+        result = subprocess.run([str(java), '-cp', classpath, 'ModelProbeCheck'],
+                                capture_output=True, text=True, env=env, timeout=30)
+        assert result.returncode == 0, result.stdout + '\n' + result.stderr
+        parsed = [json.loads(line) for line in result.stdout.splitlines()]
+        assert parsed[:2] == ['quote"slash\\\n\r\t\x01', 'quote"slash\\\n\r\t\x01']
+        assert parsed[2:] == [dict(failures=[], ok=True),
+                             dict(failures=[dict(method='reach', bone='Bip01_R_Hand'),
+                                            dict(method='transitionGrip')], ok=False)]
+        for name, marker in [('NativeTimeCheck', 'NATIVE_TIME_CHECK_PASS'),
+                             ('ClockTimeCheck', 'CLOCK_TIME_CHECK_PASS')]:
+            result = subprocess.run([str(java), '-cp', classpath, name, str(HERE)], cwd=game,
+                capture_output=True, text=True, env=dict(env, PZ_CART_TIMELINE='true'), timeout=30)
+            assert result.returncode == 0 and marker in result.stdout, result.stdout + '\n' + result.stderr
+        lab = root / 'CartLab.jar'
+        with zipfile.ZipFile(lab, 'x', zipfile.ZIP_DEFLATED) as output:
+            for source in sorted(path for path in classes.rglob('*') if path.is_file()):
+                output.write(source, source.relative_to(classes).as_posix())
+        # This cold Java entry must load before the private Kotlin runtime is appended by the mod loader.
+        subprocess.run([str(javac), '--release', '25', '-cp', classpath, '-d', str(classes),
+                        str(HERE / 'ObserverLoaderCheck.java')], check=True, env=clean_environment())
         (root/'Lua').mkdir()
         result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
             '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'ObserverAssociationCheck'],
@@ -1131,7 +807,7 @@ public final class ObserverLoaderCheck {
         assert [row['event'] for row in rows]==['publish','variable-write','trace-end'],rows
         assert [row['seq'] for row in rows]==[1,2,3] and all(row['clockReady'] and row['serverNs']>0 for row in rows)
         assert rows[0]['cartID']==42 and rows[1]['serial']==3 and rows[1]['serializedBytes']>0
-    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API, native diagnostic State marker preservation/unknown-key isolation, mod-load parameter birth/mutation/escape/default and failure cleanup checks, native equipment setters/reentrant OnEquip/load/death-entry/removal/connection tombstones and original Coop birth with immutable old retirement, exact native command serialization/callback receipts, and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
+    return 'PASS (shared cross-module Main.class monitor, composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API, native diagnostic State marker preservation/unknown-key isolation, mod-load parameter birth/mutation/escape/default and failure cleanup checks, native equipment setters/reentrant OnEquip/load/death-entry/removal/connection tombstones and original Coop birth with immutable old retirement, exact native command serialization/callback receipts, and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
 
 
 def main():
@@ -1140,6 +816,7 @@ def main():
     parser.add_argument('--game-java-dir', type=Path)
     parser.add_argument('--jdk', type=Path)
     parser.add_argument('--patch-jar', type=Path)
+    parser.add_argument('--kotlin-home', type=Path)
     args = parser.parse_args()
     manifest = json.loads((HERE / 'manifest.json').read_text())
     assert manifest['runner_adapter'] is None and manifest['live_after_parameterization'] is False
@@ -1173,7 +850,7 @@ def main():
         print('Action sampling:', check_action_sampling(lua))
     else:
         print('Lua: SKIPPED (supply --lua or install Lua/LuaJIT)')
-    print('Java:', check_java(args.game_java_dir, args.jdk, args.patch_jar))
+    print('JVM:', check_java(args.game_java_dir, args.jdk, args.patch_jar, args.kotlin_home))
 
 
 if __name__ == '__main__':

@@ -27,6 +27,7 @@ getFileReader=function() return {readLine=function() return 'client1' end,close=
 local connection,foreign={},{};local ingress=connection
 cartLeaseCurrent=function() return connection end;cartLeaseIngress=function() return ingress end
 cartLeaseSeed=function() return '00000000-0000-0000-0000-000000000001' end
+cartLeaseChallengeSeed=function() return '00000000-0000-0000-0000-000000000004' end
 require=function() end
 local Ack=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua')
 local J=dofile(root..'/tests/native_queue/contributions/wooden_cart_multiplayer/json.lua')

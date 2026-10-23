@@ -32,7 +32,9 @@ def main():
     if java is None or not Path(java).is_file():
         parser.error("Pass --jdk or put java on PATH")
     sources = []
-    for directory in (ROOT / "JavaPatches/src", ROOT / "JavaPatches/tests"):
+    for directory in (ROOT / "JavaPatches/src", ROOT / "JavaPatches/tests",
+                      ROOT / "tests/native_queue/contributions/wooden_cart_motion",
+                      ROOT / "tests/native_queue/contributions/wooden_cart_multiplayer"):
         for path in directory.rglob("*.kt"):
             if any(line.startswith("/** Generated ") for line in path.read_text().splitlines()[:5]):
                 continue
