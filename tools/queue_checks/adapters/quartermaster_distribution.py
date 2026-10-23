@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import shutil
 
+from .. import receipts
+
 SUITE = 'quartermaster-distribution'
 MODS = ['PZSurvivorToolkit', 'PZToolkitJavaPatches', 'organizedCategories_core']
 
@@ -85,13 +87,6 @@ def _exact(value, expected):
 
 
 def _deposit_records(text, prefix='QM_DEPOSIT'):
-    def unique(pairs):
-        value = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError('Duplicate deposit JSON key ' + key)
-            value[key] = item
-        return value
     records = []
     for line in text.splitlines():
         marker = '[' + prefix + '] '
@@ -101,11 +96,7 @@ def _deposit_records(text, prefix='QM_DEPOSIT'):
         event, separator, body = line[offset + len(marker):].partition(' ')
         if not separator:
             raise ValueError('Malformed deposit receipt')
-        value = json.loads(body, object_pairs_hook=unique,
-                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Nonfinite deposit receipt')))
-        if type(value) is not dict:
-            raise ValueError('Deposit receipt is not an object')
-        records.append((event, value))
+        records.append((event, receipts.decode_object(body)))
     return records
 
 

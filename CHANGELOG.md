@@ -29,6 +29,30 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.226
+
+- **Action queue:** Use shared native completion for proven P4 removal of temporary plain headwear with unchanged hair. Keep Mohawk and headwear restoration on their existing handling. Guard clothing cleanup against native capacity-driven world drops and protect unknown, multi-item, exclusive or replaced worn slots; preserve native effects and required cleanup.
+
+### 0.1.225
+
+- **Action queue:** Support proven P4 cleanup of ordinary clothing that is both held and worn when cleanup is queued. Preserve native hand/worn removal, preceding hand restoration, exact root item identity, required cleanup and independent following actions. Special clothing and changed source methods retain their existing fallback.
+
+### 0.1.224
+
+- **Action queue:** Move proven P4 hand-to-hotbar returns onto shared native completion. Preserve both authoritative hand removal and native attachment effects, exact root item and existing slot/model, required cleanup and independent following actions. Changed hotbar helpers or metadata and special equipment retain their current fallback.
+
+### 0.1.223
+
+- **Craft plans:** Reuse a script-structure catalog and prepare only the selected recipe's possible prerequisite chain and existing material overrides. Recalculating or confirming a plan no longer rereads unrelated recipes or checks their character/workbench availability. Keep all material and tool alternatives, fresh stock and eligibility checks, independent preview choices and native step validation. Reset the catalog at game boundaries and script reloads.
+
+### 0.1.222
+
+- **Action queue:** Move proven P4 removal of temporarily worn ordinary clothing onto shared native completion. Preserve exact item/root/slot identity, native server effects and required cleanup before continuing independent actions. Held clothing, activation, special equipment, hotbar and heavy-item drops retain their existing fallback.
+
+### 0.1.221
+
+- **Action queue:** Move proven P4 ordinary-clothing restoration onto the shared native completion boundary. Wait for the native wear effect and action removal before advancing, retain required cleanup and independent following actions, and reject stale or changed clothing identities/helpers. Special equipment branches retain their existing fallback.
+
 ### 0.1.220
 
 - **Distribution:** Prepare item tag membership lazily once per plan and reuse the destination search to explain unmatched or unavailable storage. Avoid rebuilding the same tag set for every rule and rescanning all destinations after a failed search. Preserve explicit-item priority, exact-category filters, broken-tool exclusions and live capacity/admission checks; subsequent plans read fresh item tags.

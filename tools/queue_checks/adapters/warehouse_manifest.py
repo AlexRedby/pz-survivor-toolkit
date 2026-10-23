@@ -1,10 +1,11 @@
 """Authoritative warehouse snapshots and native withdrawal in SP/two-client menu Host."""
-import json
 import math
 from pathlib import Path
 import re
 import shutil
 import struct
+
+from .. import receipts
 
 SUITE = 'warehouse-manifest'
 MARKER = '[WAREHOUSE_MANIFEST] '
@@ -88,23 +89,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def _records(text, event):
-    def unique(pairs):
-        value = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError('Duplicate receipt JSON key ' + key)
-            value[key] = item
-        return value
-    rows = []
-    for line in text.splitlines():
-        offset = line.find(MARKER + event + ' ')
-        if offset >= 0:
-            row = json.loads(line[offset + len(MARKER + event + ' '):], object_pairs_hook=unique,
-                             parse_constant=lambda value: (_ for _ in ()).throw(ValueError('Nonfinite receipt ' + value)))
-            if type(row) is not dict:
-                raise ValueError('Receipt must be an object: ' + event)
-            rows.append(row)
-    return rows
+    return receipts.records(text, MARKER, event)
 
 
 def _one(text, event):

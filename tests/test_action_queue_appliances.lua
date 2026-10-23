@@ -94,7 +94,7 @@ function ISWalkToTimedAction:new(character, destination)
     local action = ISBaseTimedAction.new(self, character); action.square = destination; return action
 end
 local function project(name)
-    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+    if name == 'ActionQueue' then project('ActionQueueSettlement'); project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
  assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
 project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueLabels'); project('ActionQueuePolicy'); project('ActionQueue'); project('ActionQueueWorld')
 local api, world = PZSurvivorToolkit.ActionQueue, PZSurvivorToolkit.ActionQueueWorld

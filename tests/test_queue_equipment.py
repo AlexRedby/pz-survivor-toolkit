@@ -47,6 +47,50 @@ class EquipmentTests(unittest.TestCase):
                     result.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True, walkDistance=0.75)
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
+            if case in equipment.HOTBAR_CASES:
+                tidy = 'P4TidyUpMeister' in self.selection['mods']
+                spec = equipment.HOTBAR_CASES[case]
+                provider = not spec['twoHands']
+                effect = dict(case=case, providerItem=957 if provider else False, providerType='Base.HolsterDouble' if provider else False,
+                              providerLocation='base:beltextra' if provider else False, providerWorn=provider,
+                              id=956, fullType=spec['fullType'], container='root', slotIndex=(7 if case.endswith('left') else 8) if provider else 1,
+                              slotType=spec['slotType'], model=spec['model'],
+                              attached=tidy, primary=False if tidy else 956, secondary=956 if not tidy and spec['twoHands'] else False, worn=False, producer='onRackGun',
+                              producerCompleted=True, ammoUnchanged=True, unrelatedAttachmentsPreserved=True)
+                count = int(enabled and tidy)
+                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956, secondary=956 if spec['twoHands'] else False),
+                              tidyHotbar=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
+                                              sourceSession=18 if tidy else False, sourceCompleted=tidy, attachConnectObserved=tidy,
+                                              uiHotbarIdentity=True, unrelatedTailPreserved=True,
+                                              sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
+                                                                    flush=count, legacy=0)))
+            if case in equipment.CLOTHING_CASES:
+                tidy = 'P4TidyUpMeister' in self.selection['mods']
+                spec = equipment.CLOTHING_SPECS[case]
+                effect = dict(id=955, fullType=spec['fullType'], bodyLocation=spec['location'], container='root', worn=not tidy if case != 'tidy-clothing' else tidy,
+                              producer='ISCutHair', producerCompleted=True, hairUnchanged=True, hairStyle='CrewCut',
+                              unrelatedHandsPreserved=True)
+                if case == 'tidy-clothing-overlap':
+                    effect.update(primary=950, secondary=951 if tidy else 955, originalSecondary=951)
+                count = int(enabled and tidy)
+                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=case != 'tidy-clothing', **({'secondary': 955} if case == 'tidy-clothing-overlap' else {})),
+                              tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
+                                                sourceSession=17 if tidy else False, sourceCompleted=tidy,
+                                                sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
+                                                                      flush=count, legacy=0), unrelatedTailPreserved=True))
+                if spec.get('headwear'):
+                    result['tidyClothing']['headwearSetup'] = dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
+                if case == 'tidy-clothing-overlap':
+                    cleanup = [dict(kind='ISEquipWeaponAction', id=951), dict(kind='P4RestoreAction', id=951),
+                               dict(kind='ISUnequipAction', id=955)] if tidy else []
+                    actions = [dict(kind='ISEquipWeaponAction', id=955), dict(kind='ISWearClothing', id=955), dict(kind='ISCutHair', id=False)] + cleanup
+                    result['tidyClothing']['overlap'] = dict(
+                        intermediate=dict(primary=950, secondary=955, worn=955, container='root'), cleanup=cleanup,
+                        acknowledgements=[dict(item, state='completed') for item in actions] if self.selection['kind'] == 'mp' else [],
+                        sharedHands=dict(perform=2*count, complete=2*count if self.selection['kind'] == 'sp' else 0,
+                                         flush=2*count, legacy=0, equip=count, activation=count, unequip=0))
+            if case in ('tidy-hands', 'tidy-empty-hands'):
+                result.update(rackWholeOperationMoveVerified=enabled, rackCancellationProtected=enabled, independentMoveVerified=enabled)
             if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
                 count = int(enabled and 'P4TidyUpMeister' in self.selection['mods'])
                 empty = case == 'tidy-empty-hands'
@@ -98,6 +142,13 @@ class EquipmentTests(unittest.TestCase):
         rows.append({'event': 'complete', 'cases': cases, 'expected': len(cases), 'performed': len(cases), 'skipped': 0, 'failed': 0})
         return [dict(row, suite='equipment', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1') for row in rows]
 
+    def scene_marker(self):
+        if not any(equipment.CLOTHING_SPECS.get(case, {}).get('headwear') for case in self.selection['cases']):
+            return ''
+        return '[EQUIPMENT_TEST] SCENE_HEADWEAR ' + json.dumps(dict(
+            prepared=True, authority='server' if self.selection['kind'] == 'mp' else 'sp', rootRetained=True,
+            normalizedItems=[dict(id=900, fullType='Base.Glasses_Cosmetic_Normal', location='base:eyes')])) + '\n'
+
     def logs(self, records=None):
         captures=[]
         if self.selection['kind'] == 'mp':
@@ -105,14 +156,14 @@ class EquipmentTests(unittest.TestCase):
                 count=0 if case == 'waiting-cancel' and self.selection['mode'] == 'toolkit' else equipment.RECEIPTS[case]
                 for _ in range(count):
                     captures.append('[EQUIPMENT_TEST] CAPTURE case=' + case + ' kind=ISEquipWeaponAction token=00000000-0000-0000-0000-' + str(len(captures)+1).zfill(12))
-        return '\n'.join(captures + ['[QUEUE_CHECK] ' + json.dumps(row) for row in (records or self.records())]
+        return (self.scene_marker() if self.selection['kind'] == 'sp' else '') + '\n'.join(captures + ['[QUEUE_CHECK] ' + json.dumps(row) for row in (records or self.records())]
                          + ['[EQUIPMENT_TEST] RECEIPT case=' + case for case in self.selection['cases']]
                          + ['[EQUIPMENT_TEST] COMPLETE'])
 
     def verify(self, text):
         (self.root / 'client1-launch.log').write_text(text)
         if self.selection['kind'] == 'mp' and not (self.root / 'server-launch.log').exists():
-            (self.root / 'server-launch.log').write_text('[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
+            (self.root / 'server-launch.log').write_text(self.scene_marker() + '[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
             for case in self.selection['cases']:
                 if case in ('tidy-group', 'tidy-multigroup'):
                     with (self.root / 'server-launch.log').open('a') as log:
@@ -121,7 +172,208 @@ class EquipmentTests(unittest.TestCase):
             if 'tidy-floor' in self.selection['cases'] and 'P4TidyUpMeister' in self.selection['mods']:
                 with (self.root / 'server-launch.log').open('a') as log:
                     log.write('\n[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true\n')
+            for case in self.selection['cases']:
+                if case in equipment.CLOTHING_CASES:
+                    row = next(row for row in self.records() if row.get('id') == case)
+                    effect = {key: row['outcome']['tidyClothing'][key] for key in equipment.clothing_effect_keys(case)}
+                    with (self.root / 'server-launch.log').open('a') as log:
+                        log.write('\n[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' + json.dumps(effect) + '\n')
+            for case in self.selection['cases']:
+                if case in equipment.HOTBAR_CASES:
+                    row = next(row for row in self.records() if row.get('id') == case)
+                    effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.HOTBAR_EFFECT_KEYS}
+                    with (self.root / 'server-launch.log').open('a') as log:
+                        log.write('\n[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(effect) + '\n')
         return equipment.verify(self.root, self.selection, {})
+
+    def test_tidy_hotbar_requires_exact_native_effect_session_phases_and_completed_host_receipt(self):
+        self.selection.update(cases=['tidy-hotbar'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in equipment.HOTBAR_EFFECT_KEYS | {'nativeGenerated', 'sourceSession', 'sourceCompleted', 'attachConnectObserved',
+                                                            'uiHotbarIdentity', 'authoritativeRestore', 'unrelatedTailPreserved'}:
+                    rows = self.records(); rows[1]['outcome']['tidyHotbar'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                for field, value in (('id', True), ('slotIndex', True), ('slotIndex', 2), ('slotType', 'SmallBeltLeft'),
+                                     ('model', 'Rifle On Back'), ('fullType', 'Base.Pistol'), ('container', 'worn-bag'),
+                                     ('primary', 956), ('secondary', 956), ('worn', True), ('attached', False),
+                                     ('producer', 'ISAttachItemHotbar'), ('nativeGenerated', 0), ('sourceSession', 0),
+                                     ('sourceCompleted', False), ('attachConnectObserved', False), ('uiHotbarIdentity', False)):
+                    rows = self.records(); rows[1]['outcome']['tidyHotbar'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, field, value))
+                for field in ('perform', 'complete', 'flush', 'legacy'):
+                    rows = self.records(); rows[1]['outcome']['tidyHotbar']['sharedCompletion'][field] += 1
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                rows = self.records(); rows[1]['outcome']['hotbarCheckpoint']['attached'] = True
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    rows = self.records(); rows[1]['outcome']['receiptStates'] = ['canceled']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' in line)
+                    for replacement in ('', marker + '\n' + marker, marker.replace('956', '957'), marker.replace('"attached": true', '"attached": false')):
+                        server.write_text(original.replace(marker, replacement))
+                        self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
+
+    def test_tidy_clothing_requires_exact_p4_generation_shared_phases_and_conserved_effects(self):
+        self.selection.update(cases=['tidy-clothing'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in equipment.CLOTHING_EFFECT_KEYS | {'nativeGenerated', 'authoritativeRestore', 'unrelatedTailPreserved', 'sourceSession', 'sourceCompleted'}:
+                    rows = self.records(); rows[1]['outcome']['tidyClothing'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                for field in ('perform', 'complete', 'flush', 'legacy'):
+                    for change in (True, -1, '1', 1.0, 2):
+                        rows = self.records(); rows[1]['outcome']['tidyClothing']['sharedCompletion'][field] = change
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, field, change))
+                for field, value in (('id', True), ('fullType', 'Base.Socks_Long'), ('bodyLocation', 'base:hat'),
+                                     ('container', 'worn-bag'), ('worn', False), ('producer', 'ISWearClothing'),
+                                     ('hairStyle', 'Mohawk'), ('nativeGenerated', 0), ('hairUnchanged', False),
+                                     ('unrelatedHandsPreserved', False), ('unrelatedTailPreserved', False)):
+                    rows = self.records(); rows[1]['outcome']['tidyClothing'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (field, value))
+                rows = self.records(); rows[1]['outcome']['clothingCheckpoint']['id'] += 1
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for session in (0, -1, True, '17', None):
+                    rows = self.records(); rows[1]['outcome']['tidyClothing']['sourceSession'] = session
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if '[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' in line)
+                    for replacement in ('', marker + '\n' + marker, marker.replace('955', '956'), marker.replace('"worn": true', '"worn": false')):
+                        server.write_text(original.replace(marker, replacement))
+                        self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
+
+    def test_tidy_clothing_remove_requires_empty_final_slot_and_exact_source_lifecycle(self):
+        self.selection.update(cases=['tidy-clothing-remove'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in equipment.CLOTHING_EFFECT_KEYS | {'nativeGenerated', 'authoritativeRestore', 'sourceSession', 'sourceCompleted', 'unrelatedTailPreserved'}:
+                    rows = self.records(); rows[1]['outcome']['tidyClothing'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                for field, value in (('id', 956), ('worn', True), ('container', 'worn-bag'), ('nativeGenerated', 2),
+                                     ('sourceSession', True), ('sourceCompleted', False), ('hairUnchanged', False),
+                                     ('unrelatedHandsPreserved', False), ('unrelatedTailPreserved', False)):
+                    rows = self.records(); rows[1]['outcome']['tidyClothing'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, field))
+                for field in ('perform', 'complete', 'flush', 'legacy'):
+                    rows = self.records(); rows[1]['outcome']['tidyClothing']['sharedCompletion'][field] += 1
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                rows = self.records(); rows[1]['outcome']['clothingCheckpoint']['worn'] = False
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if '[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' in line)
+                    for replacement in ('', marker + '\n' + marker, marker.replace('955', '956'), marker.replace('"worn": false', '"worn": true')):
+                        server.write_text(original.replace(marker, replacement))
+                        self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
+
+    def test_clothing_overlap_requires_real_transition_order_hands_and_every_native_receipt(self):
+        self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for field in ('primary', 'secondary', 'originalSecondary', 'overlap'):
+                    rows = self.records(); rows[3]['outcome']['tidyClothing'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+                changes = [lambda p: p['intermediate'].update(secondary=951),
+                           lambda p: p['intermediate'].update(worn=False),
+                           lambda p: p['cleanup'].reverse(), lambda p: p['cleanup'].pop(),
+                           lambda p: p['cleanup'][0].update(id=955),
+                           lambda p: p['sharedHands'].update(perform=True),
+                           lambda p: p['sharedHands'].update(complete=99),
+                           lambda p: p['sharedHands'].update(legacy=1)]
+                if kind == 'mp':
+                    changes += [lambda p: p['acknowledgements'].pop(),
+                                lambda p: p['acknowledgements'][4].update(state='canceled'),
+                                lambda p: p['acknowledgements'][2].update(id=0),
+                                lambda p: p['acknowledgements'].reverse()]
+                for change in changes:
+                    rows = self.records(); change(rows[3]['outcome']['tidyClothing']['overlap'])
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                rows = self.records(); rows[3]['outcome']['clothingCheckpoint']['secondary'] = 951
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'originalSecondary' in line)
+                    server.write_text(original.replace(marker, marker.replace('951', '955')))
+                    self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
+
+    def test_headwear_requires_configured_type_slot_setup_and_exact_server_correlation(self):
+        self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for case in ('tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove'):
+                    def target(rows):
+                        return next(row['outcome']['tidyClothing'] for row in rows if row.get('id') == case)
+                    for field, value in (('fullType', 'Base.Socks_Ankle'), ('bodyLocation', 'base:socks'), ('worn', True),
+                                         ('hairStyle', 'MohawkFlat'), ('sourceCompleted', False), ('nativeGenerated', 2)):
+                        rows = self.records(); target(rows)[field] = value
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field))
+                    for field in ('emptyExclusiveSlots', 'capacityBeforeRemoval'):
+                        for changed in (False, 1, None):
+                            rows = self.records(); target(rows)['headwearSetup'][field] = changed
+                            self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field, changed))
+                    rows = self.records(); target(rows).pop('headwearSetup')
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'Hat_Beany' in line)
+                    server.write_text(original.replace(marker, marker.replace('Hat_Beany', 'Hat_BoxingRed')))
+                    self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
+
+    def test_headwear_scene_requires_single_authority_root_conservation_proof(self):
+        self.selection.update(cases=list(equipment.CLOTHING_CASES), mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            text = self.logs()
+            self.assertEqual(self.verify(text)['issues'], [])
+            path = self.root / ('server-launch.log' if kind == 'mp' else 'client1-launch.log')
+            original = path.read_text()
+            marker = self.scene_marker().strip()
+            proof = json.loads(marker.split('SCENE_HEADWEAR ', 1)[1])
+            invalid = [None, dict(proof, authority='client'), dict(proof, rootRetained=1),
+                       dict(proof, prepared=False), dict(proof, extra=True),
+                       dict(proof, normalizedItems=proof['normalizedItems'] * 2)]
+            for field, value in (('id', True), ('id', -1), ('fullType', ''), ('location', ''), ('extra', True)):
+                changed = copy.deepcopy(proof); changed['normalizedItems'][0][field] = value; invalid.append(changed)
+            for changed in invalid:
+                replacement = '' if changed is None else '[EQUIPMENT_TEST] SCENE_HEADWEAR ' + json.dumps(changed)
+                altered = original.replace(marker, replacement)
+                if kind == 'mp':
+                    path.write_text(altered); result = self.verify(text)
+                else:
+                    result = self.verify(altered)
+                self.assertTrue(result['issues'], (kind, changed))
+            duplicated = original.replace(marker, marker + '\n' + marker)
+            if kind == 'mp':
+                path.write_text(duplicated); result = self.verify(text)
+            else:
+                result = self.verify(duplicated)
+            self.assertTrue(result['issues'])
+            path.write_text(original)
+        self.selection['cases'] = ['hands-chain']
+        self.assertEqual(equipment._verify_scene('', self.selection), ([], None))
+        self.assertTrue(equipment._verify_scene(self.scene_marker() + marker, self.selection)[0])
 
     def test_belt_requires_empty_queue_and_exact_effect_checks(self):
         self.selection['cases'] = ['belt-knife', 'belt-hammer']
@@ -251,6 +503,78 @@ class EquipmentTests(unittest.TestCase):
             self.assertEqual((layer / 'media/java/EquipmentTransferProbe.jar').read_bytes(), probe.read_bytes())
             self.assertIn('javaPkgName=net.alexredby.equipmentprobe', (layer / 'mod.info').read_text())
         self.assertIn(ROOT / 'tests/native_queue/equipment/java/Main.java', equipment.sources(ROOT, self.selection))
+
+    def test_composite_rack_control_replays_real_move_and_rejects_split_or_incomplete_roundtrip(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        script = r'''
+local root=arg[1]
+local function read(path)local f=assert(io.open(root..'/'..path));local s=f:read('*a');f:close();return s end
+local function excerpt(source,first,last)
+ local start=assert(source:find(first,1,true));local finish=assert(source:find(last,start+#first,true))
+ assert(loadstring(source:sub(start,finish-1)))()
+end
+local checks=dofile(root..'/tests/native_queue/support/QueueScenarioChecks.lua')
+require=function(name)assert(name=='QueueScenarioChecks');return checks end
+local rackControls=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentRack.lua')
+Operations={};excerpt(read('PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'),
+ 'function Operations.bounds(queue, action)','local canMerge =')
+Queue={};Toolkit={}
+excerpt(read('PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'),
+ 'function Queue.move(queue, action, target, after)','local function clearStop(queue)')
+local function run(id,fault)
+ local token={};local front={toolkitQueueOperation={},action={}};local tail={toolkitQueueOperation={}}
+ local pickup={toolkitQueueOperation=token};local equip={toolkitQueueOperation=token};local rack={toolkitQueueOperation=token}
+ local player={};local item={getID=function()return 7 end,getAmmoType=function()return {getItemKey=function()return 'Base.Bullets9mm'end}end}
+ local state={id=id,player=player,pickup=item,frontAction=front,tailAction=tail,pickupAction=pickup,rackEquipAction=equip,rackAction=rack}
+ local queue={queue={front,pickup,equip,rack,tail},current=front}
+ function queue:indexOf(action)for i,value in ipairs(self.queue)do if value==action then return i end end;return -1 end
+ Policy={record=function()end,editUnchanged=function()return true end,
+  evaluateCancel=function()return {allowed=fault=='cancel-permitted',reason='operation_dependent'}end}
+ function Policy.evaluateMove(q,action,target,after)
+  local first,last=Operations.bounds(q,action);local targetFirst,targetLast=Operations.bounds(q,target)
+  if fault=='split'then first,last=q:indexOf(action),q:indexOf(action)end
+  local to=after and targetLast+1 or targetFirst;if first<to then to=to-(last-first+1)end
+  return {allowed=fault~='stale-denial',reason='move_dependent',first=first,last=last,to=to,snapshot={}}
+ end
+ local moves=0
+ local api={cancelOperation=function()return false,'operation_dependent'end}
+ function api.move(...)
+  moves=moves+1
+  if fault=='incomplete-restore'and moves==2 then return true end
+  local ok=Queue.move(...)
+  if fault=='current'then queue.current=tail end
+  if fault=='ownership'then equip.toolkitQueueOperation={}end
+  if fault=='internal-order'then queue.queue[4],queue.queue[5]=queue.queue[5],queue.queue[4]end
+  return ok
+ end
+ local definitions={inspect=function()return {knownInputs=true,items={[7]=true},equipment=player,
+  outputTypes={['Base.Bullets9mm']=true},cancelOperation=fault=='unsafe-contract'},'native.ISRackFirearm'end}
+ rackControls.controls(state,{queue=function()return queue end,api=api,policy=Policy,operations=Operations,definitions=definitions})
+ assert(moves==2 and state.rackWholeOperationMoveVerified and state.rackCancellationProtected and state.independentMoveVerified)
+ checks.unchanged(queue,{front,pickup,equip,rack,tail})
+end
+for _,id in ipairs({'tidy-hands','tidy-empty-hands'})do
+ run(id)
+ for _,fault in ipairs({'split','incomplete-restore','internal-order','current','ownership','stale-denial','cancel-permitted','unsafe-contract'})do
+  assert(not pcall(run,id,fault),'fixture accepted unsafe/incomplete composite proof '..fault)
+ end
+end
+'''
+        target = self.root / 'rack-controls.lua'
+        target.write_text(script)
+        result = subprocess.run([lua, str(target), str(ROOT)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rack_controls_require_verified_whole_operation_move_and_preserved_cancellation_guard(self):
+        self.selection['cases'] = ['tidy-hands', 'tidy-empty-hands']
+        self.assertEqual(self.verify(self.logs())['issues'], [])
+        for field in ('rackWholeOperationMoveVerified', 'rackCancellationProtected', 'independentMoveVerified'):
+            for index in (1, 2):
+                for value in (False, None, 1):
+                    rows = self.records(); rows[index]['outcome'][field] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], (field, index, value))
 
     def test_missing_effect_or_policy_proof_fails(self):
         records = self.records()
@@ -710,6 +1034,7 @@ end
         script = r'''
 local root=arg[1]
 local function run(kind,mode,fault,equipment)
+ getActivatedMods=function()return {contains=function()return true end}end
  local enabled=mode=='toolkit'
  local item={getID=function()return 7 end,getFullType=function()return 'Base.Nails'end}
  local inventory,source={},{}
@@ -742,10 +1067,29 @@ local function run(kind,mode,fault,equipment)
  ISInventoryPane={getActualItems=function()end}
  getFilenameOfClosure=function()return 'fixture' end
  action.Type,action.primary,action.twoHands='ISEquipWeaponAction',true,false
+ local clothing=equipment=='clothing-remove' or equipment=='clothing-wear'
+ local hotbar=equipment=='hotbar'
+ if hotbar then
+  action.Type='ISUnequipAction';action.fromHotbar=true
+  item.getFullType=function()return 'Base.Shotgun'end;item.getContainer=function()return inventory end
+  item.getAttachedSlot=function()return 1 end;item.getAttachedSlotType=function()return 'Back'end
+  item.getAttachedToModel=function()return 'Rifle On Back with Bag'end
+  player.getAttachedItems=function()return {getItem=function()return fault~='attach-connect'and item or nil end}end
+  player.getPrimaryHandItem=function()return kind=='mp'and nil or item end
+  player.getSecondaryHandItem=function()return kind=='mp'and nil or item end
+ end
+ if clothing then
+  action.Type=equipment=='clothing-remove'and 'ISUnequipAction'or 'ISWearClothing'
+  item.getFullType=function()return 'Base.Socks_Ankle'end
+  item.getBodyLocation=function()return 'base:socks'end;item.getContainer=function()return inventory end
+ end
  if fault=='early-flush' then lifecycle.flush=function()return 'completed',action end end
  local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode=mode})
- observer.watch({root=inventory,source=source,baseline={[7]=item},hammer={getID=item.getID,getFullType=item.getFullType}})
- if equipment then action.item={getID=item.getID,getFullType=item.getFullType} end
+ observer.watch({id=hotbar and 'tidy-hotbar'or clothing and (equipment=='clothing-remove'and 'tidy-clothing-remove'or 'tidy-clothing')or nil,
+  root=inventory,source=source,baseline={[7]=item},hammer={getID=item.getID,getFullType=item.getFullType},
+  clothingItem=clothing and item or nil,clothingLocation='base:socks',pickup=hotbar and item or nil,hotbarDetached=true,
+  hotbarIndex=1,hotbarType='Back',hotbarLocation='Rifle On Back with Bag',hotbarRestoreAction=hotbar and action or nil,hotbarTwoHands=hotbar})
+ if equipment and not clothing and not hotbar then action.item={getID=item.getID,getFullType=item.getFullType} end
  if not enabled then
   lifecycle.begin(action,'perform');lifecycle.finish(action,'perform',true)
   local counts=observer.settled();assert(counts.perform==0 and counts.complete==0 and counts.flush==0);return
@@ -769,16 +1113,21 @@ local function run(kind,mode,fault,equipment)
  if fault~='early-flush' then assert(lifecycle.flush(queue)=='waiting');present=false end
  assert(lifecycle.flush(queue)=='completed')
  assert(lifecycle.flush(queue)==nil)
- local counts=equipment and observer.restores() or observer.settled()
+ local counts=hotbar and observer.hotbar()or clothing and observer.clothing()or equipment and observer.restores() or observer.settled()
  assert(counts.perform==1 and counts.complete==(kind=='sp' and 1 or 0) and counts.flush==1 and counts.legacy==0)
 end
 for _,kind in ipairs({'sp','mp'})do
- for _,mode in ipairs({'native','toolkit'})do run(kind,mode);run(kind,mode,nil,true)end
+ for _,mode in ipairs({'native','toolkit'})do
+  run(kind,mode);run(kind,mode,nil,true);run(kind,mode,nil,'clothing-wear');run(kind,mode,nil,'clothing-remove');run(kind,mode,nil,'hotbar')
+ end
  for _,fault in ipairs({'id','endpoint','token','handle','parent','failed','duplicate-perform','legacy','early-flush','unflushed'})do
   local ok=pcall(run,kind,'toolkit',fault);assert(not ok,'observer accepted '..kind..' '..fault)
  end
 end
 assert(not pcall(run,'mp','toolkit','host-complete'))
+assert(not pcall(run,'mp','toolkit','host-complete','clothing-remove'))
+assert(not pcall(run,'mp','toolkit','host-complete','hotbar'))
+assert(not pcall(run,'sp','toolkit','attach-connect','hotbar'))
 '''
         target = self.root / 'completion-check.lua'
         target.write_text(script)

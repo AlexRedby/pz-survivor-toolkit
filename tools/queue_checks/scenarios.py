@@ -19,6 +19,8 @@ SCENARIOS = {
     'capacity': 'Verify capacity conflicts against exact source/destination/ancestor state.',
     'return-items': 'Return borrowed items to their exact containers without duplication.',
     'restore-hands': 'Restore original hands, including empty hands and activation.',
+    'restore-hotbar': 'Restore a temporary held item to its exact original hotbar slot/model with empty captured hands.',
+    'restore-clothing': 'Restore original clothing with exact item identities and worn slots.',
     'return-unavailable': 'Handle a full, removed or inaccessible return container.',
     'callback-changed': 'Reject unreviewed callback/helper changes without losing native behavior.',
     'server-authority': 'Verify exact server effects independently of client completion.',

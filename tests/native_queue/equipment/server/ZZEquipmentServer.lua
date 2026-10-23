@@ -2,6 +2,9 @@ local cartSelection=require 'QueueTestSelection'
 if cartSelection.cases[1]=='cart-pickup' then return end
 if not isServer() then return end
 local Fixture=require 'QueueEquipmentFixture'
+local Scene=require 'QueueEquipmentScene'
+local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local Selection=require 'QueueTestSelection'
 local Postprocess=require 'QueueEquipmentPostprocess'
 local JSON=require 'QueueHealthEvents'
@@ -14,17 +17,33 @@ local function execute(module,command,player,args)
   if command=='Prepare' then
    assert(not session and not pending and Selection.cases[verified+1]==args.case,'out-of-order equipment prepare')
    player:setGhostMode(true)
-   if verified==0 then Fixture.position(player) end
+   if verified==0 then
+    Fixture.position(player)
+    local proof=Scene.prepare(player,Selection.cases)
+    if proof then print('[EQUIPMENT_TEST] SCENE_HEADWEAR '..JSON.encode(proof))end
+   end
    session=Fixture.prepare(player,args.case,nil,Selection.options)
    local ids=Fixture.descriptor(session)
+   ids.sceneSetup=Scene.proof(player)
    ids.spawn={x=player:getX(),y=player:getY(),z=player:getZ()}
    for _,item in ipairs(session.owned) do
     if item:getContainer()==player:getInventory() then sendAddItemToContainer(player:getInventory(),item) end
    end
    sendClothing(player,session.location,player:getWornItem(session.location));sendEquip(player)
+   if Clothing.isCase(session.id)then sendClothing(player,session.clothingLocation,player:getWornItem(session.clothingLocation))end
    if session.id=='hotbar-chain' then sendAttachedItem(player,session.hotbarLocation,session.hotbarInitial) end
+   if Hotbar.isCase(session.id)then
+    if session.holster then sendClothing(player,session.holsterLocation,session.holster)end
+    if session.hotbarIndex then sendAttachedItem(player,session.hotbarLocation,session.pickup)end
+   end
    reply(player,'Prepared',ids)
    print('[EQUIPMENT_TEST] PREPARED case='..args.case)
+  elseif command=='ConfigureHotbar'then
+   assert(session and session.id==args.case and session.holster and not session.hotbarConfigured and not pending
+    and args.item==session.pickup:getID(),'invalid native holster setup request')
+   Hotbar.configure(session,args.slotIndex);session.hotbarConfigured=true
+   sendAttachedItem(player,session.hotbarLocation,session.pickup)
+   reply(player,'HotbarConfigured',{case=session.id,item=session.pickup:getID(),slotIndex=session.hotbarIndex,ok=true})
   elseif command=='Checkpoint' or command=='Verify' then
    assert(session and session.id==args.case and not pending,'out-of-order equipment verify')
    assert(command=='Checkpoint' or session.checkpointed,'missing equipment checkpoint')
@@ -87,6 +106,12 @@ Events.OnTick.Add(function()
    session.verified=true
    if passed and (session.id=='tidy-group' or session.id=='tidy-multigroup') then
     print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))
+   end
+   if passed and Hotbar.isCase(session.id)then
+    print('[EQUIPMENT_TEST] HOTBAR_AUTHORITY '..JSON.encode(problem.hotbar))
+   end
+   if passed and Clothing.isCase(session.id)then
+    print('[EQUIPMENT_TEST] CLOTHING_AUTHORITY '..JSON.encode(problem.clothing))
    end
    if passed then
     print('[EQUIPMENT_TEST] AUTHORITY case='..session.id..' inventoryPreserved=true equipmentMatches=true tailCompleted=true')

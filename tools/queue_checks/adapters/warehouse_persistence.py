@@ -1,10 +1,9 @@
 """Native chunk streaming/rejoin and sealed Host world persistence evidence."""
-import json
 from pathlib import Path
 import re
 
 from . import warehouse_manifest as common
-from .. import report
+from .. import report, receipts
 
 MARKER = '[WAREHOUSE_PERSIST] '
 CASES = ('persist-seed', 'persist-reload')
@@ -13,8 +12,7 @@ RELOAD_STAGES = ('restored', 'revisited')
 
 
 def _records(text, event):
-    # Reuse the strict duplicate-key/nonfinite parser with this independent lifecycle marker.
-    return common._records(text.replace(MARKER, common.MARKER), event)
+    return receipts.records(text, MARKER, event)
 
 
 def _one(text, event):

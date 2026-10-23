@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import re
 
+from .. import receipts
+
 CASES = ('legacy-seed', 'legacy-reload')
 MARKER = '[WAREHOUSE_LEGACY] '
 
@@ -20,10 +22,7 @@ def validate(selection):
 
 
 def _records(text, event):
-    # Same strict duplicate/nonfinite parser as the other cases in this suite.
-    from .warehouse_manifest import _records as parse
-    marker = '[WAREHOUSE_MANIFEST] '
-    return parse(text.replace(MARKER, marker), event)
+    return receipts.records(text, MARKER, event)
 
 
 def _one(text, event):

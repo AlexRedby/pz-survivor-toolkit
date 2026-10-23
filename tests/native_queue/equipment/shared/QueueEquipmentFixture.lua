@@ -2,6 +2,8 @@ local Fixture={}
 local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
 local Bulk=require 'QueueEquipmentBulk'
+local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local function inventory(player)
  local result={}
  local function scan(container)
@@ -154,6 +156,8 @@ function Fixture.prepare(player,id,ids,options)
   assert(state.removalDelta>2,'native bag reduction must materially affect carried weight')
   assert(not fitsAfterRemoval,'pickup would still fit after native bag removal')
   assert(root:hasRoomFor(player,state.pickup),'pickup must fit again after native hand state restore')
+ elseif Hotbar.isCase(id)then Hotbar.prepare(state,seed)
+ elseif Clothing.isCase(id) then Clothing.prepare(state,seed)
  elseif id=='tidy-group' or id=='tidy-multigroup' then
   seed('groupOne','Base.Nails',state.source);seed('groupTwo','Base.Nails',state.source)
   if id=='tidy-multigroup' then
@@ -213,9 +217,10 @@ function Fixture.verify(state,mode,checkpoint)
  end
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
+ if Clothing.overlap(state)then secondary=state.clothingItem end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,'native final hand identities differ')
  if state.id=='bag-capacity' then
   state.expectedWorn[state.location]=nil
@@ -236,9 +241,17 @@ function Fixture.verify(state,mode,checkpoint)
   end
  end
  local extra={}
+ if Hotbar.isCase(state.id)then extra.hotbarCheckpoint=Hotbar.verify(state,false,true);extra.hotbarItem=state.pickup:getID()end
  if Bulk.isCase(state.id) then extra=Bulk.verify(state,false,false) end
  if Slots.handles(state.id) then extra=Slots.verify(state,mode) end
- assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,state.expectedWorn)
+ local expectedWorn=state.expectedWorn
+ if Clothing.isCase(state.id) then
+  extra.clothingCheckpoint=Clothing.verify(state,Clothing.removes(state))
+  extra.clothingItem=state.clothingItem:getID()
+  expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
+  expectedWorn[state.clothingLocation]=Clothing.removes(state)and state.clothingItem or nil
+ end
+ assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
   policyChecked=mode=='toolkit',cancelled=cancelled,capacityBarrier=state.id=='bag-capacity' and mode=='toolkit',
   primary=primary:getID(),secondary=secondary and secondary:getID() or false,bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
@@ -251,6 +264,7 @@ function Fixture.release(state)
  Fixture.refresh(state)
  local player=state.player
  if Slots.handles(state.id) then Slots.cleanup(state) end
+ if Hotbar.isCase(state.id)then Hotbar.release(state)end
  for _,item in ipairs(state.owned) do player:removeFromHands(item);player:removeWornItem(item) end
  if state.belt then
   local location=state.belt:getBodyLocation()
@@ -260,6 +274,7 @@ function Fixture.release(state)
   if isServer() then sendClothing(player,location,state.originalWorn[location]) end
  end
  for location,item in pairs(state.originalWorn) do player:setWornItem(location,item) end
+ if state.holster and isServer()then sendClothing(player,state.holsterLocation,state.originalWorn[state.holsterLocation])end
  player:setPrimaryHandItem(state.originalPrimary);player:setSecondaryHandItem(state.originalSecondary)
  -- Close both bag views while authoritative containers still exist.
  if not isServer() then
@@ -280,6 +295,10 @@ function Fixture.removed(state)
  if state.belt then
   local current=state.player:getWornItem(state.belt:getBodyLocation())
   if current and current:getID()==state.belt:getID() then return false end
+ end
+ if state.holster then
+  local current=state.player:getWornItem(state.holsterLocation)
+  if current and current:getID()==state.holster:getID()then return false end
  end
  if (state.id=='floor-pickup' or state.id=='tidy-floor') and Floor.resolve(state.floor) then return false end
  return true
@@ -315,7 +334,7 @@ function Fixture.cleanup(state)
 end
 function Fixture.descriptor(state)
  local result={case=state.id,items={},originalWorn={},primary=state.originalPrimary and state.originalPrimary:getID(),
-  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor}
+  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor,clothingHair=state.clothingHair}
  for name,item in pairs(state.items) do result.items[name]=item:getID() end
  for location,item in pairs(state.originalWorn) do
   result.originalWorn[#result.originalWorn+1]={location=tostring(location),id=item:getID(),fullType=item:getFullType()}
@@ -326,6 +345,7 @@ end
 function Fixture.available(player,ids)
  local actual=inventory(player)
  if not originalWorn(player,ids,actual) then return false end
+ if Clothing.isCase(ids.case)and not Clothing.available(player,ids)then return false end
  for name,id in pairs(ids.items) do
   if name~='pickup' or not ids.floor then if not actual[id] then return false end end
  end
@@ -336,9 +356,10 @@ function Fixture.settled(state,mode,checkpoint)
  local player=state.player
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
+ if Clothing.overlap(state)then secondary=state.clothingItem end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
  for _,book in ipairs(checkpoint and {state.front} or {state.front,state.tail}) do if book:getAlreadyReadPages()~=book:getNumberOfPages() then return false end end
  if state.bat and state.bat:getContainer()~=(cancelled and state.source or state.root) then return false end
@@ -352,6 +373,8 @@ function Fixture.settled(state,mode,checkpoint)
   end
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
+ if Clothing.isCase(state.id) and (player:getWornItem(state.clothingLocation)~=(Clothing.removes(state)and state.clothingItem or nil)
+  or tostring(player:getHumanVisual():getHairModel())~=state.clothingHair)then return false end
  if state.id=='hotbar-chain' or Slots.isBelt(state.id) then
   local item,old=state.hotbarReplacement,state.hotbarInitial
   -- Native attachment and item-field packets use separate channels.

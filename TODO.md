@@ -1,9 +1,3 @@
-# Cart main delivery
-
-- [ ] Merge current origin/main, preserve concurrent queue/build changes and keep delivered component versions newer than main.
-- [ ] Run merged cart and shared-runner/build regression checks, confirm no unintended runtime differences and preserve known native verification limits.
-- [ ] Recheck remote main, publish with a normal fast-forward push and verify the remote commit.
-
 # Nick's Turn Off Fridges selection
 
 - [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
@@ -143,7 +137,7 @@ Gate for each adapter: primary success; same/different targets; pending cancella
 
 These families need contract/coverage audits. Missing verification or continued use of legacy completion does not by itself mean their native actions fail.
 
-- [ ] TidyUpMeister: migrate remaining clothing, hotbar and heavy-item restores only after their SP/Host lifecycle gates. Separately define safe edit contracts for mixed-session floor returns and unknown/dynamic entry points; these remain protected. Preserve required shared cleanup on cancellation.
+- [ ] TidyUpMeister: migrate remaining held/worn clothing combinations beyond the verified temporary secondary-hand ordinary-clothing cleanup with preceding hand restoration, headwear restoration/Mohawk and remaining special-clothing, displaced/exclusive and multi-item worn slots, remaining hotbar item/slot/hand-state variants beyond the verified empty Back-slot Shotgun and empty left/right DoubleHolster Pistol cases, and native capacity-driven clothing world drops/heavy-item restores only after exact output contracts and their SP/Host lifecycle gates. Separately define safe edit contracts for mixed-session floor returns and unknown/dynamic entry points; these remain protected. Preserve required shared cleanup on cancellation.
 - [ ] Deferred food/fluid expansion: revisit only for a concrete bug or explicit request. Remaining variants include hot/state-changing items, custom callbacks, consumption replacements outside the bounded proof for plain and empty-fluid outputs, ingredient states outside the bounded native-food proof and other fluid actions. Preserve protective edit limits until a separate contract is proven.
 - [ ] Packaged food: check the remaining opening recipes, including random contents and mod callbacks. Keep their standard commands until a separate contract exists; queue support is limited to verified `OpenCannedFood` and `OpenCannedFood2`.
 - [ ] Farming and animals: inventory the specific actions still missing verified edit contracts, then cover target identity, plant/animal state, shared consumables and tools.

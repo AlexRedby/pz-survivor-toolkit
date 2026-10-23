@@ -1,4 +1,6 @@
 package.preload.QueueEquipmentBulk=function() return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentBulk.lua'))() end
+package.preload.QueueEquipmentClothing=function() return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentClothing.lua'))() end
+package.preload.QueueEquipmentHotbar=function() return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentHotbar.lua'))() end
 local Postprocess=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentPostprocess.lua'))()
 local function list(items)
  return {size=function() return #items end,get=function(_,i) return items[i+1] end,

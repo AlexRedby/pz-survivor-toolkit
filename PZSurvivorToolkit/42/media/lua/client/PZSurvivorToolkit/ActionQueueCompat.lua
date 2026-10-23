@@ -27,7 +27,7 @@ local transferSourceSafe = true
 local reviewedTransferPerform, transferPerformGuard
 local containerHelpersUnchanged
 local washWalkHelper
-local tidyClassUnchanged, tidyActionUnchanged
+local tidyClassUnchanged, tidyActionUnchanged, tidyUnequipVariant
 local tidyFloorPage, tidyFloorGetter
 local tidyFloorValid
 -- Queued actions only; prune explicitly because Kahlua ignores weak-key modes.
@@ -252,6 +252,210 @@ local function instanceUnchanged(target, class)
     return true
 end
 
+local clothingSourceSafe
+local clothingMethods = {"isValid", "update", "start", "stop", "perform", "complete", "isAlreadyEquipped",
+    "getDuration", "stopSound", "isStopOnWalk"}
+local function ordinaryClothingItem(item, character, allowHeadwear)
+    if not instanceof(item, "Clothing") or not ItemTag or not ItemTag.REPLACE_PRIMARY or not ItemTag.WEARABLE
+        or not ItemBodyLocation or not ItemBodyLocation.HAT or not ItemBodyLocation.FULL_HAT
+        or item:getContainer() ~= character:getInventory() or item:getCategory() ~= "Clothing"
+        or item:canBeEquipped() ~= nil or item:hasTag(ItemTag.WEARABLE)
+        or item:hasTag(ItemTag.REPLACE_PRIMARY) or item:isBroken()
+        or item:getAttachedSlot() ~= -1 or isForceDropHeavyItem(item) then return end
+    local location = item:getBodyLocation()
+    if not location or tostring(location) == "" then return end
+    if location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then
+        if not allowHeadwear then return end
+        -- Java setWornItem also flattens Mohawk when newItem is nil.
+        local visual = character:getHumanVisual()
+        local hair = visual and visual:getHairModel()
+        if not hair or type(hair.contains) ~= "function" or hair:contains("Mohawk") then return end
+    end
+    return location
+end
+local function ordinaryClothing(action, allowHeadwear)
+    local item, character = action.item, action.character
+    local location = ordinaryClothingItem(item, character, allowHeadwear)
+    if not location then return end
+    -- Native MP start rebinds from the root by ID. A stale queued proxy must
+    -- not prove a missing, replaced or differently configured live garment.
+    local liveItem = character:getInventory():getItemById(item:getID())
+    if not liveItem or liveItem:getFullType() ~= item:getFullType()
+        or ordinaryClothingItem(liveItem, character, allowHeadwear) ~= location then return end
+    return location, liveItem
+end
+-- Java WornItems removes exclusive slots even when setting a slot to nil.
+-- Only an empty slot or the exact garment has bounded effects here; displaced
+-- clothing and multi-item locations need their own resource/output contract.
+local function clothingWornState(action, location)
+    local character, item = action.character, action.item
+    local group = character.getBodyLocationGroup and character:getBodyLocationGroup()
+    if not group or not group.getLocation or not group.isMultiItem or not group.isExclusive
+        or not group:getLocation(location) or group:isMultiItem(location) ~= false then return end
+    local worn, exact = character:getWornItems(), false
+    if not worn or not worn.size or not worn.get then return end
+    for i = 0, worn:size() - 1 do
+        local entry = worn:get(i)
+        local otherLocation, other = entry:getLocation(), entry:getItem()
+        if not other then return end
+        if otherLocation ~= location and other:getID() == item:getID() then return end
+        if otherLocation == location then
+            if exact or not other or other:getID() ~= item:getID() or other:getFullType() ~= item:getFullType() then return end
+            exact = other
+        elseif group:isExclusive(location, otherLocation) ~= false then return end
+    end
+    return true, exact
+end
+local function ordinaryClothingWear(action)
+    local location, liveItem = ordinaryClothing(action)
+    if not location then return end
+    local safe, worn = clothingWornState(action, location)
+    -- Wear's native early return uses object identity, not ID/type. A distinct
+    -- same-ID worn proxy would be a replacement with extra capacity effects.
+    if safe and (not worn or (worn == action.item and worn == liveItem)) then return location end
+end
+local function nonnegativeFinite(value)
+    return type(value) == "number" and value >= 0 and value < math.huge
+end
+local function clothingRemovalCapacity(action, liveItem, stillWorn)
+    local inventory = action.character:getInventory()
+    if not inventory.getCapacityWeight or not inventory.getEffectiveCapacity or not inventory.isItemAllowed then return false end
+    local current, capacity = inventory:getCapacityWeight(), inventory:getEffectiveCapacity(action.character)
+    if not nonnegativeFinite(current) or not nonnegativeFinite(capacity) then return false end
+    local weight = 0
+    for _, item in ipairs({action.item, liveItem, stillWorn or liveItem}) do
+        if inventory:isItemAllowed(item) ~= true then return false end
+        local value = item.getUnequippedWeight and item:getUnequippedWeight()
+        if not nonnegativeFinite(value) then return false end
+        weight = math.max(weight, value)
+    end
+    -- setWornItem checks capacity after releasing worn weight, then adds the
+    -- same item's full unequipped weight again. Never credit a pending release.
+    -- Once authority removed the slot, one remaining reserve preserves this bound.
+    return current + (stillWorn and 2 or 1) * weight + 0.01 <= capacity
+end
+local function nativeClothingMethods()
+    if clothingSourceSafe == nil then
+        clothingSourceSafe = Proof.matches("media/lua/shared/TimedActions/ISWearClothing.lua", 1104211581, nil, true)
+    end
+    if not clothingSourceSafe then return false end
+    for _, name in ipairs(clothingMethods) do
+        if not Proof.closure(ISWearClothing[name], "ISWearClothing.lua") then return false end
+    end
+    return true
+end
+local function clothingRestore(action, class)
+    if class ~= ISWearClothing or not nativeClothingMethods() then return end
+    for _, name in ipairs(clothingMethods) do if action[name] ~= class[name] then return end end
+    return ordinaryClothingWear(action)
+end
+
+local unequipSourceSafe
+local unequipMethods = {"new", "isValid", "update", "start", "stop", "animEvent", "perform", "complete"}
+local function nativeUnequipMethods(action)
+    if unequipSourceSafe == nil then
+        unequipSourceSafe = Proof.matches("media/lua/shared/TimedActions/ISUnequipAction.lua", 2851923231, nil, true)
+    end
+    if not unequipSourceSafe or not nativeClothingMethods() then return false end
+    local variant
+    for _, name in ipairs(unequipMethods) do
+        if not Proof.closure(ISUnequipAction[name], "ISUnequipAction.lua") then
+            if name ~= "new" and name ~= "complete" then return false end
+            if variant == nil then variant = tidyUnequipVariant and tidyUnequipVariant(action) or false end
+            if not variant then return false end
+        end
+    end
+    return true
+end
+local function ordinaryClothingRemoval(action)
+    local location, item = ordinaryClothing(action, true)
+    if not location or item:canBeActivated() or action.item:canBeActivated() then return end
+    local safe, stillWorn = clothingWornState(action, location)
+    if not safe or not clothingRemovalCapacity(action, item, stillWorn) then return end
+    -- Native ordinary-clothing cleanup removes both worn and matching hand
+    -- references. The shared contract owns the character's hands as well as
+    -- this exact root item; earlier P4 hand restoration may already clear them.
+    return location
+end
+local function clothingRemoval(action, class)
+    if class ~= ISUnequipAction or action.fromHotbar or action.reason ~= nil or not nativeUnequipMethods(action) then return end
+    for _, name in ipairs(unequipMethods) do if action[name] ~= class[name] then return end end
+    local location = ordinaryClothingRemoval(action)
+    local worn = location and action.character:getWornItem(location)
+    if not worn or worn:getID() ~= action.item:getID() or worn:getFullType() ~= action.item:getFullType() then return end
+    return location
+end
+
+local hotbarSourcesSafe, hotbarHelpers
+local function nativeHotbarHelpers(hotbar)
+    if hotbarSourcesSafe == nil then
+        hotbarSourcesSafe = Proof.matches("media/lua/client/Hotbar/ISHotbar.lua", 3215104203, nil, true)
+            and Proof.matches("media/lua/client/ISUI/PlayerData/ISPlayerData.lua", 2353448738, nil, true)
+    end
+    if not hotbarSourcesSafe or not ISHotbar then return false end
+    if not hotbarHelpers then
+        if not Proof.closure(getPlayerHotbar, "ISPlayerData.lua") or not Proof.closure(getPlayerData, "ISPlayerData.lua")
+            or not Proof.closure(ISHotbar.isItemAttached, "ISHotbar.lua") or not Proof.closure(ISHotbar.setAttachAnim, "ISHotbar.lua") then return false end
+        hotbarHelpers = {owner = ISHotbar, getter = getPlayerHotbar, data = getPlayerData,
+            attached = ISHotbar.isItemAttached, animate = ISHotbar.setAttachAnim}
+    end
+    return ISHotbar == hotbarHelpers.owner and getPlayerHotbar == hotbarHelpers.getter and getPlayerData == hotbarHelpers.data
+        and ISHotbar.isItemAttached == hotbarHelpers.attached and ISHotbar.setAttachAnim == hotbarHelpers.animate
+        and hotbar and hotbar.isItemAttached == hotbarHelpers.attached and hotbar.setAttachAnim == hotbarHelpers.animate
+end
+local function hotbarItem(item, character)
+    return instanceof(item, "HandWeapon") and item:getContainer() == character:getInventory()
+        and not item:canBeActivated() and not item:isBroken() and not isForceDropHeavyItem(item)
+        and not character:getWornItems():contains(item)
+end
+local function hotbarState(action, saved)
+    local item, character, hotbar = action.item, action.character, action.hotbar
+    if not hotbarItem(item, character) or not nativeHotbarHelpers(hotbar)
+        or hotbar.chr ~= character or getPlayerHotbar(character:getPlayerNum()) ~= hotbar then return end
+    local liveItem = character:getInventory():getItemById(item:getID())
+    if not liveItem or liveItem:getFullType() ~= item:getFullType() or not hotbarItem(liveItem, character) then return end
+    local index, kind, model, attachment = item:getAttachedSlot(), item:getAttachedSlotType(), item:getAttachedToModel(), item:getAttachmentType()
+    if type(index) ~= "number" or index < 1 or index % 1 ~= 0 or type(kind) ~= "string" or kind == ""
+        or type(model) ~= "string" or model == "" or model == "null" or type(attachment) ~= "string" or attachment == ""
+        or liveItem:getAttachedSlot() ~= index or liveItem:getAttachedSlotType() ~= kind
+        or liveItem:getAttachedToModel() ~= model or liveItem:getAttachmentType() ~= attachment then return end
+    local slots = hotbar.availableSlot
+    if type(slots) ~= "table" or getmetatable(slots) then return end
+    local slot = slots[index]
+    local definition = type(slot) == "table" and not getmetatable(slot) and slot.def
+    if type(definition) ~= "table" or getmetatable(definition) or slot.slotType ~= kind or definition.type ~= kind
+        or type(definition.attachments) ~= "table" or getmetatable(definition.attachments)
+        or type(definition.animset) ~= "string" or definition.animset == "" then return end
+    local count = 0
+    for _, candidate in pairs(slots) do
+        if type(candidate) ~= "table" or getmetatable(candidate) or type(candidate.def) ~= "table" or getmetatable(candidate.def) then return end
+        if candidate.def.type == kind then count = count + 1 end
+    end
+    if count ~= 1 then return end
+    local expected = definition.attachments[attachment]
+    if definition.name == "Back" and hotbar.replacements then
+        if type(hotbar.replacements) ~= "table" or getmetatable(hotbar.replacements) then return end
+        expected = hotbar.replacements[attachment] or expected
+    end
+    if expected ~= model or type(hotbar.attachedItems) ~= "table" or getmetatable(hotbar.attachedItems)
+        or hotbar.attachedItems[index] ~= liveItem or not hotbar:isItemAttached(liveItem) then return end
+    local attached = character:getAttachedItem(model)
+    if attached and (attached:getID() ~= item:getID() or attached:getFullType() ~= item:getFullType()) then return end
+    if saved then
+        return saved.index == index and saved.kind == kind and saved.model == model and saved.attachment == attachment
+            and saved.definition == definition and saved.name == definition.name and saved.animset == definition.animset or nil
+    end
+    return {index = index, kind = kind, model = model, attachment = attachment, definition = definition,
+        name = definition.name, animset = definition.animset}
+end
+local function hotbarRestore(action, class)
+    if class ~= ISUnequipAction or action.fromHotbar ~= true or action.reason ~= nil or not nativeUnequipMethods(action) then return end
+    for _, name in ipairs(unequipMethods) do if action[name] ~= class[name] then return end end
+    local item, character = action.item, action.character
+    if item ~= character:getPrimaryHandItem() and item ~= character:getSecondaryHandItem() then return end
+    return hotbarState(action)
+end
+
 local function sourceMatches(action, record, observedItem)
     record = record or records[action]
     if not record or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
@@ -265,6 +469,14 @@ local function sourceMatches(action, record, observedItem)
         or action.alwaysTurnOn ~= record.alwaysTurnOn) then return false end
     if record.class == ISUnequipAction and (action.reason ~= record.reason or action.fromHotbar ~= record.fromHotbar
         or action.hotbar ~= record.hotbar) then return false end
+    if record.tidyClothingUnequip and ordinaryClothingRemoval(action) ~= record.clothingLocation then return false end
+    if record.tidyHotbarUnequip and not hotbarState(action, record.hotbarProof) then return false end
+    if (record.tidyClothingUnequip or record.tidyHotbarUnequip) and (not nativeUnequipMethods(action)
+        or action.clothingAction ~= record.clothingAction or action.stopOnWalk ~= record.stopOnWalk
+        or action.stopOnRun ~= record.stopOnRun or action.animSpeed ~= record.animSpeed) then return false end
+    if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothingWear(action) ~= record.clothingLocation
+        or action.fromHotbar ~= record.fromHotbar or action.clothingAction ~= record.clothingAction
+        or action.stopOnWalk ~= record.stopOnWalk or action.stopOnRun ~= record.stopOnRun) then return false end
     for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name] then return false end end
     for name, method in pairs(record.methods) do if action[name] ~= method then return false end end
     for name, method in pairs(action) do
@@ -319,11 +531,14 @@ local function adopt(action)
     local baseline = classes[context.id] and classes[context.id][class]
     if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
+    local clothingLocation = context.id == "P4TidyUpMeister" and clothingRestore(action, class)
+    local removalLocation = context.id == "P4TidyUpMeister" and clothingRemoval(action, class)
+    local hotbarProof = context.id == "P4TidyUpMeister" and hotbarRestore(action, class)
     local tidyHandUnequip = context.id == "P4TidyUpMeister" and class == ISUnequipAction and not action.fromHotbar
             and (action.item == action.character:getPrimaryHandItem() or action.item == action.character:getSecondaryHandItem())
             and not action.character:getWornItems():contains(action.item) and not isForceDropHeavyItem(action.item)
     if context.id == "P4TidyUpMeister" and class == ISUnequipAction and not classUnchanged(class, baseline)
-        and (not tidyHandUnequip or not tidyClassUnchanged(action, class, baseline)) then return end
+        and (not (tidyHandUnequip or removalLocation or hotbarProof) or not tidyClassUnchanged(action, class, baseline)) then return end
     context = tidyRestoreContext(context, action)
     if context.id == "P4TidyUpMeister" and not live(context) then return false end
     Operations.adopt(action, context.token)
@@ -334,7 +549,11 @@ local function adopt(action)
         id = context.id, target = context.target, fields = {}, itemIdentities = {}, owner = context.owner,
         primary = action.primary, twoHands = action.twoHands, alwaysTurnOn = action.alwaysTurnOn,
         reason = action.reason, fromHotbar = action.fromHotbar, hotbar = action.hotbar,
-        tidyHandUnequip = tidyHandUnequip,
+        tidyHandUnequip = tidyHandUnequip, tidyClothingWear = clothingLocation ~= nil and clothingLocation ~= false,
+        tidyClothingUnequip = removalLocation ~= nil and removalLocation ~= false,
+        tidyHotbarUnequip = type(hotbarProof) == "table", hotbarProof = hotbarProof,
+        clothingLocation = clothingLocation or removalLocation, clothingAction = action.clothingAction, animSpeed = action.animSpeed,
+        stopOnWalk = action.stopOnWalk, stopOnRun = action.stopOnRun,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction),
         settlement = context.settlement, obligation = Settlement.obligation(context)}
     records[action] = record
@@ -1086,6 +1305,17 @@ function Compat.install()
         local transfer=carts and carts.isTransferConstructor
         local unequip=carts and carts.isUnequipConstructor
         local nonCart=carts and carts.isNonCartUnequip
+        local nonCartItem=carts and carts.isNonCartItem
+        tidyUnequipVariant = function(action)
+            if not carts or Toolkit.ActionQueueCarts ~= carts or carts.isUnequipConstructor ~= unequip
+                or carts.isNonCartUnequip ~= nonCart or carts.isNonCartItem ~= nonCartItem
+                or type(nonCartItem) ~= "function" or not unequip(ISUnequipAction.new) then return false end
+            local record = records[action]
+            -- Before adoption use the full native instance matcher. Afterwards
+            -- Compat owns perform/stop wrappers; sourceMatches validates those
+            -- exact saved methods while the Carts guard still proves the class.
+            return record and (record.tidyClothingUnequip or record.tidyHotbarUnequip) and nonCartItem(action.item) or nonCart(action)
+        end
         tidyClassUnchanged = function(target,class,methods)
             if classUnchanged(target,methods) then return true end
             if not carts or Toolkit.ActionQueueCarts~=carts or carts.isTransferConstructor~=transfer
@@ -1249,7 +1479,7 @@ local function matchesTidyTransfer(action) return tidyTransfer(action) and match
 local function tidyEquipment(action)
     local record = records[action]
     return record and record.id == "P4TidyUpMeister"
-        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip)
+        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip or record.tidyClothingWear or record.tidyClothingUnequip or record.tidyHotbarUnequip)
 end
 local function matchesTidyEquipment(action) return tidyEquipment(action) and matches(action) end
 local function matchesSelectedChain(action) return not tidyTransfer(action) and not tidyEquipment(action) and matches(action) end
@@ -1263,7 +1493,7 @@ Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-transfers",
     {types = {"ISInventoryTransferAction"}, matches = matchesTidyTransfer, inspect = inspect})
 Operations.registerProducer("compat.tidy-transfers", matchesTidyTransfer, acceptsChild, true)
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-equipment",
-    {types = {"ISEquipWeaponAction", "P4RestoreAction", "ISUnequipAction"}, matches = matchesTidyEquipment, inspect = inspect})
+    {types = {"ISEquipWeaponAction", "P4RestoreAction", "ISUnequipAction", "ISWearClothing"}, matches = matchesTidyEquipment, inspect = inspect})
 Operations.registerProducer("compat.tidy-equipment", matchesTidyEquipment, acceptsChild, true)
 require "LootSorter_CraftMenu"
 Compat.install()

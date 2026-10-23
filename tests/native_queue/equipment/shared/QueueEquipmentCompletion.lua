@@ -1,8 +1,13 @@
 local Completion={}
+local function hotbarCase(id)return id=='tidy-hotbar'or id=='tidy-hotbar-holster-left'or id=='tidy-hotbar-holster-right'end
+local function clothingAction(state,action)
+ return state.clothingItem and (state.id=='tidy-clothing'and action.Type=='ISWearClothing'
+  or state.id~='tidy-clothing'and action.Type=='ISUnequipAction')
+end
 function Completion.observe(toolkit,selection)
  local lifecycle,operations=toolkit.ActionQueueLifecycle,toolkit.ActionQueueOperations
  local begin,finish,flush,perform,defer=lifecycle.begin,lifecycle.finish,lifecycle.flush,operations.perform,operations.deferCompletion
- local state,records,counts,restores,proofs
+ local state,records,counts,restores,clothing,hotbar,proofs
  local settlement,acks=toolkit.ActionQueueSettlement,toolkit.ActionQueueAcknowledgements
  local captureEffect,confirmEffect=settlement.captureEffect,settlement.confirmEffect
  local beginReturn,finishReturn,returnState=settlement.beginReturn,settlement.finishReturn,settlement.returnState
@@ -274,7 +279,11 @@ function Completion.observe(toolkit,selection)
   if grouped() and records and records[action] then return records[action].counts end
   local kind=select(2,toolkit.ActionQueueDefinitions.inspect(action))
   if kind=='compat.tidy-transfers' then return counts end
-  if kind=='compat.tidy-equipment' then return restores end
+  if kind=='compat.tidy-equipment' then
+   if clothingAction(state,action)then return clothing end
+   if hotbarCase(state.id)and action.Type=='ISUnequipAction'then return hotbar end
+   return restores
+  end
  end
  local function retained(action,record)
   local queue=ISTimedActionQueue.queues[action.character]
@@ -290,6 +299,14 @@ function Completion.observe(toolkit,selection)
    'Tidy transfer changed its exact item or endpoints')
  end
  lifecycle.begin=function(action,phase)
+  if state and hotbarCase(state.id)and action==state.hotbarRestoreAction and phase=='perform'then
+   -- Sample before native perform in both queue modes. After the detached
+   -- checkpoint, only the real attachConnect event can have attached the model.
+   assert(state.hotbarDetached and action.fromHotbar and action.item==state.pickup
+    and action.character:getAttachedItems():getItem(state.hotbarLocation)==state.pickup,
+    'native hotbar attachConnect effect missing before perform')
+   state.hotbarAttachConnect=true
+  end
   capturePickup(action,phase)
   local active=begin(action,phase)
   local counter=observed(action)
@@ -308,7 +325,30 @@ function Completion.observe(toolkit,selection)
     retained(action,record);record.perform=nil;record.complete=nil
    else record={id=id,kind=action.item:getFullType(),native=action.action,token=action.toolkitQueueOperation,counts=counter,cycles=0} end
    record.cycles=record.cycles+1
-   if counter==restores then
+   if counter==hotbar then
+    assert(action.Type=='ISUnequipAction'and action.item==state.pickup and action.fromHotbar and action.reason==nil
+     and action.item:getContainer()==state.root and action.item:getAttachedSlot()==state.hotbarIndex
+     and action.item:getAttachedSlotType()==state.hotbarType and action.item:getAttachedToModel()==state.hotbarLocation,
+     'P4 hotbar cleanup changed exact ordinary item/slot/root')
+    assert(state.hotbarDetached and action.character:getAttachedItems():getItem(state.hotbarLocation)==state.pickup,
+     'native attachConnect effect missing before hotbar perform')
+    state.hotbarAttachConnect=true
+    local held=action.character:getPrimaryHandItem()
+    local other=action.character:getSecondaryHandItem()
+    assert((held==action.item and other==(state.hotbarTwoHands and action.item or nil) or selection.kind=='mp'and not held and not other),
+     'P4 hotbar cleanup removed wrong temporary hands')
+    local queue=ISTimedActionQueue.queues[action.character]
+    assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared hotbar cleanup must remain protected')
+   elseif counter==clothing then
+    assert(clothingAction(state,action)
+     and action.item:getID()==state.clothingItem:getID()and action.item:getFullType()==state.clothingItem:getFullType()
+     and action.item:getBodyLocation()==state.clothingLocation and action.item:getContainer()==state.root,
+     'P4 restored unexpected clothing identity/slot/container')
+    local queue=ISTimedActionQueue.queues[action.character]
+    assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared clothing cleanup must remain protected')
+    -- Host can replicate worn state before client perform; observe exact final
+    -- authority after quiescence instead of requiring pre-effect slot absence.
+   elseif counter==restores then
     local primary=action.item:getID()==state.hammer:getID() and action.item:getFullType()==state.hammer:getFullType()
     assert(action.Type=='ISUnequipAction' and state.id=='tidy-empty-hands' and action.item:getID()==state.pickup:getID()
      or primary or action.item:getID()==state.screwdriver:getID() and action.item:getFullType()==state.screwdriver:getFullType(),
@@ -403,6 +443,8 @@ function Completion.observe(toolkit,selection)
   pickupOperations=0
   claimScopes,pickupScopes={},{}
   restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
+  clothing={perform=0,complete=0,flush=0,legacy=0}
+  hotbar={perform=0,complete=0,flush=0,legacy=0}
  end
  function Completion.settled()
   assert(not groupFailure,groupFailure)
@@ -496,6 +538,20 @@ function Completion.observe(toolkit,selection)
   assert(restores.flush==restores.perform and restores.complete==(selection.kind=='sp' and restores.perform or 0)
    and restores.legacy==0,'P4 equipment completion did not settle')
   return restores
+ end
+ function Completion.hotbar()
+  local expected=enabled and getActivatedMods():contains('P4TidyUpMeister')and 1 or 0
+  assert(hotbar.perform==expected and hotbar.flush==expected
+   and hotbar.complete==(selection.kind=='sp'and expected or 0)and hotbar.legacy==0,
+   'P4 hotbar shared completion phases did not settle exactly once')
+  return hotbar
+ end
+ function Completion.clothing()
+  local expected=enabled and getActivatedMods():contains('P4TidyUpMeister')and 1 or 0
+  assert(clothing.perform==expected and clothing.flush==expected
+   and clothing.complete==(selection.kind=='sp'and expected or 0)and clothing.legacy==0,
+   'P4 clothing shared completion phases did not settle exactly once')
+  return clothing
  end
  return Completion
 end

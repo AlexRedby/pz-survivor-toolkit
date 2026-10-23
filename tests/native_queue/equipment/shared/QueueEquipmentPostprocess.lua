@@ -1,5 +1,7 @@
 local Postprocess={}
 local Bulk=require 'QueueEquipmentBulk'
+local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local function isBelt(id) return id=='belt-knife' or id=='belt-hammer' end
 local function same(item,expected)
  return item==nil and expected==nil or item~=nil and expected~=nil
@@ -69,6 +71,8 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
+ if Clothing.overlap(state)and not tidy then secondary=state.clothingItem end
+ if Hotbar.isCase(state.id)then primary,secondary=not tidy and state.pickup or nil,not tidy and Hotbar.secondary(state)or nil;Hotbar.verify(state,tidy)end
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   if not tidy then primary,secondary=state.pickup,nil
   elseif state.id=='tidy-empty-hands' then primary,secondary=nil,nil
@@ -91,6 +95,7 @@ function Postprocess.verify(state,mode,tidy)
   expectedAttached[location]=item
  end
  if (state.id=='hotbar-chain' or isBelt(state.id)) then expectedAttached[state.hotbarLocation]=state.hotbarReplacement end
+ if Hotbar.isCase(state.id)and tidy then expectedAttached[state.hotbarLocation]=state.pickup end
  local actualAttached={};local attachments=player:getAttachedItems()
  for i=0,attachments:size()-1 do local entry=attachments:get(i);actualAttached[tostring(entry:getLocation())]=entry:getItem() end
  if tidy and (state.id=='hotbar-chain' or isBelt(state.id)) then
@@ -110,10 +115,15 @@ function Postprocess.verify(state,mode,tidy)
  end
  local actualWorn={};local values=player:getWornItems()
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);actualWorn[values:getLocation(item)]=item end
- sameSlots(actualWorn,state.expectedWorn,'worn item')
+ local expectedWorn=state.expectedWorn
+ if Clothing.isCase(state.id)then
+  expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
+  expectedWorn[state.clothingLocation]=Clothing.finalWorn(state,tidy)and state.clothingItem or nil
+ end
+ sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,hotbarInitial=true,hotbarReplacement=true,belt=true}
+  clothingB=true,clothingItem=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)
@@ -122,6 +132,7 @@ function Postprocess.verify(state,mode,tidy)
   elseif name=='groupOne' or name=='groupTwo' or name=='groupHeavyOne' or name=='groupHeavyTwo' then expected=tidy and state.source or root
   elseif name=='content' or name:match('^plank%d+$') then expected=state.source
   elseif name=='clothingA' then expected=tidy and state.source or root
+  elseif name=='pickup'and Hotbar.isCase(state.id)then expected=root
   elseif name=='pickup' and (state.id=='bag-capacity' or (state.id=='tidy-group' or state.id=='tidy-multigroup')) then expected=root
   elseif name=='pickup' and (state.id=='floor-pickup' or state.id=='tidy-floor') then expected=root
   elseif name=='pickup' and (state.id=='tidy-hands' or state.id=='tidy-empty-hands') then expected=tidy and state.source or root
@@ -133,6 +144,8 @@ function Postprocess.verify(state,mode,tidy)
  end
  assert(floorRestored==(state.id=='tidy-floor' and tidy),'P4 returned deliberately picked up floor item or lost borrowed floor return')
  local result={postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
+ if Hotbar.isCase(state.id)then result.hotbar=Hotbar.verify(state,tidy)end
+ if Clothing.isCase(state.id)then result.clothing=Clothing.verify(state,Clothing.finalWorn(state,tidy))end
  if (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   local ids={}
   for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do ids[#ids+1]=item:getID() end
