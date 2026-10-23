@@ -61,7 +61,7 @@ local function unchanged(a,b)
  for _,k in ipairs(protected) do assert(a[k]==b[k],'Rejected stale state changed '..k) end
 end
 local function tuple(row,b)
- if b then for _,k in ipairs({'session','grant','lease','seq','cart','nonce'}) do row[k]=b[k] end end
+ if b then for _,k in ipairs({'session','grant','lease','seq','cart','nonce'}) do if b[k]~=nil then row[k]=b[k] end end end
  return row
 end
 local function playerNamed(name)
@@ -103,6 +103,34 @@ local function disposition(old)
  return {ownerID=old.id,cart=old.binding.cart,lifetime=old.binding.lifetime,cargoID=old.binding.cargoID,cargoWeight=cargo and cargo:getActualWeight() or -1,
   cargoStillInside=cargo~=nil,cartLocation=location,corpseCount=#corpses,oldActorDead=old.actor:isDead(),oldActorHasSquare=old.actor:getCurrentSquare()~=nil,
   oldActorInOnlineList=containsActor(old.actor),sameCartPreservationClaim=false}
+end
+-- Optional native getters are diagnostic only; unavailable getters omit a field.
+local function nativeRead(object,name,arg)
+ if not object then return nil end
+ local ok,value=pcall(function()
+  local getter=object[name];if type(getter)~='function' then return nil end
+  if arg~=nil then return getter(object,arg) end
+  return getter(object)
+ end)
+ if ok then return value end
+ return nil
+end
+local function deathProgress(cached)
+ if not cached or not cached.deathStarted then return end
+ local elapsed=now()-cached.deathStarted
+ cached.deathSamples=cached.deathSamples or {}
+ for _,seconds in ipairs({1,2,5}) do
+  if elapsed>=seconds*1000 and not cached.deathSamples[seconds] then
+   cached.deathSamples[seconds]=true
+   local context=nativeRead(cached.actor,'getActionContext')
+   local nativeState=nativeRead(cached.actor,'getCurrentState')
+   emit('native-death-progress',{ownerID=cached.id,lifetime=cached.binding.lifetime,elapsedMs=elapsed,sampleSeconds=seconds,
+    actionState=nativeRead(context,'getCurrentStateName'),nativeState=nativeState and tostring(nativeState) or nil,
+    bDead=nativeRead(cached.actor,'getVariableBoolean','bDead'),onFloor=nativeRead(cached.actor,'isOnFloor'),
+    onDeathDone=nativeRead(cached.actor,'isOnDeathDone'),animationUpdating=nativeRead(cached.actor,'isAnimationUpdatingThisFrame'),
+    nativeLifetimeAbsent=cartLeaseLifetime(cached.actor)==nil,hasSquare=cached.actor:getCurrentSquare()~=nil,onlineList=containsActor(cached.actor)})
+  end
+ end
 end
 local function transitionEvidence(before,after,which,row)
  local a,b=assert(token(before)),assert(token(after));assert(a.process==b.process,'Process changed within native client/server')
@@ -176,6 +204,7 @@ if isServer() then
  end
  local function progress()
   if not old or stage~='await-death' and stage~='await-reconnect' then return end
+  deathProgress(old)
   if cartLeaseLifetime(old.actor)==nil then
    controller:unavailable(old.id,old.connection,old.actor)
    if not absenceSent then
@@ -206,6 +235,12 @@ if isServer() then
   old=cache();stage=phase==1 and 'await-death' or 'await-reconnect';stageAt=now()
   absenceSent,serverRemoved,hostRemoved,respawnOffered=false,false,false,false
   emit('transition-start',{ownerID=old.id,cart=old.binding.cart,lifetime=old.binding.lifetime,reason=phase==1 and 'programmatic-native-kill' or 'native-menu-exit'})
+  if phase==1 then
+   old.deathStarted=now()
+   emit('native-kill',{ownerID=old.id,cart=old.binding.cart,lifetime=old.binding.lifetime,programmaticNativeKill=true,authority='native-server',guarded=true,invoked=true})
+   old.actor:setGodMod(false);old.actor:setGhostMode(false);old.actor:Kill(nil)
+   assert(old.actor:isDead() and cartLeaseLifetime(old.actor)==nil,'Authoritative native Kill did not retire actor')
+  end
   for name,p in pairs(players) do
    send(p,'Transition',{phase=phase,ownerID=old.id,reason=phase==1 and 'death' or 'reconnect',stale=prepared[name].reply,payload=prepared[name].payload})
   end
@@ -388,6 +423,7 @@ local function initialized()
 end
 local function absentTick()
  if not old or not transition then return end
+ deathProgress(old)
  if cartLeaseLifetime(old.actor)~=nil then return end
  if receiver then receiver:unavailable() end
  local removed=old.actor:getCurrentSquare()==nil or not containsActor(old.actor)
@@ -471,10 +507,13 @@ Events.OnServerCommand.Add(function(module,command,args)
    assert(old and old.id==spec.ownerID and old.actor==owner,'Prepared original native actor cache missing');old.reply=args.stale;old.payload=args.payload
    transition=args.reason;assert(transition==(phase==1 and 'death' or 'reconnect'),'Unexpected lifecycle transition kind')
    emit('transition-start',{ownerID=old.id,cart=old.binding.cart,lifetime=old.binding.lifetime,reason=transition})
+   if transition=='death' then old.deathStarted=now() end
    if role=='client2' then
     if transition=='death' then
-     emit('native-kill',{ownerID=old.id,cart=old.binding.cart,lifetime=old.binding.lifetime,programmaticNativeKill=true})
-     old.actor:setGodMod(false);old.actor:setGhostMode(false);old.actor:Kill(nil)
+     local alreadyDead=old.actor:isDead()
+     emit('native-kill',{ownerID=old.id,cart=old.binding.cart,lifetime=old.binding.lifetime,programmaticNativeKill=true,authority='native-client',alreadyDead=alreadyDead,invoked=not alreadyDead})
+     old.actor:setGodMod(false);old.actor:setGhostMode(false)
+     if not alreadyDead then old.actor:Kill(nil) end
      assert(old.actor:isDead() and cartLeaseLifetime(old.actor)==nil,'Native Kill did not retire actor immediately')
      receiver:unavailable();replay('unavailable-replay',old.reply,old.payload,ingress,{nativeLifetimeAbsent=true,nativeDeath=true})
     else
@@ -578,7 +617,7 @@ Events.OnTick.Add(function()
   absentTick()
   if not initialized() then return end
   local p=getPlayer()
-  if spec and (not transition or p==owner) and now()-lastPulse>250 then lastPulse=now();send('Pulse',{}) end
+  if spec and (role=='client1' or not transition or p==owner) and now()-lastPulse>250 then lastPulse=now();send('Pulse',{}) end
   if not spec or transition=='death' and p~=old.actor then
    if now()-lastHello>1000 then lastHello=now();send('Hello',{rejoin=resuming,afterDeath=transition=='death'}) end
    return

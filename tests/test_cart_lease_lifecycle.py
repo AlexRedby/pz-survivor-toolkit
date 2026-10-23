@@ -3,6 +3,8 @@ import copy
 import json
 from pathlib import Path
 import runpy
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -124,6 +126,12 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
         if self.checkpoint is not None:path.write_text(self.checkpoint)
         elif path.exists():path.unlink()
         return API['analyze'](self.root)
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT required for actual lifecycle controller')
+    def test_actual_controller_continues_host_absence_polling_and_preserves_nonce(self):
+        base=ROOT/ANALYZER.parent
+        result=subprocess.run([shutil.which('luajit'),str(base/'LeaseLifecycleBankCheck.lua'),str(base)],capture_output=True,text=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('hostPulseBeforeCorpse=true noncePreserved=true',result.stdout)
     def test_complete_synthetic_contract_keeps_diagnostic_scope(self):
         result=self.analyze()
         self.assertTrue(result['evidenceComplete']);self.assertTrue(result['diagnosticOnly'])
@@ -134,6 +142,21 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
             self.assertEqual(len({t[1] for t in ts}),3);self.assertEqual(ts[0][2],ts[1][2])
             self.assertEqual(ts[1][2]==ts[2][2],role=='client1')
         self.assertIn('No natural-damage',result['scope'])
+    def test_online_id_reuse_still_requires_distinct_native_actor_epochs(self):
+        for rows in self.rows.values():
+            for marker,row in rows:
+                if marker:
+                    for field in ('ownerID','oldOwnerID','corpseOnlineID'):
+                        if field in row:row[field]=7
+        self.assertTrue(self.analyze()['evidenceComplete'])
+    def test_uncertified_release_parse_is_not_a_native_observer_error(self):
+        rows=self.rows['client1']
+        pos=next(i for i,(m,r) in enumerate(rows) if m==NATIVE and r['event']=='retire')
+        sample=copy.deepcopy(rows[pos][1]);sample.update(event='resnapshot',reason='remote-equip-resnapshot',success=False,certified=False,retired=False)
+        rows.insert(pos,(NATIVE,sample))
+        self.assertTrue(self.analyze()['evidenceComplete'])
+        sample['poisoned']=True
+        with self.assertRaises(ValueError):self.analyze()
     def test_guest_reset_can_drop_only_optional_old_lua_replays(self):
         self.remove('client2','unavailable-replay',2);self.remove('client2','fresh-replay',3)
         self.assertEqual(self.analyze()['settledNativeChains'],6)

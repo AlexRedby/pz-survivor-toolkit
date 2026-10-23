@@ -1164,6 +1164,9 @@ def main():
         bank=subprocess.run([lua,str(HERE/'LeaseLifetimeBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
         assert 'LEASE_LIFETIME_BANK_CHECK_PASS messages=42 cycles=6 staleSourceRefusals=4' in bank.stdout,bank.stdout+bank.stderr
         print('Equipment bank: PASS (actual Lua controller and42-message baseline plus injected resnapshot/resync races across three mocked native API contexts; native setter proof is separate)')
+        lifecycle=subprocess.run([lua,str(HERE/'LeaseLifecycleBankCheck.lua'),str(HERE)],check=True,capture_output=True,text=True,timeout=15)
+        assert 'LIFECYCLE_STATE_MACHINE_MOCK_PASS' in lifecycle.stdout,lifecycle.stdout+lifecycle.stderr
+        print('Lifecycle state machine: PASS (mock native authority, continued Host absence polling and exact nonce logs; actual game evidence is separate)')
         print('Placement:', check_placement(lua))
         print('Capture environment:', check_capture_environment(lua))
         print('Action windows:', check_action_windows(lua))

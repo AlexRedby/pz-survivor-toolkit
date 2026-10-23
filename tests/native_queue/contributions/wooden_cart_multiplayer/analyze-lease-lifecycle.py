@@ -9,7 +9,7 @@ require,parse,integer,text=(L['HELD'][k] for k in ('require','parse','integer','
 token,records=L['token'],L['records']
 ROLES=('server','client1','client2');CLIENTS=ROLES[1:]
 MARKER='[CART_LIFECYCLE] ';NATIVE='[CART_EQUIPMENT] ';MAX=9007199254740991
-EVENTS=set('setup phase-setup cart-setup native-binding request bind-wait stale-control rejoin-ui bind bound echo receipt prepare prepared transition-start native-kill native-death native-player-death unavailable unavailable-replay native-removed cart-disposition observer-absent respawn-offer respawn-ui native-create native-connection transition resnapshot reply-refused native-exit native-reconnect native-rejoin fresh-nonce-replay fresh-replay done complete-offer final-ack complete'.split())
+EVENTS=set('setup phase-setup cart-setup native-binding request bind-wait stale-control rejoin-ui bind bound echo receipt prepare prepared transition-start native-kill native-death native-death-progress native-player-death unavailable unavailable-replay native-removed cart-disposition observer-absent respawn-offer respawn-ui native-create native-connection transition resnapshot reply-refused native-exit native-reconnect native-rejoin fresh-nonce-replay fresh-replay done complete-offer final-ack complete'.split())
 
 
 def identity(row):
@@ -24,6 +24,7 @@ def analyze(root):
             'cart_lease_control','cart_lease_lifetimes','cart_action_admission','cart_observer_association','cart_inventory_equip'))
             and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow','Mixed lifecycle banks')
     logs={r:(root/(r+'-launch.log')).read_text() for r in ROLES}
+    require(all(len(log)<=32*1024*1024 for log in logs.values()),'Capture log size limit exceeded')
     rows={};native={}
     for role,log in logs.items():
         # Text completion markers are intentionally outside the structured JSON stream.
@@ -36,7 +37,8 @@ def analyze(root):
             phase=integer(row,'phase',0,3);wall=integer(row,'wall',1,MAX)
             require(wall>=prior,'Lifecycle clock regressed');prior=wall
         for _,row in native[role]:
-            require(row.get('event')!='error' and row.get('success') is True and row.get('poisoned') is False,'Native equipment error/poison')
+            require(row.get('event')!='error' and row.get('poisoned') is False
+                    and (row.get('success') is True or row.get('event')=='resnapshot' and row.get('success') is False and row.get('certified') is False),'Native equipment error/poison')
             process=text(row,'process',120);mono=integer(row,'monoNs',-9223372036854775808,9223372036854775807)
             require(process not in clocks or mono>=clocks[process],'Native clock regressed');clocks[process]=mono
         complete=[r for _,r in rows[role] if r['event']=='complete']
@@ -55,8 +57,13 @@ def analyze(root):
         match=[(n,r) for n,r in actor_rows if n<cutoff and r.get('revision')==revision and r.get('ownerID')==owner
                and r.get('connectionEpoch')==conn and r.get('primaryID')==r.get('secondaryID')==cart
                and r.get('primaryEpoch')==r.get('secondaryEpoch') and r.get('primaryEpoch',0)>0
-               and r.get('depth')==0 and r.get('retired') is False and r.get('event') in ('baseline','mutation-exit','resnapshot')]
+               and r.get('depth')==0 and r.get('success') is True and r.get('retired') is False and r.get('event') in ('baseline','mutation-exit','resnapshot')]
         require(match,role+': token not backed by exact native held state')
+        # Reuse the complete setter/parse replay, filtering only other actor incarnations.
+        filtered='\n'.join(line if NATIVE not in line or parse(line.split(NATIVE,1)[1]).get('process')==proc
+                         and parse(line.split(NATIVE,1)[1]).get('actorEpoch')==actor else '' for line in logs[role].splitlines())
+        _,snapshots,_=L['native_trace'](filtered,(proc,actor,conn,revision),owner,cart,cutoff-1)
+        require(revision in snapshots,'Native token has no complete mutation/parse state')
         require(not any(n<cutoff and r.get('event')=='retire' for n,r in actor_rows),'Retired native actor readmitted')
         require(all(r.get('connectionEpoch')==conn and r.get('ownerID')==owner for _,r in actor_rows if r.get('event')=='retire'),'Native tombstone targets wrong connection/actor ID')
         return (proc,actor,conn,revision),actor_rows
@@ -128,7 +135,11 @@ def analyze(root):
         t=tokens[role];require(len({x[0] for x in t})==1 and len({x[1] for x in t})==3,'Process changed or native actor reused')
         require(t[0][2]==t[1][2] and (t[1][2]==t[2][2])==(role=='client1'),'Respawn/reconnect used wrong role transport')
         for phase in (1,2):
-            start,_=one(role,'transition-start',phase);removed_line,removed=one(role,'native-removed',phase)
+            transition_line,_=one(role,'transition-start',phase)
+            # Server death may replicate before the diagnostic Transition control.
+            # Clients already retained the exact old native binding at Prepare.
+            start=one(role,'prepare',phase)[0] if role!='server' else transition_line
+            removed_line,removed=one(role,'native-removed',phase)
             require(start<removed_line,'Native removal precedes transition')
             require(removed.get('ownerID')==phase_data[phase-1]['ownerID'],'Removed wrong native actor')
             if phase==1:require(removed.get('nativeCorpse') is True and integer(removed,'corpseCount',1,100)>=1,'No native player corpse')
