@@ -1,9 +1,62 @@
-"""Build against locally installed PZ and ZombieBuddy; no downloaded dependencies."""
+"""Build against local PZ, ZombieBuddy and Kotlin compiler inputs; no downloads."""
 import argparse, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
+from zipfile import ZipFile, BadZipFile
 
 ROOT = Path(__file__).resolve().parent
+KOTLIN_VERSION = '2.3.0'
+KOTLIN_MODULE = 'pz_toolkit_java_patches'
+KOTLIN_RUNTIME_PACKAGE = 'net/alexredby/pztoolkitruntime/kotlin'
+
+
+def kotlin_toolchain(home, parser):
+    """Resolve a matching local compiler/runtime before touching build output."""
+    if home is None:
+        configured = os.environ.get('KOTLIN_HOME')
+        compiler = shutil.which('kotlinc') if not configured else None
+        home = Path(configured) if configured else Path(compiler).resolve().parents[1] if compiler else None
+    if home is None:
+        parser.error(f'Kotlin {KOTLIN_VERSION} compiler distribution is required; pass --kotlin-home or set KOTLIN_HOME.')
+    home = home.resolve()
+    for name in ('kotlin-compiler.jar', 'kotlin-stdlib.jar'):
+        jar = home / 'lib' / name
+        try:
+            with ZipFile(jar) as archive:
+                manifest = archive.read('META-INF/MANIFEST.MF').decode('utf-8')
+            version = re.search(r'^Implementation-Version: (\d+\.\d+\.\d+)(?:[-\r\n]|$)', manifest, re.MULTILINE)
+            if version is None or version.group(1) != KOTLIN_VERSION:
+                raise ValueError(f'{name} must be version {KOTLIN_VERSION}')
+        except (OSError, BadZipFile, KeyError, UnicodeError, ValueError) as error:
+            parser.error(f'Invalid Kotlin {KOTLIN_VERSION} distribution at "{home}": {error}. Select it with --kotlin-home or KOTLIN_HOME.')
+    for name in ('LICENSE.txt', 'NOTICE.txt', 'COPYRIGHT.txt'):
+        if not (home / 'license' / name).is_file():
+            parser.error(f'Kotlin distribution is missing license/{name}: {home}')
+    return home
+
+
+def stage_kotlin_runtime(home, destination):
+    """Bundle stdlib in the ordinary mod only; no compiler or early-font dependency."""
+    with ZipFile(home / 'lib/kotlin-stdlib.jar') as archive:
+        for entry in archive.infolist():
+            # The only multi-release entry is the Java 9 module descriptor, irrelevant on the classpath.
+            if entry.is_dir() or not (entry.filename.startswith('kotlin/')
+                                     or re.fullmatch(r'META-INF/[^/]+\.kotlin_module', entry.filename)):
+                continue
+            relative = Path(entry.filename)
+            if '..' in relative.parts or relative.is_absolute():
+                raise ValueError(f'Invalid Kotlin runtime entry: {entry.filename}')
+            target = destination / (KOTLIN_RUNTIME_PACKAGE + entry.filename[len('kotlin'):]
+                                    if entry.filename.startswith('kotlin/') else relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(entry))
+    for name in ('LICENSE.txt', 'NOTICE.txt', 'COPYRIGHT.txt'):
+        target = destination / 'META-INF/licenses/kotlin' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(home / 'license' / name, target)
+
+
 CHECKS = {'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
+          'net.alexredby.javapatchfixture.KotlinRuntimeChecks': 'KOTLIN_RUNTIME_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.UITextFitChecks': 'UI_TEXT_FIT_CHECKS_PASS',
@@ -78,11 +131,58 @@ def positive_timeout(value):
         raise argparse.ArgumentTypeError('must be a positive number of seconds')
     return seconds
 
+
+def check_sources(names):
+    """Select migrated checks and reachable Java/Kotlin helpers without unrelated checks."""
+    directory = ROOT / 'tests'
+    selected = []
+    for name in dict.fromkeys(names):
+        source = directory / name.replace('.', '/')
+        kotlin = source.with_suffix('.kt')
+        selected.append(kotlin if kotlin.is_file() else source.with_suffix('.java'))
+    candidates = sorted(path for path in directory.rglob('*') if path.suffix in ('.java', '.kt'))
+    symbols = {}
+    for candidate in candidates:
+        exported = {candidate.stem}
+        if candidate.suffix == '.kt':
+            # Tests may use idiomatic top-level helpers whose name differs from their file.
+            # Match unindented public/internal declarations; private or object-member helpers
+            # must not pull unrelated checks with common names such as verify/main into a run.
+            declarations = re.finditer(
+                r'^(?:(?:public|internal|inline|tailrec|suspend|operator|infix|const|lateinit|'
+                r'data|sealed|enum|value|open|abstract|actual|expect)\s+)*'
+                r'(?:(?:class|object|interface|val|var)\s+([A-Za-z_]\w*)|'
+                r'fun\s+(?:<[^>\n]+>\s*)?(?:[\w.*?<>]+\.)?([A-Za-z_]\w*)\s*\()',
+                candidate.read_text(encoding='utf-8'), re.MULTILINE)
+            exported.update(match.group(1) or match.group(2) for match in declarations)
+        symbols[candidate] = exported
+    pending, visited = list(selected), set()
+    while pending:
+        source = pending.pop()
+        if source in visited or not source.is_file():
+            continue
+        visited.add(source)
+        text = source.read_text(encoding='utf-8')
+        identifiers = set(re.findall(r'\b[A-Za-z_]\w*\b', text))
+        for candidate in candidates:
+            if candidate in visited or not symbols[candidate].intersection(identifiers):
+                continue
+            qualified = candidate.relative_to(directory).with_suffix('').as_posix().replace('/', '.')
+            package = qualified.rsplit('.', 1)[0]
+            if (candidate.parent == source.parent or qualified in text
+                    or any(package + '.' + symbol in text for symbol in symbols[candidate])
+                    or 'import ' + package + '.*' in text):
+                pending.append(candidate)
+    # kotlinc uses Java sources for symbol analysis but never emits their classes.
+    # Include reachable Java helpers explicitly so a Kotlin-only selection still runs javac.
+    helpers = sorted(path for path in visited if path not in selected)
+    return selected + helpers
+
 # Canonical generated mod metadata; importing this module never starts a build.
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.47',
+    'version': '0.1.48',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',
@@ -103,6 +203,7 @@ def main(argv=None):
     }
     parser.add_argument('--game', type=Path, default=game_defaults.get(sys.platform), help='Folder containing projectzomboid.jar and ZombieBuddy.jar')
     parser.add_argument('--jdk', type=Path)
+    parser.add_argument('--kotlin-home', type=Path, help=f'Kotlin {KOTLIN_VERSION} compiler distribution (or KOTLIN_HOME / kotlinc on PATH)')
     parser.add_argument('--check', action='store_true', help='Run original-engine versus woven-patch regression')
     parser.add_argument('--check-video', action='store_true', help='Run headless video timeline/FFmpeg regression (PZ_TEST_FFMPEG selects executable)')
     parser.add_argument('--test', action='append', choices=TEST_NAMES, default=[], metavar='NAME', help='Run only selected regressions; repeat for multiple. Names: ' + ', '.join(TEST_NAMES))
@@ -148,6 +249,11 @@ def main(argv=None):
             log = log_path(name, trace)
             if log.is_symlink() or (log.exists() and not log.is_file()):
                 parser.error(f'Check log must be a regular file: {log}')
+    test_sources = check_sources(selected) if selected else []
+    kotlin_tests = [source for source in test_sources if source.suffix == '.kt']
+    kotlin_sources = sorted((ROOT / 'src').rglob('*.kt'))
+    java_sources = sorted((ROOT / 'src').rglob('*.java'))
+    kotlin_home = kotlin_toolchain(args.kotlin_home, parser) if kotlin_sources or kotlin_tests else None
     build.mkdir(exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix='.build-', dir=build))
     previous = temporary / 'previous'
@@ -155,8 +261,20 @@ def main(argv=None):
     try:
         classes = temporary / 'classes'
         classes.mkdir()
+        compilepath = classpath
+        if kotlin_home is not None:
+            stdlib = kotlin_home / 'lib/kotlin-stdlib.jar'
+            subprocess.run([str(args.jdk / 'bin/java'), '-jar', str(kotlin_home / 'lib/kotlin-compiler.jar'),
+                            '-kotlin-home', str(kotlin_home), '-jvm-target', '17', '-module-name', KOTLIN_MODULE,
+                            '-no-stdlib', '-no-reflect', '-classpath', os.pathsep.join([str(stdlib), classpath]),
+                            '-d', str(classes), *map(str, kotlin_sources), *map(str, java_sources)], check=True)
+            compilepath = os.pathsep.join([str(classes), str(stdlib), classpath])
         # Output targets Java 17; reading the game's Java 25 classes still requires javac 25+.
-        subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(classes), *map(str, (ROOT/'src').rglob('*.java'))], check=True)
+        subprocess.run([javac, '--release', '17', '-cp', compilepath, '-d', str(classes), *map(str, java_sources)], check=True)
+        test_api = temporary / 'test-api'
+        if kotlin_tests:
+            # Kotlin tests see original module metadata and internals before runtime relocation.
+            shutil.copytree(classes, test_api)
         mod = temporary / 'PZToolkitJavaPatches'
         jar = mod / '42/media/java/PZToolkitJavaPatches.jar'
         jar.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +285,20 @@ def main(argv=None):
         manifest.write_text('Manifest-Version: 1.0\nZB-Preload: true\n\n')
         # Stable ZIP dates preserve approval hashes when the compiled contents do not change.
         jar_date = '--date=2000-01-01T00:00:00Z'
-        subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches'], check=True)
+        runtime_entries = []
+        if kotlin_home is not None:
+            stage_kotlin_runtime(kotlin_home, classes)
+            # PZ itself ships Kotlin 1.4.10. Relocate our stdlib and its references instead of
+            # relying on system-classpath ordering or replacing the game's runtime.
+            build_tools = temporary / 'build-tools'
+            build_tools.mkdir()
+            compiler_jar = str(kotlin_home / 'lib/kotlin-compiler.jar')
+            subprocess.run([javac, '--release', '17', '-cp', compiler_jar, '-d', str(build_tools),
+                            str(ROOT / 'tools/RelocateKotlin.java')], check=True)
+            subprocess.run([str(args.jdk / 'bin/java'), '-cp', os.pathsep.join([str(build_tools), compiler_jar]),
+                            'RelocateKotlin', str(classes)], check=True)
+            runtime_entries = ['-C', str(classes), KOTLIN_RUNTIME_PACKAGE, '-C', str(classes), 'META-INF']
+        subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches', *runtime_entries], check=True)
         subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(fontjar), '--manifest', str(manifest), '-C', str(classes), 'net/alexredby/pztoolkitbootstrap'], check=True)
         (mod/'42/mod.info').write_text(''.join(f'{key}={value}\n' for key, value in MOD_INFO.items()))
         for base in [mod/'common/media', mod/'42/media']:
@@ -177,8 +308,20 @@ def main(argv=None):
             testclasses = temporary / 'test-classes'
             testclasses.mkdir(exist_ok=True)
             checks = {name: CHECKS[name] for name in selected}
-            sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
-            subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, sources)], check=True)
+            if kotlin_tests:
+                subprocess.run([str(args.jdk / 'bin/java'), '-jar', compiler_jar,
+                                '-kotlin-home', str(kotlin_home), '-jvm-target', '17',
+                                '-module-name', KOTLIN_MODULE + '_tests', '-no-stdlib', '-no-reflect',
+                                '-Xfriend-paths=' + str(test_api), '-Xjava-source-roots=' + str(ROOT / 'tests'),
+                                '-classpath', os.pathsep.join([str(stdlib), str(test_api), classpath]),
+                                '-d', str(testclasses), *map(str, kotlin_tests)], check=True)
+                # Only Kotlin-produced test classes exist yet. Keep cold Java fixtures' literal
+                # runtime probes and initial classpaths untouched when javac compiles them next.
+                subprocess.run([str(args.jdk / 'bin/java'), '-cp', os.pathsep.join([str(build_tools), compiler_jar]),
+                                'RelocateKotlin', str(testclasses), '--tests'], check=True)
+            java_tests = [source for source in test_sources if source.suffix == '.java']
+            if java_tests:
+                subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([str(testclasses), classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, java_tests)], check=True)
             for name, marker in checks.items():
                 for trace in ([False, True] if name.endswith("VehicleTraceChecks") else [False]):
                     with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:
@@ -189,7 +332,8 @@ def main(argv=None):
                             (runtime_classes / relative).parent.mkdir(parents=True)
                             shutil.copy2(testclasses / relative, runtime_classes / relative)
                         cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
-                        testpath = [str(testclasses), classpath] if cold_fonts else [str(runtime_classes), str(jar), str(fontjar), classpath]
+                        cold_kotlin = name == 'net.alexredby.javapatchfixture.KotlinRuntimeChecks'
+                        testpath = [str(testclasses), classpath] if cold_fonts or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
                         log = log_path(name, trace)
                         try:
                             with log.open('w') as output:

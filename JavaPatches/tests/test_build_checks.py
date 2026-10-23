@@ -48,7 +48,8 @@ class BuildEntryPoint(unittest.TestCase):
         for name in build.CHECKS:
             with self.subTest(name=name):
                 self.assertEqual(build.TEST_NAMES[name.rsplit('.', 1)[-1]], name)
-                self.assertTrue((build.ROOT / 'tests' / (name.replace('.', '/') + '.java')).is_file())
+                source = build.ROOT / 'tests' / name.replace('.', '/')
+                self.assertEqual(sum(source.with_suffix(suffix).is_file() for suffix in ('.java', '.kt')), 1)
 
 
 class BuildChecks(unittest.TestCase):

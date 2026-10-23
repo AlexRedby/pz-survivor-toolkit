@@ -1055,6 +1055,17 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.48
+
+- **Kotlin pilot:** Port the TV/Radio video-path helper to Kotlin while retaining its Java patch wrapper and existing path/cache guards. Build mixed Java/Kotlin sources with the pinned Kotlin 2.3.0 compiler and bundle its standard library in a private package beside the game's Kotlin 1.4.10; keep early font bootstrap Java-only. Add late-JAR runtime loading coverage alongside the native video-path regression.
+- **Kotlin medicine bridge:** Port the native cooldown reader while retaining the static Java entry points and ZombieBuddy Lua global. Preserve exact timer values, read-only access, authoritative-server gating and unavailable values as `nil`.
+- **Kotlin style:** Refine both pilot helpers with typed nullable reads, Elvis returns, a non-null video-containment helper and Kotlin finite-value checks. Preserve static/Lua entry points, lazy directory validation, native exception behavior and signed-zero cooldown values.
+- **Kotlin regression support:** Compile selected Kotlin checks and their helpers with internal application access, then run them with the distributed private runtime. Migrate associated tests alongside runtime helpers, including the two pilot modules; retain the Java cold-loader fixture required to verify late runtime loading.
+- **Kotlin helpers:** Migrate medical body/visual updates, hutch cleanup, fence properties, construction acknowledgements and shared bytecode/source guards while preserving null boundaries, native object identity, class-monitor synchronization and fail-closed compatibility checks.
+- **Kotlin script repairs:** Extract tile/fluid metadata, fence validation, Piano icons, workstation references and item-stat defaults into Kotlin with their native regression tests. Preserve Java patch annotations and writable advice, startup ordering, exact wire data, native recipe/texture identity and guarded repair behavior.
+- **Kotlin persistent repairs:** Migrate basement room lookup/key separation and mannequin-zone repairs with their native serialization and Lua regression tests, preserving save keys, legacy flags, collision refusal and custom-zone priority. Preserve explicit game getter calls where Kotlin property syntax could select a public field.
+- **Kotlin action lifecycle:** Migrate completion/medical scopes, queue ownership, batch admission and action acknowledgements with their native tests. Preserve thread-local nesting, exact callback/buffer identity, class monitors, native effects, receipt ordering and terminal cleanup; retain Java instrumentation and compatibility types where required.
+
 ### 0.1.47
 
 - **Wooden cart clearance:** Fit the held shafts to the current render slot's bilateral leg/source-trouser cage, with a bounded lateral correction and exact calibrated source hashes. Retain native feet/root movement, the outgoing inventory envelope and closed grip; leave unsupported assets and unavailable corridors unchanged. Selected macOS B42.21 SP/Host inventory and held-motion captures are clean, with no measured source-cage contacts; complete rendered-frame, GPU garment and broader-variant coverage remain open.

@@ -8,11 +8,11 @@ Java Patches 0.1.18 gives one stock corridor a distinct persistent room key. Aft
 
 ## Prepare once
 
-The server owner prepares one copy for everyone. Players receiving it do not need Python or a JDK.
+The server owner prepares one copy for everyone. Players receiving it do not need Python, a JDK or a Kotlin installation; the Kotlin runtime is bundled in the Java mod JAR.
 
-1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit). Install **Python 3.10+** and **JDK 25+** on the build machine; preparation builds Toolkit and Java Patches.
+1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit). Install **Python 3.10+**, **JDK 25+** and unpack the [Kotlin 2.3.0 compiler distribution](https://github.com/JetBrains/kotlin/releases/tag/v2.3.0) on the build machine; preparation builds Toolkit and Java Patches. Set `KOTLIN_HOME` to its `kotlinc` directory or add `kotlinc/bin` to `PATH`.
 2. Install the [ZombieBuddy loader](#zombiebuddy-loader) there. The game Java directory must contain both `projectzomboid.jar` and `ZombieBuddy.jar`.
-3. From the repository root run `python3 tools/prepare_install.py` on macOS/Linux, or `py -3 tools/prepare_install.py` on Windows. For a custom installation add `--game "/path/to/folder-containing-both-jars"`; to choose a JDK add `--jdk "/path/to/jdk-25"`. Add `--check` to run the native Java regression checks too.
+3. From the repository root run `python3 tools/prepare_install.py` on macOS/Linux, or `py -3 tools/prepare_install.py` on Windows. For a custom installation add `--game "/path/to/folder-containing-both-jars"`; to choose a JDK add `--jdk "/path/to/jdk-25"`. To select Kotlin explicitly add `--kotlin-home "/path/to/kotlinc"`. The build requires Kotlin 2.3.0 and downloads nothing. Add `--check` to run the native Java regression checks too.
 4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZToolkitJavaPatches`, `Server/SurvivorQoL-selected.ini`, the Windows/macOS Host launchers, this installation guide and `JavaPatches/README.md`. It contains repository mods only; Workshop supplies the rest. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
 
 ## Local mods: server and every player

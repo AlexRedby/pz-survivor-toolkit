@@ -85,6 +85,13 @@ class PrepareInstall(unittest.TestCase):
         self.build.assert_not_called()
         self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
 
+    def test_kotlin_home_is_forwarded_as_an_absolute_path(self):
+        kotlin_home = Path('compiler folder/kotlinc')
+        prepare_install.prepare(self.root, kotlin_home=kotlin_home)
+        self.build.assert_called_once_with(
+            [sys.executable, str(self.root / 'JavaPatches/build.py'),
+             '--kotlin-home', str(kotlin_home.resolve())], cwd=self.root, check=True)
+
     def test_complete_set_preserves_metadata_and_builds_once_with_forwarded_options(self):
         game, jdk = self.root / "game folder", self.root / "jdk folder"
         result = prepare_install.prepare(self.root, game, jdk, check=True)

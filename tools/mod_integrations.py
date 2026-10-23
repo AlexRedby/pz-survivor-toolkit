@@ -26,7 +26,7 @@ INTEGRATIONS = {
         'tests': {'test_navigator.lua': ['MonitorConfig.lua', 'MonitorRender.lua', 'NavigatorMonitorDrag.lua']},
     },
     'TVRadio_ReInvented': {
-        'owners': ['client/PZSurvivorToolkit/TVRadio.lua', 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/TVVideoPaths.java',
+        'owners': ['client/PZSurvivorToolkit/TVRadio.lua', 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/TVVideoPaths.kt',
                    'client/PZSurvivorToolkit/TVDeviceResolver.lua'],
         'option': 'tv_source', 'root': 'media/lua/client/RadioCom',
         'argument': 'RadioWindowModules/RWMMergedTV.lua',

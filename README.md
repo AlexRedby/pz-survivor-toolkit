@@ -21,13 +21,13 @@ Archery Nexus with Wilderness Progression is selected for bow crafting, Archery 
 
 ## Installation
 
-The server owner needs Python 3.10+, JDK 25+ and the ZombieBuddy loader to prepare Toolkit and Java Patches:
+The server owner needs Python 3.10+, JDK 25+, the [Kotlin 2.3.0 compiler distribution](https://github.com/JetBrains/kotlin/releases/tag/v2.3.0) and the ZombieBuddy loader to prepare Toolkit and Java Patches. Set `KOTLIN_HOME` to the unpacked `kotlinc` directory, put its `bin` directory on `PATH`, or pass `--kotlin-home /path/to/kotlinc` to the preparation command:
 
 ```sh
 python3 tools/prepare_install.py
 ```
 
-On Windows, use `py -3` instead of `python3`. Distribute the resulting `dist/SurvivorQoL` folder to all players; recipients need neither Python nor a JDK. The two repository mod folders have no Workshop downloads and must be copied to every installation.
+On Windows, use `py -3` instead of `python3`. Distribute the resulting `dist/SurvivorQoL` folder to all players; recipients need neither Python, a JDK nor a Kotlin installation. The Kotlin runtime is bundled in the Java mod JAR. The two repository mod folders have no Workshop downloads and must be copied to every installation.
 
 Follow [the installation guide](MOD_INSTALL.md) for game/JDK paths, server profiles, client setup, Java approvals, Host launchers, updates and backups. Preparation does not modify live profiles.
 
