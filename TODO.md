@@ -31,12 +31,6 @@
 - [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.
 - [ ] Inspect passenger expanded/retracted controls and dashboard scaling in game; the current live scenario covers the stationary driver and programmatic callbacks.
 
-# Cart multiplayer presentation
-
-Closure scope: approximate remote animation is sufficient. Visible jumps, small pose/placement differences and clothing/handle clipping are acceptable. Do not expand the variant matrix or implement a new protocol, codec, playback clock, transport or clearance solver to finish this work. Reopen only for a concrete gross defect reported or reproduced in normal play. [Acceptance criteria](docs/CART_MULTIPLAYER.md).
-
-- [ ] Finish one short macOS menu-Host owner/observer check of the current ordinary wooden-cart cycle: pickup or inventory equip, push/turn/stop, setdown, cancel and retry. Review existing current-source recordings first; run only missing parts with the available mod set in disposable profiles/saves, retaining the normal resource/AeroSpace/provenance/cleanup gates. Require visible cart animation on both clients, eventual movement/action settlement without persistent total desync or a stuck pose/action, and no lost/duplicated cart or cargo. Do not require exact timing, placement, garment clearance, a full-pack run or a sex/load/network-impairment matrix. If no gross defect is found, remove this item and close cart animation/network work; otherwise retain only the concrete reproduction and its fix.
-
 # Root fix for the action queue
 
 These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
@@ -75,7 +69,7 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Near-term adapters
 
-The medical packet mismatch below is an unresolved runtime observation; its cause has not been attributed to queue scheduling. Cart work remains owned by the cart chat.
+The medical packet mismatch below is an unresolved runtime observation; its cause has not been attributed to queue scheduling.
 
 Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
 

@@ -129,7 +129,7 @@ With **SaucedCarts**, dedicated servers initialize the upstream drop, unequip an
 
 The wooden wheelbarrow has the refined animation: hands remain attached to its handles, the grounded wheel rolls with actual movement and turns lean up to 7 degrees. Walk, Run and Sprint retain moving legs; cargo affects acceleration and Sprint entry/exit. Releasing Run/Sprint uses a heavy-item braking step and a smooth return to the standing grip. New input interrupts braking. From a settled stop, side input uses full native lateral strides around the front wheel before pushing in the new direction. Cargo slows the stride cadence rather than shortening the steps. Run/Sprint wait for that turn to finish. Releasing the direction returns to standing; an opposite-direction command still requests a slower backward step. Use successive side directions for a U-turn.
 
-This tuning was checked locally with empty/full wooden wheelbarrows on both body models. Remote presentation uses native movement/equipment and synchronized cart-pose variables. Approximate animation, visible corrections and clothing contact are acceptable; the [final check](CART_MULTIPLAYER.md) covers gross animation or synchronization failures. There is no separate cart rigid-body simulation.
+This tuning was checked locally with empty/full wooden wheelbarrows on both body models. Remote presentation uses native movement/equipment and synchronized cart-pose variables. Approximate animation, visible corrections and clothing contact are acceptable; the selected [gross-regression check](CART_MULTIPLAYER.md#проверка-завершена) is complete. There is no separate cart rigid-body simulation.
 
 ### Multiplayer auto-drink
 
