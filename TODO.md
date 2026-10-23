@@ -1,7 +1,6 @@
-# Cart branch Kotlin migration
+# Cart capture coverage
 
-- [ ] Verify Kotlin style, static/JVM/Lua exposure, native weaving and unchanged native/protocol invariants with the affected source/regression and composed native checks. Freeze sources and verify the affected Host paths with the normal owned resource/window/provenance/cleanup gates; keep runtime changes out of the installed game.
-- [ ] Remove completed migration steps, record the actual checks and any concrete remaining Java boundary, and leave the rebased branch clean without pushing or installing.
+- [ ] Close the ordinary menu-Host capture's client2 owner-state trailing-edge gap in the turn window with the available 43-mod subset. Require a real sample in `[epoch+7150, epoch+7500]` under the existing 350ms edge tolerance; retain the unchanged motion/render analyzer, AeroSpace/PID/resource/provenance gates and separate full-pack checks below.
 
 # Cart game regression follow-up
 
