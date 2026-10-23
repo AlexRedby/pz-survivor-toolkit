@@ -1394,6 +1394,8 @@ do
     end
     player.getHumanVisual=function()return {getHairModel=function()return hair and {contains=function(_,needle)return hair:find(needle,1,true)~=nil end}end}end
     local function restoreClothing(mixed,kind,removal,setup)
+        local watchOverlap=kind and (kind:match('^watch%-held%-')or kind:match('^watch%-desired%-'))
+        if watchOverlap then kind=kind:sub(7)end
         reset();worn={};writes=0;load,capacity,allowed,hair,exclusive,multi=0,10,true,'CrewCut',false,false
         player.primary,player.secondary=nil,nil
         local sock=item(inventory,14801);sock.class='Clothing';sock.getUnequippedWeight=function(self)return self.weight or 0.2 end;inventory.values={sock}
@@ -1412,6 +1414,12 @@ do
         elseif kind=='heavy'then sock.fixtureHeavy=true
         elseif kind=='broken'then sock.broken=true
         elseif kind=='activated'then sock.activatable=true;sock.activated=true end
+        if watchOverlap then
+            sock.class='AlarmClockClothing';sock.location=ItemBodyLocation.LEFT_WRIST
+            sock.alarmHour,sock.alarmMinute,sock.alarmSet=23,40,true
+            sock.getHour=function(self)return self.alarmHour end;sock.getMinute=function(self)return self.alarmMinute end
+            sock.isAlarmSet=function(self)return self.alarmSet end;sock.isRinging=function()return false end
+        end
         local desired=kind and kind:match('^desired%-')
         if desired then
             if kind~='desired-both'then
@@ -1466,7 +1474,7 @@ do
         return completed(self,action)
     end
     for _,removal in ipairs({false,true})do
-    for _,kind in ipairs(removal and {'plain','hat','full-hat','watch-left','watch-right','capacity-edge','held-primary','held-secondary','held-both','held-prefix'} or {'plain','hat','full-hat','watch-left','watch-right'})do
+    for _,kind in ipairs(removal and {'plain','hat','full-hat','watch-left','watch-right','capacity-edge','held-primary','held-secondary','held-both','held-prefix','watch-held-primary','watch-held-secondary','watch-held-both'} or {'plain','hat','full-hat','watch-left','watch-right'})do
     for _,mode in ipairs({'sp','mp-early','mp-late'})do
         for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
             local sock,owner,action=restoreClothing(mixed,kind,removal)
@@ -1500,8 +1508,8 @@ do
             assert(writes==1 and (worn[sock:getBodyLocation()]==sock)==not removal and sock:getContainer()==inventory and inventory:getItemById(sock:getID())==sock,
                 'native clothing effect lost its exact slot/item or ran twice')
             assert(hair=='CrewCut','plain headwear cleanup changed hair')
-            if kind=='watch-left'or kind=='watch-right'then
-                assert(sock:getHour()==23 and sock:getMinute()==40 and sock:isAlarmSet()==(kind=='watch-left')and not sock:isRinging(),
+            if kind:match('^watch%-')then
+                assert(sock:getHour()==23 and sock:getMinute()==40 and sock:isAlarmSet()==(kind~='watch-right')and not sock:isRinging(),
                     'native wristwatch cleanup altered its alarm configuration')
             end
             if removal then
@@ -1518,16 +1526,17 @@ do
     end
     end
     end
-    assert(callbacks==180,'ordinary clothing/headwear/watch wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
+    assert(callbacks==216,'ordinary clothing/headwear/watch wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
     queue.onCompleted=completed
     -- A desired held/worn baseline is restored in the opposite direction to
     -- temporary clothing: native hands first, then Wear retains those hands.
     -- Inspect the same adopted Wear before and after every native hand effect.
     local desiredBoundaries=0
-    for _,kind in ipairs({'desired-primary','desired-secondary','desired-both'})do
+    for _,variant in ipairs({'desired-primary','desired-secondary','desired-both','watch-desired-primary','watch-desired-secondary','watch-desired-both'})do
+    local kind=variant:gsub('^watch%-','')
     for _,mode in ipairs({'sp','mp-early','mp-late'})do
     for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
-        local sock,owner,wear=restoreClothing(mixed,kind,false)
+        local sock,owner,wear=restoreClothing(mixed,variant,false)
         local equip,activate=queue.queue[1],queue.queue[2]
         local expectedPrimary=kind~='desired-secondary'and sock or player.primary
         local expectedSecondary=(kind=='desired-secondary'or kind=='desired-both')and sock or player.secondary
@@ -1560,11 +1569,26 @@ do
         assert(writes==1 and worn[sock:getBodyLocation()]==sock and inventory:getItemById(sock:getID())==sock
             and player.primary==expectedPrimary and player.secondary==expectedSecondary,
             'native desired Wear failed to retain exact held/worn/root state')
+        if variant:match('^watch%-')then
+            assert(sock:getHour()==23 and sock:getMinute()==40 and sock:isAlarmSet()and not sock:isRinging(),
+                'desired native watch hand/worn restoration changed alarm configuration')
+        end
         isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
         assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
     end end
     end end
-    assert(desiredBoundaries==108,'desired held/worn ownership and MP-order coverage incomplete')
+    assert(desiredBoundaries==216,'desired held/worn ownership and MP-order coverage incomplete')
+    for _,kind in ipairs({'watch-held-primary','watch-held-secondary','watch-held-both','watch-desired-primary','watch-desired-secondary','watch-desired-both'})do
+        for _,change in ipairs({'ringing','exclusive','missing'})do
+            local sock,_,action=restoreClothing(true,kind,kind:match('^watch%-held%-')~=nil)
+            assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+            if change=='ringing'then sock.isRinging=function()return true end
+            elseif change=='exclusive'then
+                local other=item(inventory,14808);other.class='Clothing';worn[ItemBodyLocation.FORE_ARM_LEFT]=other;exclusive=true
+            else inventory.values={}end
+            assert(not definitions.inspect(action),'held watch retained shared permissions after '..change)
+        end
+    end
     for _,field in ipairs({'fromHotbar','clothingAction','stopOnWalk','stopOnRun','item','onCompleteFunc','start'})do
         local sock,_,action=restoreClothing(true)
         local previous=action[field]
@@ -1647,7 +1671,7 @@ do
     -- admit a table alarm clock, another special category or a non-wrist slot.
     for _,removal in ipairs({false,true})do
     for _,kind in ipairs({'watch-left','watch-right'})do
-        for _,change in ipairs({'category','subtype','location','exclusive','multi','replacement','callback','ringing','primary','secondary'})do
+        for _,change in ipairs({'category','subtype','location','exclusive','multi','replacement','callback','ringing'})do
             local sock,_,action=restoreClothing(true,kind,removal)
             assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
             if change=='category'then sock.getCategory=function()return 'UnknownClock'end
@@ -1660,8 +1684,6 @@ do
                 local other=item(inventory,sock:getID());other.class='AlarmClock';other.getCategory=function()return 'AlarmClock'end
                 inventory.values={other}
             elseif change=='ringing'then sock.isRinging=function()return true end
-            elseif change=='primary'then player.primary=sock
-            elseif change=='secondary'then player.secondary=sock
             else action.onCompleteFunc=function()error('foreign watch callback must not run')end end
             assert(not definitions.inspect(action),'watch shared proof retained changed '..change)
         end

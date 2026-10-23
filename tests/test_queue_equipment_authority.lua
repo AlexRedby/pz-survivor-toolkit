@@ -216,12 +216,14 @@ end
 -- hands; Wear remains the separate clothing completion boundary.
 do
  ISEquipWeaponAction={Type='ISEquipWeaponAction'};P4RestoreAction={Type='P4RestoreAction'};ISWearClothing={Type='ISWearClothing'}
- for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+ for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both',
+  'tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
   for _,bad in ipairs({'none','item','primary','twoHands','activation'})do
    local socks,torch,screw=exact(51),exact(52),exact(53)
-   socks.getBodyLocation=function()return 'base:socks'end
+   local location=modules.QueueEquipmentClothing.spec({id=caseID}).location
+   socks.getBodyLocation=function()return location end
    local root={};socks.getContainer=function()return root end
-   local player={};local state={id=caseID,clothingItem=socks,clothingLocation='base:socks',clothingRestoreType='ISWearClothing',
+   local player={};local state={id=caseID,clothingItem=socks,clothingLocation=location,clothingRestoreType='ISWearClothing',
     hammer=torch,screwdriver=screw,player=player,root=root,baseline={[51]=socks,[52]=torch,[53]=screw}}
    local spec=modules.QueueEquipmentClothing.cleanupSpec(state)
    local actions={}
@@ -527,7 +529,9 @@ do
  local originalClient,originalServer=isClient,isServer
  local itemKinds={front='Base.BookCarpentry1',tail='Base.BookFirstAid1',hammer='Base.Torch',screwdriver='Base.Screwdriver',
   bag='Base.Bag_Schoolbag',clothingItem='Base.Socks_Ankle'}
- for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+ for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both',
+  'tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
+  itemKinds.clothingItem=clothing.spec({id=caseID}).fullType
   local root={items={}}
   function root:getItems()return {size=function()return #self.items end,get=function(_,i)return self.items[i+1]end}end
   function root:getCapacity()return 100 end;function root:getEffectiveCapacity()return 100 end

@@ -196,7 +196,9 @@ do
  isClient=function()return false end
  getCell=function()return {getProcessItems=function()return {contains=function()return true end}end,
   getProcessItemsRemove=function()return {contains=function()return false end}end}end
- for _,case in ipairs({'tidy-watch-digital-restore','tidy-watch-digital-remove','tidy-watch-classic-restore','tidy-watch-classic-remove'})do
+ for _,case in ipairs({'tidy-watch-digital-restore','tidy-watch-digital-remove','tidy-watch-classic-restore','tidy-watch-classic-remove',
+  'tidy-watch-overlap-primary','tidy-watch-overlap-secondary','tidy-watch-overlap-both',
+  'tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
   for _,tidy in ipairs({false,true})do
    local sample=fixture(case,'native')
    local spec=Clothing.spec(sample)
@@ -210,10 +212,14 @@ do
    sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
    sample.player.getWornItem=function(self,location)return self.worn[location]end
    sample.player.getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end}end
+   for _,item in ipairs({sample.hammer,sample.screwdriver})do item.isActivated=function()return false end end
+   sample.player.primary,sample.player.secondary=Clothing.expectedHands(sample,tidy)
    local worn=Clothing.finalWorn(sample,tidy)
+   getCell=function()return {getProcessItems=function()return {contains=function()return spec.alarmSet and worn end}end,
+    getProcessItemsRemove=function()return {contains=function()return false end}end}end
    sample.player.worn[spec.location]=worn and watch or nil
    local value=Postprocess.verify(sample,'native',tidy).clothing
-   assert(value.watch.alarmHour==21 and value.watch.alarmSet==spec.alarmSet and value.watchProcessing.active)
+   assert(value.watch.alarmHour==21 and value.watch.alarmSet==spec.alarmSet and value.watchProcessing.active==(spec.alarmSet and worn))
    for key,bad in pairs({hour=22,minute=30,alarm=not spec.alarmSet,ringing=true})do
     local before=watch[key];watch[key]=bad
     rejected(sample,'native',tidy,'native watch alarm changed')

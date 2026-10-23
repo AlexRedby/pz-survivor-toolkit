@@ -10,7 +10,7 @@ function ISBaseTimedAction:derive(name) local c={Type=name};setmetatable(c,{__in
 function ISBaseTimedAction:new(chr) return setmetatable({character=chr},self) end
 function ISBaseTimedAction:adjustMaxTime(time) return time end
 function ISBaseTimedAction.perform() end
-function instanceof(item,kind) return false end
+function instanceof(item,kind) return item.kind and item.kind:find('WristWatch',1,true)~=nil and (kind=='AlarmClockClothing'or kind=='Clothing')or false end
 ISInventoryPage={}
 
 local function native(path) assert(loadfile(NativeActionRoot..'/'..path))() end
@@ -304,15 +304,51 @@ do
  function player:getWornItems()return {contains=function(_,value)return player:isEquippedClothing(value)end}end
  getPlayerInventory=function()return {refreshBackpacks=function()end}end
  P4RestoreAction={Type='P4RestoreAction'};P4RestoreAction.__index=P4RestoreAction
+ -- Headwear setup must preserve existing slots and prove spare native capacity.
+ -- Java callbacks/transport remain doubles; SP/Host proves actual P4 generation.
+ local group={multi=false}
+ function group:getLocation(location)return location end
+ function group:isMultiItem()return self.multi end
+ function group:isExclusive(a,b)
+  return a~=b and (a=='base:leftwrist'and b=='base:forearmleft'or a=='base:rightwrist'and b=='base:forearmright'
+   or a==ItemBodyLocation.FULL_HAT and (b==ItemBodyLocation.HAT or b=='base:mask')
+   or b==ItemBodyLocation.FULL_HAT and (a==ItemBodyLocation.HAT or a=='base:mask'))
+ end
+ function player:getBodyLocationGroup()return group end
+ function player:getWornItems()
+  local entries={}
+  for location,item in pairs(self.worn)do
+   local l,v=location,item;entries[#entries+1]={getLocation=function()return l end,getItem=function()return v end}
+  end
+  local values=list(entries);values.getBodyLocationGroup=function()return group end
+  values.contains=function(_,item)return player.worn[item:getBodyLocation()]==item end;return values
+ end
+ state.root.getCapacityWeight=function()return 2 end
+ local capacity=50
+ state.root.getEffectiveCapacity=function()return capacity end
+ state.root.isItemAllowed=function()return true end
+ local function seedHead(key,kind)
+  local item=makeItem(kind,state.root);state[key]=item
+  item.getUnequippedWeight=function()return 0.5 end
+  item.canBeActivated=function()return false end;item.isForceDropHeavyItem=function()return false end
+  return item
+ end
+ function player:getInventory()return state.root end
+ getGameTime=function()return {getHour=function()return 9 end}end
+ getCell=function()return {getProcessItems=function()return {contains=function(_,item)
+  return state.clothingWatch and state.clothingWatch.alarmSet and player:getWornItem(item:getBodyLocation())==item
+ end}end,getProcessItemsRemove=function()return {contains=function()return false end}end}end
  for _,caseID in ipairs({'tidy-clothing-overlap','tidy-clothing-overlap-primary','tidy-clothing-overlap-both',
-  'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+  'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both',
+  'tidy-watch-overlap-primary','tidy-watch-overlap-secondary','tidy-watch-overlap-both',
+  'tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
   state.id=caseID;state.clothingP4=nil;state.clothingRestoreAction=nil;state.clothingRestoreReceipt=nil
-  state.clothingOverlap=nil;state.clothingCaptureHands=nil;state.clothingProducerStarted=nil;state.clothingCleanup=nil;state.clothingReceipts=nil
+  state.clothingOverlap=nil;state.clothingCaptureHands=nil;state.clothingProducerStarted=nil;state.clothingCleanup=nil;state.clothingReceipts=nil;state.clothingWatchReady=nil
   player.worn={};player.primary,player.secondary=state.hammer,state.screwdriver
   -- The real fixture seeds Base.Torch inactive. These inventory doubles model
   -- activation observations; native Equip/Wear/Unequip effects remain untouched.
   state.hammer.kind='Base.Torch'
-  Clothing.prepare(state,function(key,kind)state[key]=makeItem(kind,state.root);return state[key]end)
+  Clothing.prepare(state,seedHead)
   function state.root:getItemWithID(id)return self:getItemById(id)end
   for _,item in ipairs({state.hammer,state.screwdriver,state.clothingItem})do
    item.isTwoHandWeapon=function()return false end;item.isForceDropHeavyItem=function()return false end;item.isRequiresEquippedBothHands=function()return false end
@@ -340,14 +376,15 @@ do
   end
   local function id(item)return item and item:getID()or false end
   local native=Clothing.verify(state,not desired)
+  if Clothing.wristwatch(state)then assert(native.watchProcessing.active==not desired and not native.watchProcessing.pendingRemoval)end
   assert(native.primary==id(primary)and native.secondary==id(secondary)
    and native.originalPrimary==id(originalPrimary)and native.originalSecondary==id(originalSecondary))
   assert(not Clothing.settled(state,{},false),'unobserved overlap must not settle')
   local sockID=state.clothingItem:getID()
-  local acks={};local ack='completed'
+  local acks,captures={},{};local ack='completed'
   toolkit={Settings={actionQueue=function()return true end},
    ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
-   ActionQueueAcknowledgements={capture=function(action)if queue.current==action then acks[action]=acks[action]or {};return acks[action]end end,
+   ActionQueueAcknowledgements={capture=function(action)if queue.current==action then captures[action]=(captures[action]or 0)+1;acks[action]=acks[action]or {};return acks[action]end end,
     observe=function(action,receipt)assert(acks[action]==receipt);return ack end}}
   -- Empty pre-start current and nil producer are a quiet no-op.
   local nextProducer=state.clothingProducer;state.clothingProducer=nil;queue.current=nil
@@ -361,17 +398,18 @@ do
   assert(Clothing.settled(state,toolkit,false),'observed native/no-P4 overlap should settle')
   for _,action in ipairs(queue.queue)do queue.current=action;isClient=function()return true end;Clothing.observe(state,queue,toolkit,true)end
   isClient=function()return false end
-  sock='Base.Socks_Ankle#'..sockID..'@inventory'
+  local location=Clothing.spec(state).location
+  sock=Clothing.spec(state).fullType..'#'..sockID..'@inventory'
   if desired then
    Clothing.observeLine(state,prefix..'capture primary='..state.hammer:getFullType()..'#'..state.hammer:getID()..'@inventory secondary='..state.screwdriver:getFullType()..'#'..state.screwdriver:getID()..'@inventory')
-   Clothing.observeLine(state,prefix..'capture worn=[base:socks='..sock..'] inventoryCount=5')
+   Clothing.observeLine(state,prefix..'capture worn=['..location..'='..sock..'] inventoryCount=5')
    assert(state.clothingP4 and not state.clothingP4.hands,'desired capture must reject merely worn socks without preferred held IDs')
    state.clothingP4=nil
-   Clothing.observeLine(state,prefix..'capture worn=[base:socks=Base.Socks_Ankle#-1@inventory] inventoryCount=5')
+   Clothing.observeLine(state,prefix..'capture worn=['..location..'='..Clothing.spec(state).fullType..'#-1@inventory] inventoryCount=5')
    assert(not state.clothingP4,'desired capture must reject another exact worn ID')
   end
   Clothing.observeLine(state,prefix..'capture primary='..originalPrimary:getFullType()..'#'..originalPrimary:getID()..'@inventory secondary='..originalSecondary:getFullType()..'#'..originalSecondary:getID()..'@inventory')
-  Clothing.observeLine(state,prefix..'capture worn=['..(desired and 'base:socks='..sock or '')..'] inventoryCount=5')
+  Clothing.observeLine(state,prefix..'capture worn=['..(desired and location..'='..sock or '')..'] inventoryCount=5')
   if not desired then Clothing.observeLine(state,prefix..'add[add] type=ISEquipWeaponAction item='..sock)end
   Clothing.observeLine(state,prefix..'add[add] type='..(desired and 'ISUnequipAction'or 'ISWearClothing')..' item='..sock)
   Clothing.observeLine(state,prefix..'add[add] type=ISCutHair item=nil')
@@ -436,48 +474,30 @@ do
   local hands={perform=count,complete=0,flush=count,legacy=0,equip=count/2,activation=count/2,unequip=0}
   local effect=Clothing.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0},hands)
   assert(#effect.overlap.cleanup==count+1 and #effect.overlap.acknowledgements==count+(desired and 3 or 4) and effect.overlap.sharedHands==hands)
+  if Clothing.wristwatch(state)then
+   assert(effect.watchBaseline.alarmSet and effect.watchSetup.emptyExclusiveSlots and not effect.watchAcknowledgements,
+    'held watches must preserve alarm setup and reuse the single overlap receipt list')
+   for key,bad in pairs({hour=22,minute=30,alarm=false,ringing=true})do
+    local item=state.clothingItem;local before=item[key];item[key]=bad
+    quietReady(false);assert(not pcall(Clothing.evidence,state,toolkit,true,{},hands),'watch overlap accepted changed '..key)
+    item[key]=before
+   end
+  end
+  for action in pairs(state.clothingReceipts)do assert(captures[action]==1,'native action receipt captured twice')end
   for i,row in ipairs(effect.overlap.cleanup)do
    if row.kind=='ISEquipWeaponAction'then assert(type(row.primary)=='boolean'and row.twoHands==(desired and hand=='both'))
    elseif row.kind=='P4RestoreAction'then assert(row.activated==false)end
   end
   isClient=function()return false end
+  if Clothing.wristwatch(state)then assert(Clothing.verify(state,desired).watchProcessing.active==desired)end
   print(caseID..': native clothing effects, exact intermediate/hands/cleanup flags, ordering and all Host receipt gates passed')
  end
+ state.id='tidy-clothing'
  for _,name in ipairs({'Bald','Mohawk','Spike','GreasedBack','Buffont'})do
   visual.hair=name;visual.attached='PreviousAttachedStyle'
   Clothing.prepare(state,function(key,kind)state[key]=makeItem(kind,state.root);return state[key]end)
   assert(visual.hair=='CrewCut'and not visual.attached,'random unsafe starting cosmetics must not make fixture flaky')
  end
- -- Headwear setup must preserve existing slots and prove spare native capacity.
- -- Java callbacks/transport remain doubles; SP/Host proves actual P4 generation.
- local group={multi=false}
- function group:getLocation(location)return location end
- function group:isMultiItem()return self.multi end
- function group:isExclusive(a,b)
-  return a~=b and (a=='base:leftwrist'and b=='base:forearmleft'or a=='base:rightwrist'and b=='base:forearmright'
-   or a==ItemBodyLocation.FULL_HAT and (b==ItemBodyLocation.HAT or b=='base:mask')
-   or b==ItemBodyLocation.FULL_HAT and (a==ItemBodyLocation.HAT or a=='base:mask'))
- end
- function player:getBodyLocationGroup()return group end
- function player:getWornItems()
-  local entries={}
-  for location,item in pairs(self.worn)do
-   local l,v=location,item;entries[#entries+1]={getLocation=function()return l end,getItem=function()return v end}
-  end
-  local values=list(entries);values.getBodyLocationGroup=function()return group end
-  values.contains=function(_,item)return player.worn[item:getBodyLocation()]==item end;return values
- end
- state.root.getCapacityWeight=function()return 2 end
- local capacity=50
- state.root.getEffectiveCapacity=function()return capacity end
- state.root.isItemAllowed=function()return true end
- local function seedHead(key,kind)
-  local item=makeItem(kind,state.root);state[key]=item
-  item.getUnequippedWeight=function()return 0.5 end
-  item.canBeActivated=function()return false end;item.isForceDropHeavyItem=function()return false end
-  return item
- end
- function player:getInventory()return state.root end
  for _,case in ipairs({'tidy-headwear-hat-remove','tidy-headwear-full-hat-remove','tidy-headwear-hat-restore','tidy-headwear-full-hat-restore'})do
   local remove=case:match('%-remove$')~=nil
   state.id=case;state.clothingP4=nil;state.clothingCaptureHands=nil;state.clothingRestoreAction=nil;state.clothingRestoreReceipt=nil
@@ -714,13 +734,15 @@ do
  assert(Clothing.available(player,setupIds)and player.worn['base:socks']==socks)
  player.setWornItem=setWorn;state.ids=nil;isClient=function()return false end
  print('tidy-clothing: shared Host handshake conserves starter socks and client only adopts native worn/root identity')
- for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+ for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both','tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
   state.id=caseID;state.ids=nil;player.worn={['base:socks']=starterSocks}
+  local location=Clothing.spec(state).location
+  local prior=not Clothing.wristwatch(state)and starterSocks or nil
   player.primary,player.secondary=state.hammer,state.screwdriver
   local syncOrder={}
   sendEquip=function(actor)assert(actor==player);syncOrder[#syncOrder+1]='hands'end
   sendClothing=function(actor,location,item)
-   assert(actor==player and location=='base:socks'and item==state.clothingItem)
+   assert(actor==player and tostring(location)==Clothing.spec(state).location and item==state.clothingItem)
    assert(player.primary==select(1,Clothing.expectedHands(state,true))and player.secondary==select(2,Clothing.expectedHands(state,true)))
    syncOrder[#syncOrder+1]='worn'
   end
@@ -728,16 +750,17 @@ do
   Clothing.prepare(state,seedHead)
   local socks=state.clothingItem
   local ids={case=caseID,items={clothingItem=socks:getID(),hammer=state.hammer:getID(),screwdriver=state.screwdriver:getID()},
-   clothingHair='CrewCut',clothingSetupPending=true,originalWorn={{location='base:socks',id=starterSocks:getID(),fullType='Base.Socks_Ankle'}}}
-  assert(state.clothingSetupPending and player.worn['base:socks']==starterSocks and #syncOrder==0)
+   clothingHair='CrewCut',clothingSetupPending=true,clothingWatch=state.clothingWatch,originalWorn={{location='base:socks',id=starterSocks:getID(),fullType='Base.Socks_Ankle'}}}
+  assert(state.clothingSetupPending and player.worn[location]==(prior or nil) and #syncOrder==0)
   assert(player.primary==state.hammer and player.secondary==state.screwdriver and Clothing.available(player,ids))
   assert(not pcall(Clothing.configure,state,socks:getID()+1),'desired setup accepted wrong exact ID')
   local kind=socks.kind;socks.kind='Base.Other';assert(not pcall(Clothing.configure,state,socks:getID()));socks.kind=kind
   local original=player.primary;player.primary=socks
   assert(not Clothing.available(player,ids)and not pcall(Clothing.configure,state,socks:getID()),'desired pending setup accepted changed baseline hand')
   player.primary=original
-  player.worn['base:socks']=nil;assert(not pcall(Clothing.configure,state,socks:getID()),'desired setup accepted changed prior worn baseline')
-  player.worn['base:socks']=starterSocks
+  if prior then player.worn[location]=nil else player.worn[location]=starterSocks end
+  assert(not pcall(Clothing.configure,state,socks:getID()),'desired setup accepted changed prior worn baseline')
+  player.worn[location]=prior or nil
   assert(#syncOrder==0 and state.clothingSetupPending,'rejected desired setup mutated authority')
   Clothing.configure(state,socks:getID())
   assert(syncOrder[1]=='hands'and syncOrder[2]=='worn'and #syncOrder==2)
@@ -749,7 +772,7 @@ do
   assert(not Clothing.available(player,ids),'desired readiness accepted wrong primary hand');player.primary=primary
   player.secondary=secondary==socks and state.screwdriver or socks
   assert(not Clothing.available(player,ids),'desired readiness accepted wrong secondary hand');player.secondary=secondary
-  player.worn['base:socks']=starterSocks;assert(not Clothing.available(player,ids));player.worn['base:socks']=socks
+  player.worn[location]=starterSocks;assert(not Clothing.available(player,ids));player.worn[location]=socks
   socks.kind='Base.Other';assert(not Clothing.available(player,ids));socks.kind=kind
   state.ids=ids;isServer=function()return false end;isClient=function()return true end
   local p,s,w=player.setPrimaryHandItem,player.setSecondaryHandItem,player.setWornItem

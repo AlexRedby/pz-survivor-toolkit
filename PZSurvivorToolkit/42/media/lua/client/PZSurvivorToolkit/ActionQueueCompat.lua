@@ -269,11 +269,9 @@ local function ordinaryClothingItem(item, character, allowHeadwear)
     -- share its category but not Wear's bounded single-wrist effects.
     if item:getCategory() == "AlarmClock" and (not ItemBodyLocation.LEFT_WRIST or not ItemBodyLocation.RIGHT_WRIST
         or (location ~= ItemBodyLocation.LEFT_WRIST and location ~= ItemBodyLocation.RIGHT_WRIST)) then return end
-    if item:getCategory() == "AlarmClock" then
-        local primary, secondary = character:getPrimaryHandItem(), character:getSecondaryHandItem()
-        if item:isRinging() ~= false or (primary and primary:getID() == item:getID())
-            or (secondary and secondary:getID() == item:getID()) then return end
-    end
+    -- Ordinary Wear retains matching hand references; Unequip releases them.
+    -- Existing character-hand ownership covers preceding P4 hand restoration.
+    if item:getCategory() == "AlarmClock" and item:isRinging() ~= false then return end
     if location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then
         if not allowHeadwear then return end
         -- Java setWornItem also flattens Mohawk when newItem is nil.

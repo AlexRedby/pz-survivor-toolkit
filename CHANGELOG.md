@@ -33,6 +33,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.229
+
+- **Action queue:** Support proven P4 wristwatch cleanup when the same watch is worn and held in either or both hands. Preserve native hand-before-worn restoration, alarm configuration and processing, exact item identity, required cleanup and independent following actions. Ringing watches, conflicting slots and side conversions retain their existing handling.
+
 ### 0.1.228
 
 - **Action queue:** Use shared native completion for proven P4 restoration and removal of unheld, nonringing wristwatches. Preserve exact watch identity, alarm configuration, native processing, required cleanup and independent following actions. Table alarm clocks, conflicting wrist slots and modified callbacks retain their existing handling.

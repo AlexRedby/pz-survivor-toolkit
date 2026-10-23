@@ -4,6 +4,12 @@ local cases={
  ['tidy-watch-digital-remove']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true},
  ['tidy-watch-classic-restore']={fullType='Base.WristWatch_Right_ClassicBlack',location='base:rightwrist',wristwatch=true,alarmSet=false},
  ['tidy-watch-classic-remove']={fullType='Base.WristWatch_Right_ClassicBlack',location='base:rightwrist',wristwatch=true,alarmSet=false,remove=true},
+ ['tidy-watch-overlap-primary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true,overlapHand='primary'},
+ ['tidy-watch-overlap-secondary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true,overlapHand='secondary'},
+ ['tidy-watch-overlap-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true,overlapHand='both'},
+ ['tidy-watch-held-primary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='primary'},
+ ['tidy-watch-held-secondary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='secondary'},
+ ['tidy-watch-held-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='both'},
  ['tidy-clothing']={fullType='Base.Socks_Ankle',location='base:socks'},
  ['tidy-clothing-remove']={fullType='Base.Socks_Ankle',location='base:socks',remove=true},
  ['tidy-clothing-overlap']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlapHand='secondary'},
@@ -37,6 +43,17 @@ function Clothing.producerActions(state)
  local result={}
  if state.clothingEquip then result[#result+1]=state.clothingEquip end
  result[#result+1]=state.clothingFirst;result[#result+1]=state.clothingProducer
+ return result
+end
+-- One ordered native receipt list serves ordinary overlaps and watches.
+-- Watch overlaps reuse overlap.acknowledgements without a duplicate watch list.
+local function nativeActions(state,tidy)
+ local result=Clothing.producerActions(state)
+ if tidy then
+  if Clothing.overlap(state)then
+   for _,action in ipairs(state.clothingCleanup or {})do result[#result+1]=action end
+  elseif state.clothingRestoreAction then result[#result+1]=state.clothingRestoreAction end
+ end
  return result
 end
 function Clothing.cleanupSpec(state)
@@ -227,7 +244,13 @@ function Clothing.prepare(state,seed)
    if not Clothing.removes(state)then
     if isServer()then
      state.clothingSetupPending=true;state.clothingSetupPrevious=state.player:getWornItem(state.clothingLocation)
-    else state.player:setWornItem(state.clothingLocation,item)end
+    else
+     if Clothing.desired(state)then
+      local primary,secondary=Clothing.expectedHands(state,true)
+      state.player:setPrimaryHandItem(primary);state.player:setSecondaryHandItem(secondary)
+     end
+     state.player:setWornItem(state.clothingLocation,item)
+    end
    end
   end
   emptyHeadwearSlots(state,not Clothing.removes(state)and not state.clothingSetupPending and item or nil)
@@ -408,15 +431,17 @@ function Clothing.observe(state,queue,toolkit,tidy)
    end
    if isClient()and not state.clothingRestoreReceipt then
     state.clothingRestoreReceipt=toolkit.ActionQueueAcknowledgements.capture(action)
+    if Clothing.overlap(state)or Clothing.wristwatch(state)then
+     state.clothingReceipts=state.clothingReceipts or {}
+     state.clothingReceipts[action]=state.clothingRestoreReceipt
+    end
    end
   end
  end
  if (Clothing.overlap(state)or Clothing.wristwatch(state))and isClient()then
   state.clothingReceipts=state.clothingReceipts or {}
-  for _,actions in ipairs({Clothing.producerActions(state),Clothing.wristwatch(state)and {state.clothingRestoreAction}or state.clothingCleanup or {}})do
-   for _,action in ipairs(actions)do
-    if not state.clothingReceipts[action]then state.clothingReceipts[action]=toolkit.ActionQueueAcknowledgements.capture(action)end
-   end
+  for _,action in ipairs(nativeActions(state,tidy))do
+   if not state.clothingReceipts[action]then state.clothingReceipts[action]=toolkit.ActionQueueAcknowledgements.capture(action)end
   end
  end
 end
@@ -446,14 +471,14 @@ function Clothing.evidence(state,toolkit,tidy,completion,hands)
   assert(state.clothingEmptyWatchSlots and state.clothingWatchReady,'watch native setup/producer was not verified')
   result.watchBaseline=state.clothingWatch
   result.watchSetup={emptyExclusiveSlots=true,capacityBeforeRemoval=true}
-  result.watchAcknowledgements={}
-  if isClient()then
-   local actions=Clothing.producerActions(state)
-   if tidy then actions[#actions+1]=assert(state.clothingRestoreAction)end
-   for _,action in ipairs(actions)do
-    local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'watch native acknowledgement not captured')
-    assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','watch native action did not complete authoritatively')
-    result.watchAcknowledgements[#result.watchAcknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
+  if not Clothing.overlap(state)then
+   result.watchAcknowledgements={}
+   if isClient()then
+    for _,action in ipairs(nativeActions(state,tidy))do
+     local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'watch native acknowledgement not captured')
+     assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','watch native action did not complete authoritatively')
+     result.watchAcknowledgements[#result.watchAcknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
+    end
    end
   end
  end
@@ -468,12 +493,10 @@ function Clothing.evidence(state,toolkit,tidy,completion,hands)
    overlap.cleanup[#overlap.cleanup+1]=row
   end
   if isClient()then
-   for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
-    for _,action in ipairs(actions)do
-     local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'overlap native acknowledgement not captured')
-     assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','overlap native action did not complete authoritatively')
-     overlap.acknowledgements[#overlap.acknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
-    end
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'overlap native acknowledgement not captured')
+    assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','overlap native action did not complete authoritatively')
+    overlap.acknowledgements[#overlap.acknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
    end
   end
   result.overlap=overlap
@@ -494,12 +517,11 @@ function Clothing.settled(state,toolkit,tidy)
  end
  if Clothing.wristwatch(state)then
   if not isClient()and Clothing.watchProcessing(state).pendingRemoval then return false end
+  local primary,secondary=Clothing.expectedHands(state,tidy)
   if not state.clothingWatchReady or not pcall(Clothing.watchState,state,live)
-   or state.player:getPrimaryHandItem()~=state.hammer or state.player:getSecondaryHandItem()~=state.screwdriver then return false end
-  if isClient()then
-   local actions=Clothing.producerActions(state)
-   if tidy then actions[#actions+1]=state.clothingRestoreAction end
-   for _,action in ipairs(actions)do
+   or state.player:getPrimaryHandItem()~=primary or state.player:getSecondaryHandItem()~=secondary then return false end
+  if isClient()and not Clothing.overlap(state)then
+   for _,action in ipairs(nativeActions(state,tidy))do
     local receipt=state.clothingReceipts and state.clothingReceipts[action]
     if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
    end
@@ -513,11 +535,9 @@ function Clothing.settled(state,toolkit,tidy)
    or state.hammer:isActivated()or state.screwdriver:isActivated()then return false end
   if not state.clothingOverlap or tidy and not state.clothingCleanup then return false end
   if isClient()then
-   for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
-    for _,action in ipairs(actions)do
-     local receipt=state.clothingReceipts and state.clothingReceipts[action]
-     if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
-    end
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=state.clothingReceipts and state.clothingReceipts[action]
+    if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
    end
   end
  end

@@ -90,11 +90,12 @@ class EquipmentTests(unittest.TestCase):
                 if spec.get('watch'):
                     result['tidyClothing']['watchBaseline'] = dict(effect['watch'])
                     result['tidyClothing']['watchSetup'] = dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
-                    result['tidyClothing']['watchAcknowledgements'] = [
-                        dict(kind='ISWearClothing' if spec.get('remove') else 'ISUnequipAction', id=955, state='completed'),
-                        dict(kind='ISCutHair', id=False, state='completed'),
-                        *([dict(kind='ISUnequipAction' if spec.get('remove') else 'ISWearClothing', id=955, state='completed')] if tidy else [])
-                    ] if self.selection['kind'] == 'mp' else []
+                    if not spec.get('overlapHand'):
+                        result['tidyClothing']['watchAcknowledgements'] = [
+                            dict(kind='ISWearClothing' if spec.get('remove') else 'ISUnequipAction', id=955, state='completed'),
+                            dict(kind='ISCutHair', id=False, state='completed'),
+                            *([dict(kind='ISUnequipAction' if spec.get('remove') else 'ISWearClothing', id=955, state='completed')] if tidy else [])
+                        ] if self.selection['kind'] == 'mp' else []
                     if self.selection['kind'] == 'sp':
                         result['clothingCheckpoint']['watchProcessing'] = dict(active=bool(spec['alarm'] and spec.get('remove')), pendingRemoval=False)
                         result['tidyClothing']['watchProcessing'] = dict(active=bool(spec['alarm'] and effect['worn']), pendingRemoval=False)
@@ -388,7 +389,7 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                 if kind == 'mp':
                     server = self.root / 'server-launch.log'; original = server.read_text()
                     markers = [line for line in original.splitlines() if 'CLOTHING_AUTHORITY ' in line and 'originalPrimary' in line]
-                    self.assertEqual(len(markers), 6)
+                    self.assertEqual(len(markers), 12)
                     for marker in markers:
                         prefix, payload = marker.split('CLOTHING_AUTHORITY ', 1)
                         value = json.loads(payload); value['originalPrimary'] = 999
@@ -407,6 +408,9 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                 for case in cases:
                     def target(rows):
                         return next(row['outcome'] for row in rows if row.get('id') == case)
+                    def receipts(out):
+                        value = out['tidyClothing']
+                        return value['overlap']['acknowledgements'] if equipment.CLOTHING_SPECS[case].get('overlapHand') else value['watchAcknowledgements']
                     changes = [lambda out: out['tidyClothing']['watch'].update(alarmHour=True),
                                lambda out: out['tidyClothing']['watch'].update(alarmMinute=41),
                                lambda out: out['tidyClothing']['watch'].update(ringing=True),
@@ -425,10 +429,10 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                                             lambda out, field=field: out[field]['watchProcessing'].update(pendingRemoval=True),
                                             lambda out, field=field: out[field].pop('watchProcessing')])
                     else:
-                        changes.extend([lambda out: out['tidyClothing']['watchAcknowledgements'].pop(),
-                                        lambda out: out['tidyClothing']['watchAcknowledgements'].reverse(),
-                                        lambda out: out['tidyClothing']['watchAcknowledgements'][0].update(id=False),
-                                        lambda out: out['tidyClothing']['watchAcknowledgements'][1].update(state='started')])
+                        changes.extend([lambda out: receipts(out).pop(),
+                                        lambda out: receipts(out).reverse(),
+                                        lambda out: receipts(out)[0].update(id=False),
+                                        lambda out: receipts(out)[1].update(state='started')])
                     for change in changes:
                         rows = copy.deepcopy(self.records()); change(target(rows))
                         self.assertTrue(self.verify(self.logs(rows))['issues'], (case, kind, mode))
