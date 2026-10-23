@@ -389,6 +389,8 @@ internal object MainSupport {
                 Main.VEHICLE_OWNERSHIP_SUPPORTED +
                 ", media=" +
                 Main.MEDIA_SUPPORTED +
+                ", radioInventoryOff=" +
+                RadioInventoryState.SUPPORTED +
                 ", build=" +
                 Main.BUILD_SUPPORTED +
                 ", video=" +

@@ -154,10 +154,6 @@ Add contracts in Definitions/Policy/Operations for each family. Expose only veri
 
 Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.
 
-## Native unheld-radio state in Host
-
-- [ ] Separately repair B42.21's missing server inventory-radio selector `0` route. The native sender writes player index + unheld item ID, but the server handles only held selectors `1`/`2`; an on radio switched off by the client UI after unequip stays on in the server snapshot even without the queue. Require an exact connection-owned root Radio, bounded native payload parsing, negative ownership/malformed-packet regressions and native Host controls. The P4 return gate preserves and checks this existing role difference; it does not repair the protocol.
-
 ## Remaining families
 
 These families need contract/coverage audits. Missing verification or continued use of legacy completion does not by itself mean their native actions fail.

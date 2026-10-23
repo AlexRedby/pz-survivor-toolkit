@@ -10,7 +10,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
-- **Native equipment checks:** Cover portable-radio P4 returns with separate native scissors, exact device and battery state, client pointer/sound cleanup and ordered Host receipts. Compare each role against its queue-disabled control, retaining the B42.21 unheld-radio server power-state discrepancy as a separate native defect.
+- **Native equipment checks:** Cover portable-radio P4 returns with separate native scissors, exact device and battery state, client pointer/sound cleanup and ordered Host receipts. Compare each role against its queue-disabled control and require the native unheld-radio off packet to reach the server after return.
 
 - **Native equipment checks:** Preflight ordinary hotbar fixture item shapes through the actual game factory before launching a window. Check native class, attribute/script metadata ownership and an independent plain-item control; retain diagnostics in the run.
 
@@ -1104,6 +1104,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.50
+
+- **Host radios:** Apply the native power-off update when a portable radio has returned from a hand to its owner's main inventory. Validate the connection, exact item and packet before using the native decoder and relay; held, world, vehicle and other state packets retain their existing paths.
 
 ### 0.1.49
 

@@ -84,7 +84,8 @@ def stage_kotlin_runtime(home, destination):
         shutil.copyfile(home / 'license' / name, target)
 
 
-CHECKS = {'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
+CHECKS = {'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
+          'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
           'net.alexredby.javapatchfixture.KotlinRuntimeChecks': 'KOTLIN_RUNTIME_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
@@ -211,7 +212,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.49',
+    'version': '0.1.50',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

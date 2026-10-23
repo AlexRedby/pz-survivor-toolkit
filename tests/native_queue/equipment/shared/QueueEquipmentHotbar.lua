@@ -6,9 +6,9 @@ local Hotbar={}
 -- Vanilla ISRadioWindow.update (152-154) and the installed full-pack override
 -- (185) turn an inventory radio off after it leaves hands/back. Observe that
 -- client UI transition; the fixture never calls a gameplay power setter.
--- B42.21 GameServer.receiveRadioDeviceDataState lacks the unheld selector0
--- item-ID route emitted by DeviceData, so authority retains its initial power
--- state. Preserve that exact native role baseline; this gate does not fix it.
+-- Java Patches repairs B42.21 GameServer's unheld selector0/state0/off route
+-- by delegating the real packet to DeviceData. Require the server to observe
+-- that same off transition; never copy client device state into authority.
 local function radioVolume(on)return on and 0.25 or 0.1 end
 local cases={
  ['tidy-hotbar-flashlight-charged']={item='Base.FlashLight_AngleHead',attachment='Webbing',kind='WebbingLeft',model='Webbing Left Walkie',twoHands=false,provider=true,providerItem='Base.SCBA_notank',flashlight='charged'},
@@ -94,7 +94,7 @@ local function radioMatches(state,restored)
  end
  if value.power~=value.power or value.power<0 or value.power>baseline.power or value.scissors.container~='root'
   or value.scissors.id~=baseline.scissors.id or value.scissors.fullType~=baseline.scissors.fullType then return false,'power-scissors-root' end
- if data:getIsTurnedOn()~=(cases[state.id].on==true and(isServer()or not restored))then return false,'turnedOn-phase' end
+ if data:getIsTurnedOn()~=(cases[state.id].on==true and not restored)then return false,'turnedOn-phase' end
  -- Server updateTextObjects returns before radioEquipedCheck.
  if not isServer()and(state.player:getEquipedRadio()~=(not restored and item or nil)
   or (data:getEmitter()~=nil)~=(cases[state.id].on==true and not restored))then return false,'pointer-emitter' end
