@@ -125,7 +125,7 @@ def main() -> int:
     parser.add_argument("--game", type=Path, help="game Java folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--jdk", type=Path, help="JDK 25+ folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--kotlin-home", type=Path, help="Kotlin 2.3.0 compiler distribution; also accepts KOTLIN_HOME or kotlinc on PATH")
-    parser.add_argument("--check", action="store_true", help="also run the Java native regression checks")
+    parser.add_argument("--check", action="store_true", help="also run the native JVM regression checks")
     args = parser.parse_args()
     try:
         output = prepare(game=args.game, jdk=args.jdk, check=args.check, kotlin_home=args.kotlin_home)
@@ -136,7 +136,7 @@ def main() -> int:
     print("Copy the contents of mods/ into Zomboid/mods on the server and every client.")
     print("For a new server profile, copy Server/SurvivorQoL-selected.ini into Zomboid/Server.")
     print("For an existing profile, copy only Mods= and WorkshopItems= into its INI; keep its other settings.")
-    print("Clients use this same prepared copy and do not need Python or a JDK.")
+    print("Clients use this same prepared copy and do not need Python, a JDK or a Kotlin compiler.")
     print("Complete ZombieBuddy loader setup and JAR approvals on each machine; see the prepared MOD_INSTALL.md.")
     return 0
 

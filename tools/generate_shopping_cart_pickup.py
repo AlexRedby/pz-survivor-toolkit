@@ -9,10 +9,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import cart_clip_bake as baker
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from JavaPatches.build import require_current_patch_jar
 CLIP='Toolkit_ShoppingCart_Pickup'
 
 def main():
@@ -23,6 +26,7 @@ def main():
     parser.add_argument('--check',action='store_true')
     args=parser.parse_args()
     patch=ROOT/'JavaPatches/build/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar'
+    require_current_patch_jar(patch, ROOT / 'JavaPatches')
     classpath=os.pathsep.join(map(str,(patch,args.game/'projectzomboid.jar',args.game/'ZombieBuddy.jar')))
     idle=args.game/'media/anims_X/Bob/Bob_Idle.x'
     cart=args.cart_idle

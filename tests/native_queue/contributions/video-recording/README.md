@@ -2,7 +2,7 @@
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
-This fixture validates the B42.21 in-game recorder in a fresh, disposable profile. It does not launch the game itself. Build JavaPatches first, then prepare the profile:
+This fixture validates the B42.21 in-game recorder in a fresh, disposable profile. It does not launch the game itself. Build JavaPatches first with the [mixed Kotlin/Java toolchain](../../../../docs/DEVELOPMENT.md#java-development) (JDK 25+ and Kotlin 2.3.0 selected through `KOTLIN_HOME`, `PATH` or `--kotlin-home`), then prepare the profile. The fixture uses the built JAR and needs no separate Kotlin runtime:
 
 ```sh
 python3 JavaPatches/build.py

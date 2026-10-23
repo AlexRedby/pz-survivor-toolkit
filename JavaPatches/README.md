@@ -2,9 +2,11 @@
 
 `PZToolkitJavaPatches` is an experimental Java mod for **B42.21 only**. Its version is set in the [build definition](build.py); recorded changes are in the [changelog](../CHANGELOG.md#toolkit-java-patches). It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
+Patch implementation is mostly Kotlin with small Java boundaries where the current bytecode API needs a writable parameter or cold-start Java entry point. Building requires the pinned Kotlin 2.3.0 compiler; playing, including Host launch through the supplied launcher, does not. The built JAR carries its private runtime. See the [canonical build prerequisites and commands](../docs/DEVELOPMENT.md#java-development).
+
 ## Prepare and install
 
-Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build and distribute the two repository mods. The selected INI already includes this patch. [Java-only builds and tests](../docs/DEVELOPMENT.md#java-development) are documented separately.
+Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build and distribute the two repository mods. The selected INI already includes this patch. [Builds and tests](../docs/DEVELOPMENT.md#java-development) are documented separately.
 
 ## Server loader
 

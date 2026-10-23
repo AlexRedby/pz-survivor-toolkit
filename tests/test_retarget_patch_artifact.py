@@ -1,5 +1,6 @@
 """Retargeting executes a complete current mixed build, never stale Java source overlays."""
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -12,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from JavaPatches import build
 import retarget_metal_cart_pickup as retarget
+import generate_shopping_cart_pickup as shopping
+import generate_cart_locomotion as locomotion
 
 
 class RetargetPatchArtifact(unittest.TestCase):
@@ -87,6 +90,52 @@ class RetargetPatchArtifact(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         retarget.verify_native('candidate', self.root / 'game', self.root / 'jdk', self.jar)
                     run.assert_not_called()
+
+    def test_generators_reject_missing_or_stale_kotlin_artifact_before_native_inputs_or_compilation(self):
+        candidate = self.source / 'build/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar'
+        candidate.parent.mkdir(parents=True)
+        for artifact in ('missing', 'legacy', 'stale Kotlin'):
+            if artifact == 'legacy':
+                with ZipFile(candidate, 'w'):
+                    pass
+            elif artifact == 'stale Kotlin':
+                candidate.write_bytes(self.jar.read_bytes())
+                (self.runtime / 'CartWheelbarrow.kt').write_text('changed Kotlin runtime')
+            for module in (shopping, locomotion):
+                with self.subTest(artifact=artifact, tool=module.__name__), \
+                        patch.object(module, 'ROOT', self.root), \
+                        patch.object(sys, 'argv', ['tool', '--game', str(self.root / 'absent game'),
+                                                   '--jdk', str(self.root / 'jdk'),
+                                                   '--cart-idle', str(self.root / 'absent cart')]), \
+                        patch.object(module.subprocess, 'run') as run, \
+                        patch.object(module.tempfile, 'TemporaryDirectory') as temporary:
+                    with self.assertRaisesRegex(ValueError, 'Rebuild JavaPatches/build.py'):
+                        module.main()
+                    run.assert_not_called()
+                    temporary.assert_not_called()
+        self.assertFalse((self.root / 'assets').exists())
+        self.assertFalse((self.root / 'PZSurvivorToolkit').exists())
+
+    def test_generators_accept_current_mixed_artifact_for_helper_compilation(self):
+        candidate = self.source / 'build/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar'
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(self.jar.read_bytes())
+        game = self.root / 'game'
+        for name in ('MaleBody.x', 'FemaleBody.x', 'Clothes/Bob_Trousers.x', 'Clothes/Kate_Trousers.x'):
+            model = game / 'media/models_X/Skinned' / name
+            model.parent.mkdir(parents=True, exist_ok=True)
+            model.write_text('unweighted root')
+        for module in (shopping, locomotion):
+            with self.subTest(tool=module.__name__), patch.object(module, 'ROOT', self.root), \
+                    patch.object(sys, 'argv', ['tool', '--game', str(game), '--jdk', str(self.root / 'jdk'),
+                                               '--cart-idle', str(self.root / 'cart')]), \
+                    patch.object(module.subprocess, 'run', side_effect=RuntimeError('compiler reached')) as run:
+                with self.assertRaisesRegex(RuntimeError, 'compiler reached'):
+                    module.main()
+                command = run.call_args.args[0]
+                self.assertEqual(Path(command[0]).name, 'javac')
+                self.assertIn(str(candidate), command[command.index('-cp') + 1].split(os.pathsep))
+                self.assertFalse(any('/JavaPatches/src/' in str(arg) for arg in command))
 
     def test_native_solve_and_replay_compile_only_their_tool_against_verified_jar(self):
         commands = []

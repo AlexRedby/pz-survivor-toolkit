@@ -7,12 +7,15 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import shutil
 import cart_clip_bake as baker
 
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from JavaPatches.build import require_current_patch_jar
 CLIPS={
     'Idle':'Bob_Idle', 'Walk':'Bob_Walk', 'Run':'Bob_Run', 'Sprint':'Bob_Sprint',
     'Backward':'Bob_WalkBwdNoAim1Hand',
@@ -47,10 +50,11 @@ def main():
     parser.add_argument('--dry-run',action='store_true',help='Run every gate without changing outputs')
     parser.add_argument('--report',type=Path,help='Optional native replay result JSON')
     args=parser.parse_args()
+    patch=ROOT/'JavaPatches/build/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar'
+    require_current_patch_jar(patch, ROOT / 'JavaPatches')
     native=args.game/'media/anims_X/Bob'
     project=ROOT/'PZSurvivorToolkit/42/media/anims_X/Bob'
     template=native/'Bob_Idle.x'
-    patch=ROOT/'JavaPatches/build/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar'
     classpath=os.pathsep.join(map(str,(patch,args.game/'projectzomboid.jar',args.game/'ZombieBuddy.jar')))
     skinning={}
     for name in ('MaleBody.x','FemaleBody.x','Clothes/Bob_Trousers.x','Clothes/Kate_Trousers.x'):

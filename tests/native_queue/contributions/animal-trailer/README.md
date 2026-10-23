@@ -8,7 +8,7 @@ This fixture targets B42.21 with ZombieBuddy 2.3.4 and one client plus a dedicat
 
 ## Prepare offline
 
-From the repository root, set `ANIMAL_GAME` to the directory containing your installed `projectzomboid.jar` and `ZombieBuddy.jar`, and `ANIMAL_JDK` to a JDK 25+ home. The game runtime alone cannot compile Java. `ANIMAL_PATCH` must point to your locally built `PZToolkitJavaPatches.jar` (build with `python3 JavaPatches/build.py --game "$ANIMAL_GAME" --jdk "$ANIMAL_JDK"`, without `--check`). Python 3.10+ and the standard library suffice.
+From the repository root, set `ANIMAL_GAME` to the directory containing your installed `projectzomboid.jar` and `ZombieBuddy.jar`, and `ANIMAL_JDK` to a JDK 25+ home. The game runtime alone cannot compile Java. Building the production patch also requires the [Kotlin 2.3.0 toolchain](../../../../docs/DEVELOPMENT.md#java-development); set `KOTLIN_HOME` or pass `--kotlin-home` to that build. The fixture builder itself compiles only Java helpers against the complete patch JAR, whose private Kotlin runtime is already bundled. `ANIMAL_PATCH` must point to your locally built `PZToolkitJavaPatches.jar` (build with `python3 JavaPatches/build.py --game "$ANIMAL_GAME" --jdk "$ANIMAL_JDK"`, without `--check`). Python 3.10+ and the standard library suffice.
 
 ```sh
 ANIMAL_RUN=$(mktemp -d)
