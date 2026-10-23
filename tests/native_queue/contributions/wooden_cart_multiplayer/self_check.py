@@ -1154,8 +1154,8 @@ def main():
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')
         bank=subprocess.run([lua,str(HERE/'LeaseLifetimeBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
-        assert 'LEASE_LIFETIME_BANK_CHECK_PASS messages=40 cycles=6 staleSourceRefusals=4' in bank.stdout,bank.stdout+bank.stderr
-        print('Equipment bank: PASS (actual Lua controller and40-message fixture across three mocked native API contexts; native setter proof is separate)')
+        assert 'LEASE_LIFETIME_BANK_CHECK_PASS messages=42 cycles=6 staleSourceRefusals=4' in bank.stdout,bank.stdout+bank.stderr
+        print('Equipment bank: PASS (actual Lua controller and42-message baseline plus injected resnapshot/resync races across three mocked native API contexts; native setter proof is separate)')
         print('Placement:', check_placement(lua))
         print('Capture environment:', check_capture_environment(lua))
         print('Action windows:', check_action_windows(lua))

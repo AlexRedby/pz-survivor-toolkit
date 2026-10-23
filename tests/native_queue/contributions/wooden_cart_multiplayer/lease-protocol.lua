@@ -13,8 +13,8 @@ end
 local function binding(b)
  if b==nil then return nil end
  assert(type(b)=='table' and (b.mode=='motion' or b.mode=='action') and b.item~=nil
-  and integer(b.cart,-2147483648,2147483647) and (b.lifetime==nil or text(b.lifetime,160)) and (b.mode~='action' or b.action~=nil),'Native binding required')
- return {mode=b.mode,cart=b.cart,item=b.item,action=b.mode=='action' and b.action or nil,lifetime=b.lifetime}
+  and integer(b.cart,-2147483648,2147483647) and (b.lifetime==nil or text(b.lifetime,160)) and (b.resnapshotOf==nil or text(b.resnapshotOf,160)) and (b.mode~='action' or b.action~=nil),'Native binding required')
+ return {mode=b.mode,cart=b.cart,item=b.item,action=b.mode=='action' and b.action or nil,lifetime=b.lifetime,resnapshotOf=b.resnapshotOf}
 end
 local function same(a,b)
  return a==nil and b==nil or a~=nil and b~=nil and a.mode==b.mode and a.cart==b.cart
@@ -85,14 +85,21 @@ local Receiver={};Receiver.__index=Receiver
 function P.receiver(id,seed,o)
  assert(integer(id,0,32767) and text(seed,80),'Receiver actor/nonce seed required')
  local max=options(o)
- return setmetatable({id=id,seed=seed,max=max,challengeSerial=0,revision=0,grant=0,lease=0,seq=0,open=false,visible=false},Receiver)
+ return setmetatable({id=id,seed=seed,max=max,challengeSerial=0,revision=0,grant=0,lease=0,seq=0,open=false,visible=false,terminal=false,rebind=false},Receiver)
 end
 function Receiver:native(connection,actor,b)
  assert(connection~=nil and actor~=nil,'Exact native receiver binding required');b=binding(b)
  if self.connection==connection and self.actor==actor and same(self.binding,b) then return false end
+ -- Native proof may distinguish a complete remote reserialization from a release.
+ -- This certificate is trusted adapter input, never a field taken from the wire.
+ local certified=self.connection==connection and self.actor==actor and self.binding and b
+  and self.binding.lifetime~=nil and b.lifetime~=nil and b.lifetime~=self.binding.lifetime
+  and b.resnapshotOf==self.binding.lifetime and b.mode=='motion' and self.binding.mode=='motion' and b.cart==self.binding.cart
+  and not self.terminal and (self.open or self.rebind)
  if self.connection~=connection then
-  self.session=nil;self.grant=0;self.lease=0;self.seq=0
+  self.session=nil;self.grant=0;self.lease=0;self.seq=0;self.acceptedAt=nil;self.terminal=false
  end
+ self.rebind=certified==true
  self.connection=connection;self.actor=actor;self.binding=b;self.revision=self.revision+1
  self.pending=nil;self.open=false;self.visible=false;self.body=nil;self.received=nil
  -- Same-connection actor/item transitions retain the comparable grant/lease floor.
@@ -112,21 +119,23 @@ function Receiver:reply(reply,ingressConnection)
   or not text(reply.session,80) or not integer(reply.grant,1,self.max) or not integer(reply.lease,0,self.max)
   or type(reply.open)~='boolean' or reply.open and (reply.lease==0 or reply.mode~=self.binding.mode or reply.cart~=self.binding.cart)
   or self.session~=nil and self.session~=reply.session or reply.grant<self.grant
-  or reply.grant==self.grant and (reply.lease<self.lease or reply.lease==self.lease and not self.open and reply.open) then return false end
+  or reply.grant==self.grant and (reply.lease<self.lease or reply.lease==self.lease and reply.open
+   and (self.terminal or not self.open and not self.rebind)) then return false end
  self.pending=nil
  local sameLease=reply.grant==self.grant and reply.lease==self.lease
  self.session=reply.session;self.grant=reply.grant;self.lease=reply.lease
- self.open=reply.open
- if not sameLease or not reply.open then self.seq=0;self.visible=false;self.body=nil;self.received=nil end
+ self.open=reply.open;self.terminal=not reply.open;self.rebind=false
+ if not sameLease then self.seq=0;self.acceptedAt=nil end
+ if not sameLease or not reply.open then self.visible=false;self.body=nil;self.received=nil end
  return true
 end
 function Receiver:receive(e,now)
  if not self.binding or not self.open or not envelope(e,self.max) or e.session~=self.session
   or e.grant~=self.grant or e.lease~=self.lease or e.seq<=self.seq
   or e.mode~=self.binding.mode or e.cart~=self.binding.cart or not integer(now,0,9007199254740991)
-  or self.received and now<self.received then return false end
- self.seq=e.seq
- if e.op=='END' then self.open=false;self.visible=false;self.body=nil;self.received=nil
+  or self.acceptedAt and now<self.acceptedAt then return false end
+ self.seq=e.seq;self.acceptedAt=now
+ if e.op=='END' then self.open=false;self.terminal=true;self.rebind=false;self.visible=false;self.body=nil;self.received=nil
  else self.body=e.body;self.received=now;self.visible=true end
  return true
 end

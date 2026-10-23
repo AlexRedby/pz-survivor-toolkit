@@ -5,26 +5,51 @@
     private static final NativeWeakMap<zombie.core.raknet.UdpConnection,Boolean> equipmentRetiredConnections=new NativeWeakMap<>();
     private static final java.util.ArrayList<EquipmentLife> equipmentLifetimeRecords=new java.util.ArrayList<>();
     private static volatile boolean equipmentLifetimeFailed;
-    private static long equipmentLifetimeTraceCount,equipmentLifetimeMutationSerial;
+    private static long equipmentLifetimeTraceCount,equipmentLifetimeMutationSerial,equipmentLifetimeParseSerial,equipmentLifetimeIssuedCount;
+    private static final ThreadLocal<EquipmentParse> equipmentLifetimeParsing=new ThreadLocal<>();
+    public static final class EquipmentParse {
+        public final zombie.core.network.ByteBufferReader reader;
+        public final zombie.core.raknet.UdpConnection connection;
+        public final LeaseCommandIngress ingress;
+        public final LeaseDispatchScope dispatch;
+        public final EquipmentParse previous;
+        public final long serial;
+        public final boolean trusted;
+        public IsoPlayer actor;public EquipmentLife life;
+        public zombie.inventory.InventoryItem original,next;
+        public long beforeRevision,beforeHardRevision;public int stage,directCalls,genericCalls;public boolean invalid;
+        EquipmentParse(zombie.core.network.ByteBufferReader reader,zombie.core.raknet.UdpConnection connection,
+                LeaseCommandIngress ingress,LeaseDispatchScope dispatch,EquipmentParse previous,long serial,boolean trusted){
+            this.reader=reader;this.connection=connection;this.ingress=ingress;this.dispatch=dispatch;this.previous=previous;this.serial=serial;this.trusted=trusted;
+        }
+    }
     public static final class EquipmentLife {
         public final java.lang.ref.WeakReference<IsoPlayer> actor;
+        public final java.util.HashSet<Long> issued=new java.util.HashSet<>();
         public java.lang.ref.WeakReference<zombie.core.raknet.UdpConnection> connection=new java.lang.ref.WeakReference<>(null);
         public java.lang.ref.WeakReference<zombie.inventory.InventoryItem> primary=new java.lang.ref.WeakReference<>(null),secondary=new java.lang.ref.WeakReference<>(null);
-        public long revision=1,thread;public int depth,cart;public boolean baseline,poisoned,retired;
+        public long revision=1,hardRevision=1,thread;public int depth,cart,parseDepth;public boolean baseline,poisoned,retired;
         EquipmentLife(IsoPlayer actor){this.actor=new java.lang.ref.WeakReference<>(actor);}
     }
     public record EquipmentMutation(EquipmentLife life,int depth,long thread,long serial,String reason,
-        zombie.inventory.InventoryItem oldPrimary,zombie.inventory.InventoryItem oldSecondary) {}
+        zombie.inventory.InventoryItem oldPrimary,zombie.inventory.InventoryItem oldSecondary,EquipmentParse parse) {}
     private static boolean equipmentLifetimeEnabled(){return LEASE_LIFETIME && LEASE_CONTROL && !leaseControlFailed && !equipmentLifetimeFailed;}
     private static void equipmentLifetimeError(Throwable error){equipmentLifetimeFailed=true;System.err.println("[CART_EQUIPMENT] {\"event\":\"error\",\"reason\":"+mpJsonString(String.valueOf(error))+"}");Main.timelineError(new IllegalStateException("Native equipment lifetime observation failed",error));}
     private static void equipmentLifetimeTrace(String event,EquipmentLife life,EquipmentMutation scope,String reason,boolean success) {
         if(++equipmentLifetimeTraceCount>8192)throw new IllegalStateException("Equipment lifetime trace limit");
         var actor=life.actor.get();var primary=actor==null?null:actor.getPrimaryHandItem();var secondary=actor==null?null:actor.getSecondaryHandItem();
-        var oldPrimary=scope==null?primary:scope.oldPrimary();var oldSecondary=scope==null?secondary:scope.oldSecondary();
+        var parse=scope==null?equipmentLifetimeParsing.get():scope.parse();
+        boolean resnapshot="resnapshot".equals(event);
+        var oldPrimary=resnapshot && parse!=null?parse.original:scope==null?primary:scope.oldPrimary();
+        var oldSecondary=resnapshot && parse!=null?parse.original:scope==null?secondary:scope.oldSecondary();
         System.out.println("[CART_EQUIPMENT] {\"event\":"+mpJsonString(event)+",\"process\":"+mpJsonString(nativeTimeProcess)
             +",\"ownerID\":"+(actor==null?-1:actor.getOnlineID())+",\"actorEpoch\":"+nativeTimeIdentity(actor,true)
             +",\"connectionEpoch\":"+nativeTimeIdentity(life.connection.get(),false)+",\"revision\":"+life.revision+",\"depth\":"+life.depth
             +",\"reason\":"+mpJsonString(reason)+",\"mutationSerial\":"+(scope==null?0:scope.serial())
+            +",\"hardRevision\":"+life.hardRevision+",\"parseSerial\":"+(parse==null?0:parse.serial)
+            +",\"ingressGeneration\":"+(parse==null || parse.ingress==null?0:parse.ingress.generation())
+            +",\"beforeRevision\":"+(parse==null?0:parse.beforeRevision)+",\"afterRevision\":"+life.revision
+            +",\"certified\":"+(resnapshot && success)+",\"directCalls\":"+(parse==null?0:parse.directCalls)+",\"genericCalls\":"+(parse==null?0:parse.genericCalls)
             +",\"oldPrimaryEpoch\":"+nativeTimeIdentity(oldPrimary,false)+",\"oldSecondaryEpoch\":"+nativeTimeIdentity(oldSecondary,false)
             +",\"primaryEpoch\":"+nativeTimeIdentity(primary,false)+",\"secondaryEpoch\":"+nativeTimeIdentity(secondary,false)
             +",\"primaryID\":"+(primary==null?"null":String.valueOf(primary.getID()))+",\"secondaryID\":"+(secondary==null?"null":String.valueOf(secondary.getID()))
@@ -48,15 +73,17 @@
         life.primary=new java.lang.ref.WeakReference<>(primary);life.secondary=new java.lang.ref.WeakReference<>(secondary);
         life.cart=primary==null?0:primary.getID();
     }
-    private static EquipmentMutation equipmentLifetimeBegin(EquipmentLife life,String reason) {
+    private static EquipmentMutation equipmentLifetimeBegin(EquipmentLife life,String reason,boolean candidate) {
         long thread=Thread.currentThread().getId();
         if(life.retired || life.poisoned)return null;
         if(life.depth>0 && life.thread!=thread){life.poisoned=true;return null;}
         if(life.revision>=9007199254740991L || equipmentLifetimeMutationSerial>=9007199254740991L || life.depth==Integer.MAX_VALUE){life.poisoned=true;return null;}
         life.revision++;life.depth++;life.thread=thread;
+        var parse=equipmentLifetimeParsing.get();
+        if(!candidate){life.hardRevision=life.revision;if(parse!=null)parse.invalid=true;}
         var actor=life.actor.get();
         var scope=new EquipmentMutation(life,life.depth,thread,++equipmentLifetimeMutationSerial,reason,
-            actor==null?null:actor.getPrimaryHandItem(),actor==null?null:actor.getSecondaryHandItem());
+            actor==null?null:actor.getPrimaryHandItem(),actor==null?null:actor.getSecondaryHandItem(),parse);
         equipmentLifetimeTrace("mutation-enter",life,scope,reason,true);return scope;
     }
     /** Entry invalidation precedes native OnEquip callbacks; no new snapshot is eligible until exit. */
@@ -65,13 +92,31 @@
         try{synchronized(equipmentLifetimeLock){
             var life=equipmentLife(player,false);if(life==null)return null;
             var old=primary?player.getPrimaryHandItem():player.getSecondaryHandItem();
-            return old==incoming?null:equipmentLifetimeBegin(life,primary?"primary":"secondary");
+            if(old==incoming)return null;
+            var parse=equipmentLifetimeParsing.get();boolean candidate=false;
+            if(parse!=null){
+                boolean direct=equipmentLifetimeDirect(primary);if(direct)parse.directCalls++;else parse.genericCalls++;
+                if(parse.life==null){parse.life=life;parse.actor=player;parse.original=player.getPrimaryHandItem();parse.beforeRevision=life.revision;parse.beforeHardRevision=life.hardRevision;}
+                if(parse.trusted && !parse.invalid && parse.actor==player && life.baseline && !life.retired && !life.poisoned
+                    && life.depth==0 && equipmentLifetimeConnection(player)==parse.connection && life.connection.get()==parse.connection
+                    && !player.isLocalPlayer() && direct){
+                    if(primary && parse.stage==0 && life.parseDepth==0 && old!=null && old==player.getSecondaryHandItem()
+                        && life.primary.get()==old && life.secondary.get()==old && life.cart==old.getID()
+                        && incoming!=null && incoming!=old && equipmentLifetimeCart(old) && old.getWorldItem()==null
+                        && incoming.getID()==old.getID() && incoming.getFullType().equals(old.getFullType()) && incoming.getWorldItem()==null){
+                        parse.next=incoming;parse.stage=1;life.parseDepth++;candidate=true;
+                    }else if(!primary && parse.stage==1 && life.parseDepth==1 && incoming==parse.next
+                        && player.getPrimaryHandItem()==parse.next && old==parse.original){parse.stage=2;candidate=true;}
+                }
+                if(!candidate)parse.invalid=true;
+            }
+            return equipmentLifetimeBegin(life,primary?"primary":"secondary",candidate);
         }}catch(Throwable error){equipmentLifetimeError(error);return null;}
     }
     /** Loads directly write protected hand fields in both native character classes. */
     public static EquipmentMutation equipmentLifetimeLoad(zombie.characters.IsoGameCharacter actor,String reason) {
         if(!equipmentLifetimeEnabled() || !(actor instanceof IsoPlayer player))return null;
-        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,false);return life==null?null:equipmentLifetimeBegin(life,reason);}}
+        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,false);return life==null?null:equipmentLifetimeBegin(life,reason,false);}}
         catch(Throwable error){equipmentLifetimeError(error);return null;}
     }
     public static EquipmentMutation equipmentLifetimeOnlineID(IsoPlayer actor,short incoming) {
@@ -83,7 +128,7 @@
         try{synchronized(equipmentLifetimeLock){
             var scopes=new java.util.ArrayList<EquipmentMutation>();
             for(var life:equipmentLifetimeRecords)if(life.actor.get()!=null && (life.primary.get()==item || life.secondary.get()==item)){
-                var scope=equipmentLifetimeBegin(life,reason);if(scope!=null)scopes.add(scope);
+                var scope=equipmentLifetimeBegin(life,reason,false);if(scope!=null)scopes.add(scope);
             }
             return scopes;
         }}catch(Throwable error){equipmentLifetimeError(error);return null;}
@@ -92,7 +137,9 @@
         if(scope==null)return;
         try{synchronized(equipmentLifetimeLock){
             var life=scope.life();
-            if(failure!=null || life.depth!=scope.depth() || life.thread!=scope.thread() || Thread.currentThread().getId()!=scope.thread())life.poisoned=true;
+            if(failure!=null || life.depth!=scope.depth() || life.thread!=scope.thread() || Thread.currentThread().getId()!=scope.thread()){
+                life.poisoned=true;life.hardRevision=life.revision;if(scope.parse()!=null)scope.parse().invalid=true;
+            }
             if(life.depth>0)life.depth--;
             if(life.depth==0){life.thread=0;var actor=life.actor.get();if(actor!=null && !life.poisoned && !life.retired)equipmentLifetimeRemember(life,actor);}
             equipmentLifetimeTrace("mutation-exit",life,scope,scope.reason(),failure==null && !life.poisoned);
@@ -103,7 +150,7 @@
     }
     public static void equipmentLifetimeRetire(zombie.characters.IsoGameCharacter actor) {
         if(!equipmentLifetimeEnabled() || !(actor instanceof IsoPlayer player))return;
-        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,true);life.retired=true;equipmentLifetimeTrace("retire",life,null,"actor-remove",true);}}
+        try{synchronized(equipmentLifetimeLock){var life=equipmentLife(player,true);life.retired=true;life.hardRevision=life.revision;var parse=equipmentLifetimeParsing.get();if(parse!=null)parse.invalid=true;equipmentLifetimeTrace("retire",life,null,"actor-remove",true);}}
         catch(Throwable error){equipmentLifetimeError(error);}
     }
     /** Capture the exact connection before the engine removes its GUID mapping or queues cleanup. */
@@ -111,7 +158,7 @@
         if(!equipmentLifetimeEnabled())return;
         try{synchronized(equipmentLifetimeLock){
             var connection=engine.getActiveConnection(guid);if(connection==null)return;equipmentRetiredConnections.put(connection,Boolean.TRUE);
-            for(var life:equipmentLifetimeRecords)if(life.connection.get()==connection){life.retired=true;equipmentLifetimeTrace("retire",life,null,"connection-remove",true);}
+            for(var life:equipmentLifetimeRecords)if(life.connection.get()==connection){life.retired=true;life.hardRevision=life.revision;equipmentLifetimeTrace("retire",life,null,"connection-remove",true);}
         }}catch(Throwable error){equipmentLifetimeError(error);}
     }
     private static zombie.core.raknet.UdpConnection equipmentLifetimeConnection(IsoPlayer player) {
@@ -131,21 +178,88 @@
     /** Private core is separate solely to permit no-world native checks; Lua has only the validated API. */
     private static String equipmentLifetimeRead(IsoPlayer player,zombie.core.raknet.UdpConnection connection) {
         synchronized(equipmentLifetimeLock){
-            var life=equipmentLife(player,true);if(life.retired || life.poisoned || life.depth!=0)return null;
+            var life=equipmentLife(player,true);if(life.retired || life.poisoned || life.depth!=0 || life.parseDepth!=0 || equipmentLifetimeParsing.get()!=null)return null;
             var item=player.getPrimaryHandItem();var secondary=player.getSecondaryHandItem();
             if(life.baseline && (life.connection.get()!=connection || life.primary.get()!=item || life.secondary.get()!=secondary || item!=null && life.cart!=item.getID())){
                 life.poisoned=true;return null; // Unobserved mutation cannot silently become a trusted new baseline.
             }
             if(item==null || item!=secondary || !equipmentLifetimeCart(item) || item.getWorldItem()!=null)return null;
             if(!life.baseline){life.baseline=true;life.connection=new java.lang.ref.WeakReference<>(connection);equipmentLifetimeRemember(life,player);equipmentLifetimeTrace("baseline",life,null,"admitted-current",true);}
+            if(!life.issued.contains(life.revision)){
+                if(equipmentLifetimeIssuedCount>=8192)throw new IllegalStateException("Equipment issued-lifetime limit");
+                life.issued.add(life.revision);equipmentLifetimeIssuedCount++;
+            }
             return "1|"+nativeTimeProcess+"|"+nativeTimeIdentity(player,true)+"|"+nativeTimeIdentity(connection,false)+"|"+life.revision;
         }
+    }
+    /** Only the actual direct native parser calls qualify; Lua event reentrancy is a hard mutation. */
+    private static boolean equipmentLifetimeDirect(boolean primary) {
+        String method=primary?"setPrimaryHandItem":"setSecondaryHandItem";
+        return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk(frames->frames
+            .dropWhile(frame->frame.getDeclaringClass()!=zombie.characters.IsoGameCharacter.class || !frame.getMethodName().equals(method))
+            .skip(1).findFirst().map(frame->frame.getDeclaringClass()==zombie.network.packets.EquipPacket.class && frame.getMethodName().equals("parse")).orElse(false));
+    }
+    public static EquipmentParse equipmentLifetimeParseEnter(zombie.core.network.ByteBufferReader reader,zombie.network.IConnection supplied) {
+        if(!equipmentLifetimeEnabled())return null;
+        EquipmentParse scope=null;
+        try{synchronized(equipmentLifetimeLock){
+            var previous=equipmentLifetimeParsing.get();if(previous!=null)previous.invalid=true;
+            if(equipmentLifetimeParseSerial>=9007199254740991L)throw new IllegalStateException("Equipment parse serial exhausted");
+            var connection=supplied instanceof zombie.core.raknet.UdpConnection udp?udp:null;
+            var dispatch=leaseControlDispatch.get();var ingress=reader==null?null:leaseControlIngresses.get(reader);
+            boolean trusted=previous==null && connection!=null && dispatch!=null && dispatch.reader()==reader && dispatch.ingress()==ingress
+                && ingress!=null && ingress.transport().type()==zombie.network.PacketTypes.PacketType.Equip.getId()
+                && ingress.transport().connection().get()==connection && leaseControlCurrent(ingress.transport(),false);
+            scope=new EquipmentParse(reader,connection,ingress,dispatch,previous,++equipmentLifetimeParseSerial,trusted);
+            equipmentLifetimeParsing.set(scope);return scope;
+        }}catch(Throwable error){equipmentLifetimeError(error);return scope;}
+    }
+    public static void equipmentLifetimeParseExit(EquipmentParse scope,Throwable failure) {
+        if(scope==null)return;
+        try{synchronized(equipmentLifetimeLock){
+            if(equipmentLifetimeParsing.get()!=scope)scope.invalid=true;
+            var life=scope.life;var actor=scope.actor;
+            if(life!=null){
+                boolean certified=failure==null && scope.trusted && !scope.invalid && scope.stage==2 && scope.directCalls==2 && scope.genericCalls==0 && life.depth==0 && life.parseDepth==1
+                    && !life.poisoned && !life.retired && life.hardRevision==scope.beforeHardRevision && actor!=null && equipmentLifetimeConnection(actor)==scope.connection
+                    && actor.getPrimaryHandItem()==scope.next && actor.getSecondaryHandItem()==scope.next
+                    && scope.original!=null && scope.next!=null && scope.original!=scope.next
+                    && scope.original.getID()==scope.next.getID() && scope.original.getFullType().equals(scope.next.getFullType())
+                    && scope.original.getWorldItem()==null && scope.next.getWorldItem()==null && equipmentLifetimeCart(scope.next)
+                    && scope.ingress!=null && leaseControlDispatch.get()==scope.dispatch && leaseControlIngresses.get(scope.reader)==scope.ingress
+                    && leaseControlCurrent(scope.ingress.transport(),false);
+                if(!certified)life.hardRevision=life.revision;
+                if(life.parseDepth>0)life.parseDepth--;
+                if(failure!=null){life.poisoned=true;scope.invalid=true;}
+                equipmentLifetimeTrace("resnapshot",life,null,"remote-equip-resnapshot",certified);
+            }
+        }}catch(Throwable error){equipmentLifetimeError(error);}
+        finally{if(scope.previous==null)equipmentLifetimeParsing.remove();else equipmentLifetimeParsing.set(scope.previous);}
+    }
+    /** Repeatable local certificate; no authority, close fence, sequence or timestamp is changed. */
+    @LuaMethod(name="cartLeaseResnapshot",global=true)
+    public static boolean cartLeaseResnapshot(IsoPlayer player,String previousLifetime) {
+        if(!equipmentLifetimeEnabled() || previousLifetime==null || previousLifetime.length()>160)return false;
+        try{synchronized(equipmentLifetimeLock){
+            var connection=equipmentLifetimeConnection(player);var life=player==null?null:equipmentLife(player,false);
+            if(connection==null || life==null || !life.baseline || equipmentLifetimeRead(player,connection)==null)return false;
+            String prefix="1|"+nativeTimeProcess+"|"+nativeTimeIdentity(player,true)+"|"+nativeTimeIdentity(connection,false)+"|";
+            if(!previousLifetime.startsWith(prefix))return false;String field=previousLifetime.substring(prefix.length());
+            if(!field.matches("[1-9][0-9]{0,15}"))return false;
+            long revision=Long.parseLong(field);
+            return revision<=9007199254740991L && life.issued.contains(revision) && revision>=life.hardRevision && revision<life.revision;
+        }}catch(Throwable error){equipmentLifetimeError(error);return false;}
     }
     @LuaMethod(name="cartLeaseLifetime",global=true)
     public static String cartLeaseLifetime(IsoPlayer player) {
         if(!equipmentLifetimeEnabled())return null;
         try{synchronized(equipmentLifetimeLock){var connection=equipmentLifetimeConnection(player);return connection==null?null:equipmentLifetimeRead(player,connection);}}
         catch(Throwable error){equipmentLifetimeError(error);return null;}
+    }
+    @Patch(className="zombie.network.packets.EquipPacket",methodName="parse",warmUp=false)
+    public static class EquipmentLifetimeEquipParse {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferReader reader,@Patch.Argument(1) zombie.network.IConnection connection,@Patch.Local("equipmentParse") EquipmentParse scope){scope=Main.equipmentLifetimeParseEnter(reader,connection);}
+        @Patch.OnExit(onThrowable=Throwable.class,suppress=Throwable.class) public static void exit(@Patch.Local("equipmentParse") EquipmentParse scope,@Patch.Thrown Throwable failure){Main.equipmentLifetimeParseExit(scope,failure);}
     }
     @Patch(className="zombie.characters.IsoGameCharacter",methodName="setPrimaryHandItem",warmUp=false)
     public static class EquipmentLifetimePrimary {

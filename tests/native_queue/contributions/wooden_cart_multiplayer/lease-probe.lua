@@ -44,7 +44,12 @@ if isServer() then
  return M
 end
 local reader=assert(getFileReader('smoke-user.txt',false));local user=reader:readLine();reader:close()
-local receiver,round,pending,ownerID=nil,0,{},nil
+local receiver,round,pending,ownerID,previousLifetime=nil,0,{},nil,nil
+local function observe(native)
+ local b=held(native)
+ if b.mode=='motion' and b.lifetime and previousLifetime and b.lifetime~=previousLifetime and cartLeaseResnapshot(native,previousLifetime)==true then b.resnapshotOf=previousLifetime end
+ receiver:native(assert(cartLeaseCurrent()),native,b);previousLifetime=b.lifetime
+end
 local function owner()
  local players=getOnlinePlayers()
  for i=0,players:size()-1 do local p=players:get(i);if p:getUsername()=='client1' then return p end end
@@ -55,7 +60,7 @@ Events.OnServerCommand.Add(function(mod,command,args)
  local ok,err=pcall(function()
   local ingress=assert(cartLeaseIngress(),'Missing exact transport/dispatch ingress')
   local native=owner();assert(native:getOnlineID()==ownerID,'Native owner changed')
-  receiver:native(assert(cartLeaseCurrent()),native,held(native))
+  observe(native)
   if command=='Bound' then
    local request=assert(pending[args.nonce],'Unrequested bind reply')
    assert(request.stage=='bind' and receiver:reply(args,ingress),'Fresh exact bind refused')
@@ -79,7 +84,7 @@ function M.sample(native,elapsed)
  local connection=assert(cartLeaseCurrent(),'Owned local connection unavailable')
  if not receiver then ownerID=native:getOnlineID();receiver=P.receiver(ownerID,assert(cartLeaseSeed())..':'..user) end
  assert(native:getOnlineID()==ownerID,'Fixture actor ID replaced')
- receiver:native(connection,native,held(native))
+ observe(native)
  local request=assert(receiver:challenge(),'Bounded fresh challenge unavailable')
  round=round+1;pending[request.nonce]={stage='bind',round=round}
  log({actor=user,event='request',nonce=request.nonce,owner=ownerID,round=round,elapsed=elapsed})

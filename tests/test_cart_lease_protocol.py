@@ -15,7 +15,7 @@ local function check(value, message) assert(value, message or 'scenario assertio
 local function copy(row)
     local out={};for k,v in pairs(row) do out[k]=v end;return out
 end
-local protected={'session','grant','lease','seq','open','body','received','visible'}
+local protected={'session','grant','lease','seq','open','body','received','visible','terminal','rebind','acceptedAt'}
 local function unchanged(before, after)
     for _,field in ipairs(protected) do
         assert(before[field]==after[field], 'rejection changed '..field)
@@ -291,6 +291,100 @@ check(f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding))
 check(not f.receiver:native(f.observerConnection,f.observerActor,f.localBinding))
 unchanged(before,f.receiver:snapshot());unchanged(serverBefore,f.server:snapshot(f.id))
 f:deliver(f:envelope(4),200)
+''')
+
+    def test_certified_remote_resnapshot_readmits_same_authority_without_rewinding(self):
+        self.scenario(r'''
+local f=setup();f.localBinding.lifetime='observer:1'
+check(f.receiver:native(f.observerConnection,f.observerActor,f.localBinding))
+f:bind();f:deliver(f:envelope(3,'UPDATE','prior-body'),100)
+local pending=f.receiver:challenge();local oldReply=f.server:reply(pending,f.observerConnection)
+local retired=f:envelope(3,'UPDATE','cached-body')
+f.localBinding=binding('motion',{});f.localBinding.lifetime='observer:4';f.localBinding.resnapshotOf='observer:1'
+check(f.receiver:native(f.observerConnection,f.observerActor,f.localBinding))
+local paused=f.receiver:snapshot()
+check(not paused.open and paused.rebind and paused.seq==3 and paused.acceptedAt==100 and not paused.visible and not paused.body and not paused.received)
+check(not f.receiver:reply(oldReply,f.observerConnection),'prior native revision challenge adopted')
+local fresh=f:bind();check(fresh.lease==oldReply.lease and fresh.grant==oldReply.grant,'fixture authority unexpectedly changed')
+local admitted=f.receiver:snapshot()
+check(admitted.open and not admitted.rebind and not admitted.terminal and admitted.seq==3 and admitted.acceptedAt==100)
+check(not admitted.body and not admitted.received and not admitted.visible,'readmission revived prior pose')
+local before=f.receiver:snapshot();check(not f.receiver:receive(retired,200));unchanged(before,f.receiver:snapshot())
+check(not f.receiver:receive(f:envelope(4),99),'resnapshot erased accepted clock floor');unchanged(before,f.receiver:snapshot())
+f:deliver(f:envelope(4,'UPDATE','fresh-body'),201)
+''')
+
+    def test_uncertified_or_wrong_scope_resnapshot_never_reopens_same_lease(self):
+        self.scenario(r'''
+for _,case in ipairs({'missing','wrong-lifetime','actor','connection','cart','mode','action-to-action'}) do
+ local f=setup();f.localBinding.lifetime='observer:1'
+ if case=='action-to-action' then f.sourceBinding=binding('action',{},{});f.localBinding=binding('action',{},{});f.localBinding.lifetime='observer:1';f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding) end
+ f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+ f:bind();f:deliver(f:envelope(2),100)
+ local b=binding('motion',{});b.lifetime='observer:4';b.resnapshotOf='observer:1'
+ if case=='missing' then b.resnapshotOf=nil elseif case=='wrong-lifetime' then b.resnapshotOf='unrelated'
+ elseif case=='actor' then f.observerActor={} elseif case=='connection' then f.observerConnection={}
+ elseif case=='cart' then b.cart=43 elseif case=='mode' then b.mode='action';b.action={}
+ elseif case=='action-to-action' then b.mode='action';b.action={} end
+ f.receiver:native(f.observerConnection,f.observerActor,b)
+ local request=f.receiver:challenge();local reply=f.server:reply(request,f.observerConnection)
+ -- Connection replacement resets its authority namespace, but still needs a fresh control reply.
+ if case~='connection' then check(not f.receiver:reply(reply,f.observerConnection),'untrusted snapshot reopened same authority: '..case) end
+end
+''')
+
+    def test_terminal_authority_survives_certificates_and_fresh_open_replies(self):
+        self.scenario(r'''
+for _,terminal in ipairs({'END','closed-reply'}) do
+ local f=setup();f.localBinding.lifetime='observer:1';f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+ f:bind();f:deliver(f:envelope(2),100)
+ if terminal=='END' then f:deliver(f:envelope(3,'END'),101)
+ else
+  local request=f.receiver:challenge();f.server:observe(f.id,f.sourceConnection,f.sourceActor,nil)
+  check(f.receiver:reply(f.server:reply(request,f.observerConnection),f.observerConnection))
+ end
+ f.localBinding=binding('motion',{});f.localBinding.lifetime='observer:4';f.localBinding.resnapshotOf='observer:1'
+ f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+ local request=f.receiver:challenge();local misleading=copy(f.reply);misleading.nonce=request.nonce;misleading.open=true
+ local before=f.receiver:snapshot();check(before.terminal and not before.rebind)
+ check(not f.receiver:reply(misleading,f.observerConnection),'terminal same lease reopened');unchanged(before,f.receiver:snapshot())
+ f.sourceBinding=binding('motion',{});f.server:observe(f.id,f.sourceConnection,f.sourceActor,f.sourceBinding)
+ f:bind();f:deliver(f:envelope(1,'OPEN','new-authority'),200)
+ check(not f.receiver:snapshot().terminal)
+end
+''')
+
+    def test_repeated_certificates_revoke_raced_pending_and_preserve_floors(self):
+        self.scenario(r'''
+local f=setup();f.localBinding.lifetime='observer:1';f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+f:bind();f:deliver(f:envelope(5),100)
+for step=2,3 do
+ local old=f.localBinding.lifetime
+ f.localBinding=binding('motion',{});f.localBinding.lifetime='observer:'..step;f.localBinding.resnapshotOf=old
+ f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+ check(f.receiver:snapshot().rebind,'certificate chain lost pending readmission')
+ if step==2 then
+  local request=f.receiver:challenge();f.raced=f.server:reply(request,f.observerConnection)
+ end
+end
+check(not f.receiver:reply(f.raced,f.observerConnection),'superseded certified revision adopted stale reply')
+f:bind();check(f.receiver:snapshot().seq==5 and f.receiver:snapshot().acceptedAt==100)
+f:deliver(f:envelope(6),200)
+''')
+
+    def test_release_or_generic_mutation_cannot_be_healed_by_later_certificate(self):
+        self.scenario(r'''
+for _,release in ipairs({false,true}) do
+ local f=setup();f.localBinding.lifetime='observer:1';f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+ f:bind();f:deliver(f:envelope(2),100)
+ if release then f.receiver:native(f.observerConnection,f.observerActor,nil) end
+ f.localBinding=binding('motion',{});f.localBinding.lifetime='observer:2'
+ f.receiver:native(f.observerConnection,f.observerActor,f.localBinding)
+ local b=binding('motion',{});b.lifetime='observer:4';b.resnapshotOf='observer:2'
+ f.receiver:native(f.observerConnection,f.observerActor,b)
+ check(not f.receiver:snapshot().rebind,'later soft change healed hard boundary')
+ local request=f.receiver:challenge();check(not f.receiver:reply(f.server:reply(request,f.observerConnection),f.observerConnection))
+end
 ''')
 
     def test_actor_id_reuse_and_connection_replacement_need_new_authority(self):

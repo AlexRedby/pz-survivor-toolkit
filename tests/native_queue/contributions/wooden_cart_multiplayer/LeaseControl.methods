@@ -30,6 +30,7 @@
         return type==zombie.network.PacketTypes.PacketType.ClientCommand.getId();
     }
     private static boolean leaseControlObservedPacket(int type) {
+        if("true".equals(System.getenv("PZ_CART_LEASE_LIFETIME")) && type==zombie.network.PacketTypes.PacketType.Equip.getId())return true;
         return leaseControlCommand(type) || ("true".equals(System.getenv("PZ_CART_ACTION_ADMISSION"))
             && (type==zombie.network.PacketTypes.PacketType.NetTimedAction.getId()
                 || type==zombie.network.PacketTypes.PacketType.GeneralAction.getId()))
@@ -112,7 +113,8 @@
         if(!LEASE_CONTROL)return null;
         var previous=leaseControlDispatch.get();LeaseCommandIngress ingress=null;
         try {
-            if(!leaseControlFailed && data!=null && data.type==zombie.network.PacketTypes.PacketType.ClientCommand) {
+            if(!leaseControlFailed && data!=null && (data.type==zombie.network.PacketTypes.PacketType.ClientCommand
+                    || "true".equals(System.getenv("PZ_CART_LEASE_LIFETIME")) && data.type==zombie.network.PacketTypes.PacketType.Equip)) {
                 var candidate=leaseControlIngresses.get(data.buffer);
                 if(candidate!=null && data.connection==candidate.transport().guid() && leaseControlCurrent(candidate.transport(),false))ingress=candidate;
             }

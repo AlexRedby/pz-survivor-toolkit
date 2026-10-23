@@ -87,6 +87,7 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ### Equipment lifetime boundary work
 
+- [ ] Distinguish a certified complete remote Equip resnapshot from an authoritative release/END. Fresh same-lease readmission must require exact original Equip ingress and parse provenance, preserve sequence/time floors, and keep generic mutations/terminal leases closed. Extend the bank with explicit bounded resnapshot/resync evidence before repeating Host.
 - [ ] Identify the pinned native hand/actor/connection mutation boundaries and register a bounded, fail-closed lifetime revision before the fixture's actors exist. Unknown or bypassed provenance must not authorize a held lease.
 - [ ] Feed the native lifetime revision into the test-only server/receiver binding; retain ordering fences across release/reacquire and same-ID object replacement even when polling misses the intermediate empty state. Gate: actual native setter/identity regressions plus rejected stale pending replies and payloads.
 - [ ] Extend the opt-in Host evidence with witnessed equipment edges and fresh bind/rejection chains. Gate: sealed sources, exact actor/item/cargo identity, clean logs and owned cleanup. Actor removal/respawn and reconnect remain open until their actual native scenarios are verified.
