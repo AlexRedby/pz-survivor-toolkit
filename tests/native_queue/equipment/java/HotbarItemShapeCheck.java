@@ -142,6 +142,37 @@ public final class HotbarItemShapeCheck {
                 && !device.hasMedia() && !device.isPlayingMedia() && !radio.canBeActivated()
                 && radio.getAttachmentType().equals("Walkie"), "native portable radio device/attachment shape changed");
         System.out.println("RADIO class=Radio script=base:radio device=DeviceData parent=true portable=true battery=true media=false attachment=Walkie");
+        var drainables = ScriptParser.parse(ScriptParser.stripComments(Files.readString(
+                Path.of("media/scripts/generated/items/drainable.txt")))).getBlock("module", "Base");
+        var lightScript = parse(drainables, module, "FlashLight_AngleHead", false, ItemType.DRAINABLE);
+        var light = lightScript.InstanceItem(null);
+        require(light.getClass() == zombie.inventory.types.DrainableComboItem.class && light.getScriptItem() == lightScript
+                && light.getFullType().equals("Base.FlashLight_AngleHead") && light.hasTag(zombie.scripting.objects.ItemTag.FLASHLIGHT)
+                && light.getAttachmentType().equals("Webbing"), "native flashlight factory/type/tag/attachment changed");
+        var torch = (zombie.inventory.types.DrainableComboItem) light;
+        require(lightScript.getLuaCreate() == null && lightScript.getItemConfig() == null && lightScript.getItemConfigKey() == null
+                && lightScript.getReplaceOnUse() == null && lightScript.getOnBreak() == null
+                && !lightScript.hasComponents() && !light.hasComponents() && light.getFluidContainer() == null
+                && !light.isWet() && light.getItemWhenDry() == null && !torch.isCookable() && torch.getOnCooked() == null
+                && torch.getOnEat() == null && (torch.getReplaceOnCooked() == null || torch.getReplaceOnCooked().isEmpty()),
+                "native flashlight gained callback/component/cooking effects");
+        require(torch.canBeActivated() && torch.isKeepOnDeplete() && torch.isUseWhileEquiped() && !torch.isUseWhileUnequiped()
+                && torch.getReplaceOnDeplete() == null && torch.getReplaceOnDepleteFullType() == null
+                && torch.getUseDelta() == 0.006f && torch.getMaxUses() == 166 && torch.getLightStrength() == 1.5f
+                && torch.getLightDistance() == 15 && torch.isTorchCone(), "native flashlight lifecycle shape changed");
+        torch.setCurrentUses(1);torch.setActivated(true);
+        require(torch.isEmittingLight(), "charged native flashlight must emit");
+        torch.Use();
+        require(torch.getCurrentUses() == 0 && torch.isActivated() && !torch.isEmittingLight() && torch.isKeepOnDeplete() && torch.getLightStrength() == 1.5f && torch.getLightDistance() == 15,
+                "native kept flashlight depletion changed activation/emission/identity behavior");
+        System.out.println("FLASHLIGHT class=DrainableComboItem script=base:drainable tag=flashlight attachment=Webbing maxUses=166 nativeUse=0 activated=true emitting=false kept=true");
+        var clothes = ScriptParser.parse(ScriptParser.stripComments(Files.readString(
+                Path.of("media/scripts/generated/items/clothing.txt")))).getBlock("module", "Base");
+        var provider = parse(clothes, module, "SCBA_notank", false, ItemType.CLOTHING);
+        require(provider.getBodyLocation().toString().equals("base:scbanotank") && provider.attachmentsProvided != null
+                && provider.attachmentsProvided.equals(List.of("SmallBeltLeft", "SmallBeltRight", "WebbingLeft")),
+                "native flashlight provider location/slots changed");
+        System.out.println("FLASHLIGHT_PROVIDER script=Base.SCBA_notank location=base:scbanotank slots=SmallBeltLeft,SmallBeltRight,WebbingLeft");
         System.out.println("HOTBAR_ITEM_SHAPE_CHECK_PASS");
     }
 }

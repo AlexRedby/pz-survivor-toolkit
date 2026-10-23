@@ -542,9 +542,34 @@ local function radioHotbarItem(item)
     return data:getParent() == item and data:getIsPortable() == true and data:getIsBatteryPowered() == true
         and data:getIsTelevision() == false and data:hasMedia() == false and data:isPlayingMedia() == false
 end
+local function flashlightHotbarItem(item)
+    local script = instanceof(item, "DrainableComboItem") and hotbarScript(item, "DrainableComboItem", "base:drainable")
+    if not script or not ItemTag or not ItemTag.FLASHLIGHT then return false end
+    for _, name in ipairs({"hasTag", "isKeepOnDeplete", "isUseWhileEquiped", "isUseWhileUnequiped", "getUseDelta",
+        "getReplaceOnDeplete", "getReplaceOnDepleteFullType", "getReplaceOnCooked", "getOnCooked", "getOnEat",
+        "isCookable", "getLightStrength", "getLightDistance", "isTorchCone"}) do
+        if type(item[name]) ~= "function" then return false end
+    end
+    for _, name in ipairs({"getReplaceOnUse", "getOnBreak"}) do
+        if type(script[name]) ~= "function" or script[name](script) then return false end
+    end
+    local cooked = item:getReplaceOnCooked()
+    if cooked and (not instanceof(cooked, "List") or not cooked:isEmpty()) then return false end
+    local strength, distance, delta = item:getLightStrength(), item:getLightDistance(), item:getUseDelta()
+    -- Native depletion keeps this exact item but stops light emission. Unequip
+    -- start owns deactivation/sync; never pin charge, emission or activation in
+    -- the cleanup proof, refill the battery or manufacture replacement effects.
+    return item:hasTag(ItemTag.FLASHLIGHT) == true and item:canBeActivated() == true and item:isTorchCone() == true
+        and item:isKeepOnDeplete() == true and item:isUseWhileEquiped() == true and item:isUseWhileUnequiped() == false
+        and not item:getReplaceOnDeplete() and not item:getReplaceOnDepleteFullType()
+        and not item:getOnCooked() and not item:getOnEat() and item:isCookable() == false
+        and nonnegativeFinite(strength) and strength > 0 and nonnegativeFinite(distance) and distance > 0
+        and nonnegativeFinite(delta) and delta > 0 and delta <= 1
+end
 local function hotbarItem(item, character)
-    return (instanceof(item, "HandWeapon") or normalHotbarItem(item) or radioHotbarItem(item)) and item:getContainer() == character:getInventory()
-        and not item:canBeActivated() and not item:isBroken() and not isForceDropHeavyItem(item)
+    local flashlight = flashlightHotbarItem(item)
+    return (flashlight or instanceof(item, "HandWeapon") or normalHotbarItem(item) or radioHotbarItem(item)) and item:getContainer() == character:getInventory()
+        and (flashlight or not item:canBeActivated()) and not item:isBroken() and not isForceDropHeavyItem(item)
         and not character:getWornItems():contains(item)
 end
 local function hotbarState(action, saved)

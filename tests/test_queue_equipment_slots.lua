@@ -1008,8 +1008,8 @@ end
 
 -- Real native fromHotbar constructors and unequip effects; P4's generated
 -- queue/authority are still observed only by the separate SP/Host scenario.
-for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-holster-right','tidy-hotbar-normal-left','tidy-hotbar-normal-right','tidy-hotbar-radio-off','tidy-hotbar-radio-on'})do
- local ordinary=caseID:find('normal',1,true)~=nil;local radio=caseID:find('radio',1,true)~=nil;local passive=ordinary or radio;local prior=caseID=='tidy-hotbar-normal-right'
+for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-holster-right','tidy-hotbar-normal-left','tidy-hotbar-normal-right','tidy-hotbar-radio-off','tidy-hotbar-radio-on','tidy-hotbar-flashlight-charged','tidy-hotbar-flashlight-empty','tidy-hotbar-flashlight-deplete'})do
+ local ordinary=caseID:find('normal',1,true)~=nil;local radio=caseID:find('radio',1,true)~=nil;local flashlight=caseID:match('^tidy%-hotbar%-flashlight%-(.+)$');local passive=ordinary or radio or flashlight~=nil;local prior=caseID=='tidy-hotbar-normal-right'
  getClassSimpleName=function(item)return item.javaClass end
  local provider=caseID~='tidy-hotbar' native('shared/TimedActions/ISEquipWeaponAction.lua');native('shared/TimedActions/ISRackFirearm.lua');native('shared/TimedActions/ISCutHair.lua')
  local baseSource=read('shared/TimedActions/ISBaseTimedAction.lua')
@@ -1018,7 +1018,7 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  excerpt(baseSource,'function ISBaseTimedAction:adjustMaxTime(maxTime)','function ISBaseTimedAction:setActionAnim(')
  MoodleType={UNHAPPY='unhappy',DRUNK='drunk'}
  local createdTime
- LuaTimedActionNew={new=function(action,character)createdTime=action.maxTime;return {}end}
+ LuaTimedActionNew={new=function(action,character)createdTime=action.maxTime;return {isStarted=function()return false end}end}
  excerpt(context,'ISInventoryPaneContextMenu.onRackGun = function','ISInventoryPaneContextMenu.onLoadBulletsIntoFirearm = function')
  excerpt(context,'ISInventoryPaneContextMenu.equipWeapon = function','ISInventoryPaneContextMenu.onInformationItems = function')
  excerpt(read('client/Hotbar/ISHotbar.lua'),'function ISHotbar:isItemAttached(item)','function ISHotbar:attachItem (')
@@ -1030,6 +1030,10 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  isClient=function()return false end;isServer=function()return false end
  getText=function(text)return text end
  ISBaseTimedAction.setOverrideHandModels=function()end
+ ISBaseTimedAction.setActionAnim=function()end
+ ItemTag.FLASHLIGHT='Flashlight';ItemType={RADIO='base:radio'}
+ local activatedSync={}
+ syncItemActivated=function(_,item)activatedSync[#activatedSync+1]={activated=item:isActivated(),uses=item:getCurrentUses()}end
  local color={getRedFloat=function()return 0.2 end,getGreenFloat=function()return 0.3 end,getBlueFloat=function()return 0.4 end}
  local visual={hair='CrewCut',getHairModel=function(self)return self.hair end,setHairModel=function(self,value)self.hair=value end,
   getNonAttachedHair=function(self)return self.nonAttached end,setNonAttachedHair=function(self,value)self.nonAttached=value end,getHairColor=function()return color end}
@@ -1039,6 +1043,8 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  function player:isFemale()return false end
  function player:getHumanVisual()return visual end
  function player:resetModel()end
+ function player:setVariable()end;function player:reportEvent()end
+ function player:isHandItem(item)return self.primary==item or self.secondary==item end
  function player:resetHairGrowingTime()self.growthReset=(self.growthReset or 0)+1 end
  function player:getClothingItem_Back()return nil end
  function player:isEquippedClothing()return false end
@@ -1080,19 +1086,21 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  function state.root:getType()return 'inventory'end
  function state.root:getItemById(id)for item in pairs(self.items)do if item:getID()==id then return item end end end
  function state.root:setDrawDirty()end
- local hotbar={chr=player,availableSlot={[1]=slot('Back'),[7]=slot('HolsterLeft'),[9]=slot('HolsterRight'),[11]=slot('SmallBeltLeft'),[13]=slot('SmallBeltRight')},replacements={Rifle='Rifle On Back with Bag'}}
+ local hotbar={chr=player,availableSlot={[1]=slot('Back'),[7]=slot('HolsterLeft'),[9]=slot('HolsterRight'),[11]=slot('SmallBeltLeft'),[13]=slot('SmallBeltRight'),[15]=slot('WebbingLeft')},replacements={Rifle='Rifle On Back with Bag'}}
  setmetatable(hotbar,{__index=ISHotbar})
  function hotbar:refresh()end
+ function hotbar:setAttachAnim()end
  function hotbar:reloadIcons()
   self.attachedItems={};for item in pairs(state.root.items)do if item:getAttachedSlot()>-1 then self.attachedItems[item:getAttachedSlot()]=item end end
  end
  getPlayerHotbar=function()return hotbar end;getSpecificPlayer=function()return player end
  Hotbar.prepare(state,function(name,kind)
-  local item=makeItem(kind,state.root);state[name]=item;item.javaClass=(ordinary or kind=='Base.ScissorsBluntMedical')and 'ComboItem'or radio and kind=='Base.WalkieTalkie2'and 'Radio'or 'HandWeapon'
-  function item:getAttachmentType()return ordinary and 'Screwdriver'or radio and 'Walkie'or provider and 'Holster'or 'Rifle'end
+  local item=makeItem(kind,state.root);state[name]=item;item.javaClass=flashlight and kind=='Base.FlashLight_AngleHead'and 'DrainableComboItem'or (ordinary or kind=='Base.ScissorsBluntMedical')and 'ComboItem'or radio and kind=='Base.WalkieTalkie2'and 'Radio'or 'HandWeapon'
+  function item:getAttachmentType()return flashlight and 'Webbing'or ordinary and 'Screwdriver'or radio and 'Walkie'or provider and 'Holster'or 'Rifle'end
   if kind=='Base.HolsterDouble'then function item:getBodyLocation()return 'base:beltextra'end end
   if kind=='Base.Belt2'then function item:getBodyLocation()return 'base:belt'end end
-  function item:getScriptItem()return {getItemType=function()return item.javaClass=='Radio'and 'base:radio'or 'base:normal'end}end
+  if kind=='Base.SCBA_notank'then function item:getBodyLocation()return 'base:scbanotank'end end
+  function item:getScriptItem()return {getItemType=function()return item.javaClass=='Radio'and 'base:radio'or item.javaClass=='DrainableComboItem'and 'base:drainable'or 'base:normal'end,isItemType=function(_,kind)return item.javaClass=='Radio'and kind=='base:radio'end}end
   function item:IsWeapon()return not passive end
   function item:getCondition()return self.condition or 10 end;function item:getSharpness()return self.sharpness or 1 end
   function item:getCurrentUsesFloat()return 1 end
@@ -1102,6 +1110,21 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
   function item:getName()return 'Shotgun'end;function item:getUnequipSound()end
   function item:getWorldItem()end
   function item:IsClothing()return false end
+  if flashlight and kind=='Base.FlashLight_AngleHead'then
+   function item:hasTag(tag)return tag==ItemTag.FLASHLIGHT end
+   function item:setJobType()end
+   function item:canBeActivated()return true end
+   function item:setActivated(value)self.activated=value end;function item:isActivated()return self.activated==true end
+   function item:playActivateSound()self.onSound=(self.onSound or 0)+1 end
+   function item:playDeactivateSound()self.offSound=(self.offSound or 0)+1 end
+   function item:getCurrentUses()return self.uses or 0 end;function item:setCurrentUses(value)self.uses=value end
+   function item:getCurrentUsesFloat()return self:getCurrentUses()*0.006000000052154064 end
+   function item:getUseDelta()return 0.006000000052154064 end;function item:getMaxUses()return 166 end
+   function item:isKeepOnDeplete()return true end;function item:isUseWhileEquiped()return true end;function item:isUseWhileUnequiped()return false end
+   function item:getReplaceOnDeplete()end;function item:isCookable()return false end;function item:getOnCooked()end;function item:getOnEat()end
+   function item:getLightStrength()return 1.5 end;function item:getLightDistance()return 15 end;function item:isTorchCone()return true end
+   function item:isEmittingLight()return self:isActivated()and self:getCurrentUses()>0 end
+  end
   if radio and kind=='Base.WalkieTalkie2'then
    local data={javaClass='DeviceData',parent=item,power=1,on=false,channel=0,volume=0.5,mic=false}
    for name,key in pairs({getParent='parent',getPower='power',getIsTurnedOn='on',getChannel='channel',getDeviceVolume='volume',getMicIsMuted='mic'})do
@@ -1132,8 +1155,17 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  player:removeAttachedItem(state.pickup)
  if passive then
   assert(state.hotbarEquip.primary==prior and state.hotbarEquip:complete(),'real native nonweapon hand selection failed')
+  if flashlight then
+   Hotbar.observe(state,{current=state.rackAction,queue={}},nil,true)
+   assert(state.pickup:isActivated()==(flashlight~='empty'),'native equip activation differs')
+   if flashlight=='deplete'then
+    -- Feed the observed native Use result; standalone JVM preflight exercises
+    -- actual DrainableComboItem.Use and proves the kept activation/emission edge.
+    state.pickup.uses=0;Hotbar.observe(state,{current=state.rackAction,queue={}},nil,true)
+   end
+  end
   assert(state.rackAction:complete()and player.growthReset==1,'real plain CutHair complete failed')
-  assert(state.rackAction.item==(state.hotbarTool or state.pickup)and state.rackAction.maxTime==100)
+  assert(state.rackAction.item==(state.hotbarTool or state.pickup)and state.rackAction.maxTime==(flashlight=='deplete'and 3600 or 100))
  else player.primary,player.secondary=Hotbar.expectedHands(state,false)end
  Hotbar.observe(state,{current=nil,queue={}},nil,true)
  assert(not Hotbar.verify(state,false,true).attached)
@@ -1193,6 +1225,10 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  assert(not state.hotbarAttachConnect,'polling must not claim pre-perform attachment evidence')
  assert(player:getAttachedItems():getItem(state.hotbarLocation)==state.pickup)
  state.hotbarAttachConnect=true -- lifecycle.begin observes this before native perform in the scenario
+ if flashlight then
+  cleanup.action={isStarted=function()return true end};cleanup:start();Hotbar.observe(state,queue,toolkit,true)
+  assert(not state.pickup:isActivated()and (flashlight=='empty'and #activatedSync==0 or flashlight~='empty'and #activatedSync==1 and activatedSync[1].activated==false),'native unequip start must own the off packet')
+ end
  cleanup:perform();assert(cleanup:complete());local baselinePrimary,baselineSecondary=Hotbar.expectedHands(state,true);assert(player.primary==baselinePrimary and player.secondary==baselineSecondary)
  if radio then
   -- Exercise vanilla's actual inventory-radio window update: native hand
@@ -1243,7 +1279,7 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  if provider then
   local location,item=Hotbar.providerLocation(state),Hotbar.provider(state)
   player.worn[location]=nil;quietReady(false);player.worn[location]=item
-  assert(state.hotbarIndex==(passive and ((prior or caseID=='tidy-hotbar-radio-on')and 13 or 11)or caseID:find('left',1,true)and 7 or 9),'fixture must use the actual dynamic native slot index')
+  assert(state.hotbarIndex==(flashlight and 15 or passive and ((prior or caseID=='tidy-hotbar-radio-on')and 13 or 11)or caseID:find('left',1,true)and 7 or 9),'fixture must use the actual dynamic native slot index')
   local effect=Hotbar.verify(state,true)
   assert(effect.providerItem==item:getID()and effect.providerWorn and effect.secondary==(prior and state.screwdriver:getID()or false))
  end
@@ -1298,6 +1334,22 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
   Hotbar.diagnoseWaiting(state,queue,toolkit,true,22000,gates)
   assert=savedAssert;print=savedPrint
   assert(assertCalls==0 and #output==1 and output[1]:find('finalGate=transactions',1,true)and output[1]:find('settled=true',1,true))
+ end
+ if flashlight then
+  local effect=Hotbar.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})
+  assert(effect.providerType=='Base.SCBA_notank'and effect.providerLocation=='base:scbanotank'and effect.flashlight.keepOnDeplete)
+  assert(effect.flashlightLifecycle.depleted==(flashlight=='deplete')and not effect.flashlight.activated and not effect.flashlight.emitting)
+  assert(effect.acknowledgements[2].id==state.hotbarTool:getID()and effect.acknowledgements[2].id~=state.pickup:getID())
+  state.pickup.activated=true;quietReady(false);state.pickup.activated=false;quietReady(true)
+  local uses=state.pickup.uses;state.pickup.uses=-1;quietReady(false);state.pickup.uses=uses
+  local keep=state.pickup.isKeepOnDeplete;state.pickup.isKeepOnDeplete=function()return false end;quietReady(false);state.pickup.isKeepOnDeplete=keep
+  state.hotbarTool.condition=9;quietReady(false);state.hotbarTool.condition=nil;quietReady(true)
+  local oldPrint,lines=print,{}
+  print=function(line)lines[#lines+1]=line end
+  state.pickup.activated=true
+  assert(not pcall(Hotbar.verify,state,true));assert(not pcall(Hotbar.verify,state,true))
+  state.pickup.activated=false;print=oldPrint
+  assert(#lines==1 and lines[1]:find('FLASHLIGHT_STATE',1,true)and lines[1]:find('activation-emission-phase',1,true),'flashlight failure must snapshot once before assertion')
  end
  if ordinary then
   local effect=Hotbar.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})

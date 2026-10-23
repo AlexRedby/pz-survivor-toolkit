@@ -1707,6 +1707,57 @@
             "native",
             "toolkit"
           ]
+        },
+        {
+          "id": "tidy-hotbar-flashlight-charged",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "tidy-hotbar-flashlight-empty",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "tidy-hotbar-flashlight-deplete",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
         }
       ]
     }

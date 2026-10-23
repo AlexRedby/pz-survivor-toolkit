@@ -9,7 +9,8 @@ local function read(path)
 end
 local function list(values)
     return {class = 'List', size = function() return #values end, get = function(_, i) return values[i + 1] end,
-        contains=function(_, value) for _, candidate in ipairs(values) do if candidate==value then return true end end return false end}
+        contains=function(_, value) for _, candidate in ipairs(values) do if candidate==value then return true end end return false end,
+        isEmpty=function()return #values==0 end}
 end
 local function derive(self, name)
     local class = {Type = name, derive = derive}; class.__index = class
@@ -169,7 +170,7 @@ local unequipSource=read(NativeActionRoot..'/shared/TimedActions/ISUnequipAction
 assert(loadstring(unequipSource,'@media/lua/shared/TimedActions/ISUnequipAction.lua'))()
 ISWearClothing.isStopOnWalk=function()return false end
 getPlayerHotbar=function()return nil end
-ItemTag={WEARABLE='wearable',REPLACE_PRIMARY='replace-primary'}
+ItemTag={WEARABLE='wearable',REPLACE_PRIMARY='replace-primary',FLASHLIGHT='flashlight'}
 ItemBodyLocation=setmetatable({},{__index=function(owner,key)rawset(owner,key,key);return key end})
 local wearSource=read(NativeActionRoot..'/shared/TimedActions/ISWearClothing.lua')
 assert(loadstring(wearSource,'@media/lua/shared/TimedActions/ISWearClothing.lua'))()
@@ -2168,9 +2169,10 @@ do
             assert(expected.name=='Holster'and weapon.attachedModel=='Holster '..(index==2 and 'Left'or 'Right'))
         end
         local radio=type(variant)=='string'and variant:match('^RadioBelt')~=nil
-        if variant=='SmallBeltLeft'or variant=='SmallBeltRight'or radio then
-            bar.availableSlot={nativeSlot('SmallBeltLeft'),nativeSlot('SmallBeltRight')}
-            local index=(variant=='SmallBeltLeft'or radio and variant:find('Left',1,true))and 1 or 2
+        local flashlight=type(variant)=='string'and variant:match('^Flashlight')~=nil
+        if variant=='SmallBeltLeft'or variant=='SmallBeltRight'or radio or flashlight then
+            bar.availableSlot=flashlight and {nativeSlot('WebbingLeft'),nativeSlot('WebbingRight')}or {nativeSlot('SmallBeltLeft'),nativeSlot('SmallBeltRight')}
+            local index=(variant=='SmallBeltLeft'or radio and variant:find('Left',1,true)or flashlight)and 1 or 2
             local expected=bar.availableSlot[index].def
             weapon.class='ComboItem';weapon.attachment='Screwdriver'
             weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=index,bar.availableSlot[index].slotType,expected.attachments.Screwdriver
@@ -2211,6 +2213,30 @@ do
                 data.hasMedia=function(self)return self.media end
                 data.isPlayingMedia=function(self)return self.playing end
             end
+            if flashlight then
+                weapon.class='DrainableComboItem';weapon.attachment='Webbing';weapon.attachedModel=expected.attachments.Webbing
+                weapon.script.getItemType=function()return 'base:drainable'end
+                weapon.script.getReplaceOnUse=function()end;weapon.script.getOnBreak=function()end
+                weapon.activatable=true;weapon.activated=variant~='FlashlightEmpty'
+                weapon.uses=variant=='FlashlightCharged'and 80 or 0
+                weapon.keep=true;weapon.useWhileEquipped=true;weapon.useWhileUnequipped=false
+                weapon.strength,weapon.distance,weapon.delta=1.5,15,0.006
+                weapon.hasTag=function(self,tag)return tag==ItemTag.FLASHLIGHT and not self.wrongTag end
+                weapon.isKeepOnDeplete=function(self)return self.keep end
+                weapon.isUseWhileEquiped=function(self)return self.useWhileEquipped end
+                weapon.isUseWhileUnequiped=function(self)return self.useWhileUnequipped end
+                weapon.getUseDelta=function(self)return self.delta end
+                weapon.getReplaceOnDeplete=function(self)return self.replaceDeplete end
+                weapon.getReplaceOnDepleteFullType=function(self)return self.replaceFullType end
+                weapon.getReplaceOnCooked=function(self)return self.replaceCooked end
+                weapon.getOnCooked=function(self)return self.onCooked end
+                weapon.getOnEat=function(self)return self.onEat end
+                weapon.isCookable=function(self)return self.cookable or false end
+                weapon.getLightStrength=function(self)return self.strength end
+                weapon.getLightDistance=function(self)return self.distance end
+                weapon.isTorchCone=function(self)return not self.noCone end
+                weapon.playDeactivateSound=function(self)self.deactivateSounds=(self.deactivateSounds or 0)+1 end
+            end
             bar.attachedItems={[index]=weapon}
         end
         ISPlayerData={{playerHotbar=bar}}
@@ -2235,6 +2261,11 @@ do
         return weapon,owner,action
     end
     local callbacks=0
+    local previousActivatedSync=syncItemActivated
+    syncItemActivated=function(character,value)
+        assert(character==player and value.class=='DrainableComboItem'and not value:isActivated(),'native deactivation must sync the exact kept flashlight')
+        value.activationSyncs=(value.activationSyncs or 0)+1
+    end
     queue.onCompleted=function(self,action)
         if lifecycle.current(player)==action then
             assert(not operations.deferCompletion(self,action),'hotbar cleanup acquired a legacy completion scope')
@@ -2246,6 +2277,8 @@ do
         local weapon,owner,action=restoreHotbar(mixed,slot,nil,variant)
         local index,slotType=weapon:getAttachedSlot(),weapon:getAttachedSlotType()
         local device=weapon.device;local powered=device and device.on
+        local flashlight=weapon.class=='DrainableComboItem'
+        local wasActive,charge=weapon:isActivated(),weapon.uses
         local animation=bar.availableSlot[index].def.animset
         local contract,kind=definitions.inspect(action)
         assert(contract and kind=='compat.tidy-equipment'and contract.items[weapon:getID()]
@@ -2258,6 +2291,13 @@ do
         -- Native start uses the real hotbar animation helper. attachConnect is
         -- a visual effect; complete separately applies authoritative hand state.
         action:start();assert(player.AttachAnim==animation)
+        if flashlight then
+            assert(not weapon:isActivated()and weapon.uses==charge and weapon:getContainer()==inventory
+                and (weapon.activationChanges or 0)==(wasActive and 1 or 0)
+                and (weapon.activationSyncs or 0)==(wasActive and 1 or 0)
+                and (weapon.deactivateSounds or 0)==(wasActive and 1 or 0),'native flashlight start lost or duplicated deactivation/sync/sound')
+            assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','native deactivation revoked required flashlight cleanup')
+        end
         action:animEvent('attachConnect',nil)
         assert(writes==1 and attached[weapon:getAttachedToModel()]==weapon)
         if mode=='mp-early'then action:complete()end
@@ -2282,15 +2322,16 @@ do
         isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
         assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
     end
-    for _,variant in ipairs({'Back','HolsterLeft','HolsterRight','SmallBeltLeft','SmallBeltRight','RadioBeltLeftOff','RadioBeltLeftOn','RadioBeltRightOff','RadioBeltRightOn'})do
+    for _,variant in ipairs({'Back','HolsterLeft','HolsterRight','SmallBeltLeft','SmallBeltRight','RadioBeltLeftOff','RadioBeltLeftOn','RadioBeltRightOff','RadioBeltRightOn','FlashlightCharged','FlashlightEmpty','FlashlightDeplete'})do
         for _,mode in ipairs({'sp','mp-early','mp-late'})do
             for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
                 for _,slot in ipairs({'primary','secondary','both'})do completeCase(mode,mixed,cancelled,slot,variant)end
             end end
         end
     end
-    assert(callbacks==324,'hotbar cleanup missed item-family/slot/hand/owner/cancel/effect-order combinations')
+    assert(callbacks==432,'hotbar cleanup missed item-family/slot/hand/owner/cancel/effect-order combinations')
     queue.onCompleted=completed
+    syncItemActivated=previousActivatedSync
     for _,variant in ipairs({'HolsterLeft','HolsterRight'})do
         for _,change in ipairs({'other-slot','other-definition','duplicate-type','icon-other-slot','removed-slot'})do
             local weapon,_,action=restoreHotbar(true,'primary',nil,variant)
@@ -2406,6 +2447,52 @@ do
         live.device=setmetatable({getParent=function()return live end},{__index=weapon.device});inventory.values={live}
         bar.attachedItems[weapon:getAttachedSlot()]=live
         assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','canonical radio proxy replacement lost cleanup')
+    end
+    for _,change in ipairs({'class','tag','script-type','script-id','create','config','components','fluid','wet','dry','missing-api',
+        'not-activatable','keep','equipped-use','unequipped-use','deplete-output','full-output','cooked-output','cooked-callback','eat-callback','cookable',
+        'use-output','break-callback','no-cone','strength','distance','delta','nan','live-output','missing-root'})do
+        local weapon,_,action=restoreHotbar(true,'secondary',nil,'FlashlightCharged')
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','native flashlight did not migrate')
+        if change=='class'then weapon.class='InventoryItem'
+        elseif change=='tag'then weapon.wrongTag=true
+        elseif change=='script-type'then weapon.script.getItemType=function()return 'base:normal'end
+        elseif change=='script-id'then weapon.script.getFullName=function()return 'Base.Other'end
+        elseif change=='create'then weapon.script.getLuaCreate=function()return 'customCreate'end
+        elseif change=='config'then weapon.script.getItemConfig=function()return {}end
+        elseif change=='components'then weapon.components=true
+        elseif change=='fluid'then weapon.fluid={}
+        elseif change=='wet'then weapon.wet=true
+        elseif change=='dry'then weapon.dryReplacement='Base.Other'
+        elseif change=='missing-api'then weapon.getUseDelta=nil
+        elseif change=='not-activatable'then weapon.activatable=false
+        elseif change=='keep'then weapon.keep=false
+        elseif change=='equipped-use'then weapon.useWhileEquipped=false
+        elseif change=='unequipped-use'then weapon.useWhileUnequipped=true
+        elseif change=='deplete-output'then weapon.replaceDeplete='Base.Other'
+        elseif change=='full-output'then weapon.replaceFullType='Base.Other'
+        elseif change=='cooked-output'then weapon.replaceCooked=list({'Base.Other'})
+        elseif change=='cooked-callback'then weapon.onCooked='callback'
+        elseif change=='eat-callback'then weapon.onEat='callback'
+        elseif change=='cookable'then weapon.cookable=true
+        elseif change=='use-output'then weapon.script.getReplaceOnUse=function()return 'Base.Other'end
+        elseif change=='break-callback'then weapon.script.getOnBreak=function()return 'callback'end
+        elseif change=='no-cone'then weapon.noCone=true
+        elseif change=='strength'then weapon.strength=0
+        elseif change=='distance'then weapon.distance=math.huge
+        elseif change=='delta'then weapon.delta=0
+        elseif change=='nan'then weapon.delta=0/0
+        elseif change=='live-output'then local live=setmetatable({replaceDeplete='Base.Other'},{__index=weapon});inventory.values={live}
+        elseif change=='missing-root'then inventory.values={}end
+        assert(not definitions.inspect(action),'flashlight hotbar cleanup accepted changed '..change)
+    end
+    do
+        local weapon,_,action=restoreHotbar(true,'secondary',nil,'FlashlightCharged')
+        local id=weapon:getID()
+        weapon.uses=0;weapon.activated=false;weapon.replaceCooked=list({})
+        local contract,kind=definitions.inspect(action)
+        assert(kind=='compat.tidy-equipment'and contract.items[id]and contract.hands==player,'depleted flashlight lost exact item/hands resource or cleanup')
+        local live=setmetatable({uses=0,activated=false},{__index=weapon});inventory.values={live};bar.attachedItems[weapon:getAttachedSlot()]=live
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','canonical depleted flashlight proxy lost cleanup')
     end
     for _,field in ipairs({'reason','fromHotbar','hotbar','clothingAction','stopOnWalk','stopOnRun','animSpeed','onCompleteFunc','animEvent'})do
         local _,_,action=restoreHotbar(true,'primary');local original=action[field]

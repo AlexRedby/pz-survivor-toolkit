@@ -37,6 +37,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.235
+
+- **Action queue / P4:** Use shared hotbar cleanup for proven battery flashlights that retain the same item when empty. Keep native activation, battery consumption and deactivation/synchronization on return; charge or light-emission changes no longer exclude required cleanup. Replacement outputs and custom callbacks remain protected.
+
 ### 0.1.234
 
 - **Action queue / P4:** Use shared hotbar cleanup for portable battery radios without media. Keep native device settings, battery processing, UI power transitions and sound cleanup instead of treating radio power as item activation.

@@ -371,6 +371,7 @@ function Fixture.settled(state,mode,checkpoint)
  if Clothing.overlap(state)then primary,secondary=Clothing.expectedHands(state,false)end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
  if Hotbar.radio(state)and not Hotbar.radioReady(state,false)then return false end
+ if Hotbar.flashlight(state)and not Hotbar.flashlightReady(state,false)then return false end
  for _,book in ipairs(checkpoint and {state.front} or {state.front,state.tail}) do if book:getAlreadyReadPages()~=book:getNumberOfPages() then return false end end
  if state.bat and state.bat:getContainer()~=(cancelled and state.source or state.root) then return false end
  if state.pickup and state.pickup:getContainer()~=state.root then return false end

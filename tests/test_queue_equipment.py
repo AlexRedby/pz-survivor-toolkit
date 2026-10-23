@@ -52,8 +52,10 @@ class EquipmentTests(unittest.TestCase):
                 spec = equipment.HOTBAR_CASES[case]
                 provider = not spec['twoHands']
                 ordinary, prior, radio = bool(spec.get('ordinary')), bool(spec.get('priorSecondary')), bool(spec.get('radio'))
-                effect = dict(case=case, providerItem=957 if provider else False, providerType=('Base.Belt2' if ordinary or radio else 'Base.HolsterDouble') if provider else False,
-                              providerLocation=('base:belt' if ordinary or radio else 'base:beltextra') if provider else False, providerWorn=provider,
+                flashlight = spec.get('flashlight')
+                passive = ordinary or radio or bool(flashlight)
+                effect = dict(case=case, providerItem=957 if provider else False, providerType=('Base.SCBA_notank' if flashlight else 'Base.Belt2' if ordinary or radio else 'Base.HolsterDouble') if provider else False,
+                              providerLocation=('base:scbanotank' if flashlight else 'base:belt' if ordinary or radio else 'base:beltextra') if provider else False, providerWorn=provider,
                               id=956, fullType=spec['fullType'], container='root', slotIndex=(7 if case.endswith('left') else 8) if provider else 1,
                               slotType=spec['slotType'], model=spec['model'],
                               attached=tidy, primary=False if tidy else 956, secondary=956 if not tidy and spec['twoHands'] else False, worn=False, producer='onRackGun',
@@ -74,8 +76,19 @@ class EquipmentTests(unittest.TestCase):
                                          'activated': False, 'equippedRadio': not tidy, 'emitter': spec['on'] and not tidy,
                                          'scissors': dict(id=958, fullType='Base.ScissorsBluntMedical', container='root'),
                                          'producer': dict(condition=10, sharpness=1.0, hairStyle='CrewCut', hairColor=dict(r=0.2, g=0.3, b=0.4), nonAttachedHair=False, secondary=False)})
+                if flashlight:
+                    effect.pop('ammoUnchanged')
+                    effect.update(producer='ISCutHair', primary=False, secondary=False if tidy else 956,
+                                  flashlight={'class': 'DrainableComboItem', 'canonical': True, 'flashlight': True, 'canActivate': True,
+                                              'keepOnDeplete': True, 'useWhileEquipped': True, 'useWhileUnequipped': False,
+                                              'replaceOnDeplete': False, 'cookable': False, 'onCooked': False, 'onEat': False,
+                                              'lightStrength': 1.5, 'lightDistance': 15, 'torchCone': True, 'useDelta': equipment.FLASHLIGHT_USE_DELTA,
+                                              'maxUses': 166, 'uses': 165 if flashlight == 'charged' else 0,
+                                              'activated': flashlight != 'empty' and not tidy, 'emitting': flashlight == 'charged' and not tidy,
+                                              'scissors': dict(id=958, fullType='Base.ScissorsBluntMedical', container='root'),
+                                              'producer': dict(condition=10, sharpness=1.0, hairStyle='CrewCut', hairColor=dict(r=0.2, g=0.3, b=0.4), nonAttachedHair=False, secondary=False)})
                 count = int(enabled and tidy)
-                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956 if not (ordinary or radio) or prior else False, secondary=(951 if prior else 956) if ordinary or radio else 956 if spec['twoHands'] else False),
+                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956 if not passive or prior else False, secondary=(951 if prior else 956) if passive else 956 if spec['twoHands'] else False),
                               tidyHotbar=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                               sourceSession=18 if tidy else False, sourceCompleted=tidy, attachConnectObserved=tidy,
                                               uiHotbarIdentity=True, unrelatedTailPreserved=True,
@@ -88,6 +101,14 @@ class EquipmentTests(unittest.TestCase):
                     result['hotbarCheckpoint']['radio']['emitter'] = spec['on']
                     result['tidyHotbar']['radioBaseline'] = dict(copy.deepcopy(effect['radio']), power=1, equippedRadio=False, emitter=False, turnedOn=spec['on'])
                     result['tidyHotbar']['radioLifecycle'] = dict(heldPointer=True, emitterCreated=spec['on'], emitterCleaned=spec['on'] and tidy)
+                    actions = [dict(kind='ISEquipWeaponAction', id=956), dict(kind='ISCutHair', id=958)] + ([dict(kind='ISUnequipAction', id=956)] if tidy else [])
+                    result['tidyHotbar']['acknowledgements'] = [dict(action, state='completed') for action in actions] if self.selection['kind'] == 'mp' else []
+                if flashlight:
+                    result['hotbarCheckpoint']['flashlight'] = copy.deepcopy(effect['flashlight'])
+                    result['hotbarCheckpoint']['flashlight']['activated'] = flashlight != 'empty'
+                    result['hotbarCheckpoint']['flashlight']['emitting'] = flashlight == 'charged'
+                    result['tidyHotbar']['flashlightBaseline'] = dict(copy.deepcopy(effect['flashlight']), uses=166 if flashlight == 'charged' else 1 if flashlight == 'deplete' else 0, activated=False, emitting=False)
+                    result['tidyHotbar']['flashlightLifecycle'] = dict(held=True, activated=flashlight != 'empty', emitted=flashlight != 'empty', depleted=flashlight == 'deplete', deactivated=tidy and flashlight != 'empty')
                     actions = [dict(kind='ISEquipWeaponAction', id=956), dict(kind='ISCutHair', id=958)] + ([dict(kind='ISUnequipAction', id=956)] if tidy else [])
                     result['tidyHotbar']['acknowledgements'] = [dict(action, state='completed') for action in actions] if self.selection['kind'] == 'mp' else []
                 if ordinary:
@@ -376,6 +397,43 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                         rows = self.records();value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
                         value['acknowledgements'].pop(1)
                         self.assertTrue(self.verify(self.logs(rows))['issues'])
+
+    def test_flashlight_hotbar_requires_native_activation_depletion_and_exact_host_state(self):
+        cases = ['tidy-hotbar-flashlight-' + mode for mode in ('charged', 'empty', 'deplete')]
+        self.selection.update(cases=cases, mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for case in cases:
+                    for field, wrong in [('class', 'ComboItem'), ('canonical', False), ('keepOnDeplete', False), ('useWhileUnequipped', True),
+                                         ('replaceOnDeplete', 'Base.Battery'), ('cookable', True), ('onCooked', 'callback'), ('lightStrength', 0),
+                                         ('uses', -1), ('uses', 167), ('uses', True), ('activated', True), ('emitting', True)]:
+                        rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['flashlight'][field] = wrong
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (kind, mode, case, field))
+                    for malformed in (False, [], 'light', None):
+                        rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['flashlight'] = malformed
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], ('malformed flashlight', malformed))
+                    rows = self.records(); value = next(row['outcome']['hotbarCheckpoint'] for row in rows if row.get('id') == case)
+                    value['flashlight']['activated'] = not value['flashlight']['activated']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'incorrect native held activation')
+                    rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                    value['flashlightLifecycle']['depleted'] = not value['flashlightLifecycle']['depleted']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'missing/false native depletion evidence')
+                    rows = self.records(); value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                    value['flashlight']['scissors']['id'] = value['id']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'flashlight used as scissors')
+                if kind == 'mp':
+                    self.logs(); server = self.root / 'server-launch.log'; original = server.read_text()
+                    marker = next(line for line in original.splitlines() if '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' in line and 'tidy-hotbar-flashlight-charged' in line)
+                    for field, wrong in [('activated', True), ('uses', 164), ('keepOnDeplete', False)]:
+                        value = json.loads(marker.split('HOTBAR_AUTHORITY ', 1)[1]); value['flashlight'][field] = wrong
+                        server.write_text(original.replace(marker, '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(value)))
+                        self.assertTrue(self.verify(self.logs())['issues'], ('server exact state', field))
+                    server.write_text(original)
 
     def test_radio_hotbar_requires_owned_device_separate_scissors_and_natural_power(self):
         self.selection.update(cases=['tidy-hotbar-radio-off', 'tidy-hotbar-radio-on'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])

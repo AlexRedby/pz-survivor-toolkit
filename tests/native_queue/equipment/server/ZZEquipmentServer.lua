@@ -100,13 +100,14 @@ Events.OnTick.Add(function()
   -- selector0 gap retains its initial power state despite client UI cleanup.
   -- Never copy client values into authority or wait for an unsupported edge.
   if Hotbar.radio(session)and not pending.checkpoint then settled=settled and Hotbar.radioReady(session,pending.tidy)end
+  if Hotbar.flashlight(session)then settled=settled and Hotbar.flashlightReady(session,not pending.checkpoint and pending.tidy)end
   if Clothing.wristwatch(session)then
    local worn=Clothing.removes(session)
    if not pending.checkpoint then worn=Clothing.finalWorn(session,pending.tidy)end
    settled=settled and Clothing.watchProcessingReady(session,worn)
   end
   if not idle or not settled then
-   if Hotbar.radio(session)and not pending.checkpoint and getTimestampMs()-pending.since>=1000 then Hotbar.diagnoseAuthority(session,pending.tidy)end
+   if (Hotbar.radio(session)and not pending.checkpoint or Hotbar.flashlight(session))and getTimestampMs()-pending.since>=1000 then Hotbar.diagnoseAuthority(session,not pending.checkpoint and pending.tidy)end
    if not pending.diagnostic or getTimestampMs()-pending.diagnostic>=5000 then
     pending.diagnostic=getTimestampMs()
     local player=session.player

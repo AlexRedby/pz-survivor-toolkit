@@ -829,7 +829,7 @@ do
  local sample={id='tidy-hotbar-radio-on',player=player,owned={},hammer=item(1),screwdriver=item(2),front=item(3),tail=item(4)}
  local fixture={position=function()end,prepare=function()return sample end,descriptor=function()return {}end,
   transactionsSettled=function()return true end,settled=function()return true end,verify=function()return {}end,refresh=function()end}
- local hotbar={isCase=function()return true end,provider=function()end,radio=function()return true end,
+ local hotbar={isCase=function()return true end,provider=function()end,radio=function()return true end,flashlight=function()return false end,
   radioReady=function(state,tidy)assert(state==sample and tidy);reads=reads+1;return on end,
   diagnoseAuthority=function(state,tidy)assert(state==sample and tidy);diagnostics=diagnostics+1 end}
  local required={QueueTestSelection={cases={sample.id},mode='native',options={}},QueueEquipmentFixture=fixture,
