@@ -70,7 +70,9 @@
     "ActionAdmissionCheck.kt",
     "NullableDiagnosticCheck.kt",
     "lease-menu-actions.lua",
-    "LeaseMenuBankCheck.lua"
+    "LeaseMenuBankCheck.lua",
+    "lease-inventory-state.lua",
+    "analyze-inventory-entry.py"
   ],
   "selection_template": {
     "schema_version": 1,

@@ -26,7 +26,18 @@ def _fixture_environment(selection, role, cache, extra_env):
         allowed_env.add('PZ_LIGHTS_TEST_CACHE')
     if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
             and selection.get('cases') == ['owner_observer_motion'] and options.get('mp_host') is True
-            and options.get('cart_inventory_equip') is True and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'
+            and options.get('cart_inventory_equip') is True and options.get('cart_lease_inventory', False) is False
+            and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'
+            and role in ('client1', 'client2')):
+        allowed_env.add('PZ_CART_INVENTORY_EQUIP')
+    if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
+            and selection.get('cases') == ['owner_observer_motion'] and options.get('mp_host') is True
+            and all(options.get(flag) is True for flag in ('cart_lease_inventory', 'cart_lease_menu',
+                'cart_lease_lifetimes', 'cart_lease_control', 'cart_timeline', 'cart_fast_motion'))
+            and all(options.get(flag, False) is False for flag in ('cart_inventory_equip', 'cart_actions',
+                'cart_hotkey_setdown', 'cart_time_alignment', 'cart_action_admission', 'cart_observer_association'))
+            and 'cart_wall_exit' not in options
+            and options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow'
             and role in ('client1', 'client2')):
         allowed_env.add('PZ_CART_INVENTORY_EQUIP')
     if (selection['suite'] == 'wooden_cart_multiplayer' and selection['kind'] == 'mp'
@@ -61,7 +72,7 @@ def _fixture_environment(selection, role, cache, extra_env):
     if (selection['suite']=='wooden_cart_multiplayer' and selection['kind']=='mp'
             and selection.get('cases')==['lease_lifecycle'] and options.get('mp_host') is True
             and not any(options.get(flag,False) is not False for flag in ('cart_timeline','cart_time_alignment','cart_fast_motion',
-                'cart_actions','cart_hotkey_setdown','cart_lease_control','cart_lease_lifetimes','cart_action_admission','cart_observer_association','cart_inventory_equip'))
+                'cart_actions','cart_hotkey_setdown','cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_lease_inventory','cart_action_admission','cart_observer_association','cart_inventory_equip'))
             and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow'
             and role in ('server','client1','client2')):
         allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_LEASE_LIFETIME'))

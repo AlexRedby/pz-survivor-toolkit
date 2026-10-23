@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Initial inventory-entry diagnostics:** Add a separately selected real inventory Push Cart entry to the menu lifetime bank. Join sealed action receipts to canonical native completion, require all-role held endpoints before the first lifetime, and retain the later same-cart release/pickup fences. Repeated inventory return and production/visual qualification remain separate.
+
 - **Cart public-input diagnostics:** Bind admission to the selected Drop/Setdown kind, keep completed Drop receipts separate from queue-reset revocation, regress delayed old receipts during a fresh Drop, and add an explicit owner world-menu release/pickup lifetime bank with all-role native absence and stale-message fences before and after rebinding. Keep native transport checks callback-scoped and use retained identities only to close old authority. Distinguish hard held/empty transitions from certified same-lease Equip resnapshots.
 
 - **Cart capture sampling:** Preserve each real native motion tick instead of discarding observations under the 100ms state throttle. Keep slower post-motion state logging, independent action sampling and unchanged analyzer coverage limits.

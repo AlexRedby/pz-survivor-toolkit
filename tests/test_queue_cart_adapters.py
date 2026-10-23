@@ -794,6 +794,53 @@ print('STARTUP_REJOIN_GUARD_PASS')
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
             self.options.clear();self.options.update(original)
 
+    def test_initial_inventory_entry_requires_menu_chain_and_stages_only_selected_endpoints(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_inventory=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_inventory'):carts.validate(self.selection)
+        self.options.update(cart_lease_menu=True,cart_lease_lifetimes=True,cart_lease_control=True,
+                            cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertEqual((lua/'shared/CartLeaseInventoryState.lua').read_bytes(),
+                (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-inventory-state.lua').read_bytes())
+            self.assertFalse((lua/'client/CartMPInventoryEquipClient.lua').exists())
+            self.assertEqual(self.runtime['roles'][role]['env'].get('PZ_CART_INVENTORY_EQUIP'),
+                             None if role=='server' else 'true')
+        for key,value in [('cart_lease_inventory','true'),('cart_lease_menu',False),('cart_lease_control',False),
+                          ('cart_inventory_equip',True),('cart_actions',True),('cart_variant','shopping-cart')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_incomplete_initial_inventory_report_is_rejected_after_lifetime_analysis(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_inventory=True,cart_lease_menu=True,cart_lease_lifetimes=True,
+                            cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        for role in ('client1','client2'):
+            (self.output/(role+'-launch.log')).write_text('selected capture')
+        calls=[]
+        def load(path):
+            def analyze(*args):
+                calls.append((path.name,args))
+                return dict(evidenceComplete=path.name!='analyze-inventory-entry.py')
+            return SimpleNamespace(analyze=analyze)
+        with patch.object(carts,'complete',return_value=True),patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',side_effect=load):
+            result=carts.verify(self.output,self.selection,{})
+        self.assertIn('Incomplete initial inventory entry evidence',result['issues'])
+        entry=next(args for name,args in calls if name=='analyze-inventory-entry.py')
+        self.assertEqual(entry[1],{'evidenceComplete':True})
+        self.assertNotIn('inventoryEntry',result.get('evidence',{}))
+
+    def test_inventory_entry_endpoint_and_probe_are_absent_from_default_motion(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            self.assertFalse((self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseInventoryState.lua').exists())
+            self.assertNotIn('PZ_CART_INVENTORY_EQUIP',self.runtime['roles'][role]['env'])
+
     def test_action_admission_stages_probe_only_for_explicit_native_action_bank(self):
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         self.options.update(cart_action_admission=True)

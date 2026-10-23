@@ -170,7 +170,7 @@ def window_start_counts(selection):
     """The isolated guest menu rejoin produces a second native game start."""
     options = selection.get('options', {})
     incompatible = ('cart_timeline', 'cart_time_alignment', 'cart_fast_motion', 'cart_actions',
-                    'cart_hotkey_setdown', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu',
+                    'cart_hotkey_setdown', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu', 'cart_lease_inventory',
                     'cart_action_admission', 'cart_observer_association', 'cart_inventory_equip')
     if (selection.get('suite') == MP and selection.get('cases') == ['lease_lifecycle']
             and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
@@ -216,13 +216,13 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu', 'cart_action_admission', 'cart_observer_association'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu', 'cart_lease_inventory', 'cart_action_admission', 'cart_observer_association'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
     if suite == MP and selection['cases'] == ['lease_lifecycle']:
         incompatible = ('cart_timeline','cart_time_alignment','cart_fast_motion','cart_actions','cart_hotkey_setdown',
-                        'cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_action_admission','cart_observer_association','cart_inventory_equip')
+                        'cart_lease_control','cart_lease_lifetimes','cart_lease_menu', 'cart_lease_inventory','cart_action_admission','cart_observer_association','cart_inventory_equip')
         if (options.get('mp_host') is not True or any(options.get(flag,False) is not False for flag in incompatible)
                 or 'cart_wall_exit' in options or options.get('cart_variant','wooden-wheelbarrow') != 'wooden-wheelbarrow'):
             raise ValueError('lease_lifecycle requires an isolated wooden-cart menu Host case')
@@ -240,6 +240,8 @@ def validate(selection):
     if options.get('cart_lease_menu') is True and (options.get('cart_lease_lifetimes') is not True
             or options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow'):
         raise ValueError('cart_lease_menu requires the explicit wooden-cart equipment lifetime bank')
+    if options.get('cart_lease_inventory') is True and options.get('cart_lease_menu') is not True:
+        raise ValueError('cart_lease_inventory requires the explicit menu equipment lifetime bank')
     if options.get('cart_action_admission') is True and (options.get('cart_timeline') is not True
             or options.get('cart_fast_motion') is not True or options.get('mp_host') is not True
             or options.get('cart_actions') is not True or options.get('cart_lease_control') is True
@@ -435,7 +437,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                    ('lease-protocol.lua', 'shared/CartLeaseProtocol.lua'), ('lease-probe.lua', 'shared/CartLeaseProbe.lua'),
                                    ('lease-lifetimes.lua', 'shared/CartLeaseLifetimes.lua'),
                                    ('lease-menu-actions.lua', 'client/CartLeaseMenuActions.lua'),
+                                   ('lease-inventory-state.lua', 'shared/CartLeaseInventoryState.lua'),
                                    ('lease-lifecycle.lua', 'shared/CartLeaseLifecycle.lua')]:
+                if origin == 'lease-inventory-state.lua' and selection.get('options', {}).get('cart_lease_inventory') is not True:
+                    continue
                 if origin == 'lease-lifecycle.lua' and not lifecycle:
                     continue
                 if origin == 'lease-menu-actions.lua' and (role == 'server' or selection.get('options', {}).get('cart_lease_menu') is not True):
@@ -467,7 +472,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             spec['env']['PZ_CART_OBSERVER_ASSOCIATION'] = 'true'
         if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_time_alignment') is True:
             spec['env']['PZ_CART_TIME_ALIGNMENT'] = 'true'
-        if selection['suite'] == MP and role != 'server' and selection.get('options', {}).get('cart_inventory_equip'):
+        if selection['suite'] == MP and role != 'server' and (selection.get('options', {}).get('cart_inventory_equip') is True or selection.get('options', {}).get('cart_lease_inventory') is True):
             spec['env']['PZ_CART_INVENTORY_EQUIP'] = 'true'
         if role == 'server':
             _write(runtime_lua, 'return true\n')
@@ -1323,6 +1328,12 @@ def verify(root, selection, catalog):
             costs = _load(intake / 'analyze-lease-cost.py').analyze(root)
             _write(analysis / 'mp-lease-cost.json', json.dumps(costs, indent=2, allow_nan=False))
             evidence['leaseControlCost'] = costs
+        if selection['suite'] == MP and selection.get('options', {}).get('cart_lease_inventory') is True:
+            entry = _load(intake / 'analyze-inventory-entry.py').analyze(root, lifetimes)
+            if entry.get('evidenceComplete') is not True:
+                raise ValueError('Incomplete initial inventory entry evidence')
+            _write(analysis / 'mp-inventory-entry.json', json.dumps(entry, indent=2, allow_nan=False))
+            evidence['inventoryEntry'] = entry
         if selection['suite'] == MP and selection.get('options', {}).get('cart_action_admission') is True:
             admission = _load(intake / 'analyze-action-admission.py').analyze(root)
             if admission.get('evidenceComplete') is not True:

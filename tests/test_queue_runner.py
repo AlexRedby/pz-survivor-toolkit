@@ -783,6 +783,36 @@ class InventoryEquipEnvironmentTests(unittest.TestCase):
                 runner._fixture_environment(self.selection(), 'client1', Path('/owned/cache'), dict(extra, PZ_CART_INVENTORY_EQUIP='true'))
 
 
+class InventoryLifetimeEnvironmentTests(unittest.TestCase):
+    def selection(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict.fromkeys(('mp_host','cart_lease_inventory','cart_lease_menu','cart_lease_lifetimes',
+                                           'cart_lease_control','cart_timeline','cart_fast_motion'),True))
+
+    def test_only_exact_initial_inventory_chain_admits_client_probe(self):
+        for role in ('client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selection(),role,Path('/owned/cache'),
+                {'PZ_CART_INVENTORY_EQUIP':'true'})['PZ_CART_INVENTORY_EQUIP'],'true')
+        for role in ('server','client3'):
+            with self.subTest(role=role),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+        for flag in self.selection()['options']:
+            for value in (False,'true',1,None):
+                selected=self.selection();selected['options'][flag]=value
+                with self.subTest(flag=flag,value=value),self.assertRaises(ValueError):
+                    runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+        for flag,value in [('cart_inventory_equip',True),('cart_actions',True),('cart_time_alignment',True),
+                           ('cart_wall_exit','front'),('cart_variant','shopping-cart')]:
+            selected=self.selection();selected['options'][flag]=value
+            with self.subTest(flag=flag),self.assertRaises(ValueError):
+                runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+
+    def test_inherited_inventory_probe_is_stripped_even_for_selected_entry(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_INVENTORY_EQUIP':'true'}):
+            for role in ('server','client1','client2'):
+                self.assertNotIn('PZ_CART_INVENTORY_EQUIP',runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{}))
+
+
 class CartTimelineEnvironmentTests(unittest.TestCase):
     def selected(self):
         return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],options=dict(cart_timeline=True))

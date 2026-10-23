@@ -89,6 +89,10 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
+### Initial inventory-menu lifetime verification
+
+- [ ] Verify the implemented `cart_lease_inventory=true` extension in an isolated available-mod macOS menu Host capture after game checks resume. Freeze sources and retain resource/AeroSpace/provenance/runtime/cleanup gates. Require the genuine inventory Push Cart receipt joined to canonical native Done, all-role held endpoints before arming, a fresh first held lifetime, and unchanged same-cart/cargo release/absence/rebind fences. Remove only the proven initial entry from pending work; repeated inventory return, other lifetimes and traffic/production gates remain separate.
+
 ### Remaining native lifetime and traffic gates
 
 - [ ] Extend native lifetime coverage to inventory-menu equip and the remaining actor-removal/disconnection routes beyond the verified guest native-death/Coop-respawn/menu-rejoin path. Keep exact native incarnation and transport provenance, permanent retirement and replay fences.

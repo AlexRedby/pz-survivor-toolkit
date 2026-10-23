@@ -41,6 +41,18 @@ local function makeAction(pickup)
 end
 local deferred=false;local badOption=false;local extraAction=false;local fillCount=0;local callbackCount=0
 local inventoryFillCount=0;local wrongTarget=false;local unavailable=false
+local inventoryMode=false;local inventoryDurationValue=30;local inventoryNativeDuration=30;local inventoryLuaTime=30.375
+local inventorySource='inventory';local inventoryID=42;local inventoryResolved=item;local nativeAtQueued=true
+local owned={contains=function(_,candidate) return candidate==item end,getItemById=function(_,id) return id==42 and item or nil end}
+p.getInventory=function() return owned end;item.getContainer=function() return item.container end
+ISCartEquipAction={}
+local function makeInventoryAction()
+ return setmetatable({character=p,Type='ISCartEquipAction',cartId=inventoryID,sourceType=inventorySource,
+  toolkitQueueOperation=operation,maxTime=inventoryLuaTime,getDuration=function() return inventoryDurationValue end,
+  findCart=function() return inventoryResolved end,
+  action=nativeAtQueued and {getTime=function() return inventoryNativeDuration end} or nil},ISCartEquipAction)
+end
+local origins={};getFilenameOfClosure=function(callback) return origins[callback] end
 local square={};local floor={getSquare=function() return square end};square.getFloor=function() return floor end
 p.getCurrentSquare=function() return square end
 local function enqueueAction(pickup)
@@ -59,6 +71,15 @@ end,onDropItems=function() error('Inventory Drop is not the native onUnEquip rou
 ISInventoryPaneContextMenu.createMenu=function(num,inInventory,items,x,y)
  assert(num==0 and inInventory==true and items[1]==item and #items==1 and x==50 and y==50)
  inventoryFillCount=inventoryFillCount+1
+ if inventoryMode then
+  local callback=badOption and function() error('foreign inventory callback') end or function(actual,player,cart)
+   assert(actual==items and player==0 and cart==item and scope);callbackCount=callbackCount+1
+   q.queue={makeInventoryAction()};if extraAction then q.queue[2]=makeInventoryAction() end
+  end
+  origins[callback]=badOption and '/Foreign/ContextMenu.lua' or 'C:\\mods\\SaucedCarts\\ContextMenu.lua'
+  return context({{name='UI_SaucedCarts_PushCart',target=wrongTarget and {} or items,param1=num,param2=item,
+   onSelect=callback,notAvailable=unavailable}})
+ end
  -- Heavy-item inventory menus use onDropItems; Sauced also removes Unequip.
  return context({{name='ContextMenu_Drop',target=items,param1=num,onSelect=ISInventoryPaneContextMenu.onDropItems}})
 end
@@ -85,8 +106,11 @@ end
 local M=assert(loadfile(HELPER))()
 local function emit(event,row) clock=clock+1;row.wall=clock;events[#events+1]={event=event,row=row} end
 local function pickup() p.primary=nil;p.secondary=nil;item.world=world end
+local function inventory()
+ config.options.cart_lease_inventory=true;p.primary=nil;p.secondary=nil;item.world=nil;item.container=owned;inventoryMode=true
+end
 local function start(s)
- q.current=s.action;s.action.action={};nativeList.count=1
+ q.current=s.action;s.action.action=s.action.action or {getTime=function() return inventoryNativeDuration end};nativeList.count=1
  assert(not M.poll(s));assert(events[#events].event=='start')
 end
 local function finish(s)
@@ -105,6 +129,92 @@ class CartLeaseMenuActionsTests(unittest.TestCase):
         script = 'local HELPER=' + repr(str(HELPER)) + '\n' + HARNESS + '\n' + body
         result = subprocess.run([LUA, '-'], input=script, text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_inventory_input_keeps_exact_real_ack_and_native_duration(self):
+        self.run_lua(r'''
+inventory();local s=M.inventory(p,item,0,emit)
+assert(inventoryFillCount==1 and fillCount==0 and callbackCount==1)
+local queued=events[1].row
+assert(queued.kind=='inventory' and queued.phase==0 and queued.cart==42)
+assert(queued.actionType=='ISCartEquipAction' and queued.queuedSource=='ISCartEquipAction')
+assert(queued.sourceType=='inventory' and queued.duration==30 and queued.nativeMaxTime==30 and queued.luaMaxTime==30.375)
+assert(not queued.token and not queued.sealed)
+start(s);finish(s)
+for _,entry in ipairs(events) do
+ assert(entry.row.kind=='inventory' and entry.row.duration==30 and entry.row.nativeMaxTime==30 and entry.row.luaMaxTime==30.375)
+ assert(entry.row.localNativeEpoch==queued.localNativeEpoch and entry.row.operation==queued.operation)
+end
+assert(events[2].row.token==receipt.token and events[3].row.state=='completed' and events[3].row.sealed)
+assert(p.primary==nil and item.container==owned and not item.world) -- Caller verifies actual equip effects.
+''')
+
+    def test_inventory_native_duration_is_checked_when_native_created_later(self):
+        self.run_lua(r'''
+inventory();nativeAtQueued=false;local s=M.inventory(p,item,0,emit)
+assert(events[1].row.nativeMaxTime==nil and events[1].row.localNativeEpoch==nil)
+start(s);finish(s);assert(events[2].row.nativeMaxTime==30 and events[3].row.nativeMaxTime==30)
+''')
+
+    def test_inventory_scope_original_container_menu_target_and_callback_are_required(self):
+        for mutation, error in (
+            ('config.options.cart_lease_inventory=false', 'Explicit inventory lifetime input'),
+            ('config.options.cart_lease_inventory=1', 'Explicit inventory lifetime input'),
+            ('p.primary=item', 'Inventory equip requires released hands'),
+            ('item.world=world', 'Exact owned inventory cart'),
+            ('item.container={}', 'Exact owned inventory cart'),
+            ('owned.contains=function() return false end', 'Exact owned inventory cart'),
+            ('owned.getItemById=function() return {} end', 'Exact owned inventory cart'),
+            ('badOption=true', 'menu option unavailable'),
+            ('wrongTarget=true', 'menu option unavailable'),
+            ('unavailable=true', 'menu option unavailable'),
+            ('getFilenameOfClosure=nil', 'menu option unavailable'),
+            ("getFilenameOfClosure=function() error('foreign') end", 'menu option unavailable'),
+        ):
+            with self.subTest(mutation=mutation):
+                self.run_lua('inventory();' + mutation + '\nfails(function() M.inventory(p,item,0,emit) end,' +
+                             repr(error) + ');assert(callbackCount==0)')
+
+    def test_inventory_queued_class_cart_source_resolution_and_durations_fail_closed(self):
+        for mutation, error in (
+            ("inventorySource='vehicle'", 'Unexpected native menu approach'),
+            ('inventoryID=43', 'Unexpected native menu approach'),
+            ('inventoryResolved={}', 'Queued inventory cart source changed'),
+            ('inventoryDurationValue=1', 'inventory equip duration changed'),
+            ('inventoryNativeDuration=31', 'inventory equip duration changed'),
+            ('inventoryLuaTime=0/0', 'inventory equip duration changed'),
+            ('inventoryLuaTime=math.huge', 'inventory equip duration changed'),
+            ('extraAction=true', 'exactly one action'),
+        ):
+            with self.subTest(mutation=mutation):
+                self.run_lua('inventory();' + mutation + '\nfails(function() M.inventory(p,item,0,emit) end,' + repr(error) + ')')
+
+    def test_inventory_action_native_and_operation_identities_remain_frozen(self):
+        for mutation, error in (
+            ('s.action.cartId=43', 'action binding changed'),
+            ("s.action.sourceType='vehicle'", 'action binding changed'),
+            ('setmetatable(s.action,{})', 'action binding changed'),
+            ('s.action.toolkitQueueOperation={}', 'action binding changed'),
+            ('s.action.action={getTime=function() return 30 end}', 'Native inventory action identity changed'),
+            ('source={}', 'owner/source/operation changed'),
+            ('inventoryNativeDuration=29', 'inventory equip duration changed'),
+        ):
+            with self.subTest(mutation=mutation):
+                self.run_lua('inventory();local s=M.inventory(p,item,0,emit);' + mutation +
+                             '\nfails(function() M.poll(s) end,' + repr(error) + ')')
+
+    def test_inventory_cannot_finish_without_real_ack_start_or_on_cancel(self):
+        self.run_lua(r'''
+inventory();local s=M.inventory(p,item,0,emit);q.current=s.action;nativeList.count=1
+Ack.capture=function() return nil end
+assert(not M.poll(s));receipt.state='completed';assert(not M.poll(s) and #events==1)
+q.queue={};q.current=nil;nativeList.count=0
+fails(function() M.poll(s) end,'without captured start')
+''')
+        self.run_lua(r'''
+inventory();local s=M.inventory(p,item,0,emit);start(s);receipt.state='canceled'
+q.queue={};q.current=nil;nativeList.count=0
+fails(function() M.poll(s) end,'did not complete')
+''')
 
     def test_release_records_exact_native_receipts_and_allows_empty_hands_barrier(self):
         self.run_lua(r'''
