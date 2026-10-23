@@ -290,3 +290,46 @@ do
  isClient=function()return false end;isServer=function()return false end
 end
 print('Equipment Mohawk postprocessing: exact per-role hair, color/attachment and one native gel use passed; growth timer unavailable.')
+
+-- Shared postprocess keeps the exact ordinary tool, Belt2 provider and prior
+-- secondary on authority, including no-P4 temporary held outcomes.
+do
+ local Hotbar=require 'QueueEquipmentHotbar'
+ getClassSimpleName=function(item)return item.javaClass end
+ for _,case in ipairs({'tidy-hotbar-normal-left','tidy-hotbar-normal-right'})do
+  for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native');local player=sample.player
+   local target=item('Base.ScissorsBluntMedical',sample.root);local belt=item('Base.Belt2',sample.root)
+   target.javaClass='ComboItem'
+   sample.screwdriver.kind='Base.Screwdriver'
+   sample.pickup,sample.belt=target,belt;sample.items.pickup=target;sample.items.belt=belt
+   sample.baseline[target.id]=target;sample.baseline[belt.id]=belt
+   sample.hotbarIndex=case:find('left',1,true)and 11 or 13
+   sample.hotbarType=case:find('left',1,true)and 'SmallBeltLeft'or 'SmallBeltRight'
+   sample.hotbarLocation=case:find('left',1,true)and 'Belt Left Screwdriver'or 'Belt Right Screwdriver'
+   target.slot,target.slotType,target.model=sample.hotbarIndex,sample.hotbarType,sample.hotbarLocation
+   target.canBeActivated=function()return false end;target.getScriptItem=function()return {getItemType=function()return 'base:normal'end}end
+   target.getCondition=function(self)return self.condition or 10 end;target.getSharpness=function()return 1 end
+   belt.getBodyLocation=function()return 'base:belt'end
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   player.getWornItem=function(self,location)return self.worn[location]end
+   local color={getRedFloat=function()return 0.2 end,getGreenFloat=function()return 0.3 end,getBlueFloat=function()return 0.4 end}
+   player.getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end,getHairColor=function()return color end}end
+   local prior=case=='tidy-hotbar-normal-right'
+   sample.hotbarOrdinaryBaseline={condition=10,sharpness=1,hairStyle='CrewCut',nonAttachedHair=false,hairColor={r=0.2,g=0.3,b=0.4},
+    secondary=prior and {id=sample.screwdriver.id,fullType='Base.Screwdriver',container='root'}or false}
+   player.primary,player.secondary=Hotbar.expectedHands(sample,tidy)
+   player.worn['base:belt']=belt;sample.expectedWorn['base:belt']=belt
+   if tidy then player.attached[sample.hotbarLocation]=target end
+   isClient=function()return false end;isServer=function()return true end
+   isForceDropHeavyItem=function()return false end
+   local result=Postprocess.verify(sample,'native',tidy).hotbar
+   assert(result.id==target.id and result.attached==tidy and result.providerItem==belt.id and result.ordinaryBaseline==sample.hotbarOrdinaryBaseline)
+   target.javaClass='InventoryItem';assert(not pcall(Postprocess.verify,sample,'native',tidy),'generic base class accepted instead of native ComboItem');target.javaClass='ComboItem'
+   target.condition=9;assert(not pcall(Postprocess.verify,sample,'native',tidy),'changed normal tool condition accepted');target.condition=nil
+   player.secondary=sample.hammer;assert(not pcall(Postprocess.verify,sample,'native',tidy),'changed native secondary accepted')
+  end
+ end
+ isClient=function()return false end;isServer=function()return false end
+end
+print('Equipment ordinary hotbar postprocess: exact tool/provider/root/hands and unchanged condition/sharpness/appearance passed.')

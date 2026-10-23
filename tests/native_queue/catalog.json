@@ -1639,6 +1639,40 @@
             "native",
             "toolkit"
           ]
+        },
+        {
+          "id": "tidy-hotbar-normal-left",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "tidy-hotbar-normal-right",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
         }
       ]
     }

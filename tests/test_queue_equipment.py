@@ -51,19 +51,30 @@ class EquipmentTests(unittest.TestCase):
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
                 spec = equipment.HOTBAR_CASES[case]
                 provider = not spec['twoHands']
-                effect = dict(case=case, providerItem=957 if provider else False, providerType='Base.HolsterDouble' if provider else False,
-                              providerLocation='base:beltextra' if provider else False, providerWorn=provider,
+                ordinary, prior = bool(spec.get('ordinary')), bool(spec.get('priorSecondary'))
+                effect = dict(case=case, providerItem=957 if provider else False, providerType=('Base.Belt2' if ordinary else 'Base.HolsterDouble') if provider else False,
+                              providerLocation=('base:belt' if ordinary else 'base:beltextra') if provider else False, providerWorn=provider,
                               id=956, fullType=spec['fullType'], container='root', slotIndex=(7 if case.endswith('left') else 8) if provider else 1,
                               slotType=spec['slotType'], model=spec['model'],
                               attached=tidy, primary=False if tidy else 956, secondary=956 if not tidy and spec['twoHands'] else False, worn=False, producer='onRackGun',
                               producerCompleted=True, ammoUnchanged=True, unrelatedAttachmentsPreserved=True)
+                if ordinary:
+                    effect.pop('ammoUnchanged')
+                    effect.update(producer='ISCutHair', primary=False if tidy or not prior else 956,
+                                  secondary=(951 if prior else False) if tidy else (951 if prior else 956),
+                                  ordinary=dict(condition=10, sharpness=1.0, hairStyle='CrewCut', hairColor=dict(r=0.2, g=0.3, b=0.4), nonAttachedHair=False,
+                                                secondary=dict(id=951, fullType='Base.Screwdriver', container='root') if prior else False))
                 count = int(enabled and tidy)
-                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956, secondary=956 if spec['twoHands'] else False),
+                result.update(hotbarItem=956, hotbarCheckpoint=dict(effect, attached=False, primary=956 if not ordinary or prior else False, secondary=(951 if prior else 956) if ordinary else 956 if spec['twoHands'] else False),
                               tidyHotbar=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                               sourceSession=18 if tidy else False, sourceCompleted=tidy, attachConnectObserved=tidy,
                                               uiHotbarIdentity=True, unrelatedTailPreserved=True,
                                               sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
                                                                     flush=count, legacy=0)))
+                if ordinary:
+                    result['tidyHotbar']['ordinaryBaseline'] = copy.deepcopy(effect['ordinary'])
+                    actions = [dict(kind='ISEquipWeaponAction', id=956), dict(kind='ISCutHair', id=956)] + ([dict(kind='ISUnequipAction', id=956)] if tidy else [])
+                    result['tidyHotbar']['acknowledgements'] = [dict(action, state='completed') for action in actions] if self.selection['kind'] == 'mp' else []
             if case in equipment.CLOTHING_CASES:
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
                 spec = equipment.CLOTHING_SPECS[case]
@@ -257,7 +268,7 @@ class EquipmentTests(unittest.TestCase):
             for case in self.selection['cases']:
                 if case in equipment.HOTBAR_CASES:
                     row = next(row for row in self.records() if row.get('id') == case)
-                    effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.HOTBAR_EFFECT_KEYS}
+                    effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.hotbar_effect_keys(case) | ({'ordinaryBaseline'} if equipment.HOTBAR_CASES[case].get('ordinary') else set())}
                     with (self.root / 'server-launch.log').open('a') as log:
                         log.write('\n[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(effect) + '\n')
         return equipment.verify(self.root, self.selection, {})
@@ -312,6 +323,35 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                         server.write_text(original.replace(marker, replacement))
                         self.assertTrue(self.verify(self.logs())['issues'])
                     server.write_text(original)
+
+    def test_ordinary_hotbar_requires_native_hand_selection_exact_provider_and_tool_conservation(self):
+        selected = [case for case, spec in equipment.HOTBAR_CASES.items() if spec.get('ordinary')]
+        self.selection.update(cases=selected, mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('native', 'toolkit'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for case in selected:
+                    for field, change in [('condition', 9), ('sharpness', 0.5), ('sharpness', True), ('hairStyle', 'MohawkFan'), ('nonAttachedHair', 'Ponytail')]:
+                        rows = self.records();value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['ordinary'][field] = change
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field, change))
+                    for field, change in [('providerType', 'Base.HolsterDouble'), ('providerLocation', 'base:beltextra'), ('primary', 956), ('producer', 'onRackGun')]:
+                        rows = self.records();value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value[field] = change
+                        self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field))
+                    rows = self.records();value = next(row['outcome']['hotbarCheckpoint'] for row in rows if row.get('id') == case)
+                    value['primary'], value['secondary'] = value['secondary'], value['primary']
+                    self.assertTrue(self.verify(self.logs(rows))['issues'], 'wrong native selected hand')
+                    if equipment.HOTBAR_CASES[case].get('priorSecondary'):
+                        rows = self.records();value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['ordinary']['secondary']['id'] = 956
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
+                    if kind == 'mp':
+                        rows = self.records();value = next(row['outcome']['tidyHotbar'] for row in rows if row.get('id') == case)
+                        value['acknowledgements'].pop(1)
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
 
     def test_tidy_clothing_requires_exact_p4_generation_shared_phases_and_conserved_effects(self):
         self.selection.update(cases=['tidy-clothing'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
@@ -781,7 +821,7 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
         probe = self.root / 'probe.jar'
         probe.write_bytes(b'read-only fixture probe')
         runtime = {'roles': {'server': {}, 'client1': {}}, 'fixture': {'mods': []}}
-        with patch.object(equipment, '_transfer_probe', return_value=probe):
+        with patch.object(equipment, '_transfer_probe', return_value=probe), patch.object(equipment, '_item_shape_probe'):
             equipment.stage(ROOT, self.root, None, None, self.selection, {}, runtime)
         self.assertEqual(runtime['fixture']['mods'], ['EquipmentTransferProbe'])
         for role in ('server', 'client1'):
@@ -910,11 +950,33 @@ end
                     with self.subTest(mode=mode, case=case, key=key):
                         self.assertTrue(self.verify(self.logs(rows))['issues'])
 
+    def test_native_item_shape_preflight_runs_once_only_for_selected_ordinary_hotbar_cases(self):
+        for cases in (['tidy-hotbar'], ['tidy-hotbar-normal-left'], ['tidy-hotbar-normal-right'],
+                      ['tidy-hotbar-normal-left', 'tidy-hotbar-normal-right']):
+            self.selection['cases'] = cases
+            with patch.object(equipment, '_item_shape_probe') as probe:
+                equipment.stage(ROOT, self.root, None, None, self.selection, {}, {'roles': {}})
+                if any(equipment.HOTBAR_CASES[case].get('ordinary') for case in cases):
+                    probe.assert_called_once_with(ROOT, self.root, None, None)
+                else:
+                    probe.assert_not_called()
+
+    def test_native_item_shape_failure_stops_stage_before_transfer_probe_or_role_staging(self):
+        self.selection.update(cases=['tidy-hotbar-normal-left'], kind='mp',
+                              mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'])
+        with patch.object(equipment, '_item_shape_probe', side_effect=ValueError('native item shape rejected')), \
+                patch.object(equipment, '_transfer_probe') as transfer, patch.object(equipment.shutil, 'copy2') as copy_file:
+            with self.assertRaisesRegex(ValueError, 'native item shape rejected'):
+                equipment.stage(ROOT, self.root, None, None, self.selection, {}, {'roles': {'client1': {}}})
+            transfer.assert_not_called()
+            copy_file.assert_not_called()
+
     def test_stage_pins_shared_json_writer_and_only_equipment_sources(self):
         target = self.root / 'client1/mods/ActionQueueTest/42/media/lua/shared'
         target.mkdir(parents=True)
         runtime = {'fixture': {'mods': []}}
-        equipment.stage(ROOT, self.root, None, None, self.selection, {}, runtime)
+        with patch.object(equipment, '_item_shape_probe'):
+            equipment.stage(ROOT, self.root, None, None, self.selection, {}, runtime)
         self.assertEqual((target / 'QueueHealthEvents.lua').read_bytes(),
                          (ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua').read_bytes())
         self.assertEqual(runtime['fixture']['server_ready'], '[EQUIPMENT_TEST] SERVER_READY')
@@ -1160,7 +1222,7 @@ end
         script = r'''
 local root=arg[1]
 local function run(kind,fault)
- require=function(name)if name=='QueueEquipmentClothing'then return dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentClothing.lua')end end
+ require=function(name)if name=='QueueEquipmentClothing'or name=='QueueEquipmentHotbar'then return dofile(root..'/tests/native_queue/equipment/shared/'..name..'.lua')end end
  isClient=function()return kind=='mp'end
  Events={OnGameStart={Add=function()end}}
  ISQueueActionsAction={start=function()end}
@@ -1334,7 +1396,7 @@ local function run(kind,mode,fault,equipment)
  ISQueueActionsAction={start=function()end}
  isClient=function()return kind=='mp'end
  Events={OnGameStart={Add=function()end}}
- require=function(name)if name=='QueueEquipmentClothing'then return dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentClothing.lua')end end
+ require=function(name)if name=='QueueEquipmentClothing'or name=='QueueEquipmentHotbar'then return dofile(root..'/tests/native_queue/equipment/shared/'..name..'.lua')end end
  PZSurvivorToolkit={Settings={actionQueue=function()return enabled end}}
  local lifecycle=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua')
  local toolkit=PZSurvivorToolkit

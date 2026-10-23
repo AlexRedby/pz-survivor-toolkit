@@ -477,8 +477,56 @@ local function nativeHotbarHelpers(hotbar)
         and ISHotbar.isItemAttached == hotbarHelpers.attached and ISHotbar.setAttachAnim == hotbarHelpers.animate
         and hotbar and hotbar.isItemAttached == hotbarHelpers.attached and hotbar.setAttachAnim == hotbarHelpers.animate
 end
+local hotbarClassName = getClassSimpleName
+local function normalHotbarComponents(item, script)
+    if not script:hasComponents() then return not item:hasComponents() end
+    if not ComponentType or not ComponentType.Attributes or not ComponentType.Script then return false end
+    for _, name in ipairs({"componentSize", "getComponentForIndex", "getAttributes", "getComponent", "getEntityScript"}) do
+        if type(item[name]) ~= "function" then return false end
+    end
+    if type(script.getComponentScripts) ~= "function" or type(script.getComponentScriptFor) ~= "function" then return false end
+    local scripts = script:getComponentScripts()
+    if not scripts or type(scripts.size) ~= "function" or type(scripts.get) ~= "function"
+        or scripts:size() ~= 1 or not item:hasComponents() or item:componentSize() ~= 2 then return false end
+    local definition, attributes = scripts:get(0), item:getAttributes()
+    if not definition or hotbarClassName(definition) ~= "AttributesScript"
+        or script:getComponentScriptFor(ComponentType.Attributes) ~= definition
+        or not attributes or hotbarClassName(attributes) ~= "AttributeContainer"
+        or type(attributes.getComponentType) ~= "function" or type(attributes.getOwner) ~= "function"
+        or attributes:getComponentType() ~= ComponentType.Attributes or attributes:getOwner() ~= item then return false end
+    -- The factory adds passive Script metadata to an entity with Attributes.
+    -- This is EntityScriptInfo, not an executable Lua callback/component.
+    local metadata = item:getComponent(ComponentType.Script)
+    if not metadata or hotbarClassName(metadata) ~= "EntityScriptInfo" then return false end
+    for _, name in ipairs({"getComponentType", "getOwner", "getScript", "getOriginalScript", "isOriginalIsItem"}) do
+        if type(metadata[name]) ~= "function" then return false end
+    end
+    if metadata:getComponentType() ~= ComponentType.Script or metadata:getOwner() ~= item
+        or metadata:getScript() ~= script or item:getEntityScript() ~= script
+        or metadata:getOriginalScript() ~= item:getFullType() or metadata:isOriginalIsItem() ~= true then return false end
+    local first, second = item:getComponentForIndex(0), item:getComponentForIndex(1)
+    return first == attributes and second == metadata or first == metadata and second == attributes
+end
+local function normalHotbarItem(item)
+    if not instanceof(item, "InventoryItem") or type(hotbarClassName) ~= "function" or getClassSimpleName ~= hotbarClassName
+        or hotbarClassName(item) ~= "ComboItem" then return false end
+    for _, name in ipairs({"getScriptItem", "hasComponents", "getFluidContainer", "isWet", "getItemWhenDry"}) do
+        if type(item[name]) ~= "function" then return false end
+    end
+    local script = item:getScriptItem()
+    if not script then return false end
+    for _, name in ipairs({"getFullName", "getItemType", "getLuaCreate", "getItemConfig", "getItemConfigKey", "hasComponents"}) do
+        if type(script[name]) ~= "function" then return false end
+    end
+    -- Native base:normal creates final ComboItem. Attaching registers processing;
+    -- ordinary Attributes (including sharpness) have no update/equipment hooks.
+    if script:getFullName() ~= item:getFullType() or tostring(script:getItemType()) ~= "base:normal"
+        or script:getLuaCreate() or script:getItemConfig() or script:getItemConfigKey()
+        or item:getFluidContainer() or item:isWet() or item:getItemWhenDry() then return false end
+    return normalHotbarComponents(item, script)
+end
 local function hotbarItem(item, character)
-    return instanceof(item, "HandWeapon") and item:getContainer() == character:getInventory()
+    return (instanceof(item, "HandWeapon") or normalHotbarItem(item)) and item:getContainer() == character:getInventory()
         and not item:canBeActivated() and not item:isBroken() and not isForceDropHeavyItem(item)
         and not character:getWornItems():contains(item)
 end

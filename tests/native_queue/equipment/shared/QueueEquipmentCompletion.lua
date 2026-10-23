@@ -1,6 +1,7 @@
 local Completion={}
 local Clothing=require 'QueueEquipmentClothing'
-local function hotbarCase(id)return id=='tidy-hotbar'or id=='tidy-hotbar-holster-left'or id=='tidy-hotbar-holster-right'end
+local Hotbar=require 'QueueEquipmentHotbar'
+local function hotbarCase(id)return Hotbar.isCase(id)end
 local function clothingAction(state,action)
  if Clothing.replaces(state)then return Clothing.cleanupMember(state,action)~=nil end
  return state.clothingItem and action.Type==(state.clothingRestoreType
@@ -337,7 +338,9 @@ function Completion.observe(toolkit,selection)
     state.hotbarAttachConnect=true
     local held=action.character:getPrimaryHandItem()
     local other=action.character:getSecondaryHandItem()
-    assert((held==action.item and other==(state.hotbarTwoHands and action.item or nil) or selection.kind=='mp'and not held and not other),
+    local primary,secondary=Hotbar.expectedHands(state,false)
+    local finalPrimary,finalSecondary=Hotbar.expectedHands(state,true)
+    assert((held==primary and other==secondary or selection.kind=='mp'and held==finalPrimary and other==finalSecondary),
      'P4 hotbar cleanup removed wrong temporary hands')
     local queue=ISTimedActionQueue.queues[action.character]
     assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared hotbar cleanup must remain protected')
