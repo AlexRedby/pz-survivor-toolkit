@@ -5,6 +5,7 @@ assert(config.disposable==true and config.options.cart_lease_lifetimes==true
 require 'SaucedCarts/ContextMenu'
 require 'ISUI/ISContextMenu'
 require 'ISUI/ISInventoryPaneContextMenu'
+require 'ISUI/ISWorldObjectContextMenu'
 require 'TimedActions/ISTimedActionQueue'
 local Ack=require 'PZSurvivorToolkit/ActionQueueAcknowledgements'
 local M={}
@@ -65,8 +66,11 @@ function M.enqueue(player,item,pickup,phase,callback)
  else
   assert(player:getPrimaryHandItem()==item and player:getSecondaryHandItem()==item and not item:getWorldItem(),
    'Release requires exact held menu cart')
-  -- Vanilla adds Unequip before emitting OnFillInventoryObjectContextMenu.
-  context=assert(ISInventoryPaneContextMenu.createMenu(player:getPlayerNum(),true,{item},50,50),'Inventory menu missing')
+  -- Sauced removes inventory Unequip. Vanilla's world DropNamedItem retains onUnEquip.
+  local square=assert(player:getCurrentSquare(),'Native owner menu square missing')
+  local floor=assert(square:getFloor(),'Native owner menu floor missing')
+  assert(floor:getSquare()==square,'Native owner menu floor source changed')
+  context=assert(ISWorldObjectContextMenu.createMenu(player:getPlayerNum(),{floor},50,50,false),'Native world menu missing')
   option=find(context,function(o) return o.onSelect==ISInventoryPaneContextMenu.onUnEquip
    and type(o.target)=='table' and #o.target==1 and o.target[1]==item and o.param1==player:getPlayerNum() end)
  end
