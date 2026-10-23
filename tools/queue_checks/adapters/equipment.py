@@ -237,7 +237,7 @@ def _item_shape_probe(project, output, game, jdk):
     game = Path(game)
     try:
         with log.open('w') as stream:
-            subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '17', '-cp', str(game / 'projectzomboid.jar'),
+            subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
                             '-d', str(classes), str(Path(project) / 'tests/native_queue/equipment/java/HotbarItemShapeCheck.java')],
                            check=True, stdout=stream, stderr=subprocess.STDOUT, text=True, timeout=60)
             subprocess.run([str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.',
