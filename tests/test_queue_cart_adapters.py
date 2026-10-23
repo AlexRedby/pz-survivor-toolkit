@@ -841,6 +841,28 @@ print('STARTUP_REJOIN_GUARD_PASS')
             self.assertFalse((self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseInventoryState.lua').exists())
             self.assertNotIn('PZ_CART_INVENTORY_EQUIP',self.runtime['roles'][role]['env'])
 
+    def test_action_invalidation_is_isolated_and_seals_native_fixture_inputs(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_action_invalidation=True,mp_host=True,cart_timeline=True,cart_fast_motion=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            env=self.runtime['roles'][role]['env']
+            for name in ('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION','PZ_CART_ACTION_INVALIDATION'):
+                self.assertEqual(env[name],'true')
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertEqual((lua/'shared/CartActionInvalidation.lua').read_bytes(),
+                (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/action-invalidation.lua').read_bytes())
+            self.assertEqual((lua/'client/CartLeaseMenuActions.lua').exists(),role!='server')
+            self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+            self.assertFalse((lua/'shared/CartLeaseLifetimes.lua').exists())
+            self.assertFalse((lua/'client/CartActionAdmissionProbe.lua').exists())
+        for key,value in [('cart_action_invalidation','true'),('mp_host',False),('cart_timeline',False),
+                          ('cart_fast_motion',False),('cart_actions',True),('cart_action_admission',True),
+                          ('cart_lease_control',True),('cart_lease_menu',True),('cart_variant','shopping-cart')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
     def test_action_admission_stages_probe_only_for_explicit_native_action_bank(self):
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         self.options.update(cart_action_admission=True)

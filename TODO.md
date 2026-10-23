@@ -89,6 +89,10 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
+### Active action invalidation and reused-transaction fences
+
+- [ ] Freeze the implemented world-identity loss/canonical cancellation/fresh Pickup pilot and verify a fresh isolated macOS Host run with normal resource/AeroSpace/provenance/runtime/cleanup gates. Require exact accepted source/action/cart/world, absorbing invalidation before the exact native stop, preserved cart/cargo, new world/action/token and rejection of two historical terminal replays while the new receipt is current. Remove only proven boundaries from pending work; true pre-admission rejection, natural allocator wrap, other lifetimes, full-pack/visual and production/wire gates remain separate.
+
 ### Remaining native lifetime and traffic gates
 
 - [ ] Extend native lifetime coverage to the remaining inventory-menu equip contexts and actor-removal/disconnection routes beyond the verified initial inventory Push Cart entry, world release/ground-pickup cycles and guest native-death/Coop-respawn/menu-rejoin path. Keep exact native incarnation and transport provenance, permanent retirement and replay fences.

@@ -1,7 +1,7 @@
 -- Disposable owner input driver; receipts prove actions, the caller verifies cart effects.
 local config=require 'QueueTestSelection'
-assert(config.disposable==true and config.options.cart_lease_lifetimes==true
- and config.options.cart_lease_menu==true,'Explicit disposable lease menu bank required')
+assert(config.disposable==true and (config.options.cart_lease_lifetimes==true and config.options.cart_lease_menu==true
+ or config.options.cart_action_invalidation==true),'Explicit disposable lease menu bank required')
 require 'SaucedCarts/ContextMenu'
 require 'ISUI/ISContextMenu'
 require 'ISUI/ISInventoryPaneContextMenu'

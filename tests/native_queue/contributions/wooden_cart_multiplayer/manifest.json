@@ -72,7 +72,11 @@
     "lease-menu-actions.lua",
     "LeaseMenuBankCheck.lua",
     "lease-inventory-state.lua",
-    "analyze-inventory-entry.py"
+    "analyze-inventory-entry.py",
+    "ActionInvalidation.kt",
+    "action-invalidation.lua",
+    "ActionAdmissionIncarnationCheck.kt",
+    "analyze-action-invalidation.py"
   ],
   "selection_template": {
     "schema_version": 1,

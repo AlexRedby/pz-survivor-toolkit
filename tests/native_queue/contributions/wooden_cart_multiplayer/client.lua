@@ -10,10 +10,11 @@ local admissionProbe=config.options and config.options.cart_action_admission==tr
 local leaseProbe=config.options and config.options.cart_lease_control==true and require 'CartLeaseProbe'
 local lifetimeProbe=config.options and config.options.cart_lease_lifetimes==true and require 'CartLeaseLifetimes'
 local inventoryMode=config.options and config.options.cart_lease_inventory==true
+local invalidationProbe=config.options and config.options.cart_action_invalidation==true and require 'CartActionInvalidation'
 local inventoryState=inventoryMode and require 'CartLeaseInventoryState'
 local inventoryDriver,inventoryAction,inventorySince,inventoryHeld
 local function setupCommand(command,args)
- if inventoryMode then sendClientCommand(getPlayer(),'CartMP',command,args)
+ if inventoryMode or invalidationProbe then sendClientCommand(getPlayer(),'CartMP',command,args)
  else sendClientCommand('CartMP',command,args) end
 end
 local function inventoryRow(event,row)
@@ -249,6 +250,7 @@ Events.OnTick.Add(function()
     if admissionProbe and not admissionProbe.done() then return end
     actionsFinished=true
    end
+   if invalidationProbe and not invalidationProbe.finish(owner,now) then return end
    if lifetimeProbe and not lifetimeProbe.finish(owner,now) then return end
    if not finishedAt then finishedAt=now end
    if not stopped then assert(toolkitVideoStop(),'video stop failed');stopped=true;getCore():TakeFullScreenshot('cart-mp-end.png') end

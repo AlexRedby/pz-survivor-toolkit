@@ -13,7 +13,7 @@ from .native import font_preload
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
-INHERITED_ENV_EXCLUSIONS = ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_LEASE_LIFETIME', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION')
+INHERITED_ENV_EXCLUSIONS = ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_LEASE_LIFETIME', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION', 'PZ_CART_ACTION_INVALIDATION')
 
 
 def _fixture_environment(selection, role, cache, extra_env):
@@ -70,15 +70,24 @@ def _fixture_environment(selection, role, cache, extra_env):
         if options.get('cart_observer_association') is True:
             allowed_env.add('PZ_CART_OBSERVER_ASSOCIATION')
     if (selection['suite']=='wooden_cart_multiplayer' and selection['kind']=='mp'
+            and selection.get('cases')==['owner_observer_motion']
+            and all(options.get(flag) is True for flag in ('cart_action_invalidation','mp_host','cart_timeline','cart_fast_motion'))
+            and all(options.get(flag,False) is False for flag in ('cart_actions','cart_action_admission',
+                'cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_lease_inventory','cart_inventory_equip',
+                'cart_time_alignment','cart_hotkey_setdown','cart_observer_association'))
+            and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow'
+            and role in ('server','client1','client2')):
+        allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION','PZ_CART_ACTION_INVALIDATION'))
+    if (selection['suite']=='wooden_cart_multiplayer' and selection['kind']=='mp'
             and selection.get('cases')==['lease_lifecycle'] and options.get('mp_host') is True
             and not any(options.get(flag,False) is not False for flag in ('cart_timeline','cart_time_alignment','cart_fast_motion',
-                'cart_actions','cart_hotkey_setdown','cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_lease_inventory','cart_action_admission','cart_observer_association','cart_inventory_equip'))
+                'cart_actions','cart_hotkey_setdown','cart_lease_control','cart_lease_lifetimes','cart_lease_menu','cart_lease_inventory','cart_action_invalidation','cart_action_admission','cart_observer_association','cart_inventory_equip'))
             and 'cart_wall_exit' not in options and options.get('cart_variant','wooden-wheelbarrow')=='wooden-wheelbarrow'
             and role in ('server','client1','client2')):
         allowed_env.update(('PZ_CART_LEASE_CONTROL','PZ_CART_LEASE_LIFETIME'))
     if (set(extra_env) - allowed_env
             or any(not isinstance(value, str) or not Path(value).is_absolute()
-                   for name, value in extra_env.items() if name not in ('PZ_CART_TEST_PAD', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_LEASE_LIFETIME', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION'))
+                   for name, value in extra_env.items() if name not in ('PZ_CART_TEST_PAD', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_LEASE_LIFETIME', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION', 'PZ_CART_ACTION_INVALIDATION'))
             or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')
             or 'PZ_CART_INVENTORY_EQUIP' in extra_env and extra_env['PZ_CART_INVENTORY_EQUIP'] != 'true'
             or 'PZ_CART_TIMELINE' in extra_env and extra_env['PZ_CART_TIMELINE'] != 'true'
@@ -86,6 +95,7 @@ def _fixture_environment(selection, role, cache, extra_env):
             or 'PZ_CART_LEASE_CONTROL' in extra_env and extra_env['PZ_CART_LEASE_CONTROL'] != 'true'
             or 'PZ_CART_LEASE_LIFETIME' in extra_env and extra_env['PZ_CART_LEASE_LIFETIME'] != 'true'
             or 'PZ_CART_ACTION_ADMISSION' in extra_env and extra_env['PZ_CART_ACTION_ADMISSION'] != 'true'
+            or 'PZ_CART_ACTION_INVALIDATION' in extra_env and extra_env['PZ_CART_ACTION_INVALIDATION'] != 'true'
             or 'PZ_CART_OBSERVER_ASSOCIATION' in extra_env and extra_env['PZ_CART_OBSERVER_ASSOCIATION'] != 'true'
             or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)
             or 'PZ_LIGHTS_TEST_CACHE' in extra_env and extra_env['PZ_LIGHTS_TEST_CACHE'] != str(cache)):

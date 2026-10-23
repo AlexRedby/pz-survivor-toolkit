@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Cart action invalidation diagnostics:** Add a selected native world-identity loss/cancellation/retry bank with exact source and action binding, preserved cart/cargo, all-role endpoints and historical terminal replay refusal. Add a composed native signed-byte reuse regression through the production acknowledgement and Lua receiver; keep natural allocator wrap and production migration separate.
+
 - **Initial inventory-entry diagnostics:** Add a separately selected real inventory Push Cart entry to the menu lifetime bank. Join sealed action receipts to canonical native completion, require all-role held endpoints before the first lifetime, and retain the later same-cart release/pickup fences. Repeated inventory return and production/visual qualification remain separate.
 
 - **Cart public-input diagnostics:** Bind admission to the selected Drop/Setdown kind, keep completed Drop receipts separate from queue-reset revocation, regress delayed old receipts during a fresh Drop, and add an explicit owner world-menu release/pickup lifetime bank with all-role native absence and stale-message fences before and after rebinding. Keep native transport checks callback-scoped and use retained identities only to close old authority. Distinguish hard held/empty transitions from certified same-lease Equip resnapshots.
