@@ -250,7 +250,7 @@ Events.OnTick.Add(function()
   if state and Bulk.isCase(state.id) then Bulk.observe(state,queue()) end
   if state and Clothing.isCase(state.id)then Clothing.observe(state,queue(),Toolkit,tidy)end
   if state and Hotbar.isCase(state.id)then Hotbar.observe(state,queue(),Toolkit,tidy)end
-  if state and Selection.kind=='mp' then
+  if state and Selection.kind=='mp' and state.records then
    local action=queue().current
    local record=action and Toolkit.ActionQueueAcknowledgements.capture(action)
    if phase~='drain' and phase~='checkpointReceipt' and record and (action.Type=='ISEquipWeaponAction' or action.Type=='ISWearClothing' or action.Type=='ISAttachItemHotbar') and not state.seen[record.token] then
@@ -317,7 +317,7 @@ Events.OnTick.Add(function()
    local player=getPlayer()
    if not player:getCurrentSquare() or player:isPlayerMoving() or player:tooDarkToRead() then return end
    state=Fixture.prepare(player,Selection.cases[index],ids,Selection.options)
-   if state.holster then
+   if Hotbar.isCase(state.id)and Hotbar.provider(state)then
     sendClientCommand('EquipmentQueueTest','ConfigureHotbar',{case=state.id,item=state.pickup:getID(),slotIndex=state.hotbarIndex})
     phase='configureHotbar';return
    end

@@ -33,7 +33,8 @@ local function execute(module,command,player,args)
    if Clothing.isCase(session.id)then sendClothing(player,session.clothingLocation,player:getWornItem(session.clothingLocation))end
    if session.id=='hotbar-chain' then sendAttachedItem(player,session.hotbarLocation,session.hotbarInitial) end
    if Hotbar.isCase(session.id)then
-    if session.holster then sendClothing(player,session.holsterLocation,session.holster)end
+    local provider=Hotbar.provider(session)
+    if provider then sendClothing(player,Hotbar.providerLocation(session),provider)end
     if session.hotbarIndex then sendAttachedItem(player,session.hotbarLocation,session.pickup)end
    end
    reply(player,'Prepared',ids)
@@ -49,8 +50,8 @@ local function execute(module,command,player,args)
    reply(player,'RingConfigured',{case=session.id,item=session.clothingItem:getID(),ok=true,watch=session.clothingWatch,
     startedAgeHours=session.clothingWatchStartedAge})
   elseif command=='ConfigureHotbar'then
-   assert(session and session.id==args.case and session.holster and not session.hotbarConfigured and not pending
-    and args.item==session.pickup:getID(),'invalid native holster setup request')
+   assert(session and session.id==args.case and Hotbar.isCase(session.id)and Hotbar.provider(session)and not session.hotbarConfigured and not pending
+    and args.item==session.pickup:getID(),'invalid native provider setup request')
    Hotbar.configure(session,args.slotIndex);session.hotbarConfigured=true
    sendAttachedItem(player,session.hotbarLocation,session.pickup)
    reply(player,'HotbarConfigured',{case=session.id,item=session.pickup:getID(),slotIndex=session.hotbarIndex,ok=true})

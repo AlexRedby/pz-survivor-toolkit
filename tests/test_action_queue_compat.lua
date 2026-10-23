@@ -45,6 +45,8 @@ for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOve
 instanceof = function(value, kind)
     return type(value) == 'table' and (value.class == kind or (kind == 'Clothing' and value.class == 'AlarmClockClothing') or (kind == 'InventoryItem' and value.item == true))
 end
+getClassSimpleName=function(value)return value.class end
+ComponentType={Attributes={},Script={}}
 table.wipe = function(value) for key in pairs(value) do value[key] = nil end end
 getText = function(value) return value end
 getTextOrNull = getText
@@ -2165,12 +2167,43 @@ do
             bar.attachedItems={[index]=weapon}
             assert(expected.name=='Holster'and weapon.attachedModel=='Holster '..(index==2 and 'Left'or 'Right'))
         end
+        if variant=='SmallBeltLeft'or variant=='SmallBeltRight'then
+            bar.availableSlot={nativeSlot('SmallBeltLeft'),nativeSlot('SmallBeltRight')}
+            local index=variant=='SmallBeltLeft'and 1 or 2
+            local expected=bar.availableSlot[index].def
+            weapon.class='ComboItem';weapon.attachment='Screwdriver'
+            weapon.attachedSlot,weapon.attachedKind,weapon.attachedModel=index,variant,expected.attachments.Screwdriver
+            weapon.script={getFullName=function()return weapon:getFullType()end,getItemType=function()return 'base:normal'end,
+                getLuaCreate=function()end,getItemConfig=function()end,getItemConfigKey=function()end,hasComponents=function()return false end}
+            weapon.getScriptItem=function(self)return self.script end
+            weapon.hasComponents=function(self)return self.components or false end
+            weapon.getFluidContainer=function(self)return self.fluid end
+            weapon.isWet=function(self)return self.wet or false end
+            weapon.getItemWhenDry=function(self)return self.dryReplacement end
+            if variant=='SmallBeltRight'then
+                weapon.attributeScript={class='AttributesScript'}
+                weapon.attributes={class='AttributeContainer',getComponentType=function()return ComponentType.Attributes end,
+                    getOwner=function()return weapon end}
+                weapon.components=true;weapon.script.hasComponents=function()return true end
+                weapon.script.getComponentScripts=function()return list({weapon.attributeScript})end
+                weapon.script.getComponentScriptFor=function(_,kind)if kind==ComponentType.Attributes then return weapon.attributeScript end end
+                weapon.metadata={class='EntityScriptInfo',getComponentType=function()return ComponentType.Script end,
+                    getOwner=function()return weapon end,getScript=function()return weapon.script end,
+                    getOriginalScript=function()return weapon:getFullType()end,isOriginalIsItem=function()return true end}
+                weapon.componentSize=function()return 2 end
+                weapon.getComponentForIndex=function(_,index)if index==0 then return weapon.attributes elseif index==1 then return weapon.metadata end end
+                weapon.getAttributes=function()return weapon.attributes end
+                weapon.getComponent=function(_,kind)if kind==ComponentType.Script then return weapon.metadata end end
+                weapon.getEntityScript=function()return weapon.script end
+            end
+            bar.attachedItems={[index]=weapon}
+        end
         ISPlayerData={{playerHotbar=bar}}
         if kind=='heavy'then weapon.fixtureHeavy=true
         elseif kind=='activated'then weapon.activatable=true
         elseif kind=='broken'then weapon.broken=true
         elseif kind=='slot'then bar.availableSlot={}
-        elseif kind=='duplicate'then bar.availableSlot[2]={slotType='Back',def=definition}end
+        elseif kind=='duplicate'then bar.availableSlot[#bar.availableSlot+1]=bar.availableSlot[weapon.attachedSlot]end
         local captured=TidyFixture.captureSession(player)
         captured.armed,captured.restoreHands=true,true;TidyFixture.sessions[player]=captured
         local owner=tail();local other=mixed and tail()or nil
@@ -2228,14 +2261,14 @@ do
         isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
         assert(not TidyFixture.restoring[player]and not TidyFixture.sessions[player])
     end
-    for _,variant in ipairs({'Back','HolsterLeft','HolsterRight'})do
+    for _,variant in ipairs({'Back','HolsterLeft','HolsterRight','SmallBeltLeft','SmallBeltRight'})do
         for _,mode in ipairs({'sp','mp-early','mp-late'})do
             for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
                 for _,slot in ipairs({'primary','secondary','both'})do completeCase(mode,mixed,cancelled,slot,variant)end
             end end
         end
     end
-    assert(callbacks==108,'hotbar cleanup missed slot/hand/owner/cancel/effect-order combinations')
+    assert(callbacks==180,'hotbar cleanup missed item-family/slot/hand/owner/cancel/effect-order combinations')
     queue.onCompleted=completed
     for _,variant in ipairs({'HolsterLeft','HolsterRight'})do
         for _,change in ipairs({'other-slot','other-definition','duplicate-type','icon-other-slot','removed-slot'})do
@@ -2252,9 +2285,65 @@ do
             assert(not definitions.inspect(action),'holster restore accepted changed '..variant..' '..change)
         end
     end
-    for _,kind in ipairs({'heavy','activated','broken','slot','duplicate','worn'})do
-        local _,_,action=restoreHotbar(true,'primary',kind)
-        assert(select(2,definitions.inspect(action))=='compat.selected-chains','hotbar cleanup migration expanded into '..kind)
+    for _,variant in ipairs({'Back','SmallBeltLeft'})do
+        for _,kind in ipairs({'heavy','activated','broken','slot','duplicate','worn'})do
+            local _,_,action=restoreHotbar(true,'primary',kind,variant)
+            assert(select(2,definitions.inspect(action))=='compat.selected-chains','hotbar cleanup migration expanded into '..variant..' '..kind)
+        end
+    end
+    for _,change in ipairs({'class','type','script-id','create','config','config-key','script-components',
+        'components','fluid','wet','dry-replacement','missing-api','missing-script','class-helper','live-components','missing-item','occupied','base-class'})do
+        local weapon,_,action=restoreHotbar(true,'secondary',nil,'SmallBeltLeft')
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','normal belt item did not migrate')
+        local classHelper=getClassSimpleName
+        if change=='class'then weapon.class='Radio'
+        elseif change=='type'then weapon.script.getItemType=function()return 'base:drainable'end
+        elseif change=='script-id'then weapon.script.getFullName=function()return 'Base.Other'end
+        elseif change=='create'then weapon.script.getLuaCreate=function()return 'customCreate'end
+        elseif change=='config'then weapon.script.getItemConfig=function()return {}end
+        elseif change=='config-key'then weapon.script.getItemConfigKey=function()return 'customConfig'end
+        elseif change=='script-components'then weapon.script.hasComponents=function()return true end
+        elseif change=='components'then weapon.components=true
+        elseif change=='fluid'then weapon.fluid={}
+        elseif change=='wet'then weapon.wet=true
+        elseif change=='dry-replacement'then weapon.dryReplacement='Base.Other'
+        elseif change=='missing-api'then weapon.hasComponents=nil
+        elseif change=='missing-script'then weapon.script=nil
+        elseif change=='class-helper'then getClassSimpleName=function()return 'ComboItem'end
+        elseif change=='live-components'then
+            local live=setmetatable({components=true},{__index=weapon});inventory.values={live}
+        elseif change=='missing-item'then action.item=nil
+        elseif change=='occupied'then attached[weapon.attachedModel]=item(inventory,14811)
+        elseif change=='base-class'then weapon.class='InventoryItem'end
+        assert(not definitions.inspect(action),'normal belt cleanup accepted changed '..change)
+        getClassSimpleName=classHelper
+    end
+    for _,change in ipairs({'script-class','script-extra','script-mapping','script-api','item-extra','item-api',
+        'component-class','component-type','component-owner','component-index','missing-attributes','fluid',
+        'metadata-class','metadata-type','metadata-owner','metadata-key','metadata-kind','metadata-script','entity-script','metadata-index'})do
+        local weapon,_,action=restoreHotbar(true,'primary',nil,'SmallBeltRight')
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment','ordinary native attributes did not migrate')
+        if change=='script-class'then weapon.attributeScript.class='FluidContainerScript'
+        elseif change=='script-extra'then weapon.script.getComponentScripts=function()return list({weapon.attributeScript,{}})end
+        elseif change=='script-mapping'then weapon.script.getComponentScriptFor=function()return {}end
+        elseif change=='script-api'then weapon.script.getComponentScripts=nil
+        elseif change=='item-extra'then weapon.componentSize=function()return 3 end
+        elseif change=='item-api'then weapon.componentSize=nil
+        elseif change=='component-class'then weapon.attributes.class='FluidContainer'
+        elseif change=='component-type'then weapon.attributes.getComponentType=function()return {}end
+        elseif change=='component-owner'then weapon.attributes.getOwner=function()return item(inventory,14812)end
+        elseif change=='component-index'then weapon.getComponentForIndex=function()return {}end
+        elseif change=='missing-attributes'then weapon.attributes=nil
+        elseif change=='fluid'then weapon.fluid={}
+        elseif change=='metadata-class'then weapon.metadata.class='Unknown'
+        elseif change=='metadata-type'then weapon.metadata.getComponentType=function()return {}end
+        elseif change=='metadata-owner'then weapon.metadata.getOwner=function()return {}end
+        elseif change=='metadata-key'then weapon.metadata.getOriginalScript=function()return 'Base.Other'end
+        elseif change=='metadata-kind'then weapon.metadata.isOriginalIsItem=function()return false end
+        elseif change=='metadata-script'then weapon.metadata.getScript=function()return {}end
+        elseif change=='entity-script'then weapon.getEntityScript=function()return {}end
+        elseif change=='metadata-index'then weapon.getComponentForIndex=function(_,index)if index==0 then return weapon.attributes end end end
+        assert(not definitions.inspect(action),'normal belt cleanup accepted changed attributes '..change)
     end
     for _,field in ipairs({'reason','fromHotbar','hotbar','clothingAction','stopOnWalk','stopOnRun','animSpeed','onCompleteFunc','animEvent'})do
         local _,_,action=restoreHotbar(true,'primary');local original=action[field]

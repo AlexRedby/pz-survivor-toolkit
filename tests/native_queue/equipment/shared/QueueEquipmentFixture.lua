@@ -219,7 +219,8 @@ function Fixture.verify(state,mode,checkpoint)
  end
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,nil end
+ if Hotbar.isCase(state.id)then primary,secondary=Hotbar.expectedHands(state,false)end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  if Clothing.overlap(state)then primary,secondary=Clothing.expectedHands(state,false)end
@@ -340,7 +341,7 @@ function Fixture.descriptor(state)
  local result={case=state.id,items={},originalWorn={},primary=state.originalPrimary and state.originalPrimary:getID(),
   secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor,clothingHair=state.clothingHair,
   clothingSetupPending=state.clothingSetupPending,clothingWatch=state.clothingWatch,
-  clothingRingPending=state.clothingRingPending,clothingWatchStartedAge=state.clothingWatchStartedAge}
+  clothingRingPending=state.clothingRingPending,clothingWatchStartedAge=state.clothingWatchStartedAge,hotbarHair=state.hotbarHair}
  for name,item in pairs(state.items) do result.items[name]=item:getID() end
  for location,item in pairs(state.originalWorn) do
   result.originalWorn[#result.originalWorn+1]={location=tostring(location),id=item:getID(),fullType=item:getFullType()}
@@ -349,6 +350,7 @@ function Fixture.descriptor(state)
  return result
 end
 function Fixture.available(player,ids)
+ if Hotbar.isCase(ids.case)and not Hotbar.available(player,ids)then return false end
  local actual=inventory(player)
  if not originalWorn(player,ids,actual) then return false end
  if Clothing.isCase(ids.case)and not Clothing.available(player,ids)then return false end
@@ -362,7 +364,8 @@ function Fixture.settled(state,mode,checkpoint)
  local player=state.player
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or Hotbar.isCase(state.id)or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,Hotbar.isCase(state.id)and Hotbar.secondary(state)or nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,nil end
+ if Hotbar.isCase(state.id)then primary,secondary=Hotbar.expectedHands(state,false)end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  if Clothing.overlap(state)then primary,secondary=Clothing.expectedHands(state,false)end

@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Native equipment checks:** Preflight ordinary hotbar fixture item shapes through the actual game factory before launching a window. Check native class, attribute/script metadata ownership and an independent plain-item control; retain diagnostics in the run.
+
 - **Native equipment checks:** Extend the common clothing matrix to initially desired held/worn baselines, with authority-only hand/worn setup after inventory delivery, exact cleared-hand checkpoints and P4 Equip/activation/Wear restoration.
 
 - **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
@@ -32,6 +34,10 @@ Version labels come from committed component metadata, including changes made wi
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit
+
+### 0.1.233
+
+- **Action queue / P4:** Use the shared hotbar cleanup contract for stable ordinary non-weapon items as well as weapons. Preserve native hand selection and belt return; devices, unknown components, drying replacements and displaced attachment models remain protected.
 
 ### 0.1.232
 

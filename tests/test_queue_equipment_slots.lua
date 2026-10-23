@@ -1008,8 +1008,10 @@ end
 
 -- Real native fromHotbar constructors and unequip effects; P4's generated
 -- queue/authority are still observed only by the separate SP/Host scenario.
-for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-holster-right'})do
- local provider=caseID~='tidy-hotbar' native('shared/TimedActions/ISEquipWeaponAction.lua');native('shared/TimedActions/ISRackFirearm.lua')
+for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-holster-right','tidy-hotbar-normal-left','tidy-hotbar-normal-right'})do
+ local ordinary=caseID:find('normal',1,true)~=nil;local prior=caseID=='tidy-hotbar-normal-right'
+ getClassSimpleName=function(item)return item.javaClass end
+ local provider=caseID~='tidy-hotbar' native('shared/TimedActions/ISEquipWeaponAction.lua');native('shared/TimedActions/ISRackFirearm.lua');native('shared/TimedActions/ISCutHair.lua')
  local baseSource=read('shared/TimedActions/ISBaseTimedAction.lua')
  excerpt(baseSource,'function ISBaseTimedAction:isStarted()','function ISBaseTimedAction:stop()')
  excerpt(baseSource,'function ISBaseTimedAction:create()','function ISBaseTimedAction:begin()')
@@ -1021,13 +1023,29 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  excerpt(context,'ISInventoryPaneContextMenu.equipWeapon = function','ISInventoryPaneContextMenu.onInformationItems = function')
  excerpt(read('client/Hotbar/ISHotbar.lua'),'function ISHotbar:isItemAttached(item)','function ISHotbar:attachItem (')
  excerpt(read('client/Hotbar/ISHotbar.lua'),'function ISHotbar:getThisSlotIndex(slotType, list)','function ISHotbar:compareWornItems()')
+ excerpt(read('client/Hotbar/ISHotbar.lua'),'local dropItemNow = function','function ISHotbar:getSlotIndexAt(x, y)')
  ISHotbarAttachDefinition=nil;native('client/Hotbar/ISHotbarAttachDefinition.lua')
  local function slot(kind)for _,def in ipairs(ISHotbarAttachDefinition)do if def.type==kind then return {slotType=kind,def=def}end end end
  local Hotbar=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentHotbar.lua'))()
  isClient=function()return false end;isServer=function()return false end
  getText=function(text)return text end
  ISBaseTimedAction.setOverrideHandModels=function()end
+ local color={getRedFloat=function()return 0.2 end,getGreenFloat=function()return 0.3 end,getBlueFloat=function()return 0.4 end}
+ local visual={hair='CrewCut',getHairModel=function(self)return self.hair end,setHairModel=function(self,value)self.hair=value end,
+  getNonAttachedHair=function(self)return self.nonAttached end,setNonAttachedHair=function(self,value)self.nonAttached=value end,getHairColor=function()return color end}
+ local style={getName=function()return 'CrewCut'end,isAttachedHair=function()return false end}
+ getHairStylesInstance=function()return {FindMaleStyle=function()return style end}end
  local player={primary=nil,secondary=nil,attached={},worn={}}
+ function player:isFemale()return false end
+ function player:getHumanVisual()return visual end
+ function player:resetModel()end
+ function player:resetHairGrowingTime()self.growthReset=(self.growthReset or 0)+1 end
+ function player:getClothingItem_Back()return nil end
+ function player:isEquippedClothing()return false end
+ function player:getCurrentSquare()return nil end
+ getPlayerData=function()return {playerInventory={refreshBackpacks=function()end}}end
+ getPlayerInventory=function()return {refreshBackpacks=function()end}end
+ sendHumanVisual=function()end
  function player:getPlayerNum()return 0 end
  function player:isTimedActionInstant()return false end
  function player:getMoodles()return {getMoodleLevel=function()return 0 end}end
@@ -1056,11 +1074,12 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
   local values=list(entries);values.getItem=function(_,location)return self.attached[location]end;return values
  end
  local state={id=caseID,player=player,root=container()}
+ if prior then state.screwdriver=makeItem('Base.Screwdriver',state.root);state.screwdriver.isRequiresEquippedBothHands=function()return false end end
  function player:getInventory()return state.root end
  function state.root:getType()return 'inventory'end
  function state.root:getItemById(id)for item in pairs(self.items)do if item:getID()==id then return item end end end
  function state.root:setDrawDirty()end
- local hotbar={chr=player,availableSlot={[1]=slot('Back'),[7]=slot('HolsterLeft'),[9]=slot('HolsterRight')},replacements={Rifle='Rifle On Back with Bag'}}
+ local hotbar={chr=player,availableSlot={[1]=slot('Back'),[7]=slot('HolsterLeft'),[9]=slot('HolsterRight'),[11]=slot('SmallBeltLeft'),[13]=slot('SmallBeltRight')},replacements={Rifle='Rifle On Back with Bag'}}
  setmetatable(hotbar,{__index=ISHotbar})
  function hotbar:refresh()end
  function hotbar:reloadIcons()
@@ -1068,9 +1087,14 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  end
  getPlayerHotbar=function()return hotbar end;getSpecificPlayer=function()return player end
  Hotbar.prepare(state,function(name,kind)
-  local item=makeItem(kind,state.root);state[name]=item
-  function item:getAttachmentType()return provider and 'Holster'or 'Rifle'end
+  local item=makeItem(kind,state.root);state[name]=item;item.javaClass=ordinary and 'ComboItem'or 'HandWeapon'
+  function item:getAttachmentType()return ordinary and 'Screwdriver'or provider and 'Holster'or 'Rifle'end
   if kind=='Base.HolsterDouble'then function item:getBodyLocation()return 'base:beltextra'end end
+  if kind=='Base.Belt2'then function item:getBodyLocation()return 'base:belt'end end
+  function item:getScriptItem()return {getItemType=function()return 'base:normal'end}end
+  function item:IsWeapon()return not ordinary end
+  function item:getCondition()return self.condition or 10 end;function item:getSharpness()return self.sharpness or 1 end
+  function item:getCurrentUsesFloat()return 1 end
   function item:canBeActivated()return false end;function item:isForceDropHeavyItem()return false end
   function item:getCurrentAmmoCount()return 0 end;function item:isRoundChambered()return false end
   function item:isRequiresEquippedBothHands()return not provider end;function item:isTwoHandWeapon()return not provider end
@@ -1088,18 +1112,24 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  Hotbar.enqueue(state,{queue=function()return queue end,run=function(fn,...)return fn(...)end})
  queue.current=state.rackAction;Hotbar.observe(state,queue,nil,true)
  assert(not state.hotbarProducerStarted,'unstarted native rack counted as producer start');queue.current=nil
- assert(#queue.queue==3 and state.hotbarEquip.twoHands==not provider and state.hotbarEquip.fromHotbar and state.rackAction.gun==state.pickup)
+ assert(#queue.queue==3 and state.hotbarEquip.twoHands==not provider and state.hotbarEquip.fromHotbar and (ordinary and state.rackAction.item==state.pickup or not ordinary and state.rackAction.gun==state.pickup))
  state.hotbarEquip:setOverrideHandModels(nil,nil)
- player:removeAttachedItem(state.pickup);player.primary,player.secondary=state.pickup,Hotbar.secondary(state)
+ player:removeAttachedItem(state.pickup)
+ if ordinary then
+  assert(state.hotbarEquip.primary==prior and state.hotbarEquip:complete(),'real native nonweapon hand selection failed')
+  assert(state.rackAction:complete()and player.growthReset==1,'real plain CutHair complete failed')
+  assert(state.rackAction.item==state.pickup and state.rackAction.maxTime==100)
+ else player.primary,player.secondary=Hotbar.expectedHands(state,false)end
  assert(not Hotbar.verify(state,false,true).attached)
  local prefix='[P4TidyUpMeister][P0][S21] '
- local trace='ISReadABook -> ISEquipWeaponAction -> ISRackFirearm -> ISReadABook'
+ local producer=ordinary and 'ISCutHair'or 'ISRackFirearm'
+ local trace='ISReadABook -> ISEquipWeaponAction -> '..producer..' -> ISReadABook'
  local function source(state,omit)
-  Hotbar.observeLine(state,prefix..'capture primary=nil secondary=nil')
-  Hotbar.observeLine(state,prefix..'capture worn=['..(provider and 'base:beltextra=Base.HolsterDouble#'..state.holster:getID()..'@inventory'or '')..'] inventoryCount=4')
+  Hotbar.observeLine(state,prefix..'capture primary=nil secondary='..(prior and 'Base.Screwdriver#'..state.screwdriver:getID()..'@inventory'or 'nil'))
+  Hotbar.observeLine(state,prefix..'capture worn=['..(provider and tostring(Hotbar.providerLocation(state))..'='..Hotbar.provider(state):getFullType()..'#'..Hotbar.provider(state):getID()..'@inventory'or '')..'] inventoryCount=4')
   if omit~='equip'then Hotbar.observeLine(state,prefix..'add[add] type=ISEquipWeaponAction item='..state.pickup:getFullType()..'#'..state.pickup:getID()..'@inventory')end
-  if omit~='producer'then Hotbar.observeLine(state,prefix..'add[add] type=ISRackFirearm item=nil')end
-  if omit~='finish'then Hotbar.observeLine(state,prefix..'finish armed=true cancelled=false prep=true transfer=false operation=true dismantle=nil restoreHands=true restoreWorn=false queueRestoreOnCancel=nil actionTotal=4 transferCount=0 counts=[ISEquipWeaponAction=1, ISRackFirearm=1, ISReadABook=2] trace=['..trace..']')end
+  if omit~='producer'then Hotbar.observeLine(state,prefix..'add[add] type='..producer..' item='..(ordinary and state.pickup:getFullType()..'#'..state.pickup:getID()..'@inventory'or 'nil'))end
+  if omit~='finish'then Hotbar.observeLine(state,prefix..'finish armed=true cancelled=false prep=true transfer=false operation=true dismantle=nil restoreHands=true restoreWorn='..tostring(ordinary)..' queueRestoreOnCancel=nil actionTotal=4 transferCount=0 counts=[ISEquipWeaponAction=1, ISRackFirearm=1, ISReadABook=2] trace=['..trace..']')end
   Hotbar.observeLine(state,prefix..'RESTORE actionTotal=4 trace=['..trace..'] reason=operation:ISReadABook')
  end
  for _,omit in ipairs({'equip','producer','finish'})do state.hotbarP4=nil;source(state,omit);assert(state.hotbarP4.problem,'incomplete native source proof accepted '..omit)end
@@ -1141,7 +1171,7 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  assert(not state.hotbarAttachConnect,'polling must not claim pre-perform attachment evidence')
  assert(player:getAttachedItems():getItem(state.hotbarLocation)==state.pickup)
  state.hotbarAttachConnect=true -- lifecycle.begin observes this before native perform in the scenario
- cleanup:perform();assert(cleanup:complete());assert(not player.primary and not player.secondary)
+ cleanup:perform();assert(cleanup:complete());local baselinePrimary,baselineSecondary=Hotbar.expectedHands(state,true);assert(player.primary==baselinePrimary and player.secondary==baselineSecondary)
  assert(Hotbar.verify(state,true).attached)
  state.hotbarProducerStarted=true
  Hotbar.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S21')
@@ -1169,7 +1199,7 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  state.pickup:setAttachedSlotType(nil);quietReady(false);state.pickup:setAttachedSlotType(state.hotbarType)
  state.pickup:setAttachedToModel(nil);quietReady(false);state.pickup:setAttachedToModel(state.hotbarLocation)
  player.primary=state.pickup;quietReady(false);player.primary=nil
- player.secondary=state.pickup;quietReady(false);player.secondary=nil
+ player.secondary=state.pickup;quietReady(false);player.secondary=baselineSecondary
  player:removeAttachedItem(state.pickup);quietReady(false);player:setAttachedItem(state.hotbarLocation,state.pickup)
  hotbar.attachedItems[state.hotbarIndex]=nil;quietReady(false);hotbar.attachedItems[state.hotbarIndex]=state.pickup
  state.hotbarP4.completed=nil;quietReady(false);state.hotbarP4.completed=true
@@ -1179,10 +1209,27 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  state.pickup:setAttachedToModel('Rifle On Back');assert(not pcall(Hotbar.verify,state,true),'wrong model must fail')
  state.pickup:setAttachedToModel(state.hotbarLocation)
  if provider then
-  player.worn[state.holsterLocation]=nil;quietReady(false);player.worn[state.holsterLocation]=state.holster
-  assert(state.hotbarIndex==(caseID:find('left',1,true)and 7 or 9),'fixture must use the actual dynamic native slot index')
+  local location,item=Hotbar.providerLocation(state),Hotbar.provider(state)
+  player.worn[location]=nil;quietReady(false);player.worn[location]=item
+  assert(state.hotbarIndex==(ordinary and (prior and 13 or 11)or caseID:find('left',1,true)and 7 or 9),'fixture must use the actual dynamic native slot index')
   local effect=Hotbar.verify(state,true)
-  assert(effect.providerItem==state.holster:getID()and effect.providerWorn and effect.secondary==false)
+  assert(effect.providerItem==item:getID()and effect.providerWorn and effect.secondary==(prior and state.screwdriver:getID()or false))
+ end
+ if ordinary then
+  local effect=Hotbar.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})
+  assert(#effect.acknowledgements==3 and effect.acknowledgements[2].kind=='ISCutHair'and effect.acknowledgements[2].id==state.pickup:getID())
+  assert(effect.ordinary.condition==10 and effect.ordinary.sharpness==1 and effect.ordinary.hairColor.r==0.2)
+  for _,class in ipairs({'InventoryItem','DrainableComboItem','Radio'})do
+   state.pickup.javaClass=class;quietReady(false);assert(not pcall(Hotbar.verify,state,true),'wrong native factory class accepted '..class)
+  end
+  state.pickup.javaClass='ComboItem';quietReady(true)
+  state.pickup.condition=9;quietReady(false);assert(not pcall(Hotbar.verify,state,true));state.pickup.condition=nil
+  state.pickup.sharpness=0.5;quietReady(false);state.pickup.sharpness=nil
+  visual.hair='MohawkFan';quietReady(false);visual.hair='CrewCut'
+  visual.nonAttached='Ponytail';quietReady(false);visual.nonAttached=nil
+  local savedColor=color.getRedFloat;color.getRedFloat=function()return 0.7 end;quietReady(false);color.getRedFloat=savedColor
+  if prior then state.root.items[state.screwdriver]=nil;quietReady(false);state.root.items[state.screwdriver]=true end
+  quietReady(true)
  end
  Hotbar.release(state);assert(state.pickup:getAttachedSlot()==-1 and next(player.attached)==nil)
  if provider then

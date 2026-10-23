@@ -710,3 +710,107 @@ do
  getActivatedMods=oldMods
 end
 print('Equipment displacement completion: exact shared clothing boundaries and zero synthetic hand receipts passed in SP/Host modes.')
+
+-- Ordinary hotbar setup waits for native visual replication without a client
+-- repair, then checkpoint hands follow the real nonweapon equip branch.
+do
+ local Hotbar=modules.QueueEquipmentHotbar
+ for _,id in ipairs({'tidy-hotbar-normal-left','tidy-hotbar-normal-right'})do
+  local root={};local pickup={getContainer=function()return root end};local secondary={}
+  local visual={hair='MohawkFan',getHairModel=function(self)return self.hair end,getNonAttachedHair=function(self)return self.attached end}
+  local sample={id=id,root=root,pickup=pickup,screwdriver=secondary,front=book(10),tail=book(9)}
+  local primary,held=Hotbar.expectedHands(sample,false)
+  sample.player={getPrimaryHandItem=function()return primary end,getSecondaryHandItem=function()return held end,getHumanVisual=function()return visual end}
+  local ids={case=id,hotbarHair='CrewCut'}
+  assert(not Hotbar.available(sample.player,ids),'unreplicated plain hair must wait')
+  visual.hair='CrewCut';visual.attached='Ponytail';assert(not Hotbar.available(sample.player,ids))
+  visual.attached=nil;assert(Hotbar.available(sample.player,ids))
+  assert(Fixture.settled(sample,'toolkit',true),'native selected ordinary checkpoint hands differ')
+  assert(not Fixture.settled(sample,'toolkit'),'independent tail must still be incomplete')
+  primary,held=held,primary;assert(not Fixture.settled(sample,'toolkit',true),'swapped native selected hands accepted')
+ end
+end
+print('Equipment ordinary hotbar authority: passive visual setup and exact native checkpoint hands passed.')
+
+-- Drive the actual client state machine with a first-case provider handshake.
+-- Prepared state exists before enqueue creates receipt tracking; an expired
+-- heartbeat must neither enumerate nil records nor capture setup actions.
+do
+ for _,id in ipairs({'tidy-hotbar-normal-left','tidy-hotbar-holster-left'})do
+  local now,enabled,captures,enqueued,watches=0,false,0,0,0
+  local tick,start,serverCommand
+  local sent,events,lines={},{},{}
+  local queue={queue={}}
+  function queue:indexOf(action)for i,value in ipairs(self.queue)do if value==action then return i end end;return -1 end
+  local player={}
+  function player:getCurrentSquare()return {}end
+  function player:isPlayerMoving()return false end
+  function player:tooDarkToRead()return false end
+  function player:hasTimedActions()return false end
+  function player:isTimedActionInstant()return false end
+  function player:getPlayerNum()return 0 end
+  function player:getX()return 1 end;function player:getY()return 2 end;function player:getZ()return 0 end
+  function player:setGhostMode()end;function player:setAutoDrink()end
+  local function book(kind)return {getFullType=function()return kind end,getAlreadyReadPages=function()return 0 end}end
+  local sample={id=id,player=player,front=book('Base.BookCarpentry1'),tail=book('Base.BookFirstAid1'),
+   pickup={getID=function()return 1801 end},hotbarIndex=3}
+  local selection={cases={id},kind='mp',mode='native',language='EN',options={}}
+  local toolkit={Settings={actionQueue=function()return enabled end},ActionQueue={},ActionQueuePolicy={},ActionQueueOperations={},
+   ActionQueueAcknowledgements={capture=function(action)
+    captures=captures+1
+    if action.Type=='ISEquipWeaponAction'then return {token='provider-token',kind=action.Type,transaction=1,state='completed'}end
+   end}}
+  local hotbar={isCase=function(value)return value==id end,provider=function()return {}end,install=function()end,
+   observe=function()end,watch=function()watches=watches+1 end,
+   enqueue=function(state)
+    assert(state==sample);enqueued=enqueued+1
+    queue.queue[#queue.queue+1]={Type='ISEquipWeaponAction',item=sample.pickup}
+    queue.queue[#queue.queue+1]={Type='ISCutHair',item=sample.pickup}
+   end}
+  local required={QueueTestSelection=selection,QueueEquipmentSelection=selection,
+   QueueEquipmentFixture={available=function()return true end,prepare=function()return sample end},
+   QueueEquipmentScene={needed=function()return false end},QueueEquipmentSlots={isBelt=function()return false end},
+   QueueEquipmentBulk={isCase=function()return false end},QueueEquipmentClothing={isCase=function()return false end,watch=function()end},
+   QueueEquipmentHotbar=hotbar,QueueEquipmentCompletion={observe=function()return {watch=function()end}end},
+   QueueHealthEvents={emit=function(event)events[#events+1]=event end}}
+  local env=setmetatable({PZSurvivorToolkit=toolkit,require=function(name)return required[name]or {}end,
+   Events={OnTick={Add=function(fn)tick=fn end},OnGameStart={Add=function(fn)start=fn end},
+    OnPlayerUpdate={Add=function()end},OnServerCommand={Add=function(fn)serverCommand=fn end}},
+   getPlayer=function()return player end,getTimestampMs=function()return now end,
+   isClient=function()return true end,isServer=function()return false end,
+   getActivatedMods=function()return {contains=function()return true end}end,
+   getCore=function()return {setOptionAutoDrink=function()end}end,
+   Translator={getLanguage=function()return {name=function()return 'EN'end}end},
+   PZAPI={ModOptions={getOptions=function()return {getOption=function()return {setValue=function(_,value)enabled=value end}end}end}},
+   ISTimedActionQueue={getTimedActionQueue=function()return queue end,add=function(action)queue.queue[#queue.queue+1]=action end},
+   ISReadABook={getDuration=function()return 1 end},
+   sendClientCommand=function(module,command,args)sent[#sent+1]={module=module,command=command,args=args}end,
+   print=function(line)lines[#lines+1]=line end},{__index=_G})
+  env.ISInventoryPaneContextMenu={onLiteratureItems=function(items)
+   env.ISTimedActionQueue.add({Type='ISReadABook',item=items[1],getDuration=env.ISReadABook.getDuration,minutesPerPage=2.0})
+  end}
+  local chunk=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/client/ZZEquipmentQueue.lua'))
+  setfenv(chunk,env);chunk();start();tick()
+  assert(sent[1].command=='Prepare'and enqueued==0)
+  serverCommand('EquipmentQueueTest','Prepared',{case=id,items={pickup=1801},spawn={x=1,y=2,z=0}})
+  tick();tick()
+  assert(sent[2].command=='ConfigureHotbar'and not sample.records and enqueued==0 and watches==0)
+  now=15000
+  for i=1,3 do tick()end
+  assert(captures==0 and enqueued==0 and #queue.queue==0,'partial provider setup captured receipts/actions')
+  assert(#events==1 and events[1].event=='setup','delayed first provider acknowledgement failed with expired heartbeat')
+  for _,line in ipairs(lines)do assert(not line:find('CAPTURE',1,true)and not line:find('WAIT',1,true),'setup leaked active receipt heartbeat')end
+  serverCommand('EquipmentQueueTest','HotbarConfigured',{case=id,item=1801,slotIndex=3,ok=true})
+  tick()
+  assert(#events==1,'client failed after provider acknowledgement: '..tostring(events[#events].reason))
+  assert(enqueued==1 and watches==1 and #queue.queue==4 and sample.expectedReceipts==1
+   and type(sample.records)=='table'and type(sample.seen)=='table','provider ack did not enqueue and initialise strict receipt tracking')
+  queue.current=queue.queue[2];tick();tick()
+  assert(captures==2 and #sample.records==1 and sample.seen['provider-token']and sample.records[1].state=='completed',
+   'after-enqueue exact receipt capture/dedup changed')
+  local waits=0
+  for _,line in ipairs(lines)do if line:find('[EQUIPMENT_TEST] WAIT',1,true)then waits=waits+1 end end
+  assert(waits==1 and #events==1,'active heartbeat failed after delayed provider ack')
+ end
+end
+print('Equipment first-provider client setup: expired heartbeat waits for enqueue tracking, then exact receipt capture proceeds once.')

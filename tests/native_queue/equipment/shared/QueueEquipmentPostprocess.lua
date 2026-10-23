@@ -72,7 +72,7 @@ function Postprocess.verify(state,mode,tidy)
  end
  local primary,secondary=state.hammer,state.screwdriver
  if Clothing.overlap(state)then primary,secondary=Clothing.expectedHands(state,tidy)end
- if Hotbar.isCase(state.id)then primary,secondary=not tidy and state.pickup or nil,not tidy and Hotbar.secondary(state)or nil;Hotbar.verify(state,tidy)end
+ if Hotbar.isCase(state.id)then primary,secondary=Hotbar.expectedHands(state,tidy);Hotbar.verify(state,tidy)end
  if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   if not tidy then primary,secondary=state.pickup,nil
   elseif state.id=='tidy-empty-hands' then primary,secondary=nil,nil
