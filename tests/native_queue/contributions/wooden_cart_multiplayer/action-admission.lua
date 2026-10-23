@@ -2,7 +2,8 @@
 local config=require 'QueueTestSelection'
 assert(config.disposable==true and config.options.cart_action_admission==true,'Explicit disposable action admission experiment required')
 local J=require 'CartMPJSON'
-local M={}
+if CartActionAdmissionProbe then return CartActionAdmissionProbe end
+local M={};CartActionAdmissionProbe=M
 local module='CartActionAdmissionProbe'
 -- Native counters cross Kahlua as doubles. Emit safe integers in decimal so
 -- tostring's scientific representation cannot lose receipt precision. Native

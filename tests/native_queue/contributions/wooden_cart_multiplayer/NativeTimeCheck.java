@@ -41,6 +41,40 @@ public final class NativeTimeCheck {
         for(String exact:new String[]{"\"monoNs\":253716934852789","\"maximum\":9007199254740991","\"negative\":-9007199254740991", "\"wallMs\":1792720134545","\"zero\":0","\"cart\":-2147483648"})
             check(encoded.contains(exact),"Actual Kahlua admission counter lost precision: "+encoded);
     }
+    /** Native copy normalizes a remote owner; the parsed packet alone retains the signed wire slot. */
+    private static void checkNativeActionOwnerCopy(sun.misc.Unsafe unsafe)throws Exception {
+        boolean server=zombie.network.GameServer.server,client=zombie.network.GameClient.client;
+        try {
+            zombie.network.GameServer.server=true;zombie.network.GameClient.client=false;
+            var remote=(Owner)unsafe.allocateInstance(Owner.class);remote.local=false;remote.onlineId=7;remote.playerIndex=0;
+            // isLocal() is final and consults the native ECS component, not just isLocalPlayer().
+            // Construct only the in-memory owner/component association, without an AI/world lifecycle.
+            var components=zombie.iso.IsoObject.class.getDeclaredField("ecsComponentMap");components.setAccessible(true);
+            components.set(remote,new java.util.HashMap<Class<? extends zombie.characters.ecs.ECSComponent>,zombie.characters.ecs.ECSComponent>());
+            var network=(zombie.characters.component.NetworkPlayerComponent)unsafe.allocateInstance(zombie.characters.component.NetworkPlayerComponent.class);
+            var componentClass=zombie.characters.ecs.ECSComponent.class.getDeclaredField("ecsClass");componentClass.setAccessible(true);
+            componentClass.set(network,zombie.characters.ecs.ECSComponent.getECSClass(zombie.characters.component.NetworkPlayerComponent.class));
+            network.setECSOwnerEntity(remote);
+            check(network.isRemote() && !remote.isLocal(),"Native remote owner fixture is local");
+            var actionClass=Class.forName("zombie.core.Action");
+            var actionOwner=actionClass.getDeclaredField("playerId");actionOwner.setAccessible(true);
+            var actionID=actionClass.getDeclaredField("id");actionID.setAccessible(true);
+            var actionState=actionClass.getDeclaredField("state");actionState.setAccessible(true);
+            var player=zombie.network.fields.character.PlayerID.class.getDeclaredField("player");player.setAccessible(true);
+            var packet=new zombie.network.packets.NetTimedActionPacket();
+            var source=(zombie.network.fields.character.PlayerID)actionOwner.get(packet);
+            source.setID((short)7);source.setPlayerIndex((byte)0);player.set(source,remote);
+            actionID.setByte(packet,(byte)1);actionState.set(packet,zombie.core.Transaction.TransactionState.Request);
+            packet.type="ToolkitWoodCartPickup";packet.action=se.krka.kahlua.j2se.J2SEPlatform.getInstance().newTable();
+            var actual=new zombie.core.NetTimedAction();actual.copyFrom(packet);
+            var copied=(zombie.network.fields.character.PlayerID)actionOwner.get(actual);
+            check(source.getPlayerIndex()==0,"Native action copy changed the packet's signed wire slot");
+            check(copied.getPlayerIndex()==-1,"Native action copy retained the source slot for a remote server actor");
+            check(copied.getPlayer()==remote && copied.getID()==7,"Native action copy lost exact actor/online ID");
+            check(actionID.getByte(actual)==1 && actionState.get(actual)==zombie.core.Transaction.TransactionState.Request,"Native action copy lost transaction/state");
+            check(actual.action==packet.action && actual.action.rawget("netAction")==actual,"Native action table did not rebind to the actual copied action");
+        } finally {zombie.network.GameServer.server=server;zombie.network.GameClient.client=client;}
+    }
     public static void main(String[] args)throws Exception {
         checkAdmissionNumbers(java.nio.file.Path.of(args[0]));
         check(Main.actionAdmissionKind("ToolkitWoodCartPickup") && !Main.actionAdmissionKind("ISWalkToTimedAction"),"Unrelated action admitted");
@@ -86,7 +120,8 @@ public final class NativeTimeCheck {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         Class.forName("zombie.characters.IsoGameCharacter");Class.forName("zombie.network.GameClient");
         var unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
-        var unsafe=(sun.misc.Unsafe)unsafeField.get(null);var owner=(Owner)unsafe.allocateInstance(Owner.class);
+        var unsafe=(sun.misc.Unsafe)unsafeField.get(null);checkNativeActionOwnerCopy(unsafe);
+        var owner=(Owner)unsafe.allocateInstance(Owner.class);
         owner.local=true;owner.motion="motion-before";owner.action="action-before";
         owner.ai=(zombie.characters.NetworkPlayerAI)unsafe.allocateInstance(zombie.characters.NetworkPlayerAI.class);
         owner.ai.prediction=new zombie.network.fields.character.Prediction();

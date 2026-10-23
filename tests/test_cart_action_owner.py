@@ -81,6 +81,14 @@ assert(has('"monoNs":253716934852789') and has('"startGeneration":90071992547409
 assert(not has('[CART_ADMISSION] ERROR'))
 ''')
 
+    def test_role_alias_reload_registers_callbacks_once(self):
+        self.run_lua('''
+local again=dofile(root..'/tests/native_queue/contributions/wooden_cart_multiplayer/action-admission.lua')
+assert(again==probe and #callbacks==2)
+start();event('CartActionAdmissionProbe','Reply',reply())
+assert(not has('[CART_ADMISSION] ERROR'))
+''')
+
     def test_changed_ingress_or_native_action_is_rejected(self):
         for mutation in ('ingress=foreign','action.action={}'): 
             with self.subTest(mutation=mutation):

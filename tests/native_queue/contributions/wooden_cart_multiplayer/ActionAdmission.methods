@@ -136,9 +136,11 @@
                 || packet.action!=action.action || !"Request".equals(actionAdmissionState(packet)))return null;
             var owner=actionAdmissionPlayer(action);var packetOwner=actionAdmissionPlayer(packet);var player=owner.getPlayer();
             int transaction=((Byte)actionAdmissionField(action,"id")).intValue();
-            if(player==null || packetOwner==null || transaction==0 || transaction!=((Byte)actionAdmissionField(packet,"id")).intValue() || owner.getPlayerIndex()!=player.playerIndex
+            if(player==null || packetOwner==null || transaction==0 || transaction!=((Byte)actionAdmissionField(packet,"id")).intValue()
                 || packetOwner.getPlayer()!=player || owner.getID()!=player.getOnlineID() || packetOwner.getID()!=player.getOnlineID()
                 || packetOwner.getPlayerIndex()!=player.playerIndex || !actionAdmissionRegistered(player,scope.connection))return null;
+            // Native Action.copyFrom calls PlayerID.set(remotePlayer), resetting its local slot to -1.
+            // Only the original parsed wire owner slot identifies the source connection slot.
             var binding=actionAdmissionBinding(action,player);var record=new ActionAdmissionRecord();
             record.action=new java.lang.ref.WeakReference<>(action);record.table=new java.lang.ref.WeakReference<>(action.action);record.actor=new java.lang.ref.WeakReference<>(player);
             record.connection=new java.lang.ref.WeakReference<>(scope.connection);record.item=new java.lang.ref.WeakReference<>(binding.item());record.world=new java.lang.ref.WeakReference<>(binding.world());
