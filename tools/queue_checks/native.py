@@ -345,7 +345,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             font_preload(cache, selection, game if os.name == 'nt' else None)
             for name in ("ToolkitWindowBootstrap.java", "ToolkitSmokeLauncher.java"):
                 shutil.copy2(support / name, cache / "classes")
-            subprocess.run([str(jdk_binary(jdk, 'javac')), "-cp", str(game / "projectzomboid.jar"),
+            subprocess.run([str(jdk_binary(jdk, 'javac')), "--release", "25", "-cp", str(game / "projectzomboid.jar"),
                             str(cache / "classes/ToolkitWindowBootstrap.java"), str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
                            env={key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")})
             if not (cache / "classes/ToolkitSmokeLauncher.class").is_file():

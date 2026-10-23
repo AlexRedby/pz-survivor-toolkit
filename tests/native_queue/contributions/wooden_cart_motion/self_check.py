@@ -41,7 +41,7 @@ def check_manifest():
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
     assert manifest["dependencies"]["compile_jdk_minimum"] == 25
-    assert manifest["dependencies"]["compile_release"] == 17
+    assert manifest["dependencies"]["compile_release"] == 25
     assert manifest["dependencies"]["required_project_versions"]["PZSurvivorToolkit"] == ">=0.1.58"
     assert manifest["dependencies"]["required_project_versions"]["PZToolkitJavaPatches"] == ">=0.1.15"
     assert manifest["required_environment"] == ["PZ_CART_RUNTIME_FILE", "PZ_CART_COMMAND_FILE", "PZ_CART_TEST_PAD"]
@@ -270,7 +270,7 @@ def check_java(game, jdk, patch):
     jars = [game / name for name in ("projectzomboid.jar", "ZombieBuddy.jar")] + [patch.resolve()]
     assert all(path.is_file() for path in jars), "Local game/ZombieBuddy and candidate patch JARs required"
     with tempfile.TemporaryDirectory(prefix="wooden-cart-compile-") as output:
-        subprocess.run([str(compiler), "--release", "17", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java"), str(HERE / "KahluaChecks.java"), str(HERE / "ImpactWatchChecks.java")], check=True)
+        subprocess.run([str(compiler), "--release", "25", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java"), str(HERE / "KahluaChecks.java"), str(HERE / "ImpactWatchChecks.java")], check=True)
         assert (Path(output) / "net/alexredby/cartlab/Main.class").is_file()
         runtime = jdk / "bin" / ("java.exe" if os.name == "nt" else "java")
         for pad in ('false', 'true'):

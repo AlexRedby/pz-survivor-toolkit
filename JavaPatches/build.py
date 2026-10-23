@@ -5,6 +5,7 @@ from zipfile import ZipFile, BadZipFile
 
 ROOT = Path(__file__).resolve().parent
 KOTLIN_VERSION = '2.4.21'
+JVM_TARGET = '25'
 KOTLIN_MODULE = 'pz_toolkit_java_patches'
 KOTLIN_RUNTIME_PACKAGE = 'net/alexredby/pztoolkitruntime/kotlin'
 SOURCE_MANIFEST = 'META-INF/pztoolkit-build-inputs.json'
@@ -294,12 +295,12 @@ def main(argv=None):
         if kotlin_home is not None:
             stdlib = kotlin_home / 'lib/kotlin-stdlib.jar'
             subprocess.run([str(args.jdk / 'bin/java'), '-jar', str(kotlin_home / 'lib/kotlin-compiler.jar'),
-                            '-kotlin-home', str(kotlin_home), '-jvm-target', '17', '-module-name', KOTLIN_MODULE,
+                            '-kotlin-home', str(kotlin_home), '-jvm-target', JVM_TARGET, '-module-name', KOTLIN_MODULE,
                             '-no-stdlib', '-no-reflect', '-classpath', os.pathsep.join([str(stdlib), classpath]),
                             '-d', str(classes), *map(str, kotlin_sources), *map(str, java_sources)], check=True)
             compilepath = os.pathsep.join([str(classes), str(stdlib), classpath])
-        # Output targets Java 17; reading the game's Java 25 classes still requires javac 25+.
-        subprocess.run([javac, '--release', '17', '-cp', compilepath, '-d', str(classes), *map(str, java_sources)], check=True)
+        # Match the supported game's Java 25 runtime for both Kotlin and Java output.
+        subprocess.run([javac, '--release', JVM_TARGET, '-cp', compilepath, '-d', str(classes), *map(str, java_sources)], check=True)
         if source_fingerprints(ROOT) != fingerprints:
             raise ValueError('Runtime sources or build tools changed during compilation; rebuild the candidate.')
         write_source_manifest(ROOT, classes, fingerprints)
@@ -325,7 +326,7 @@ def main(argv=None):
             build_tools = temporary / 'build-tools'
             build_tools.mkdir()
             compiler_jar = str(kotlin_home / 'lib/kotlin-compiler.jar')
-            subprocess.run([javac, '--release', '17', '-cp', compiler_jar, '-d', str(build_tools),
+            subprocess.run([javac, '--release', JVM_TARGET, '-cp', compiler_jar, '-d', str(build_tools),
                             str(ROOT / 'tools/RelocateKotlin.java')], check=True)
             subprocess.run([str(args.jdk / 'bin/java'), '-cp', os.pathsep.join([str(build_tools), compiler_jar]),
                             'RelocateKotlin', str(classes)], check=True)
@@ -342,7 +343,7 @@ def main(argv=None):
             checks = {name: CHECKS[name] for name in selected}
             if kotlin_tests:
                 subprocess.run([str(args.jdk / 'bin/java'), '-jar', compiler_jar,
-                                '-kotlin-home', str(kotlin_home), '-jvm-target', '17',
+                                '-kotlin-home', str(kotlin_home), '-jvm-target', JVM_TARGET,
                                 '-module-name', KOTLIN_MODULE + '_tests', '-no-stdlib', '-no-reflect',
                                 '-Xfriend-paths=' + str(test_api), '-Xjava-source-roots=' + str(ROOT / 'tests'),
                                 '-classpath', os.pathsep.join([str(stdlib), str(test_api), classpath]),
@@ -353,7 +354,7 @@ def main(argv=None):
                                 'RelocateKotlin', str(testclasses), '--tests'], check=True)
             java_tests = [source for source in test_sources if source.suffix == '.java']
             if java_tests:
-                subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([str(testclasses), classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, java_tests)], check=True)
+                subprocess.run([javac, '--release', JVM_TARGET, '-cp', os.pathsep.join([str(testclasses), classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, java_tests)], check=True)
             for name, marker in checks.items():
                 for trace in ([False, True] if name.endswith("VehicleTraceChecks") else [False]):
                     with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:

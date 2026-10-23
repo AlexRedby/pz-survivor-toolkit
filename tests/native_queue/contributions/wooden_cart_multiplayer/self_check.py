@@ -726,7 +726,7 @@ def check_java(game, jdk, patch):
         root = Path(directory)
         main = root / 'Main.java'
         main.write_text(base.replace(anchor, (HERE / 'MPMain.methods').read_text() + '\n' + anchor))
-        subprocess.run([str(javac), '--release', '17', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ClearanceProbe.java')], check=True)
+        subprocess.run([str(javac), '--release', '25', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ClearanceProbe.java')], check=True)
         assert (root / 'net/alexredby/cartlab/Main.class').is_file() and (root / 'ClearanceProbe.class').is_file()
         checks=root/'ModelProbeCheck.java'
         checks.write_text(r'''
@@ -1015,7 +1015,7 @@ public final class ModelProbeCheck {
 }
 ''')
         classpath=os.pathsep.join([str(root),*map(str,jars)])
-        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),str(checks)],check=True)
+        subprocess.run([str(javac),'--release','25','-cp',classpath,'-d',str(root),str(checks)],check=True)
         java=jdk/'bin'/('java.exe' if os.name=='nt' else 'java')
         result=subprocess.run([str(java),'-cp',classpath,'ModelProbeCheck'],capture_output=True,text=True,
             env=dict(os.environ,PZ_CART_RUNTIME_FILE=str(root/'runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'commands.txt')))
@@ -1060,7 +1060,7 @@ public final class TimelineNativeCheck {
     }
 }
 ''')
-        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),str(timeline_check)],check=True)
+        subprocess.run([str(javac),'--release','25','-cp',classpath,'-d',str(root),str(timeline_check)],check=True)
         lab=root/'CartLab.jar'
         subprocess.run([str(jdk/'bin/jar'),'--create','--file',str(lab),'-C',str(root),'net/alexredby/cartlab'],check=True)
         (root/'Lua').mkdir()

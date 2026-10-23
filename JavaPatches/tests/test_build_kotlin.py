@@ -164,14 +164,14 @@ class KotlinBuild(unittest.TestCase):
             self.assertEqual(build.kotlin_toolchain(None, parser), self.home)
             run.assert_not_called()
 
-    def test_mixed_build_preserves_java17_and_bundles_runtime_only_in_ordinary_jar(self):
+    def test_mixed_build_targets_java25_and_bundles_runtime_only_in_ordinary_jar(self):
         with patch.dict(os.environ, {'KOTLIN_HOME': str(self.root / 'wrong environment distribution')}):
             self.run_build()
         kotlin = next(command for command in self.commands if '-jar' in command)
         java = next(command for command in self.commands if '--release' in command)
         self.assertLess(self.commands.index(kotlin), self.commands.index(java))
-        self.assertEqual(kotlin[kotlin.index('-jvm-target') + 1], '17')
-        self.assertEqual(java[java.index('--release') + 1], '17')
+        self.assertEqual(kotlin[kotlin.index('-jvm-target') + 1], '25')
+        self.assertEqual(java[java.index('--release') + 1], '25')
         self.assertEqual(kotlin[kotlin.index('-module-name') + 1], build.KOTLIN_MODULE)
         self.assertIn(str(self.kotlin), kotlin)
         self.assertIn(str(self.java), kotlin)

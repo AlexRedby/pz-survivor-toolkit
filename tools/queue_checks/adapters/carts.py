@@ -284,7 +284,7 @@ def sources(project, selection):
 
 def _compile(jdk, classpath, classes, sources):
     classes.mkdir(parents=True)
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '17', '-cp', classpath, '-d', str(classes),
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
                     *map(str, sources)], check=True, capture_output=True, text=True, timeout=120,
                    env={key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})
     if not list(classes.rglob('*.class')):

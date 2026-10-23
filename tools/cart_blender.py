@@ -136,7 +136,7 @@ def export_workspace(workspace,bake_fps=None):
     import cart_clip_bake as baker
     game=Path(config['game']);jdk=Path(config['jdk']);classes=output/'classes';classes.mkdir()
     java_source=ROOT/'tools/CartClipCheck.java'
-    run([jdk_binary(jdk,'javac'),'-cp',game/'projectzomboid.jar','-d',classes,java_source],output/'javac.log')
+    run([jdk_binary(jdk,'javac'),'--release','25','-cp',game/'projectzomboid.jar','-d',classes,java_source],output/'javac.log')
     requested_bake_fps=bake_fps
     while True:
         suffix=f'-{bake_fps:g}' if bake_fps is not None else ''

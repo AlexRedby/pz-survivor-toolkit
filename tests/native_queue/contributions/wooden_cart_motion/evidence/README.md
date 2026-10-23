@@ -13,7 +13,7 @@ Offline analyzers and attachable, read-only render probes for the calibrated B42
 - `check-clearance.py`, `check-hip-actual.py`, `analyze-native.py`: mesh and native pose analyzers. The first two now share `clearance_geometry.py` instead of executing another script's source. All input/output paths are explicit.
 - `fbx_mesh.py`, `shaft_components.py`, `actual_mesh.py`: original binary FBX reader and wooden shaft topology/intersection/distance calculations, with explicit mesh loading instead of import-time access to an investigation directory. No FBX, native vertex buffer or body mesh is included.
 
-Java dependencies are local `projectzomboid.jar`, `ZombieBuddy.jar` (includes Byte Buddy), the compiled candidate JavaPatches classes and JDK 25+; source targets Java 17. Python requires Python 3 and NumPy. No dependency is downloaded or installed by these files. The probes reflect candidate `CartWheelSpin.phase`, `CartGrounding.render` and `CartGrip.grip`; incompatible candidates must fail instrumentation or the capture checks.
+Java dependencies are local `projectzomboid.jar`, `ZombieBuddy.jar` (includes Byte Buddy), the compiled candidate JavaPatches classes and JDK 25+; source targets Java 25. Python requires Python 3 and NumPy. No dependency is downloaded or installed by these files. The probes reflect candidate `CartWheelSpin.phase`, `CartGrounding.render` and `CartGrip.grip`; incompatible candidates must fail instrumentation or the capture checks.
 
 ## Offline checks
 
@@ -34,7 +34,7 @@ Synthetic analyzer regressions also require actual body/cart and body/trousers i
 Compile with explicit dependencies into an adapter-owned build directory, outside this source tree:
 
 ```sh
-"$PZ_JDK/bin/javac" --release 17 \
+"$PZ_JDK/bin/javac" --release 25 \
   -cp "$PZ_GAME_JAVA_DIR/projectzomboid.jar:$PZ_GAME_JAVA_DIR/ZombieBuddy.jar:$PZ_TOOLKIT_CLASSES" \
   -d "$PZ_EVIDENCE_CLASSES" tests/native_queue/contributions/wooden_cart_motion/evidence/*.java
 ```

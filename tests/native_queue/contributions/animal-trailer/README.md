@@ -19,7 +19,7 @@ python3 -m unittest discover \
   -s tests/native_queue/contributions/animal-trailer -p 'test_*.py'
 ```
 
-PowerShell: use `py -3`, `$env:ANIMAL_GAME`, `$env:ANIMAL_JDK`, `$env:ANIMAL_PATCH` and a new temporary output path. All CLI paths are explicit. The output must not exist; the builder refuses to merge into a profile. A failed build can leave this new disposable output for inspection. It validates three exact engine class hashes, compiles Java for release 17, and parses the generated Lua with stock Kahlua without executing it. No game, Workshop files, saves, profiles, credentials or JARs are stored in Git.
+PowerShell: use `py -3`, `$env:ANIMAL_GAME`, `$env:ANIMAL_JDK`, `$env:ANIMAL_PATCH` and a new temporary output path. All CLI paths are explicit. The output must not exist; the builder refuses to merge into a profile. A failed build can leave this new disposable output for inspection. It validates three exact engine class hashes, compiles Java for release 25, and parses the generated Lua with stock Kahlua without executing it. No game, Workshop files, saves, profiles, credentials or JARs are stored in Git.
 
 Output contains `mods/` and `runtime-manifest.json` with ordered helper IDs and per-JAR hashes. All Java dependencies are externally supplied. The patch JAR is a compile dependency; it is **not copied or enabled automatically**, allowing the equipment negative control to run without it.
 

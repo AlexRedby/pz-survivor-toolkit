@@ -181,8 +181,8 @@ public class KotlinRuntimeChecks { public static void main(String[] args) { Syst
                          {str(self.kotlin_check), str(self.kotlin_helper)})
         self.assertEqual([arg for arg in java if arg.endswith('.java')],
                          [str(self.cold_check), str(self.java_helper)])
-        self.assertEqual(kotlin[kotlin.index('-jvm-target') + 1], '17')
-        self.assertEqual(java[java.index('--release') + 1], '17')
+        self.assertEqual(kotlin[kotlin.index('-jvm-target') + 1], '25')
+        self.assertEqual(java[java.index('--release') + 1], '25')
         classpath = kotlin[kotlin.index('-classpath') + 1].split(os.pathsep)
         friend = next(arg.split('=', 1)[1] for arg in kotlin if arg.startswith('-Xfriend-paths='))
         self.assertEqual(classpath[:2], [str(self.fixture.home / 'lib/kotlin-stdlib.jar'), friend])

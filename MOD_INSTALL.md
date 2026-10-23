@@ -8,7 +8,7 @@ Java Patches 0.1.18 gives one stock corridor a distinct persistent room key. Aft
 
 ## Prepare once
 
-The server owner prepares one copy for everyone. Players receiving it do not need Python, a JDK or a Kotlin installation; the Kotlin runtime is bundled in the Java mod JAR.
+The server owner prepares one copy for everyone. Players receiving it do not need Python, a JDK or a Kotlin installation. The patch targets Java 25, provided by the supported B42.21 game runtime; its private Kotlin runtime is bundled in the mod JAR.
 
 1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit). Install **Python 3.10+**, **JDK 25+** and unpack the [Kotlin 2.4.21 compiler distribution](https://github.com/JetBrains/kotlin/releases/tag/v2.4.21) on the build machine; preparation builds Toolkit and Java Patches. Point `KOTLIN_HOME` to the distribution root containing `lib/` (not `bin/`); the build prefers `--kotlin-home`, then `KOTLIN_HOME`, then `kotlinc` on `PATH`.
 2. Install the [ZombieBuddy loader](#zombiebuddy-loader) there. The game Java directory must contain both `projectzomboid.jar` and `ZombieBuddy.jar`.

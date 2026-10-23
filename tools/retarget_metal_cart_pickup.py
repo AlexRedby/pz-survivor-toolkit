@@ -102,7 +102,7 @@ def solve(samples, parents, game, jdk, patch_jar):
     classpath = os.pathsep.join(str(p) for p in (patch_jar, game / 'projectzomboid.jar', game / 'ZombieBuddy.jar'))
     with tempfile.TemporaryDirectory(prefix='cart-metal-retarget-') as directory:
         work = Path(directory)
-        subprocess.run([str(jdk / 'bin/javac'), '--release', '17', '-cp', classpath,
+        subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath,
                         '-d', str(work), str(ROOT / 'tools/CartMetalPickupRetarget.java')], check=True)
         with (work / 'input.bin').open('wb') as stream:
             stream.write(struct.pack('>ii', 0x434d5052, len(names)))
@@ -146,7 +146,7 @@ def verify_native(clip, game, jdk, patch_jar):
         work = Path(directory)
         candidate = work / f'{CLIP}.x'
         candidate.write_text(clip)
-        subprocess.run([str(jdk / 'bin/javac'), '--release', '17', '-cp', classpath,
+        subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath,
                         '-d', str(work), str(ROOT / 'tools/CartMetalPickupReplay.java')], check=True)
         subprocess.run([str(jdk / 'bin/java'), '-Djava.awt.headless=true',
                         f'-Djava.library.path={game}', '-cp', os.pathsep.join((str(work), classpath)),

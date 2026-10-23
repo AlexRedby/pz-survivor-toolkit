@@ -67,7 +67,7 @@ def prepare(args):
     (profile/'mods/default.txt').write_text('VERSION = 1,\nmods\n{\n mod = ZombieBuddy,\n mod = PZToolkitJavaPatches,\n mod = VideoFixture,\n}\nmaps\n{\n}\n')
     (profile/'mods/reset-mods-42_00.txt').write_text('')
     (profile/'options.ini').write_text('version=10\nwidth=1280\nheight=720\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\nvoiceEnable=false\npauseOnFocusLoss=false\nlanguage=' + args.language + '\n')
-    subprocess.run([str(jdk/'bin/javac'), '--release', '17', '-cp', str(game/'projectzomboid.jar'),
+    subprocess.run([str(jdk/'bin/javac'), '--release', '25', '-cp', str(game/'projectzomboid.jar'),
                     '-d', str(profile/'classes'), str(HERE/'ToolkitVideoLauncher.java')], check=True, timeout=60)
     # Keep inherited agent options from starting a second loader outside this profile.
     argv = ['/usr/bin/env', 'JDK_JAVA_OPTIONS=', 'JAVA_TOOL_OPTIONS=', '_JAVA_OPTIONS=',

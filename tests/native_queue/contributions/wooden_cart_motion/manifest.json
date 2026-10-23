@@ -57,7 +57,7 @@
     "game": "Project Zomboid B42.21 only",
     "zombie_buddy_minimum": "2.3.4",
     "compile_jdk_minimum": 25,
-    "compile_release": 17,
+    "compile_release": 25,
     "compile_jars": [
       "projectzomboid.jar",
       "ZombieBuddy.jar"

@@ -32,7 +32,7 @@ class CaptureUIAdviceChecks(unittest.TestCase):
         jars=[GAME/'projectzomboid.jar',GAME/'ZombieBuddy.jar',PATCH]
         with tempfile.TemporaryDirectory(prefix='cart-ui-advice-') as temporary:
             output=Path(temporary)
-            compile_result=subprocess.run([str(JDK/'bin'/('javac'+suffix)),'--release','17','-cp',os.pathsep.join(map(str,jars)),
+            compile_result=subprocess.run([str(JDK/'bin'/('javac'+suffix)),'--release','25','-cp',os.pathsep.join(map(str,jars)),
                 '-d',str(output),str(ROOT/'tests/native_queue/contributions/wooden_cart_motion/Main.java'),
                 str(ROOT/'tests/java/CartCaptureUIAdviceChecks.java')],text=True,capture_output=True)
             self.assertEqual(compile_result.returncode,0,compile_result.stdout+compile_result.stderr)

@@ -33,7 +33,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='cart-shopping-clip-') as directory:
         work=Path(directory)
         sources=[ROOT/'tools/CartShoppingPickupGenerate.java',ROOT/'tools/CartShoppingPickupReplay.java',ROOT/'tools/CartClipCheck.java']
-        subprocess.run([str(args.jdk/'bin/javac'),'--release','17','-cp',classpath,'-d',str(work),*map(str,sources)],check=True)
+        subprocess.run([str(args.jdk/'bin/javac'),'--release','25','-cp',classpath,'-d',str(work),*map(str,sources)],check=True)
         runtime=[str(args.jdk/'bin/java'),'-Djava.awt.headless=true',f'-Djava.library.path={args.game}',
                  '-cp',os.pathsep.join((str(work),classpath))]
         raw=work/'poses.json'

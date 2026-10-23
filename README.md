@@ -27,7 +27,7 @@ The server owner needs Python 3.10+, JDK 25+, the [Kotlin 2.4.21 compiler distri
 python3 tools/prepare_install.py
 ```
 
-On Windows, use `py -3` instead of `python3`. Distribute the resulting `dist/SurvivorQoL` folder to all players; recipients need neither Python, a JDK nor a Kotlin installation. The Kotlin runtime is bundled in the Java mod JAR. The two repository mod folders have no Workshop downloads and must be copied to every installation.
+On Windows, use `py -3` instead of `python3`. Distribute the resulting `dist/SurvivorQoL` folder to all players; recipients need neither Python, a JDK nor a Kotlin installation. Java and Kotlin project classes target JVM 25, matching B42.21; the private Kotlin runtime is bundled in the Java mod JAR. The two repository mod folders have no Workshop downloads and must be copied to every installation.
 
 Follow [the installation guide](MOD_INSTALL.md) for game/JDK paths, server profiles, client setup, Java approvals, Host launchers, updates and backups. Preparation does not modify live profiles.
 

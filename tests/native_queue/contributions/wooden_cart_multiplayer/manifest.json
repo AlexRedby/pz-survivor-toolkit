@@ -65,7 +65,7 @@
   "dependencies": {
     "game": "B42.21",
     "jdk_minimum": 25,
-    "java_release": 17,
+    "java_release": 25,
     "compile_jars": [
       "projectzomboid.jar",
       "ZombieBuddy.jar",

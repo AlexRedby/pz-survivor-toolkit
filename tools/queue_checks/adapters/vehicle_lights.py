@@ -44,7 +44,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     from ..native import _lua
     validate(selection)
     classes = Path(output) / 'vehicle-lights-classes'; classes.mkdir()
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '17', '-cp',
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
         os.pathsep.join(str(Path(game) / jar) for jar in ('projectzomboid.jar', 'ZombieBuddy.jar')),
         '-d', str(classes), str(Path(project) / 'tests/native_queue/vehicle-lights/Main.java')],
         check=True, capture_output=True, text=True, timeout=60)

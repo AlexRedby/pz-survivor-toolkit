@@ -94,7 +94,7 @@ class CartAdapterTests(unittest.TestCase):
     def test_sp_stage_builds_three_sealed_agents_and_waits_for_owned_probe_gate(self):
         compiler = self.stage()
         self.assertEqual(compiler.call_count, 2)
-        self.assertTrue(all('--release' in call.args[0] and '17' in call.args[0] for call in compiler.call_args_list))
+        self.assertTrue(all('--release' in call.args[0] and '25' in call.args[0] for call in compiler.call_args_list))
         spec = self.runtime['roles']['client1']
         runtime = Path(spec['env']['PZ_CART_RUNTIME_FILE'])
         text = runtime.read_text()
