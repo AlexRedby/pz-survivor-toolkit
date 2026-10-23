@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Development tools
 
+- **Cart capture sampling:** Preserve each real native motion tick instead of discarding observations under the 100ms state throttle. Keep slower post-motion state logging, independent action sampling and unchanged analyzer coverage limits.
+
 - **Native equipment checks:** Cover portable-radio P4 returns with separate native scissors, exact device and battery state, client pointer/sound cleanup and ordered Host receipts. Compare each role against its queue-disabled control and require the native unheld-radio off packet to reach the server after return.
 
 - **Native equipment checks:** Preflight ordinary hotbar fixture item shapes through the actual game factory before launching a window. Check native class, attribute/script metadata ownership and an independent plain-item control; retain diagnostics in the run.

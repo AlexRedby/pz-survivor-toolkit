@@ -204,7 +204,10 @@ Events.OnTick.Add(function()
    if drive~=heldDrive then heldDrive=drive;cartLabDrive(drive) end
   end
   if wallSide and now-lastTraffic>=1000 then lastTraffic=now;print('[CART_MP_TRAFFIC] '..cartMPTraffic()) end
-  if now-lastSample>=100 then
+  -- Preserve real native ticks during the bounded motion bank. A 100ms throttle
+  -- can discard the last available state before a slow frame at a window edge.
+  -- After motion, retain the slower state cadence and independent action probe.
+  if elapsed<=duration or now-lastSample>=100 then
    lastSample=now
    for i=0,online:size()-1 do print('[CART_MP_STATE] '..cartMPState(online:get(i))) end
    if wallSide and user=='client1' then wallSample(p,now,elapsed) end

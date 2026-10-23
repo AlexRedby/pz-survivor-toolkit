@@ -661,7 +661,7 @@ def check_action_sampling(lua):
     signature='local function sampleActionPresentation(owner,now,elapsed)'
     assert client.count(signature)==1 and client.count('  sampleActionPresentation(owner,now,elapsed)')==1
     helper=signature+client.split(signature,1)[1].split('\nend',1)[0]+'\nend'
-    motion=client.split('  if now-lastSample>=100 then',1)[1].split('\n  end',1)[0]
+    motion=client.split('  if elapsed<=duration or now-lastSample>=100 then',1)[1].split('\n  end',1)[0]
     assert 'CART_MP_STATE' in motion and 'actions.sample' not in motion
     code=r"""
 for _,name in ipairs({'SaucedCarts/ContextMenu','ISUI/ISContextMenu','ISUI/ISInventoryPaneContextMenu','TimedActions/ISTimedActionQueue'}) do package.preload[name]=function() return {} end end
@@ -712,7 +712,7 @@ actions.command('ActionPhase',{index=6,phase='pickup-repeat',id=42})
 actionsFinished=true;now=now+32;sampleActionPresentation(owner,now,duration+550);assert(#presentations==count,'Finished action bank sampled')
 """.replace('SOURCE',json.dumps(str(HERE/'actions.lua'))).replace('HELPER',helper)
     subprocess.run([lua,'-e',code],check=True,capture_output=True)
-    return 'PASS (short observer progress crossing captured at25ms; motion100ms, phase closure and bank bounds retained; no new sends)'
+    return 'PASS (short observer progress crossing captured at25ms; motion/action sampling separated, phase closure and bank bounds retained; no new sends)'
 
 
 def check_java(game, jdk, patch, kotlin_home=None):

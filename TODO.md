@@ -5,6 +5,7 @@
 # Cart capture coverage
 
 - [ ] Close the ordinary menu-Host capture's client2 owner-state trailing-edge gap in the turn window with the available 43-mod subset. Require a real sample in `[epoch+7150, epoch+7500]` under the existing 350ms edge tolerance; retain the unchanged motion/render analyzer, AeroSpace/PID/resource/provenance gates and separate full-pack checks below.
+- [ ] Freeze the verified candidate and run one isolated available-43 menu-Host capture; inspect ordinary state/render coverage, runtime cleanliness, provenance and complete process cleanup before closing this gate.
 
 # Cart game regression follow-up
 
