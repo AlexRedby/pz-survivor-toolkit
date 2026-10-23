@@ -85,9 +85,10 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ## Current v2 admission gate
 
-- [ ] Prove the native source/recipient connection and actor/action/item lifecycle inputs for server-owned grants; choose a fresh bind exchange unless full ordered lifecycle dispatch is established. Do not promote cached VariableSync state into a new grant.
-- [ ] Implement the bounded admission/retirement controller with durable high-water state, shared motion/action lease, sequenced END and exact challenge/current-binding checks. Exercise missed/old epochs, reconnect, ID reuse, END-before-OPEN, pruning and counter exhaustion before connecting presentation consumers.
-- [ ] Verify the selected control exchange in isolated menu Host and measure added control traffic. Migrate motion/action together only after authority and native lifecycle gates pass; retain v1 until the replacement is verified, then remove the replaced consumers in the same change. Source-time playback remains behind its separate timing gate.
+- [ ] Extend current-held control evidence to complete native equipment lifetimes: observe release/reacquire, same-ID item replacement, actor removal/respawn and reconnect before accepting or retiring a lease. The successful guarded challenge/echo probe does not cover these missed edges.
+- [ ] Bind action admission to the exact accepted server NetTimedAction instance/table, registered source connection/actor and native item/world ownership. Start precedes Accept; update can write terminal state without setState. Reuse the existing sealed ActionAcknowledgements owner token/queue receipts where proven; test pending/accepted/cancel/reject/repeat/byte-ID reuse/removal/disconnect. Prove the observer BaseAction/StatePacket association separately; non-null getAction is insufficient.
+- [ ] Measure serialized/wire control costs and bounded bind/resync bursts; the held probe's 24 logical messages are not a payload or production-frequency budget.
+- [ ] Connect the verified admission reference to production motion/action together only after those authority/lifetime and traffic gates pass. Preserve durable high-water fences and native root catch-up; remove the replaced v1 consumers in the same change after verification. Source-time playback remains behind its separate timing gate.
 
 Design and dependencies: [multiplayer presentation plan](docs/CART_MULTIPLAYER.md). Remaining work follows the implemented timing baseline and same-native-render clearance fallback; the current cart protocol remains active.
 
