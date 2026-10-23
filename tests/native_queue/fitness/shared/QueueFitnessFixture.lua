@@ -6,7 +6,7 @@ function F.requestedAction(action,panel,native,exercise)
  if not native or action.Type~='ISWaitWhileGettingUp'or action.onCompleteFunc~=ISTimedActionQueue.add then return end
  local deferred=action.onCompleteArgs and action.onCompleteArgs.p1
  if deferred and deferred.Type=='ISFitnessAction'and deferred.character==panel.player and deferred.fitnessUI==panel
-  and deferred.exercise==exercise and deferred.timeToExe==10 then return deferred,true end
+  and deferred.exercise==exercise and deferred.timeToExe==tonumber(panel.exeTime:getInternalText()) then return deferred,true end
 end
 function F.menuReady(panel,current,gate,now)
  gate.since=gate.since or now

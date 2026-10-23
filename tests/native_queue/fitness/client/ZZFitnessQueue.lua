@@ -11,11 +11,12 @@ local T=PZSurvivorToolkit
 local API,Ops=T.ActionQueue,T.ActionQueueOperations
 local state,authority,previous,ids,receipt,mutation,command,ui,front,tail,requests,seen,ack,progressSeen,menuGate
 local started,done,phase,index,failed,since,quiet,idle=false,false,'prepare',1,0,0,nil,0
-local peerCase,peerBook,peerComplete,actor
+local peerCase,peerBook,peerComplete,actor,stopReached
 local ready,setupSince=false,0
 local peersReady,peersReceipt=false,nil
 local function case()return config.cases[index]end
-local function exerciseForCase(id)return (id=='missing-dumbbell'or id=='closed-ui-restore')and 'bicepscurl'or 'squats'end
+local function minutes()return case()=='burpees-30'and 30 or 10 end
+local function exerciseForCase(id)return id=='burpees-30'and 'burpees'or (id=='missing-dumbbell'or id=='closed-ui-restore')and 'bicepscurl'or 'squats'end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
 local function emit(row)
@@ -103,7 +104,7 @@ local function rejectedRequest(exercise,first,last)
  raw('REQUEST_REJECTED',{case=case(),exercise=exercise,children=children,callbacks=callbacks})
 end
 local function enqueue(exercise)
- ui.selectedExe=exercise;ui:selectedNewExercise();ui:updateButtons(queue().queue[1])
+ ui.selectedExe=exercise;ui:selectedNewExercise();ui.exeTime:setText(tostring(minutes()));ui:updateButtons(queue().queue[1])
  if not ui.ok.enable then
   raw('MENU_NOT_READY',F.menuDiagnostic(ui,case(),menuGate and getTimestampMs()-menuGate.since or 0,'dispatch-disabled'))
   error('native fitness OK not enabled')
@@ -120,17 +121,17 @@ local function enqueue(exercise)
  requests[#requests+1]=requestAction
  if not native then
   local managed=T.ActionQueueFitness.isManaged(requestAction)and requestAction.toolkitFitnessExercise==exercise
-   and requestAction.toolkitFitnessMinutes==10
+   and requestAction.toolkitFitnessMinutes==minutes()
   if not managed then rejectedRequest(exercise,before+1,#queue().queue);error('fitness command did not snapshot menu parameters')end
  end
  return first,requestAction
 end
 local function dispatch()
- local id=case();requests,seen,ack,progressSeen={},{},{},{}
- command={menuDispatched=true,nativeDurations=true,minutes=10,frontMinutes=(id=='empty'or id=='active-cancel')and 0 or 12,
+ local id=case();requests,seen,ack,progressSeen,stopReached={},{},{},{},{}
+ command={menuDispatched=true,nativeDurations=true,minutes=minutes(),frontMinutes=(id=='empty'or id=='active-cancel'or id=='burpees-30')and 0 or 12,
   waitingNoExercise=true,waitingNoClinicalEffects=true,activeObserved=false,activeCancelled=false,pendingCancelled=false,
   reordered=false,closedUI=false,startedOrder={},activeAcks={},terminalAcks={},progressSamples={},queueDrained=false}
- if id~='empty'and id~='active-cancel'then front=read(state.items.front)end
+ if id~='empty'and id~='active-cancel'and id~='burpees-30'then front=read(state.items.front)end
  local first=enqueue(exerciseForCase(id))
  if id=='sequential'then enqueue('pushups')end
  tail=read(state.items.tail)
@@ -171,14 +172,14 @@ local function observe()
    if case()=='pending-reorder'and not native then
     command.reorderedTailBeforeStart=getPlayer():getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
    end
-   assert(current.timeToExe==10 and current.getDuration==ISFitnessAction.getDuration and current:getDuration()==5000000,'native fitness duration modified')
+   assert(current.timeToExe==minutes() and current.getDuration==ISFitnessAction.getDuration and current:getDuration()==5000000,'native fitness duration modified')
   end
   if not native and not progressSeen[current]then
    local progress=T.ActionQueueFitness.progress(current)
    if progress and progress.fraction>0 then
-    local sampleMS=O.clock();local expected=math.max(0,math.min(10,(sampleMS-current.startMS)/60000))
-    assert(progress.total==10 and progress.elapsed>0 and progress.elapsed<=10 and progress.fraction<=1
-     and math.abs(progress.elapsed-expected)<.000001 and math.abs(progress.fraction-progress.elapsed/10)<.000001,
+    local sampleMS=O.clock();local expected=math.max(0,math.min(minutes(),(sampleMS-current.startMS)/60000))
+    assert(progress.total==minutes() and progress.elapsed>0 and progress.elapsed<=minutes() and progress.fraction<=1
+     and math.abs(progress.elapsed-expected)<.000001 and math.abs(progress.fraction-progress.elapsed/minutes())<.000001,
      'fitness displayed progress differs from selected native time')
     local description=T.ActionQueueFitness.describe(current)
     assert(description and type(description.target)=='string'and description.target~='','fitness progress label missing')
@@ -200,6 +201,16 @@ local function observe()
    if repObserved and getTimestampMs()-command.activeSince>=3500 and (not isClient()or native or ack[current])then
     if native then ui:onClick(ui.cancel)else assert(API.cancelOperation(queue(),current),'active fitness cancellation rejected')end
     command.activeCancelled=true
+   end
+  end
+ end
+ if case()=='burpees-30'and not native then
+  for action in pairs(seen)do
+   if action.Type=='ISFitnessAction'and O.clock()>=action.endMS then
+    stopReached[action]=stopReached[action]or getTimestampMs()
+    if command.durationStopDelayMilliseconds==nil and not player:getCharacterActions():contains(action.action)then
+     command.durationStopDelayMilliseconds=getTimestampMs()-stopReached[action]
+    end
    end
   end
  end

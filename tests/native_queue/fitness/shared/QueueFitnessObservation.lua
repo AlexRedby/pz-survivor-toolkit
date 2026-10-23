@@ -6,7 +6,7 @@ local function clock()return getGameTime():getCalender():getTimeInMillis()end
 O.clock=clock
 function O.clinical(player)
  local fit=player:getFitness();local xp=player:getXp();local regularity,stiffness,timers={},{},{}
- for _,kind in ipairs({'squats','pushups','bicepscurl'})do regularity[kind]=fit:getRegularity(kind)end
+ for _,kind in ipairs({'squats','pushups','bicepscurl','burpees'})do regularity[kind]=fit:getRegularity(kind)end
  for _,part in ipairs({'legs','arms','chest','abs'})do
   stiffness[part]=fit:getCurrentExeStiffnessInc(part);timers[part]=fit:getCurrentExeStiffnessTimer(part)
  end

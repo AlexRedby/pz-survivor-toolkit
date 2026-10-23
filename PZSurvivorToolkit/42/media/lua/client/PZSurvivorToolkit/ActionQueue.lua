@@ -347,10 +347,22 @@ ISTimedActionQueue.tick = function(queue)
             return
         elseif queue.toolkitOutcomeWait then
             local wait = queue.toolkitOutcomeWait
+            if wait.pendingStart then
+                local binding = wait.pendingStart
+                if action.action ~= binding.native or action.toolkitNativeTransaction ~= binding.transaction
+                    or action.toolkitNativeKind ~= binding.kind
+                    or (queue.toolkitOperationGeneration or 0) ~= binding.generation then
+                    queue:resetQueue()
+                    queue.character:setIsFarming(false)
+                    return
+                end
+                wait.acknowledgement = Toolkit.ActionQueueAcknowledgements.capture(action)
+                if wait.acknowledgement then wait.pendingStart = nil end
+            end
             local state = wait.generic and Toolkit.ActionQueueAcknowledgements.state(action, wait.acknowledgement)
                 or not wait.generic and Toolkit.ActionQueueWorld.buildState(action, wait.acknowledgement)
             if queue.character:isPlayerMoving() or queue.character:pressedMovement(false)
-                or getTimestampMs() >= wait.deadline or not state
+                or getTimestampMs() >= wait.deadline or (not state and not wait.pendingStart)
                 or (wait.operation and (wait.operation.action ~= action or wait.operation.token ~= action.toolkitQueueOperation
                     or (type(wait.operation.token) == "table" and wait.operation.token.toolkitCancelled))) then
                 if getTimestampMs() >= wait.deadline then
@@ -360,7 +372,7 @@ ISTimedActionQueue.tick = function(queue)
                 queue.character:setIsFarming(false)
                 return
             end
-            if queue.character:getCharacterActions():contains(action.action)
+            if wait.pendingStart or queue.character:getCharacterActions():contains(action.action)
                 or state == "started" or not (queue.toolkitCancelStopped or wait.localCompleted) then return end
             if wait.operation and state ~= "completed" then
                 Operations.invalidate(wait.operation.token)

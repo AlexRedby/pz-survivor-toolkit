@@ -921,6 +921,16 @@ assert(list.items[1].header and list.items[1].tooltip:find('[42%]',1,true)
     and list.items[1].tooltip:find('queue_remaining(3)',1,true) and list.lastTexture=='close-icon')
 assert(table.concat(list.drawnTexts,'\n'):find('ContextMenu_Read',1,true))
 assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_steps(3)')
+do
+    local previousFitness=PZSurvivorToolkit.ActionQueueFitness
+    PZSurvivorToolkit.ActionQueueFitness={progress=function(action)
+        if action==a then return {fraction=1,stopping=true} end
+    end}
+    list.doDrawItem(list,0,list.items[1],false)
+    assert(list.items[1].tooltip:find('[...]',1,true) and not list.items[1].tooltip:find('[100%]',1,true),
+        'server settlement still renders a running 100 percent workout')
+    PZSurvivorToolkit.ActionQueueFitness=previousFitness
+end
 local title=list.items[1].task
 list.items[1].task=string.rep('Long recipe ',50);list.clips={}
 list.doDrawItem(list,0,list.items[1],false)
@@ -1855,6 +1865,55 @@ for _, outcome in ipairs({'canceled', 'completed', 'rejected'}) do
 end
 PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
 print('Generic native outcomes: local stop/removal waits for receipt; only canceled resumes, completed/rejected preserve independent tail without replay.')
+
+-- An expired workout can send native stop before its server started message arrives.
+-- Keep the stopped Lua action current so only the ordinary sealed receipt may advance it.
+do
+    local originalAcknowledgements=PZSurvivorToolkit.ActionQueueAcknowledgements
+    for _,scenario in ipairs({'late-start','late-terminal','timeout','native','transaction','kind','generation'}) do
+        p=player();a,b,c=leaf(p,'stopped-workout'),leaf(p,'restore-equipment'),leaf(p,'independent-tail')
+        q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c);frame(p)
+        a.toolkitNativeTransaction,a.toolkitNativeKind=42,'ISFitnessAction'
+        local receipt
+        PZSurvivorToolkit.ActionQueueAcknowledgements={
+            capture=function(action) if action==a then return receipt end end,
+            state=function(action,record) if action==a and record and record==receipt then return record.state end end,
+            reset=function()end,
+        }
+        q.toolkitCancel=a
+        q.toolkitOutcomeWait={generic=true,deadline=acknowledgementClock+30000,pendingStart={
+            native=a.action,transaction=42,kind='ISFitnessAction',generation=q.toolkitOperationGeneration or 0}}
+        local wait=q.toolkitOutcomeWait
+        local before=#completions
+        a:forceStop();frame(p)
+        assert(q.current==a and #q.queue==3 and q.toolkitCancelStopped and not p.actions[a.action]
+            and #completions==before,'native removal advanced cleanup before late authoritative receipt')
+        if scenario=='late-start' or scenario=='late-terminal' then
+            receipt={state=scenario=='late-start' and 'started' or 'canceled'}
+            q:tick()
+            assert(wait.acknowledgement==receipt and not wait.pendingStart,'late receipt was not captured by current stopped action')
+            if scenario=='late-start' then
+                assert(q.current==a and #completions==before,'started receipt advanced stopped workout before terminal')
+                receipt.state='canceled';q:tick()
+            end
+            assert(q.current==b and not q.toolkitOutcomeWait and #completions==before,'late terminal lost cleanup or replayed workout')
+            frame(p);b.action.done=true;frame(p)
+            assert(q.current==c and completions[#completions]=='restore-equipment','required cleanup did not precede independent tail')
+        else
+            if scenario=='timeout' then acknowledgementClock=wait.deadline
+            elseif scenario=='native' then a.action=LuaTimedActionNew.new(a)
+            elseif scenario=='transaction' then a.toolkitNativeTransaction=43
+            elseif scenario=='kind' then a.toolkitNativeKind='other'
+            elseif scenario=='generation' then q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1 end
+            q:tick()
+            assert(#q.queue==0 and not q.toolkitOutcomeWait and #completions==before,
+                'uncertain or stale late receipt wait advanced work instead of resetting safely: '..scenario)
+        end
+    end
+    PZSurvivorToolkit.ActionQueueAcknowledgements=originalAcknowledgements
+end
+print('Late started receipts: native stop is immediate; cleanup/tail wait for terminal and stale identity/timeouts fail closed.')
+
 
 -- A replicated BBQ effect can invalidate native isValid() before local completion/Done arrives.
 do

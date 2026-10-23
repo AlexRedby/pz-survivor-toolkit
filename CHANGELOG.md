@@ -55,6 +55,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.236
+
+- **Fixed:** Host workouts send their native stop immediately when the selected duration ends, even if the server's start acknowledgement is late. Equipment restoration and subsequent actions still wait for the matching authoritative outcome; the queue shows server settlement separately from workout progress.
+- **Fixed:** Grouped workout preparation and equipment restoration have distinct labels instead of looking like a second full-duration exercise.
+
 ### 0.1.235
 
 - **Action queue / P4:** Use shared hotbar cleanup for proven battery flashlights that retain the same item when empty. Keep native activation, battery consumption and deactivation/synchronization on return; charge or light-emission changes no longer exclude required cleanup. Replacement outputs and custom callbacks remain protected.

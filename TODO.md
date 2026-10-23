@@ -1,3 +1,7 @@
+# Fitness completion verification
+
+- [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host after the missing `VanillaVehiclesAnimated` source and any further unresolved pack inputs are available. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass; the game run remains blocked at pack resolution.
+
 # Cart capture coverage
 
 - [ ] Close the ordinary menu-Host capture's client2 owner-state trailing-edge gap in the turn window with the available 43-mod subset. Require a real sample in `[epoch+7150, epoch+7500]` under the existing 350ms edge tolerance; retain the unchanged motion/render analyzer, AeroSpace/PID/resource/provenance gates and separate full-pack checks below.

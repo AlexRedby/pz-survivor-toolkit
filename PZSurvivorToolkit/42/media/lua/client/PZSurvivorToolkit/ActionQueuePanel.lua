@@ -207,7 +207,7 @@ function Panel.drawRow(list, y, row, alt)
     if current and action.action then
         local fitness = Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.progress(action)
         local fraction = fitness and fitness.fraction or action:getJobDelta()
-        prefix = "[" .. tostring(math.floor(fraction * 100)) .. "%] "
+        prefix = fitness and fitness.stopping and "[...] " or "[" .. tostring(math.floor(fraction * 100)) .. "%] "
     end
     local top = math.max(0, y + list:getYScroll())
     local label = prefix .. description.title .. (description.target and ": " .. description.target or "")
