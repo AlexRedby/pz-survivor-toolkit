@@ -174,7 +174,7 @@ assert(not has('[CART_ADMISSION] ERROR'))
 ''')
 
     def test_changed_ingress_or_native_action_is_rejected(self):
-        for mutation in ('ingress=foreign','action.action={}'): 
+        for mutation in ('ingress=foreign','action.action={}'):
             with self.subTest(mutation=mutation):
                 self.run_lua("start();"+mutation+";event('CartActionAdmissionProbe','Reply',reply());assert(has('[CART_ADMISSION] ERROR'));assert(not has('\"event\":\"reply\"'))")
 
