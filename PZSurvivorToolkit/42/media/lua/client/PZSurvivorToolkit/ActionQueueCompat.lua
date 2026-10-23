@@ -307,7 +307,9 @@ local function clothingWornState(action, location)
     return true, exact
 end
 local function ordinaryClothingWear(action)
-    local location, liveItem = ordinaryClothing(action)
+    -- Empty-slot headwear has the same bounded effect as ordinary clothing.
+    -- The shared item guard excludes native Mohawk changes on both replicas.
+    local location, liveItem = ordinaryClothing(action, true)
     if not location then return end
     local safe, worn = clothingWornState(action, location)
     -- Wear's native early return uses object identity, not ID/type. A distinct

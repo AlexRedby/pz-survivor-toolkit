@@ -21,7 +21,7 @@ local option=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('
 option:setValue(not native)
 local started,done=false,false
 local ids,receipt,checkpoint,cleaned,outcome=nil,nil,nil,false,nil
-local hotbarConfigured=nil
+local hotbarConfigured,clothingConfigured=nil,nil
 local idleUpdates=0
 local tidy=getActivatedMods():contains('P4TidyUpMeister')
 local index,performed,failures,since,heartbeat=1,0,0,0,0
@@ -205,7 +205,7 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='EquipmentQueueTest' then return end
  assert(args.ok~=false,args.error)
- if command=='Prepared' then ids=args elseif command=='Checkpointed' then checkpoint=args elseif command=='Verified' then receipt=args elseif command=='Cleaned' then cleaned=true elseif command=='HotbarConfigured'then hotbarConfigured=args end
+ if command=='Prepared' then ids=args elseif command=='Checkpointed' then checkpoint=args elseif command=='Verified' then receipt=args elseif command=='Cleaned' then cleaned=true elseif command=='HotbarConfigured'then hotbarConfigured=args elseif command=='ClothingConfigured'then clothingConfigured=args end
 end)
 Events.OnGameStart.Add(function()
  local ok,problem=pcall(function()
@@ -284,13 +284,25 @@ Events.OnTick.Add(function()
    else state=Fixture.prepare(getPlayer(),Selection.cases[index],nil,Selection.options);watch();enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls' end
   elseif phase=='ready' then
    if not ids or not Fixture.available(getPlayer(),ids) then return end
-   if Scene.needed(Selection.cases)and not Scene.available(getPlayer(),ids.sceneSetup)then return end
+   if Scene.needed(Selection.cases)and not Scene.available(getPlayer(),ids.sceneSetup,ids)then return end
    assert(ids.case==Selection.cases[index],'wrong authoritative fixture case')
+   if ids.clothingSetupPending then
+    assert(ids.clothingSetupPending==true and Clothing.isCase(ids.case)and not Clothing.removes({id=ids.case}),
+     'unexpected authoritative clothing setup descriptor')
+    print('[EQUIPMENT_TEST] CLOTHING_SETUP_ROOT_READY case='..ids.case..' id='..ids.items.clothingItem)
+    sendClientCommand('EquipmentQueueTest','ConfigureClothing',{case=ids.case,item=ids.items.clothingItem})
+    phase='configureClothing';return
+   end
    local player=getPlayer()
    if math.abs(player:getX()-ids.spawn.x)>0.1 or math.abs(player:getY()-ids.spawn.y)>0.1 or player:getZ()~=ids.spawn.z then
     Fixture.relocate(player,ids.spawn)
    end
    phase='positioned';return
+  elseif phase=='configureClothing'then
+   if not clothingConfigured then return end
+   assert(clothingConfigured.case==ids.case and clothingConfigured.item==ids.items.clothingItem,
+    'authoritative clothing setup acknowledgement differs')
+   ids.clothingSetupPending=nil;phase='ready';return
   elseif phase=='positioned' then
    local player=getPlayer()
    if not player:getCurrentSquare() or player:isPlayerMoving() or player:tooDarkToRead() then return end
@@ -405,7 +417,7 @@ Events.OnTick.Add(function()
    outcome.dependentMoveRejected=state.dependentMoveRejected==true
    emit({event='case',id=state.id,status=state.postproblem and 'failed' or 'passed',reason=state.postproblem,outcome=outcome})
    print('[EQUIPMENT_TEST] RECEIPT case='..state.id)
-   index=index+1;since=now;phase='prepare';state=nil;ids=nil;receipt=nil;checkpoint=nil;hotbarConfigured=nil;cleaned=false;outcome=nil;idleUpdates=0
+   index=index+1;since=now;phase='prepare';state=nil;ids=nil;receipt=nil;checkpoint=nil;hotbarConfigured=nil;clothingConfigured=nil;cleaned=false;outcome=nil;idleUpdates=0
    if index>#Selection.cases then complete() end
   end
  end)

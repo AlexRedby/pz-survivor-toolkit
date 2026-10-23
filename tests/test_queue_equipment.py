@@ -67,13 +67,13 @@ class EquipmentTests(unittest.TestCase):
             if case in equipment.CLOTHING_CASES:
                 tidy = 'P4TidyUpMeister' in self.selection['mods']
                 spec = equipment.CLOTHING_SPECS[case]
-                effect = dict(id=955, fullType=spec['fullType'], bodyLocation=spec['location'], container='root', worn=not tidy if case != 'tidy-clothing' else tidy,
+                effect = dict(id=955, fullType=spec['fullType'], bodyLocation=spec['location'], container='root', worn=not tidy if spec.get('remove') else tidy,
                               producer='ISCutHair', producerCompleted=True, hairUnchanged=True, hairStyle='CrewCut',
                               unrelatedHandsPreserved=True)
                 if case == 'tidy-clothing-overlap':
                     effect.update(primary=950, secondary=951 if tidy else 955, originalSecondary=951)
                 count = int(enabled and tidy)
-                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=case != 'tidy-clothing', **({'secondary': 955} if case == 'tidy-clothing-overlap' else {})),
+                result.update(clothingItem=955, clothingCheckpoint=dict(effect, worn=bool(spec.get('remove')), **({'secondary': 955} if case == 'tidy-clothing-overlap' else {})),
                               tidyClothing=dict(effect, nativeGenerated=int(tidy), authoritativeRestore=tidy and self.selection['kind'] == 'mp',
                                                 sourceSession=17 if tidy else False, sourceCompleted=tidy,
                                                 sharedCompletion=dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
@@ -321,10 +321,10 @@ class EquipmentTests(unittest.TestCase):
             for mode in ('native', 'toolkit'):
                 self.selection['mode'] = mode
                 self.assertEqual(self.verify(self.logs())['issues'], [])
-                for case in ('tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove'):
+                for case in (case for case, spec in equipment.CLOTHING_SPECS.items() if spec.get('headwear')):
                     def target(rows):
                         return next(row['outcome']['tidyClothing'] for row in rows if row.get('id') == case)
-                    for field, value in (('fullType', 'Base.Socks_Ankle'), ('bodyLocation', 'base:socks'), ('worn', True),
+                    for field, value in (('fullType', 'Base.Socks_Ankle'), ('bodyLocation', 'base:socks'), ('worn', bool(equipment.CLOTHING_SPECS[case].get('remove'))),
                                          ('hairStyle', 'MohawkFlat'), ('sourceCompleted', False), ('nativeGenerated', 2)):
                         rows = self.records(); target(rows)[field] = value
                         self.assertTrue(self.verify(self.logs(rows))['issues'], (case, field))
@@ -1067,7 +1067,8 @@ local function run(kind,mode,fault,equipment)
  ISInventoryPane={getActualItems=function()end}
  getFilenameOfClosure=function()return 'fixture' end
  action.Type,action.primary,action.twoHands='ISEquipWeaponAction',true,false
- local clothing=equipment=='clothing-remove' or equipment=='clothing-wear'
+ local headwear=equipment=='headwear-wear'
+ local clothing=equipment=='clothing-remove' or equipment=='clothing-wear' or headwear
  local hotbar=equipment=='hotbar'
  if hotbar then
   action.Type='ISUnequipAction';action.fromHotbar=true
@@ -1080,14 +1081,15 @@ local function run(kind,mode,fault,equipment)
  end
  if clothing then
   action.Type=equipment=='clothing-remove'and 'ISUnequipAction'or 'ISWearClothing'
-  item.getFullType=function()return 'Base.Socks_Ankle'end
-  item.getBodyLocation=function()return 'base:socks'end;item.getContainer=function()return inventory end
+  item.getFullType=function()return headwear and 'Base.Hat_Beany'or 'Base.Socks_Ankle'end
+  item.getBodyLocation=function()return headwear and 'base:hat'or 'base:socks'end;item.getContainer=function()return inventory end
  end
  if fault=='early-flush' then lifecycle.flush=function()return 'completed',action end end
  local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode=mode})
- observer.watch({id=hotbar and 'tidy-hotbar'or clothing and (equipment=='clothing-remove'and 'tidy-clothing-remove'or 'tidy-clothing')or nil,
+ observer.watch({id=hotbar and 'tidy-hotbar'or headwear and 'tidy-headwear-hat-restore'or clothing and (equipment=='clothing-remove'and 'tidy-clothing-remove'or 'tidy-clothing')or nil,
   root=inventory,source=source,baseline={[7]=item},hammer={getID=item.getID,getFullType=item.getFullType},
-  clothingItem=clothing and item or nil,clothingLocation='base:socks',pickup=hotbar and item or nil,hotbarDetached=true,
+  clothingItem=clothing and item or nil,clothingLocation=headwear and 'base:hat'or 'base:socks',
+  clothingRestoreType=headwear and 'ISWearClothing'or nil,pickup=hotbar and item or nil,hotbarDetached=true,
   hotbarIndex=1,hotbarType='Back',hotbarLocation='Rifle On Back with Bag',hotbarRestoreAction=hotbar and action or nil,hotbarTwoHands=hotbar})
  if equipment and not clothing and not hotbar then action.item={getID=item.getID,getFullType=item.getFullType} end
  if not enabled then
@@ -1118,7 +1120,7 @@ local function run(kind,mode,fault,equipment)
 end
 for _,kind in ipairs({'sp','mp'})do
  for _,mode in ipairs({'native','toolkit'})do
-  run(kind,mode);run(kind,mode,nil,true);run(kind,mode,nil,'clothing-wear');run(kind,mode,nil,'clothing-remove');run(kind,mode,nil,'hotbar')
+  run(kind,mode);run(kind,mode,nil,true);run(kind,mode,nil,'clothing-wear');run(kind,mode,nil,'clothing-remove');run(kind,mode,nil,'headwear-wear');run(kind,mode,nil,'hotbar')
  end
  for _,fault in ipairs({'id','endpoint','token','handle','parent','failed','duplicate-perform','legacy','early-flush','unflushed'})do
   local ok=pcall(run,kind,'toolkit',fault);assert(not ok,'observer accepted '..kind..' '..fault)
@@ -1126,6 +1128,7 @@ for _,kind in ipairs({'sp','mp'})do
 end
 assert(not pcall(run,'mp','toolkit','host-complete'))
 assert(not pcall(run,'mp','toolkit','host-complete','clothing-remove'))
+assert(not pcall(run,'mp','toolkit','host-complete','headwear-wear'))
 assert(not pcall(run,'mp','toolkit','host-complete','hotbar'))
 assert(not pcall(run,'sp','toolkit','attach-connect','hotbar'))
 '''

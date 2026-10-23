@@ -3,6 +3,8 @@ local cases={
  ['tidy-clothing']={fullType='Base.Socks_Ankle',location='base:socks'},
  ['tidy-clothing-remove']={fullType='Base.Socks_Ankle',location='base:socks',remove=true},
  ['tidy-clothing-overlap']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlap=true},
+ ['tidy-headwear-hat-restore']={fullType='Base.Hat_Beany',location='base:hat',headwear=true},
+ ['tidy-headwear-full-hat-restore']={fullType='Base.Hat_BoxingRed',location='base:fullhat',headwear=true},
  ['tidy-headwear-hat-remove']={fullType='Base.Hat_Beany',location='base:hat',remove=true,headwear=true},
  ['tidy-headwear-full-hat-remove']={fullType='Base.Hat_BoxingRed',location='base:fullhat',remove=true,headwear=true},
 }
@@ -15,13 +17,14 @@ local function capacitySafe(state)
  local weight,full,capacity=state.root:getCapacityWeight(),state.clothingItem:getUnequippedWeight(),state.root:getEffectiveCapacity(state.player)
  return weight>=0 and full>=0 and weight+2*full+0.01<=capacity and state.root:isItemAllowed(state.clothingItem)
 end
-local function emptyHeadwearSlots(state)
+local function emptyHeadwearSlots(state,allowed)
  local values=state.player:getWornItems();local group=values:getBodyLocationGroup()
  assert(group==state.player:getBodyLocationGroup()and group:getLocation(state.clothingLocation)
   and not group:isMultiItem(state.clothingLocation),'headwear fixture needs a real single worn slot')
  for i=0,values:size()-1 do
   local location=values:get(i):getLocation()
-  assert(location~=state.clothingLocation and not group:isExclusive(state.clothingLocation,location),
+  assert(location==state.clothingLocation and values:get(i):getItem()==allowed
+   or location~=state.clothingLocation and not group:isExclusive(state.clothingLocation,location),
    'headwear fixture requires empty target/exclusive slots in the prepared scene')
  end
 end
@@ -88,6 +91,8 @@ function Clothing.install(withP4)
 end
 function Clothing.prepare(state,seed)
  local spec=Clothing.spec(state)
+ assert(not isClient()or not state.ids.clothingSetupPending,'client cannot prepare before authoritative clothing setup')
+ state.clothingRestoreType=Clothing.restoreType(state)
  seed('clothingItem',spec.fullType)
  local item=state.clothingItem
  state.clothingLocation=item:getBodyLocation()
@@ -96,13 +101,31 @@ function Clothing.prepare(state,seed)
  if Clothing.headwear(state)then
   assert(not item:canBeActivated()and item:getAttachedSlot()==-1 and not item:isBroken()and not isForceDropHeavyItem(item),
    'headwear fixture must be plain unattached non-heavy Clothing')
-  emptyHeadwearSlots(state);assert(capacitySafe(state),'headwear fixture lacks conservative root capacity')
+  assert(capacitySafe(state),'headwear fixture lacks conservative root capacity')
+  if isClient()then
+   assert(Clothing.available(state.player,state.ids),'client has not adopted authoritative headwear setup')
+  else
+   emptyHeadwearSlots(state)
+   if not Clothing.removes(state)then
+    if isServer()then
+     state.clothingSetupPending=true;state.clothingSetupPrevious=state.player:getWornItem(state.clothingLocation)
+    else state.player:setWornItem(state.clothingLocation,item)end
+   end
+  end
+  emptyHeadwearSlots(state,not Clothing.removes(state)and not state.clothingSetupPending and item or nil)
   state.clothingEmptyHeadwear=true
  elseif Clothing.removes(state)then state.player:setWornItem(state.clothingLocation,nil)
+ elseif isClient()then
+  assert(Clothing.available(state.player,state.ids),'client has not adopted authoritative clothing setup')
+ elseif isServer()then
+  state.clothingSetupPending=true;state.clothingSetupPrevious=state.player:getWornItem(state.clothingLocation)
  else state.player:setWornItem(state.clothingLocation,item)end
  local visual=state.player:getHumanVisual()
  state.clothingHair=state.ids and assert(state.ids.clothingHair,'authoritative clothing hair style missing')
   or (state.player:isFemale()and 'Bob'or 'CrewCut')
+ if Clothing.headwear(state)then
+  assert(state.clothingHair==(state.player:isFemale()and 'Bob'or 'CrewCut'),'headwear requires the configured plain native style')
+ end
  local styles=getHairStylesInstance()
  local style=state.player:isFemale() and styles:FindFemaleStyle(state.clothingHair) or styles:FindMaleStyle(state.clothingHair)
  assert(style and tostring(style:getName())==state.clothingHair and not style:isAttachedHair(),'plain native hair definition required')
@@ -120,8 +143,47 @@ function Clothing.prepare(state,seed)
  end
 end
 function Clothing.available(player,ids)
- return type(ids.clothingHair)=='string'and tostring(player:getHumanVisual():getHairModel())==ids.clothingHair
-  and not player:getHumanVisual():getNonAttachedHair()
+ if type(ids.clothingHair)~='string'or tostring(player:getHumanVisual():getHairModel())~=ids.clothingHair
+  or player:getHumanVisual():getNonAttachedHair()then return false end
+ local spec=cases[ids.case]
+ if spec and (spec.headwear or not spec.remove)then
+  local root=player:getInventory();local item=root:getItemById(ids.items.clothingItem)
+  if not item or item:getFullType()~=spec.fullType or item:getContainer()~=root
+   or tostring(item:getBodyLocation())~=spec.location then return false end
+  local expected=not spec.remove and not ids.clothingSetupPending and item or nil
+  if ids.clothingSetupPending then
+   for _,record in ipairs(ids.originalWorn or {})do
+    if record.location==spec.location then
+     expected=root:getItemById(record.id)
+     if not expected or expected:getFullType()~=record.fullType or expected:getContainer()~=root then return false end
+    end
+   end
+  end
+  if player:getWornItem(item:getBodyLocation())~=expected then return false end
+ end
+ return true
+end
+-- SyncClothingPacket.process keeps an already-worn ID even if it was created
+-- before inventory replication. Send the first worn snapshot only after the
+-- owning client confirms its exact root item, avoiding a permanent worn proxy.
+function Clothing.configure(state,itemID)
+ assert(isServer()and not isClient()and Clothing.isCase(state.id)and not Clothing.removes(state)
+  and state.clothingSetupPending==true,'invalid authoritative clothing setup phase')
+ local item=state.clothingItem
+ assert(type(itemID)=='number'and itemID==item:getID()and state.player:getInventory()==state.root
+  and state.root:getItemById(itemID)==item and item:getContainer()==state.root
+  and item:getFullType()==Clothing.spec(state).fullType and item:getBodyLocation()==state.clothingLocation,
+  'authoritative clothing setup identity/root differs')
+ assert(state.player:getWornItem(state.clothingLocation)==state.clothingSetupPrevious,
+  'authoritative clothing setup baseline changed')
+ if Clothing.headwear(state)then
+  emptyHeadwearSlots(state)
+  assert(capacitySafe(state),'authoritative headwear setup lacks conservative root capacity')
+ end
+ state.player:setWornItem(state.clothingLocation,item)
+ assert(state.player:getWornItem(state.clothingLocation)==item,'authoritative clothing setup did not wear exact root item')
+ state.clothingSetupPending=nil;state.clothingSetupPrevious=nil
+ sendClothing(state.player,state.clothingLocation,item)
 end
 function Clothing.enqueue(state,helpers)
  require 'TimedActions/ISCutHair'
@@ -151,7 +213,8 @@ function Clothing.observe(state,queue,toolkit,tidy)
   state.clothingProducerStarted=true
   if Clothing.headwear(state)then
    assert(state.clothingEmptyHeadwear and capacitySafe(state),'headwear removal lacks setup/capacity proof')
-   assert(Clothing.verify(state,true).worn,'native headwear was not observed worn before cleanup')
+   emptyHeadwearSlots(state,Clothing.removes(state)and state.clothingItem or nil)
+   Clothing.verify(state,Clothing.removes(state))
    state.clothingHeadwearReady=true
   end
   if Clothing.overlap(state)then

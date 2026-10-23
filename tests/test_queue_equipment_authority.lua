@@ -384,10 +384,21 @@ do
   and player:getWornItem('base:eyes')==nil and player:getWornItem('base:shirt')==shirt)
  assert(Scene.available(player,proof),'declared baseline should become ready with exact retained glasses')
  local temporary=add(34,'Base.Hat_BoxingRed','base:fullhat')
+ temporary.getBodyLocation=function()return 'base:fullhat'end
+ local restoreIds={case='tidy-headwear-full-hat-restore',items={clothingItem=temporary.id}}
+ assert(Scene.needed({'tidy-headwear-hat-restore'})and Scene.needed({'tidy-headwear-full-hat-restore'}))
+ assert(Scene.available(player,proof,restoreIds),'restore may adopt only its exact authority-seeded worn headwear')
+ local foreign=add(35,'Base.Other','base:hat')
+ assert(not Scene.available(player,proof,restoreIds),'exact seeded target must not allow another conflicting slot')
+ player.worn['base:hat']=nil
+ temporary.kind='Base.Hat_Beany'
+ assert(not Scene.available(player,proof,restoreIds),'restore must reject same-ID wrong type')
+ temporary.kind='Base.Hat_BoxingRed'
  assert(Scene.prepare(player,{'tidy-headwear-full-hat-remove'})==proof and #calls==1
   and player:getWornItem('base:fullhat')==temporary,'scene must not normalize between tested actions')
  assert(not Scene.available(player,proof),'readiness must quietly wait for native clothing replication')
  player.worn['base:fullhat']=nil
+ assert(not Scene.available(player,proof,restoreIds),'restore readiness must wait for authoritative worn state')
  isClient,isServer=function()return true end,function()return false end
  local client,clientGlasses=actor()
  assert(not Scene.available(client,proof)and client:getWornItem('base:eyes')==clientGlasses and #calls==1)

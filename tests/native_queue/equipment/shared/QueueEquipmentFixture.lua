@@ -334,7 +334,8 @@ function Fixture.cleanup(state)
 end
 function Fixture.descriptor(state)
  local result={case=state.id,items={},originalWorn={},primary=state.originalPrimary and state.originalPrimary:getID(),
-  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor,clothingHair=state.clothingHair}
+  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor,clothingHair=state.clothingHair,
+  clothingSetupPending=state.clothingSetupPending}
  for name,item in pairs(state.items) do result.items[name]=item:getID() end
  for location,item in pairs(state.originalWorn) do
   result.originalWorn[#result.originalWorn+1]={location=tostring(location),id=item:getID(),fullType=item:getFullType()}

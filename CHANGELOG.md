@@ -29,6 +29,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.227
+
+- **Action queue:** Use shared native completion for proven P4 restoration of plain headwear into an empty slot, with unchanged non-Mohawk hair. Preserve exact item identity, required cleanup and independent following actions. Conflicting slots, hairstyle changes and modified callbacks retain their existing handling.
+
 ### 0.1.226
 
 - **Action queue:** Use shared native completion for proven P4 removal of temporary plain headwear with unchanged hair. Keep Mohawk and headwear restoration on their existing handling. Guard clothing cleanup against native capacity-driven world drops and protect unknown, multi-item, exclusive or replaced worn slots; preserve native effects and required cleanup.

@@ -1445,7 +1445,7 @@ do
         return completed(self,action)
     end
     for _,removal in ipairs({false,true})do
-    for _,kind in ipairs(removal and {'plain','hat','full-hat','capacity-edge','held-primary','held-secondary','held-both','held-prefix'} or {'plain'})do
+    for _,kind in ipairs(removal and {'plain','hat','full-hat','capacity-edge','held-primary','held-secondary','held-both','held-prefix'} or {'plain','hat','full-hat'})do
     for _,mode in ipairs({'sp','mp-early','mp-late'})do
         for _,mixed in ipairs({false,true})do for _,cancelled in ipairs({false,true})do
             local sock,owner,action=restoreClothing(mixed,kind,removal)
@@ -1478,6 +1478,7 @@ do
             elseif mode=='mp-late'then assert(action:complete())end
             assert(writes==1 and (worn[sock:getBodyLocation()]==sock)==not removal and sock:getContainer()==inventory and inventory:getItemById(sock:getID())==sock,
                 'native clothing effect lost its exact slot/item or ran twice')
+            assert(hair=='CrewCut','plain headwear cleanup changed hair')
             if removal then
                 assert(player.primary==expectedPrimary and player.secondary==expectedSecondary and player.equipSyncs==syncs+1,
                     'ordinary worn/held removal suppressed or repeated native hand synchronization')
@@ -1492,7 +1493,7 @@ do
     end
     end
     end
-    assert(callbacks==108,'ordinary clothing wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
+    assert(callbacks==132,'ordinary clothing/headwear wear/removal boundary missed a hand/worn/single/mixed/cancel/MP-order combination')
     queue.onCompleted=completed
     for _,field in ipairs({'fromHotbar','clothingAction','stopOnWalk','stopOnRun','item','onCompleteFunc','start'})do
         local sock,_,action=restoreClothing(true)
@@ -1529,7 +1530,7 @@ do
         assert(not definitions.inspect(action),'clothing restore accepted changed native helper '..name)
         ISWearClothing[name]=previous
     end
-    for _,kind in ipairs({'bag','hat','full-hat','primary','wearable','wearable-tag','attached','heavy','broken'})do
+    for _,kind in ipairs({'bag','primary','wearable','wearable-tag','attached','heavy','broken'})do
         local _,_,action=restoreClothing(true,kind)
         assert(select(2,definitions.inspect(action))=='compat.selected-chains','clothing migration expanded into '..kind)
     end
@@ -1572,16 +1573,48 @@ do
         assert(not definitions.inspect(action),'worn removal accepted changed native helper '..name)
         ISUnequipAction[name]=original
     end
-    -- Headwear remains a removal-only migration with a live hair guard. Native
-    -- Java can flatten Mohawk even when the requested worn value is nil.
+    -- Both headwear directions require a live hair guard. Native Lua and Java
+    -- can flatten Mohawk, including when the requested worn value is nil.
+    for _,removal in ipairs({false,true})do
     for _,kind in ipairs({'hat','full-hat'})do
         for _,style in ipairs({'Mohawk','MohawkFlat','CustomMohawk',false})do
-            local _,_,action=restoreClothing(true,kind,true,function()hair=style end)
+            local _,_,action=restoreClothing(true,kind,removal,function()hair=style end)
             assert(select(2,definitions.inspect(action))=='compat.selected-chains','headwear adopted unknown or changing hair effects')
         end
-        local _,_,action=restoreClothing(true,kind,true)
+        local _,_,action=restoreClothing(true,kind,removal)
         hair='Mohawk'
         assert(not definitions.inspect(action),'headwear retained shared ownership after a live hair change')
+    end
+    end
+    -- Headwear Wear adds no unrelated output when the real single slot is
+    -- empty; a replaced item, occupied slot or exclusive location must never
+    -- borrow that proof, even after the original action was already adopted.
+    for _,kind in ipairs({'hat','full-hat'})do
+        for _,change in ipairs({'missing','type','location','same-id-occupied','exclusive','other-slot','multi','hair-api'})do
+            local sock,_,action=restoreClothing(true,kind,false)
+            assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+            if change=='missing'then inventory.values={}
+            elseif change=='type'then
+                local replica=item(inventory,sock:getID());replica.class='Clothing';replica.location=sock.location
+                replica.getFullType=function()return 'Base.OtherHeadwear'end;inventory.values={replica}
+            elseif change=='location'then sock.location=ItemBodyLocation.HANDS
+            elseif change=='same-id-occupied'then
+                local proxy=item(inventory,sock:getID());proxy.class='Clothing';proxy.location=sock.location
+                worn[sock:getBodyLocation()]=proxy
+            elseif change=='exclusive'then
+                local other=item(inventory,14805);other.class='Clothing'
+                inventory.values[#inventory.values+1]=other;worn[ItemBodyLocation.HANDS]=other;exclusive=true
+            elseif change=='other-slot'then worn[ItemBodyLocation.HANDS]=sock
+            elseif change=='multi'then multi=true
+            else hair=false end
+            assert(not definitions.inspect(action),'headwear Wear retained shared ownership after '..change)
+        end
+        local sock,_,action=restoreClothing(true,kind,false)
+        load,capacity=100,0
+        assert(select(2,definitions.inspect(action))=='compat.tidy-equipment',
+            'empty-slot native Wear must not invent a removal capacity debit')
+        assert(action:complete()and worn[sock:getBodyLocation()]==sock and inventory:getItemById(sock:getID())==sock,
+            'empty-slot headwear Wear lost its exact item on a full inventory')
     end
     -- The capacity proof covers Java's post-removal check, which adds the
     -- existing garment's full weight again. This state really drops on native

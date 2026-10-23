@@ -390,11 +390,13 @@ do
   item.canBeActivated=function()return false end;item.isForceDropHeavyItem=function()return false end
   return item
  end
- for _,case in ipairs({'tidy-headwear-hat-remove','tidy-headwear-full-hat-remove'})do
+ function player:getInventory()return state.root end
+ for _,case in ipairs({'tidy-headwear-hat-remove','tidy-headwear-full-hat-remove','tidy-headwear-hat-restore','tidy-headwear-full-hat-restore'})do
+  local remove=case:match('%-remove$')~=nil
   state.id=case;state.clothingP4=nil;state.clothingCaptureHands=nil;state.clothingRestoreAction=nil;state.clothingRestoreReceipt=nil
   state.clothingHeadwearReady=nil;state.clothingProducerStarted=nil;state.clothingEmptyHeadwear=nil;player.worn={}
   player.primary,player.secondary=state.hammer,state.screwdriver;visual.hair='CrewCut';visual.attached=nil
-  local location=case=='tidy-headwear-hat-remove'and ItemBodyLocation.HAT or ItemBodyLocation.FULL_HAT
+  local location=case:find('full%-hat')and ItemBodyLocation.FULL_HAT or ItemBodyLocation.HAT
   local foreign=makeItem('Base.Other',state.root);player.worn[location]=foreign
   assert(not pcall(Clothing.prepare,state,seedHead),'occupied head slot must fail fixture setup')
   assert(player.worn[location]==foreign,'fixture cleared baseline headwear');player.worn={}
@@ -404,34 +406,132 @@ do
   assert(player.worn[exclusive]==foreign,'fixture cleared baseline exclusive item');player.worn={}
   group.multi=true;assert(not pcall(Clothing.prepare,state,seedHead),'multi-item head slot must fail setup');group.multi=false
   capacity=3;assert(not pcall(Clothing.prepare,state,seedHead),'insufficient capacity must fail setup');capacity=50
-  Clothing.prepare(state,seedHead);assert(next(player.worn)==nil and state.clothingEmptyHeadwear)
+  Clothing.prepare(state,seedHead);assert(player.worn[location]==(not remove and state.clothingItem or nil)and state.clothingEmptyHeadwear)
+  assert(state.clothingRestoreType==(remove and 'ISUnequipAction'or 'ISWearClothing'))
+  local prepared=state.clothingItem
+  local ids={case=case,items={clothingItem=prepared:getID()},clothingHair='CrewCut'}
+  assert(Clothing.available(player,ids),'exact authority setup must be ready')
+  player.worn[location]=remove and prepared or nil
+  assert(not Clothing.available(player,ids),'wrong native setup must wait for clothing replication')
+  player.worn[location]=not remove and prepared or nil
+  state.ids=ids;isClient=function()return true end
+  Clothing.prepare(state,function(key)state[key]=prepared end)
+  assert(player.worn[location]==(not remove and prepared or nil),'client must adopt the authority worn snapshot')
+  state.ids=nil;isClient=function()return false end
   queue.queue={};Clothing.enqueue(state,{run=function(callback)return callback()end})
-  assert(#queue.queue==2 and getmetatable(queue.queue[1])==ISWearClothing and queue.queue[1].maxTime==50)
+  local first=remove and ISWearClothing or ISUnequipAction
+  assert(#queue.queue==2 and getmetatable(queue.queue[1])==first and queue.queue[1].maxTime==50)
   assert(queue.queue[1]:complete());assert(queue.queue[2]:complete())
-  assert(player.worn[location]==state.clothingItem and visual.hair=='CrewCut'and not visual.attached)
+  assert(player.worn[location]==(remove and state.clothingItem or nil)and visual.hair=='CrewCut'and not visual.attached)
   state.clothingProducer.isStarted=function()return true end;queue.current=state.clothingProducer
+  player.worn[location]=not remove and state.clothingItem or nil
+  assert(not pcall(Clothing.observe,state,queue,toolkit,true),'headwear must prove the expected intermediate worn state')
+  player.worn[location]=remove and state.clothingItem or nil
   Clothing.observe(state,queue,toolkit,true);assert(state.clothingHeadwearReady)
   local spec=Clothing.spec(state);local label=spec.fullType..'#'..state.clothingItem:getID()..'@inventory'
-  Clothing.observeLine(state,prefix..'capture worn=[] inventoryCount=5')
-  Clothing.observeLine(state,prefix..'add[add] type=ISWearClothing item='..label)
+  Clothing.observeLine(state,prefix..'capture worn=['..(remove and ''or tostring(location)..'='..label)..'] inventoryCount=5')
+  Clothing.observeLine(state,prefix..'add[add] type='..first.Type..' item='..label)
   Clothing.observeLine(state,prefix..'add[add] type=ISCutHair item=nil')
-  Clothing.observeLine(state,prefix..'RESTORE actionTotal=4 trace=[ISReadABook -> ISWearClothing -> ISCutHair -> ISReadABook] reason=operation:ISReadABook')
-  local cleanup=ISUnequipAction:new(player,state.clothingItem,50)
+  Clothing.observeLine(state,prefix..'RESTORE actionTotal=4 trace=[ISReadABook -> '..first.Type..' -> ISCutHair -> ISReadABook] reason=operation:ISReadABook')
+  local cleanup=(remove and ISUnequipAction or ISWearClothing):new(player,state.clothingItem,50)
   local nativeReceipt={};local receiptState='started'
   toolkit={Settings={actionQueue=function()return true end},ActionQueueDefinitions={inspect=function(action)assert(action==cleanup);return {},'compat.tidy-equipment'end},
    ActionQueueAcknowledgements={capture=function(action)if queue.current==action then return nativeReceipt end end,
     observe=function(action,receipt)assert(action==cleanup and receipt==nativeReceipt);return receiptState end}}
   queue.queue={cleanup};queue.current=cleanup;isClient=function()return true end
   Clothing.observe(state,queue,toolkit,true);assert(state.clothingRestoreReceipt==nativeReceipt)
-  assert(cleanup:complete());assert(Clothing.verify(state,false).fullType==spec.fullType)
+  assert(cleanup:complete());assert(Clothing.verify(state,not remove).fullType==spec.fullType)
   Clothing.observeLine(state,'[P4TidyUpMeister][P0][S-] restore queue complete S17')
   assert(not Clothing.settled(state,toolkit,true),'headwear needs completed native authority')
   receiptState='completed';assert(Clothing.settled(state,toolkit,true))
   local outcome=Clothing.evidence(state,toolkit,true,{perform=1,complete=0,flush=1,legacy=0})
   assert(outcome.headwearSetup.emptyExclusiveSlots and outcome.headwearSetup.capacityBeforeRemoval and outcome.bodyLocation==spec.location)
   isClient=function()return false end
-  print(case..': native Wear/CutHair/Unequip, empty exclusive slots, spare capacity, unchanged hair and Host receipt passed')
+  print(case..': native clothing/CutHair/cleanup, empty exclusive slots, spare capacity, unchanged hair and Host receipt passed')
+  if not remove then
+   -- Native SyncClothingPacket.process first retains WornItems.getItemById;
+   -- only an absent worn ID reaches inventory.getItemWithID/CreateItem. An
+   -- early snapshot therefore pins a worn-only proxy after AddItems arrives.
+   player.worn={};isServer=function()return true end
+   local sync={}
+   sendClothing=function(actor,slot,item)
+    assert(actor==player and slot==location and item==state.clothingItem)
+    sync[#sync+1]=item
+   end
+   Clothing.prepare(state,seedHead)
+   local rootItem=state.clothingItem
+   assert(state.clothingSetupPending==true and next(player.worn)==nil and #sync==0,
+    'Host prepare must never wear before client exact-root acknowledgement')
+   local pendingIds={case=case,items={clothingItem=rootItem:getID()},clothingHair='CrewCut',clothingSetupPending=true}
+   local client={worn={}}
+   function client:getHumanVisual()return visual end
+   function client:getInventory()return state.root end
+   function client:getWornItem(slot)return self.worn[slot]end
+   local function nativeSync(rootPresent)
+    if client.worn[location] and client.worn[location]:getID()==rootItem:getID()then return end
+    client.worn[location]=rootPresent and rootItem or {
+     getID=function()return rootItem:getID()end,getFullType=function()return rootItem:getFullType()end,
+     getBodyLocation=function()return location end,getContainer=function()return nil end}
+   end
+   nativeSync(false);nativeSync(true)
+   assert(client.worn[location]~=rootItem and not Clothing.available(client,pendingIds),
+    'a native same-ID worn proxy must never pass exact root readiness')
+   client.worn={}
+   state.root.items[rootItem]=nil
+   assert(not Clothing.available(client,pendingIds),'root acknowledgement must wait for AddItems')
+   state.root.items[rootItem]=true
+   assert(Clothing.available(client,pendingIds),'root acknowledgement requires exact root item and empty head')
+   assert(not pcall(Clothing.configure,state,rootItem:getID()+1),'wrong setup ID accepted')
+   local kind=rootItem.kind;rootItem.kind='Base.Other'
+   assert(not pcall(Clothing.configure,state,rootItem:getID()),'same-ID wrong setup type accepted');rootItem.kind=kind
+   local caseID=state.id;state.id='tidy-headwear-hat-remove'
+   assert(not pcall(Clothing.configure,state,rootItem:getID()),'removal case setup accepted');state.id=caseID
+   isClient=function()return true end
+   assert(not pcall(Clothing.configure,state,rootItem:getID()),'client cannot own setup mutation')
+   isClient=function()return false end
+   assert(next(player.worn)==nil and #sync==0 and state.clothingSetupPending,
+    'rejected setup must preserve exact pending authority state')
+   Clothing.configure(state,rootItem:getID())
+   assert(player.worn[location]==rootItem and not state.clothingSetupPending and #sync==1)
+   assert(not pcall(Clothing.configure,state,rootItem:getID())and #sync==1,'duplicate setup accepted')
+   pendingIds.clothingSetupPending=nil
+   assert(not Clothing.available(client,pendingIds),'configuration acknowledgement alone cannot replace worn replication')
+   nativeSync(true)
+   assert(Clothing.available(client,pendingIds)and client.worn[location]==rootItem,
+    'post-ack native snapshot must bind the already-present exact root object')
+   player.worn={};isServer=function()return false end
+   print(case..': two-phase Host setup rejects early native proxy, absent root, wrong ID/type/case and duplicates')
+  end
  end
+ -- Socks use the same Host restore handshake, retaining a real starter socks
+ -- baseline until configuration instead of repairing a client worn proxy.
+ state.id='tidy-clothing';player.worn={};isServer=function()return true end
+ local starterSocks=makeItem('Base.Socks_Ankle',state.root)
+ player.worn['base:socks']=starterSocks
+ local synced
+ sendClothing=function(actor,location,item)
+  assert(actor==player and location=='base:socks');synced=item
+ end
+ Clothing.prepare(state,seedHead)
+ local socks=state.clothingItem
+ assert(state.clothingSetupPending and player.worn['base:socks']==starterSocks and not synced)
+ local setupIds={case=state.id,items={clothingItem=socks:getID()},clothingHair='CrewCut',clothingSetupPending=true,
+  originalWorn={{location='base:socks',id=starterSocks:getID(),fullType='Base.Socks_Ankle'}}}
+ assert(Clothing.available(player,setupIds))
+ player.worn['base:socks']=nil
+ assert(not Clothing.available(player,setupIds),'socks setup must preserve exact authoritative starter baseline')
+ assert(not pcall(Clothing.configure,state,socks:getID()),'changed starter baseline must fail configuration')
+ player.worn['base:socks']=starterSocks
+ Clothing.configure(state,socks:getID())
+ assert(synced==socks and player.worn['base:socks']==socks and not state.clothingSetupPending)
+ setupIds.clothingSetupPending=nil;state.ids=setupIds
+ isClient,isServer=function()return true end,function()return false end
+ local setWorn=player.setWornItem
+ player.setWornItem=function()error('client must not repair the authoritative restore setup')end
+ Clothing.prepare(state,function(key)state[key]=socks end)
+ assert(Clothing.available(player,setupIds)and player.worn['base:socks']==socks)
+ player.setWornItem=setWorn;state.ids=nil;isClient=function()return false end
+ print('tidy-clothing: shared Host handshake conserves starter socks and client only adopts native worn/root identity')
  state.id='tidy-clothing';player.worn={};styleName='Mohawk'
  assert(not pcall(Clothing.prepare,state,function(key,kind)state[key]=makeItem(kind,state.root);return state[key]end),
   'changed/unsafe target style definition must fail closed')

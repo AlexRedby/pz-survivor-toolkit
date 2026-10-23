@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right']
 HOTBAR_CASES = {
     'tidy-hotbar': dict(fullType='Base.Shotgun', slotType='Back', model='Rifle On Back with Bag', twoHands=True),
     'tidy-hotbar-holster-left': dict(fullType='Base.Pistol', slotType='HolsterLeft', model='Holster Left', twoHands=False),
@@ -15,7 +15,7 @@ HOTBAR_CASES = {
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-headwear-hat-restore': 0, 'tidy-headwear-full-hat-restore': 0, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
@@ -93,8 +93,17 @@ SCENARIO_ACTIONS = {
             'server-authority': {'tidy-clothing-overlap': {'authoritative': True}},
         },
     },
+    'tidy-headwear-restore': {
+        'scope': 'Authority seeds exact vanilla Beany/HAT or BoxingRed/FULL_HAT after once-only starter headwear normalization. Native Unequip and unchanged plain CutHair then arm real P4 Wear cleanup; exact root/slot/hair/hands, native completion and independent tail.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}
+                                 for case in ('tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore')},
+        },
+    },
     'tidy-headwear-remove': {
-        'scope': 'One authority-owned disposable scene preparation removes conflicting starter headwear to root before the baseline. Native Wear and unchanged plain CutHair constructors then temporarily wear vanilla Beany/HAT and BoxingRed/FULL_HAT in that declared scene; real P4 generates removal. Exact item/root/slot/hair/hands and independent tail; conservative capacity excludes native drop. Headwear Wear restoration and Mohawk are outside this gate.',
+        'scope': 'One authority-owned disposable scene preparation removes conflicting starter headwear to root before the baseline. Native Wear and unchanged plain CutHair constructors then temporarily wear vanilla Beany/HAT and BoxingRed/FULL_HAT in that declared scene; real P4 generates removal. Exact item/root/slot/hair/hands and independent tail; conservative capacity excludes native drop. Mohawk is outside this gate.',
         'mods': ['P4TidyUpMeister'],
         'checks': {
             'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}
@@ -305,7 +314,7 @@ def verify(root, selection, catalog):
         if row.get('id') in HOTBAR_CASES:
             issues.extend(_verify_tidy_hotbar(result, selection, row['id']))
         if row.get('id') in CLOTHING_CASES:
-            issues.extend(_verify_tidy_clothing(result, selection, remove=row['id'] != 'tidy-clothing', overlap=row['id'] == 'tidy-clothing-overlap', case=row['id']))
+            issues.extend(_verify_tidy_clothing(result, selection, remove=CLOTHING_SPECS[row['id']].get('remove', False), overlap=row['id'] == 'tidy-clothing-overlap', case=row['id']))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),
                          'reason': row.get('reason'), 'outcome': result})
     ends = [row for row in records if row['event'] == 'complete']
@@ -469,10 +478,12 @@ def _verify_tidy_hotbar(result, selection, case):
 
 CLOTHING_SPECS = {
     'tidy-clothing': dict(fullType='Base.Socks_Ankle', location='base:socks'),
-    'tidy-clothing-remove': dict(fullType='Base.Socks_Ankle', location='base:socks'),
-    'tidy-clothing-overlap': dict(fullType='Base.Socks_Ankle', location='base:socks'),
-    'tidy-headwear-hat-remove': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True),
-    'tidy-headwear-full-hat-remove': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True),
+    'tidy-clothing-remove': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True),
+    'tidy-clothing-overlap': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True),
+    'tidy-headwear-hat-restore': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True),
+    'tidy-headwear-full-hat-restore': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True),
+    'tidy-headwear-hat-remove': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True, remove=True),
+    'tidy-headwear-full-hat-remove': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True, remove=True),
 }
 CLOTHING_CASES = tuple(CLOTHING_SPECS)
 CLOTHING_OVERLAP_EFFECT_KEYS = {'primary', 'secondary', 'originalSecondary'}
@@ -522,6 +533,8 @@ def _verify_tidy_clothing(result, selection, remove=False, overlap=False, case='
             or any(type(item) is not int for item in completion.values())):
         return ['P4 clothing shared completion evidence differs']
     if headwear:
+        if value['hairStyle'] not in ('CrewCut', 'Bob'):
+            return ['P4 headwear plain haircut style differs']
         setup = value.get('headwearSetup')
         if (not isinstance(setup, dict) or setup != dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
                 or any(type(item) is not bool for item in setup.values())):

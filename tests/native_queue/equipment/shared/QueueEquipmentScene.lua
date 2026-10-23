@@ -1,10 +1,11 @@
 -- Disposable scene preparation runs once, before the first fixture snapshot.
 -- It is separate from the native actions under test and never removes inventory.
 local Scene={}
+local Clothing=require 'QueueEquipmentClothing'
 local prepared={}
 function Scene.needed(cases)
  for _,id in ipairs(cases or {})do
-  if id=='tidy-headwear-hat-remove'or id=='tidy-headwear-full-hat-remove'then return true end
+  if Clothing.headwear({id=id})then return true end
  end
  return false
 end
@@ -14,9 +15,19 @@ local function conflicting(group,location)
  end
  return false
 end
-local function emptyHead(player)
+local function emptyHead(player,ids)
  local values=player:getWornItems();local group=values:getBodyLocationGroup()
- for i=0,values:size()-1 do if conflicting(group,values:get(i):getLocation())then return false end end
+ local allowed
+ if ids and Clothing.headwear({id=ids.case})and not Clothing.removes({id=ids.case})and not ids.clothingSetupPending then
+  local spec=Clothing.spec({id=ids.case})
+  allowed=ids.items and player:getInventory():getItemById(ids.items.clothingItem)
+  if not allowed or allowed:getFullType()~=spec.fullType or allowed:getContainer()~=player:getInventory()
+   or tostring(allowed:getBodyLocation())~=spec.location or player:getWornItem(allowed:getBodyLocation())~=allowed then return false end
+ end
+ for i=0,values:size()-1 do
+  local entry=values:get(i)
+  if conflicting(group,entry:getLocation())and entry:getItem()~=allowed then return false end
+ end
  return true
 end
 local function retained(player,proof)
@@ -71,7 +82,7 @@ function Scene.prepare(player,cases)
  prepared[player]=proof
  return Scene.proof(player)
 end
-function Scene.available(player,proof)
+function Scene.available(player,proof,ids)
  if type(proof)~='table'or proof.prepared~=true or proof.rootRetained~=true
   or (proof.authority~='server'and proof.authority~='sp')or type(proof.normalizedItems)~='table'then return false end
  local previous
@@ -81,6 +92,6 @@ function Scene.available(player,proof)
    or type(record.location)~='string'or record.location==''then return false end
   previous=record.id
  end
- return retained(player,proof)and emptyHead(player)
+ return retained(player,proof)and emptyHead(player,ids)
 end
 return Scene

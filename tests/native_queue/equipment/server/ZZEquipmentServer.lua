@@ -38,6 +38,11 @@ local function execute(module,command,player,args)
    end
    reply(player,'Prepared',ids)
    print('[EQUIPMENT_TEST] PREPARED case='..args.case)
+  elseif command=='ConfigureClothing'then
+   assert(session and session.id==args.case and not pending and not cleanup,'invalid authoritative clothing setup session')
+   Clothing.configure(session,args.item)
+   reply(player,'ClothingConfigured',{case=session.id,item=session.clothingItem:getID(),ok=true})
+   print('[EQUIPMENT_TEST] CLOTHING_SETUP_CONFIGURED case='..session.id..' id='..session.clothingItem:getID())
   elseif command=='ConfigureHotbar'then
    assert(session and session.id==args.case and session.holster and not session.hotbarConfigured and not pending
     and args.item==session.pickup:getID(),'invalid native holster setup request')
