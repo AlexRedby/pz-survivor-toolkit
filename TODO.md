@@ -1,3 +1,10 @@
+# Cart branch Kotlin migration
+
+- [ ] Rebase this chat's branch on current origin/main, resolve conflicts against the Kotlin refactor and preserve unrelated main changes.
+- [ ] Move the branch-owned native diagnostics, probes and JVM checks to idiomatic Kotlin using the existing compiler/runtime isolation. Keep only demonstrably necessary writable instrumentation boundaries in minimal Java; migrate all source composition, manifest and direct-source consumers together and remove superseded sources.
+- [ ] Verify Kotlin style, static/JVM/Lua exposure, native weaving and unchanged native/protocol invariants with the affected source/regression and composed native checks. Freeze sources and verify the affected Host paths with the normal owned resource/window/provenance/cleanup gates; keep runtime changes out of the installed game.
+- [ ] Remove completed migration steps, record the actual checks and any concrete remaining Java boundary, and leave the rebased branch clean without pushing or installing.
+
 # Cart game regression follow-up
 
 Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host profiles and saves, without installing into the user's game. Current preflight resolves 43 IDs; required local sources are missing for VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. Follow the native runner's AeroSpace placement and owned-window/focus gates.
