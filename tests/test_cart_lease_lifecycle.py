@@ -90,7 +90,7 @@ def fixture():
                 emit(role,'native-removed',phase,ownerID=owner,lifetime=lifetime(role,phase),nativeCorpse=phase==1,nativeRemovalWitness='new-native-corpse' if phase==1 else None,
                      corpseCount=1 if phase==1 else 0,hasSquare=False,onlineList=False,oldActorDead=phase==1)
                 emit(role,'unavailable-replay',phase,ownerID=owner,lifetime=lifetime(role,phase),stalePayloadAccepted=False,
-                     staleReplyAccepted=False,guarded=False,**ident(phase))
+                     staleReplyAccepted=False,guarded=True,nativeLifetimeAbsent=True,**ident(phase))
                 emit(role,'cart-disposition',phase,ownerID=owner,cart=cart,lifetime=lifetime(role,phase),cargoID=cargo,
                      cargoWeight=30,cartLocation='corpse-container' if phase==1 else 'native-container',sameCartPreservationClaim=False)
             if phase==1:
@@ -141,6 +141,21 @@ class LeaseLifecycleEvidenceTests(unittest.TestCase):
         bad=subprocess.run(command+['uncertified'],capture_output=True,text=True,timeout=15)
         self.assertNotEqual(bad.returncode,0)
         self.assertIn('Uncertified equipment transition',bad.stdout+bad.stderr)
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT required for actual lifecycle controller')
+    def test_actual_controller_closes_on_authority_before_delayed_native_death(self):
+        base=ROOT/ANALYZER.parent
+        for mode in ('normal','resnapshot'):
+            result=subprocess.run([shutil.which('luajit'),str(base/'LeaseLifecycleBankCheck.lua'),str(base),mode,'certified','delayed-death'],capture_output=True,text=True,timeout=15)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('delayedHostDeath=true',result.stdout)
+
+    def test_early_authority_close_does_not_claim_local_native_death(self):
+        row=self.row('client1','unavailable-replay',1)
+        row.update(nativeLifetimeAbsent=False,authoritativeAbsence=True,guarded=True)
+        self.assertTrue(self.analyze()['evidenceComplete'])
+        row['authoritativeAbsence']=False
+        with self.assertRaises(ValueError):self.analyze()
+
     def test_complete_synthetic_contract_keeps_diagnostic_scope(self):
         result=self.analyze()
         self.assertTrue(result['evidenceComplete']);self.assertTrue(result['diagnosticOnly'])

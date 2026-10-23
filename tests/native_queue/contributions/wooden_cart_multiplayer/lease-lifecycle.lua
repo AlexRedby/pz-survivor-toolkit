@@ -542,8 +542,9 @@ Events.OnServerCommand.Add(function(module,command,args)
     end
    end
   elseif command=='ProbeAbsent' then
-   assert(old and transition and cartLeaseLifetime(old.actor)==nil,'Authoritative absence arrived before local native absence')
-   receiver:unavailable();replay('unavailable-replay',args.stale,args.payload,ingress,{nativeLifetimeAbsent=true,cachedActor=true})
+   assert(old and transition,'Authoritative absence arrived outside cached native transition')
+   local nativeAbsent=cartLeaseLifetime(old.actor)==nil
+   receiver:unavailable();replay('unavailable-replay',args.stale,args.payload,ingress,{nativeLifetimeAbsent=nativeAbsent,authoritativeAbsence=true,cachedActor=true})
   elseif command=='Respawn' then
    assert(role=='client2' and phase==1 and transition=='death','Unexpected native respawn offer');respawnAllowed=true
    emit('respawn-offer',{ownerID=old.id,lifetime=old.binding.lifetime})

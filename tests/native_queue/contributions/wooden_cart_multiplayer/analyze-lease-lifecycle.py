@@ -179,7 +179,10 @@ def analyze(root):
                 require(replay.get('stalePayloadAccepted') is False,'Stale payload accepted during absence')
                 stale=prepared['client2' if role=='server' else role,phase]
                 require(identity(replay)==identity(stale),'Absence replay is not the exact prepared lease')
-                if role!='server':require(replay.get('staleReplyAccepted') is False,'Stale pending reply accepted during absence')
+                if role!='server':
+                    require(replay.get('staleReplyAccepted') is False,'Stale pending reply accepted during absence')
+                    require(replay.get('guarded') is True or role=='client2' and phase==2 and replay.get('nativeMenu') is True and replay.get('nilIngress') is True,'Absence replay lacks exact ingress or actual menu suspension')
+                    require(replay.get('nativeLifetimeAbsent') is True or replay.get('authoritativeAbsence') is True and replay.get('guarded') is True,'Unknown local state cannot prove absence without guarded server revocation')
             for _,d in get(role,'cart-disposition',phase):
                 require(d.get('sameCartPreservationClaim') is False and d.get('cartLocation') in ('world-item','native-container','unattached','corpse-container'),'Unsupported cart preservation claim')
         if role=='client1':
