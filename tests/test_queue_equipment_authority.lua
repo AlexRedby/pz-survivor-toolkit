@@ -216,12 +216,14 @@ end
 -- hands; Wear remains the separate clothing completion boundary.
 do
  ISEquipWeaponAction={Type='ISEquipWeaponAction'};P4RestoreAction={Type='P4RestoreAction'};ISWearClothing={Type='ISWearClothing'}
- for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+ for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both',
+  'tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
   for _,bad in ipairs({'none','item','primary','twoHands','activation'})do
    local socks,torch,screw=exact(51),exact(52),exact(53)
-   socks.getBodyLocation=function()return 'base:socks'end
+   local location=modules.QueueEquipmentClothing.spec({id=caseID}).location
+   socks.getBodyLocation=function()return location end
    local root={};socks.getContainer=function()return root end
-   local player={};local state={id=caseID,clothingItem=socks,clothingLocation='base:socks',clothingRestoreType='ISWearClothing',
+   local player={};local state={id=caseID,clothingItem=socks,clothingLocation=location,clothingRestoreType='ISWearClothing',
     hammer=torch,screwdriver=screw,player=player,root=root,baseline={[51]=socks,[52]=torch,[53]=screw}}
    local spec=modules.QueueEquipmentClothing.cleanupSpec(state)
    local actions={}
@@ -527,7 +529,9 @@ do
  local originalClient,originalServer=isClient,isServer
  local itemKinds={front='Base.BookCarpentry1',tail='Base.BookFirstAid1',hammer='Base.Torch',screwdriver='Base.Screwdriver',
   bag='Base.Bag_Schoolbag',clothingItem='Base.Socks_Ankle'}
- for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both'})do
+ for _,caseID in ipairs({'tidy-clothing-held-primary','tidy-clothing-held-secondary','tidy-clothing-held-both',
+  'tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
+  itemKinds.clothingItem=clothing.spec({id=caseID}).fullType
   local root={items={}}
   function root:getItems()return {size=function()return #self.items end,get=function(_,i)return self.items[i+1]end}end
   function root:getCapacity()return 100 end;function root:getEffectiveCapacity()return 100 end
@@ -595,3 +599,114 @@ do
  isClient,isServer,getCell=beforeClient,beforeServer,beforeCell
 end
 print('Equipment watch processing readiness: server passively waits for disabled/worn and enabled/removed sweeps; SP unchanged.')
+
+-- Arm only once after exact root/worn/hand replication. These Java doubles
+-- model the audited native trigger; the fixture itself calls real item:update.
+do
+ local clothing=modules.QueueEquipmentClothing
+ local oldClient,oldServer,oldTime,oldInstanceof=isClient,isServer,getGameTime,instanceof
+ local age=100.0
+ getGameTime=function()return {getHour=function()return 9 end,getMinutes=function()return 23 end,getWorldAgeHours=function()return age end}end
+ instanceof=function(item,kind)return item.watch and(kind=='Clothing'or kind=='AlarmClockClothing')end
+ isClient=function()return false end
+ for _,server in ipairs({false,true})do
+ isServer=function()return server end
+ for _,id in ipairs({'tidy-watch-ringing-restore','tidy-watch-ringing-remove','tidy-watch-ringing-overlap-both','tidy-watch-ringing-held-both'})do
+  age=100.0
+  local spec=clothing.spec({id=id});local root={};local setters,updates,syncStops=0,0,0
+  local watch={watch=true,hour=21,minute=40,alarm=true,ringing=false,force=-1}
+  function watch:getID()return 701 end;function watch:getFullType()return spec.fullType end
+  function watch:getBodyLocation()return spec.location end;function watch:getCategory()return 'AlarmClock'end
+  function watch:getContainer()return root end
+  function watch:getHour()return self.hour end;function watch:getMinute()return self.minute end
+  function watch:isAlarmSet()return self.alarm end;function watch:isRinging()return self.ringing end
+  function watch:setAlarmSet(value)setters=setters+1;self.alarm=value;self.ringing=false;self.force=20 end
+  function watch:setHour(value)setters=setters+1;self.hour=value;self.force=-1 end
+  function watch:setMinute(value)setters=setters+1;self.minute=value;self.force=-1 end
+  function watch:setForceDontRing(value)setters=setters+1;self.force=value end
+  function watch:update()
+   updates=updates+1
+   if self.alarm and self.hour==9 and self.minute==(server and 20 or 23)and self.force~=20 then self.ringing=true end
+  end
+  function watch:stopRinging()self.ringing=false end
+  function watch:syncStopRinging()syncStops=syncStops+1 end
+  local hammer={getID=function()return 702 end,getFullType=function()return 'Base.Torch'end,getContainer=function()return root end}
+  local screw={getID=function()return 703 end,getFullType=function()return 'Base.Screwdriver'end,getContainer=function()return root end}
+  function root:getItemById(value)return value==701 and watch or value==702 and hammer or value==703 and screw or nil end
+  local sample={id=id,root=root,clothingItem=watch,clothingLocation=spec.location,clothingHair='CrewCut',clothingRingPending=true,
+   clothingWatch={alarmHour=21,alarmMinute=40,alarmSet=true,ringing=false},hammer=hammer,screwdriver=screw}
+  local primary,secondary=clothing.expectedHands(sample,true)
+  local worn=not clothing.removes(sample)and watch or nil
+  sample.player={getInventory=function()return root end,getPrimaryHandItem=function()return primary end,getSecondaryHandItem=function()return secondary end,
+   getWornItem=function()return worn end,getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end}end}
+  assert(not pcall(clothing.armRing,sample,999)and setters==0,'wrong ring ID must fail before native setters')
+  sample.clothingSetupPending=true
+  assert(not pcall(clothing.armRing,sample,701)and setters==0,'ring must await root-before-worn setup')
+  sample.clothingSetupPending=nil
+  isClient=function()return true end
+  assert(not pcall(clothing.armRing,sample,701)and setters==0,'client must never repair or arm a ring')
+  isClient=function()return false end
+  clothing.armRing(sample,701)
+  assert(updates==1 and setters==4 and watch:isRinging()and sample.clothingWatch.ringing and not sample.clothingRingPending)
+  assert(not pcall(clothing.armRing,sample,701)and updates==1 and setters==4,'duplicate or stale ring arm must not retrigger')
+  local ids={case=id,items={clothingItem=701,hammer=702,screwdriver=703},clothingHair='CrewCut',clothingWatch=sample.clothingWatch,
+   clothingWatchStartedAge=sample.clothingWatchStartedAge}
+  watch.ringing=false
+  assert(not clothing.available(sample.player,ids)and not clothing.watchMatches(sample)and setters==4,'ring convergence must quietly wait without repair')
+  watch.ringing=true;age=100.1
+  assert(clothing.available(sample.player,ids)and clothing.watchTiming(sample).observedAgeHours==age)
+  age=100.5;assert(not pcall(clothing.watchTiming,sample),'half-hour lifetime boundary must not be claimed as persistent ring')
+  age=100.1
+  local cleanup=clothing.stopRing(sample)
+  assert(cleanup.id==701 and not cleanup.watch.ringing and cleanup.watch.alarmSet and syncStops==(server and 1 or 0)and setters==4)
+  assert(clothing.stopRing(sample)==nil and syncStops==(server and 1 or 0),'fixture cleanup must stop its exact watch once only')
+ end
+ end
+ isClient,isServer,getGameTime,instanceof=oldClient,oldServer,oldTime,oldInstanceof
+end
+print('Equipment native ring protocol: root-ready once-only native trigger, quiet convergence, lifetime bound and logical cleanup stop passed.')
+
+-- Exclusive cleanup prefixes are clothing boundaries, never synthetic hand
+-- restores. Drive the real observer through native perform/complete/flush.
+do
+ local clothing=modules.QueueEquipmentClothing
+ local oldMods=getActivatedMods
+ getActivatedMods=function()return {contains=function(_,name)return name=='P4TidyUpMeister'end}end
+ ISUnequipAction=ISUnequipAction or {Type='ISUnequipAction'}
+ ISWearClothing=ISWearClothing or {Type='ISWearClothing'}
+ for _,kind in ipairs({'sp','mp'})do
+  for _,id in ipairs({'tidy-clothing-replace','tidy-headwear-hat-exclusive','tidy-headwear-full-hat-exclusive'})do
+   local spec=clothing.spec({id=id});local root={};local player={getCharacterActions=function()return {contains=function()return false end}end}
+   local function garment(number,fullType,location)
+    return {getID=function()return number end,getFullType=function()return fullType end,getContainer=function()return root end,
+     getBodyLocation=function()return location end}
+   end
+   local baseline=garment(901,spec.fullType,spec.location);local temp=garment(902,spec.temporaryType,spec.temporaryLocation)
+   local sample={id=id,player=player,root=root,clothingItem=baseline,clothingTemporary=temp,clothingLocation=spec.location,
+    baseline={[901]=baseline,[902]=temp}}
+   local queue={character=player,queue={}}
+   ISTimedActionQueue={queues={[player]=queue}}
+   local lifecycle={begin=function()return true end,current=function()return queue.current end,finish=function()end,
+    flush=function(value)return 'completed',value.current end}
+   local toolkit={ActionQueueLifecycle=lifecycle,ActionQueueOperations={perform=function()end,deferCompletion=function()return false end},
+    ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment'end},
+    ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end},
+    ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()return false end},ActionQueueAcknowledgements={},
+    ActionQueueTidyIntent={status=function()return true end},ActionQueueCompat={isInstalled=function()return true end,verifySources=function()return true end}}
+   local observer=load('QueueEquipmentCompletion').observe(toolkit,{kind=kind,mode='toolkit'});observer.watch(sample)
+   local specs=clothing.cleanupSpec(sample)
+   for _,row in ipairs(specs)do
+    local action=setmetatable({Type=row.class.Type,item=row.item,character=player,action={},toolkitQueueOperation={}},row.class)
+    queue.current=action;queue.queue={action}
+    lifecycle.begin(action,'perform');lifecycle.finish(action,'perform',true)
+    if kind=='sp'then lifecycle.begin(action,'complete');lifecycle.finish(action,'complete',true)end
+    lifecycle.flush(queue)
+   end
+   local observed=observer.clothing();local hands=observer.restores()
+   assert(observed.perform==#specs and observed.flush==#specs and observed.complete==(kind=='sp'and #specs or 0))
+   assert(hands.perform==0 and hands.unequip==0,'clothing prefix acquired false hand restoration evidence')
+  end
+ end
+ getActivatedMods=oldMods
+end
+print('Equipment displacement completion: exact shared clothing boundaries and zero synthetic hand receipts passed in SP/Host modes.')

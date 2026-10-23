@@ -1,9 +1,26 @@
 local Clothing={}
 local cases={
+ ['tidy-headwear-mohawk-hat-restore']={fullType='Base.Hat_Beany',location='base:hat',headwear=true,mohawk=true},
+ ['tidy-headwear-mohawk-hat-remove']={fullType='Base.Hat_Beany',location='base:hat',headwear=true,mohawk=true,remove=true},
+ ['tidy-headwear-mohawk-full-hat-restore']={fullType='Base.Hat_BoxingRed',location='base:fullhat',headwear=true,mohawk=true},
+ ['tidy-headwear-mohawk-full-hat-remove']={fullType='Base.Hat_BoxingRed',location='base:fullhat',headwear=true,mohawk=true,remove=true},
  ['tidy-watch-digital-restore']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true},
  ['tidy-watch-digital-remove']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true},
  ['tidy-watch-classic-restore']={fullType='Base.WristWatch_Right_ClassicBlack',location='base:rightwrist',wristwatch=true,alarmSet=false},
  ['tidy-watch-classic-remove']={fullType='Base.WristWatch_Right_ClassicBlack',location='base:rightwrist',wristwatch=true,alarmSet=false,remove=true},
+ ['tidy-watch-overlap-primary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true,overlapHand='primary'},
+ ['tidy-watch-overlap-secondary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true,overlapHand='secondary'},
+ ['tidy-watch-overlap-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,remove=true,overlapHand='both'},
+ ['tidy-watch-held-primary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='primary'},
+ ['tidy-watch-held-secondary']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='secondary'},
+ ['tidy-watch-held-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,overlapHand='both'},
+ ['tidy-watch-ringing-restore']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,},
+ ['tidy-watch-ringing-remove']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,remove=true,},
+ ['tidy-watch-ringing-overlap-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,remove=true,overlapHand='both',},
+ ['tidy-watch-ringing-held-both']={fullType='Base.WristWatch_Left_DigitalBlack',location='base:leftwrist',wristwatch=true,alarmSet=true,ringing=true,overlapHand='both',},
+ ['tidy-clothing-replace']={fullType='Base.Socks_Ankle',location='base:socks',temporaryType='Base.Socks_Long',temporaryLocation='base:socks'},
+ ['tidy-headwear-hat-exclusive']={fullType='Base.Hat_Beany',location='base:hat',headwear=true,temporaryType='Base.Hat_BoxingRed',temporaryLocation='base:fullhat'},
+ ['tidy-headwear-full-hat-exclusive']={fullType='Base.Hat_BoxingRed',location='base:fullhat',headwear=true,temporaryType='Base.Hat_Beany',temporaryLocation='base:hat'},
  ['tidy-clothing']={fullType='Base.Socks_Ankle',location='base:socks'},
  ['tidy-clothing-remove']={fullType='Base.Socks_Ankle',location='base:socks',remove=true},
  ['tidy-clothing-overlap']={fullType='Base.Socks_Ankle',location='base:socks',remove=true,overlapHand='secondary'},
@@ -19,6 +36,7 @@ local cases={
 }
 function Clothing.isCase(id)return cases[id]~=nil end
 function Clothing.spec(state)return assert(cases[state.id],'unknown clothing case')end
+function Clothing.replaces(state)return cases[state.id]and cases[state.id].temporaryType~=nil or false end
 function Clothing.overlapHand(state)return cases[state.id]and cases[state.id].overlapHand or nil end
 function Clothing.overlap(state)return Clothing.overlapHand(state)~=nil end
 -- The same native hand expectation serves checkpoint, readiness and final
@@ -39,8 +57,26 @@ function Clothing.producerActions(state)
  result[#result+1]=state.clothingFirst;result[#result+1]=state.clothingProducer
  return result
 end
+-- One ordered native receipt list serves ordinary overlaps and watches.
+-- Watch overlaps reuse overlap.acknowledgements without a duplicate watch list.
+local function nativeActions(state,tidy)
+ local result=Clothing.producerActions(state)
+ if tidy then
+  if Clothing.overlap(state)or Clothing.replaces(state)then
+   for _,action in ipairs(state.clothingCleanup or {})do result[#result+1]=action end
+  elseif state.clothingRestoreAction then result[#result+1]=state.clothingRestoreAction end
+ end
+ return result
+end
 function Clothing.cleanupSpec(state)
  local result={}
+ if Clothing.replaces(state)then
+  if Clothing.spec(state).temporaryLocation~=Clothing.spec(state).location then
+   result[#result+1]={class=ISUnequipAction,item=state.clothingTemporary}
+  end
+  result[#result+1]={class=ISWearClothing,item=state.clothingItem}
+  return result
+ end
  local function hand(item,primary,twoHands)
   result[#result+1]={class=ISEquipWeaponAction,item=item,primary=primary,twoHands=twoHands==true}
   result[#result+1]={class=P4RestoreAction,item=item,activated=false}
@@ -84,7 +120,9 @@ end
 function Clothing.removes(state)return cases[state.id]and cases[state.id].remove==true or false end
 function Clothing.headwear(state)return cases[state.id]and cases[state.id].headwear==true or false end
 function Clothing.wristwatch(state)return cases[state.id]and cases[state.id].wristwatch==true or false end
-local function strictWatch(value,spec)
+function Clothing.mohawk(state)return cases[state.id]and cases[state.id].mohawk==true or false end
+function Clothing.ringing(state)return cases[state.id]and cases[state.id].ringing==true or false end
+local function strictWatch(value,spec,pending)
  if type(value)~='table'or getmetatable(value)~=nil then return false end
  local count=0
  for key in pairs(value)do
@@ -92,18 +130,67 @@ local function strictWatch(value,spec)
   count=count+1
  end
  return count==4 and type(value.alarmHour)=='number'and value.alarmHour%1==0 and value.alarmHour>=0 and value.alarmHour<24
-  and value.alarmMinute==40 and value.alarmSet==spec.alarmSet and value.ringing==false
+  and type(value.alarmMinute)=='number'and value.alarmMinute%1==0 and value.alarmMinute>=0 and value.alarmMinute<60
+  and (spec.ringing or value.alarmMinute==40)and value.alarmSet==spec.alarmSet
+  and value.ringing==(spec.ringing==true and not pending)
+end
+local function watchSnapshot(item)
+ return {alarmHour=item:getHour(),alarmMinute=item:getMinute(),alarmSet=item:isAlarmSet(),ringing=item:isRinging()}
+end
+-- Readiness must not throw assertions while native alarm packets converge.
+function Clothing.watchMatches(state,item)
+ if not Clothing.wristwatch(state)then return true end
+ item=item or state.clothingItem
+ if not strictWatch(state.clothingWatch,Clothing.spec(state),state.clothingRingPending)
+  or not instanceof(item,'AlarmClockClothing')or not instanceof(item,'Clothing')or item:getCategory()~='AlarmClock'then return false end
+ local value=watchSnapshot(item)
+ for key,expected in pairs(state.clothingWatch)do if value[key]~=expected then return false end end
+ return true
 end
 function Clothing.watchState(state,item)
  if not Clothing.wristwatch(state)then return nil end
- local baseline=state.clothingWatch
- assert(strictWatch(baseline,Clothing.spec(state)),'invalid authoritative watch baseline')
- item=item or state.clothingItem
- assert(instanceof(item,'AlarmClockClothing')and instanceof(item,'Clothing')and item:getCategory()=='AlarmClock',
-  'watch must remain native AlarmClockClothing')
- local value={alarmHour=item:getHour(),alarmMinute=item:getMinute(),alarmSet=item:isAlarmSet(),ringing=item:isRinging()}
- for key,expected in pairs(baseline)do assert(value[key]==expected,'native watch alarm changed '..key)end
- return value
+ assert(Clothing.watchMatches(state,item),'native watch alarm changed or invalid authoritative watch baseline')
+ return watchSnapshot(item or state.clothingItem)
+end
+local function finite(value)return type(value)=='number'and value==value and value>-math.huge and value<math.huge end
+function Clothing.watchTiming(state)
+ if not Clothing.ringing(state)or state.clothingRingPending then return nil end
+ local started,observed=state.clothingWatchStartedAge,getGameTime():getWorldAgeHours()
+ assert(finite(started)and finite(observed)and observed>=started and observed-started<0.5,'native ring lifetime evidence expired or clock changed')
+ return {startedAgeHours=started,observedAgeHours=observed}
+end
+function Clothing.armRing(state,itemID)
+ assert(not isClient()and Clothing.ringing(state)and state.clothingRingPending==true and not state.clothingSetupPending,
+  'ring arming belongs to the once-only SP/server root-ready phase')
+ local item=state.clothingItem
+ assert(itemID==item:getID()and state.root==state.player:getInventory()and state.root:getItemById(itemID)==item
+  and item:getContainer()==state.root and item:getFullType()==Clothing.spec(state).fullType and Clothing.watchMatches(state),
+  'ring arming exact root/configuration differs')
+ local primary,secondary=Clothing.expectedHands(state,true)
+ assert(state.player:getPrimaryHandItem()==primary and state.player:getSecondaryHandItem()==secondary
+  and state.player:getWornItem(state.clothingLocation)==(not Clothing.removes(state)and item or nil),
+  'ring arming must follow exact authoritative hand/worn setup')
+ local time=getGameTime();local minute=time:getMinutes()
+ if isServer()then minute=math.floor(minute/10)*10 end
+ item:setAlarmSet(true);item:setHour(time:getHour());item:setMinute(minute);item:setForceDontRing(-1)
+ state.clothingWatchStartedAge=time:getWorldAgeHours()
+ -- This is the real alarm trigger. Its server start sends the native packet;
+ -- the owning client applies its setters/force flag then calls native update.
+ item:update()
+ assert(item:isRinging(),'native alarm update did not start the prepared ring')
+ state.clothingWatch=watchSnapshot(item);state.clothingRingPending=nil
+ Clothing.watchState(state);Clothing.watchTiming(state)
+end
+function Clothing.stopRing(state)
+ if not Clothing.ringing(state)or state.clothingRingStopped then return nil end
+ local item=state.clothingItem
+ item:stopRinging()
+ if isServer()then item:syncStopRinging()end
+ local value=watchSnapshot(item)
+ assert(not value.ringing and value.alarmHour==state.clothingWatch.alarmHour and value.alarmMinute==state.clothingWatch.alarmMinute
+  and value.alarmSet==state.clothingWatch.alarmSet,'fixture cleanup changed alarm configuration')
+ state.clothingRingStopped=true
+ return {id=item:getID(),watch=value}
 end
 function Clothing.watchProcessing(state)
  if not Clothing.wristwatch(state)or isClient()then return nil end
@@ -117,6 +204,53 @@ function Clothing.watchProcessingReady(state,worn)
  if not isServer()or isClient()or not Clothing.wristwatch(state)then return true end
  local processing=Clothing.watchProcessing(state)
  return not processing.pendingRemoval and processing.active==(state.clothingWatch.alarmSet and worn)
+end
+local function appearanceSnapshot(state)
+ local player,gel=state.player,state.clothingGel
+ if not gel or state.root:getItemById(gel:getID())~=gel or gel:getContainer()~=state.root or gel:getFullType()~='Base.Hairgel'
+  or gel:getMaxUses()~=20 or math.abs(gel:getUseDelta()-0.05)>=0.000001 then return nil end
+ local visual=player:getHumanVisual();local color=visual and visual:getHairColor()
+ if not color then return nil end
+ return {hairModel=tostring(visual:getHairModel()),nonAttachedHair=visual:getNonAttachedHair()or false,
+  -- The native hairGrowTiming field is private with no public getter. False
+  -- explicitly means unavailable; headwear's lack of a reset is source proof.
+  hairColor={r=color:getRedFloat(),g=color:getGreenFloat(),b=color:getBlueFloat()},hairGrowthTime=false,
+  gel={id=gel:getID(),fullType=gel:getFullType(),container='root',uses=gel:getCurrentUses()}}
+end
+function Clothing.appearance(state)return assert(appearanceSnapshot(state),'native styling gel/visual identity or definition changed')end
+local function appearanceSame(left,right,ignoreHair,ignoreUses)
+ if not left or not right or left.nonAttachedHair~=right.nonAttachedHair or left.hairGrowthTime~=right.hairGrowthTime then return false end
+ if not ignoreHair and left.hairModel~=right.hairModel then return false end
+ for _,key in ipairs({'r','g','b'})do if left.hairColor[key]~=right.hairColor[key]then return false end end
+ for _,key in ipairs({'id','fullType','container','uses'})do
+  if not(ignoreUses and key=='uses')and left.gel[key]~=right.gel[key]then return false end
+ end
+ return true
+end
+function Clothing.appearanceReady(state,phase,tidy)
+ if not Clothing.mohawk(state)then return tostring(state.player:getHumanVisual():getHairModel())==state.clothingHair end
+ local baseline=state.clothingAppearanceBaseline
+ if not baseline or not state.clothingGel or state.root:getItemById(state.clothingGel:getID())~=state.clothingGel then return false end
+ local current=appearanceSnapshot(state)
+ if not current then return false end
+ -- Java flattening requires the client/SP cached player initialized by text
+ -- rendering. Host server Wear also flattens through native Lua; Unequip does not.
+ local wears=phase=='first'and Clothing.removes(state)or phase=='final'and not Clothing.removes(state)
+ local flatten=not isClient()and (not isServer()or wears)
+ local expected=(phase=='first'or phase=='final'and tidy)and flatten and 'MohawkFlat'or 'MohawkFan'
+ local uses=phase=='first'and 20 or 19
+ return current.hairModel==expected and current.gel.uses==uses and appearanceSame(current,baseline,true,true)
+end
+function Clothing.appearanceCheckpoint(state)
+ if not Clothing.mohawk(state)then return end
+ assert(Clothing.appearanceReady(state,'checkpoint'),'native Mohawk producer/gel effect differs')
+ local value=Clothing.appearance(state)
+ if state.clothingAppearanceCheckpoint then assert(appearanceSame(value,state.clothingAppearanceCheckpoint),'appearance checkpoint changed')
+ else state.clothingAppearanceCheckpoint=value end
+ if isServer()then
+  local JSON=require 'QueueHealthEvents'
+  print('[EQUIPMENT_TEST] APPEARANCE_CHECKPOINT '..JSON.encode({id=state.clothingItem:getID(),appearance=value}))
+ end
 end
 local function preparedSlots(state)return Clothing.headwear(state)or Clothing.wristwatch(state)end
 local function capacitySafe(state)
@@ -136,6 +270,27 @@ local function emptyHeadwearSlots(state,allowed)
 end
 function Clothing.restoreType(state)return Clothing.removes(state)and 'ISUnequipAction'or 'ISWearClothing'end
 function Clothing.finalWorn(state,tidy)return Clothing.removes(state)and not tidy or not Clothing.removes(state)and tidy end
+function Clothing.slotMatches(state,restored,live)
+ live=live or state.clothingItem
+ local expected=restored and live or nil
+ if Clothing.replaces(state)then
+  local spec=Clothing.spec(state);local temp=state.root:getItemById(state.clothingTemporary:getID())
+  if not temp or temp:getContainer()~=state.root or temp:getFullType()~=spec.temporaryType
+   or tostring(temp:getBodyLocation())~=spec.temporaryLocation then return false end
+  if not restored and spec.temporaryLocation==spec.location then expected=temp end
+  local expectedTemp=not restored and temp or spec.temporaryLocation==spec.location and live or nil
+  if state.player:getWornItem(temp:getBodyLocation())~=expectedTemp then return false end
+ end
+ return state.player:getWornItem(state.clothingLocation)==expected
+end
+function Clothing.expectedWorn(state,baseline,restored)
+ local result={};for location,item in pairs(baseline)do result[location]=item end
+ result[state.clothingLocation]=nil
+ if Clothing.replaces(state)then result[state.clothingTemporary:getBodyLocation()]=nil end
+ if restored then result[state.clothingLocation]=state.clothingItem
+ elseif Clothing.replaces(state)then result[state.clothingTemporary:getBodyLocation()]=state.clothingTemporary end
+ return result
+end
 local watched,installed
 function Clothing.watch(state)watched=state end
 function Clothing.observeLine(state,line)
@@ -166,9 +321,11 @@ function Clothing.observeLine(state,line)
    and state.clothingCaptureHands.session==session and state.clothingCaptureHands.valid};state.clothingP4=proof
  end
  if not proof or proof.session~=session then return end
- local first=Clothing.removes(state)and 'ISWearClothing'or 'ISUnequipAction'
+ local first=(Clothing.removes(state)or Clothing.replaces(state))and 'ISWearClothing'or 'ISUnequipAction'
+ local firstItem=Clothing.replaces(state)and state.clothingTemporary or state.clothingItem
+ local firstLabel=firstItem:getFullType()..'#'..firstItem:getID()..'@'..state.root:getType()
  if Clothing.overlap(state)and message:find('^add%[%w+%] type=ISEquipWeaponAction item=')and message:find(sock,1,true)then proof.equip=true end
- if message:find('^add%[%w+%] type='..first..' item=')and message:find(sock,1,true)then proof.clothing=true end
+ if message:find('^add%[%w+%] type='..first..' item=')and message:find(firstLabel,1,true)then proof.clothing=true end
  if message:find('^add%[%w+%] type=ISCutHair item=nil$')then proof.producer=true end
  if message:find('^RESTORE actionTotal=')then
   local trace=message:match(' trace=%[(.-)%] reason=')
@@ -190,7 +347,7 @@ function Clothing.install(withP4)
  -- Capture short native transactions when their public started/completed
  -- notifications arrive; ordinary OnTick observation remains the fallback.
  Events.OnServerCommand.Add(function(module,command)
-  if module=='PZSurvivorToolkitActions'and command=='State'and watched and (Clothing.overlap(watched)or Clothing.wristwatch(watched))then
+  if module=='PZSurvivorToolkitActions'and command=='State'and watched and (Clothing.overlap(watched)or Clothing.wristwatch(watched)or Clothing.replaces(watched)or Clothing.mohawk(watched))then
    Clothing.observe(watched,ISTimedActionQueue.getTimedActionQueue(watched.player),PZSurvivorToolkit,true)
   end
  end)
@@ -200,7 +357,22 @@ function Clothing.prepare(state,seed)
  local spec=Clothing.spec(state)
  assert(not isClient()or not state.ids.clothingSetupPending,'client cannot prepare before authoritative clothing setup')
  state.clothingRestoreType=Clothing.restoreType(state)
+ if spec.ringing then
+  state.clothingRingPending=not isClient()or state.ids.clothingRingPending or nil
+  state.clothingWatchStartedAge=state.ids and state.ids.clothingWatchStartedAge or nil
+ end
  seed('clothingItem',spec.fullType)
+ if spec.mohawk then
+  local gel=seed('clothingGel','Base.Hairgel')
+  if not isClient()then gel:setCurrentUses(gel:getMaxUses())end
+  assert(gel:getCurrentUses()==20 and gel:getMaxUses()==20,'Mohawk setup requires full native Hairgel')
+ end
+ if spec.temporaryType then
+  local temporary=seed('clothingTemporary',spec.temporaryType)
+  assert(temporary:getContainer()==state.root and temporary:getCategory()=='Clothing'
+   and tostring(temporary:getBodyLocation())==spec.temporaryLocation and temporary:getID()~=state.clothingItem:getID(),
+   'displacement fixture requires a distinct ordinary root temporary item')
+ end
  local item=state.clothingItem
  state.clothingLocation=item:getBodyLocation()
  assert((spec.wristwatch and item:getCategory()=='AlarmClock'and instanceof(item,'AlarmClockClothing')and instanceof(item,'Clothing')
@@ -227,7 +399,13 @@ function Clothing.prepare(state,seed)
    if not Clothing.removes(state)then
     if isServer()then
      state.clothingSetupPending=true;state.clothingSetupPrevious=state.player:getWornItem(state.clothingLocation)
-    else state.player:setWornItem(state.clothingLocation,item)end
+    else
+     if Clothing.desired(state)then
+      local primary,secondary=Clothing.expectedHands(state,true)
+      state.player:setPrimaryHandItem(primary);state.player:setSecondaryHandItem(secondary)
+     end
+     state.player:setWornItem(state.clothingLocation,item)
+    end
    end
   end
   emptyHeadwearSlots(state,not Clothing.removes(state)and not state.clothingSetupPending and item or nil)
@@ -246,36 +424,56 @@ function Clothing.prepare(state,seed)
  end
  local visual=state.player:getHumanVisual()
  state.clothingHair=state.ids and assert(state.ids.clothingHair,'authoritative clothing hair style missing')
-  or (state.player:isFemale()and 'Bob'or 'CrewCut')
- if Clothing.headwear(state)then
+  or (spec.mohawk and 'MohawkFan'or state.player:isFemale()and 'Bob'or 'CrewCut')
+ if Clothing.headwear(state)and not spec.mohawk then
   assert(state.clothingHair==(state.player:isFemale()and 'Bob'or 'CrewCut'),'headwear requires the configured plain native style')
  end
  local styles=getHairStylesInstance()
  local style=state.player:isFemale() and styles:FindFemaleStyle(state.clothingHair) or styles:FindMaleStyle(state.clothingHair)
- assert(style and tostring(style:getName())==state.clothingHair and not style:isAttachedHair(),'plain native hair definition required')
- for _,name in ipairs({'Bald','Mohawk','Spike','Greased','Buffont'})do
-  assert(not tostring(style:getName()):find(name,1,true),'haircut fixture must not consume styling items or reset hair color')
- end
+ assert(style and tostring(style:getName())==state.clothingHair and not style:isAttachedHair(),'configured unattached native hair definition required')
+ if not spec.mohawk then
+  for _,name in ipairs({'Bald','Mohawk','Spike','Greased','Buffont'})do
+   assert(not tostring(style:getName()):find(name,1,true),'haircut fixture must not consume styling items or reset hair color')
+  end
+ else assert(state.clothingHair=='MohawkFan','Mohawk fixture needs the real upright style')end
  if isClient()then
   assert(tostring(visual:getHairModel())==state.clothingHair and not visual:getNonAttachedHair(),
-   'client has not adopted authoritative plain hair setup')
+   'client has not adopted authoritative native hair setup')
  else
-  -- Disposable-character setup, like seeding socks/hands. The tested native
-  -- haircut later requests this same validated style without consumables.
+  -- Disposable-character setup, like seeding socks/hands. Tested CutHair
+  -- uses this native style; Mohawk cases prove its real Hairgel consumption.
   visual:setNonAttachedHair(nil);visual:setHairModel(state.clothingHair);state.player:resetModel()
   if isServer()then sendHumanVisual(state.player)end
  end
+ if spec.mohawk then
+  state.clothingAppearanceBaseline=Clothing.appearance(state)
+  assert(state.clothingAppearanceBaseline.hairModel=='MohawkFan'and state.clothingAppearanceBaseline.nonAttachedHair==false,'invalid Mohawk setup baseline')
+ end
+ if spec.ringing and not isClient()and not isServer()then Clothing.armRing(state,item:getID())end
 end
 function Clothing.available(player,ids)
  if type(ids.clothingHair)~='string'or tostring(player:getHumanVisual():getHairModel())~=ids.clothingHair
   or player:getHumanVisual():getNonAttachedHair()then return false end
  local spec=cases[ids.case]
+ if spec and spec.mohawk then
+  local gel=player:getInventory():getItemById(ids.items.clothingGel)
+  if not gel or gel:getFullType()~='Base.Hairgel'or gel:getContainer()~=player:getInventory()or gel:getCurrentUses()~=20 then return false end
+ end
  if spec and (spec.headwear or spec.wristwatch or not spec.remove)then
   local root=player:getInventory();local item=root:getItemById(ids.items.clothingItem)
   if not item or item:getFullType()~=spec.fullType or item:getContainer()~=root
    or tostring(item:getBodyLocation())~=spec.location then return false end
   if spec.wristwatch then
-   if not strictWatch(ids.clothingWatch,spec)or not pcall(Clothing.watchState,{id=ids.case,clothingItem=item,clothingWatch=ids.clothingWatch})then return false end
+   if not Clothing.watchMatches({id=ids.case,clothingItem=item,clothingWatch=ids.clothingWatch,clothingRingPending=ids.clothingRingPending})then return false end
+   if spec.ringing and not ids.clothingRingPending then
+    local age=getGameTime():getWorldAgeHours();local started=ids.clothingWatchStartedAge
+    if not finite(started)or not finite(age)or age<started or age-started>=0.5 then return false end
+   end
+  end
+  if spec.temporaryType then
+   local temp=root:getItemById(ids.items.clothingTemporary)
+   if not temp or temp:getFullType()~=spec.temporaryType or temp:getContainer()~=root
+    or tostring(temp:getBodyLocation())~=spec.temporaryLocation or player:getWornItem(temp:getBodyLocation())==temp then return false end
   end
   local expected=not spec.remove and not ids.clothingSetupPending and item or nil
   if ids.clothingSetupPending then
@@ -328,13 +526,29 @@ function Clothing.configure(state,itemID)
  state.clothingSetupPending=nil;state.clothingSetupPrevious=nil
  if Clothing.desired(state)then sendEquip(state.player)end
  sendClothing(state.player,state.clothingLocation,item)
+ if Clothing.mohawk(state)then
+  state.player:getHumanVisual():setHairModel('MohawkFan');state.player:resetModel();sendHumanVisual(state.player)
+  assert(appearanceSame(Clothing.appearance(state),state.clothingAppearanceBaseline),'once-only setup changed appearance baseline')
+ end
 end
 function Clothing.enqueue(state,helpers)
  require 'TimedActions/ISCutHair'
  -- Explicit native constructors exercise P4's public queue observer, rather
- -- than UI explicit-equip intent. The unchanged haircut arms restoreWorn.
+ -- than UI explicit-equip intent. The native haircut arms restoreWorn.
  -- Only P4 constructs the eventual wear/unequip cleanup action.
  local remove=Clothing.removes(state)
+ if Clothing.mohawk(state)then
+  assert(state.root:getItemFromType('Hairgel',true,true)==state.clothingGel,'native haircut selector did not choose exact root Hairgel')
+  local count=0
+  local function scan(container)
+   local items=container:getItems()
+   for i=0,items:size()-1 do local item=items:get(i)
+    if item:getFullType()=='Base.Hairgel'then count=count+1 end
+    if instanceof(item,'InventoryContainer')then scan(item:getItemContainer())end
+   end
+  end
+  scan(state.root);assert(count==1,'Mohawk fixture requires exactly one reachable Hairgel')
+ end
  state.clothingEquip=nil
  helpers.run(function()
   if Clothing.overlap(state)and not Clothing.desired(state)then
@@ -346,8 +560,8 @@ function Clothing.enqueue(state,helpers)
     and state.clothingEquip.twoHands==(hand=='both')and state.clothingEquip.complete==ISEquipWeaponAction.complete,
     'native overlap equip fixture changed')
   end
-  local class=remove and ISWearClothing or ISUnequipAction
-  state.clothingFirst=class:new(state.player,state.clothingItem,50)
+  local class=(remove or Clothing.replaces(state))and ISWearClothing or ISUnequipAction
+  state.clothingFirst=class:new(state.player,Clothing.replaces(state)and state.clothingTemporary or state.clothingItem,50)
   ISTimedActionQueue.add(state.clothingFirst)
   state.clothingProducer=ISCutHair:new(state.player,state.clothingHair,nil,100)
   ISTimedActionQueue.add(state.clothingProducer)
@@ -361,9 +575,14 @@ function Clothing.observe(state,queue,toolkit,tidy)
   state.clothingProducerStarted=true
   if preparedSlots(state)then
    assert((state.clothingEmptyHeadwear or state.clothingEmptyWatchSlots)and capacitySafe(state),'clothing removal lacks setup/capacity proof')
-   emptyHeadwearSlots(state,Clothing.removes(state)and state.clothingItem or nil)
-   Clothing.verify(state,Clothing.removes(state),true)
+   if not Clothing.replaces(state)then emptyHeadwearSlots(state,Clothing.removes(state)and state.clothingItem or nil)end
+   if not Clothing.mohawk(state)or not state.clothingFirstObserved then
+    Clothing.verify(state,Clothing.removes(state),true,'first');state.clothingFirstObserved=true
+   end
    if Clothing.headwear(state)then state.clothingHeadwearReady=true else state.clothingWatchReady=true end
+  end
+  if Clothing.replaces(state)then
+   Clothing.verify(state,false,true);state.clothingDisplacementReady=true
   end
   if Clothing.overlap(state)then
    local item=assert(state.root:getItemById(state.clothingItem:getID()),'overlap exact socks missing')
@@ -377,7 +596,7 @@ function Clothing.observe(state,queue,toolkit,tidy)
     worn=not Clothing.desired(state)and item:getID()or false,container='root'}
   end
  end
- if Clothing.overlap(state)and state.clothingP4 and state.clothingP4.restore and not state.clothingCleanup then
+ if (Clothing.overlap(state)or Clothing.replaces(state))and state.clothingP4 and state.clothingP4.restore and not state.clothingCleanup then
   local cleanup={}
   for _,action in ipairs(queue.queue)do
    if Clothing.cleanupMember(state,action)then
@@ -387,8 +606,14 @@ function Clothing.observe(state,queue,toolkit,tidy)
   Clothing.verifyCleanup(state,cleanup)
   if toolkit.Settings.actionQueue()then
    for _,action in ipairs(cleanup)do
-    local _,kind=toolkit.ActionQueueDefinitions.inspect(action)
+    local contract,kind=toolkit.ActionQueueDefinitions.inspect(action)
     assert(kind=='compat.tidy-equipment','P4 overlap cleanup lacks verified scoped origin')
+    if Clothing.replaces(state)and action.item==state.clothingItem then
+     local baseline,temporary=state.clothingItem,state.clothingTemporary
+     assert(contract and contract.items and contract.items[baseline:getID()]and contract.items[temporary:getID()]
+      and contract.itemTypes and contract.itemTypes[baseline:getFullType()]and contract.itemTypes[temporary:getFullType()]
+      and contract.hands==state.player,'P4 replacement Wear must own both exact garments and actor equipment')
+    end
    end
   end
   state.clothingCleanup=cleanup
@@ -405,23 +630,30 @@ function Clothing.observe(state,queue,toolkit,tidy)
    if toolkit.Settings.actionQueue()then
     local _,kind=toolkit.ActionQueueDefinitions.inspect(action)
     assert(kind=='compat.tidy-equipment','P4 wear lacks verified scoped origin')
+    if Clothing.mohawk(state)then
+     local contract=toolkit.ActionQueueDefinitions.inspect(action)
+     assert(contract and contract.targets and contract.targets[state.player:getHumanVisual()],'P4 Mohawk cleanup omitted exact appearance resource')
+    end
    end
    if isClient()and not state.clothingRestoreReceipt then
     state.clothingRestoreReceipt=toolkit.ActionQueueAcknowledgements.capture(action)
+    if Clothing.overlap(state)or Clothing.wristwatch(state)or Clothing.replaces(state)or Clothing.mohawk(state)then
+     state.clothingReceipts=state.clothingReceipts or {}
+     state.clothingReceipts[action]=state.clothingRestoreReceipt
+    end
    end
   end
  end
- if (Clothing.overlap(state)or Clothing.wristwatch(state))and isClient()then
+ if (Clothing.overlap(state)or Clothing.wristwatch(state)or Clothing.replaces(state)or Clothing.mohawk(state))and isClient()then
   state.clothingReceipts=state.clothingReceipts or {}
-  for _,actions in ipairs({Clothing.producerActions(state),Clothing.wristwatch(state)and {state.clothingRestoreAction}or state.clothingCleanup or {}})do
-   for _,action in ipairs(actions)do
-    if not state.clothingReceipts[action]then state.clothingReceipts[action]=toolkit.ActionQueueAcknowledgements.capture(action)end
-   end
+  for _,action in ipairs(nativeActions(state,tidy))do
+   if not state.clothingReceipts[action]then state.clothingReceipts[action]=toolkit.ActionQueueAcknowledgements.capture(action)end
   end
  end
 end
 function Clothing.evidence(state,toolkit,tidy,completion,hands)
  assert(state.clothingProducerStarted,'native haircut producer was never observed running')
+ state.clothingAppearanceTidy=tidy
  local result=Clothing.verify(state,Clothing.finalWorn(state,tidy))
  result.nativeGenerated=state.clothingRestoreAction and 1 or 0
  assert(result.nativeGenerated==(tidy and 1 or 0),'P4 did not generate exactly one socks restore')
@@ -446,16 +678,40 @@ function Clothing.evidence(state,toolkit,tidy,completion,hands)
   assert(state.clothingEmptyWatchSlots and state.clothingWatchReady,'watch native setup/producer was not verified')
   result.watchBaseline=state.clothingWatch
   result.watchSetup={emptyExclusiveSlots=true,capacityBeforeRemoval=true}
-  result.watchAcknowledgements={}
-  if isClient()then
-   local actions=Clothing.producerActions(state)
-   if tidy then actions[#actions+1]=assert(state.clothingRestoreAction)end
-   for _,action in ipairs(actions)do
-    local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'watch native acknowledgement not captured')
-    assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','watch native action did not complete authoritatively')
-    result.watchAcknowledgements[#result.watchAcknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
+  if not Clothing.overlap(state)then
+   result.watchAcknowledgements={}
+   if isClient()then
+    for _,action in ipairs(nativeActions(state,tidy))do
+     local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'watch native acknowledgement not captured')
+     assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','watch native action did not complete authoritatively')
+     result.watchAcknowledgements[#result.watchAcknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
+    end
    end
   end
+ end
+ if Clothing.mohawk(state)then
+  result.appearanceAcknowledgements={}
+  if isClient()then
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'Mohawk native receipt missing')
+    assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','Mohawk native receipt incomplete')
+    result.appearanceAcknowledgements[#result.appearanceAcknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
+   end
+  end
+ end
+ if Clothing.replaces(state)then
+  assert(state.clothingDisplacementReady,'native temporary clothing state was never observed')
+  local proof={cleanup={},acknowledgements={}}
+  if tidy then Clothing.verifyCleanup(state,state.clothingCleanup or {})end
+  for _,action in ipairs(state.clothingCleanup or {})do proof.cleanup[#proof.cleanup+1]={kind=action.Type,id=action.item:getID()}end
+  if isClient()then
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'displacement native receipt missing')
+    assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','displacement native action lacks authoritative completion')
+    proof.acknowledgements[#proof.acknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
+   end
+  end
+  result.displacement=proof
  end
  if Clothing.overlap(state)then
   local overlap={intermediate=assert(state.clothingOverlap,'native overlap was never observed'),cleanup={},acknowledgements={},sharedHands=hands}
@@ -468,12 +724,10 @@ function Clothing.evidence(state,toolkit,tidy,completion,hands)
    overlap.cleanup[#overlap.cleanup+1]=row
   end
   if isClient()then
-   for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
-    for _,action in ipairs(actions)do
-     local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'overlap native acknowledgement not captured')
-     assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','overlap native action did not complete authoritatively')
-     overlap.acknowledgements[#overlap.acknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
-    end
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=assert(state.clothingReceipts and state.clothingReceipts[action],'overlap native acknowledgement not captured')
+    assert(toolkit.ActionQueueAcknowledgements.observe(action,receipt)=='completed','overlap native action did not complete authoritatively')
+    overlap.acknowledgements[#overlap.acknowledgements+1]={kind=action.Type,id=action.item and action.item:getID()or false,state='completed'}
    end
   end
   result.overlap=overlap
@@ -483,8 +737,25 @@ end
 function Clothing.settled(state,toolkit,tidy)
  local live=state.root:getItemById(state.clothingItem:getID())
  if not live or live:getFullType()~=Clothing.spec(state).fullType or live:getContainer()~=state.root then return false end
- local worn=state.player:getWornItem(state.clothingLocation)
- if Clothing.finalWorn(state,tidy)then if worn~=live then return false end elseif worn~=nil then return false end
+ if not Clothing.slotMatches(state,Clothing.finalWorn(state,tidy),live)then return false end
+ if Clothing.replaces(state)then
+  if not state.clothingDisplacementReady or tidy and not state.clothingCleanup then return false end
+  if isClient()then
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=state.clothingReceipts and state.clothingReceipts[action]
+    if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
+   end
+  end
+ end
+ if Clothing.mohawk(state)then
+  if not state.clothingAppearanceCheckpoint or not Clothing.appearanceReady(state,'final',tidy)then return false end
+  if isClient()then
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=state.clothingReceipts and state.clothingReceipts[action]
+    if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
+   end
+  end
+ end
  if tidy then
   if not state.clothingRestoreAction then return false end
   local source=state.clothingP4
@@ -494,12 +765,11 @@ function Clothing.settled(state,toolkit,tidy)
  end
  if Clothing.wristwatch(state)then
   if not isClient()and Clothing.watchProcessing(state).pendingRemoval then return false end
-  if not state.clothingWatchReady or not pcall(Clothing.watchState,state,live)
-   or state.player:getPrimaryHandItem()~=state.hammer or state.player:getSecondaryHandItem()~=state.screwdriver then return false end
-  if isClient()then
-   local actions=Clothing.producerActions(state)
-   if tidy then actions[#actions+1]=state.clothingRestoreAction end
-   for _,action in ipairs(actions)do
+  local primary,secondary=Clothing.expectedHands(state,tidy)
+  if not state.clothingWatchReady or not Clothing.watchMatches(state,live)
+   or state.player:getPrimaryHandItem()~=primary or state.player:getSecondaryHandItem()~=secondary then return false end
+  if isClient()and not Clothing.overlap(state)then
+   for _,action in ipairs(nativeActions(state,tidy))do
     local receipt=state.clothingReceipts and state.clothingReceipts[action]
     if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
    end
@@ -513,31 +783,55 @@ function Clothing.settled(state,toolkit,tidy)
    or state.hammer:isActivated()or state.screwdriver:isActivated()then return false end
   if not state.clothingOverlap or tidy and not state.clothingCleanup then return false end
   if isClient()then
-   for _,actions in ipairs({Clothing.producerActions(state),state.clothingCleanup or {}})do
-    for _,action in ipairs(actions)do
-     local receipt=state.clothingReceipts and state.clothingReceipts[action]
-     if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
-    end
+   for _,action in ipairs(nativeActions(state,tidy))do
+    local receipt=state.clothingReceipts and state.clothingReceipts[action]
+    if not receipt or toolkit.ActionQueueAcknowledgements.observe(action,receipt)~='completed'then return false end
    end
   end
  end
  return true
 end
-function Clothing.verify(state,restored,transient)
+function Clothing.verify(state,restored,transient,phase)
  local player,item=state.player,state.clothingItem
  local live=assert(state.root:getItemById(item:getID()),'exact socks identity missing from root')
  assert(live:getFullType()==Clothing.spec(state).fullType and live:getContainer()==state.root,'socks type/container changed')
- assert(restored and player:getWornItem(state.clothingLocation)==live
-  or not restored and player:getWornItem(state.clothingLocation)==nil,'exact socks worn slot differs')
- assert(tostring(player:getHumanVisual():getHairModel())==state.clothingHair and not player:getHumanVisual():getNonAttachedHair(),'native haircut changed the requested existing style')
+ assert(Clothing.slotMatches(state,restored,live),'exact socks worn slot differs')
+ phase=phase or 'final'
+ if Clothing.mohawk(state)then
+  local ready=Clothing.appearanceReady(state,phase,phase=='final'and state.clothingAppearanceTidy)
+  if not ready then
+   local worn=player:getWornItem(state.clothingLocation)
+   local JSON=require 'QueueHealthEvents'
+   print('[EQUIPMENT_TEST] APPEARANCE_MISMATCH '..JSON.encode({case=state.id,phase=phase,tidy=state.clothingAppearanceTidy==true,
+    role=isClient()and 'client'or isServer()and 'server'or 'sp',restored=restored,
+    currentAppearance=appearanceSnapshot(state)or false,baseline=state.clothingAppearanceBaseline or false,
+    checkpoint=state.clothingAppearanceCheckpoint or false,
+    worn={location=tostring(state.clothingLocation),id=worn and worn:getID()or false,fullType=worn and worn:getFullType()or false}}))
+  end
+  assert(ready,'native Mohawk phase effect differs')
+ else assert(tostring(player:getHumanVisual():getHairModel())==state.clothingHair and not player:getHumanVisual():getNonAttachedHair(),'native haircut changed the requested existing style')end
  local primary,secondary=Clothing.expectedHands(state,Clothing.removes(state)and not restored or not Clothing.removes(state)and restored)
  if Clothing.overlap(state)then handActivation(state)end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,
   'clothing restoration changed unrelated hands')
  local result={id=live:getID(),fullType=live:getFullType(),bodyLocation=tostring(state.clothingLocation),container='root',
   worn=restored,producer='ISCutHair',producerCompleted=true,hairUnchanged=true,hairStyle=state.clothingHair,unrelatedHandsPreserved=true}
+ if Clothing.mohawk(state)then
+  result.hairStyle=tostring(player:getHumanVisual():getHairModel());result.hairUnchanged=result.hairStyle==state.clothingHair
+  result.appearance=Clothing.appearance(state)
+  if phase=='final'then
+   result.appearanceBaseline=state.clothingAppearanceBaseline
+   result.appearanceCheckpoint=assert(state.clothingAppearanceCheckpoint,'native appearance checkpoint missing')
+   assert(appearanceSame(result.appearance,result.appearanceCheckpoint,true,false),'headwear cleanup changed color/attachment/gel')
+  end
+ end
+ if Clothing.replaces(state)then
+  local temporary=assert(state.root:getItemById(state.clothingTemporary:getID()),'exact temporary clothing root identity missing')
+  result.temporary={id=temporary:getID(),fullType=temporary:getFullType(),bodyLocation=tostring(temporary:getBodyLocation()),container='root',worn=not restored}
+ end
  if Clothing.wristwatch(state)then
   result.watch=Clothing.watchState(state,live)
+  result.watchTiming=Clothing.watchTiming(state)
   result.watchProcessing=not transient and Clothing.watchProcessing(state)or nil
   assert(not result.watchProcessing or not result.watchProcessing.pendingRemoval,'watch processing removal has not settled')
  end

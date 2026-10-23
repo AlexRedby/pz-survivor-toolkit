@@ -117,13 +117,12 @@ function Postprocess.verify(state,mode,tidy)
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);actualWorn[values:getLocation(item)]=item end
  local expectedWorn=state.expectedWorn
  if Clothing.isCase(state.id)then
-  expectedWorn={};for location,item in pairs(state.expectedWorn)do expectedWorn[location]=item end
-  expectedWorn[state.clothingLocation]=Clothing.finalWorn(state,tidy)and state.clothingItem or nil
+  expectedWorn=Clothing.expectedWorn(state,state.expectedWorn,Clothing.finalWorn(state,tidy))
  end
  sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,clothingItem=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
+  clothingB=true,clothingItem=true,clothingTemporary=true,clothingGel=true,hotbarInitial=true,hotbarReplacement=true,belt=true,holster=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)
@@ -145,7 +144,7 @@ function Postprocess.verify(state,mode,tidy)
  assert(floorRestored==(state.id=='tidy-floor' and tidy),'P4 returned deliberately picked up floor item or lost borrowed floor return')
  local result={postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
  if Hotbar.isCase(state.id)then result.hotbar=Hotbar.verify(state,tidy)end
- if Clothing.isCase(state.id)then result.clothing=Clothing.verify(state,Clothing.finalWorn(state,tidy))end
+ if Clothing.isCase(state.id)then state.clothingAppearanceTidy=tidy;result.clothing=Clothing.verify(state,Clothing.finalWorn(state,tidy))end
  if (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   local ids={}
   for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do ids[#ids+1]=item:getID() end

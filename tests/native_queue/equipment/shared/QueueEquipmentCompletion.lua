@@ -2,6 +2,7 @@ local Completion={}
 local Clothing=require 'QueueEquipmentClothing'
 local function hotbarCase(id)return id=='tidy-hotbar'or id=='tidy-hotbar-holster-left'or id=='tidy-hotbar-holster-right'end
 local function clothingAction(state,action)
+ if Clothing.replaces(state)then return Clothing.cleanupMember(state,action)~=nil end
  return state.clothingItem and action.Type==(state.clothingRestoreType
   or (state.id=='tidy-clothing'and 'ISWearClothing'or 'ISUnequipAction'))
 end
@@ -341,9 +342,10 @@ function Completion.observe(toolkit,selection)
     local queue=ISTimedActionQueue.queues[action.character]
     assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared hotbar cleanup must remain protected')
    elseif counter==clothing then
+    local expected=Clothing.replaces(state)and assert(Clothing.cleanupMember(state,action)).item or state.clothingItem
     assert(clothingAction(state,action)
-     and action.item:getID()==state.clothingItem:getID()and action.item:getFullType()==state.clothingItem:getFullType()
-     and action.item:getBodyLocation()==state.clothingLocation and action.item:getContainer()==state.root,
+     and action.item:getID()==expected:getID()and action.item:getFullType()==expected:getFullType()
+     and action.item:getBodyLocation()==expected:getBodyLocation()and action.item:getContainer()==state.root,
      'P4 restored unexpected clothing identity/slot/container')
     local queue=ISTimedActionQueue.queues[action.character]
     assert(not toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true).allowed,'shared clothing cleanup must remain protected')
@@ -551,7 +553,7 @@ function Completion.observe(toolkit,selection)
   return hotbar
  end
  function Completion.clothing()
-  local expected=enabled and getActivatedMods():contains('P4TidyUpMeister')and 1 or 0
+  local expected=enabled and getActivatedMods():contains('P4TidyUpMeister')and (Clothing.replaces(state)and #Clothing.cleanupSpec(state)or 1)or 0
   assert(clothing.perform==expected and clothing.flush==expected
    and clothing.complete==(selection.kind=='sp'and expected or 0)and clothing.legacy==0,
    'P4 clothing shared completion phases did not settle exactly once')

@@ -33,6 +33,22 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.232
+
+- **Action queue:** Preserve native Mohawk flattening during proven P4 headwear cleanup. Own the exact character appearance separately from item and hand resources, retain mandatory cleanup through hair changes and early Host completion, and reject a replaced visual object without blocking unrelated reading or food.
+
+### 0.1.231
+
+- **Action queue:** Use shared P4 completion for proven ordinary-clothing replacement and exclusive-slot restoration. Retain every displaced root item as a resource through preceding cleanup and Host effects, preserve native order and required returns, and guard capacity-driven world outputs, including modified worn-weight multipliers. Multi-item slots, displaced special equipment and modified callbacks retain their existing handling.
+
+### 0.1.230
+
+- **Action queue:** Keep proven P4 wristwatch cleanup on the shared completion boundary while its alarm rings or stops naturally. Preserve native alarm behavior, exact item/hand/worn identity, required cleanup and independent following actions; conflicting slots, side conversions and modified callbacks retain their existing handling.
+
+### 0.1.229
+
+- **Action queue:** Support proven P4 wristwatch cleanup when the same watch is worn and held in either or both hands. Preserve native hand-before-worn restoration, alarm configuration and processing, exact item identity, required cleanup and independent following actions. Ringing watches, conflicting slots and side conversions retain their existing handling.
+
 ### 0.1.228
 
 - **Action queue:** Use shared native completion for proven P4 restoration and removal of unheld, nonringing wristwatches. Preserve exact watch identity, alarm configuration, native processing, required cleanup and independent following actions. Table alarm clocks, conflicting wrist slots and modified callbacks retain their existing handling.

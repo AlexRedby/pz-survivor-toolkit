@@ -21,7 +21,7 @@ local option=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('
 option:setValue(not native)
 local started,done=false,false
 local ids,receipt,checkpoint,cleaned,outcome=nil,nil,nil,false,nil
-local hotbarConfigured,clothingConfigured=nil,nil
+local hotbarConfigured,clothingConfigured,ringConfigured=nil,nil,nil
 local idleUpdates=0
 local tidy=getActivatedMods():contains('P4TidyUpMeister')
 local index,performed,failures,since,heartbeat=1,0,0,0,0
@@ -205,7 +205,7 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='EquipmentQueueTest' then return end
  assert(args.ok~=false,args.error)
- if command=='Prepared' then ids=args elseif command=='Checkpointed' then checkpoint=args elseif command=='Verified' then receipt=args elseif command=='Cleaned' then cleaned=true elseif command=='HotbarConfigured'then hotbarConfigured=args elseif command=='ClothingConfigured'then clothingConfigured=args end
+ if command=='Prepared' then ids=args elseif command=='Checkpointed' then checkpoint=args elseif command=='Verified' then receipt=args elseif command=='Cleaned' then cleaned=true elseif command=='HotbarConfigured'then hotbarConfigured=args elseif command=='ClothingConfigured'then clothingConfigured=args elseif command=='RingConfigured'then ringConfigured=args end
 end)
 Events.OnGameStart.Add(function()
  local ok,problem=pcall(function()
@@ -293,6 +293,11 @@ Events.OnTick.Add(function()
     sendClientCommand('EquipmentQueueTest','ConfigureClothing',{case=ids.case,item=ids.items.clothingItem})
     phase='configureClothing';return
    end
+   if ids.clothingRingPending then
+    assert(Clothing.ringing({id=ids.case}),'unexpected pending native ring descriptor')
+    sendClientCommand('EquipmentQueueTest','ConfigureRing',{case=ids.case,item=ids.items.clothingItem})
+    phase='configureRing';return
+   end
    local player=getPlayer()
    if math.abs(player:getX()-ids.spawn.x)>0.1 or math.abs(player:getY()-ids.spawn.y)>0.1 or player:getZ()~=ids.spawn.z then
     Fixture.relocate(player,ids.spawn)
@@ -303,6 +308,11 @@ Events.OnTick.Add(function()
    assert(clothingConfigured.case==ids.case and clothingConfigured.item==ids.items.clothingItem,
     'authoritative clothing setup acknowledgement differs')
    ids.clothingSetupPending=nil;phase='ready';return
+  elseif phase=='configureRing'then
+   if not ringConfigured then return end
+   assert(ringConfigured.case==ids.case and ringConfigured.item==ids.items.clothingItem,'native ring acknowledgement differs')
+   ids.clothingWatch=ringConfigured.watch;ids.clothingWatchStartedAge=ringConfigured.startedAgeHours
+   ids.clothingRingPending=nil;phase='ready';return
   elseif phase=='positioned' then
    local player=getPlayer()
    if not player:getCurrentSquare() or player:isPlayerMoving() or player:tooDarkToRead() then return end
@@ -349,6 +359,7 @@ Events.OnTick.Add(function()
     end
    end
    if state.id=='hands-chain' then assert(state.activeProgress,'equipment never made native active progress') end
+   if Clothing.mohawk(state)and not Clothing.appearanceReady(state,'checkpoint')then return end
    outcome=Fixture.verify(state,Selection.mode,true)
    if Selection.options.belt_walk then
     outcome.walkingVerified=true;outcome.walkedDuringTransfer=state.walkedDuringTransfer==true
@@ -417,7 +428,7 @@ Events.OnTick.Add(function()
    outcome.dependentMoveRejected=state.dependentMoveRejected==true
    emit({event='case',id=state.id,status=state.postproblem and 'failed' or 'passed',reason=state.postproblem,outcome=outcome})
    print('[EQUIPMENT_TEST] RECEIPT case='..state.id)
-   index=index+1;since=now;phase='prepare';state=nil;ids=nil;receipt=nil;checkpoint=nil;hotbarConfigured=nil;clothingConfigured=nil;cleaned=false;outcome=nil;idleUpdates=0
+   index=index+1;since=now;phase='prepare';state=nil;ids=nil;receipt=nil;checkpoint=nil;hotbarConfigured=nil;clothingConfigured=nil;ringConfigured=nil;cleaned=false;outcome=nil;idleUpdates=0
    if index>#Selection.cases then complete() end
   end
  end)

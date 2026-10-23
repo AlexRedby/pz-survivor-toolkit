@@ -269,17 +269,17 @@ local function ordinaryClothingItem(item, character, allowHeadwear)
     -- share its category but not Wear's bounded single-wrist effects.
     if item:getCategory() == "AlarmClock" and (not ItemBodyLocation.LEFT_WRIST or not ItemBodyLocation.RIGHT_WRIST
         or (location ~= ItemBodyLocation.LEFT_WRIST and location ~= ItemBodyLocation.RIGHT_WRIST)) then return end
-    if item:getCategory() == "AlarmClock" then
-        local primary, secondary = character:getPrimaryHandItem(), character:getSecondaryHandItem()
-        if item:isRinging() ~= false or (primary and primary:getID() == item:getID())
-            or (secondary and secondary:getID() == item:getID()) then return end
-    end
+    -- Ordinary Wear retains matching hand references; Unequip releases them.
+    -- Existing character-hand ownership covers preceding P4 hand restoration.
+    -- Native clothing actions retain alarm state on the same watch;
+    -- naturally starting/stopping its alarm does not change item ownership.
     if location == ItemBodyLocation.HAT or location == ItemBodyLocation.FULL_HAT then
         if not allowHeadwear then return end
-        -- Java setWornItem also flattens Mohawk when newItem is nil.
+        -- Java setWornItem also flattens Mohawk when newItem is nil. Its
+        -- native appearance effect is owned separately from item/hand state.
         local visual = character:getHumanVisual()
         local hair = visual and visual:getHairModel()
-        if not hair or type(hair.contains) ~= "function" or hair:contains("Mohawk") then return end
+        if not hair or type(hair.contains) ~= "function" then return end
     end
     return location
 end
@@ -295,14 +295,14 @@ local function ordinaryClothing(action, allowHeadwear)
     return location, liveItem
 end
 -- Java WornItems removes exclusive slots even when setting a slot to nil.
--- Only an empty slot or the exact garment has bounded effects here; displaced
--- clothing and multi-item locations need their own resource/output contract.
-local function clothingWornState(action, location)
+-- Removal keeps the single-item proof. Wear may supply a bounded displaced
+-- item collector; unknown/multi-item locations retain their native fallback.
+local function clothingWornState(action, location, displaced)
     local character, item = action.character, action.item
     local group = character.getBodyLocationGroup and character:getBodyLocationGroup()
     if not group or not group.getLocation or not group.isMultiItem or not group.isExclusive
         or not group:getLocation(location) or group:isMultiItem(location) ~= false then return end
-    local worn, exact = character:getWornItems(), false
+    local worn, exact, seen = character:getWornItems(), false, {}
     if not worn or not worn.size or not worn.get then return end
     for i = 0, worn:size() - 1 do
         local entry = worn:get(i)
@@ -310,24 +310,82 @@ local function clothingWornState(action, location)
         if not other then return end
         if otherLocation ~= location and other:getID() == item:getID() then return end
         if otherLocation == location then
-            if exact or not other or other:getID() ~= item:getID() or other:getFullType() ~= item:getFullType() then return end
-            exact = other
-        elseif group:isExclusive(location, otherLocation) ~= false then return end
+            if seen[otherLocation] then return end
+            seen[otherLocation] = true
+            if other:getID() == item:getID() then
+                if other:getFullType() ~= item:getFullType() then return end
+                exact = other
+            elseif not displaced or not displaced(other, otherLocation, true, group) then return end
+        else
+            local exclusive = group:isExclusive(location, otherLocation)
+            if exclusive ~= false then
+                if exclusive ~= true or seen[otherLocation] or not displaced
+                    or not displaced(other, otherLocation, false, group) then return end
+                seen[otherLocation] = true
+            end
+        end
     end
     return true, exact
 end
-local function ordinaryClothingWear(action)
-    -- Empty-slot headwear has the same bounded effect as ordinary clothing.
-    -- The shared item guard excludes native Mohawk changes on both replicas.
-    local location, liveItem = ordinaryClothing(action, true)
-    if not location then return end
-    local safe, worn = clothingWornState(action, location)
-    -- Wear's native early return uses object identity, not ID/type. A distinct
-    -- same-ID worn proxy would be a replacement with extra capacity effects.
-    if safe and (not worn or (worn == action.item and worn == liveItem)) then return location end
-end
 local function nonnegativeFinite(value)
     return type(value) == "number" and value >= 0 and value < math.huge
+end
+local function displacedClothing(item, character, location, group)
+    return item:getCategory() == "Clothing" and not instanceof(item, "AlarmClockClothing")
+        and not item:canBeActivated() and ordinaryClothingItem(item, character, true) == location
+        and group:getLocation(location) and group:isMultiItem(location) == false
+end
+local function ordinaryClothingWear(action, saved)
+    local location, liveItem = ordinaryClothing(action, true)
+    if not location then return end
+    local character, inventory = action.character, action.character:getInventory()
+    local group = character.getBodyLocationGroup and character:getBodyLocationGroup()
+    if not group or not group.getLocation or not group.isMultiItem then return end
+    local proof, current, old, hasDisplaced = saved or {}, {}, nil, false
+    -- Keep the original resource set through earlier cleanup and early Host
+    -- completion. A newly occupying item cannot borrow an older action's proof.
+    for id, entry in pairs(proof) do
+        local item = inventory:getItemById(id)
+        if not item or item:getFullType() ~= entry.fullType
+            or not displacedClothing(item, character, entry.location, group) then return end
+    end
+    local function collect(item, otherLocation, sameSlot, wornGroup)
+        local id = item:getID()
+        if id == action.item:getID() or current[id] or inventory:getItemById(id) ~= item
+            or not displacedClothing(item, character, otherLocation, wornGroup) then return false end
+        local previous = proof[id]
+        if saved and (not previous or previous.fullType ~= item:getFullType() or previous.location ~= otherLocation) then return false end
+        proof[id] = previous or {fullType = item:getFullType(), location = otherLocation}
+        current[id] = item
+        hasDisplaced = true
+        if sameSlot then old = item end
+        return true
+    end
+    local safe, worn = clothingWornState(action, location, collect)
+    if not safe then return end
+    -- Native's same-object early return must not conceal a different worn proxy
+    -- or an already inconsistent exclusive-slot combination.
+    if worn and (worn ~= action.item or worn ~= liveItem or hasDisplaced) then return end
+    if old then
+        if not inventory.getCapacityWeight or not inventory.getEffectiveCapacity or not inventory.isItemAllowed then return end
+        local weight, capacity = inventory:getCapacityWeight(), inventory:getEffectiveCapacity(character)
+        if not nonnegativeFinite(weight) or not nonnegativeFinite(capacity) or inventory:isItemAllowed(old) ~= true then return end
+        -- Java removes every exclusive entry but only capacity-checks the old
+        -- same-slot item. Never credit the incoming item's worn-weight release.
+        -- A changed native worn multiplier must not make that incoming item heavier.
+        for _, item in ipairs({action.item, liveItem}) do
+            local full, equipped = item:getUnequippedWeight(), item:getEquippedWeight()
+            if not nonnegativeFinite(full) or not nonnegativeFinite(equipped) or equipped > full then return end
+        end
+        for _, item in pairs(current) do
+            local full, equipped = item:getUnequippedWeight(), item:getEquippedWeight()
+            if not nonnegativeFinite(full) or not nonnegativeFinite(equipped) or equipped > full then return end
+            weight = weight + full
+        end
+        if weight + old:getUnequippedWeight() + 0.01 > capacity then return end
+    end
+    -- Exclusive-only changes have no native drop branch and need no reserve.
+    return location, proof
 end
 local function clothingRemovalCapacity(action, liveItem, stillWorn)
     local inventory = action.character:getInventory()
@@ -339,6 +397,10 @@ local function clothingRemovalCapacity(action, liveItem, stillWorn)
         if inventory:isItemAllowed(item) ~= true then return false end
         local value = item.getUnequippedWeight and item:getUnequippedWeight()
         if not nonnegativeFinite(value) then return false end
+        local equipped = item.getEquippedWeight and item:getEquippedWeight()
+        -- Removal may release worn/held weight before the native drop check.
+        -- Negative equipped weight invalidates the full-weight upper bound.
+        if not nonnegativeFinite(equipped) then return false end
         weight = math.max(weight, value)
     end
     -- setWornItem checks capacity after releasing worn weight, then adds the
@@ -481,12 +543,13 @@ local function sourceMatches(action, record, observedItem)
         or action.alwaysTurnOn ~= record.alwaysTurnOn) then return false end
     if record.class == ISUnequipAction and (action.reason ~= record.reason or action.fromHotbar ~= record.fromHotbar
         or action.hotbar ~= record.hotbar) then return false end
+    if record.clothingVisual and action.character:getHumanVisual() ~= record.clothingVisual then return false end
     if record.tidyClothingUnequip and ordinaryClothingRemoval(action) ~= record.clothingLocation then return false end
     if record.tidyHotbarUnequip and not hotbarState(action, record.hotbarProof) then return false end
     if (record.tidyClothingUnequip or record.tidyHotbarUnequip) and (not nativeUnequipMethods(action)
         or action.clothingAction ~= record.clothingAction or action.stopOnWalk ~= record.stopOnWalk
         or action.stopOnRun ~= record.stopOnRun or action.animSpeed ~= record.animSpeed) then return false end
-    if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothingWear(action) ~= record.clothingLocation
+    if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothingWear(action, record.clothingDisplaced) ~= record.clothingLocation
         or action.fromHotbar ~= record.fromHotbar or action.clothingAction ~= record.clothingAction
         or action.stopOnWalk ~= record.stopOnWalk or action.stopOnRun ~= record.stopOnRun) then return false end
     for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name] then return false end end
@@ -543,9 +606,13 @@ local function adopt(action)
     local baseline = classes[context.id] and classes[context.id][class]
     if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
-    local clothingLocation = context.id == "P4TidyUpMeister" and clothingRestore(action, class)
+    local clothingLocation, clothingDisplaced
+    if context.id == "P4TidyUpMeister" then clothingLocation, clothingDisplaced = clothingRestore(action, class) end
     local removalLocation = context.id == "P4TidyUpMeister" and clothingRemoval(action, class)
     local hotbarProof = context.id == "P4TidyUpMeister" and hotbarRestore(action, class)
+    local wornLocation = clothingLocation or removalLocation
+    local clothingVisual = wornLocation and (wornLocation == ItemBodyLocation.HAT or wornLocation == ItemBodyLocation.FULL_HAT)
+        and action.character:getHumanVisual() or nil
     local tidyHandUnequip = context.id == "P4TidyUpMeister" and class == ISUnequipAction and not action.fromHotbar
             and (action.item == action.character:getPrimaryHandItem() or action.item == action.character:getSecondaryHandItem())
             and not action.character:getWornItems():contains(action.item) and not isForceDropHeavyItem(action.item)
@@ -564,7 +631,8 @@ local function adopt(action)
         tidyHandUnequip = tidyHandUnequip, tidyClothingWear = clothingLocation ~= nil and clothingLocation ~= false,
         tidyClothingUnequip = removalLocation ~= nil and removalLocation ~= false,
         tidyHotbarUnequip = type(hotbarProof) == "table", hotbarProof = hotbarProof,
-        clothingLocation = clothingLocation or removalLocation, clothingAction = action.clothingAction, animSpeed = action.animSpeed,
+        clothingLocation = wornLocation, clothingDisplaced = clothingDisplaced, clothingVisual = clothingVisual,
+        clothingAction = action.clothingAction, animSpeed = action.animSpeed,
         stopOnWalk = action.stopOnWalk, stopOnRun = action.stopOnRun,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction),
         settlement = context.settlement, obligation = Settlement.obligation(context)}
@@ -750,6 +818,9 @@ local function inspect(action)
             result.items[item:getID()] = true; result.itemTypes[item:getFullType()] = true
         end
     end
+    for id, entry in pairs(record.clothingDisplaced or {}) do
+        result.items[id] = true; result.itemTypes[entry.fullType] = true
+    end
     if action.sink then result.targets[action.sink] = true end
     if record.class == ISWashClothing and action.soaps then
         if not instanceof(action.soaps, "List") then return end
@@ -769,6 +840,9 @@ local function inspect(action)
         Toolkit.ActionQueuePolicy.addContainerResources(result, container)
     end
     if record.target then result.targets[record.target] = true end
+    -- Claim every admitted headwear visual, including initially plain hair:
+    -- native hair edits/sync mutate this stable object before cleanup runs.
+    if record.clothingVisual then result.targets[record.clothingVisual] = true end
     if record.id ~= "WashFix" then result.hands = action.character end
     if record.class == ISQueueActionsAction then result.deferred, result.knownInputs = true, false end
     if record.class == ISWashClothing or record.class == ISAddItemInRecipe then result.unknownOutputs = true end
