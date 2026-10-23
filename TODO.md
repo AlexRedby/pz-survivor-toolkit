@@ -91,7 +91,7 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 
 ### Active ordinary-menu and hotkey verification
 
-- [ ] Run focused Lua/analyzer/native-helper checks, then freeze and verify the two explicit banks in isolated available-mod menu Host captures with unchanged AeroSpace/resource/source/cleanup gates. Close only the routes actually proven; keep production migration, wire costs and remaining lifetime routes separate.
+- [ ] Verify the two corrected explicit banks in isolated available-mod menu Host captures with unchanged AeroSpace/resource/source/cleanup gates. Close only the routes actually proven; keep production migration, wire costs and remaining lifetime routes separate.
 
 ### Remaining native lifetime and traffic gates
 
