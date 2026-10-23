@@ -17,7 +17,7 @@ MARKER='[CART_LEASE_LIFETIME] '
 NATIVE='[CART_EQUIPMENT] '
 
 
-def fixture(cart=42,injected=False,receipt_gap=False,menu=False):
+def fixture(cart=42,injected=False,receipt_gap=False,menu=False,menu_parses=False,menu_race=False):
     selection,prefixes,held=CONTROL['fixture']()
     selection['options']['cart_lease_lifetimes']=True
     if menu: selection['options']['cart_lease_menu']=True
@@ -33,7 +33,8 @@ def fixture(cart=42,injected=False,receipt_gap=False,menu=False):
         row=dict(event=event,process='native-'+role,ownerID=7,actorEpoch=101,connectionEpoch=201,revision=s['revision'],hardRevision=s['hard'],
                  depth=depth,mutationSerial=serial,parseSerial=parse,ingressGeneration=ingress,reason=reason,directCalls=(2 if event=='resnapshot' else 0),genericCalls=0,
                  oldPrimaryEpoch=old[0],oldSecondaryEpoch=old[1],primaryEpoch=primary,secondaryEpoch=secondary,
-                 primaryID=cart if primary else None,secondaryID=cart if secondary else None,success=True,poisoned=False,retired=False,monoNs=len(rows[role])+100,**extra)
+                 primaryID=cart if primary else None,secondaryID=cart if secondary else None,success=True,poisoned=False,retired=False,monoNs=len(rows[role])+100)
+        row.update(extra)
         rows[role].append((NATIVE,row))
     def setter(role,reason,new,parse=0,ingress=0):
         s=state[role]; old=(s['primary'],s['secondary']); s['revision']+=1; s['serial']+=1
@@ -65,7 +66,8 @@ def fixture(cart=42,injected=False,receipt_gap=False,menu=False):
         original={role:state[role]['primary'] for role in ROLES}
         menu_action(phase,'release','queued');menu_action(phase,'release','start')
         for role in ROLES:
-            setter(role,'primary',0);setter(role,'secondary',0)
+            if menu_parses and role=='client2': menu_parse(role,0)
+            else: setter(role,'primary',0);setter(role,'secondary',0)
             if role=='client1':menu_action(phase,'release','terminal')
             fields=dict(before=before[role],nativeLifetimeAbsent=True)
             if role!='server':fields.update(staleReplyAccepted=False,stalePayloadAccepted=False,staleNonce=f'{role}-pending-{phase-1}')
@@ -77,12 +79,23 @@ def fixture(cart=42,injected=False,receipt_gap=False,menu=False):
         for role in ('client1','client2'):lua(role,'menu-resume-received',phase,nativeLifetimeAbsent=True)
         menu_action(phase,'pickup','queued');menu_action(phase,'pickup','start')
         for role in ROLES:
-            setter(role,'primary',original[role]);setter(role,'secondary',original[role])
+            if menu_parses and role!='server': menu_parse(role,9000+state[role]['parse'])
+            else: setter(role,'primary',original[role]);setter(role,'secondary',original[role])
             if role=='client1':menu_action(phase,'pickup','terminal')
             fields=dict(name=API['MENU_PHASES'][phase-1],cart=cart,before=before[role],after=tok(role),
                         cargoID=313,cargoWeight=30,sameItem=True,menu=True)
             if role!='server':fields.update(staleReplyAccepted=False,stalePayloadAccepted=False,staleNonce=f'{role}-pending-{phase-1}')
             lua(role,'cycle',phase,**fields)
+    def menu_parse(role,new):
+        s=state[role];old=(s['primary'],s['secondary']);before=s['revision'];at=len(rows[role])
+        s['parse']+=1;s['ingress']+=3
+        for reason in ('primary','secondary'):
+            s['hard']=s['revision']+1
+            setter(role,reason,new,s['parse'],s['ingress'])
+        for offset,(_,row) in enumerate(rows[role][at:]):
+            row.update(directCalls=offset//2+1,beforeRevision=before,afterRevision=row['revision'])
+        native(role,'resnapshot','remote-equip-resnapshot',old=old,parse=s['parse'],ingress=s['ingress'],
+               beforeRevision=before,afterRevision=s['revision'],certified=False,success=False)
     def gap(role,phase):
         s=state[role]; before=tok(role); oldrev=s['revision']; old=(s['primary'],s['secondary']); s['parse']+=1;s['ingress']+=3
         new=7000+s['parse']; parse=s['parse']; ingress=s['ingress']
@@ -118,7 +131,7 @@ def fixture(cart=42,injected=False,receipt_gap=False,menu=False):
                 for role in ROLES: cycle(role,phase)
         for role in ('client1','client2'):
             if phase>1: lua('server','stale',phase,requester=role,attempt=attempts[role]+1,guarded=True,accepted=False,**binding(phase-1))
-            if injected and phase==2 and role=='client2': chain(role,phase,race=True)
+            if (injected or menu_race) and phase==2 and role=='client2': chain(role,phase,race=True)
             chain(role,phase,gap_receipt=receipt_gap and phase==2 and role=='client2')
             if receipt_gap and phase==2 and role=='client2': chain(role,phase)
             if phase<3:
@@ -165,6 +178,90 @@ class EquipmentLifetimeEvidenceTests(unittest.TestCase):
         self.assertEqual(result['logicalCommandMessages']['maximumFixture'],90)
         self.assertEqual(result['menuEvidence']['postBindClientPayloadsRefused'],4)
         self.assertIn('Inventory-menu equip',result['qualification'])
+
+    def test_menu_hard_equip_transitions_are_separate_from_certified_reply_races(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True,menu_race=True)
+        result=self.analyze()
+        self.assertTrue(result['evidenceComplete'])
+        self.assertEqual(result['certifiedResnapshots'],1)
+        self.assertEqual(result['refusedRacedReplies'],1)
+        self.assertEqual(result['completedNativeCycles'],6)
+        self.assertEqual(result['logicalCommandMessages']['fixture'],52)
+        for role,count in (('client1',2),('client2',4)):
+            ready=self.find(role,'ready')[0]['lifetime'];selected=API['token'](ready)
+            log=(self.profile/(role+'-launch.log')).read_text();cutoff=len(log.splitlines())-1
+            _,_,certificates,generic=API['native_trace'](log,selected,7,42,cutoff,True)
+            self.assertEqual(len(generic),count)
+            self.assertTrue(set(generic).isdisjoint(certificates))
+
+    def test_menu_generic_parse_closure_cannot_be_omitted_or_forged_as_certificate(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True,menu_race=True)
+        original=copy.deepcopy(self.rows)
+        for role in ('client1','client2'):
+            self.rows=copy.deepcopy(original)
+            entry=next(e for e in self.rows[role] if e[0]==NATIVE and e[1]['event']=='resnapshot' and e[1]['certified'] is False)
+            self.rows[role].remove(entry)
+            with self.subTest(role=role),self.assertRaisesRegex(ValueError,'terminal closure'):self.analyze()
+        self.rows=copy.deepcopy(original)
+        end=next(r for m,r in self.rows['client1'] if m==NATIVE and r['event']=='resnapshot')
+        end.update(success=True,certified=True)
+        with self.assertRaises(ValueError):self.analyze()
+
+    def test_menu_generic_parse_poison_shape_fence_identity_and_scope_are_strict(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True)
+        original=copy.deepcopy(self.rows)
+        for changes in (dict(poisoned=True),dict(retired=True),dict(success=0),dict(certified=0),
+                        dict(directCalls=1),dict(directCalls=True),dict(genericCalls=1),dict(genericCalls=False),
+                        dict(parseSerial=0),dict(ingressGeneration=0),dict(parseSerial=99),dict(ingressGeneration=99),
+                        dict(hardRevision=3),dict(depth=1),dict(mutationSerial=1),dict(oldPrimaryEpoch=999),
+                        dict(primaryID=43),dict(reason='generic-equip'),dict(beforeRevision=True),dict(afterRevision=5.0)):
+            self.rows=copy.deepcopy(original)
+            self.find('client1','resnapshot',marker=NATIVE)[0].update(changes)
+            with self.subTest(changes=changes),self.assertRaises(ValueError):self.analyze()
+        for changes in (dict(success=False),dict(depth=2),dict(parseSerial=99),dict(ingressGeneration=99),
+                        dict(genericCalls=1),dict(directCalls=2),dict(reason='item-load'),dict(hardRevision=3),
+                        dict(beforeRevision=True),dict(beforeRevision=3.0),dict(afterRevision=True),dict(afterRevision=4.0)):
+            self.rows=copy.deepcopy(original)
+            row=next(r for m,r in self.rows['client1'] if m==NATIVE and r['event']=='mutation-enter' and r['parseSerial']>0)
+            row.update(changes)
+            with self.subTest(write=changes),self.assertRaises(ValueError):self.analyze()
+
+    def test_generic_equip_cannot_heal_a_lua_resnapshot_or_unselected_setter_bank(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True)
+        original=copy.deepcopy(self.rows)
+        cycle=self.find('client1','cycle',2)[0];rows=self.rows['client1']
+        at=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r is cycle)
+        healing=dict(actor='client1',owner=7,event='resnapshot',phase=2,before=cycle['before'],after=cycle['after'],
+                     cart=42,cargoID=313,cargoWeight=30,nativeCertified=True,wall=cycle['wall'])
+        rows.insert(at,(MARKER,healing))
+        with self.assertRaisesRegex(ValueError,'Uncertified native equipment gap'):self.analyze()
+        self.rows=copy.deepcopy(original)
+        self.write();log=(self.profile/'client1-launch.log').read_text();ready=self.find('client1','ready')[0]['lifetime']
+        with self.assertRaisesRegex(ValueError,'cannot heal'):
+            API['native_trace'](log,API['token'](ready),7,42,len(log.splitlines())-1,False)
+
+    def test_generic_transition_outside_declared_menu_cycle_remains_unlinked(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True)
+        rows=self.rows['client2'];native=[r for m,r in rows if m==NATIVE];last=native[-1]
+        first_end=next(r for r in native if r['event']=='resnapshot')
+        group=[copy.deepcopy(r) for r in native if r['parseSerial']==first_end['parseSerial']]
+        delta=last['revision']-first_end['beforeRevision'];serial=max(r['mutationSerial'] for r in native)
+        for row in group:
+            row['revision']+=delta;row['hardRevision']=row['revision']
+            row['beforeRevision']=last['revision'];row['afterRevision']=row['revision']
+            row['parseSerial']=last['parseSerial']+1;row['ingressGeneration']=last['ingressGeneration']+3
+            if row['mutationSerial']:row['mutationSerial']+=serial
+            for field in ('primaryEpoch','secondaryEpoch','oldPrimaryEpoch','oldSecondaryEpoch'):
+                if row[field]:row[field]=last['primaryEpoch']
+        at=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r['event']=='complete')
+        rows[at:at]=[(NATIVE,row) for row in group]
+        for i,(marker,row) in enumerate(rows):
+            if marker==NATIVE:row['monoNs']=100+i
+        self.write();log=(self.profile/'client2-launch.log').read_text()
+        selected=API['token'](self.find('client2','ready')[0]['lifetime'])
+        # The extra parse is structurally valid, but no declared menu cycle authorizes it.
+        self.assertEqual(len(API['native_trace'](log,selected,7,42,len(log.splitlines())-1,True)[3]),5)
+        with self.assertRaisesRegex(ValueError,'native revision window|Unlinked|outside verified menu cycle'):self.analyze()
 
     def test_menu_proof_rejects_missing_barrier_input_or_stale_refusal(self):
         self.selection,self.logs,self.rows=fixture(menu=True)

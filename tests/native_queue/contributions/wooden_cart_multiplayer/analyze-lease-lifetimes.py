@@ -42,7 +42,7 @@ def identity(row):
     return tuple(row[field] for field in IDENTITY)
 
 
-def native_trace(log,selected,owner,cart,cutoff):
+def native_trace(log,selected,owner,cart,cutoff,menu=False):
     """Replay exact actor scopes, retaining hard fences and whole-parse certificates."""
     process,actor,connection,_=selected
     target,clocks=[],{}
@@ -55,7 +55,7 @@ def native_trace(log,selected,owner,cart,cutoff):
             require(row.get('actorEpoch')==actor,'Native owner actor incarnation changed')
         if proc==process and row.get('actorEpoch')==actor: target.append((line,row))
     require(target,'Missing exact native lifetime trace')
-    stack,snapshots,certificates=[],{},{}
+    stack,snapshots,certificates,generic_ends,open_parses=[],{},{},{},{}
     revision,current,prior_serial,hard,prior_parse,prior_ingress=None,None,0,1,0,0
     for line,row in target:
         require(integer(row,'ownerID',0,32767)==owner,'Native owner changed')
@@ -69,8 +69,11 @@ def native_trace(log,selected,owner,cart,cutoff):
         state=tuple(row[key] for key in ('primaryEpoch','secondaryEpoch','primaryID','secondaryID'))
         for epoch,id_ in ((state[0],state[2]),(state[1],state[3])):
             require((epoch==0 and id_ is None) or (epoch>0 and type(id_) is int and -2147483648<=id_<=2147483647),'Native hand epoch/ID mismatch')
-        require(row.get('success') is True and row.get('poisoned') is False and row.get('retired') is False,'Failed/poisoned/retired native lifetime cannot heal')
         event,reason=row.get('event'),text(row,'reason',80)
+        generic_end=menu and event=='resnapshot' and row.get('success') is False and row.get('certified') is False
+        require((row.get('success') is True or generic_end) and row.get('poisoned') is False and row.get('retired') is False,'Failed/poisoned/retired native lifetime cannot heal')
+        if event in ('mutation-enter','mutation-exit') and parse_serial:
+            open_parses.setdefault((parse_serial,ingress),[]).append(row)
         if event=='baseline':
             require(revision is None and not stack and serial==0 and depth==0 and reason=='admitted-current' and parse_serial==0,'Repeated or invalid native baseline')
             require(rev==hard==1 and state[0]==state[1] and state[0]>0 and state[2]==state[3]==cart,'Invalid native held baseline')
@@ -90,31 +93,54 @@ def native_trace(log,selected,owner,cart,cutoff):
         elif event=='resnapshot':
             require(not stack and depth==serial==0 and revision==rev and state==current,'Incomplete native Equip parse certificate')
             before=integer(row,'beforeRevision',1,rev-1); after=integer(row,'afterRevision',before+1,rev)
-            require(after==rev and after==before+2 and hard<=before and row.get('certified') is True
-                    and reason=='remote-equip-resnapshot' and parse_serial>prior_parse and ingress>prior_ingress,
-                    'Uncertified/reused native Equip resnapshot')
+            require(after==rev and after==before+2 and reason=='remote-equip-resnapshot'
+                    and parse_serial>prior_parse and ingress>prior_ingress,'Uncertified/reused native Equip resnapshot')
             require(before in snapshots,'Native certificate missing preparse snapshot')
             integer(row,'directCalls',2,2); integer(row,'genericCalls',0,0)
             original=snapshots[before][1]
-            require(original[0]==original[1]>0 and original[2]==original[3]==cart
-                    and (row['oldPrimaryEpoch'],row['oldSecondaryEpoch'])==original[:2]
-                    and state[0]==state[1]>0 and state[0]!=original[0] and state[2]==state[3]==cart,
-                    'Native resnapshot is not exact same-ID new-reference Equip')
+            require((row['oldPrimaryEpoch'],row['oldSecondaryEpoch'])==original[:2],'Native parse original references differ')
             window=[r for n,r in target if n<line and before<r.get('revision',0)<=after and r.get('event') in ('mutation-enter','mutation-exit')]
             require(len(window)==4 and [r['event'] for r in window]==['mutation-enter','mutation-exit']*2
                     and [r['reason'] for r in window]==['primary','primary','secondary','secondary']
                     and [r['depth'] for r in window]==[1,0,1,0]
-                    and all(r['parseSerial']==parse_serial and r['ingressGeneration']==ingress and r['hardRevision']==hard for r in window),
+                    and all(r['parseSerial']==parse_serial and r['ingressGeneration']==ingress for r in window)
+                    and open_parses.pop((parse_serial,ingress),None)==window,
                     'Native Equip certificate contains generic/nested/unknown mutation')
             primary=window[1]
-            require(primary['primaryEpoch']==state[0] and primary['secondaryEpoch']==original[1]
-                    and primary['primaryID']==primary['secondaryID']==cart,'Native Equip primary write differs')
-            require(before not in certificates,'Overlapping native Equip certificates')
-            certificates[before]=(after,line,row); prior_parse,prior_ingress=parse_serial,ingress
+            if generic_end:
+                # success is the continuity certificate here, not parse execution success.
+                # A hard transition cannot populate the certificate map or heal old authority.
+                empty=(0,0,None,None)
+                held=lambda s:s[0]==s[1]>0 and s[2]==s[3]==cart
+                require(hard==after and ((held(original) and state==empty) or (original==empty and held(state))),
+                        'Generic native Equip must hard-fence exact held/empty transition')
+                for write in window:
+                    integer(write,'beforeRevision',before,before); integer(write,'afterRevision',write['revision'],write['revision'])
+                require([r.get('directCalls') for r in window]==[1,1,2,2]
+                        and all(type(r.get('directCalls')) is int and r.get('genericCalls')==0 and type(r.get('genericCalls')) is int
+                                and r['hardRevision']==r['revision'] and r.get('beforeRevision')==before
+                                and r.get('afterRevision')==r['revision'] for r in window),
+                        'Generic native Equip contains non-direct/unfenced writes')
+                require((primary['primaryEpoch'],primary['secondaryEpoch'],primary['primaryID'],primary['secondaryID'])
+                        ==(state[0],original[1],state[2],original[3]),'Generic native Equip primary write differs')
+                require(before not in generic_ends,'Overlapping generic native Equip transitions')
+                generic_ends[before]=(after,line,row)
+            else:
+                require(hard<=before and row.get('certified') is True and all(r['hardRevision']==hard for r in window),
+                        'Uncertified/reused native Equip resnapshot')
+                require(original[0]==original[1]>0 and original[2]==original[3]==cart
+                        and state[0]==state[1]>0 and state[0]!=original[0] and state[2]==state[3]==cart,
+                        'Native resnapshot is not exact same-ID new-reference Equip')
+                require(primary['primaryEpoch']==state[0] and primary['secondaryEpoch']==original[1]
+                        and primary['primaryID']==primary['secondaryID']==cart,'Native Equip primary write differs')
+                require(before not in certificates,'Overlapping native Equip certificates')
+                certificates[before]=(after,line,row)
+            prior_parse,prior_ingress=parse_serial,ingress
         else: raise ValueError('Unknown/retired native event: '+str(event))
         if not stack: snapshots[revision]=(line,current)
     require(not stack,'Unfinished native mutation scope')
-    return target,snapshots,certificates
+    require(not open_parses,'Native Equip parse mutations lack terminal closure')
+    return target,snapshots,certificates,generic_ends
 
 
 def analyze(root):
@@ -180,9 +206,9 @@ def analyze(root):
         ready=[row for _,row in rows[role] if row['event']=='ready']; initial=ready[0]['lifetime']; selected=token(initial)
         require(all(row['lifetime']==initial for row in ready),'Server initial native lifetime changed between Ready')
         require(selected[0] not in processes,'Native process identity reused across roles'); processes.add(selected[0])
-        _,cutoff=get(role,3,'complete'); trace,snapshots,certificates=native_trace(logs[role],selected,owner,cart,cutoff)
+        _,cutoff=get(role,3,'complete'); trace,snapshots,certificates,generic_ends=native_trace(logs[role],selected,owner,cart,cutoff,menu)
         native_by_role[role]=trace
-        current=initial; covered=set(); used_certificates=set(); live_tokens[role]={}
+        current=initial; covered=set(); used_certificates=set(); used_generic=set(); live_tokens[role]={}
         def eligible(value,line):
             tok=token(value); require(tok[:3]==selected[:3] and tok[3] in snapshots,'Unknown/stale native token revision')
             start,state=snapshots[tok[3]]
@@ -226,6 +252,10 @@ def analyze(root):
                             if before[3]<=revision and end<=after[3]:
                                 require(revision not in used_certificates,'Menu native certificate reused')
                                 used_certificates.add(revision)
+                        for revision,(end,native_line,transition) in generic_ends.items():
+                            if before[3]<=revision and end<=after[3]:
+                                require(revision not in used_generic and native_line<line,'Menu native hard transition reused/reordered')
+                                used_generic.add(revision)
                     else:
                         require(phase in (2,3) and row.get('name')==PHASES[phase-1] and row.get('sameItem') is True,'Setter fixture original cart restoration missing')
                         require(before[3] in snapshots and snapshots[before[3]][1]==snapshots[after[3]][1],'Native setter original references not restored before cycle')
@@ -250,6 +280,7 @@ def analyze(root):
             live_tokens[role][line]=current
         require({r['revision'] for _,r in trace if r['event']=='mutation-enter'}==covered,'Unlinked native mutation before final lifetime completion')
         require(set(certificates)==used_certificates,'Unlinked native Equip certificate')
+        require(set(generic_ends)==used_generic,'Generic native Equip transition outside verified menu cycle')
 
     chains,refused,nonces=[],[],set()
     successful={}; server_binding={}

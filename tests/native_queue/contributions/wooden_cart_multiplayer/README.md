@@ -166,6 +166,8 @@ An exact successful client `EquipPacket.parse` may reconstruct the same held car
 
 Server, owner and observer must each witness completed native empty hands before the server permits pickup. Prepared old replies and client/server payloads must be refused during absence and after fresh native binding. Server ticks use the exact actor/connection captured in the original callback only to close old authority; every subsequent menu command revalidates the owner and requester transports inside its original native callback before any fresh binding or grant. Exact cart/cargo IDs and weight remain fixed; native hand objects may be reconstructed by transport. Same-ID replacement, inventory-menu equip, other removal/reconnect routes and visual acceptance remain separate coverage. The baseline is 50 extra logical commands (maximum 90 with bounded resnapshot retries), with a 45-second bank deadline. Delivered application serialization is recorded separately from RakNet/IP/UDP wire totals.
 
+Native `resnapshot` decision records use `success` for the continuity certificate result. Real held/empty transitions are uncertified and advance the hard fence; the menu analyzer accepts only their exact completed two-setter groups inside the independently proved menu cycle. They never enter the continuity-certificate map or restore an old lease. Poisoned/retired lifetimes, failed mutations, incomplete groups and unaccounted transitions still fail.
+
 The unchanged default lifetime bank still checks direct setters and same-ID replacement. The menu bank changes only disposable fixture inputs and diagnostics; production admission and playback remain unchanged.
 
 ## Native control message size accounting
