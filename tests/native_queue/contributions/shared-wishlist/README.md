@@ -1,8 +1,8 @@
-# Shared wishlist native fixture intake
+# Shared wishlist native fixture
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
-The common `shared-wishlist` adapter stages the B42.21 client/server scenarios and verifies exact stage labels and server replies. `manifest.json` describes dependencies and parameters; per-run reports record current verification separately from registration. No game files are distributed.
+The `shared-wishlist` adapter stages B42.21 client/server scenarios and verifies exact stage labels and server replies. `manifest.json` lists fixture dependencies and parameters. The shared runner guide explains preparation, launch and report interpretation; no game files are distributed here.
 
 Run the no-game check from the repository root:
 
@@ -18,63 +18,20 @@ borders with exactly one overlay call, actual combined-container selection,
 joint observation ordering and deadlines, and restoration before server readiness.
 It does not launch the game or claim native UI/network coverage.
 
-## Install hookup for a later authorized native run
+## Native run
 
-Prepare three disposable caches with matching product/mod snapshots by the
-existing native tooling or another reviewed launcher. Do not use normal profiles.
-Then install this helper once in each cache; `prepare.py` copies only the two Lua
-sources and `mod.info`, and writes the private runtime configuration. It does not
-copy product mods, alter a server INI, compile Java or start processes.
+The adapter invokes `prepare.py` to stage role-specific sources and private
+parameters. Select `full`, `standalone`, `visual` or `reload`. The compatible
+`--cases visual,standalone` pair shares one lifecycle in that order; `full` and
+`reload` require separate runs.
+Full mode uses CleanUI, combined-container, Neat and Project Cook APIs; the other
+cases use Wishlist included with Toolkit. All cases support the Toolkit queue-off
+control.
 
-Supply `TEST_CACHE`, `TEST_HOST`, `TEST_PORT` and `WISHLIST_TEST_PASSWORD` at runtime.
-Keep the password out of shell history, argv, source and committed files. For
-example, with those environment variables already set:
+For menu Host, use `mp_host=true` with two clients in EN/RU; client1 owns the
+native CoopServer and client2 joins. Host reload is unsupported.
 
-```sh
-python3 tests/native_queue/contributions/shared-wishlist/prepare.py "$TEST_CACHE/client1" \
-  --user client1 --mode standalone --host "$TEST_HOST" --port "$TEST_PORT" \
-  --password-env WISHLIST_TEST_PASSWORD
-```
-
-Repeat for `client2` and `server`, changing the cache/actor. The fresh configuration
-has six lines in the order documented in `manifest.json`. For full integrations,
-use `--mode full --mods ...` with the exact selected product IDs, including
-`PZSurvivorToolkit`, but excluding `WishlistTest`.
-Use the dependency APIs in the manifest; the current selected INI defines the mod set.
-
-Enable `WishlistTest` after the selected product mods in each cache's
-`mods/default.txt` and server `Mods=` list. Set the server's port to the supplied
-port and UDP port to its successor, disable public listing/UPnP/voice, enable Lua
-checksums, and use an isolated local server/world. Use client usernames `client1`
-and `client2` with the runtime password, languages EN and RU respectively. The
-server fixture waits for both fixed actors before it sends their item IDs/start
-signal. Full mode needs the CleanUI, combined-container, Neat and Project Cook
-APIs listed in the manifest; standalone/visual selects only Toolkit, which includes Wishlist.
-
-Reuse `tests/native_queue/support/ToolkitSmokeLauncher.java` from the common
-support. Compile it against the installed game with the selected
-JDK; launch clients with the game/JDK native options and `-novoip`, matching the
-common native tooling. That launcher handles display and voice checks. Keep
-paths, connection credentials and Java-agent policy in the runner-owned runtime
-configuration; do not embed them in fixture sources.
-
-The common runner installs these Lua sides and their six-line config, retains
-its safe launcher/preflight and verifies the `[WISHLIST_TEST]` contract. Select
-exactly one case (`full`, `standalone`, `visual` or `reload`) per run. Full uses
-the declared UI integrations; `standalone` is a retained scenario ID for Toolkit
-without optional UI mods, also used by visual and reload. All cases support the
-Toolkit queue-off control. Historical standalone evidence predates the merge
-and does not validate the integrated product.
-
-For menu Host, set `options.mp_host=true` with the two EN/RU clients. The adapter
-freezes and stages the common startup bootstrap; client1 owns the native
-CoopServer and client2 joins it. The runner supplies the shared selection and
-role-local `smoke-user.txt`. Only this Host route disables the fixture's older
-connection/character-creation handlers, including composed visual/standalone
-sessions. The ordinary separate-server route keeps its existing handlers.
-Host reload is rejected because its seed/restore lifecycle is not supported.
-
-For persistence through the common runner, finish a successful full/standalone
+For persistence through the common runner, finish a successful `full`, `standalone` or grouped `visual,standalone`
 run and supply its absolute directory as `options.seed_run` in the JSON passed
 to `--config` for the `reload` case. The adapter requires verified seed evidence,
 stopped clients/server and the same ports. It copies the seed's owned `Saves/`
@@ -97,8 +54,8 @@ The reload evidence retains `seed_native_audit.pending=true` and
 pending audit. Failed, new-error, unknown, microphone-active or unavailable seed
 audits are rejected.
 
-The retained stage labels/counts are unchanged. The sidebar stage follows the
-Wishlist entry in the Toolkit tools hub in every mode. Geometry checks use absolute rectangles in both dimensions. Inventory
+The sidebar stage follows the Wishlist entry in the Toolkit tools hub in every
+mode. Geometry checks use absolute rectangles in both dimensions. Inventory
 checks retain actual border drawing and independently require exactly one
 Wishlist overlay invocation, so a clipped candidate row does not masquerade as
 a duplicate wrapper. Before measurement, a real native render builds flattened

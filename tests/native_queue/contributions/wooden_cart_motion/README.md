@@ -2,7 +2,7 @@
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
-Source fixtures are connected through `tools/queue_checks/adapters/carts.py`. The common runner stages fresh profiles, owns probe attachment and records captures separately from functional passes. The manifest retains historical intake metadata. `self_check.py` checks the manifest, files, Lua parsing and optional Kotlin/JVM compilation. It never starts Project Zomboid.
+This guide covers single-player wooden cart motion captures and offline geometry analysis. The `carts` adapter stages the fixtures, owns the native run and reports capture evidence separately from functional results. `self_check.py` validates the manifest, files, Lua parsing and optional Kotlin/JVM compilation without starting Project Zomboid.
 
 The Kotlin fixture supplies native keyboard input (`drive`, `gait`) and reads the current cart bank, root-speed ramp and animation tracks. `bootstrap.lua` equips carts, creates its HUD and prepares the disposable floor. `scenario-clips.lua` records 16 cases: two sexes, empty/full cargo, and comparison/direct Sprint/gait transitions plus a Run-stop control. The full 12-second records include turns, stops and returns to walking. It samples every 100 ms.
 

@@ -1,8 +1,8 @@
 # Native video recording fixture
 
-[Development](../../../../docs/DEVELOPMENT.md#test-video) · [Native runner](../../README.md)
+[Development](../../../../docs/development/JAVA.md#test-video) · [Native runner](../../README.md)
 
-This fixture validates the B42.21 in-game recorder through the shared native runner in a fresh, disposable SP profile. The adapter stages `VideoFixture.lua` and its encoder configuration; the common runner owns mod snapshots, local JAR approvals, silent settings, desktop admission, AeroSpace placement, PID/window checks and process cleanup. Build Java Patches first with the [mixed Kotlin/Java toolchain](../../../../docs/DEVELOPMENT.md#java-development). The fixture uses the built JAR and needs no separate Kotlin runtime.
+This fixture validates the B42.21 in-game recorder through the shared native runner in a fresh, disposable SP profile. The adapter stages `VideoFixture.lua` and its encoder configuration; the common runner owns mod snapshots, local JAR approvals, silent settings, desktop admission, AeroSpace placement, PID/window checks and process cleanup. Build Java Patches first with the [mixed Kotlin/Java toolchain](../../../../docs/development/JAVA.md#java-development). The fixture uses the built JAR and needs no separate Kotlin runtime.
 
 ## Prepare and run
 
@@ -28,7 +28,7 @@ python3 tools/check_action_queue.py prepare /tmp/pz-video-capture-fresh \
 python3 tools/check_action_queue.py resume /tmp/pz-video-capture-fresh
 ```
 
-The run directory must not already exist at preparation. `prepare` creates snapshots without launching; `resume` launches that prepared run, stops its owned processes and writes the common report. To prepare and launch in one command, use `run` instead of `prepare` with another fresh run directory and the same arguments. EN is the default; RU is accepted, with historical language coverage listed below. The default mod subset is ZombieBuddy, Java Patches and Toolkit; it does not establish full-pack compatibility.
+The run directory must not already exist at preparation. `prepare` creates snapshots without launching; `resume` launches that prepared run, stops its owned processes and writes the common report. To prepare and launch in one command, use `run` instead of `prepare` with another fresh run directory and the same arguments. EN is the default; RU is also accepted. The default mod subset is ZombieBuddy, Java Patches and Toolkit; it does not establish full-pack compatibility.
 
 This configuration uses `desktop_mode=auto`: AeroSpace placement is primary, with current-desktop fallback admitted only after undiscovered owned windows and confirmed sleeping online displays. Use `aerospace` to require placement without fallback. Keep the shared runner's PID/window, focus/fullscreen and admission gates; do not invoke a separate launcher or use direct `Popen` to bypass them. See the [runner commands](../../README.md#commands) for preparation and resource options. The scenario starts a fresh Sandbox named `VideoFixture`, records twice for about 3.5 seconds, and checks duplicate starts/stops and recording restart. The adapter requires `[VIDEO_TEST] PASSED` before verifying the clips; the common report also requires readiness, clean runtime logs and unchanged inputs.
 
@@ -58,6 +58,6 @@ Existing encoder edge-case coverage is reusable via `PZ_TEST_FFMPEG=/absolute/pa
 
 ## Supported scope and limits
 
-The dated validation in `manifest.json` is historical evidence. It does not establish current support for multiplayer, Russian, Windows, Linux, long sessions, sustained 4K or live resize; each new shared-runner report records its own coverage. The Display hook is guarded by the fingerprint recorded in `manifest.json`. The recorder's API and limits are in [development: test video](../../../../docs/DEVELOPMENT.md#test-video).
+This fixture covers one-client SP capture and decoding. It does not establish multiplayer, Windows/Linux, long-session, sustained 4K or live-resize behavior. The Display hook is guarded by the fingerprint recorded in `manifest.json`. The recorder's API and limits are in [development: test video](../../../../docs/development/JAVA.md#test-video).
 
 Playback and visual inspection remain manual checks; `verify.py` performs decoding and extracts frames.

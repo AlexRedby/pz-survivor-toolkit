@@ -46,7 +46,7 @@ class PrepareInstall(unittest.TestCase):
             "[controls](docs/FEATURES.md#controls) [changes](CHANGELOG.md)\n", encoding="utf-8")
         (self.root / "JavaPatches/README.md").write_text(
             "[install](../MOD_INSTALL.md#prepare-once) "
-            "[regressions](../docs/DEVELOPMENT.md#java-development) "
+            "[regressions](../docs/development/JAVA.md#java-development) "
             "[fixture](../tests/native_queue/contributions/video-recording/README.md) "
             "[version](build.py) [changes](../CHANGELOG.md#toolkit-java-patches)\n",
             encoding="utf-8")
@@ -122,7 +122,7 @@ class PrepareInstall(unittest.TestCase):
                          "[changes](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/CHANGELOG.md)\n")
         self.assertEqual((result / "JavaPatches/README.md").read_text(encoding="utf-8"),
                          "[install](../MOD_INSTALL.md#prepare-once) "
-                         "[regressions](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/DEVELOPMENT.md#java-development) "
+                         "[regressions](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/development/JAVA.md#java-development) "
                          "[fixture](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/tests/native_queue/contributions/video-recording/README.md) "
                          "[version](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/JavaPatches/build.py) "
                          "[changes](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/CHANGELOG.md#toolkit-java-patches)\n")

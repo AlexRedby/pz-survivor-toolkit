@@ -1,6 +1,22 @@
-# Useful Mods and Settings for Project Zomboid
+# Selected mod catalog
 
-Reference for the selected third-party mods, Workshop IDs, dependencies, load order, settings and known caveats. The [server INI](SurvivorQoL-selected.ini) defines the current B42.21 selection. See [installation instructions](MOD_INSTALL.md) for the portable server/client INI and local repository mods. Toolkit features are documented in [FEATURES](docs/FEATURES.md); Java Patches setup is in [JavaPatches/README.md](JavaPatches/README.md).
+Reference for the selected third-party mods, Workshop IDs, dependencies, load order, settings and known caveats. The [server INI](../SurvivorQoL-selected.ini) defines the current B42.21 selection. See [installation instructions](../MOD_INSTALL.md) for the portable server/client INI and local repository mods. Toolkit features are documented in [FEATURES](FEATURES.md); Java Patches setup is in [JavaPatches/README.md](../JavaPatches/README.md).
+
+
+## Find a mod
+
+This is the project’s selected set, not a general recommendation list. The INI is authoritative; entries also identify features already included in Toolkit and separate mods to disable. Upstream compatibility claims are distinguished from checks performed with this pack.
+
+**Inventory, equipment and storage:** [Show VHS Skills in Tooltip](#1-show-vhs-skills-in-tooltip), [Better Containers](#3-better-containers), [Clean HotBar](#4-clean-hotbar), [Tidy Up Meister](#7-tidy-up-meister), [NeatUI Equipment](#15-neatui-equipment), [Better Clothing Info](#16-better-clothing-info), [CleanUI](#28-cleanui), [The Shortcut](#29-the-shortcut), [Item classification and retained items: Toolkit](#32-item-classification-and-retained-items-toolkit), [Transfer a Specified Quantity: Toolkit](#33-transfer-a-specified-quantity-toolkit), [Included Quartermaster](#included-quartermaster).
+
+**Crafting, food, farming and medicine:** [Neat Crafting](#5-neat-crafting), [Project Cook](#6-project-cook), [Research indicator: Toolkit](#18-research-indicator-toolkit), [Neat Building](#19-neat-building), [Eat Smart](#20-eat-smart), [Drink Smart](#21-drink-smart), [Washing Menus Improved](#22-washing-menus-improved), [Neat Crafting & Neat Building - XP & Mod Display](#23-neat-crafting--neat-building---xp--mod-display), [Wash Or Rot](#25-wash-or-rot), [Mini Health Plus](#27-mini-health-plus), [Planting information: Toolkit](#31-planting-information-toolkit), [Medicine Indicators: Toolkit + Moodle Framework](#34-medicine-indicators-toolkit--moodle-framework).
+
+**World, navigation and multiplayer:** [MP Fast Forward](#2-mp-fast-forward), [Moodle Descriptions Expanded](#8-moodle-descriptions-expanded), [Detailed Descriptions for Occupations and Traits](#9-detailed-descriptions-for-occupations-and-traits), [Peek a View](#10-peek-a-view), [Share Map Notes](#12-share-map-notes), [Better Generator Info](#13-better-generator-info), [Map Symbols Plus (Hand-drawn)](#14-map-symbols-plus-hand-drawn), [Rain Cleans Blood](#17-rain-cleans-blood), [Smart Radial Menu](#24-smart-radial-menu), [Gas Pump Indicator](#26-gas-pump-indicator), [Zombie Visibility Fix + Stair-O-Vision](#41-zombie-visibility-fix--stair-o-vision), [Plumbed Sink Mains Water Fix](#42-plumbed-sink-mains-water-fix), [Detailed Skill Tooltips](#49-detailed-skill-tooltips), [Foraging Tooltip Extended](#50-foraging-tooltip-extended), [Custom Light Switch](#51-custom-light-switch), [Nick's Turn Off Fridges](#52-nicks-turn-off-fridges).
+
+**Vehicles, carts and archery:** [Realistic Dashboard & Gauges](#35-realistic-dashboard--gauges), [Navigator](#36-navigator), [SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft](#40-saucedcarts-saucedwheelbarrow-and-wheelbarrow-craft), [Nepenthe's High Beams](#44-nepenthes-high-beams), [Reverse Drive Lights](#45-reverse-drive-lights), [Vanilla Vehicles Animated](#46-vanilla-vehicles-animated), [Animated Vehicle Parts Fix](#47-animated-vehicle-parts-fix), [Archery Nexus + Wilderness Progression](#48-archery-nexus--wilderness-progression), [Vehicle Aim Roof Fix](#53-vehicle-aim-roof-fix), [Vehicle Repair Overhaul](#54-vehicle-repair-overhaul).
+
+**Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
+
 
 ## 1 Show VHS Skills in Tooltip
 
@@ -178,7 +194,7 @@ Configurable quick-action panel for items and crafting/building recipes. Tab tog
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3420581050) · Workshop `3420581050` · Mod `TVRadio_ReInvented`
 
-Reworks TV, radio, car stereo, walkie-talkie and CD interfaces and adds channel videos/VHS. B41/B42 are reported. Toolkit handles device recognition and adds VHS controls; see [TV & Radio ReInvented](docs/FEATURES.md#tv--radio-reinvented). The separate [42.20 fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675) (`3796050675`, `TVRadioReinventedFix4220`) is no longer required with the current Toolkit.
+Reworks TV, radio, car stereo, walkie-talkie and CD interfaces and adds channel videos/VHS. B41/B42 are reported. Toolkit handles device recognition and adds VHS controls; see [TV & Radio ReInvented](FEATURES.md#tv--radio-reinvented). The separate [42.20 fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675) (`3796050675`, `TVRadioReinventedFix4220`) is no longer required with the current Toolkit.
 
 ## 31 Planting information: Toolkit
 
@@ -188,39 +204,39 @@ Toolkit displays known planting seasons on seeds and full packets, plus water re
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3370707195) · Workshop `3370707195` · Mod `organizedCategories_core`
 
-Toolkit now owns the item classifier, dynamic fluid/media categories and protection from mass transfer. Disable the separate `organizedCategories_core` mod on the Host and every client; it is removed from the selected INI. Existing Stick marks and exact category IDs remain readable. Native loot categories stay unchanged. The old mod's category editor, display-order instance pins and item renaming are outside this migration. See [retained items](docs/FEATURES.md#retained-items) and [item tags](docs/FEATURES.md#item-tags).
+Toolkit now owns the item classifier, dynamic fluid/media categories and protection from mass transfer. Disable the separate `organizedCategories_core` mod on the Host and every client; it is removed from the selected INI. Existing Stick marks and exact category IDs remain readable. Native loot categories stay unchanged. The old mod's category editor, display-order instance pins and item renaming are outside this migration. See [retained items](features/INVENTORY.md#retained-items) and [item tags](features/INVENTORY.md#item-tags).
 
 ## 33 Transfer a Specified Quantity: Toolkit
 
-Toolkit provides **Grab amount / Put amount** via the native number-entry window. See [quantity transfers](docs/FEATURES.md#bulk-actions). The former [Take Any Amount B42MP](https://steamcommunity.com/sharedfiles/filedetails/?id=3389115640) (`TakeAnyAmount`) is not required.
+Toolkit provides **Grab amount / Put amount** via the native number-entry window. See [quantity transfers](features/INVENTORY.md#bulk-actions). The former [Take Any Amount B42MP](https://steamcommunity.com/sharedfiles/filedetails/?id=3389115640) (`TakeAnyAmount`) is not required.
 
 ## 34 Medicine Indicators: Toolkit + Moodle Framework
 
-Toolkit provides eight medicine indicators using the selected Moodle Framework (`3396446795`, `MoodleFramework`). See [medicine indicators](docs/FEATURES.md#medicine-indicators). The old [Medicine Moodles B42.20 port](https://steamcommunity.com/sharedfiles/filedetails/?id=3778856579) (`MedicineMoodlesB42`) is not required.
+Toolkit provides eight medicine indicators using the selected Moodle Framework (`3396446795`, `MoodleFramework`). See [medicine indicators](FEATURES.md#medicine-indicators). The old [Medicine Moodles B42.20 port](https://steamcommunity.com/sharedfiles/filedetails/?id=3778856579) (`MedicineMoodlesB42`) is not required.
 
 ## 35 Realistic Dashboard & Gauges
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3635591071) · Workshop `3635591071` · Mod `RealisticDash`
 
-Dashboard controls cover windows, locks, radio, air conditioning, seat selection and sleep. No external library is reported. Load before Navigator. Passenger dashboard and other vehicle types have not been verified. Toolkit dashboard integration is documented under [Navigator](docs/FEATURES.md#navigator).
+Dashboard controls cover windows, locks, radio, air conditioning, seat selection and sleep. No external library is reported. Load before Navigator. Passenger dashboard and other vehicle types have not been verified. Toolkit dashboard integration is documented under [Navigator](features/VEHICLES.md#navigator).
 
 ## 36 Navigator
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3708816224) · Workshop `3708816224` · Mod `Navigator`
 
-Plans road routes and provides turn prompts; requires the mod's Navigator or Navigator Micro radio. No external library is reported. Load after Realistic Dashboard (`RealisticDash;Navigator`). Voice, long drives, rerouting, custom maps and other vehicle mods remain unverified. Toolkit dashboard integration is documented under [Navigator](docs/FEATURES.md#navigator). The separate TheShortcut panel can overlap the dashboard.
+Plans road routes and provides turn prompts; requires the mod's Navigator or Navigator Micro radio. No external library is reported. Load after Realistic Dashboard (`RealisticDash;Navigator`). Voice, long drives, rerouting, custom maps and other vehicle mods remain unverified. Toolkit dashboard integration is documented under [Navigator](features/VEHICLES.md#navigator). The separate TheShortcut panel can overlap the dashboard.
 
 ## 37 Toolkit Action Queues and Context Menus
 
-Toolkit action queue, bulk actions and context-menu grouping/rules are described under [bulk actions](docs/FEATURES.md#bulk-actions), [context menus](docs/FEATURES.md#context-menus) and [action queue](docs/FEATURES.md#action-queue). Crafting-plan behavior and limits are in [crafting plans](docs/FEATURES.md#crafting-plans).
+Toolkit action queue, bulk actions and context-menu grouping/rules are described under [bulk actions](features/INVENTORY.md#bulk-actions), [context menus](FEATURES.md#context-menus) and [action queue](features/ACTION_QUEUE.md#action-queue). Crafting-plan behavior and limits are in [crafting plans](FEATURES.md#crafting-plans).
 
 ## 38 Survivor Wishlist
 
-Survivor Wishlist usage, settings, persistence and multiplayer behavior are documented in [Survivor Wishlist](docs/FEATURES.md#survivor-wishlist). No Workshop item is required; install the prepared repository mod on server and clients.
+Survivor Wishlist usage, settings, persistence and multiplayer behavior are documented in [Survivor Wishlist](FEATURES.md#survivor-wishlist). No Workshop item is required; install the prepared repository mod on server and clients.
 
 ## 39 Toolkit Java Patches
 
-Toolkit Java Patches v0.1.15 patches B42.21 client vehicle/zombie behavior, server media/build acknowledgements and the reproduced vehicle ownership handoff race. It also includes animal/equipment, hutch, native string-property and fluid-name guards. It is experimental; unrelated causes of persistent vehicle desync remain outside the confirmed fix. Follow the canonical [Java Patches build and installation guide](JavaPatches/README.md), including the [optional vehicle diagnostic flag](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs); ZombieBuddy 2.3.4+ is required on server and clients. The separately published [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) (`3801615436`, `AnimalTrailerSyncMPFix`) addresses the server's one-animal-per-update timer issue and requires JAR approval when prompted.
+Toolkit Java Patches supplies guarded engine fixes for B42.21 client vehicle/zombie behavior, server media/build acknowledgements and the reproduced vehicle ownership handoff race. It also includes animal/equipment, hutch, native string-property and fluid-name guards. It is experimental; unrelated causes of persistent vehicle desync remain outside the confirmed fix. Follow the canonical [Java Patches build and installation guide](../JavaPatches/README.md), including the [optional vehicle diagnostic flag](../JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs); ZombieBuddy 2.3.4+ is required on server and clients. The separately published [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) (`3801615436`, `AnimalTrailerSyncMPFix`) addresses the server's one-animal-per-update timer issue and requires JAR approval when prompted.
 
 ## 40 SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft
 
@@ -232,7 +248,7 @@ Load in this order:
 | [SaucedWheelbarrow](https://steamcommunity.com/sharedfiles/filedetails/?id=3689975894) | `3689975894` | `saucedwheelbarrow` |
 | [Sauced Wheelbarrow Craft](https://steamcommunity.com/sharedfiles/filedetails/?id=3695168970) | `3695168970` | `saucedwheelbarrow_Craft` |
 
-SaucedCarts adds pushable shopping carts; SaucedWheelbarrow adds wooden/metal wheelbarrows; Craft adds recipes and requires both preceding mods. Both wheelbarrow recipes require Welding 3, welding mask, pipes and blowtorch fuel; wooden also requires three planks, metal a metal sheet. Preserve the complete mod folder. Wheelbarrows share outdoor spawns with carts; default weights are equal, and natural spawns occur only in unexplored areas. SaucedCarts conflicts with `TMC_Trolley`. Tidy Up Meister may leave a cart on the ground after a tool action; use Push Cart again. Toolkit integration details are in [SaucedCarts](docs/FEATURES.md#saucedcarts).
+SaucedCarts adds pushable shopping carts; SaucedWheelbarrow adds wooden/metal wheelbarrows; Craft adds recipes and requires both preceding mods. Both wheelbarrow recipes require Welding 3, welding mask, pipes and blowtorch fuel; wooden also requires three planks, metal a metal sheet. Preserve the complete mod folder. Wheelbarrows share outdoor spawns with carts; default weights are equal, and natural spawns occur only in unexplored areas. SaucedCarts conflicts with `TMC_Trolley`. Tidy Up Meister may leave a cart on the ground after a tool action; use Push Cart again. Toolkit integration details are in [SaucedCarts](features/VEHICLES.md#saucedcarts).
 
 ## 41 Zombie Visibility Fix + Stair-O-Vision
 
@@ -262,7 +278,7 @@ Official package version 4, B42.21. Adds white rear beams only for the local dri
 
 Toolkit includes the complete Quartermaster `0.24.0` feature set: container sorting, category/item/tag rules, presets, priorities, overflow, crafting and the single-player storage manifest. Use **Configure sorting...** on a world container and **Distribute Loot** in inventory/loot controls. Existing designations, global presets and options keep their original storage names.
 
-The separate Workshop item `3761216758` and Mod ID `Quartermaster` are no longer selected. Disable the external mod and remove any overriding local copy when installing the updated Toolkit; keep its save data. Disable `organizedCategories_core` too and do not add bridge `3797594072`. Multiplayer designations/presets remain shared; the storage manifest remains single-player. Queue adapters retain their supported crafting/manifest boundaries and conservative restrictions on unsupported actions. See [installation](MOD_INSTALL.md#update-the-set) and [action queue](docs/FEATURES.md#action-queue).
+The separate Workshop item `3761216758` and Mod ID `Quartermaster` are no longer selected. Disable the external mod and remove any overriding local copy when installing the updated Toolkit; keep its save data. Disable `organizedCategories_core` too and do not add bridge `3797594072`. Multiplayer designations/presets remain shared; the storage manifest remains single-player. Queue adapters retain their supported crafting/manifest boundaries and conservative restrictions on unsupported actions. See [installation](../MOD_INSTALL.md#update-the-set) and [action queue](features/ACTION_QUEUE.md#action-queue).
 
 ## 46 Vanilla Vehicles Animated
 
@@ -291,7 +307,7 @@ The companion preserves the base bow, visuals and sounds while adding a dedicate
 
 Baseline sandbox settings under Wilderness Progression are damage/range multipliers `1`, Endurance Drain `Normal` and Muscle Strain `Normal`. Increased Bow Hit Chance and plastic-bottle fletching default on; these are upstream defaults, not settings supplied by the selected INI. Keep the existing world's sandbox settings unless deliberately changing them.
 
-Requires both Workshop items on Host and clients. Do not combine the companion with Archery Nexus Fixed or Lite; do not add RadArchery or the RadBows Upgrade as dependencies. As checked on 20 October 2026, the companion was updated on 15 October, but its author explicitly says multiplayer live testing is incomplete. B42.21 full-pack/Host behavior, hunting, arrow conservation and Toolkit queue/crafting integrations have not been verified. Before installing into a gameplay world, use a disposable profile to check crafting, nocking/firing, hit/miss recovery, breakage, restringing, unequipping and Host synchronization. See [installation](MOD_INSTALL.md#archery).
+Requires both Workshop items on Host and clients. Do not combine the companion with Archery Nexus Fixed or Lite; do not add RadArchery or the RadBows Upgrade as dependencies. As checked on 20 October 2026, the companion was updated on 15 October, but its author explicitly says multiplayer live testing is incomplete. B42.21 full-pack/Host behavior, hunting, arrow conservation and Toolkit queue/crafting integrations have not been verified. Before installing into a gameplay world, use a disposable profile to check crafting, nocking/firing, hit/miss recovery, breakage, restringing, unequipping and Host synchronization. See [installation](#48-archery-nexus--wilderness-progression).
 
 ## 49 Detailed Skill Tooltips
 
