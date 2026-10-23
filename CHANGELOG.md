@@ -1073,6 +1073,7 @@ The older README associates medicine indicators with this label, but no separate
 - **Kotlin cart actions and networking:** Migrate steering hooks, pickup/setdown transitions and cosmetic owner/observer synchronization with their Kotlin regressions and source consumers. Preserve native authority, exact identities, parsing and rate limits, cancellation/recovery deadlines, Lua globals and render scopes.
 - **Kotlin test recording:** Migrate the video recorder and associated regressions, preserving the Lua API, class monitor, render-thread capture, bounded buffers and encoder shutdown. Verify Lua scanner registration and real FFmpeg timeline/error handling with the distributed private runtime.
 - **Kotlin regression bodies:** Migrate the remaining animal/equipment/media/font, food-replacement, Lua-model and metal-grip checks with their fixtures. Retain only runtime-independent Java cold probes and their shared font decoder support, so early loading remains testable before the ordinary mod is appended.
+- **Kotlin registration support:** Extract bytecode support policy, startup sequencing and equipment/animal/media/cart orchestration from `Main.java`. Preserve Java patch identities, writable advice, compatibility fields, lazy guard evaluation and cold target-preparation order.
 
 ### 0.1.47
 
