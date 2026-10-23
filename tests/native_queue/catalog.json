@@ -1760,6 +1760,205 @@
           ]
         }
       ]
+    },
+    "tv-controls": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "AnimalTrailerSyncMPFix",
+        "NeatUI_Framework",
+        "MoodleFramework",
+        "CleanUI",
+        "PZSurvivorToolkit",
+        "VHSSkillNameInTooltip",
+        "MPFastForward",
+        "EURY_CONTAINERS",
+        "CleanHotBar",
+        "Neat_Crafting",
+        "Project_Cook",
+        "P4TidyUpMeister",
+        "B42MoodleDescriptionsExpanded",
+        "DetailedDescriptionsForOccupationsAndTraits",
+        "PeekAView",
+        "PZShareMapNotes",
+        "BetterGeneratorInfo",
+        "MapSymbolsPlusDeonHand",
+        "NeatUI_Equipment",
+        "EURY_CLOTHINGINFO",
+        "RainCleansBlood",
+        "Neat_Building_UIOnly",
+        "EatSmartInt",
+        "Drink_Smart",
+        "WashFix",
+        "Neat_Crafting_AddonXP",
+        "Neat_Building_AddonXP",
+        "SmartRadialMenu",
+        "WashOrRot_MP",
+        "GasPumpIndicator",
+        "MiniHealthPlus",
+        "TheShortcut",
+        "TVRadio_ReInvented",
+        "RealisticDash",
+        "Navigator",
+        "SaucedCarts",
+        "saucedwheelbarrow",
+        "saucedwheelbarrow_Craft",
+        "ZombieVisibilityFix",
+        "PlumbedSinkMainsFix",
+        "VanillaVehiclesAnimated",
+        "AnimatedVehiclePartsFix",
+        "NepHighBeams",
+        "ReverseDriveLights",
+        "ArcheryNexus",
+        "WildernessProgressionArcheryNexusCompanion",
+        "EURY_DST",
+        "Ivmakk_ForagingTooltipExtended",
+        "CustomLightSwitch",
+        "NicksTurnOffFridges",
+        "organizedCategories_core"
+      ],
+      "scenario_actions": {
+        "tv-eject-controls": {
+          "mods": [
+            "ZombieBuddy",
+            "PZToolkitJavaPatches",
+            "AnimalTrailerSyncMPFix",
+            "NeatUI_Framework",
+            "MoodleFramework",
+            "CleanUI",
+            "PZSurvivorToolkit",
+            "VHSSkillNameInTooltip",
+            "MPFastForward",
+            "EURY_CONTAINERS",
+            "CleanHotBar",
+            "Neat_Crafting",
+            "Project_Cook",
+            "P4TidyUpMeister",
+            "B42MoodleDescriptionsExpanded",
+            "DetailedDescriptionsForOccupationsAndTraits",
+            "PeekAView",
+            "PZShareMapNotes",
+            "BetterGeneratorInfo",
+            "MapSymbolsPlusDeonHand",
+            "NeatUI_Equipment",
+            "EURY_CLOTHINGINFO",
+            "RainCleansBlood",
+            "Neat_Building_UIOnly",
+            "EatSmartInt",
+            "Drink_Smart",
+            "WashFix",
+            "Neat_Crafting_AddonXP",
+            "Neat_Building_AddonXP",
+            "SmartRadialMenu",
+            "WashOrRot_MP",
+            "GasPumpIndicator",
+            "MiniHealthPlus",
+            "TheShortcut",
+            "TVRadio_ReInvented",
+            "RealisticDash",
+            "Navigator",
+            "SaucedCarts",
+            "saucedwheelbarrow",
+            "saucedwheelbarrow_Craft",
+            "ZombieVisibilityFix",
+            "PlumbedSinkMainsFix",
+            "VanillaVehiclesAnimated",
+            "AnimatedVehiclePartsFix",
+            "NepHighBeams",
+            "ReverseDriveLights",
+            "ArcheryNexus",
+            "WildernessProgressionArcheryNexusCompanion",
+            "EURY_DST",
+            "Ivmakk_ForagingTooltipExtended",
+            "CustomLightSwitch",
+            "NicksTurnOffFridges",
+            "organizedCategories_core"
+          ],
+          "checks": {
+            "success-queued": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              }
+            },
+            "server-authority": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "tailCompleted": true,
+                "serverAuthorityVerified": true
+              }
+            },
+            "move-independent": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              }
+            },
+            "cancel-waiting": {
+              "eject-idle": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              },
+              "eject-playing": {
+                "effectsVerified": true,
+                "pendingEditsVerified": true
+              }
+            }
+          },
+          "scope": "Two ordered full-selected-pack SP/menu-Host cases: native UI insertion and optional playback before baseline; eject across a channel setter and redundant pending volume cancellation only with queue enabled. Actual volume/mute/unmute/channel callbacks and two naturally completed root books. Exact new VHS ID/index/type, independent authoritative media/settings/pages and ordered native Host control receipts. Adjacent TV requires no emitted walk; no physical input, video/audio rendering, arbitrary inventory output capacity or playback-toggle projection coverage implied."
+        }
+      },
+      "cases": [
+        {
+          "id": "eject-idle",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        },
+        {
+          "id": "eject-playing",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        }
+      ]
     }
   }
 }

@@ -275,7 +275,9 @@ ISBaseTimedAction.stop = function(action)
         local fireUnavailable = fire and fire.canSkip and fire.canSkip(action)
         if (generators and generators.canSkip and generators.canSkip(action))
             or fireUnavailable
-            or (health and health.canPreserveStop and health.canPreserveStop(action)) then
+            or (health and health.canPreserveStop and health.canPreserveStop(action))
+            or (Toolkit.ActionQueueMedia and Toolkit.ActionQueueMedia.canSkipUnavailable
+                and Toolkit.ActionQueueMedia.canSkipUnavailable(action)) then
             local request = {action = action, token = action.toolkitQueueOperation}
             local receipt = fireUnavailable and Toolkit.ActionQueueAcknowledgements.capture(action)
             if receipt then
@@ -425,6 +427,9 @@ ISTimedActionQueue.tick = function(queue)
         and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false)
         and ((health and health.canSkip(current) and health.canPreserveStop(current))
             or (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.canSkip(current)
+                and not Toolkit.ActionQueueAcknowledgements.capture(current))
+            or (Toolkit.ActionQueueMedia and Toolkit.ActionQueueMedia.canSkipUnavailable
+                and Toolkit.ActionQueueMedia.canSkipUnavailable(current)
                 and not Toolkit.ActionQueueAcknowledgements.capture(current))) then
         Operations.invalidate(current.toolkitQueueOperation)
         queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}

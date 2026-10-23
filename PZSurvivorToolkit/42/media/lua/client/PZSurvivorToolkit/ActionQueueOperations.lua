@@ -7,6 +7,7 @@ require "ISUI/ISContextMenu"
 require "ISUI/ISButton"
 require "ISUI/ISInventoryPaneContextMenu"
 require "ISUI/ISInventoryPane"
+require "RadioCom/RadioWindowModules/RWMVolume"
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 
 local Operations = {}
@@ -430,6 +431,32 @@ wrap(ISInventoryPane, "onMouseUp")
 wrap(ISInventoryPane, "onMouseDoubleClick")
 wrap(ISInventoryPaneContextMenu, "readItem", true)
 
+-- The native volume bar commits directly, or later from update() after a
+-- joypad/+/- change. Scope the real producer rather than the earlier UI click.
+local volumeProducer
+function Operations.installVolumeProducer()
+    local class, panel = RWMVolume, RWMPanel
+    if volumeProducer then
+        return class == volumeProducer.class and panel == volumeProducer.panel
+            and class.onVolumeChange == volumeProducer.wrapper
+    end
+    local callback, walk = class and class.onVolumeChange, panel and panel.doWalkTo
+    local proof = require "PZSurvivorToolkit/SourceProof"
+    if not proof or not proof.closure(callback, "RWMVolume.lua") or not proof.closure(walk, "RWMPanel.lua")
+        or not proof.matches("media/lua/client/RadioCom/RadioWindowModules/RWMVolume.lua", 1122481123, nil, true)
+        or not proof.matches("media/lua/client/RadioCom/RadioWindowModules/RWMPanel.lua", 4229885986, nil, true) then return false end
+    local wrapper
+    wrapper = function(self, ...)
+        if RWMVolume ~= class or RWMPanel ~= panel or class.onVolumeChange ~= wrapper
+            or panel.doWalkTo ~= walk or self.doWalkTo ~= walk then return callback(self, ...) end
+        return Operations.run(callback, self, ...)
+    end
+    volumeProducer = {class = class, panel = panel, wrapper = wrapper}
+    class.onVolumeChange = wrapper
+    return true
+end
+Operations.installVolumeProducer()
+
 local transferPanes = {}
 local function installTransferPane(class)
     if not class or transferPanes[class] or type(class.transferItemsByWeight) ~= "function" then return end
@@ -458,6 +485,7 @@ local function installTransferPanes()
     InventoryClasses.panes(installTransferPane)
 end
 Events.OnGameStart.Add(function()
+    Operations.installVolumeProducer()
     installTransferPanes()
     InventoryClasses.onToggle(installTransferPanes)
 end)

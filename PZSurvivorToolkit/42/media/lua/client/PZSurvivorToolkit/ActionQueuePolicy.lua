@@ -190,6 +190,35 @@ local function dynamicConflict(a, b, context)
     return false
 end
 
+-- Audited property setters are independent of VHS inventory/playback effects.
+-- Playback retains its asynchronous native state; this only removes a disjoint
+-- target edge, never power/media ordering, item or capacity dependencies.
+local mediaSetterModes = {SetVolume = true, SetChannel = true, MuteMicrophone = true,
+    MuteVolume = true, UnMuteVolume = true}
+local function mediaSetterIndependent(a, b, context)
+    local setter, media = a, b
+    if not mediaSetterModes[setter.mode] then setter, media = b, a end
+    if not mediaSetterModes[setter.mode] or not EditAdapters then return false end
+    local edit = EditAdapters.radio(setter)
+    if not edit or not instanceof(setter.device, "IsoTelevision") then return false end
+    if not inspect then return false end
+    local contract, source = inspect(media, context)
+    local cassette = source == "native.device-media-insert" or source == "native.device-media-eject"
+    local playback = source == "native.ISRadioAction" and media.mode == "TogglePlayMedia"
+        and media.device == setter.device and EditAdapters.radioCallbacksTrusted(media) and media.maxTime == 30
+    if not contract or not (cassette and media.Type == "ISDeviceMediaAction" or playback)
+        or media.character ~= setter.character
+        or media.action or media.started or media._isAddingActions
+        or (type(media.toolkitQueueOperation) == "table" and media.toolkitQueueOperation.toolkitStarted)
+        or media.deviceData ~= setter.deviceData or setter.deviceData:getParent() ~= setter.device then return false end
+    local targetCount = 0
+    for target in pairs(contract.targets or {}) do
+        if target ~= setter.device then return false end
+        targetCount = targetCount + 1
+    end
+    return targetCount == 1
+end
+
 local function sharedWorldTarget(a, b, context)
     local generators = Toolkit.ActionQueueGenerators
     if generators and generators.sharesTarget then
@@ -200,7 +229,9 @@ local function sharedWorldTarget(a, b, context)
     if left and right then
         if sharedEditResource and sharedEditResource(left, right) then return true end
         for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
-        for target in pairs(left.targets or {}) do if right.targets and right.targets[target] then return target end end
+        for target in pairs(left.targets or {}) do
+            if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+        end
         if left.hands and left.hands == right.hands then return left.hands end
         if (left.equipment and left.equipment == right.hands) or (right.equipment and right.equipment == left.hands) then return left.equipment or right.equipment end
     end

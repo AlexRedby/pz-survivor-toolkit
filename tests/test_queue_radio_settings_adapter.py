@@ -42,7 +42,8 @@ class RadioSettingsAdapterTests(unittest.TestCase):
 
         specs = [('anchor', 'SetVolume', 'b', .25), ('firstVolume', 'SetVolume', 'a', .25)]
         if case == 'barrier':
-            specs += [('legacyMute', 'MuteVolume', 'a', True), ('channel', 'SetChannel', 'a', 95000)]
+            specs += [('channel', 'SetChannel', 'a', 95000), ('powerOff', 'ToggleOnOff', 'a', None),
+                      ('powerOn', 'ToggleOnOff', 'a', None), ('legacyMute', 'MuteVolume', 'a', True)]
         else:
             specs += [('channel', 'SetChannel', 'a', 95000), ('lastVolume', 'SetVolume', 'a', .75),
                       ('mic', 'MuteMicrophone', 'a', True)]

@@ -55,6 +55,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.237
+
+- **Action queue / televisions:** Preserve queued work when VHS ejection replicates before native completion. Require the empty television, one newly returned cassette with the expected media index and a correlated Host receipt; retain native effects without replaying them.
+- **Action queue / TV controls:** Allow independent VHS/playback/settings reordering, model power and mute prerequisites, and keep volume-slider changes with their walk preparation. With the queue enabled, an unavailable audited TV command discards its own operation while retaining unrelated work.
+
 ### 0.1.236
 
 - **Fixed:** Host workouts send their native stop immediately when the selected duration ends, even if the server's start acknowledgement is late. Equipment restoration and subsequent actions still wait for the matching authoritative outcome; the queue shows server settlement separately from workout progress.
