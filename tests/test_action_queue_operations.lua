@@ -602,4 +602,19 @@ do
     assert(not operations.installVolumeProducer(),'foreign replacement cannot be adopted or wrapped again')
 end
 
+-- An unexpected producer error must stay visible without leaving subsequent
+-- independent enqueues inside the failed command's insertion boundary.
+reset()
+local broken = operations.command(player, function() error('producer failure sentinel') end, {})
+local untouched = action()
+q.queue, q.current = {broken, untouched}, broken
+local succeeded, failure = pcall(broken.start, broken)
+assert(not succeeded and tostring(failure):find('producer failure sentinel', 1, true))
+assert(not q:isCurrentActionAddingOtherActions(), 'failed expansion retained the native insertion boundary')
+local following = enqueue()
+assert(q.queue[2] == untouched and q.queue[3] == following,
+    'independent enqueue was inserted into the failed producer instead of after the existing tail')
+assert(following.toolkitQueueOperation ~= broken.toolkitQueueOperation)
+reset()
+
 print('Action operation grouping: native contracts, volume slider/deferred commits and foreign helper guards passed.')

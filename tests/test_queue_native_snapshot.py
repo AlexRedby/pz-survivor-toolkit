@@ -344,7 +344,7 @@ class NativeSnapshotTests(unittest.TestCase):
 
     def test_selected_adapter_helpers_are_sealed_without_unrelated_adapters(self):
         from queue_checks.adapters import (craft_ui, inventory_grab, inventory_transfer,
-                                           fluid, food, quartermaster_crafting, queue_recovery)
+                                           fluid, food, quartermaster_crafting, queue_recovery, approach_queue)
         dependencies = (
             (craft_ui, ('craft.py',)),
             (inventory_grab, ('craft.py',)),
@@ -353,6 +353,7 @@ class NativeSnapshotTests(unittest.TestCase):
             (food, ('craft.py', 'fluid.py')),
             (quartermaster_crafting, ('craft.py', 'quartermaster_supply_units.py')),
             (queue_recovery, ('tv_controls.py',)),
+            (approach_queue, ('tv_controls.py',)),
         )
         # Keep helper mutations private; exercise the real source declarations
         # through snapshot preparation, without compiling/staging each fixture.

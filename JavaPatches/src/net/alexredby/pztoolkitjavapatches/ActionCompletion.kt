@@ -1,11 +1,70 @@
 package net.alexredby.pztoolkitjavapatches
 
+import me.zed_0xff.zombie_buddy.Accessor
 import se.krka.kahlua.vm.KahluaTable
 import zombie.Lua.LuaManager
+import zombie.characters.CharacterTimedActions.BaseAction
 import zombie.characters.CharacterTimedActions.LuaTimedActionNew
+import zombie.characters.IsoPlayer
+import zombie.core.ActionManager
+import zombie.network.GameClient
+import zombie.network.fields.character.PlayerID
 
 object ActionCompletion {
     private val current = ThreadLocal<Scope>()
+
+    /** Let the original engine settle a paid remote action whose target was already replicated. */
+    @JvmStatic
+    fun restoreNativeCompletion(
+        nativeAction: LuaTimedActionNew?,
+        valid: Boolean,
+        supported: Boolean,
+    ): Boolean {
+        if (valid || !supported || !GameClient.client || !QueueManagers.ACTION_SUPPORTED)
+            return valid
+        val native = nativeAction ?: return false
+        val player = native.chr as? IsoPlayer ?: return false
+        if (
+            native.forceStop ||
+                !(native as BaseAction).started ||
+                !Accessor.tryGet<Boolean>(native, "started", false) ||
+                Accessor.tryGet<Boolean>(native, "useCustomRemoteTimedActionSync", true) ||
+                player.isDead ||
+                !player.isLocalPlayer
+        )
+            return false
+        val actions = player.getCharacterActions() ?: return false
+        if (actions.isEmpty() || actions[0] !== native) return false
+        val owner = Accessor.tryGet<PlayerID>(native, "playerId", null) ?: return false
+        val id = Accessor.tryGet<Byte>(native, "transactionId", null) ?: return false
+        if (
+            id.toInt() == 0 ||
+                owner.getPlayer() !== player ||
+                owner.getID() != player.onlineId ||
+                !QueueManagers.hasAction(owner, id) ||
+                !ActionManager.isDone(owner, id)
+        )
+            return false
+        val toolkit = LuaManager.env?.rawget("PZSurvivorToolkit") as? KahluaTable ?: return false
+        val lifecycle = toolkit.rawget("ActionQueueLifecycle") as? KahluaTable ?: return false
+        val allow = lifecycle.rawget("allowNativeCompletion") ?: return false
+        val result = LuaManager.caller.pcall(LuaManager.thread, allow, native.getTable(), native)
+        if (
+            result.size < 2 ||
+                !true.equals(result[0]) ||
+                !true.equals(result[1]) ||
+                native.forceStop ||
+                actions.isEmpty() ||
+                actions[0] !== native ||
+                !QueueManagers.hasAction(owner, id) ||
+                !ActionManager.isDone(owner, id)
+        )
+            return false
+        // Returning true alone would run Lua update before the engine notices Done. That final
+        // update may invalidate a consumed target or forceStop, discarding the queued continuation.
+        native.forceComplete()
+        return true
+    }
 
     class Scope(
         previous: Scope?,

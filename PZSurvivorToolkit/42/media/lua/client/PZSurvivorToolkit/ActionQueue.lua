@@ -70,6 +70,9 @@ function Queue.cancel(queue, action)
     Policy.record("cancel", action, decision)
     if not decision.allowed then return false, decision.reason end
     if craft(action) then return Queue.cancelOperation(queue, action) end
+    -- Policy validates deferred commands as complete operations. Execute that
+    -- same edit, so required preparation cannot be detached from its body.
+    if action.Type == "ISQueueActionsAction" then return Queue.cancelOperation(queue, action) end
     if appliance(action) then return Queue.cancelOperation(queue, action) end
     local contract = Policy.inspect(action)
     if contract and contract.cancelWaiting and not stoppable(action) then return Queue.cancelOperation(queue, action) end
@@ -134,6 +137,7 @@ end
 
 local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
+    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.completed(action) end
     if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.completed(action) end
     if Toolkit.ActionQueueLifecycle.deferCompletion(queue, action) then return end
     if Operations.deferCompletion and Operations.deferCompletion(queue, action) then return end
@@ -251,6 +255,8 @@ end
 
 local stop = ISBaseTimedAction.stop
 ISBaseTimedAction.stop = function(action)
+    local approach = Toolkit.ActionQueueApproach
+    if approach then approach.onStop(action) end
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.stop(action) end
     local queue = ISTimedActionQueue.queues[action.character]
     local world = Toolkit.ActionQueueWorld
@@ -317,6 +323,7 @@ if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop"
 -- Native reset/clear delegate here even when another mod retains an earlier reset wrapper.
 local cancelQueue = ISTimedActionQueue.cancelQueue
 ISTimedActionQueue.cancelQueue = function(queue)
+    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.reset(queue) end
     if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.capture(queue) end
     Toolkit.ActionQueueLifecycle.reset(queue)
     Toolkit.ActionQueueAcknowledgements.reset(queue)

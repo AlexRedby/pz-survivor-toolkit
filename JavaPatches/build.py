@@ -127,6 +127,7 @@ CHECKS = {'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STA
           'zombie.core.ItemBatchAdmissionChecks': 'ITEM_BATCH_ADMISSION_CHECKS_PASS',
           'zombie.core.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
           'zombie.characters.CharacterTimedActions.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
+          'zombie.characters.CharacterTimedActions.ActionValidityChecks': 'ACTION_VALIDITY_CHECKS_PASS',
           'zombie.characters.AnimalChecks': 'ANIMAL_CHECKS_PASS',
           'zombie.network.packets.EquipmentChecks': 'EQUIPMENT_CHECKS_PASS',
           'zombie.network.packets.MedicalBodyDamageChecks': 'MEDICAL_BODY_DAMAGE_CHECKS_PASS',
@@ -315,7 +316,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.50',
+    'version': '0.1.51',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

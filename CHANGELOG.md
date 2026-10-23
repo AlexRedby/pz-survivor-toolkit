@@ -24,6 +24,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.242
+
+- **Action queue / approach:** Queue native approach preparation through one shared mechanism and resolve its route from the actor's position when the operation reaches the front. Preserve native wall/floor/multi-tile route alternatives, selected cursor state and queue-disabled movement; native vegetation, destruction and moveable cursors use the same routing layer without replacing preceding queued work. Preserve the native fishing-net placement fallback and exact destroy-target selection. A positively identified path failure drops its dependent operation while keeping unrelated work.
+- **Action queue / editing:** Keep deferred approach preparation transparent to whole-operation editing and reconstruct supported pending approach intent during cancelled-queue recovery. Cancel deferred command rows through the same whole-operation boundary used by validation, so required preparation cannot be detached from its body.
+
 ### 0.1.241
 
 - Make the container editor easier to read with a larger icon preview, container identity, an opaque background, compact appearance/sorting sections, labelled searches and explicit tag-rule state. Localize its main controls in English and Russian, explain empty search/selection/preset lists, make the tag-rule dialog opaque with a labelled search, keep the scrollbar aligned through resizing and collapse duplicate icon images while retaining their search aliases.
@@ -1072,6 +1077,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.51
+
+- **Action queue / Host completion:** Let the native engine finish an owned, server-completed action when its replicated target has already disappeared. Preserve its original completion cleanup and subsequent queued work without replaying server effects. Require the exact native transaction and sealed completion receipt; explicit stops, movement, combat, custom synchronization and disabled-queue behavior retain their existing paths.
 
 ### 0.1.50
 

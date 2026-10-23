@@ -899,6 +899,18 @@ end, inspect = function(action)
     local result = resources(action); result.unknownOutputs, result.bulk = true, true; return result
 end})
 
+Definitions.registerBehavior("toolkit.approach", {types = {"ISQueueActionsAction"}, matches = function(action)
+    local approach=Toolkit.ActionQueueApproach
+    return approach and approach.isAction(action)
+end, inspect = function(action)
+    local result=resources(action)
+    result.deferred,result.preparation,result.preparationFinish=true,true,true
+    result.cancelWaiting=true
+    result.positions={[action.character]=true}
+    result.capacityNonIncreasing=true
+    return result
+end})
+
 Definitions.registerBehavior("toolkit.food", {types = {"ISQueueActionsAction"}, matches = function(action)
     local Food = Toolkit.BulkFood
     return Food and (Food.isCommand(action) or (Food.isOpeningWait and Food.isOpeningWait(action)))
@@ -1314,7 +1326,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
             for _, batch in ipairs(action.queueList or {}) do
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
-        elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
+        elseif not capacityNeutral[action.Type] and source~="toolkit.approach" and not boundedWaterDrink(action, character, source)
             and not (source=="native.ISFluidEmptyAction" and contract.edit and contract.capacityNonIncreasing==true)
             and not (source == "native.ISEatFoodAction" and contract.edit
                 and (contract.capacityNonIncreasing == true or conditionalCapacity[action]
