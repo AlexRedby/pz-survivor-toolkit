@@ -21,6 +21,17 @@ local activate=ISInventoryPaneContextMenu.onActivateItem
 local cartDropOwner=Toolkit.ActionQueueCarts
 local cartDropCallback=cartDropOwner and cartDropOwner.isDropCallback
 local cartDropMatch=cartDropOwner and cartDropOwner.isNonCartDrop
+local cartUnequipConstructor=cartDropOwner and cartDropOwner.isUnequipConstructor
+local cartUnequipMatch=cartDropOwner and cartDropOwner.isNonCartUnequip
+local function approvedUnequipConstructor(callback)
+ return Toolkit.ActionQueueCarts==cartDropOwner and cartDropOwner
+  and cartDropOwner.isUnequipConstructor==cartUnequipConstructor and cartDropOwner.isNonCartUnequip==cartUnequipMatch
+  and type(cartUnequipConstructor)=='function' and cartUnequipConstructor(callback)
+end
+local function approvedUnequip(action)
+ return approvedUnequipConstructor(ISUnequipAction.new) and type(cartUnequipMatch)=='function'
+  and cartUnequipMatch(action)==true
+end
 local function approvedDrop(name,callback)
  return Toolkit.ActionQueueCarts==cartDropOwner and cartDropOwner
   and cartDropOwner.isDropCallback==cartDropCallback and cartDropOwner.isNonCartDrop==cartDropMatch
@@ -51,7 +62,7 @@ local function approvedChange(kind,name)
  if kind=='ISInventoryTransferAction' and (name=='new' or name=='perform' or name=='transferItem') then
   return carts and carts.isTransferConstructor(classes[kind].methods.new) and carts.isTransferConstructor(ISInventoryTransferAction.new)
  elseif kind=='ISUnequipAction' and (name=='new' or name=='complete') then
-  return carts and carts.isUnequipConstructor(classes[kind].methods.new) and carts.isUnequipConstructor(ISUnequipAction.new)
+  return approvedUnequipConstructor(classes[kind].methods.new) and approvedUnequipConstructor(ISUnequipAction.new)
  end
  return false
 end
@@ -65,8 +76,7 @@ for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction',
    methods[name]=callback
    -- Transfers already have source-approved Better Containers, P4 and Manifest hooks in Policy.
    if kind~='ISFitnessAction' and kind~='ISInventoryTransferAction' and name~='derive' and not Proof.closure(callback,kind..'.lua') then
-    local carts=Toolkit.ActionQueueCarts
-    local approved=kind=='ISUnequipAction' and (name=='new' or name=='complete') and carts and carts.isUnequipConstructor(owner.new)
+    local approved=kind=='ISUnequipAction' and (name=='new' or name=='complete') and approvedUnequipConstructor(owner.new)
      or kind=='ISDropWorldItemAction' and approvedDrop(name,callback)
     trusted=trusted and approved==true
    end
@@ -108,6 +118,8 @@ local function root(player,ref)
  return item and item:getContainer()==player:getInventory() and item or nil
 end
 local function unchanged()
+ if (not Proof.closure(ISUnequipAction.new,'ISUnequipAction.lua') or not Proof.closure(ISUnequipAction.complete,'ISUnequipAction.lua'))
+  and not approvedUnequipConstructor(ISUnequipAction.new) then return false end
  for _,name in ipairs({'new','isValid','complete'}) do
   if not Proof.closure(ISDropWorldItemAction[name],'ISDropWorldItemAction.lua')
    and not approvedDrop(name,ISDropWorldItemAction[name]) then return false end
@@ -145,6 +157,8 @@ local function validRecord(action)
   end
   if action.onStartFunc or action.onCancelFunc or action.retriggerLastAction or action.onFailFunc or action.additionalTest
    or action.onCompleteFunc and not (guarded and action.onCompleteFunc==action.toolkitQueueSafeOnComplete) then return end
+  if action.Type=='ISUnequipAction' and (not Proof.closure(ISUnequipAction.new,'ISUnequipAction.lua')
+   or not Proof.closure(ISUnequipAction.complete,'ISUnequipAction.lua')) and not approvedUnequip(action) then return end
   if action.Type=='ISDropWorldItemAction' and not Proof.closure(ISDropWorldItemAction.new,'ISDropWorldItemAction.lua')
    and (not cartDropMatch or not cartDropMatch(action)) then return end
   if record.item and not same(action.item,record.item) then return end
@@ -466,6 +480,11 @@ local function contract(action)
  return result
 end
 Definitions.registerBehavior('toolkit.fitness',{types={'ISQueueActionsAction','ISFitnessAction','ISWaitWhileGettingUp','ISWearClothing','ISDropWorldItemAction'},matches=Fitness.isManaged,inspect=contract})
+-- The native matcher owns ordinary callbacks. Only this operation's exact
+-- reviewed non-cart wrapper branch needs its own preparation/cleanup contract.
+Definitions.registerBehavior('toolkit.fitness-cart-unequip',{types={'ISUnequipAction'},matches=function(action)
+ return Fitness.isManaged(action) and approvedUnequip(action) and not Toolkit.ActionQueuePolicy.matchesNative(action)
+end,inspect=contract})
 local keys={squats='IGUI_Squats',pushups='IGUI_PushUps',situp='IGUI_SitUps',burpees='IGUI_Burpees',
  barbellcurl='IGUI_BarbellCurl',dumbbellpress='IGUI_DumbbellPress',bicepscurl='IGUI_BicepsCurl'}
 function Fitness.progress(action)

@@ -434,6 +434,10 @@ assert(currentExercise==nil and dumbbell:getContainer()==backpack.inner and play
 expand(pending,q)
 local axeUnequips,bagUnequips=0,0
 for _,action in ipairs(q.queue)do
+    if action.Type=='ISUnequipAction'then
+        local contract,adapter=policy.inspect(action)
+        assert(contract and adapter=='native.ISUnequipAction','ordinary native unequip acquired an ambiguous Fitness contract')
+    end
     if action.Type=='ISUnequipAction' and action.item==axe then axeUnequips=axeUnequips+1 end
     if action.Type=='ISUnequipAction' and action.item==backpack then bagUnequips=bagUnequips+1 end
 end
@@ -1017,9 +1021,9 @@ assert(#q.queue==1 and currentExercise==nil and player.worn.BACK==backpack,
 enabled=true
 print('PASS native queue-disabled ground storage, closed-window restoration, distance guards and placement preflight')
 
--- Execute the selected cart drop wrappers after Fitness captures the native callbacks,
+-- Execute the selected cart equipment/drop wrappers after Fitness captures native callbacks,
 -- exactly as the full mod pack's OnGameStart does. Source pins and the production
--- private drop-admission installer are used rather than an unconditional cart stub.
+-- private equipment/drop admission installers are used rather than unconditional cart approval.
 if SaucedCartsSource then
  local restrictionsPath=SaucedCartsSource..'/ContainerRestrictions.lua'
  local restrictions=read(restrictionsPath)
@@ -1030,25 +1034,30 @@ if SaucedCartsSource then
  local pinCode='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua\'))();local sourceFiles={}\n'
   ..assert(compatText:match('(local function verified%(id, files%).-\nend)'))..'\nlocal Compat={}\n'
   ..assert(compatText:match('(function Compat.isCartMaskSource%(%).-\nend)'))..'\nreturn Compat'
- local admissionCode='local Carts={isTransfer=function()return false end,isReturn=function()return false end};local Toolkit=PZSurvivorToolkit;local core=SaucedCarts;local compat=Toolkit.ActionQueueCompat\n'
+ local admissionCode='local Carts={isTransfer=function()return false end,isReturn=function()return false end};local Toolkit=PZSurvivorToolkit;local core=SaucedCarts;local compat=Toolkit.ActionQueueCompat;local Policy=Toolkit.ActionQueuePolicy\n'
   ..'local function filename(callback)return getFilenameOfClosure(callback):match("([^/]+)$")end\n'
   ..'local function unchanged()return Toolkit.ActionQueueCarts==Carts end\n'
-  ..assert(cartsText:match('(local function ordinaryEquipment%(item%).-\nend)'))..'\n'
-  ..assert(cartsText:match('(%-%- Fitness uses the ordinary%-bag branches.-)\nlocal function installFoodMaskRemoval'))
-  ..'\nToolkit.ActionQueueCarts=Carts;installFitnessStorageDrop();return Carts'
- local hookCode='local dropActionHookInitialized=false\n'
+  ..assert(cartsText:match('(local equipmentGuard, equipmentMatch, equipmentPrevious, equipmentReplacement.-)\nfunction Carts.install'))
+  ..'\nToolkit.ActionQueueCarts=Carts;installFoodMaskRemoval();installFitnessStorageDrop();return Carts'
+ local hookCode='local dropActionHookInitialized=false;local unequipHookInitialized=false\n'
   ..assert(restrictions:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
   ..assert(restrictions:match('(local function wrapDropNew%(%).-\nend)'))..'\n'
-  ..assert(restrictions:match('(local function initDropActionHook%(%).-\nend)'))..'\nreturn initDropActionHook'
+  ..assert(restrictions:match('(local function initDropActionHook%(%).-\nend)'))..'\n'
+  ..assert(restrictions:match('(local function wrapUnequipNew%(%).-\nend)'))..'\n'
+  ..assert(restrictions:match('(local function initUnequipHook%(%).-\nend)'))..'\nreturn function()initUnequipHook();initDropActionHook()end'
  local function source(text,path)return assert(loadstring(text,'@'..path))()end
  local originalStartAdd=Events.OnGameStart.Add
  local originalModReader=getModFileReader
- for _,mode in ipairs({'valid','changed-source','preinstalled'})do
+ for _,mode in ipairs({'normal','pickup-cancel','active-cancel','changed-source','preinstalled'})do
   reset()
   native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
-  native('shared/TimedActions/ISDropWorldItemAction.lua')
+  native('shared/TimedActions/ISDropWorldItemAction.lua');native('shared/TimedActions/ISUnequipAction.lua')
   f.project('FitnessEquipment') -- Each source scenario owns its native UI preparation registry.
   f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+  local cartCore=assert(loadstring('local Queue,Toolkit,Policy,Operations,Settlement = ...\n'..
+   'local craft,live,stoppable=Policy.isCraftAction,Policy.live,Policy.stoppable\n'..
+   'local Batch,processPriority,returnMarker=nil,nil,{}\n'..coreChunk..'\nreturn Queue',
+   '@PZSurvivorToolkit/ActionQueue.lua'))({},PZSurvivorToolkit,policy,PZSurvivorToolkit.ActionQueueOperations,settlement)
   local callbacks={}
   Events.OnGameStart.Add=function(callback)callbacks[#callbacks+1]=callback end
   SaucedCarts=source('return {CartTypes={},safeIsCart=function(item)return item and item.cart end,debug=function()end}',SaucedCartsSource..'/Core.lua')
@@ -1068,21 +1077,66 @@ if SaucedCartsSource then
   local carts=source(admissionCode,clientRoot..'ActionQueueCarts.lua')
   fitnessQueue=f.project('ActionQueueFitness')
   for _,callback in ipairs(callbacks)do callback()end
+  -- Mirror Compat's synchronous enqueue observation before Fitness binds preparation.
+  local nativeAdd=ISTimedActionQueue.add
+  local borrowingScope
+  ISTimedActionQueue.add=function(action)
+   local result=nativeAdd(action)
+   if result and action.toolkitQueueOperation then
+    borrowingScope=borrowingScope or settlement.deferred(player,action.toolkitQueueOperation)
+    settlement.remember(borrowingScope,action,policy.inspect(action))
+    if action.Type=='ISInventoryTransferAction' and action.srcContainer:getType()~='floor' and policy.isOrdinaryTransfer(action) then settlement.preparePickup(borrowingScope,action)end
+   end
+   return result
+  end
   local bag=item('Bag_BigHikingBag',nil,'BACK');bag.favorite=true;player.worn.BACK=bag
-  local packed=item('WaterBottle',bag.inner)
-  local requestAction,cartQueue=request('squats',10)
-  if mode~='valid'then
-   assert(not fitnessQueue.isManaged(requestAction)and requestAction.Type=='ISUnequipAction',
+  local packed=item('WaterBottle',bag.inner);local borrowed=item('DumbBell',bag.inner)
+  local axe=item('Axe',nil,nil,true);player.primary,player.secondary=axe,axe
+  local requestAction,cartQueue=request('bicepscurl',10)
+  if mode=='changed-source' or mode=='preinstalled'then
+   assert(not fitnessQueue.isManaged(requestAction)and requestAction.Type=='ISInventoryTransferAction',
     'unverified/preinstalled cart drop source acquired managed producer permission: '..mode)
   else
    assert(fitnessQueue.isManaged(requestAction),'actual selected late cart drop wrappers forced native Fitness fallback')
    expand(requestAction,cartQueue)
-   local exercise=reachExercise(cartQueue)
-   assert(bag:getWorldItem()and not player.worn.BACK,'approved ordinary bag did not use native paid ground placement')
-   finish(cartQueue,exercise)
-   assert(player.worn.BACK==bag and packed:getContainer()==bag.inner and bag:isFavorite()and #worlds==0,
-    'actual ordinary cart drop wrapper did not preserve exact storage restoration')
+   local reviewedUnequips={}
+   for _,action in ipairs(cartQueue.queue)do if action.Type=='ISUnequipAction'then reviewedUnequips[#reviewedUnequips+1]=action end end
+   local unrelated=head();ISTimedActionQueue.add(unrelated)
+   local borrowedReturns=0
+   if mode=='pickup-cancel'then
+    local pickup=assert(cartQueue.queue[1]);assert(pickup.Type=='ISInventoryTransferAction')
+    pickup.action=nativeAction();cartQueue.current=pickup;lifecycle.started(pickup)
+    nextTransaction=nextTransaction+1;pickup.transactionId=nextTransaction;transactions[nextTransaction]='completed'
+    lifecycle.begin(pickup,'perform');pickup:checkQueueList()
+    assert(cartCore.cancelOperation(cartQueue,pickup),'actual cart unequip wrapper blocked in-flight pickup cancellation')
+    pickup.srcContainer:Remove(borrowed);pickup.destContainer:AddItem(borrowed)
+    table.remove(pickup.queueList,1);lifecycle.finish(pickup,'perform',true);lifecycle.reset(cartQueue);cartQueue:onCompleted(pickup)
+   else
+    local exercise=reachExercise(cartQueue)
+    assert(bag:getWorldItem()and not player.worn.BACK,'approved ordinary bag did not use native paid ground placement')
+    if mode=='active-cancel'then
+     assert(cartCore.cancelOperation(cartQueue,exercise),'actual cart unequip wrapper blocked active exercise cancellation')
+     exercise:forceStop();cartQueue:onCompleted(exercise)
+    else exercise:forceStop();removeCurrent(cartQueue)end
+   end
+   for _=1,20 do
+    if cartQueue.queue[1]==unrelated then break end
+    local current=assert(cartQueue.queue[1])
+    if current.Type=='ISInventoryTransferAction'and current.item==borrowed and current.destContainer==bag.inner then borrowedReturns=borrowedReturns+1 end
+    runCurrent(cartQueue)
+   end
+   assert(cartQueue.queue[1]==unrelated and player.primary==axe and player.secondary==axe and player.worn.BACK==bag
+    and borrowed:getContainer()==bag.inner and borrowedReturns==1 and packed:getContainer()==bag.inner and bag:isFavorite()and #worlds==0,
+    'actual cart equipment/drop wrappers lost exact hands/storage/prop return before tail: '..mode)
+   assert(#reviewedUnequips==2,'actual wrapper fixture omitted hand/bag preparation')
+   for _,action in ipairs(reviewedUnequips)do
+    local contract,adapter=policy.inspect(action)
+    assert(contract and adapter=='toolkit.fitness-cart-unequip','owned wrapped unequip lacks its unambiguous Fitness contract')
+    local foreign=ISUnequipAction:new(player,action.item,50)
+    assert(not policy.inspect(foreign),'identical unowned wrapped unequip acquired Fitness queue-edit permission')
+   end
    local function rejected(message)
+    player.primary,player.secondary=nil,nil
     player.worn.BACK=nil -- Fallback is checked without executing a deliberately replaced constructor.
     local rejectedAction=request('squats',10)
     player.worn.BACK=bag
@@ -1093,10 +1147,32 @@ if SaucedCartsSource then
     rejected('changed drop callback retained managed permission: '..name)
     ISDropWorldItemAction[name]=callback
    end
+   for _,name in ipairs({'new','complete','start'})do
+    local callback=ISUnequipAction[name];ISUnequipAction[name]=function()end
+    rejected('changed unequip callback retained managed permission: '..name)
+    assert(not policy.inspect(reviewedUnequips[1]),'changed unequip callback retained owned contract')
+    ISUnequipAction[name]=callback
+   end
+   for _,name in ipairs({'isUnequipConstructor','isNonCartUnequip'})do
+    local helper=carts[name];carts[name]=function()return true end
+    rejected('replacement equipment helper retained managed permission: '..name)
+    assert(not policy.inspect(reviewedUnequips[1]),'replacement equipment helper retained owned contract')
+    carts[name]=helper
+   end
    local classifier=SaucedCarts.safeIsCart;SaucedCarts.safeIsCart=function()return false end
    rejected('changed cart classification helper retained managed drop permission');SaucedCarts.safeIsCart=classifier
    local helper=carts.isDropCallback;carts.isDropCallback=function()return true end
    rejected('replacement cart admission helper retained managed permission');carts.isDropCallback=helper
+   local removal=reviewedUnequips[1]
+   removal.item.cart=true
+   assert(not fitnessQueue.isManaged(removal)and not policy.inspect(removal),'cart acquired owned ordinary unequip permission')
+   removal.item.cart=nil
+   SaucedCarts.CartTypes[removal.item:getFullType()]=true
+   assert(not fitnessQueue.isManaged(removal)and not policy.inspect(removal),'known cart type acquired owned unequip permission')
+   SaucedCarts.CartTypes[removal.item:getFullType()]=nil
+   removal.onCompleteFunc=function()end
+   assert(not fitnessQueue.isManaged(removal)and not policy.inspect(removal),'foreign completion callback acquired owned unequip permission')
+   removal.onCompleteFunc=nil
    local drop=ISDropWorldItemAction:new(player,bag,here,0,0,0,0,false)
    bag.cart=true;assert(not carts.isNonCartDrop(drop),'cart acquired ordinary ground storage drop permission');bag.cart=nil
    SaucedCarts.CartTypes[bag:getFullType()]=true
@@ -1105,10 +1181,11 @@ if SaucedCartsSource then
    drop.onCompleteFunc=function()end
    assert(not carts.isNonCartDrop(drop),'drop with foreign completion callback acquired managed permission')
   end
+  ISTimedActionQueue.add=nativeAdd
  end
  Events.OnGameStart.Add=originalStartAdd;getModFileReader=originalModReader
- native('shared/TimedActions/ISDropWorldItemAction.lua');f.project('FitnessEquipment')
- print('PASS actual late SaucedCarts drop wrappers admit ordinary Fitness storage and reject changed source/helpers/carts')
+ native('shared/TimedActions/ISDropWorldItemAction.lua');native('shared/TimedActions/ISUnequipAction.lua');f.project('FitnessEquipment')
+ print('PASS actual late SaucedCarts equipment/drop wrappers preserve normal and cancelled borrowing with guarded admission')
 end
 
 -- A changed source present before capture must not acquire a new permission.

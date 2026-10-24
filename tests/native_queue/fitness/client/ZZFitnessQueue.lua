@@ -63,6 +63,25 @@ local function emit(row)
  row.suite,row.kind,row.mode,row.actor='fitness',config.kind,config.mode,actor;JSON.emit(row)
 end
 local function raw(marker,row)print('[FITNESS_TEST] '..marker..' '..JSON.encode(row))end
+local function cancel(action,message)
+ local accepted,reason=API.cancelOperation(queue(),action)
+ if not accepted then
+  local policy=T.ActionQueuePolicy;local decision=policy.evaluateCancel(queue(),action,true);local members={}
+  for _,member in ipairs(queue().queue)do
+   local contract,adapter=policy.inspect(member)
+   members[#members+1]={kind=member.Type,stage=member.toolkitFitnessStage or false,adapter=adapter or false,
+    managed=T.ActionQueueFitness.isManaged(member),cancelWaiting=contract and contract.cancelWaiting or false,
+    cancelOperation=contract and contract.cancelOperation~=false or false,preparation=contract and contract.preparation or false,
+    preparationFinish=contract and contract.preparationFinish or false,deferred=contract and contract.deferred or false,
+    adding=member._isAddingActions==true,completeCallback=member.onCompleteFunc~=nil,
+    completeCallbackSafe=member.onCompleteFunc==member.toolkitQueueSafeOnComplete}
+  end
+  raw('CANCEL_REJECTED',{case=case(),reason=reason or false,decisionReason=decision.reason or false,
+   blocker=decision.blocker and decision.blocker.Type or false,first=decision.first or false,last=decision.last or false,
+   current=action.Type,preparationCanFinish=policy.preparationCanFinish(action),members=members})
+ end
+ assert(accepted,message..' ('..tostring(reason)..')')
+end
 local function run(fn,...)
  if native then return fn(...)end
  return Ops.run(fn,...)
@@ -218,7 +237,7 @@ local function observe()
    command.pickupCancel={id=current.item:getID(),kind=current.item:getFullType(),source=state.ids.items.bag,
     destination='root',progress=current:getJobDelta(),started=current:isStarted(),transaction=current.transactionId or 0}
    if native then ui:onClick(ui.cancel);command.cancelCallback='ISFitnessUI:CANCEL'
-   else assert(API.cancelOperation(queue(),current),'in-flight fitness pickup cancellation rejected');command.cancelCallback='ActionQueue.cancelOperation'end
+   else cancel(current,'in-flight fitness pickup cancellation rejected');command.cancelCallback='ActionQueue.cancelOperation'end
    command.pickupCancelled=true
    assert(queue():indexOf(tail)~=-1,'pickup cancellation removed independent tail')
   end
@@ -228,7 +247,7 @@ local function observe()
   command.placementCancel={id=current.item:getID(),kind=current.item:getFullType(),progress=current:getJobDelta(),started=true,
    isPlaceItem=current.isPlaceItem==true,square={x=current.sq:getX(),y=current.sq:getY(),z=current.sq:getZ()},storage=F.storage(player,state.ids.items.bag),inventory=F.inventory(player)}
   if native then ui:onClick(ui.cancel);command.cancelCallback='ISFitnessUI:CANCEL'
-  else assert(API.cancelOperation(queue(),current),'in-flight fitness placement cancellation rejected');command.cancelCallback='ActionQueue.cancelOperation'end
+  else cancel(current,'in-flight fitness placement cancellation rejected');command.cancelCallback='ActionQueue.cancelOperation'end
   command.placementCancelled=true
   assert(queue():indexOf(tail)~=-1,'placement cancellation removed independent tail')
  end
@@ -293,7 +312,7 @@ local function observe()
    command.activeSince=command.activeSince or getTimestampMs()
    local repObserved=isClient()and (command.authoritativeReps or 0)>0 or not isClient()and current.repnb>0
    if repObserved and getTimestampMs()-command.activeSince>=3500 and (not isClient()or native or ack[current])and (case()~='active-cancel-restore'or native or command.confirmedPreparation)then
-    if native then ui:onClick(ui.cancel)else assert(API.cancelOperation(queue(),current),'active fitness cancellation rejected')end
+    if native then ui:onClick(ui.cancel)else cancel(current,'active fitness cancellation rejected')end
     command.activeCancelled=true
     if F.restorationCase(case())then command.cancelCallback=native and 'ISFitnessUI:CANCEL'or 'ActionQueue.cancelOperation' end
    end
