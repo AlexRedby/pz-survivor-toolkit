@@ -76,6 +76,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 # Fitness preparation live verification
 
+- [ ] Preserve native completion of the exact accepted in-flight `finish-step` cancellation when Host already confirmed its effect. Keep the remaining stop/input/death/reset/provenance guards, prove the private cancellation binding with real-ACK regressions, and rerun the failed Host placement case before delivery. `run-owned07-host` preserves the original failure; its other three cases and all four SP cases passed.
 - [ ] Keep native cleanup contracts scoped to their actual owning family: food-mask restoration must not claim Fitness bag wear. Check unique contract selection, required cleanup inheritance and exact prop return before rerunning the affected SP/Host gates below.
 - [ ] Run `closed-ui-restore,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore` in disposable full-pack macOS SP and two-client menu Host with matching queue-disabled controls on the integrated ground-storage code. Require exact hand/bag/favourite/content/activation restoration before the independent reader, confirmed native drop and recovery, one shared pickup/return episode and no replayed workout with clean runtime logs. Preserve original failed runs and native timing/order/replica failures; do not reclassify them as passes. Deliver the migration only after the affected Toolkit gates pass.
 

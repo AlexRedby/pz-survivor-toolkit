@@ -107,11 +107,19 @@ function Queue.cancelOperation(queue, action, expected)
     decision = Policy.evaluateCancel(queue, action, true)
     if not decision.allowed then return false, decision.reason end
     if decision.first ~= first or decision.last ~= last then return false, "unavailable" end
-    if Operations.invalidate then Operations.invalidate(action.toolkitQueueOperation) end
-    if Batch then Batch.cancel(action) end
+    local request
     if first == 1 and queue.current == queue.queue[1] then
         local current = queue.current
-        queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
+        request = {action = current, token = current.toolkitQueueOperation}
+        if not stoppable(current) then
+            Toolkit.ActionQueueLifecycle.acceptFinishStepCancellation(queue, current, request, decision)
+        end
+    end
+    if Operations.invalidate then Operations.invalidate(action.toolkitQueueOperation) end
+    if Batch then Batch.cancel(action) end
+    if request then
+        local current = queue.current
+        queue.toolkitGroupCancel = request
         if stoppable(current) then
             Toolkit.ActionQueueLifecycle.requestStop(queue, current, "cancel", "operation")
         end

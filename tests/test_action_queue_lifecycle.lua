@@ -170,6 +170,119 @@ assert(not permitted(),'a stale queue generation acquired completion')
 queue.toolkitOperationGeneration=queue.toolkitOperationGeneration-1
 assert(permitted())
 ack.reset(queue);assert(not permitted(),'queue reset revived a retained completed receipt')
+-- Exercise the real public cancellation function with controlled Policy resource
+-- decisions and the real sealed ACK registry. No callback/effect is executed by
+-- the completion permission, including an accepted cancellation of a later row.
+do
+    local toolkit=PZSurvivorToolkit
+    local previousPolicy=toolkit.ActionQueuePolicy
+    local methods={}
+    for _,name in ipairs({'getPlayerNum','getOnlineID','isDead','isLocalPlayer','pressedCancelAction','isPlayerMoving',
+        'pressedMovement','isRunning','isSprinting','isAiming'})do methods[name]=actor[name]end
+    local descriptor={}
+    local callback=function()end
+    local policy={}
+    function policy.inspect(value)
+        if value.perform~=callback or value.complete~=callback or value.foreign then return end
+        return {interrupt=value.auditedStop and 'audited-stop' or 'finish-step',preparationFinish=true},'fixture.preparation',descriptor
+    end
+    function policy.stoppable(value)return value.auditedStop==true end
+    function policy.preparationCanFinish(value)return policy.inspect(value)~=nil and not value.unsafe end
+    function policy.editUnchanged(value,snapshot)
+        return snapshot and snapshot.queue==value and snapshot.current==value.current and snapshot.list==value.queue
+            and snapshot.native==value.current.action and snapshot.token==value.current.toolkitQueueOperation
+            and snapshot.cancelled==value.current.toolkitQueueOperation.toolkitCancelled
+            and snapshot.generation==(value.toolkitOperationGeneration or 0) and snapshot.group==value.toolkitGroupCancel
+    end
+    function policy.evaluateCancel(value,target)
+        local accepted=not value.toolkitGroupCancel and policy.inspect(value.current)~=nil and not target.denied
+        return {allowed=accepted,reason=not accepted and 'operation_dependent' or nil,first=1,last=#value.queue,
+            mode=target==value.current and 'active'or 'pending',snapshot={queue=value,current=value.current,list=value.queue,
+                native=value.current.action,token=value.current.toolkitQueueOperation,
+                cancelled=value.current.toolkitQueueOperation.toolkitCancelled,generation=value.toolkitOperationGeneration or 0,
+                group=value.toolkitGroupCancel}}
+    end
+    function policy.record()end
+    toolkit.ActionQueuePolicy=policy
+    local function read(path)
+        local file=assert(io.open(path));local text=file:read('*a');file:close();return text
+    end
+    local cancelSource=assert(read(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua')
+        :match('(function Queue.cancelOperation%(queue, action, expected%).-\nend)'))
+    local api=assert(loadstring('local Queue,Toolkit,Policy,Operations=...;local Batch;local stoppable=Policy.stoppable\n'
+        ..cancelSource..'\nreturn Queue','@PZSurvivorToolkit/ActionQueue.lua'))({},toolkit,policy,
+            {invalidate=function(token)token.toolkitCancelled=true end})
+    local stopped=0
+    local function prepare(terminal,later)
+        queue,action,present=fixture();actor=action.character
+        for name,method in pairs(methods)do actor[name]=method end
+        native=action.action
+        action.toolkitNativeTransaction,action.toolkitNativeKind=7,'CompletionProbe'
+        action.toolkitQueueOperation={};action.perform,action.complete=callback,callback
+        action.forceStop=function()stopped=stopped+1 end
+        local target=action
+        if later then
+            target={character=actor,toolkitQueueOperation=action.toolkitQueueOperation}
+            queue.queue[2]=target
+        end
+        ack.reset(queue);serial=serial+1
+        if terminal then deliver('started');if terminal~='started'then deliver(terminal)end end
+        assert(api.cancelOperation(queue,target),'actual accepted preparation cancellation was rejected')
+        assert(queue.toolkitGroupCancel.action==action and action.toolkitQueueOperation.toolkitCancelled,
+            'public cancellation did not bind its actual current native step')
+        return target
+    end
+    for _,terminal in ipairs({'started','rejected','canceled','completed'})do
+        prepare(terminal)
+        assert(permitted()==(terminal=='completed'),'finish-step cancellation bypassed the exact terminal ACK: '..terminal)
+    end
+    assert(stopped==0,'finish-step cancellation invoked native forceStop')
+    prepare(nil);assert(not permitted(),'finish-step cancellation invented a receipt')
+    deliver('started');assert(not permitted(),'started ACK became completed finish-step work')
+    deliver('completed');assert(permitted(),'late exact completed ACK lost its accepted finish-step capability')
+    prepare('completed',true);assert(permitted(),'canceling a later same-operation row lost the current finish-step capability')
+    local request=queue.toolkitGroupCancel
+    queue.toolkitGroupCancel={action=action,token=action.toolkitQueueOperation}
+    assert(not permitted(),'copied public request fields acquired private finish-step completion')
+    queue.toolkitGroupCancel=request;assert(not permitted(),'a replaced request revived revoked finish-step completion')
+    for _,mutate in ipairs({
+        function()action.toolkitQueueOperation={}end,
+        function()queue.toolkitGroupCancel.token={}end,
+        function()action.action={}end,
+        function()queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1 end,
+        function()queue.current={}end,
+        function()queue.queue[1]={}end,
+        function()ISTimedActionQueue.queues[actor]={}end,
+        function()action.perform=function()end end,
+        function()action.complete=function()end end,
+        function()action.unsafe=true end,
+        function()action.auditedStop=true end,
+        function()toolkit.ActionQueuePolicy={}end,
+    })do
+        toolkit.ActionQueuePolicy=policy;prepare('completed');mutate()
+        assert(not permitted(),'changed finish-step ownership/proof retained completion')
+    end
+    toolkit.ActionQueuePolicy=policy
+    for _,name in ipairs({'toolkitCancel','toolkitStopIntent','toolkitOutcomeWait','toolkitResume','toolkitOperationsInvalid'})do
+        prepare('completed');queue[name]={};assert(not permitted(),'private finish-step capability overrode '..name)
+    end
+    for _,name in ipairs({'dead','cancel','moving','input','running','sprinting','aiming'})do
+        prepare('completed');action.stopOnWalk,action.stopOnRun,action.stopOnAim=true,true,true
+        actor[name]=true;assert(not permitted(),'private finish-step capability overrode native '..name)
+    end
+    prepare('completed');actor.localPlayer=false;assert(not permitted(),'foreign actor retained finish-step completion')
+    prepare('completed');enabled=false;assert(not permitted());enabled=true
+    assert(not permitted(),'feature re-enable revived a revoked finish-step capability')
+    prepare('completed');Lifecycle.reset(queue);assert(not permitted(),'lifecycle reset retained canceled finish-step completion')
+    prepare('completed');Lifecycle.finish(action,'perform',true)
+    assert(not permitted(),'native callback finish retained a reusable cancellation capability')
+    prepare('completed');Lifecycle.started({character=actor,action={}})
+    assert(not permitted(),'a different native start retained an older cancellation capability')
+    prepare('completed');Lifecycle.requestStop(queue,action,'cancel','operation')
+    assert(not permitted(),'explicit stop retained finish-step completion')
+    assert(stopped==1,'explicit stop lost its native forceStop')
+    toolkit.ActionQueuePolicy=previousPolicy
+end
 print("Action queue lifecycle checks passed (SP effects, MP callback tail, sealed completion, explicit stops, native removal, failures, reset, ownership, disabled).")
 
 -- A broken read-only integration cannot replay or abort the native callback.
