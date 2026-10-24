@@ -9,6 +9,7 @@
 # Exercise ground storage
 
 - [ ] Diagnose queue-disabled full-pack Host Fitness equipment restoration: the exact dumbbell remains in root instead of returning to its recovered source bag (both replicas agree; no item loss), and the server retains the original secondary-hand item at workout start. Require actual native return/equip transactions and exact final IDs. Preserve the native get-up callback ordering difference that runs the already-queued reader before appending the workout; do not relabel it a Toolkit ordering pass.
+- [ ] Diagnose the queue-disabled native Fitness constructor timer: a thirty-minute burpees request in the full-pack Host control produced only twenty-six authoritative workout minutes after preparation. Require the complete selected body duration without changing native effects; preserve the failed control separately from the verified Toolkit timer.
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 
 # Container editor visual states
@@ -22,11 +23,6 @@
 # Vehicle aim roof fix verification
 
 - [ ] Resolve CarRoofFix through Workshop or an explicit source override, then verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
-
-# Fitness completion verification
-
-- [ ] Repeat `fitness --cases closed-ui-restore,burpees-30 --kind mp --mode toolkit` with the full selected pack after fixing the peer observer's boolean/table confusion, and require clean runtime logs on both clients. Retain the passed full confirmed continuous duration, independent server duration, prompt native removal, exact terminal acknowledgement, equipment restoration and independent-reader gates. Preserve the failed native control's shortened constructor window and get-up ordering; its diagnosis remains in Exercise ground storage above. Keep the runner's default desktop policy.
-- [ ] After successful verification, preserve the run evidence outside the task worktree, push the integrated result to main, verify the remote commit and remove only this task's merged branch/worktree before archiving the chat.
 
 # Nick's Turn Off Fridges selection
 
