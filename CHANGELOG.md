@@ -24,6 +24,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.250
+
+- **Performance:** Avoid duplicate nearby-container discovery after a simultaneous turn and tile change. Defer unused details rows and counts while the loot window is fully hidden and idle; rebuild on reopening while preserving reachable containers, Better Containers aggregates and live transfer/crafting inputs.
+- **Performance:** Build filter-menu item snapshots only when needed and skip the extra empty-selection projection. Reuse capacity-bar weight readings for up to 200 ms, invalidating on container changes; transfer capacity checks remain immediate.
+
 ### 0.1.249
 
 - **Inventory:** Allow deliberate transfers of several retained items through drag-and-drop, context menus, quantity commands and Smart Deposit. Keep protection during Take/Transfer All, automatic Move to Floor and loot distribution; manual moves keep their retained flags.
@@ -34,6 +39,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 - **Changed:** Vehicle glass is replacement-only: remove Vehicle Repair Overhaul repairs for windshields, side/rear windows and military glass in both Lua and script-recipe modes. Keep glass removal/installation, other vehicle repairs and metal window armor/frame repairs.
 - **Fixed:** Hide empty Repair submenus for installed and loose vehicle parts when Vehicle Repair Overhaul offers no repairs, including fully broken parts with their repair option disabled. Keep unavailable choices that explain missing materials or skills, and preserve sandbox repair rules.
+
 
 ### 0.1.247
 

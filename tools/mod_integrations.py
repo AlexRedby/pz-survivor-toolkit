@@ -65,12 +65,14 @@ INTEGRATIONS = {
                                                                        'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua')),
             'test_container_configuration_menus.lua': CLEAN_PAGES,
             'test_smart_deposit.lua': CLEAN_PAGES,
+            'test_inventory_refresh.lua': CLEAN_PAGES,
         },
         'game_inputs': {
             **{test: ('native_inventory_pane',) for test in ('test_inventory_tags.lua', 'test_inventory_filter.lua',
                                                            'test_inventory_layout.lua', 'test_inventory_interaction.lua')},
             **{test: ('native_action_root',) for test in ('test_inventory_transfer_operations.lua',
-                                                        'test_container_configuration_menus.lua', 'test_smart_deposit.lua')},
+                                                        'test_container_configuration_menus.lua', 'test_smart_deposit.lua',
+                                                        'test_inventory_refresh.lua')},
         },
     },
     'Navigator': {
@@ -115,10 +117,11 @@ INTEGRATIONS = {
                       Source('NativeBCIniWriterSource', '_IO/IniWriter.lua'),
                       Source('NativeBCIOSource', '_IO/_IO.lua')),
                   'test_smart_deposit.lua': (Source('NativeBCSmartDepositSource', 'Proximity/Proximity_SmartDeposit.lua'),),
+                  'test_inventory_refresh.lua': (Source('NativeBCProximitySource', 'Proximity.lua'),),
                   'test_container_configuration_menus.lua': (Source('NativeBCPageCustomizerSource',
                                                                     'Customize/Customize_ISInventoryPage.lua'),)},
         'game_inputs': {test: ('native_action_root',) for test in ('test_smart_deposit.lua',
-                                                                 'test_container_configuration_menus.lua')},
+                                                                 'test_container_configuration_menus.lua', 'test_inventory_refresh.lua')},
     },
 }
 

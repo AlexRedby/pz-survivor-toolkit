@@ -133,3 +133,10 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Inventory infrastructure proposals
 
 - [ ] Remove the discarded details-selection mapping at the known native/CleanUI restore boundary after agreeing the integration: InventoryFilter invokes upstream restore, then InventoryRows wipes its result and maps the final rows again. Retain external mod hooks, final row ordering and unknown/icon-mode fallback; prove render-capped expanded stacks and selection/Shift-anchor correctness before removing the first pass.
+
+# Warehouse client workload
+
+- [ ] Coalesce movement-triggered loot rebuilds and defer hidden presentation work while keeping reachable-container data fresh for native/mod consumers; verify reopen, remote changes, nesting, transfers and UI-mode switches.
+- [ ] Remove avoidable full-item snapshot/selection work in the owned filter pipeline without changing live metadata, filtering or selection behavior.
+- [ ] Bound capacity-indicator redraw work without caching transfer admission; preserve fresh item/fluid/nested-container state and clean lifecycle ownership.
+- [ ] Add source-backed workload regressions for native/CleanUI/Better Containers, review integration boundaries, run affected checks and update shipped version/changelog. Run isolated native checks if source-backed tests cannot establish the required behavior.

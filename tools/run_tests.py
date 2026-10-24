@@ -89,7 +89,7 @@ def configure_test_sources(lua, name, args):
         lua.globals().NativePZLuaRoot = str(args.native_action_root)
     if name == 'test_container_appearance_controls.lua' and args.native_action_root:
         lua.globals().NativeColorPickerSource = (args.native_action_root / 'client/ISUI/ISColorPickerHSB.lua').read_text(encoding='utf-8')
-    if name in ('test_container_configuration_menus.lua', 'test_smart_deposit.lua'):
+    if name in ('test_container_configuration_menus.lua', 'test_smart_deposit.lua', 'test_inventory_refresh.lua'):
         if args.native_action_root:
             lua.globals().NativeInventoryPageSource = (args.native_action_root / 'client/ISUI/ISInventoryPage.lua').read_text(encoding='utf-8')
     if name in ("test_highlighter.lua", "test_item_details.lua") and args.native_mod_options:

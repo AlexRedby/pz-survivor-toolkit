@@ -85,13 +85,26 @@ local function filterGroup(group, accepts)
     return copy
 end
 
+local function filterItems(pane)
+    if not pane.toolkitFilterItems then
+        local items, seen = {}, {}
+        for _, group in ipairs(pane.toolkitFilterSourceRows or pane.itemslist or {}) do
+            for _, item in ipairs(group.items or {}) do
+                if not seen[item] then items[#items + 1], seen[item] = item, true end
+            end
+        end
+        pane.toolkitFilterItems = items
+    end
+    return pane.toolkitFilterItems
+end
+
 -- Menu choices use the complete refresh universe, never its filtered/split rows.
 -- Read live instance metadata on demand; ordinary restores need no menu labels/tags.
 function Filter.choices(pane, includeTags)
     local categories, tags, result = {}, {}, {}
     if not Toolkit.Settings.inventoryFilters() then return result, tags end
     local tagsEnabled = includeTags ~= false and Tags.enabled()
-    for _, item in ipairs(pane.toolkitFilterItems or {}) do
+    for _, item in ipairs(filterItems(pane)) do
         local category = item:getDisplayCategory() or item:getCategory()
         if category then categories[category] = true end
         if tagsEnabled then
@@ -112,17 +125,10 @@ local function applyFilter(pane, selected)
     pane.toolkitUnfilteredRows = pane.itemslist
     pane.toolkitVisibleItems = nil
     if not Toolkit.Settings.inventoryFilters() then return end
-    -- Choices belong to the full refresh, not a later split/pinned projection.
-    -- Keep physical references so changed instance categories are still live.
-    if not pane.toolkitFilterItems then
-        local items, seen = {}, {}
-        for _, group in ipairs(pane.itemslist) do
-            for _, item in ipairs(group.items or {}) do
-                if not seen[item] then items[#items + 1], seen[item] = item, true end
-            end
-        end
-        pane.toolkitFilterItems = items
-    end
+    -- Keep the first full row universe across our filtered copies and later
+    -- split/pin projections. Physical items are enumerated only when a menu needs
+    -- them; metadata is always read live from those references.
+    if not pane.toolkitFilterSourceRows then pane.toolkitFilterSourceRows = pane.itemslist end
     local search = Search.forPane(pane)
     local filterTags = tagFilterActive(pane)
     if not pane.toolkitCategory and not filterTags and not search then return end
@@ -287,7 +293,7 @@ local function install(class)
             membership.index = {}
             membership = membership.parent
         end
-        self.toolkitFilterItems = nil
+        self.toolkitFilterItems, self.toolkitFilterSourceRows = nil, nil
         return refresh(self, ...)
     end
     local restore, prerender, transfer = class.restoreSelection, class.prerender, class.transferItemsByWeight
@@ -295,7 +301,17 @@ local function install(class)
         local saved = applyFilter(self, selected) or selected
         local result = restore(self, saved)
         -- Keep mod ordering/filter hooks, then publish indices for the final view.
-        if self.mode == "details" then Rows.restoreSelection(self, saved) end
+        if self.mode == "details" then
+            local hasSelection = false
+            for key, value in pairs(saved) do
+                if key == "_cleanUISelectedGroups" then
+                    for _ in pairs(value) do hasSelection = true; break end
+                else hasSelection = true end
+                if hasSelection then break end
+            end
+            if hasSelection then Rows.restoreSelection(self, saved)
+            else table.wipe(self.selected) end
+        end
         return result
     end
     class.prerender = function(self, ...)
