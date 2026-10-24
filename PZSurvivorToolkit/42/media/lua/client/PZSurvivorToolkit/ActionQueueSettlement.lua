@@ -5,6 +5,118 @@ Toolkit.ActionQueueSettlement = Settlement
 local providers, byId = {}, {}
 local cleanupMarker = {}
 
+local operationMarker, stepMarker = {}, {}
+local function operationLive(record)
+    return record and record.queue == ISTimedActionQueue.queues[record.character]
+        and record.queue.character == record.character and not record.character:isDead()
+        and (record.queue.toolkitOperationGeneration or 0) == record.generation
+        and Toolkit.Settings and Toolkit.Settings.actionQueue()
+end
+
+local function operation(character, token, create)
+    if type(token) ~= "table" or not character then return end
+    local seal = rawget(token, operationMarker)
+    local record = type(seal) == "function" and seal(token)
+    if record then return operationLive(record) and record.character == character and record or nil end
+    local queue = ISTimedActionQueue.queues[character]
+    if not create or not queue then return end
+    record = {character = character, token = token, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0, phase = "prepare", steps = {}, actions = {}, borrowings = {}}
+    if not operationLive(record) then return end
+    token[operationMarker] = function(value) if value == token then return record end end
+    return record
+end
+
+local function stepProof(handle)
+    local seal = type(handle) == "table" and rawget(handle, stepMarker)
+    return type(seal) == "function" and seal(handle) or nil
+end
+
+-- Records live with their operation, not the shrinking native queue. Merely
+-- accepting or removing a step never earns an effect or permission to replay it.
+function Settlement.track(action, phase)
+    if phase ~= "prepare" and phase ~= "body" and phase ~= "cleanup" then return end
+    local record = action and operation(action.character, action.toolkitQueueOperation, true)
+    if not record then return end
+    local step = record.actions[action]
+    if step then
+        -- Generic enqueue tracking must not overwrite a reviewed adapter's role.
+        if phase ~= "body" and step.state == "pending" then step.phase = phase end
+        return step.handle
+    end
+    step = {operation = record, action = action, phase = phase, state = "pending"}
+    local handle = {}
+    handle[stepMarker] = function(value) if value == handle then return step end end
+    step.handle = handle
+    record.actions[action], record.steps[#record.steps + 1] = step, step
+    return handle
+end
+
+function Settlement.started(action)
+    Settlement.track(action, "body")
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    if step then step.started, record.phase = true, step.phase end
+end
+
+-- The native callback's receipt AND the adapter's exact observed effect must
+-- refer to this step. A receipt from another action cannot pay its obligation.
+function Settlement.bindEffect(handle, receipt)
+    local step = stepProof(handle)
+    if not step or not operationLive(step.operation) or step.state ~= "pending"
+        or step.receipt or not Settlement.effectBelongs(receipt, step.action) then return false end
+    step.receipt = receipt
+    return true
+end
+
+function Settlement.earn(handle, receipt, observed)
+    local step = stepProof(handle)
+    if not step or not operationLive(step.operation) or step.action.character ~= step.operation.character
+        or step.action.toolkitQueueOperation ~= step.operation.token then return false end
+    if step.state == "earned" then return false end
+    if not Settlement.effectBelongs(receipt, step.action) or not Settlement.confirmEffect(receipt, observed) then return false end
+    step.state, step.receipt = "earned", receipt
+    return true
+end
+
+function Settlement.cleanup(action, prerequisite)
+    local before = stepProof(prerequisite)
+    local handle = Settlement.track(action, "cleanup")
+    local step = stepProof(handle)
+    if not before or not step or before.operation ~= step.operation or before == step
+        or before.phase == "cleanup" or step.prerequisite then return false end
+    step.prerequisite = before
+    step.kind = action.Type
+    if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
+    return true
+end
+
+local function requiredCleanup(action)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    return step and step.phase == "cleanup" and step.prerequisite and step.prerequisite.state == "earned"
+        and action.Type == step.kind and (not step.item or action.item and action.item:getID() == step.item.id
+            and action.item:getFullType() == step.item.fullType)
+        and Toolkit.ActionQueuePolicy and Toolkit.ActionQueuePolicy.inspect(action) ~= nil
+end
+
+-- Value-only diagnostics. Callers cannot mutate proof, renew it after reset or
+-- turn an enqueue claim into an authoritative result.
+function Settlement.operationState(action)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    if not record then return end
+    local result = {phase = record.phase, generation = record.generation, steps = {}}
+    for _, step in ipairs(record.steps) do
+        result.steps[#result.steps + 1] = {phase = step.phase, state = step.state, started = step.started == true}
+    end
+    result.borrowings = {}
+    for _, binding in ipairs(record.borrowings) do
+        local candidate = binding.candidate
+        result.borrowings[#result.borrowings + 1] = {id = candidate.id, fullType = candidate.fullType, state = candidate.phase}
+    end
+    return result
+end
+
 -- Families retain their own identity/effect proofs. Registration grants no edit rights.
 function Settlement.register(id, provider)
     assert(type(id) == "string" and type(provider) == "table" and type(provider.retain) == "function")
@@ -18,6 +130,7 @@ function Settlement.register(id, provider)
 end
 
 local function retained(action, current, queue)
+    if requiredCleanup(action) then return "operation-effect" end
     for _, provider in ipairs(providers) do
         if provider.retain(action, current, queue) then return provider.id end
     end
@@ -30,6 +143,12 @@ local function ownedPickup(current, id)
     return false
 end
 
+function Settlement.requiredStep(action)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    return step and step.required == true or false
+end
+
 function Settlement.isCleanup(action)
     return action and action.toolkitQueueReturn == cleanupMarker or false
 end
@@ -37,6 +156,8 @@ end
 local function insert(queue, action, index)
     -- Required work gets a fresh operation: cancelling its former owner cannot revoke it.
     action.toolkitQueueOperation, action.toolkitQueueReturn = {}, cleanupMarker
+    local step = stepProof(Settlement.track(action, "cleanup"))
+    if step then step.required = true end
     table.insert(queue.queue, index, action)
 end
 
@@ -101,6 +222,11 @@ function Settlement.effectState(handle, observed)
     return "waiting"
 end
 
+function Settlement.effectBelongs(handle, action)
+    local proof = effectProof(handle)
+    return proof and proof.action == action or false
+end
+
 function Settlement.confirmEffect(handle, observed)
     local proof = effectProof(handle)
     if not proof or proof.confirmed or Settlement.effectState(handle, observed) ~= "completed" then return false end
@@ -130,6 +256,7 @@ function Settlement.remember(scope, action, contract)
     if not deferred(scope) or scope.phase == "retired" or action.character ~= scope.character
         or not action.toolkitQueueOperation then return false end
     local token = action.toolkitQueueOperation
+    Settlement.track(action, "body")
     if scope.token ~= token then scope.mixed = true end
     if scope.seen[action] then return false end
     scope.seen[action] = true
@@ -610,6 +737,10 @@ function Settlement.preparePickup(scope, action)
     for _, previous in ipairs(ledger.candidates) do
         if previous.id == id and previous.phase ~= "completed" then previous.ambiguous, candidate.ambiguous = true, true end
     end
+    local record = operation(scope.character, candidate.owner, true)
+    if not record then return false end
+    record.borrowings[#record.borrowings + 1] = {scope = scope, candidate = candidate}
+    candidate.step = stepProof(Settlement.track(action, "prepare"))
     ledger.candidates[#ledger.candidates + 1], ledger.actions[action] = candidate, candidate
     ledger.executors[action] = {[id] = candidate}
     return true
@@ -621,7 +752,7 @@ bindPickup = function(proof, member)
     local candidate = mapped and mapped[member.id]
     if candidate and candidate.fullType == member.fullType and candidate.source == proof.source
         and candidate.destination == proof.destination and candidate.phase == "prepare" and not candidate.ambiguous then
-        member.borrowed = candidate
+        member.borrowed, candidate.proof, candidate.member = candidate, proof, member
     end
 end
 
@@ -686,6 +817,7 @@ pollPickups = function(scope)
                 if candidate and candidate.phase == "prepare" and not candidate.ambiguous and member.completed then
                     local attempt = proof.attempts[member.attempt]
                     candidate.phase, candidate.attempt = "active", attempt.ordinal
+                    if candidate.step then candidate.step.state = "earned" end
                     candidate.transaction = proof.client and attempt.transaction or 0
                     candidate.authority = attempt.authority
                 end
@@ -802,22 +934,113 @@ function Settlement.close(scope)
     if deferred(scope) then scope.phase = "retired" end
 end
 
+-- Do not release an independent tail while a preparation result can still
+-- arrive. Pending unstarted work has no receipt; a rejected attempt is isolated.
+-- A lost/expired authority is a failure, never an invitation to guess or retry.
+function Settlement.cancellationState(queue, action)
+    local request = queue and queue.toolkitGroupCancel
+    if not request or request.action ~= action then return "ready" end
+    local record = operation(action.character, request.token)
+    if not record then return "ready" end
+    for _, step in ipairs(record.steps) do
+        if step.phase == "prepare" and step.state ~= "earned" and step.receipt then
+            local state = Settlement.effectState(step.receipt, false)
+            if state == "waiting" then return "waiting" end
+            if state ~= "canceled" and state ~= "rejected" then return "failed" end
+        end
+    end
+    for _, binding in ipairs(record.borrowings) do
+        local scope, candidate = binding.scope, binding.candidate
+        pollPickups(scope)
+        local member, proof = candidate.member, candidate.proof
+        if candidate.phase == "prepare" and member and member.attempt and proof then
+            if not borrowingLive(scope) or proof.invalid then return "failed" end
+            local state = observeAttempt(proof, proof.attempts[member.attempt])
+            if state == "waiting" then return "waiting" end
+            if state ~= "rejected" then return "failed" end
+        end
+    end
+    return "ready"
+end
+
+local function plannedReturn(action)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    return step and step.returning
+end
+
+function Settlement.completionState(queue, action)
+    local planned = plannedReturn(action)
+    if planned then
+        local state = Settlement.returnState(planned.obligation)
+        if state == "waiting" then return "waiting" end
+        if state ~= "completed" and state ~= "rejected" then return "failed" end
+        if state == "completed" then
+            local record = operation(action.character, action.toolkitQueueOperation)
+            record.actions[action].state = "earned"
+        end
+    end
+    return Settlement.cancellationState(queue, action)
+end
+
+function Settlement.plannedReturnMatches(action)
+    local planned = plannedReturn(action)
+    return planned and Settlement.returnMatches(action, planned.obligation) or false
+end
+
+function Settlement.beginPlannedReturn(action, guard)
+    local planned = plannedReturn(action)
+    if not planned or type(guard) ~= "function" then return false end
+    planned.guard = planned.guard or function(value)
+        return value == action and plannedReturn(value) == planned and guard(value)
+    end
+    return Settlement.beginReturn(action, planned.obligation, planned.guard)
+end
+
+function Settlement.refreshPlannedReturn(action)
+    local planned = plannedReturn(action)
+    return planned and Settlement.refreshReturn(action, planned.obligation) or false
+end
+
+function Settlement.finishPlannedReturn(action, succeeded)
+    local planned = plannedReturn(action)
+    return planned and Settlement.finishReturn(planned.obligation, succeeded) or false
+end
+
 -- Called only after the current native step/Host receipt has settled. Pickup
 -- locations are intents: only the surviving exact direct-root item can activate
 -- a return. Family adapters own any stronger effect/cleanup proof they require.
 function Settlement.finish(queue, request, discard)
     local current, token = request.action, request.token
-    if request.settlement or not queue or queue.current ~= current or queue.queue[1] ~= current
+    if request.settlement or not queue or Settlement.cancellationState(queue, current) ~= "ready" or queue.current ~= current or queue.queue[1] ~= current
         or current.character ~= queue.character or current.toolkitQueueOperation ~= token then return false end
+    local record = operation(current.character, token, true)
+    if not record or record.settlement then return false end
     local state = {phase = "body", obligations = {}, discarded = 0}
+    record.settlement, record.phase = state, "body"
     request.settlement = state
     local operations = Toolkit.ActionQueueOperations
     local inventory = queue.character:getInventory()
     local last = 1
     while token and queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == token do last = last + 1 end
-    local returns, cleanup = {}, {}
+    local returns, cleanup, observed = {}, {}, {}
+    -- Receipt-backed borrowing episodes supersede enqueue-only hints. A shared,
+    -- returned, rejected or unresolved episode must never become an exclusive
+    -- synthetic return just because its source action left the queue.
+    for _, binding in ipairs(record.borrowings) do
+        local scope, candidate = binding.scope, binding.candidate
+        pollPickups(scope)
+        observed[candidate.id] = true
+        if borrowingLive(scope) and candidate.phase == "active" and not candidate.ambiguous
+            and not candidate.returning and not sharedBorrowing(scope, candidate) then
+            local previous = returns[candidate.id]
+            if previous then previous.ambiguous = true
+            else returns[candidate.id] = {fullType = candidate.fullType, destination = candidate.source, borrowed = candidate, scope = scope} end
+        end
+    end
     local function rememberReturn(item, destination)
         local id, fullType = item:getID(), item:getFullType()
+        if observed[id] then return end
         local previous = returns[id]
         if previous then
             if previous.fullType ~= fullType or previous.destination ~= destination then previous.ambiguous = true end
@@ -845,7 +1068,7 @@ function Settlement.finish(queue, request, discard)
     for item, source in pairs(type(token) == "table" and token.toolkitPickups or {}) do rememberReturn(item, source) end
     local containers = ISInventoryPaneContextMenu.getContainers(queue.character)
     local index = 2
-    state.phase = "cleanup"
+    state.phase, record.phase = "cleanup", "cleanup"
     for _, obligation in ipairs(cleanup) do
         insert(queue, obligation.action, index)
         state.obligations[#state.obligations + 1] = obligation
@@ -866,12 +1089,19 @@ function Settlement.finish(queue, request, discard)
                 if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
                 action:setAllowMissingItems(true)
                 insert(queue, action, index)
+                if expected.borrowed and action.Type == "ISInventoryTransferAction" then
+                    local handle = Settlement.track(action, "cleanup")
+                    local step, scope, owner = stepProof(handle), expected.scope, action.toolkitQueueOperation
+                    local obligation = {token = owner}
+                    obligation[obligationScope] = function(value) if value == obligation then return scope, owner end end
+                    step.returning = {obligation = obligation}
+                end
                 state.obligations[#state.obligations + 1] = {kind = "return", itemId = id, itemType = expected.fullType, destination = destination, action = action}
                 index = index + 1
             end
         end
     end
-    state.phase = "scheduled"
+    state.phase, record.phase = "scheduled", "cleanup"
     return true
 end
 

@@ -57,6 +57,7 @@ ISBaseTimedAction.begin = function(action)
     if media then media.start(action) end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and isClient() then intent.start(action) end
+    Toolkit.ActionQueueLifecycle.started(action)
     local token = action.toolkitQueueOperation
     if type(token) == "table" then token.toolkitStarted = true end
     local result = begin(action)
@@ -150,11 +151,11 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         and not (action.action and action.action.hasStalled and action.action:hasStalled()) then Batch.completed(action) end
     local request = queue.toolkitGroupCancel
     if request and request.action == action then
-        queue.toolkitGroupCancel = nil
         if live(queue) and queue.current == action and queue.queue[1] == action
             and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false) then
-            finishGroup(queue, request)
+            if not finishGroup(queue, request) then queue:resetQueue(); return end
         end
+        queue.toolkitGroupCancel = nil
     end
     if processPriority then processPriority(queue, false) end
     if Toolkit.Settings.actionQueue() and Toolkit.BulkFood and queue.current == action and queue.queue[1] == action then

@@ -1378,7 +1378,18 @@ function Compat.install()
             return getmetatable(action) == ISInventoryTransferAction and tidyActionUnchanged and tidyActionUnchanged(action)
                 and Toolkit.ActionQueuePolicy.isOrdinaryTransfer(action)
         end
+        local function plannedReturnGuard(action)
+            -- Settlement owns this freshly constructed native return. Its
+            -- reviewed rejection-stop and no-op merge guard are intentionally
+            -- absent from P4's original instance snapshot. Reuse Policy's full
+            -- native/approved-helper matcher; a copied safe-callback flag alone
+            -- cannot grant observation or cleanup ownership.
+            local policy = Toolkit.ActionQueuePolicy
+            return getmetatable(action) == ISInventoryTransferAction and policy.matchesNative(action)
+                and policy.isOrdinaryTransfer(action)
+        end
         TidyIntent.observeTransfers(function(action)
+            Settlement.refreshPlannedReturn(action)
             local session = pickupScope(action)
             if session then
                 Settlement.refreshPickup(session, action)
@@ -1411,6 +1422,7 @@ function Compat.install()
             local session = pickupScope(action)
             return record and record.class == ISInventoryTransferAction and matches(action, record)
                 or session and Settlement.pickupMatches(session, action)
+                or Settlement.plannedReturnMatches(action)
         end, {
             merging = function(action)
                 local record = records[action]
@@ -1437,15 +1449,18 @@ function Compat.install()
                 return session and pickupGuard(action) and Settlement.beforePickupMerge(session, action, pickupGuard)
             end,
             begin = function(action)
+                local returning = plannedReturnGuard(action) and Settlement.beginPlannedReturn(action, plannedReturnGuard)
                 local session = pickupScope(action)
                 if session and pickupGuard(action) then
                     Settlement.departure(session, action)
-                    return Settlement.beginPickup(session, action, pickupGuard)
+                    return Settlement.beginPickup(session, action, pickupGuard) or returning
                 end
+                return returning
             end,
             finish = function(action, succeeded)
+                local returning = Settlement.finishPlannedReturn(action, succeeded)
                 local session = pickupScope(action)
-                return session and Settlement.finishPickup(session, action, succeeded)
+                return session and Settlement.finishPickup(session, action, succeeded) or returning
             end,
         })
         local policy=Toolkit.ActionQueuePolicy

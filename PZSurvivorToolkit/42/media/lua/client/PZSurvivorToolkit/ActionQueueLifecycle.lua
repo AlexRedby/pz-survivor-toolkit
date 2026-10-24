@@ -5,6 +5,35 @@ local Lifecycle = {}
 Toolkit.ActionQueueLifecycle = Lifecycle
 
 local pending = setmetatable({}, {__mode = "k"})
+local observers, observerIds = {}, {}
+-- Observation at the common native boundary does not grant edit permissions.
+-- Failed observers are quarantined: observation must never abort a paid native
+-- callback and make it eligible for replay. An incomplete proof earns no effect.
+function Lifecycle.registerObserver(id, observer)
+    if type(id) ~= "string" or type(observer) ~= "table" or observerIds[id] then return false end
+    for key, callback in pairs(observer) do
+        if (key ~= "started" and key ~= "begin" and key ~= "finish") or type(callback) ~= "function" then return false end
+    end
+    local entry = {}
+    for key, callback in pairs(observer) do entry[key] = callback end
+    observers[#observers + 1], observerIds[id] = entry, true
+    return true
+end
+local function observe(phase, ...)
+    local accepted = false
+    for _, observer in ipairs(observers) do
+        if not observer.failed and observer[phase] then
+            local ok, result = pcall(observer[phase], ...)
+            if not ok then observer.failed = true
+            elseif result == true then accepted = true end
+        end
+    end
+    return accepted
+end
+function Lifecycle.started(action)
+    if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.started(action) end
+    observe("started", action)
+end
 local function enabled(action)
     local media=Toolkit.ActionQueueMedia
     return Toolkit.Settings and Toolkit.Settings.actionQueue() or media and media.tracks(action)
@@ -56,8 +85,9 @@ end
 -- Called by the supported native LuaTimedActionNew boundary, never by individual action adapters.
 function Lifecycle.begin(action, phase)
     if phase ~= "perform" and phase ~= "complete" then return false end
+    local observing = observe("begin", action, phase)
     local intent=Toolkit.ActionQueueTidyIntent
-    local observing=intent and intent.begin(action,phase)
+    if intent and intent.begin(action,phase) then observing = true end
     if not enabled(action) then return observing==true end
     local queue = action and ISTimedActionQueue.queues[action.character]
     if not owned(queue, action) or not action.action then return observing==true end
@@ -73,6 +103,7 @@ function Lifecycle.begin(action, phase)
 end
 
 function Lifecycle.finish(action, phase, succeeded)
+    observe("finish", action, phase, succeeded)
     local intent=Toolkit.ActionQueueTidyIntent
     if intent then intent.finish(action,phase,succeeded) end
     local queue = action and ISTimedActionQueue.queues[action.character]
@@ -140,8 +171,11 @@ function Lifecycle.flush(queue)
     if media and media.tracks(action) then mediaState=media.continuationState(action)
     else mediaState=reading and reading.mediaCompletionState and reading.mediaCompletionState(queue, action) end
     if mediaState == "waiting" then return "waiting", action end
+    local settlement = Toolkit.ActionQueueSettlement
+    local cancellation = settlement and settlement.completionState(queue, action)
+    if cancellation == "waiting" then return "waiting", action end
     pending[queue] = nil
-    if mediaState == "failed" then return "failed", action end
+    if cancellation == "failed" or mediaState == "failed" then return "failed", action end
     if reading and reading.completedPickup then reading.completedPickup(queue, action) end
     queue:onCompleted(action)
     return "completed", action

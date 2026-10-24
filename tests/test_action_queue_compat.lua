@@ -364,6 +364,7 @@ fixturePolicy.resumableWorld=function() return false end
 fixturePolicy.replaceStop=function() end
 fixturePolicy.adoptBegin=function() end
 fixturePolicy.inspect=definitions.inspect
+fixturePolicy.matchesNative=function()return false end -- real Policy is used by the planned-return observer regression below
 PZSurvivorToolkit.ActionQueueLabels={label=function() end}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
@@ -2737,6 +2738,78 @@ do
         assert(first.container==destination and second.container==destination and not TidyFixture.restoring[player]
             and not TidyFixture.sessions[player],
             'native grouped P4 effects and cleanup must finish after '..mode..' ownership validation')
+    end
+    -- Actual Compat transfer observation must admit Settlement's native guarded
+    -- return without weakening P4's original source/instance matcher. Only the
+    -- private ledger's exact owned-action binding is stubbed here; native Policy,
+    -- BulkActions guard bodies and TidyIntent's observer dispatcher stay real.
+    do
+        reset()
+        local previousPolicy,previousBulk=PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions
+        local source=read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua')
+        local first=assert(source:find('function Actions.guardTransfer(',1,true))
+        local last=assert(source:find('function Actions.transfer(',first,true))
+        local bulk=assert(loadstring('local Actions={};local transferGuard={}\n'..source:sub(first,last-1)..'\nreturn Actions',
+            '@PZSurvivorToolkit/BulkActions.lua'))()
+        PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=actualPolicy,bulk
+        local settlement=PZSurvivorToolkit.ActionQueueSettlement
+        local intent=PZSurvivorToolkit.ActionQueueTidyIntent
+        local beforeBegin,beforeFinish=settlement.beginPlannedReturn,settlement.finishPlannedReturn
+        local owned,begun;local captures,finishes=0,0
+        settlement.beginPlannedReturn=function(action,guard)
+            if action~=owned then return false end
+            assert(guard(action)and actualPolicy.matchesNative(action),'planned return lost full native binding proof')
+            begun=action;captures=captures+1;return true
+        end
+        settlement.finishPlannedReturn=function(action,succeeded)
+            if action~=begun then return false end
+            assert(succeeded,'native planned return failed');finishes=finishes+1;begun=nil;return true
+        end
+        local function returning(id)
+            return bulk.guardTransfer(ISInventoryTransferAction:new(player,item(inventory,id),inventory,tidyBag))
+        end
+        owned=returning(19401)
+        assert(actualPolicy.matchesNative(owned)and actualPolicy.isOrdinaryTransfer(owned),'actual guarded return must match native Policy')
+        assert(not intent.status(owned),'owned stop/no-op callback must not widen P4 source-instance permissions')
+        assert(intent.begin(owned,'perform'),'actual Compat listener must capture an owned guarded planned return')
+        intent.finish(owned,'perform',true)
+        assert(captures==1 and finishes==1,'owned guarded return did not pair its real observer begin/finish')
+        local outside=returning(19402)
+        assert(not intent.begin(outside,'perform'),'valid but unowned guard cannot mint a planned return')
+        for _,change in ipairs({'guard','callback','helper'})do
+            local beforeCaptures,beforeFinishes=captures,finishes
+            owned=returning(19403)
+            local restore
+            if change=='guard'then
+                local original=owned.toolkitTransferGuard
+                owned.toolkitTransferGuard={stop=original.stop,original=original.original}
+                restore=function()owned.toolkitTransferGuard=original end
+            elseif change=='callback'then
+                local original=owned.onCompleteFunc;owned.onCompleteFunc=function()error('foreign completion must not run')end
+                restore=function()owned.onCompleteFunc=original end
+            else
+                local original=ISInventoryTransferAction.getNotFullFloorSquare
+                ISInventoryTransferAction.getNotFullFloorSquare=function()error('foreign helper must not run')end
+                restore=function()ISInventoryTransferAction.getNotFullFloorSquare=original end
+            end
+            assert(not actualPolicy.matchesNative(owned)and not intent.begin(owned,'perform'),
+                'forged '..change..' obtained planned native return observation')
+            assert(captures==beforeCaptures and finishes==beforeFinishes,'rejected '..change..' reached the private ledger begin')
+            restore()
+            assert(intent.begin(owned,'perform'),'restored exact '..change..' did not regain its native observation')
+            intent.finish(owned,'perform',true)
+            assert(captures==beforeCaptures+1 and finishes==beforeFinishes+1,'restored '..change..' did not pair its native observer finish')
+        end
+        local ordinary=ISInventoryTransferAction:new(player,item(inventory,19404),inventory,tidyBag)
+        assert(intent.status(ordinary),'unchanged P4 source instance lost its own ordinary pickup guard')
+        local sourcePolicy=P4TidyUpMeister.registerActionPolicy
+        P4TidyUpMeister.registerActionPolicy=function()end
+        assert(not intent.status(ordinary),'planned return migration widened a changed P4 owner proof')
+        P4TidyUpMeister.registerActionPolicy=sourcePolicy
+        assert(intent.status(ordinary),'restored exact P4 owner did not regain source permissions')
+        settlement.beginPlannedReturn,settlement.finishPlannedReturn=beforeBegin,beforeFinish
+        PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=previousPolicy,previousBulk
+        reset()
     end
     round,player.getOnlineID,inventory.getVehiclePart=previousRound,previousOnline,previousVehiclePart
     tidyBag.isExistYet,tidyBag.getItemById=previousExists,previousLookup

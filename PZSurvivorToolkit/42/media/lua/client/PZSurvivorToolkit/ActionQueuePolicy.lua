@@ -927,9 +927,15 @@ inspect = function(action, context)
         if context then context.contracts[action] = {} end
         return
     end
-    if not context then return Definitions.inspect(action) end
     local result = {Definitions.inspect(action)}
-    context.contracts[action] = result
+    local settlement = Toolkit.ActionQueueSettlement
+    if result[1] and settlement and settlement.requiredStep(action) then
+        local contract = {}
+        for key, value in pairs(result[1]) do contract[key] = value end
+        contract.cancelOperation, contract.cancelWaiting = false, false
+        result[1] = contract
+    end
+    if context then context.contracts[action] = result end
     return unpack(result, 1, 3)
 end
 Policy.inspect = inspect

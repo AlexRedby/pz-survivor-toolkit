@@ -1537,4 +1537,132 @@ for _,client in ipairs({false,true}) do
     assertOwnership(s,{'completed'},{s.token})
 end
 next = savedNext
-print('Shared settlement: effect-bound pickup ownership, exact native attempts and no effect replay passed.')
+-- Persistent phases require the exact native receipt and its observed effect,
+-- never source membership. Diagnostics and copied handles grant no authority.
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'completed', 'rejected', 'unobserved', 'different-action', 'copied', 'reset'}) do
+        local s = setup(client)
+        PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+        local removal, restore = s.action(), s.action()
+        removal.action = {}
+        s.queue.current, s.queue.queue = removal, {removal, s.current, restore, s.tail}
+        if client then
+            removal.toolkitNativeTransaction, removal.toolkitNativeKind = 51, 'ISUnequipAction'
+            s.receipt(removal, 'started')
+        end
+        local handle = s.settlement.track(removal, 'prepare')
+        assert(handle == s.settlement.track(removal, 'body'), 'enqueue cannot replace the reviewed preparation role')
+        assert(s.settlement.cleanup(restore, handle))
+        local other = s.action(); other.action = {}
+        local proof = s.settlement.captureEffect(outcome == 'different-action' and other or removal)
+        if outcome ~= 'different-action' then assert(s.settlement.bindEffect(handle, proof)) end
+        local credit = handle
+        if outcome == 'copied' then credit = {}; for key, value in pairs(handle) do credit[key] = value end end
+        if outcome == 'reset' then s.queue.toolkitOperationGeneration = 1 end
+        if client then s.receipt(removal, outcome == 'rejected' and 'rejected' or 'completed') end
+        local earned = s.settlement.earn(credit, proof, outcome ~= 'unobserved')
+        assert(earned == (outcome == 'completed' or not client and outcome == 'rejected'),
+            outcome .. ': effect proof must belong to the original live step')
+        if earned or outcome ~= 'unobserved' then
+            assert(not s.settlement.earn(credit, proof, true), 'an earned or invalid step cannot be credited twice')
+        end
+        if outcome ~= 'reset' then
+            local state = s.settlement.operationState(removal)
+            assert(state.steps[1].phase == 'prepare')
+            state.steps[1].state = 'earned' -- value copy cannot pay the real obligation
+            s.queue.current, s.queue.queue = s.current, {s.current, restore, s.tail} -- source removal is already pruned
+            local request = {action = s.current, token = s.token}
+            assert(s.settlement.finish(s.queue, request, s.discard))
+            assert((s.queue.queue[2] == restore) == earned,
+                outcome .. ': only a confirmed preparation retains restoration after source pruning')
+            assert(s.queue.queue[#s.queue.queue] == s.tail)
+            assert(not s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard),
+                'a new request object cannot settle the same operation twice')
+        else
+            assert(not s.settlement.operationState(removal), 'a reset permanently retires the old operation seal')
+            assert(not s.settlement.track(s.current, 'body'), 'an old token cannot acquire a new generation')
+        end
+    end
+end
+
+-- The independent tail waits for late authority AND exact replication. A
+-- rejected preparation is isolated; missing authority times out without replay.
+for _, outcome in ipairs({'completed', 'rejected', 'timeout'}) do
+    local s = setup(true)
+    local removal = s.action(); removal.action = {}
+    s.queue.current, s.queue.queue = removal, {removal, s.current, s.tail}
+    removal.toolkitNativeTransaction, removal.toolkitNativeKind = 52, 'ISUnequipAction'
+    s.receipt(removal, 'started')
+    local handle = s.settlement.track(removal, 'prepare')
+    local proof = s.settlement.captureEffect(removal)
+    assert(s.settlement.bindEffect(handle, proof))
+    s.queue.current, s.queue.queue = s.current, {s.current, s.tail}
+    s.queue.toolkitGroupCancel = {action = s.current, token = s.token}
+    assert(s.settlement.cancellationState(s.queue, s.current) == 'waiting')
+    assert(not s.settlement.finish(s.queue, s.queue.toolkitGroupCancel, s.discard)
+        and s.queue.queue[2] == s.tail and s.counts() == 0,
+        'an uncertain preparation cannot schedule cleanup or release its tail')
+    if outcome == 'timeout' then
+        s.advance(30001)
+        assert(s.settlement.cancellationState(s.queue, s.current) == 'failed')
+    else
+        s.receipt(removal, outcome)
+        if outcome == 'completed' then
+            assert(s.settlement.cancellationState(s.queue, s.current) == 'waiting',
+                'authority alone cannot stand in for exact local replication')
+            assert(s.settlement.earn(handle, proof, true))
+        end
+        assert(s.settlement.cancellationState(s.queue, s.current) == 'ready')
+    end
+end
+
+-- Cancellation planning consumes the exact earned P4 episode. A legacy hint
+-- may not resurrect an already-returned, shared, rejected or unresolved pickup.
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs(client and {'earned', 'shared', 'returned', 'rejected', 'unresolved'}
+        or {'earned', 'shared', 'returned', 'unresolved'}) do
+        local s = pickupFixture(client)
+        if outcome == 'shared' then
+            s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {items = {[181] = true}})
+        end
+        if client and outcome == 'rejected' then s.transaction.done, s.transaction.rejected = false, true end
+        assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+        if outcome ~= 'unresolved' and outcome ~= 'rejected' then s.movePickup(1) end
+        assert(s.finishPickup(true))
+        if outcome == 'returned' then s.makeReturn(); s.completeReturn() end
+        s.queue.current, s.queue.queue = s.current, {s.current, s.tail}
+        s.token.toolkitCancelled = true
+        local request = {action = s.current, token = s.token}
+        s.queue.toolkitGroupCancel = request
+        if outcome == 'unresolved' then
+            assert(s.settlement.cancellationState(s.queue, s.current) == 'waiting')
+            s.advance(30001)
+            assert(s.settlement.cancellationState(s.queue, s.current) == 'failed')
+        else
+            assert(s.settlement.finish(s.queue, request, s.discard), outcome .. ': isolated cancellation must settle')
+            local n = s.counts()
+            assert(n == (outcome == 'earned' and 1 or 0), outcome .. ': only exclusively earned borrowing creates a return')
+            assert(s.queue.queue[#s.queue.queue] == s.tail)
+            if outcome == 'earned' then
+                local action = s.queue.queue[2]
+                s.queue.current = action; table.remove(s.queue.queue, 1)
+                action.action, action.transactionId = {}, 80
+                action.queueList = {{items = {action.item}}}
+                s.transaction.done, s.transaction.rejected = true, false
+                assert(s.settlement.beginPlannedReturn(action, s.guard))
+                assert(s.settlement.requiredStep(action))
+                local copy = {}; for key, value in pairs(action) do copy[key] = value end
+                assert(not s.settlement.requiredStep(copy), 'copied cleanup presentation cannot acquire required ownership')
+                action.queueList, action.transactionId = {}, 0
+                assert(s.settlement.finishPlannedReturn(action, true))
+                assert(s.settlement.completionState(s.queue, action) == 'waiting',
+                    'retokenized return cannot release its tail before exact endpoint replication')
+                s.root.items[181], s.members[1].container, s.source.items[181] = nil, s.source, s.members[1]
+                assert(s.settlement.completionState(s.queue, action) == 'ready')
+                assert(s.settlement.operationState(s.current).borrowings[1].state == 'completed',
+                    'native return receipt retires the same borrowed episode')
+            end
+        end
+    end
+end
+print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')

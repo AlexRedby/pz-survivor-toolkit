@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.244
+
+- **Action queue / cancellation:** Keep preparation, work and required restoration in persistent operation records. Confirm mask removal before retaining its restoration; wait for Host outcomes and exact item replication before releasing independent work. Use confirmed P4 pickup/return episodes when returning borrowed tools, preserving shared ownership, native equipment restoration and explicit equipment choices. Repeated queue cancellation cannot discard already-required restoration, and completed effects are never replayed.
+
 ### 0.1.243
 
 - Fix Host item retention and custom tag assignment rejecting accessible vehicle items when replicated vehicle grid squares differ. Match the exact item, vehicle and compartment while retaining live server range, floor, container, nested-bag and SafeHouse admission.

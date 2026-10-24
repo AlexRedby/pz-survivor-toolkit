@@ -171,3 +171,45 @@ queue.toolkitOperationGeneration=queue.toolkitOperationGeneration-1
 assert(permitted())
 ack.reset(queue);assert(not permitted(),'queue reset revived a retained completed receipt')
 print("Action queue lifecycle checks passed (SP effects, MP callback tail, sealed completion, explicit stops, native removal, failures, reset, ownership, disabled).")
+
+-- A broken read-only integration cannot replay or abort the native callback.
+local calls, nativeEffects = 0, 0
+local callbacks = {begin = function() calls = calls + 1; error('observer failure') end}
+assert(Lifecycle.registerObserver('failure-isolation', callbacks))
+callbacks.begin = function() error('registration must snapshot callbacks') end
+assert(not Lifecycle.registerObserver('failure-isolation', {}))
+queue, action, present = fixture()
+assert(Lifecycle.begin(action, 'perform'))
+nativeEffects = nativeEffects + 1
+queue:onCompleted(action)
+Lifecycle.finish(action, 'perform', true)
+assert(Lifecycle.begin(action, 'complete'))
+Lifecycle.finish(action, 'complete', true)
+present[action.action] = nil
+assert(Lifecycle.flush(queue) == 'completed' and calls == 1 and nativeEffects == 1,
+    'a failed observer is quarantined while native execution continues exactly once')
+
+-- Native callback pairing stays observable in queue-off controls. Accepting an
+-- observation never creates a pending completion owner or advances native work.
+local observed = {}
+assert(Lifecycle.registerObserver('native-control-observer', {
+    begin = function(value, phase)
+        if value.observeControl then observed[#observed + 1] = 'begin:' .. phase; return true end
+    end,
+    finish = function(value, phase, succeeded)
+        if value.observeControl then observed[#observed + 1] = 'finish:' .. phase .. ':' .. tostring(succeeded) end
+    end,
+}))
+enabled = false
+queue, action, present = fixture(); action.observeControl = true
+for _, phase in ipairs({'perform', 'complete'}) do
+    assert(Lifecycle.begin(action, phase), 'accepted observation must receive its matching native finish callback')
+    assert(not Lifecycle.deferCompletion(queue, action) and not Lifecycle.current(action.character),
+        'queue-off observation cannot claim native scheduler completion')
+    Lifecycle.finish(action, phase, true)
+end
+assert(#observed == 4 and observed[1] == 'begin:perform' and observed[4] == 'finish:complete:true')
+assert(Lifecycle.flush(queue) == nil and queue.started == 0)
+queue, action, present = fixture()
+assert(not Lifecycle.begin(action, 'perform'), 'unobserved queue-off work must retain the native boundary')
+enabled = true

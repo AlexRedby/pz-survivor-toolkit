@@ -1695,6 +1695,10 @@ frame(p)
 local returned=q.current
 assert(returned.Type=='ISInventoryTransferAction' and returned~=restore and returned.item==a.item)
 assert(returned.allowMissingItems and #q.queue==2 and q.queue[2]==d and not q.toolkitGroupCancel)
+assert(api.cancelReason(q,returned)=='dependent' and api.cancelOperationReason(q,returned)=='operation_dependent',
+    'a second UI cancellation cannot revoke earned mandatory cleanup')
+assert(not api.cancel(q,returned) and not api.cancelOperation(q,returned) and q.current==returned and q.queue[2]==d)
+
 assert(not b.action and not p.actions[a.action], 'group stop must precede native cleanup; remaining work never starts')
 returned.action.done=true;frame(p)
 assert(a.item.container==bag and q.current==d, 'borrowed item returns once, then the unrelated operation starts')
