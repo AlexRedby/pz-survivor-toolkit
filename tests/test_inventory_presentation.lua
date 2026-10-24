@@ -1,5 +1,6 @@
 -- Real Toolkit presenters; small layout owners expose separators, scaling and late UI classes.
 local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
+function table.wipe(values) for key in pairs(values) do values[key]=nil end end
 local function run(initialEnhanced, lateVanilla, withFreshness)
     local magazineEnabled, callbacks, modules = true, {}, {}
     getActivatedMods=function() return {contains=function(_, id) return withFreshness and id=='EURY_CONTAINERS' end} end
@@ -108,7 +109,7 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     local detailSortEnabled,realDetailSort=true,nil
     modules['PZSurvivorToolkit/InventoryDetailOptions']={enableSort={getValue=function() return detailSortEnabled end}}
     modules['PZSurvivorToolkit/InventoryDetailSort']={refresh=function(pane,class,anchor)
-        sorts=sorts+1; assert(anchor==a)
+        sorts=sorts+1; assert(anchor==a, 'refresh captured another physical item as the Shift anchor')
         if not detailSortEnabled then return realDetailSort.refresh(pane,class,anchor) end
     end}
     require=function(name)
@@ -185,7 +186,13 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         pane.items={target,a,other,b};pane.firstSelect=2
         pane.itemslist={target,other};pane.collapsed={}
         pane.rebuiltGroups={other,target};pane.rows={other,b,target,a}
-        detailSortEnabled=false;pane.dirty=true;pane:renderdetails(false)
+        detailSortEnabled=false
+        -- Host packets and pane refreshes can run more than once before the
+        -- next render. The new anchor index must not read the previous map.
+        pane:refreshContainer();pane:refreshContainer()
+        assert(pane.firstSelect==4,
+            'repeated refresh read the new Shift anchor from stale rendered rows')
+        pane.dirty=true;pane:renderdetails(false)
         assert(pane.firstSelect==4 and pane.items[pane.firstSelect]==a,
             'dirty refresh lost the physical Shift anchor with detail sorting disabled')
         assert(pane.selected[4]==a and pane.items[4]==a,

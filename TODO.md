@@ -1,7 +1,6 @@
-# Retained-item transfer and indicator verification
+# Retained-item full-pack compatibility
 
-- [ ] Prepare a fresh `item-retention/trunk` run from current main in isolated macOS B42.21 EN/RU native and CleanUI views when the desktop test slot is available. Verify the final child-gutter lock placement, exact authoritative IDs/retained flags for two manually moved items and their return, automatic distribution exclusion and single-item transfer/release. Require completed functional receipts and inspect the screenshots.
-- [ ] Resolve the full selected pack's `PZToolkitJavaPatches` input and repeat the scenario with that pack. Keep current source-backed checks distinct from the outstanding live Host gate.
+- [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.
 
 # Vehicle entry and exit roof clipping
 

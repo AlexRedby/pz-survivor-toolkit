@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.250
+
+- **Inventory:** Keep Shift selection anchored to the same physical item when retained-item groups refresh in CleanUI, including repeated refreshes before the next render.
+
 ### 0.1.249
 
 - **Inventory:** Allow deliberate transfers of several retained items through drag-and-drop, context menus, quantity commands and Smart Deposit. Keep protection during Take/Transfer All, automatic Move to Floor and loot distribution; manual moves keep their retained flags.

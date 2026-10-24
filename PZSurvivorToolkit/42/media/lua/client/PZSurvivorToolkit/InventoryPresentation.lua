@@ -63,7 +63,7 @@ end
 local function render(pane, native, details, ...)
     local previous = contexts[pane]
     -- Dirty native redraw clears pane.items before refreshing its groups.
-    local context = {icons = {}, details = details, anchor = pane.items and pane.firstSelect and pane.items[pane.firstSelect]}
+    local context = {icons = {}, details = details, anchor = Rows.captureAnchor(pane)}
     contexts[pane] = context
     local ok, result = pcall(native, pane, ...)
     contexts[pane] = previous
@@ -98,7 +98,7 @@ local function installPane(class)
     class.refreshContainer = function(pane, ...)
         Wishlist.invalidate(pane)
         Retention.invalidate(pane)
-        local anchor = pane.items and pane.firstSelect and pane.items[pane.firstSelect]
+        local anchor = Rows.captureAnchor(pane)
         anchor = anchor or (contexts[pane] and contexts[pane].anchor)
         local result = nativeRefresh(pane, ...)
         Sort.refresh(pane, class, anchor)

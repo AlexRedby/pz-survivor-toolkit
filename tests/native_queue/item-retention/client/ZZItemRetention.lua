@@ -179,6 +179,16 @@ Events.OnTick.Add(function()
    actionAt=getTimestampMs()
   elseif phase=='Distribute'and role=='client1'and not actionAt then
    getPlayerLoot(0):setForceSelectedContainer(state.container)
+   -- Check the same native stand the sorter will select, after the crate has
+   -- become a blocking object and with the actual cargo actor as its origin.
+   local crateSquare=state.crate:getSquare()
+   local stand=AdjacentFreeTileFinder.Find(crateSquare,player)
+   local function position(square)
+    return square and square:getX()..','..square:getY()..','..square:getZ()or 'nil'
+   end
+   assert(stand and stand:canStand()and not stand:isVehicleIntersecting(),
+    'Fixture Distribute stand overlaps an obstacle: actor='..position(player:getCurrentSquare())
+     ..' crate='..position(crateSquare)..' stand='..position(stand))
    local handler=ISLootWindowObjectControlHandler_LootSorterDistribute:new()
    handler.container=state.container;handler.playerNum=0;handler.lootWindow=getPlayerLoot(0)
    assert(handler:shouldBeVisible(),'Distribute toolbar unavailable')

@@ -4,6 +4,16 @@ local Categories = require 'PZSurvivorToolkit/ItemCategories'
 local F = {module='ItemRetentionTest', types={'Base.Screwdriver','Base.Screwdriver','Base.PetrolCan','Base.Hammer'}}
 F.persistence='PZSTRetentionFixturePersistence'
 
+local function outsideVehicleStandRing(square)
+ -- Native AdjacentFreeTileFinder can choose any of these eight neighbors but
+ -- does not reject vehicle footprints. Keep its whole choice set off the truck.
+ for dx=-1,1 do for dy=-1,1 do
+  local neighbor=getCell():getGridSquare(square:getX()+dx,square:getY()+dy,square:getZ())
+  if not neighbor or not neighbor:canStand()or neighbor:isVehicleIntersecting()then return false end
+ end end
+ return true
+end
+
 function F.prepare(player)
  assert(not getActivatedMods():contains('organizedCategories_core'),'External OC is still active')
  Spawn.types=F.types
@@ -29,7 +39,8 @@ function F.prepare(player)
      and not point.square:isBlockedTo(candidate)then
      visited[candidate]=true
      queue[#queue+1]={square=candidate,depth=point.depth+1}
-     if not square and candidate:isFree(true)and candidate:getObjects():size()<=1 then square=candidate end
+     if not square and candidate:isFree(true)and candidate:getObjects():size()<=1
+      and outsideVehicleStandRing(candidate)then square=candidate end
     end
    end
   end
