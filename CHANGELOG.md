@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.245
+
+- **Changed:** Replace stiff procedural shopping-cart steps with a body-leading turn built from native walking, retaining heel/toe roll, knee motion and a gently moving torso. Slight leg separation prevents the native trouser surfaces from crossing.
+
 ### 0.1.244
 
 - **Changed:** Added the accepted upright shopping-cart walking-turn clips with shorter forward-diagonal steps and gradual weight transfer. Straight walking, stationary pivots and wheelbarrow animations retain their existing clips.
@@ -1097,6 +1101,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.55
+
+- **Changed:** Give shopping-cart forward walking and turning one shared visual phase with a bounded cadence and smooth entry/release. Partial turns no longer mix legs from unrelated phases. Physical movement and multiplayer packet fields/rate retain their existing behavior; reverse and fast gaits retain their native clips.
 
 ### 0.1.54
 

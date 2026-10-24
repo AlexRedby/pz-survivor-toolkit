@@ -87,23 +87,48 @@ object CartShoppingTurnTest {
         val motion = CartShoppingTurn.Blend()
         val clock = Any()
         motion.update(1.0, 1.0 / 60, clock, .98, 2.0 / 3)
+        close(motion.phase, .48, "entry anchors anatomical left swing")
         motion.update(1.0, 1.0 / 60, clock, .02, 2.0 / 3)
-        close(motion.phase, 1.0 / 30, "phase wrap")
+        close(motion.phase, .48 + 1.0 / 60 / .88, "wrap honors cadence cap")
+        val beforeReplacement = motion.phase
         motion.update(1.0, 1.0 / 60, Any(), .75, 2.0 / 3)
-        close(motion.phase, 1.0 / 30, "track replacement")
-        repeat(60) { motion.update(1.0, 1.0 / 60, null, Double.NaN, Double.NaN) }
-        check(motion.turn > .99, "entry reaches target")
+        close(motion.phase, beforeReplacement, "track replacement cannot jump feet")
+        repeat(60) { motion.update(1.0, 1.0 / 60, clock, it / 30.0, 2.0 / 3) }
+        check(motion.turn > .99 && motion.walk > .99, "entry reaches walking turn")
+        val paused = motion.phase
+        repeat(10) { motion.update(1.0, 1.0 / 60, clock, 59 / 30.0, 2.0 / 3) }
+        close(motion.phase, paused, "native pause freezes cosmetic feet")
         val before = motion.turn
-        motion.update(0.0, 1.0 / 60, null, Double.NaN, Double.NaN)
-        check(motion.turn in .8..before, "release must fade")
-        repeat(60) { motion.update(0.0, 1.0 / 60, null, Double.NaN, Double.NaN) }
-        close(motion.turn, 0.0, "release settles")
-        repeat(120) { motion.update(-1.0, 1.0 / 60, null, Double.NaN, Double.NaN) }
+        motion.update(0.0, 1.0 / 60, clock, 2.0, 2.0 / 3)
+        check(motion.turn in .8..before, "turn release must fade")
+        repeat(60) { motion.update(0.0, 1.0 / 60, clock, 2.0 + it / 30.0, 2.0 / 3) }
+        close(motion.turn, 0.0, "turn release settles")
+        check(motion.walk > .99, "straight walking survives turn release")
+        repeat(120) { motion.update(-1.0, 1.0 / 60, clock, 4.0 + it / 30.0, 2.0 / 3) }
         check(motion.turn < -.99, "direction reversal")
-        val secondsClock = CartShoppingTurn.Blend()
+        val beforeStop = motion.walk
+        motion.update(0.0, 1.0 / 60, null, Double.NaN, Double.NaN, false)
+        check(motion.walk in .8..beforeStop, "stop/reverse releases walk smoothly")
+        repeat(90) { motion.update(0.0, 1.0 / 60, null, Double.NaN, Double.NaN, false) }
+        close(motion.walk, 0.0, "walk release settles")
+        close(motion.turn, 0.0, "stop releases turn")
+        motion.update(0.0, 1.0 / 60, clock, .25, 2.0 / 3)
+        close(motion.phase, .75, "new walk reanchors after full release")
+
+        val fast = CartShoppingTurn.Blend()
         val token = Any()
-        for (i in 0..60) secondsClock.update(1.0, 1.0 / 60, token, (i / 60.0) / (2.0 / 3), 2.0 / 3)
-        close(secondsClock.phase, .25, "one native source second preserves .8s loop duration")
+        for (i in 0..120) fast.update(0.0, 1.0 / 60, token, i * .06, 2.0 / 3)
+        close(
+            fast.phase,
+            (.5 + 2 / .88) % 1.0,
+            "compensated strafe cannot accelerate cosmetic cadence",
+        )
+        val slow = CartShoppingTurn.Blend()
+        for (i in 0..60) slow.update(0.0, 1.0 / 60, token, i * .005, 2.0 / 3)
+        close(slow.phase, .8, "slower native cycle limits cosmetic clock")
+        val unchanged = slow.phase
+        slow.update(0.0, Double.NaN, token, .4, 2.0 / 3)
+        close(slow.phase, unchanged, "invalid wall time cannot advance phase")
     }
 
     private fun slots() {
@@ -132,16 +157,22 @@ object CartShoppingTurnTest {
         owner.model = allocate(Model::class.java)
         check(CartShoppingTurn.view(slot, owner) == null, "replacement model rejected")
         owner.model = model
+        val straight = CartShoppingTurn.View(.4f, 0f, 1f)
+        CartShoppingTurn.capture(slot, source, straight)
+        check(CartShoppingTurn.view(slot, owner) == straight, "straight walking owns a snapshot")
+        CartShoppingTurn.capture(slot, source, straight.copy(walk = 0f))
+        check(CartShoppingTurn.view(slot, owner) == null, "released walk cannot capture")
+        CartShoppingTurn.capture(slot, source, straight.copy(walk = Float.NaN))
+        check(CartShoppingTurn.view(slot, owner) == null, "invalid walk cannot capture")
+        CartShoppingTurn.capture(slot, source, straight)
         CartShoppingTurn.release(slot)
         check(CartShoppingTurn.view(slot, owner) == null, "released slot")
     }
 
-    /** A complete foot cycle must bend the arms rather than shuttle the cart with the shoulders. */
+    /** A complete foot cycle keeps the cart fixed while preserving the arms and hand contacts. */
     private fun stableBar(actor: SkinningData, clip: AnimationClip, baseline: Array<Matrix4f?>) {
         for (female in listOf(false, true)) {
             var first: Matrix4f? = null
-            var minFlex = 180.0
-            var maxFlex = 0.0
             for (phase in 0..48) {
                 val poses = Array(baseline.size) { Matrix4f(baseline[it]) }
                 check(
@@ -183,8 +214,6 @@ object CartShoppingTurnTest {
                                     .coerceIn(-1.0, 1.0),
                             ),
                         )
-                    minFlex = minOf(minFlex, flex)
-                    maxFlex = maxOf(maxFlex, flex)
                     check(flex <= 118, "turn arm folded: $female/$phase/$side $flex")
                     val target = Matrix4f()
                     check(
@@ -227,7 +256,122 @@ object CartShoppingTurnTest {
                     check(poses[i] == before[i], "stable bar changed body: $name")
                 }
             }
-            check(maxFlex - minFlex > 20, "turn elbows stopped absorbing body motion")
+        }
+    }
+
+    /** The production composition uses the same anatomical phase at every turn strength. */
+    private fun sharedWalk(
+        actor: SkinningData,
+        baseline: Array<Matrix4f?>,
+        walk: AnimationClip,
+        turn: AnimationClip,
+    ) {
+        for (phase in listOf(0f, .13f, .49f, .75f)) {
+            val native = Array(baseline.size) { Matrix4f(baseline[it]) }
+            check(
+                CartShoppingTurn.apply(
+                    native,
+                    actor,
+                    walk,
+                    CartShoppingTurn.View(phase, 1f),
+                ),
+                "native walk phase",
+            )
+            for (i in native.indices) {
+                val bone = actor.getBoneAt(i)
+                val parent = bone.parent ?: continue
+                if (!bone.name.endsWith("Nub")) continue
+                close(
+                    native[i]
+                        .getTranslation(Vector3f())
+                        .distance(native[parent.index].getTranslation(Vector3f()))
+                        .toDouble(),
+                    baseline[i]!!
+                        .getTranslation(Vector3f())
+                        .distance(baseline[parent.index]!!.getTranslation(Vector3f()))
+                        .toDouble(),
+                    "native zero-offset marker keeps actor length ${bone.name}",
+                )
+            }
+            val straight = Array(baseline.size) { Matrix4f(baseline[it]) }
+            check(
+                CartShoppingTurn.apply(
+                    straight,
+                    actor,
+                    walk,
+                    null,
+                    CartShoppingTurn.View(phase, 0f),
+                ),
+                "straight walk composition",
+            )
+            check(
+                straight.indices.all { matrixError(straight[it], native[it]) < 2e-5 },
+                "straight walk anatomical phase",
+            )
+            for (weight in listOf(.25f, .5f, 1f)) {
+                val expected = Array(native.size) { Matrix4f(native[it]) }
+                check(
+                    CartShoppingTurn.apply(
+                        expected,
+                        actor,
+                        turn,
+                        CartShoppingTurn.View(phase, weight),
+                    ),
+                    "expected turn",
+                )
+                val output = Array(baseline.size) { Matrix4f(baseline[it]) }
+                check(
+                    CartShoppingTurn.apply(
+                        output,
+                        actor,
+                        walk,
+                        turn,
+                        CartShoppingTurn.View(phase, weight),
+                    ),
+                    "shared phase turn composition",
+                )
+                check(
+                    output.indices.all { matrixError(output[it], expected[it]) < 2e-5 },
+                    "turn and straight use one phase",
+                )
+            }
+            val fallback = Array(baseline.size) { Matrix4f(baseline[it]) }
+            check(
+                CartShoppingTurn.apply(
+                    fallback,
+                    actor,
+                    walk,
+                    null,
+                    CartShoppingTurn.View(phase, 1f),
+                ),
+                "missing turn retains straight walk",
+            )
+            check(
+                fallback.indices.all { matrixError(fallback[it], native[it]) < 2e-5 },
+                "valid native fallback",
+            )
+            val untouched = Array(baseline.size) { Matrix4f(baseline[it]) }
+            check(
+                !CartShoppingTurn.apply(
+                    untouched,
+                    actor,
+                    null,
+                    turn,
+                    CartShoppingTurn.View(phase, 1f),
+                ),
+                "missing native walk refuses composition",
+            )
+            check(
+                untouched.indices.all { untouched[it] == baseline[it] },
+                "failed composition is transactional",
+            )
+            for (name in listOf("Dummy01", "Bip01", "Translation_Data")) {
+                val i = actor.getBone(name).index
+                check(
+                    matrixError(straight[i], baseline[i]!!) < 2e-5,
+                    "cosmetic walk preserves root $name",
+                )
+            }
         }
     }
 
@@ -239,11 +383,15 @@ object CartShoppingTurnTest {
         val folder = root.resolve("PZSurvivorToolkit/42/media/anims_X/Bob")
         val (actor, idle) = read(folder.resolve("Toolkit_CartPivot_Idle.x"))
         val baseline = reference(actor, idle)
+        val (_, walk) = read(folder.resolve("Toolkit_ShoppingWalk.x"))
+        val (_, nativeWalk) = read(folder.resolve("Toolkit_CartPivot_Walk.x"))
         for (side in listOf("Left", "Right")) {
             val (targetActor, clip) = read(folder.resolve("Toolkit_ShoppingTurn_$side.x"))
             check(actor.boneIndices == targetActor.boneIndices, "bone mapping")
             val expected = reference(actor, clip)
             stableBar(actor, clip, baseline)
+            sharedWalk(actor, baseline, walk, clip)
+            if (side == "Left") sharedWalk(actor, baseline, nativeWalk, clip)
             val zero = Array(baseline.size) { Matrix4f(baseline[it]) }
             check(
                 CartShoppingTurn.apply(zero, actor, clip, CartShoppingTurn.View(0f, 0f)),
@@ -260,7 +408,13 @@ object CartShoppingTurnTest {
             )
             check(
                 full.indices.all { matrixError(full[it], expected[it]!!) < 2e-5 },
-                "native import/FK matches accepted pose",
+                "native import/FK matches source: " +
+                    full.indices
+                        .sortedByDescending { matrixError(full[it], expected[it]!!) }
+                        .take(3)
+                        .joinToString {
+                            "${actor.getBoneAt(it).name}=${matrixError(full[it], expected[it]!!)}"
+                        },
             )
             for (phase in 0..48) for (weight in listOf(.15f, .5f, 1f)) {
                 val output = Array(baseline.size) { Matrix4f(baseline[it]) }
@@ -300,7 +454,7 @@ object CartShoppingTurnTest {
             )
         }
         println(
-            "CART_SHOPPING_TURN_PASS native loops, local length-preserving blends, phase wrap/release, slot ownership",
+            "CART_SHOPPING_TURN_PASS native loops, shared walking phase, cadence cap/pause/release, transactional fallback, slot ownership",
         )
     }
 }

@@ -1,6 +1,6 @@
 # Shopping cart turn footwork
 
-- [ ] Run the accepted shopping walking-turn animation and stable-handle fix with the full selected mod pack on macOS SP/Host once `VanillaVehiclesAnimated` is available. Check entry/release, a small correction and held turns, retaining straight/reverse/fast gait controls. Cart-only SP capture and final two-client Host render evidence are available; font-loading errors keep those runtime reports at needs-review rather than clean PASS.
+- [ ] Run the native-walk-based shopping gait and stable-handle fix with the full selected mod pack on macOS SP/Host once `VanillaVehiclesAnimated` is available. Check entry/release, a small correction and held turns, retaining reverse/fast gait controls. Cart-only SP capture and two-client Host render evidence confirm the new motion and bounded cadence; font-loading errors keep those runtime reports at needs-review rather than clean PASS.
 
 # Container editor visual states
 

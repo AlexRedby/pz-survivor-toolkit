@@ -169,6 +169,24 @@ def extract(study, side, parents, canonical):
 
 def check_metadata(samples, side):
     meta = samples[0].get('metadata', {})
+    if meta.get('schema') == 'shopping-turn-native-walk-v2':
+        source = meta.get('source', {})
+        require(meta.get('coordinate_space') == 'native actor-local'
+                and meta.get('direction') == side
+                and close(meta.get('period_seconds'), PERIOD)
+                and meta.get('fps') == FPS
+                and meta.get('canonical_phase') == 'left foot swings first'
+                and close(meta.get('source_phase_offset'), .5),
+                f'{side}: invalid native-walk loop metadata')
+        require(source.get('path') == 'assets/animations/cart_pivot_walk.json'
+                and source.get('sha256') == digest(ROOT / source['path']),
+                f'{side}: native walking source changed; regenerate the shopping gait')
+        sign = -1 if side == 'left' else 1
+        require(close(meta.get('pelvis_yaw_degrees'), sign * 25)
+                and close(meta.get('chest_yaw_degrees'), sign * 8)
+                and close(meta.get('leg_abduction_degrees'), 2),
+                f'{side}: unexpected body-leading turn')
+        return meta
     require(meta.get('schema') == 'shopping-turn-visual-loop-v1'
             and meta.get('coordinate_space') == 'native actor-local'
             and meta.get('direction') == side, f'{side}: missing visual-loop provenance')

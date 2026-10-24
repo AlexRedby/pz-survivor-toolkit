@@ -22,11 +22,13 @@ import zombie.core.skinnedmodel.model.SkinningBone
 import zombie.core.skinnedmodel.model.SkinningData
 import zombie.inventory.InventoryItem
 
-/** Cosmetic playback of the accepted actor-local Blender loop; never supplies root movement. */
+/** Cosmetic native-walk playback with body-leading turns; never supplies root movement. */
 internal object CartShoppingTurn {
-    data class View(val phase: Float, val turn: Float)
+    data class View(val phase: Float, val turn: Float, val walk: Float = 1f)
 
-    /** Native phase is unwrapped before scaling; changing tracks must never jump the feet. */
+    /**
+     * One cosmetic clock for straight walking and turning, bounded by a relaxed walking cadence.
+     */
     class Blend {
         var phase = 0.0
             private set
@@ -34,9 +36,14 @@ internal object CartShoppingTurn {
         var turn = 0.0
             private set
 
+        var walk = 0.0
+            private set
+
         private var velocity = 0.0
+        private var walkVelocity = 0.0
         private var clock: Any? = null
         private var previous = Double.NaN
+        private var anchored = false
 
         fun update(
             goal: Double,
@@ -44,36 +51,51 @@ internal object CartShoppingTurn {
             identity: Any?,
             nativePhase: Double,
             nativeDuration: Double,
+            moving: Boolean = true,
         ): View {
             val dt = if (seconds.isFinite()) seconds.coerceIn(0.0, .1) else 0.0
-            val target = if (goal.isFinite()) goal.coerceIn(-1.0, 1.0) else 0.0
+            val active =
+                moving &&
+                    identity != null &&
+                    nativePhase.isFinite() &&
+                    nativeDuration.isFinite() &&
+                    nativeDuration > 0
+            val target = if (active && goal.isFinite()) goal.coerceIn(-1.0, 1.0) else 0.0
             if (dt > 0) {
                 val frequency = 18.0
+                val decay = exp(-frequency * dt)
                 val offset = turn - target
                 val rate = velocity + frequency * offset
-                val decay = exp(-frequency * dt)
                 turn = (target + (offset + rate * dt) * decay).coerceIn(-1.0, 1.0)
                 velocity = (velocity - frequency * rate * dt) * decay
+                val walkTarget = if (active) 1.0 else 0.0
+                val walkOffset = walk - walkTarget
+                val walkRate = walkVelocity + frequency * walkOffset
+                walk = (walkTarget + (walkOffset + walkRate * dt) * decay).coerceIn(0.0, 1.0)
+                walkVelocity = (walkVelocity - frequency * walkRate * dt) * decay
                 if (abs(turn) < .0001 && target == 0.0) {
                     turn = 0.0
                     velocity = 0.0
                 }
+                if (walk < .0001 && !active) {
+                    walk = 0.0
+                    walkVelocity = 0.0
+                    anchored = false
+                }
             }
-            if (
-                identity != null &&
-                    nativePhase.isFinite() &&
-                    nativeDuration.isFinite() &&
-                    nativeDuration > 0
-            ) {
+            if (active) {
                 val current = nativePhase - floor(nativePhase)
-                if (identity === clock && previous.isFinite()) {
+                if (!anchored) {
+                    // Bob's native walk starts its anatomical left swing halfway through the clip.
+                    phase = (current + .5) % 1.0
+                    anchored = true
+                } else if (identity === clock && previous.isFinite()) {
                     var delta = current - previous
                     if (delta < -.5) delta += 1.0
-                    // Track retiming or a missed update is not a reason to teleport a planted foot.
                     if (delta in 0.0..0.35) {
-                        // Preserve native source seconds in the authored .8-second loop;
-                        // normalized fractions alone would change its footstep cadence.
-                        phase = (phase + delta * nativeDuration / .8) % 1.0
+                        // Native strafe compensation can run much faster than a natural walk.
+                        // Keep the cosmetic cycle <= 137 steps/min and honor slower/paused tracks.
+                        phase = (phase + minOf(delta, dt / .88)) % 1.0
                     }
                 }
                 clock = identity
@@ -82,14 +104,14 @@ internal object CartShoppingTurn {
                 clock = null
                 previous = Double.NaN
             }
-            return View(phase.toFloat(), turn.toFloat())
+            return View(phase.toFloat(), turn.toFloat(), walk.toFloat())
         }
     }
 
     private class State(val item: InventoryItem) {
         val blend = Blend()
         var track: AnimationTrack? = null
-        var view = View(0f, 0f)
+        var view = View(0f, 0f, 0f)
     }
 
     private data class Draw(
@@ -139,9 +161,13 @@ internal object CartShoppingTurn {
             states.remove(player)
             return
         }
-        val state =
-            states[player]?.takeIf { it.item === item }
-                ?: State(item!!).also { states[player] = it }
+        val x = player.getVariableFloat("ToolkitCartStepX", 0f)
+        val y = player.getVariableFloat("ToolkitCartStepY", 0f)
+        val moving =
+            x.isFinite() && y.isFinite() && y > .05f && player.getVariableBoolean("isMoving")
+        val previousState = states[player]?.takeIf { it.item === item }
+        if (!moving && previousState == null) return
+        val state = previousState ?: State(item!!).also { states[player] = it }
         val animator = player.getAdvancedAnimator()
         var chosen: AnimationTrack? = null
         var largest = 0f
@@ -176,15 +202,14 @@ internal object CartShoppingTurn {
             else Double.NaN
         state.view =
             state.blend.update(
-                amount(
-                    player.getVariableFloat("ToolkitCartStepX", 0f),
-                    player.getVariableFloat("ToolkitCartStepY", 0f),
-                ),
+                amount(x, y),
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate().toDouble(),
                 chosen,
                 phase,
                 chosen?.getDuration()?.toDouble() ?: Double.NaN,
+                moving,
             )
+        if (!moving && state.view.walk == 0f) states.remove(player)
     }
 
     @JvmStatic
@@ -214,7 +239,7 @@ internal object CartShoppingTurn {
     fun current(player: IsoPlayer): View? {
         val state = states[player] ?: return null
         return state.view.takeIf {
-            abs(it.turn) > .001f &&
+            it.walk > .001f &&
                 player.getPrimaryHandItem() === state.item &&
                 player.getSecondaryHandItem() === state.item
         }
@@ -236,8 +261,10 @@ internal object CartShoppingTurn {
                 !view.phase.isFinite() ||
                 view.phase !in 0f..1f ||
                 !view.turn.isFinite() ||
-                abs(view.turn) <= .001f ||
-                abs(view.turn) > 1f
+                abs(view.turn) > 1f ||
+                !view.walk.isFinite() ||
+                view.walk <= .001f ||
+                view.walk > 1f
         )
             return
         slots[slot] = Draw(player, owner, model, animation, view)
@@ -273,24 +300,88 @@ internal object CartShoppingTurn {
         val native = org.lwjgl.util.vector.Matrix4f()
         val target = Array(64) { Matrix4f() }
         val result = Array(64) { Matrix4f() }
+        val working = Array(64) { Matrix4f() }
         val from = Matrix4f()
         val local = Matrix4f()
         val offset = Vector3f()
     }
 
     private val sampler = ThreadLocal.withInitial(::Sampler)
+    private val walkingSampler = ThreadLocal.withInitial(::Sampler)
+
+    private fun clip(name: String): AnimationClip? =
+        try {
+            ModelManager.instance.getAnimationClip(name)
+        } catch (_: NullPointerException) {
+            null
+        }
 
     @JvmStatic
-    fun apply(poses: Array<out Matrix4f?>, actor: SkinningData, view: View): Boolean {
-        val name = if (view.turn > 0) "Toolkit_ShoppingTurn_Left" else "Toolkit_ShoppingTurn_Right"
-        val clip =
-            try {
-                ModelManager.instance.getAnimationClip(name)
-            } catch (_: NullPointerException) {
-                null
-            }
-        return apply(poses, actor, clip, view)
+    fun apply(poses: Array<out Matrix4f?>, actor: SkinningData, view: View): Boolean =
+        apply(
+            poses,
+            actor,
+            clip("Toolkit_ShoppingWalk"),
+            if (abs(view.turn) > .001f)
+                clip(
+                    if (view.turn > 0) "Toolkit_ShoppingTurn_Left"
+                    else "Toolkit_ShoppingTurn_Right",
+                )
+            else null,
+            view,
+        )
+
+    /**
+     * Stage both clips before committing; a missing/refused turn retains the valid straight walk.
+     */
+    @JvmStatic
+    fun apply(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        walkClip: AnimationClip?,
+        turnClip: AnimationClip?,
+        view: View,
+    ): Boolean {
+        val count = actor.numBones()
+        if (count > 64 || poses.size < count || !valid(view)) return false
+        val walk = walkingSampler.get()
+        for (i in 0 until count) {
+            val pose = poses[i] ?: return false
+            if (!pose.isFinite) return false
+            walk.working[i].set(pose)
+        }
+        if (
+            !sample(
+                walk.working,
+                actor,
+                walkClip,
+                view.phase,
+                view.walk.toDouble(),
+                walk,
+            )
+        )
+            return false
+        if (abs(view.turn) > .001f) {
+            sample(
+                walk.working,
+                actor,
+                turnClip,
+                view.phase,
+                abs(view.turn * view.walk).toDouble(),
+                sampler.get(),
+            )
+        }
+        for (i in 0 until count) poses[i]!!.set(walk.working[i])
+        return true
     }
+
+    private fun valid(view: View): Boolean =
+        view.phase.isFinite() &&
+            view.phase in 0f..1f &&
+            view.turn.isFinite() &&
+            abs(view.turn) <= 1f &&
+            view.walk.isFinite() &&
+            view.walk in 0f..1f
 
     /** Transactional local-joint blend; full model poses are committed only after validation. */
     @JvmStatic
@@ -299,6 +390,24 @@ internal object CartShoppingTurn {
         actor: SkinningData,
         clip: AnimationClip?,
         view: View,
+    ): Boolean =
+        valid(view) &&
+            sample(
+                poses,
+                actor,
+                clip,
+                view.phase,
+                abs(view.turn * view.walk).toDouble(),
+                sampler.get(),
+            )
+
+    private fun sample(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        clip: AnimationClip?,
+        phase: Float,
+        weight: Double,
+        scratch: Sampler,
     ): Boolean {
         val count = actor.numBones()
         val pelvis = actor.getBone("Bip01_Pelvis") ?: return false
@@ -306,15 +415,14 @@ internal object CartShoppingTurn {
             clip == null ||
                 count > 64 ||
                 poses.size < count ||
-                !view.phase.isFinite() ||
-                view.phase !in 0f..1f ||
-                !view.turn.isFinite() ||
-                abs(view.turn) > 1f ||
+                !phase.isFinite() ||
+                phase !in 0f..1f ||
+                !weight.isFinite() ||
+                weight !in 0.0..1.0 ||
                 clip.getDuration() <= 0 ||
                 !clip.getDuration().isFinite()
         )
             return false
-        val scratch = sampler.get()
         for (i in 0 until count) {
             val parent = actor.getBoneAt(i).parent
             if (poses[i]?.isFinite != true || parent != null && parent.index >= i) return false
@@ -333,7 +441,7 @@ internal object CartShoppingTurn {
             scratch.track.setUseDeferredMovement(false)
             scratch.clip = clip
         }
-        val time = (view.phase % 1f) * clip.getDuration()
+        val time = (phase % 1f) * clip.getDuration()
         scratch.track.setCurrentTimeValue(time)
         scratch.track.setPreviousTimeValue(time)
         scratch.track.UpdateKeyframes(0f)
@@ -354,7 +462,7 @@ internal object CartShoppingTurn {
                     !CartTransitionMath.blend(
                         from,
                         scratch.target[i],
-                        abs(view.turn).toDouble(),
+                        weight,
                         local,
                     )
                 )
@@ -362,8 +470,15 @@ internal object CartShoppingTurn {
                 if (bone !== pelvis) {
                     val length = from.getTranslation(scratch.offset).length()
                     local.getTranslation(scratch.offset)
-                    if (length > 0 && scratch.offset.lengthSquared() < 1e-12f) return false
-                    if (length > 0) local.setTranslation(scratch.offset.normalize(length))
+                    if (length > 0) {
+                        if (scratch.offset.lengthSquared() < 1e-12f) {
+                            // Native Walk omits offsets for unskinned end markers. Keep the
+                            // actor's marker instead of collapsing it or refusing the gait.
+                            if (!bone.name.endsWith("Nub")) return false
+                            from.getTranslation(scratch.offset)
+                        }
+                        local.setTranslation(scratch.offset.normalize(length))
+                    }
                 }
             } else local.set(from)
             if (parent == null) scratch.result[i].set(local)
