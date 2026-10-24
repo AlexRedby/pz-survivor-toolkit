@@ -18,6 +18,14 @@ local class=ISFitnessAction
 local ui=ISFitnessUI
 local click=ui.onClick
 local activate=ISInventoryPaneContextMenu.onActivateItem
+local cartDropOwner=Toolkit.ActionQueueCarts
+local cartDropCallback=cartDropOwner and cartDropOwner.isDropCallback
+local cartDropMatch=cartDropOwner and cartDropOwner.isNonCartDrop
+local function approvedDrop(name,callback)
+ return Toolkit.ActionQueueCarts==cartDropOwner and cartDropOwner
+  and cartDropOwner.isDropCallback==cartDropCallback and cartDropOwner.isNonCartDrop==cartDropMatch
+  and type(cartDropCallback)=='function' and cartDropCallback(name,callback)
+end
 local trusted=Proof.matches('media/lua/shared/TimedActions/ISFitnessAction.lua',1524582630)
  and Proof.matches('media/lua/client/ISUI/ISFitnessUI.lua',219506148)
  and Proof.matches('media/lua/shared/Definitions/FitnessExercises.lua',4259913378)
@@ -33,6 +41,9 @@ local childSources={ISEquipWeaponAction=1814269902,ISUnequipAction=229487418,ISW
  ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935,ISDropWorldItemAction=2862163534}
 local function approvedChange(kind,name)
  local carts=Toolkit.ActionQueueCarts
+ if kind=='ISDropWorldItemAction' then
+  return approvedDrop(name,classes[kind].methods[name]) and approvedDrop(name,ISDropWorldItemAction[name])
+ end
  if kind=='ISInventoryTransferAction' and name=='checkQueueList' then
   local intent=Toolkit.ActionQueueTidyIntent
   return intent and intent.isQueueObserver(classes[kind].methods[name],ISInventoryTransferAction[name])
@@ -56,6 +67,7 @@ for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction',
    if kind~='ISFitnessAction' and kind~='ISInventoryTransferAction' and name~='derive' and not Proof.closure(callback,kind..'.lua') then
     local carts=Toolkit.ActionQueueCarts
     local approved=kind=='ISUnequipAction' and (name=='new' or name=='complete') and carts and carts.isUnequipConstructor(owner.new)
+     or kind=='ISDropWorldItemAction' and approvedDrop(name,callback)
     trusted=trusted and approved==true
    end
   end
@@ -96,6 +108,10 @@ local function root(player,ref)
  return item and item:getContainer()==player:getInventory() and item or nil
 end
 local function unchanged()
+ for _,name in ipairs({'new','isValid','complete'}) do
+  if not Proof.closure(ISDropWorldItemAction[name],'ISDropWorldItemAction.lua')
+   and not approvedDrop(name,ISDropWorldItemAction[name]) then return false end
+ end
  if not trusted or ISFitnessAction~=class or ISFitnessUI~=ui or ui.onClick~=Fitness.onClick
   or ISInventoryPaneContextMenu.onActivateItem~=activate then return false end
  for kind,snapshot in pairs(classes) do
@@ -129,6 +145,8 @@ local function validRecord(action)
   end
   if action.onStartFunc or action.onCancelFunc or action.retriggerLastAction or action.onFailFunc or action.additionalTest
    or action.onCompleteFunc and not (guarded and action.onCompleteFunc==action.toolkitQueueSafeOnComplete) then return end
+  if action.Type=='ISDropWorldItemAction' and not Proof.closure(ISDropWorldItemAction.new,'ISDropWorldItemAction.lua')
+   and (not cartDropMatch or not cartDropMatch(action)) then return end
   if record.item and not same(action.item,record.item) then return end
   if action.Type=='ISInventoryTransferAction' and not Toolkit.ActionQueuePolicy.matchesNative(action) then return end
   if action.Type=='ISFitnessAction' and (action.exercise~=record.saved.exercise or action.timeToExe~=record.saved.minutes
@@ -310,6 +328,10 @@ local function prepare(player,saved)
  saved.storage=Equipment.capture(player)
  local drops=Equipment.drops(player,saved.storage)
  if not drops then return end
+ for _,drop in ipairs(drops) do
+  if not Proof.closure(ISDropWorldItemAction.new,'ISDropWorldItemAction.lua')
+   and (not cartDropMatch or not cartDropMatch(drop)) then return end
+ end
  if player:isSitting() then add(ISWaitWhileGettingUp:new(player),saved,'preparation') end
  saved.before={hands={primary=identity(primary),secondary=identity(secondary)},bags={}}
  saved.preparations,saved.handles={},{}

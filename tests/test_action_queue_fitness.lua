@@ -1017,6 +1017,100 @@ assert(#q.queue==1 and currentExercise==nil and player.worn.BACK==backpack,
 enabled=true
 print('PASS native queue-disabled ground storage, closed-window restoration, distance guards and placement preflight')
 
+-- Execute the selected cart drop wrappers after Fitness captures the native callbacks,
+-- exactly as the full mod pack's OnGameStart does. Source pins and the production
+-- private drop-admission installer are used rather than an unconditional cart stub.
+if SaucedCartsSource then
+ local restrictionsPath=SaucedCartsSource..'/ContainerRestrictions.lua'
+ local restrictions=read(restrictionsPath)
+ local coreText=read(SaucedCartsSource..'/Core.lua')
+ local clientRoot=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'
+ local compatText=read(clientRoot..'ActionQueueCompat.lua')
+ local cartsText=read(clientRoot..'ActionQueueCarts.lua')
+ local pinCode='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua\'))();local sourceFiles={}\n'
+  ..assert(compatText:match('(local function verified%(id, files%).-\nend)'))..'\nlocal Compat={}\n'
+  ..assert(compatText:match('(function Compat.isCartMaskSource%(%).-\nend)'))..'\nreturn Compat'
+ local admissionCode='local Carts={isTransfer=function()return false end,isReturn=function()return false end};local Toolkit=PZSurvivorToolkit;local core=SaucedCarts;local compat=Toolkit.ActionQueueCompat\n'
+  ..'local function filename(callback)return getFilenameOfClosure(callback):match("([^/]+)$")end\n'
+  ..'local function unchanged()return Toolkit.ActionQueueCarts==Carts end\n'
+  ..assert(cartsText:match('(local function ordinaryEquipment%(item%).-\nend)'))..'\n'
+  ..assert(cartsText:match('(%-%- Fitness uses the ordinary%-bag branches.-)\nlocal function installFoodMaskRemoval'))
+  ..'\nToolkit.ActionQueueCarts=Carts;installFitnessStorageDrop();return Carts'
+ local hookCode='local dropActionHookInitialized=false\n'
+  ..assert(restrictions:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
+  ..assert(restrictions:match('(local function wrapDropNew%(%).-\nend)'))..'\n'
+  ..assert(restrictions:match('(local function initDropActionHook%(%).-\nend)'))..'\nreturn initDropActionHook'
+ local function source(text,path)return assert(loadstring(text,'@'..path))()end
+ local originalStartAdd=Events.OnGameStart.Add
+ local originalModReader=getModFileReader
+ for _,mode in ipairs({'valid','changed-source','preinstalled'})do
+  reset()
+  native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+  native('shared/TimedActions/ISDropWorldItemAction.lua')
+  f.project('FitnessEquipment') -- Each source scenario owns its native UI preparation registry.
+  f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+  local callbacks={}
+  Events.OnGameStart.Add=function(callback)callbacks[#callbacks+1]=callback end
+  SaucedCarts=source('return {CartTypes={},safeIsCart=function(item)return item and item.cart end,debug=function()end}',SaucedCartsSource..'/Core.lua')
+  getModFileReader=function(id,path)
+   assert(id=='SaucedCarts')
+   local text=path:match('/Core.lua$') and coreText or restrictions
+   if mode=='changed-source'then text=text..'\n-- changed selected source\n'end
+   local offset=1
+   return {readLine=function()
+    if offset>#text then return end
+    local stop=text:find('\n',offset)or #text+1;local line=text:sub(offset,stop-1);offset=stop+1;return line
+   end,close=function()end}
+  end
+  PZSurvivorToolkit.ActionQueueCompat=source(pinCode,clientRoot..'ActionQueueCompat.lua')
+  local hook=source(hookCode,restrictionsPath)
+  if mode=='preinstalled'then hook()else Events.OnGameStart.Add(hook)end
+  local carts=source(admissionCode,clientRoot..'ActionQueueCarts.lua')
+  fitnessQueue=f.project('ActionQueueFitness')
+  for _,callback in ipairs(callbacks)do callback()end
+  local bag=item('Bag_BigHikingBag',nil,'BACK');bag.favorite=true;player.worn.BACK=bag
+  local packed=item('WaterBottle',bag.inner)
+  local requestAction,cartQueue=request('squats',10)
+  if mode~='valid'then
+   assert(not fitnessQueue.isManaged(requestAction)and requestAction.Type=='ISUnequipAction',
+    'unverified/preinstalled cart drop source acquired managed producer permission: '..mode)
+  else
+   assert(fitnessQueue.isManaged(requestAction),'actual selected late cart drop wrappers forced native Fitness fallback')
+   expand(requestAction,cartQueue)
+   local exercise=reachExercise(cartQueue)
+   assert(bag:getWorldItem()and not player.worn.BACK,'approved ordinary bag did not use native paid ground placement')
+   finish(cartQueue,exercise)
+   assert(player.worn.BACK==bag and packed:getContainer()==bag.inner and bag:isFavorite()and #worlds==0,
+    'actual ordinary cart drop wrapper did not preserve exact storage restoration')
+   local function rejected(message)
+    player.worn.BACK=nil -- Fallback is checked without executing a deliberately replaced constructor.
+    local rejectedAction=request('squats',10)
+    player.worn.BACK=bag
+    assert(not fitnessQueue.isManaged(rejectedAction)and rejectedAction.Type=='ISWaitWhileGettingUp',message)
+   end
+   for _,name in ipairs({'new','isValid','complete'})do
+    local callback=ISDropWorldItemAction[name];ISDropWorldItemAction[name]=function()end
+    rejected('changed drop callback retained managed permission: '..name)
+    ISDropWorldItemAction[name]=callback
+   end
+   local classifier=SaucedCarts.safeIsCart;SaucedCarts.safeIsCart=function()return false end
+   rejected('changed cart classification helper retained managed drop permission');SaucedCarts.safeIsCart=classifier
+   local helper=carts.isDropCallback;carts.isDropCallback=function()return true end
+   rejected('replacement cart admission helper retained managed permission');carts.isDropCallback=helper
+   local drop=ISDropWorldItemAction:new(player,bag,here,0,0,0,0,false)
+   bag.cart=true;assert(not carts.isNonCartDrop(drop),'cart acquired ordinary ground storage drop permission');bag.cart=nil
+   SaucedCarts.CartTypes[bag:getFullType()]=true
+   assert(not carts.isNonCartDrop(drop),'known cart type acquired ordinary ground storage drop permission')
+   SaucedCarts.CartTypes[bag:getFullType()]=nil
+   drop.onCompleteFunc=function()end
+   assert(not carts.isNonCartDrop(drop),'drop with foreign completion callback acquired managed permission')
+  end
+ end
+ Events.OnGameStart.Add=originalStartAdd;getModFileReader=originalModReader
+ native('shared/TimedActions/ISDropWorldItemAction.lua');f.project('FitnessEquipment')
+ print('PASS actual late SaucedCarts drop wrappers admit ordinary Fitness storage and reject changed source/helpers/carts')
+end
+
 -- A changed source present before capture must not acquire a new permission.
 native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
 f.project('ActionQueueDefinitions')
