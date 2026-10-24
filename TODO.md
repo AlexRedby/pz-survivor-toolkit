@@ -1,3 +1,7 @@
+# Open Jackets and Climb Ladders selection
+
+- [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, plus ladder ascent/descent, occupied exits, moved ladders, reload and second-player synchronization in isolated full-pack macOS B42.21 SP/Host saves. Selection and author support claims do not establish runtime compatibility.
+
 # Retained-item full-pack compatibility
 
 - [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.

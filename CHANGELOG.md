@@ -11,6 +11,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Added:** Spongie's Open Jackets (`SpnOpenClothBase` before `SpnOpenCloth`, Workshop `2812326159`) and Climb Ladders (`SubirEscaleras`, Workshop `3774776279`) to the B42.21 selection (58 Mod IDs / 53 Workshop items). Adds open/rolled clothing variants and world-ladder climbing. Optional Fluffy Hair and Build Ladders remain unselected; full-pack SP/Host behavior is unverified.
+
 - **Added:** Vehicle Repair Overhaul and its B42 Vehicle Salvage Overhaul module from Workshop `2757712197`, loaded base-first after the other vehicle mods (55 Mod IDs / 51 Workshop items). Adds repair options and whole-vehicle salvage; full-pack SP/Host behavior and the upstream sandbox-setting controls remain unverified.
 
 - **Added:** Vehicle Aim Roof Fix (`CarRoofFix`, Workshop `3781616141`) after the VVA pair in the B42.21 selection (54 Mod IDs / 51 Workshop items), to keep visible occupants seated during right-mouse look-around/aiming. Full-pack SP/Host behavior remains unverified.
