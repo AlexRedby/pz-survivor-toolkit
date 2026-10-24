@@ -2,10 +2,6 @@ package net.alexredby.pztoolkitjavapatches
 
 /** Shopping-cart axle pivot and rolling wheelbarrow arc; native collision stays authoritative. */
 object CartSteeringMath {
-    // shortcut: selected models use an approximate axle offset; recalibrate when their geometry
-    // changes.
-    const val AXLE_DISTANCE = 0.8
-
     class Step() {
         private var x = 0.0
         private var y = 0.0
@@ -123,24 +119,19 @@ object CartSteeringMath {
         return if (Math.abs(wrap(target - heading)) > threshold) -1 else 1
     }
 
+    /** Two fixed rear wheels constrain the rear axle; the front casters follow their arcs. */
     @JvmStatic
-    fun step(
+    fun shoppingStep(
         heading: Double,
         target: Double,
         distance: Double,
         seconds: Double,
         load: Double,
-    ): Step = step(heading, target, distance, seconds, load, Step())
-
-    @JvmStatic
-    fun step(
-        heading: Double,
-        target: Double,
-        distance: Double,
-        seconds: Double,
-        load: Double,
-        result: Step?,
-    ): Step = step(heading, target, distance, seconds, load, 0.0, result)
+        axle: Double,
+        reverse: Boolean,
+        result: Step,
+    ): Step =
+        rollingStep(heading, target, distance, seconds, load, axle, 0.0, reverse, false, result)
 
     @JvmStatic
     fun step(
@@ -188,13 +179,37 @@ object CartSteeringMath {
         reverse: Boolean,
         result: Step?,
     ): Step {
-        if (!(distance > 0) || !(seconds > 0))
-            return (result ?: throw NullPointerException()).set(0.0, 0.0, 0.0, 0.0)
+        return rollingStep(
+            heading,
+            target,
+            distance,
+            seconds,
+            load,
+            axleDistance,
+            lateralDegrees,
+            reverse,
+            true,
+            result ?: throw NullPointerException(),
+        )
+    }
+
+    private fun rollingStep(
+        heading: Double,
+        target: Double,
+        distance: Double,
+        seconds: Double,
+        load: Double,
+        axle: Double,
+        lateralDegrees: Double,
+        reverse: Boolean,
+        wheelbarrow: Boolean,
+        result: Step,
+    ): Step {
+        if (!(distance > 0) || !(seconds > 0) || !axle.isFinite() || axle <= 0)
+            return result.set(0.0, 0.0, 0.0, 0.0)
         val boundedLoad = Math.max(0.0, Math.min(1.0, load))
         var error = wrap(target - heading)
         if (reverse) error = wrap(error + Math.PI)
-        val wheelbarrow = axleDistance > 0
-        val axle = if (wheelbarrow) axleDistance else AXLE_DISTANCE
         var limit =
             if (wheelbarrow)
                 2 *
@@ -222,7 +237,7 @@ object CartSteeringMath {
             var travel = Math.sqrt(Math.max(0.0, distance * distance - sideways * sideways))
             if (reverse) travel = -travel
             // The handles step outside so the front wheel stays in its rolling plane.
-            return (result ?: throw NullPointerException()).set(
+            return result.set(
                 travel * Math.cos(heading + half) + sideways * Math.sin(heading + half),
                 travel * Math.sin(heading + half) - sideways * Math.cos(heading + half),
                 turn,
@@ -232,10 +247,12 @@ object CartSteeringMath {
         // Handle translation and the turn chord are perpendicular, not additive costs.
         val chord = 2 * axle * Math.sin(turn / 2)
         var travel = Math.sqrt(Math.max(0.0, distance * distance - chord * chord))
-        if (Math.abs(Math.cos(error)) < 1e-10) travel = 0.0
+        // A time-limited yaw must not jump from a pure pivot to most of a forward stride.
+        // Release rolling travel continuously as the handles align with the requested direction.
+        travel = Math.min(travel, distance * Math.abs(Math.cos(error)))
         if (reverse) travel = -travel
         val next = heading + turn
-        return (result ?: throw NullPointerException()).set(
+        return result.set(
             travel * Math.cos(heading + turn / 2) - axle * (Math.cos(next) - Math.cos(heading)),
             travel * Math.sin(heading + turn / 2) - axle * (Math.sin(next) - Math.sin(heading)),
             turn,
@@ -388,7 +405,7 @@ object CartSteeringMath {
         )
     }
 
-    /** A native sidestep budget moves the handles around the planted front wheel. */
+    /** A native sidestep budget moves the handles around the cart's rolling axle. */
     @JvmStatic
     fun stationaryStep(
         heading: Double,

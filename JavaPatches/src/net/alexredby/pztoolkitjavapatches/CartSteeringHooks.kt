@@ -461,14 +461,43 @@ internal object CartSteeringHooks {
                             clearanceLean(player).toFloat(),
                             CartLegPace.woodenGaitShift(player),
                         )
+            "SaucedCarts.ShoppingCart" -> CartShopping.axle(player.getPrimaryHandItem().worldScale)
             else -> 0.0
         }
 
-    @JvmStatic
-    private fun pivotAxle(player: IsoPlayer): Double {
-        val axle = axle(player)
-        return if (axle > 0) axle else CartSteeringMath.AXLE_DISTANCE
-    }
+    private fun rollingStep(
+        player: IsoPlayer,
+        heading: Double,
+        target: Double,
+        distance: Double,
+        seconds: Double,
+        load: Double,
+        reverse: Boolean,
+        result: CartSteeringMath.Step,
+    ): CartSteeringMath.Step =
+        if (wheelbarrow(player))
+            CartSteeringMath.step(
+                heading,
+                target,
+                distance,
+                seconds,
+                load,
+                axle(player),
+                52.0,
+                reverse,
+                result,
+            )
+        else
+            CartSteeringMath.shoppingStep(
+                heading,
+                target,
+                distance,
+                seconds,
+                load,
+                axle(player),
+                reverse,
+                result,
+            )
 
     @JvmStatic
     private fun load(player: IsoPlayer): Double {
@@ -655,7 +684,7 @@ internal object CartSteeringHooks {
                 distance,
                 dt,
                 state.load,
-                pivotAxle(owner),
+                axle(owner),
                 state.stationaryRate,
                 state.requested,
             )
@@ -676,14 +705,13 @@ internal object CartSteeringHooks {
                 state.requested,
             )
         else
-            CartSteeringMath.step(
+            rollingStep(
+                owner,
                 state.heading,
                 if (state.relative || state.moving) state.target else state.heading,
                 distance,
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate().toDouble(),
                 state.load,
-                axle(owner),
-                52.0,
                 if (state.relative) state.reversal.direction < 0
                 else state.moving && CartSteeringMath.reversing(state.heading, state.target),
                 state.requested,
@@ -1279,14 +1307,13 @@ internal object CartSteeringHooks {
                     state.requested,
                 )
             else
-                CartSteeringMath.step(
+                rollingStep(
+                    player,
                     state.heading,
                     state.target,
                     .03,
                     1.0 / 60,
                     state.load,
-                    axle(player),
-                    52.0,
                     if (state.relative) state.reversal.direction < 0
                     else CartSteeringMath.reversing(state.heading, state.target),
                     state.requested,
@@ -1303,7 +1330,7 @@ internal object CartSteeringHooks {
                 1.0,
                 dt,
                 state.load,
-                pivotAxle(player),
+                axle(player),
                 state.stationaryRate,
                 state.requested,
             )

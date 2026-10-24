@@ -230,6 +230,7 @@ object CartSteeringHooksTest {
         val dot = fullType.indexOf('.')
         cart.setModule(fullType.substring(0, dot))
         cart.setType(fullType.substring(dot + 1))
+        cart.worldScale = 1f
     }
 
     private fun check(condition: Boolean, message: String) {
@@ -1728,6 +1729,90 @@ object CartSteeringHooksTest {
         }
     }
 
+    private fun shoppingRearAxleControls(unsafe: Unsafe, states: Map<*, *>) {
+        val player = unsafe.allocateInstance(Player::class.java) as Player
+        val cart = unsafe.allocateInstance(InventoryContainer::class.java) as InventoryContainer
+        player.inventory = ItemContainer()
+        player.primary = cart
+        player.secondary = cart
+        cart.setContainer(player.inventory)
+        type(cart, "SaucedCarts.ShoppingCart")
+        player.walkSpeed = .8f
+        val input = IsoPlayer.InputState()
+        val keys = Keys()
+        player.keys = keys
+        val time = GameTime.getInstance()
+        val old = time.fpsMultiplier
+        try {
+            time.fpsMultiplier = 1f
+            for (scale in floatArrayOf(.6f, 1f, 1.7f)) for (sign in intArrayOf(-1, 1)) {
+                cart.worldScale = scale
+                player.keyboard = true
+                keys.set(0, sign)
+                CartSteeringHooks.reset(player)
+                player.actualX = 0f
+                player.actualY = 0f
+                player.moving = false
+                CartSteeringHooks.heading(player)
+                val state = states[player]
+                val axle = CartShopping.axle(scale)
+                direction(player, sign * Math.PI / 2)
+                CartSteeringHooks.input(player, input)
+                player.moving = true
+                CartSteeringHooks.heading(player)
+                check(
+                    sign * player.stepX < 0 && player.stepY == 0f,
+                    "shopping handle steps opposite the stationary yaw",
+                )
+                CartSteeringHooks.movement(player, .02f, 0f)
+                CartSteeringHooks.heading(player)
+                check(
+                    field(state, "heading").getDouble(state) == 0.0,
+                    "blocked shopping turn cannot rotate",
+                )
+                repeat(30) {
+                    CartSteeringHooks.input(player, input)
+                    accept(player, CartSteeringHooks.movement(player, .02f, 0f))
+                    val h = field(state, "heading").getDouble(state)
+                    check(
+                        Math.hypot(
+                            player.actualX + axle * Math.cos(h) - axle,
+                            player.actualY + axle * Math.sin(h),
+                        ) < 1e-5,
+                        "shopping stationary turn must hold the rear axle, not a virtual front pivot",
+                    )
+                }
+                check(
+                    sign * field(state, "heading").getDouble(state) > .1,
+                    "shopping stationary turn must make progress",
+                )
+                player.keyboard = false
+                for (reverse in booleanArrayOf(false, true)) {
+                    CartSteeringHooks.reset(player)
+                    player.actualX = 0f
+                    player.actualY = 0f
+                    player.moving = true
+                    CartSteeringHooks.heading(player)
+                    direction(player, (if (reverse) Math.PI else 0.0) + sign * .3)
+                    CartSteeringHooks.input(player, input)
+                    val movement = CartSteeringHooks.movement(player, .02f, 0f)
+                    check(movement.getLength() <= .020001f, "shopping steering cannot add speed")
+                    accept(player, movement)
+                    val h = field(states[player], "heading").getDouble(states[player])
+                    val dx = player.actualX + axle * (Math.cos(h) - 1)
+                    val dy = player.actualY + axle * Math.sin(h)
+                    check(
+                        Math.abs(-dx * Math.sin(h / 2) + dy * Math.cos(h / 2)) < 1e-6,
+                        "shopping moving/reverse rear axle must roll without lateral travel",
+                    )
+                }
+            }
+        } finally {
+            CartSteeringHooks.reset(player)
+            time.fpsMultiplier = old
+        }
+    }
+
     private fun stationaryControls(unsafe: Unsafe, states: Map<*, *>) {
         val player = unsafe.allocateInstance(Player::class.java) as Player
         val cart = unsafe.allocateInstance(InventoryContainer::class.java) as InventoryContainer
@@ -2494,12 +2579,13 @@ object CartSteeringHooksTest {
         CartLocomotionBlendChecks.check()
         zombie.core.random.RandStandard.INSTANCE.init()
         zombie.core.random.RandLua.INSTANCE.init()
-        val tiny = CartSteeringMath.step(0.0, 0.0, .0002, 1.0 / 60, 0.0)
+        val tiny =
+            CartSteeringMath.step(0.0, 0.0, .0002, 1.0 / 60, 0.0, 1.0, CartSteeringMath.Step())
         check(
             !CartSteeringHooks.blockedStep(tiny, 10825.5f, 10142.5f, 0.0),
             "float-rounded first Sprint step must not restart its acceleration forever",
         )
-        val wall = CartSteeringMath.step(0.0, 0.0, .02, 1.0 / 60, 0.0)
+        val wall = CartSteeringMath.step(0.0, 0.0, .02, 1.0 / 60, 0.0, 1.0, CartSteeringMath.Step())
         check(
             CartSteeringHooks.blockedStep(wall, 10825.5f, 10142.5f, 0.0),
             "a real blocked budget must release Sprint momentum",
@@ -2876,6 +2962,7 @@ object CartSteeringHooksTest {
         keyboardControls(unsafe, states)
         keyboardReleaseControls(unsafe, states)
         keyboardWorldReleaseControls(unsafe, states)
+        shoppingRearAxleControls(unsafe, states)
         stationaryControls(unsafe, states)
         stationaryCadence(unsafe, states)
         brakeControls(unsafe, states)

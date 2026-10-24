@@ -1,7 +1,26 @@
 package net.alexredby.pztoolkitjavapatches
 
 object CartSteeringMathTest {
-    private const val L = 0.8
+    private const val L = .3594920263
+
+    private fun shoppingStep(
+        heading: Double,
+        target: Double,
+        distance: Double,
+        seconds: Double,
+        load: Double,
+        result: CartSteeringMath.Step = CartSteeringMath.Step(),
+    ): CartSteeringMath.Step =
+        CartSteeringMath.shoppingStep(
+            heading,
+            target,
+            distance,
+            seconds,
+            load,
+            L,
+            CartSteeringMath.reversing(heading, target),
+            result,
+        )
 
     private fun check(condition: Boolean, message: String) {
         if (!condition) throw AssertionError(message)
@@ -821,15 +840,15 @@ object CartSteeringMathTest {
     fun main(args: Array<String>) {
         stationaryChecks()
         reversalChecks()
-        val idle = CartSteeringMath.step(0.0, Math.PI / 2, 0.0, 1.0 / 60, 0.0)
+        val idle = shoppingStep(0.0, Math.PI / 2, 0.0, 1.0 / 60, 0.0)
         check(idle.turn() == 0.0 && idle.x() == 0.0 && idle.y() == 0.0, "idle cannot spin")
-        val pivot = CartSteeringMath.step(0.0, Math.PI / 2, 0.03, 1.0 / 60, 0.0)
+        val pivot = shoppingStep(0.0, Math.PI / 2, 0.03, 1.0 / 60, 0.0)
         close(pivot.travel(), 0.0, "lateral cart intent keeps axle stationary")
         close(pivot.x() + L * Math.cos(pivot.turn()), L, "pivot axle X")
         close(pivot.y() + L * Math.sin(pivot.turn()), 0.0, "pivot axle Y")
         check(pivot.y() < 0 && pivot.turn() > 0, "handle sidesteps opposite cart yaw")
-        val fast = CartSteeringMath.step(0.0, Math.PI / 2, 0.08, 1.0 / 60, 0.0)
-        val full = CartSteeringMath.step(0.0, Math.PI / 2, 0.08, 1.0 / 60, 1.0)
+        val fast = shoppingStep(0.0, Math.PI / 2, 0.08, 1.0 / 60, 0.0)
+        val full = shoppingStep(0.0, Math.PI / 2, 0.08, 1.0 / 60, 1.0)
         check(fast.turn() > full.turn() && full.turn() > 0, "cargo limits yaw")
         check(!CartSteeringMath.reversing(0.0, Math.PI * .75), "135 degrees remains a forward arc")
         check(
@@ -840,7 +859,7 @@ object CartSteeringMathTest {
         woodenArc()
         wallClockChecks()
         woodenTransitions()
-        val reverse = CartSteeringMath.step(0.0, Math.PI, 0.03, 1.0 / 60, 0.0)
+        val reverse = shoppingStep(0.0, Math.PI, 0.03, 1.0 / 60, 0.0)
         close(reverse.x(), -0.03, "reverse escapes head-on wall")
         close(reverse.y(), 0.0, "reverse stays on axis")
         close(reverse.turn(), 0.0, "reverse cannot spin into U-turn")
@@ -860,7 +879,7 @@ object CartSteeringMathTest {
             doubleArrayOf(0.0, 0.0001, 0.03, 0.5)) {
             for (degrees in -180..180) {
                 check(
-                    CartSteeringMath.step(
+                    shoppingStep(
                         0.7,
                         0.7 + Math.toRadians(degrees.toDouble()),
                         budget,
@@ -878,6 +897,15 @@ object CartSteeringMathTest {
                 check(
                     Math.hypot(reusable.x(), reusable.y()) <= budget + 1e-12,
                     "no displacement/speed gain",
+                )
+                // Each fixed rear wheel must roll along its own plane, on both turn sides.
+                for (side in doubleArrayOf(-.189, .189)) rolling(
+                    .7,
+                    reusable.turn(),
+                    L,
+                    side,
+                    reusable.x(),
+                    reusable.y(),
                 )
                 val next = 0.7 + reusable.turn()
                 close(
@@ -897,12 +925,12 @@ object CartSteeringMathTest {
             var x = 0.0
             var y = 0.0
             for (i in 0 until fps) {
-                val step = CartSteeringMath.step(h, h + Math.PI / 2, 1.8 / fps, 1.0 / fps, 0.0)
+                val step = shoppingStep(h, h + Math.PI / 2, 1.8 / fps, 1.0 / fps, 0.0)
                 x += step.x()
                 y += step.y()
                 h += step.turn()
             }
-            close(h, 2.25, "frame-independent pivot yaw")
+            close(h, 3.8, "frame-independent pivot yaw")
             close(x + L * Math.cos(h), L, "frame-independent fixed axle X")
             close(y + L * Math.sin(h), 0.0, "frame-independent fixed axle Y")
         }
@@ -912,7 +940,7 @@ object CartSteeringMathTest {
             var travelled = 0.0
             var flat = 0
             for (frame in 0 until fps * 4) {
-                val step = CartSteeringMath.step(h, Math.PI / 2, 1.8 / fps, 1.0 / fps, 0.0)
+                val step = shoppingStep(h, Math.PI / 2, 1.8 / fps, 1.0 / fps, 0.0)
                 h += step.turn()
                 travelled += step.travel()
                 if (step.travel() < 1e-8) flat++
@@ -930,10 +958,9 @@ object CartSteeringMathTest {
             check(travelled > 4 && h > Math.PI / 2 - 0.01, "held turn becomes forward rolling")
         }
         for ((distance, seconds) in arrayOf(Double.NaN to .1, .1 to Double.NaN)) {
-            CartSteeringMath.step(0.0, Math.PI / 4, .03, .1, 0.0, reusable)
+            shoppingStep(0.0, Math.PI / 4, .03, .1, 0.0, reusable)
             check(
-                CartSteeringMath.step(0.0, Math.PI / 2, distance, seconds, 0.0, reusable) ===
-                    reusable &&
+                shoppingStep(0.0, Math.PI / 2, distance, seconds, 0.0, reusable) === reusable &&
                     reusable.x() == 0.0 &&
                     reusable.y() == 0.0 &&
                     reusable.turn() == 0.0 &&
@@ -962,7 +989,7 @@ object CartSteeringMathTest {
             ),
             "unknown time must leave every bank state component unchanged",
         )
-        CartSteeringMath.step(0.0, Math.PI / 2, 0.0, 1.0 / 60, 0.0, reusable)
+        shoppingStep(0.0, Math.PI / 2, 0.0, 1.0 / 60, 0.0, reusable)
         check(
             reusable.x() == 0.0 &&
                 reusable.y() == 0.0 &&

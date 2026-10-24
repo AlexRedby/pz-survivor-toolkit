@@ -178,6 +178,100 @@ object CartShoppingWheelsTest {
         }
     }
 
+    private fun heldSteering() {
+        val cart = CartShopping.held(Matrix4f()) ?: throw AssertionError("valid held cart rejected")
+        val rear =
+            cart.transformPosition(
+                point(CartShoppingWheelMesh.CENTERS[0])
+                    .add(point(CartShoppingWheelMesh.CENTERS[1]))
+                    .mul(.5f),
+                Vector3f(),
+            )
+        val axle = -1.5 * rear.z
+        val dt = .02
+        for (mode in intArrayOf(0, 1, -1)) for (sign in intArrayOf(-1, 1)) {
+            val item = item()
+            var x = 0f
+            var y = 0f
+            var heading = 0.0
+            var angle = (Math.PI / 2).toFloat()
+            var rate = 0.0
+            var before = follow(item, x, y, angle, cart, 6_000_000_000L)
+            val step = CartSteeringMath.Step()
+            repeat(20) { frame ->
+                if (mode == 0)
+                    CartSteeringMath.stationaryStep(
+                        heading,
+                        sign * Math.PI / 2,
+                        .02,
+                        dt,
+                        0.0,
+                        axle,
+                        rate,
+                        step,
+                    )
+                else
+                    CartSteeringMath.shoppingStep(
+                        heading,
+                        heading + (if (mode < 0) Math.PI else 0.0) + sign * mode * Math.PI / 4,
+                        .02,
+                        dt,
+                        0.0,
+                        axle,
+                        mode < 0,
+                        step,
+                    )
+                val oldX = x
+                val oldY = y
+                val oldAngle = angle
+                val mid = heading + step.turn() / 2
+                x += step.x().toFloat()
+                y += step.y().toFloat()
+                heading += step.turn()
+                // Native actor angle pi/2 maps the held cart's forward direction to world +X.
+                angle = (heading + Math.PI / 2).toFloat()
+                rate = step.turn() / dt
+                val after = follow(item, x, y, angle, cart, 6_020_000_000L + frame * 20_000_000L)
+                for (wheel in 0 until 2) {
+                    val a = centerWorld(cart, wheel, oldX, oldY, oldAngle)
+                    val b = centerWorld(cart, wheel, x, y, angle)
+                    val dx = b[0] - a[0]
+                    val dy = b[1] - a[1]
+                    close(
+                        -dx * Math.sin(mid) + dy * Math.cos(mid),
+                        0.0,
+                        2e-6,
+                        "held steering slid fixed rear tire sideways: $mode/$sign/$wheel",
+                    )
+                    val phase = difference(after.phases!![wheel], before.phases!![wheel])
+                    close(
+                        phase,
+                        -(dx * Math.cos(mid) + dy * Math.sin(mid)) / radius(),
+                        3e-5,
+                        "held steering rear tire did not follow accepted center travel",
+                    )
+                    if (mode != 0)
+                        check(
+                            phase * mode < 0,
+                            "held forward/reverse steering rolled a rear tire backwards",
+                        )
+                }
+                if (mode == 0)
+                    check(
+                        difference(after.phases!![0], before.phases!![0]) *
+                            difference(after.phases!![1], before.phases!![1]) < 0,
+                        "rear tires must counter-roll around their stationary axle",
+                    )
+                before = after
+            }
+            if (mode == 0)
+                for (caster in before.casters!!) check(
+                    sign * caster > .05,
+                    "stationary turn did not swivel the front caster with its accepted motion",
+                )
+        }
+    }
+
     private fun continuityAndInvalid() {
         val item = item()
         val cart =
@@ -577,13 +671,14 @@ object CartShoppingWheelsTest {
         boundaryOrder()
         straightAndReverse()
         turns()
+        heldSteering()
         continuityAndInvalid()
         circularGeometry()
         topology()
         if (args.size == 2) fullMesh(Path.of(args[0]), Path.of(args[1]))
         else check(args.isEmpty(), "expected optional xyz-f32le and elements-i32le paths")
         println(
-            "CART_SHOPPING_WHEELS_PASS (signed center travel, independent turn phases, bounded casters, item/handoff continuity, circular floor support, source topology)",
+            "CART_SHOPPING_WHEELS_PASS (signed center travel, independent turn phases, held axle steering, bounded casters, item/handoff continuity, circular floor support, source topology)",
         )
     }
 }

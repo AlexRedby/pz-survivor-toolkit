@@ -166,6 +166,29 @@ object CartShoppingTest {
         }
     }
 
+    private fun steeringAxle() {
+        // Independent native tire centers, not the production generated table or old .8 pivot.
+        val rear = Vector3f(-109.615318f, 8.723767f, -.021271825f)
+        for (scale in floatArrayOf(.6f, 1f, 1.7f)) {
+            val pose = nativeHeld()
+            val model = nativeModel()
+            check(CartShopping.support(model, 1f), "steering world support rejected")
+            check(CartShopping.align(pose, model, scale, Matrix4f()), "steering held pose rejected")
+            val expected = -1.5f * at(pose, rear).z
+            close(
+                CartShopping.axle(scale).toFloat(),
+                expected,
+                1e-6f,
+                "rear rolling axle at scale $scale",
+            )
+        }
+        close(CartShopping.axle(1f).toFloat(), .35949203f, 1e-6f, "native held rear axle")
+        for (scale in floatArrayOf(0f, -1f, Float.NaN, Float.POSITIVE_INFINITY)) check(
+            CartShopping.axle(scale) == 0.0,
+            "invalid scale cannot create a steering pivot",
+        )
+    }
+
     private fun invalid() {
         for (scale in floatArrayOf(0f, -1f, Float.NaN, Float.POSITIVE_INFINITY)) {
             val m = nativeModel()
@@ -312,6 +335,7 @@ object CartShoppingTest {
         support()
         directSupport()
         align()
+        steeringAxle()
         invalid()
         atlasLaterScale()
         wovenAtlas()

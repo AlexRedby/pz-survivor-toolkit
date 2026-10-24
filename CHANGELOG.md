@@ -1094,6 +1094,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.52
+
+- Correct shopping-cart turning to use the held model's fixed rear wheel axle, including item scale, during forward/reverse travel and stationary turns. Keep the front casters free to follow their own paths and match character steps to the corrected handle arc; wheelbarrow handling is unchanged.
+
 ### 0.1.51
 
 - **Action queue / Host completion:** Let the native engine finish an owned, server-completed action when its replicated target has already disappeared. Preserve its original completion cleanup and subsequent queued work without replaying server effects. Require the exact native transaction and sealed completion receipt; explicit stops, movement, combat, custom synchronization and disabled-queue behavior retain their existing paths.

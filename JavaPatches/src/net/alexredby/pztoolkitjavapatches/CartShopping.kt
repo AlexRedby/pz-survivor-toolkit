@@ -151,6 +151,25 @@ internal object CartShopping {
         return if (align(result, model, worldScale, Matrix4f())) result else null
     }
 
+    // Scale around the native hand bar, just as align() does. Cache the affine offset so
+    // steering does not allocate matrices/vectors on every movement update.
+    private val rearAxle = run {
+        val held = held(Matrix4f()) ?: error("Invalid shopping-cart steering geometry")
+        val bar = held.transformPosition(BAR, Vector3f())
+        val rear = Vector3f()
+        for (i in 0..1) {
+            val p = CartShoppingWheelMesh.CENTERS[i]
+            rear.add(p[0], p[1], p[2])
+        }
+        held.transformPosition(rear.mul(.5f))
+        // Model.vectorToWorldCoords maps forward model -Z to 1.5 world tiles.
+        doubleArrayOf(-1.5 * bar.z, -1.5 * (rear.z - bar.z))
+    }
+
+    @JvmStatic
+    fun axle(worldScale: Float): Double =
+        if (worldScale.isFinite() && worldScale > 0) rearAxle[0] + rearAxle[1] * worldScale else 0.0
+
     @JvmStatic
     fun progress(value: Double, setdown: Boolean): CartTransitionMath.Progress? {
         if (!value.isFinite()) return null

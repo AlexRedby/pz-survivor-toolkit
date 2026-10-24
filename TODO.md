@@ -1,3 +1,7 @@
+# Shopping cart rear-wheel steering
+
+- [ ] Compare the corrected shopping-cart moving quarter-turn, stationary turn and reverse turn in a fresh isolated macOS SP profile with the selected mod set. Check rendered rear-wheel rolling, front caster direction and the character handle arc. Native verification is pending availability of the shared desktop slot; the focused Kotlin/JVM regressions pass.
+
 # Container editor visual states
 
 - [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.
