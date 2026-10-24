@@ -416,9 +416,9 @@ end
 local function captureExpanded(action, saved, selected, before)
     local queue = ISTimedActionQueue.queues[action.character]
     if not queue then return end
-    local replacement
+    local replacement, added
     if saved.kind == "HReplaceBandage" then
-        local added = {}
+        added = {}
         for _, child in ipairs(queue.queue) do if not before[child] then added[#added + 1] = child end end
         local remove, apply = added[1], added[#added]
         if (#added ~= 2 and #added ~= 3) or not childMatches("HRemoveBandage", remove)
@@ -430,7 +430,7 @@ local function captureExpanded(action, saved, selected, before)
             or transfer.destContainer ~= saved.character:getInventory()) then return end
         replacement = {item = selected[1], transfer = transfer}
     end
-    for _, child in ipairs(queue.queue) do
+    for _, child in ipairs(added or queue.queue) do
         if not before[child] and child.toolkitQueueOperation == action.toolkitQueueOperation
             and child.character == saved.character and Toolkit.ActionQueueOperations.isTransfer(child)
             and Toolkit.ActionQueuePolicy.inspect(child) then
@@ -741,10 +741,14 @@ function Health.install()
     HealthPanelAction.perform = function(action, ...)
         if Health.canSkip(action) then return ISBaseTimedAction.perform(action) end
         return Toolkit.ActionQueueOperations.perform(action, function(current, ...)
-            local saved, before = records[current], {}
-            local queue = ISTimedActionQueue.queues[current.character]
-            if queue then for _, member in ipairs(queue.queue) do before[member] = true end end
+            local saved = records[current]
             local selected = saved and Health.inspect(current) and selectedItems(current)
+            local before
+            if selected then
+                before = {}
+                local queue = ISTimedActionQueue.queues[current.character]
+                if queue then for _, member in ipairs(queue.queue) do before[member] = true end end
+            end
             local result = pack(perform(current, ...))
             if selected and Health.inspect(current) then captureExpanded(current, saved, selected, before) end
             return unpack(result, 1, result.n)

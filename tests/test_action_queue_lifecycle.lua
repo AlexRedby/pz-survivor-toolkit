@@ -95,17 +95,8 @@ assert(forced == 1 and queue.toolkitCancel == action and queue.toolkitStopIntent
 assert(queue.toolkitOutcomeWait.generic and queue.toolkitOutcomeWait.acknowledgement == receipt)
 assert(queue.toolkitOutcomeWait.deadline == 30100)
 assert(not Lifecycle.requestStop({}, action, "cancel", "action"))
-local expanded = 0
-local command = {args = {}, beginAddingActions = function() end, endAddingActions = function() return false end,
-    addActionsFunction = function() expanded = expanded + 1 end, forceComplete = function(self) self.completed = true end}
-ISQueueActionsAction.start(command)
-assert(expanded == 1 and command.completed and not command.nativeStopped, "empty expansion cleared independent work")
-command.completed = false
-command.addActionsFunction = function() error("command failure") end
-assert(not pcall(ISQueueActionsAction.start, command) and not command.completed, "command failure became successful completion")
-enabled = false
-ISQueueActionsAction.start(command)
-assert(command.nativeStopped, "disabled queue changed native empty-command semantics")
+-- Native/Toolkit command expansion is checked against native queue methods in
+-- test_action_queue_operations; this fixture isolates completion and receipts.
 -- Exercise the completion gate with the real sealed receipt registry. It must
 -- not turn a server cancellation, stale generation or explicit local stop into
 -- completion, even when the same action/native pointers remain accessible.

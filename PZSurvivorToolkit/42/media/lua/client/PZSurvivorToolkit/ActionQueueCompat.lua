@@ -5,6 +5,7 @@ require "ISUI/ISXuiSkin"
 
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
+local expandCommand = Operations.expandCommand
 local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
 local TidyIntent = require "PZSurvivorToolkit/ActionQueueTidyIntent"
 local Compat = {}
@@ -739,9 +740,8 @@ local function adopt(action)
             if record.expanded then return end
             record.expanded = true
             if live(record) and matches(self) then
-                self:beginAddingActions()
-                Operations.runWith(record.token, scoped, record, callback, self.character, unpack(self.args))
-                self:endAddingActions()
+                return expandCommand(self, Operations.runWith, record.token,
+                    scoped, record, callback, self.character, unpack(self.args))
             end
             -- The source may have lost its target; native's empty-command path clears unrelated work.
             self:forceComplete()

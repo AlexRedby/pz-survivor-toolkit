@@ -946,6 +946,43 @@ reset(); panel:addIngredients({{groupKey='none',panelType='Ingredient',recipeCom
 command=queue.queue[1]; unrelated=tail(); operations.invalidate(command.toolkitQueueOperation); command:start()
 assert(#queue.queue==2 and queue.queue[2]==unrelated,'canceled Project Cook command cannot append a wait')
 command:perform(); assert(queue.queue[1]==unrelated,'empty canceled source expansion completes without clearing its independent tail')
+-- An actual Project Cook producer can fail after native insertion. Its source
+-- callback remains unchanged; inject the failure at the child enqueue boundary.
+do
+    reset()
+    panel:addIngredients({{groupKey='none',panelType='Ingredient',recipeCompatible=true}},recipe,panel.baseItem)
+    local failed = queue.queue[1]
+    local independent = tail()
+    assert(definitions.inspect(failed).deferred)
+    local errorValue, attempts, completions = {}, 0, 0
+    failed.action.forceComplete = function() completions = completions + 1 end
+    local add = ISTimedActionQueue.add
+    local injectedAdd = function(action)
+        local result = add(action)
+        if action.Type == 'PJCK_SequenceWaitAction' then
+            attempts = attempts + 1
+            error(errorValue)
+        end
+        return result
+    end
+    ISTimedActionQueue.add = injectedAdd
+    local insert, addAfter, queueActions = table.insert, ISTimedActionQueue.addAfter, ISTimedActionQueue.queueActions
+    local ok, failure = pcall(failed.start, failed)
+    assert(not ok and failure == errorValue and attempts == 1 and completions == 0,
+        'reviewed mod failure was hidden, skipped or completed')
+    assert(not queue:isCurrentActionAddingOtherActions() and failed._numAddedActions == nil,
+        'reviewed mod failure retained the native insertion boundary')
+    assert(ISTimedActionQueue.add == injectedAdd and table.insert == insert
+        and ISTimedActionQueue.addAfter == addAfter and ISTimedActionQueue.queueActions == queueActions,
+        'reviewed mod failure retained scoped queue hooks')
+    failed:start()
+    assert(attempts == 1 and completions == 0, 'reviewed mod failure replayed its producer')
+    ISTimedActionQueue.add = add
+    local following = tail()
+    assert(queue.queue[2].Type == 'PJCK_SequenceWaitAction' and queue.queue[3] == independent
+        and queue.queue[4] == following and following.toolkitQueueOperation ~= failed.toolkitQueueOperation,
+        'reviewed mod failure rolled back a child or captured the independent tail')
+end
 reset()
 local food = item(bag, 13); food.class='Food'
 for _, name in ipairs({'isRotten','isBurnt','isFrozen','isCooked','isSpice','IsDrainable','isNoRecipes'}) do food[name]=function() return false end end
