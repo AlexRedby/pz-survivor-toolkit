@@ -595,8 +595,11 @@ local function installInventoryProducer()
         end
     end
     for _, name in ipairs({"haveToBeTransfered", "walkToContainer"}) do
-        if not nativeClosure(utils[name], "luautils.lua") then return end
-        saved.utilsMethods[name] = utils[name]
+        local callback = utils[name]
+        local approach = Toolkit.ActionQueueApproach
+        local original = approach and approach.nativeHelper(utils, name, callback) or callback
+        if not nativeClosure(original, "luautils.lua") then return end
+        saved.utilsMethods[name] = callback
     end
     for _, name in ipairs({"newInventoryTransferAction", "isPlayerCharacter", "isCharacterGrabbingCorpseItem", "isPlayerGrabbingCorpseItem"}) do
         if not nativeClosure(transfer[name], "ISInventoryTransferUtil.lua") then return end
@@ -622,6 +625,16 @@ local function installInventoryProducer()
             local added = {}
             for _, action in ipairs(queue.queue) do if not before[action] then added[#added + 1] = action end end
             local child = added[#added]
+            if #added == 3 then
+                local preparation, approach = added[1], Toolkit.ActionQueueApproach
+                if not approach or not approach.isContainer(preparation, source, character)
+                    or preparation.toolkitQueueOperation ~= child.toolkitQueueOperation then
+                    return unpack(result, 1, result.n)
+                end
+                -- Retain preparation in the queue; only the body shape below is
+                -- the verified transfer + bandage contract.
+                table.remove(added, 1)
+            end
             if (#added ~= 1 and #added ~= 2) or not childMatches("HApplyBandage", child)
                 or child.character ~= character or child.otherPlayer ~= character or child.bodyPart ~= bodyPart
                 or child.item ~= item or child.doIt ~= true then return unpack(result, 1, result.n) end

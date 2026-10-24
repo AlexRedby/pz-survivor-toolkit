@@ -12,8 +12,11 @@ local menuClasses=0
 local function emit(event,value) print('[CONTAINER_CONFIG] '..event..' '..JSON.encode(value))end
 local function close()if LootSorter._picker then LootSorter._picker:closePicker()end end
 local function shot(name)
+ local list=assert(picker.listbox);local scroll=assert(list.vscroll)
+ assert(scroll:getX()==list:getWidth()-16 and scroll:getY()==0
+  and scroll:getHeight()==list:getHeight(),'Native scrollbar frame differs from list: '..name)
  getCore():TakeFullScreenshot('container-config-'..name..'.png')
- emit('SHOT',{name=name,role=role})
+ emit('SHOT',{name=name,role=role,width=picker:getWidth(),height=picker:getHeight()})
 end
 local function checkControls()
  assert(picker.appearanceName and picker.appearanceIcon and picker.appearanceColor and picker.appearanceReset,'Unified appearance fields absent')
@@ -104,6 +107,50 @@ local function tick()
   print('[CONTAINER_CONFIG_DIAG] editing local='..tostring(player:getUsername())..' specific='..tostring(getSpecificPlayer(0):getUsername())..' role='..tostring(role))
   probeMenus()
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
+  phase='empty';nextAt=getTimestampMs()+1200
+ elseif phase=='empty'then
+  shot('empty')
+  picker.filter:setText(Tags.label(F.tag))
+  phase='search';nextAt=getTimestampMs()+1200
+ elseif phase=='search'then
+  assert(picker.listbox.count>0,'Known tag search returned no rows')
+  shot('search')
+  picker.filter:setText('pzst-no-matching-entry-20261024')
+  phase='no-results';nextAt=getTimestampMs()+1200
+ elseif phase=='no-results'then
+  assert(picker.listbox.count==0,'Unmatched search kept rows')
+  assert(picker.emptyListKey=='NoMatches','Empty search guidance absent')
+  shot('no-results')
+  picker.filter:setText('');picker.onlyChecked=true;picker.needRebuild=true
+  phase='checked';nextAt=getTimestampMs()+1200
+ elseif phase=='checked'then
+  assert(picker.listbox.count==0,'Blank selection acquired checked rows')
+  assert(picker.emptyListKey=='NoSelected','Empty selection guidance absent')
+  shot('checked')
+  picker.onlyChecked=false;picker.needRebuild=true;picker:setMode('items')
+  phase='items';nextAt=getTimestampMs()+1200
+ elseif phase=='items'then
+  shot('items')
+  picker:setMode('presets')
+  phase='presets';nextAt=getTimestampMs()+1200
+ elseif phase=='presets'then
+  if picker.listbox.count==0 then
+   assert(picker.emptyListKey=='NoPresets','Empty preset guidance absent')
+  end
+  shot('presets')
+  picker:setMode('cats');picker:onTagRule()
+  phase='rule';nextAt=getTimestampMs()+1200
+ elseif phase=='rule'then
+  assert(picker.toolkitRulePicker,'Tag rule editor absent')
+  shot('rule')
+  picker.toolkitRulePicker:close();Controls.chooseColor(picker)
+  phase='color';nextAt=getTimestampMs()+1200
+ elseif phase=='color'then
+  assert(picker.toolkitColorPicker,'Native color picker absent')
+  shot('color')
+  picker.toolkitColorPicker:removeSelf();picker.toolkitColorPicker=nil
+  phase='choose-item'
+ elseif phase=='choose-item'then
   picker:setMode('items')
   local script=assert(getScriptManager():FindItem(F.item))
   clickRow(script:getDisplayName())
@@ -118,13 +165,16 @@ local function tick()
  elseif phase=='icon'then
   shot('icon')
   local chooser=assert(picker.toolkitIconPicker);local selected
+  local crateTexture=assert(Helpers.getIconTexture({kind='container',value='crate'}))
   for i,row in ipairs(chooser.list.items)do
-   local icon=row.item.icon
-   if icon.kind=='container' and icon.value=='crate' then selected=i end
+   if row.item.texture==crateTexture then selected=i end
   end
-  assert(selected,'Crate absent from real BC catalogue')
+  assert(selected,'Crate image absent from real BC catalogue')
+  local chosen=chooser.list.items[selected].item.icon
   chooser.list.selected=selected;chooser:choose()
-  assert(not picker.toolkitIconPicker and picker.toolkitAppearance.icon.value=='crate','Real icon callback did not commit draft')
+  local committed=picker.toolkitAppearance.icon
+  assert(not picker.toolkitIconPicker and committed.kind==chosen.kind and committed.value==chosen.value
+   and Helpers.getIconTexture(committed)==crateTexture,'Real icon callback did not commit draft')
   picker.appearanceName:setText('Cancelled item draft');pickColor()
   picker:closePicker();assert(F.blankRead(obj,player),'Item draft Cancel persisted appearance')
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
@@ -146,6 +196,12 @@ local function tick()
   phase='edit';nextAt=getTimestampMs()+1200
  elseif phase=='edit'then
   shot('edit')
+  picker:setWidth(420);picker:setHeight(600);picker:layout()
+  phase='minimum';nextAt=getTimestampMs()+1200
+ elseif phase=='minimum'then
+  assert(picker:getWidth()==420 and picker:getHeight()==600,'Minimum editor size differs')
+  shot('minimum')
+  picker:setWidth(480);picker:setHeight(700);picker:layout()
   picker.btnSave.onclick(picker)
   emit('SAVE',{count=1,role=role})
   phase='saved'

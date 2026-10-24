@@ -52,6 +52,10 @@ function Base:addOptionWithData(label,value) self.options=self.options or {};sel
 function Base:getOptionData(index) return self.options[index].value end
 ISCollapsableWindowJoypad,ISScrollingListBox,ISComboBox,ISPanel=Base,Base:derive(),Base:derive(),Base:derive()
 ISButton=Base:derive()
+ISLabel=Base:derive()
+function ISLabel:new(x,y,h,label)
+    local value=Base.new(self,x,y,0,h);value.name=label;return value
+end
 function ISButton:new(x,y,w,h,title,target,callback)
     local value=Base.new(self,x,y,w,h);value.title,value.target,value.callback=title,target,callback;return value
 end
@@ -189,8 +193,21 @@ end
 assert(found==1 and missing,'script icons not deduplicated or missing texture lacks text fallback')
 catalog=Catalog.open();catalog:chooseIcon()
 assert(catalog.toolkitIconPicker and catalog.dimmer.visible,'icon picker did not reuse native popup')
+assert(catalog.toolkitIconPicker.searchCaption=='UI_PZST_TagEdit_SearchIcons'
+    and catalog.toolkitIconPicker.searchLabel.name=='UI_PZST_TagEdit_SearchIcons'
+    and catalog.toolkitIconPicker.search.tooltip=='UI_PZST_TagEdit_SearchIcons',
+    'tag icon search caption was overwritten by its native label widget')
+assert(catalog.toolkitIconPicker.search.y==54 and catalog.toolkitIconPicker.list.y==86,
+    'shared icon popup lost its visible search label layout')
 catalog.toolkitIconPicker.onPick('Item_Hammer');catalog.toolkitIconPicker:close()
 assert(catalog.draft.icon=='Item_Hammer' and not catalog.dimmer.visible)
+local defaultPopup=require('PZSurvivorToolkit/ContainerIconPicker').openEntries(catalog,function()end,entries)
+assert(defaultPopup.searchLabel.name=='UI_PZST_ContainerIconSearch'
+    and defaultPopup.search.tooltip=='UI_PZST_ContainerIconSearch'
+    and defaultPopup.defaultButton.title=='UI_PZST_ContainerDefault'
+    and defaultPopup.selectButton.title=='UI_PZST_ContainerSelectIcon',
+    'shared icon popup lost localized container captions')
+defaultPopup:close()
 catalog:close()
 local options={}
 local context={addOption=function(_,label,target,callback) local option={label=label,target=target,callback=callback};options[#options+1]=option;return option end}

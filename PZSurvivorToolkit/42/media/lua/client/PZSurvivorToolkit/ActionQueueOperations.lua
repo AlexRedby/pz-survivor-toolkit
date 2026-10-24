@@ -160,8 +160,12 @@ end
 
 local function startCommand(action)
     action:beginAddingActions()
-    Operations.runWith(action.toolkitQueueOperation, action.addActionsFunction, action.character, unpack(action.args))
+    local results = pack(pcall(Operations.runWith, action.toolkitQueueOperation,
+        action.addActionsFunction, action.character, unpack(action.args)))
     action:endAddingActions()
+    -- Restore the native insertion boundary even for an unexpected producer
+    -- error; propagate it rather than leaving all future enqueues nested here.
+    if not results[1] then error(results[2], 0) end
     -- An invalid future target skips its command without clearing unrelated native actions.
     action:forceComplete()
 end
@@ -245,6 +249,16 @@ function Operations.perform(action, callback, ...)
         pending.queue:onCompleted(action)
     end
     return unpack(results, 2, results.n)
+end
+
+-- Only synchronous producer dispatch can enqueue future preparation. Native
+-- completion, asynchronous continuations and nested expansion already run at
+-- their execution boundary and must retain the native boolean result.
+function Operations.preparationScope(character)
+    if completionScope or continuationScope then return end
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    if lifecycle and lifecycle.current(character) then return end
+    return scope
 end
 
 local function stamp(action, token)
@@ -489,5 +503,11 @@ Events.OnGameStart.Add(function()
     installTransferPanes()
     InventoryClasses.onToggle(installTransferPanes)
 end)
+
+local approach = require "PZSurvivorToolkit/ActionQueueApproach"
+if approach then
+    approach.install()
+    Events.OnGameStart.Add(approach.install)
+end
 
 return Operations

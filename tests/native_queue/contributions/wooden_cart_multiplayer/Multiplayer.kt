@@ -947,6 +947,7 @@ object Multiplayer {
         LeaseControl.initialize()
         EquipmentLifetime.initialize()
         ActionAdmission.initialize()
+        ActionInvalidation.initialize()
         ObserverAssociation.initialize()
         ObserverParams.initialize()
         ObserverParamsBootstrap.install()

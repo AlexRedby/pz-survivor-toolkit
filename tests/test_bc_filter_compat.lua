@@ -14,6 +14,12 @@ local function setup(active)
     }
     for _, name in ipairs({"refreshContainer", "onFilterMenu", "createChildren"}) do w.base[name] = ISInventoryPane[name] end
     local loaded = {}
+    local sources = {
+        ["BetterContainers/Categorize/InventoryCategory"] = NativeBCInventoryCategorySource,
+        ["BetterContainers/Categorize/CategoryStore"] = NativeBCCategoryStoreSource,
+        ["BetterContainers/_IO/IniWriter"] = NativeBCIniWriterSource,
+        ["BetterContainers/_IO/_IO"] = NativeBCIOSource,
+    }
     require = function(name)
         w.calls[#w.calls + 1] = name
         if loaded[name] then return loaded[name] end
@@ -36,6 +42,8 @@ local function setup(active)
                 value.install()
                 error("fixture filters failed after installing patches")
             end
+        elseif sources[name] then
+            value = assert(loadstring(sources[name]))()
         else error("unexpected require: " .. name) end
         loaded[name] = value
         return value
@@ -51,6 +59,26 @@ if not NativeBCFilterSource then
     print("SKIP BC duplicate filtering checks require actual upstream CategoryFilters source")
     return
 end
+
+-- The real upstream must filter this input before Toolkit suppresses its duplicate wrappers.
+w = setup(true)
+local control = require("BetterContainers/Categorize/CategoryFilters")
+control.install()
+local controlPane = setmetatable({selected = {}, itemHgt = 20,
+    _bcCategoryFilterApplied = {map = {AdvancedFood = true}, count = 1},
+    saveSelection = function() return {} end, restoreSelection = function() end,
+    setScrollHeight = function() end, setScrollWidth = function() end,
+}, {__index = ISInventoryPane})
+table.wipe = table.wipe or function(value) for key in pairs(value) do value[key] = nil end end
+controlPane:refreshContainer()
+assert(#controlPane.itemslist == 1 and #controlPane._bcItemslistUnfiltered == 2)
+for name in pairs({
+    ["BetterContainers/Categorize/InventoryCategory"] = true,
+    ["BetterContainers/Categorize/CategoryStore"] = true,
+    ["BetterContainers/_IO/IniWriter"] = true,
+    ["BetterContainers/_IO/_IO"] = true,
+}) do assert(w.loads[name] == 1, "actual BC dependency must load exactly once: " .. name) end
+print("PASS BC actual dependency chain filters the control input before Toolkit suppression")
 
 w = setup(true); dofile(gate)
 local filters = PZSurvivorToolkit.BCFilterCompatibility

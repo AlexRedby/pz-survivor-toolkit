@@ -112,7 +112,7 @@ def analyze(root):
         # Reuse the complete setter/parse replay, filtering only other actor incarnations.
         filtered='\n'.join(line if NATIVE not in line or parse(line.split(NATIVE,1)[1]).get('process')==proc
                          and parse(line.split(NATIVE,1)[1]).get('actorEpoch')==actor else '' for line in logs[role].splitlines())
-        _,snapshots,_=L['native_trace'](filtered,(proc,actor,conn,revision),owner,cart,cutoff-1)
+        _,snapshots,_,_=L['native_trace'](filtered,(proc,actor,conn,revision),owner,cart,cutoff-1)
         require(revision in snapshots and max(snapshots)==revision,'Native token is not the current complete mutation/parse state')
         require(not any(n<cutoff and r.get('event')=='retire' for n,r in actor_rows),'Retired native actor readmitted')
         retired=[(n,r) for n,r in actor_rows if r.get('event')=='retire']

@@ -3,11 +3,12 @@ from pathlib import Path
 import re
 import shutil
 from .. import receipts
+from ..mod_selection import metadata, mod_ids
 
 SUITE = 'custom-tags'
 MARKER = '[CUSTOM_TAG_TEST] '
 PROJECT = Path(__file__).resolve().parents[3]
-MODS = re.search(r'^Mods=(.*)$', (PROJECT / 'SurvivorQoL-selected.ini').read_text(), re.M)[1].split(';')
+MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 PHASES = ('Create', 'Builtin', 'TypeAdd', 'ItemRemove', 'ItemDefault', 'ItemAdd', 'ItemReset',
           'TypeRemove', 'TypeReset', 'TypeFinal', 'ItemFinal', 'Cancel', 'Conflict',
           'RetiredCreate', 'RetiredAssign', 'RetiredDelete')

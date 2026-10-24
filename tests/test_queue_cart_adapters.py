@@ -17,6 +17,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import carts
+from queue_checks import runner
 
 
 class CartAdapterTests(unittest.TestCase):
@@ -63,6 +64,10 @@ class CartAdapterTests(unittest.TestCase):
     def stage(self):
         with patch.object(carts, '_compile', side_effect=self.compiler) as compiler:
             carts.stage(ROOT, self.output, self.root / 'game', self.root / 'jdk', self.selection, self.locations, self.runtime)
+        for role, spec in self.runtime['roles'].items():
+            staged = spec.get('env', {})
+            admitted = runner._fixture_environment(self.selection, role, Path(spec['cache']), staged)
+            self.assertEqual({name: admitted[name] for name in staged}, staged)
         self._last_compiler_calls=compiler.call_args_list
         return compiler
 
@@ -773,6 +778,92 @@ print('STARTUP_REJOIN_GUARD_PASS')
         path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/EquipmentLifetime.kt'
         self.assertIn(path, [p for call in self._last_compiler_calls for p in call.args[3]]);self.assertIn(path,carts.sources(ROOT,self.selection))
         for key,value in [('cart_lease_lifetimes','true'),('cart_lease_control',False),('cart_time_alignment',True),('cart_hotkey_setdown',True)]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_menu_lifetime_bank_is_explicit_and_stages_owner_driver_only_on_clients(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_menu=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_menu'):carts.validate(self.selection)
+        self.options.update(cart_lease_lifetimes=True,cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        failure='LOG : Lua > [CART_LEASE_LIFETIME] ERROR attempted index: enqueue of non-table: null java.lang.RuntimeException'
+        self.assertTrue(any(marker in failure for marker in self.runtime['fixture']['failure_markers']))
+        for role in ('client1','client2'):
+            path=self.output/role/'mods/ActionQueueTest/42/media/lua/client/CartLeaseMenuActions.lua'
+            self.assertEqual(path.read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-menu-actions.lua').read_bytes())
+        self.assertFalse((self.output/'server/mods/ActionQueueTest/42/media/lua/client/CartLeaseMenuActions.lua').exists())
+        for key,value in [('cart_lease_menu','true'),('cart_lease_lifetimes',False),('cart_variant','metal-wheelbarrow')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_initial_inventory_entry_requires_menu_chain_and_stages_only_selected_endpoints(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_inventory=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_inventory'):carts.validate(self.selection)
+        self.options.update(cart_lease_menu=True,cart_lease_lifetimes=True,cart_lease_control=True,
+                            cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertEqual((lua/'shared/CartLeaseInventoryState.lua').read_bytes(),
+                (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-inventory-state.lua').read_bytes())
+            self.assertFalse((lua/'client/CartMPInventoryEquipClient.lua').exists())
+            self.assertEqual(self.runtime['roles'][role]['env'].get('PZ_CART_INVENTORY_EQUIP'),
+                             None if role=='server' else 'true')
+        for key,value in [('cart_lease_inventory','true'),('cart_lease_menu',False),('cart_lease_control',False),
+                          ('cart_inventory_equip',True),('cart_actions',True),('cart_variant','shopping-cart')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_incomplete_initial_inventory_report_is_rejected_after_lifetime_analysis(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_inventory=True,cart_lease_menu=True,cart_lease_lifetimes=True,
+                            cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        for role in ('client1','client2'):
+            (self.output/(role+'-launch.log')).write_text('selected capture')
+        calls=[]
+        def load(path):
+            def analyze(*args):
+                calls.append((path.name,args))
+                return dict(evidenceComplete=path.name!='analyze-inventory-entry.py')
+            return SimpleNamespace(analyze=analyze)
+        with patch.object(carts,'complete',return_value=True),patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',side_effect=load):
+            result=carts.verify(self.output,self.selection,{})
+        self.assertIn('Incomplete initial inventory entry evidence',result['issues'])
+        entry=next(args for name,args in calls if name=='analyze-inventory-entry.py')
+        self.assertEqual(entry[1],{'evidenceComplete':True})
+        self.assertNotIn('inventoryEntry',result.get('evidence',{}))
+
+    def test_inventory_entry_endpoint_and_probe_are_absent_from_default_motion(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            self.assertFalse((self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseInventoryState.lua').exists())
+            self.assertNotIn('PZ_CART_INVENTORY_EQUIP',self.runtime['roles'][role]['env'])
+
+    def test_action_invalidation_is_isolated_and_seals_native_fixture_inputs(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_action_invalidation=True,mp_host=True,cart_timeline=True,cart_fast_motion=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            env=self.runtime['roles'][role]['env']
+            for name in ('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION','PZ_CART_ACTION_INVALIDATION'):
+                self.assertEqual(env[name],'true')
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertEqual((lua/'shared/CartActionInvalidation.lua').read_bytes(),
+                (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/action-invalidation.lua').read_bytes())
+            self.assertEqual((lua/'client/CartLeaseMenuActions.lua').exists(),role!='server')
+            self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+            self.assertFalse((lua/'shared/CartLeaseLifetimes.lua').exists())
+            self.assertFalse((lua/'client/CartActionAdmissionProbe.lua').exists())
+        for key,value in [('cart_action_invalidation','true'),('mp_host',False),('cart_timeline',False),
+                          ('cart_fast_motion',False),('cart_actions',True),('cart_action_admission',True),
+                          ('cart_lease_control',True),('cart_lease_menu',True),('cart_variant','shopping-cart')]:
             original=dict(self.options);self.options[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
             self.options.clear();self.options.update(original)

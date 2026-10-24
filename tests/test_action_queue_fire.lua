@@ -174,7 +174,13 @@ local function project(name)
     if name~='ActionQueueFire' then return assert(loadfile(path))() end
     return assert(loadstring((read(path):gsub('\nreturn Fire','\nFire.fixtureRegistries = {records, snapshots, expanded, returns}\nreturn Fire'))))()
 end
-project('ActionQueueOperations'); project('ActionQueueDefinitions')
+project('ActionQueueOperations')
+local unwrappedContainerWalk=luautils.walkToContainer
+local sharedApproach=project('ActionQueueApproach');assert(sharedApproach.install())
+assert(luautils.walkToContainer~=unwrappedContainerWalk
+    and sharedApproach.nativeHelper(luautils,'walkToContainer',luautils.walkToContainer)==unwrappedContainerWalk,
+    'actual shared dispatcher must precede Fire source trust capture')
+project('ActionQueueDefinitions')
 -- A mod replacement present before capture must not acquire permission.
 local originalBBQPetrol = ISBBQLightFromPetrol.new
 if not FireTestTrustBBQPetrol then ISBBQLightFromPetrol.new = function(...) return originalBBQPetrol(...) end end
@@ -351,6 +357,16 @@ local function expand(command)
     command.action={forceComplete=function() end,isStarted=function() return true end}
     command:start()
 end
+do
+    reset();item('Log');ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
+    local requested=q.queue[2];assert(api.isDeferredAction(requested),'wrapped native transfer helper must preserve Fire trust')
+    local helper=luautils.walkToContainer
+    luautils.walkToContainer=function()error('foreign helper must not run during inspection')end
+    assert(not api.isDeferredAction(requested),'replacing the actual dispatcher must revoke Fire helper identity')
+    luautils.walkToContainer=helper
+    assert(api.isDeferredAction(requested),'restoring the exact dispatcher must restore Fire provenance')
+end
+
 do
     local function count(registry) local n=0; for _ in pairs(registry) do n=n+1 end; return n end
     local records,snapshots,expanded,returns=unpack(api.fixtureRegistries)

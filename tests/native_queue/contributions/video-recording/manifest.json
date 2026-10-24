@@ -2,14 +2,14 @@
   "schema_version": 1,
   "topic": "video-recording",
   "name": "B42.21 native video recording fixture",
-  "purpose": "Validate two short silent in-game captures in a fresh disposable profile; preparation does not launch the game.",
+  "purpose": "Validate two short silent in-game captures through the shared native runner in a fresh disposable profile.",
   "dependencies": {
     "game": "Project Zomboid B42.21",
     "zombie_buddy": "2.3.4 or newer",
-    "java": "JDK 25 for compilation; game-bundled Java executable for launch",
+    "java": "JDK 25+ for compilation and shared-runner launch on macOS",
     "ffmpeg": "Absolute executable path; build must include libx264",
     "ffprobe": "Absolute executable path for verification",
-    "python": "Python 3.10+"
+    "python": "Python 3.11+ for the shared native runner"
   },
   "parameters": {
     "language": [
@@ -17,7 +17,7 @@
       "RU"
     ],
     "default_language": "EN",
-    "profile": "Must be a new, nonexistent absolute disposable directory",
+    "profile": "Fresh run directory owned by tools/check_action_queue.py; per-client cache is prepared automatically",
     "voiceEnable": false,
     "approval_policy": "Local SHA approvals; deny-new",
     "capture": {

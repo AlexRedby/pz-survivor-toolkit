@@ -11,7 +11,7 @@ MODULES = {'vehicle-lights': 'vehicle_lights', 'vehicle-doors': 'vehicle_doors',
            'inventory-tooltips': 'auxiliary',
            'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'inventory-presentation': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'quartermaster-transfers': 'quartermaster', 'quartermaster-distribution': 'quartermaster_distribution', 'quartermaster-crafting': 'quartermaster_crafting', 'animal-trailer': 'auxiliary',
            'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts',
-           'queue-recovery': 'queue_recovery', 'tv-controls': 'tv_controls', 'shelf-book-tv': 'shelf_book_tv', 'bulk-reading': 'bulk_reading', 'radio-settings': 'radio_settings'}
+           'approach-queue': 'approach_queue', 'queue-recovery': 'queue_recovery', 'tv-controls': 'tv_controls', 'shelf-book-tv': 'shelf_book_tv', 'bulk-reading': 'bulk_reading', 'radio-settings': 'radio_settings'}
 
 
 def get(suite):
@@ -20,11 +20,13 @@ def get(suite):
     return import_module('.' + MODULES[suite], __name__)
 
 
-def definitions():
+def definitions(suites=None):
+    """Load declarations for requested suites, or the complete catalog by default."""
+    selected = MODULES if suites is None else {suite: MODULES[suite] for suite in suites if suite in MODULES}
     result = {}
-    for name in dict.fromkeys(MODULES.values()):
+    for name in dict.fromkeys(selected.values()):
         result.update(import_module('.' + name, __name__).definitions())
-    return result
+    return result if suites is None else {suite: result[suite] for suite in selected}
 
 
 def roles(selection, server=True):

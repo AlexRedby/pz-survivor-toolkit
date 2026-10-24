@@ -51,22 +51,14 @@ def configure_game_sources(args):
     game = args.game.resolve()
     if not (game / 'projectzomboid.jar').is_file():
         raise ValueError('--game must contain projectzomboid.jar: ' + str(game))
-    for option, relative in {
-        'native_mod_options': 'media/lua/client/PZAPI/ModOptions.lua',
-        'native_inventory_pane': 'media/lua/client/ISUI/ISInventoryPane.lua',
-        'native_inventory_context_menu': 'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',
-        'native_radio_root': 'media/lua/client',
-        'native_uninstall': 'media/lua/shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua',
-        'native_vehicles': 'media/lua/server/Vehicles/Vehicles.lua',
-        'native_action_root': 'media/lua',
-        'wishlist_game_root': '.',
-    }.items():
+    for option, relative in mod_integrations.GAME_SOURCES.items():
         if getattr(args, option) is None:
             setattr(args, option, game / relative)
 
 
 def configure_test_sources(lua, name, args):
     """Give every isolated runtime the same paths; read only this test's inputs."""
+    mod_integrations.bind_sources(lua, name, args)
     lua.globals().ProjectRoot = str(ROOT)
     lua.globals().NativeQuartermasterLuaRoot = str(ROOT / "PZSurvivorToolkit/42/media/lua")
     for option, variable in (
@@ -100,11 +92,6 @@ def configure_test_sources(lua, name, args):
     if name in ('test_container_configuration_menus.lua', 'test_smart_deposit.lua'):
         if args.native_action_root:
             lua.globals().NativeInventoryPageSource = (args.native_action_root / 'client/ISUI/ISInventoryPage.lua').read_text(encoding='utf-8')
-        if args.cleanui_inventory_pane:
-            lua.globals().CleanUIInventoryPageSource = (args.cleanui_inventory_pane.parent / 'ISInventoryPage.lua').read_text(encoding='utf-8')
-            lua.globals().CleanUIVanillaInventoryPageSource = (args.cleanui_inventory_pane.parent.parent / 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua').read_text(encoding='utf-8')
-        if args.bc_filter_source:
-            lua.globals().NativeBCPageCustomizerSource = (args.bc_filter_source.parent.parent / 'Customize/Customize_ISInventoryPage.lua').read_text(encoding='utf-8')
     if name in ("test_highlighter.lua", "test_item_details.lua") and args.native_mod_options:
         lua.globals().NativeModOptionsSource = args.native_mod_options.read_text(encoding="utf-8")
     if name == "test_highlighter.lua" and args.native_action_root:
@@ -117,11 +104,7 @@ def configure_test_sources(lua, name, args):
         lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
         lua.globals().NativeGarmentSource = (args.native_inventory_context_menu.parent / "ISGarmentUI.lua").read_text(encoding="utf-8")
         lua.globals().NativeTransferSource = (args.native_action_root / "client/TimedActions/ISInventoryTransferAction.lua").read_text(encoding="utf-8")
-    if name in ("test_tv_videos.lua", "test_tv_controls.lua") and args.tv_source:
-        lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
     if name == "test_tv_controls.lua":
-        if args.tv_source:
-            lua.globals().NativeTVWindowSource = (args.tv_source.parent.parent / "ISRadioWindow.lua").read_text(encoding="utf-8")
         if args.native_radio_root:
             lua.globals().NativeMediaSource = (args.native_radio_root / "RadioCom/RadioWindowModules/RWMMedia.lua").read_text(encoding="utf-8")
             lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
@@ -148,13 +131,6 @@ def configure_test_sources(lua, name, args):
         lua.globals().ActionQueueTranslations = lua.table_from(translations, recursive=True)
         if name == "test_food_goal_labels.lua":
             lua.globals().FoodGoalTranslations = lua.table_from(translations, recursive=True)
-    if name == "test_medicine_moodles.lua" and args.medicine_framework_source:
-        lua.globals().NativeMedicineFrameworkSource = args.medicine_framework_source.read_text(encoding="utf-8")
-    if name == "test_mpff_compat.lua" and args.mpff_source:
-        lua.globals().NativeMPFFConfigSource = (args.mpff_source / "shared/MPFastForward_Config.lua").read_text(encoding="utf-8")
-        lua.globals().NativeMPFFServerSource = (args.mpff_source / "server/MPFastForward_Server.lua").read_text(encoding="utf-8")
-    if name == "test_bc_filter_compat.lua" and args.bc_filter_source:
-        lua.globals().NativeBCFilterSource = args.bc_filter_source.read_text(encoding="utf-8")
     if name == "test_quantity_transfers.lua" and args.oc_stick_source:
         lua.globals().OCItemStickSource = args.oc_stick_source.read_text(encoding="utf-8")
     if name == "test_inventory_filter.lua" and args.oc_display_source:
@@ -163,19 +139,6 @@ def configure_test_sources(lua, name, args):
         lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
         if name == "test_quantity_transfers.lua":
             lua.globals().NativeTextBoxSource = (args.native_inventory_context_menu.parent / "ISTextBox.lua").read_text(encoding="utf-8")
-    if name == "test_navigator.lua" and args.navigator_source:
-        for suffix in ("Config", "Render", "Drag"):
-            source_name = "NavigatorMonitorDrag" if suffix == "Drag" else "Monitor" + suffix
-            lua.globals()["NativeNavigator" + suffix] = (args.navigator_source / (source_name + ".lua")).read_text(encoding="utf-8")
-    if name in ("test_inventory_tags.lua", "test_inventory_filter.lua", "test_inventory_search.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_inventory_transfer_operations.lua") and args.cleanui_inventory_pane:
-        lua.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
-        if name == "test_inventory_filter.lua":
-            handler = args.cleanui_inventory_pane.parent / "ISInventoryPageTransferHandler.lua"
-            if handler.is_file():
-                lua.globals().CleanUIInventoryTransferHandlerSource = handler.read_text(encoding="utf-8")
-        if name == "test_inventory_transfer_operations.lua":
-            vanilla = args.cleanui_inventory_pane.parent.parent / "CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua"
-            lua.globals().CleanUIVanillaInventoryPaneSource = vanilla.read_text(encoding="utf-8")
     if name in ("test_inventory_tags.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua") and args.native_inventory_pane:
         lua.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
 
@@ -241,7 +204,7 @@ def main() -> None:
         print("\n".join(available))
         return
     if args.list_integrations:
-        print(json.dumps(mod_integrations.INTEGRATIONS, indent=2))
+        print(json.dumps(mod_integrations.describe(), indent=2))
         return
     if args.integration or args.pack_lock:
         try:

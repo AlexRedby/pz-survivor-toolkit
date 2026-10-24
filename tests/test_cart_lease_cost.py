@@ -13,7 +13,9 @@ API=runpy.run_path(str(ROOT/'tests/native_queue/contributions/wooden_cart_multip
 class LeaseCostEvidenceTests(unittest.TestCase):
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
-        self.selection,logs,rows=fixture();self.rows={}
+        self.populate()
+    def populate(self,menu=False):
+        self.selection,logs,rows=fixture(menu=menu);self.rows={}
         for role in ROLES:
             counter=0;out=[]
             lines=logs[role]+[marker+json.dumps(row) for marker,row in rows[role]]
@@ -46,6 +48,20 @@ class LeaseCostEvidenceTests(unittest.TestCase):
         self.assertEqual(result['perProcessOneSecondBursts']['server']['maximumMessages'],34)
         self.assertIn('excludes RakNet/IP/UDP',result['scope'])
         self.assertNotIn('wireBytes',result)
+    def test_menu_commands_keep_exact_callback_receipts_and_counts(self):
+        self.populate(menu=True)
+        result=self.analyze()
+        self.assertEqual(result['totals']['messages'],74)
+        commands={row['command']:row['messages'] for row in result['commands'] if row['command'] in ('MenuAbsent','MenuResume')}
+        self.assertEqual(commands,dict(MenuAbsent=4,MenuResume=4))
+        original=copy.deepcopy(self.rows)
+        for command in ('MenuAbsent','MenuResume'):
+            self.rows=copy.deepcopy(original)
+            for role in ROLES:
+                matches=[r for r in self.natives(role) if r['command']==command]
+                if matches:matches[0]['receipt']='wrong-receipt';break
+            with self.subTest(command=command),self.assertRaises(ValueError):self.analyze()
+
     def test_native_shape_direction_process_header_and_size_are_strict(self):
         original=copy.deepcopy(self.rows)
         for key,value in [('process','other'),('direction','server-to-client'),('module','foreign'),('command','Receipt'),('payloadBytes',0),('engineBytes',999),('connectionEpoch',0),('ingressGeneration',0),('monoNs',float('nan'))]:

@@ -3,11 +3,12 @@ from pathlib import Path
 import shutil
 import re
 from .. import receipts
+from ..mod_selection import metadata, mod_ids
 
 SUITE = 'classification-baseline'
 MARKER = '[CLASSIFICATION_BASELINE] '
 PROJECT = Path(__file__).resolve().parents[3]
-MODS = re.search(r'^Mods=(.*)$', (PROJECT / 'SurvivorQoL-selected.ini').read_text(), re.M)[1].split(';')
+MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 if 'organizedCategories_core' not in MODS:
     MODS.append('organizedCategories_core')
 

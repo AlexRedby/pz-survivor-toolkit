@@ -1,6 +1,7 @@
 if not NativeActionRoot then print('Generator native contracts SKIP.'); return end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
 local craftContainers
+local supportRequire = require
 require = function(name)
     if name == "PZSurvivorToolkit/ActionQueueMembership" then
         return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
@@ -11,9 +12,13 @@ require = function(name)
         craftContainers = craftContainers or f.project('QuartermasterCraftContainers')
         return craftContainers
     end
+    if name == 'PZSurvivorToolkit/ActionQueueTidyIntent' then
+        return PZSurvivorToolkit.ActionQueueTidyIntent or f.project('ActionQueueTidyIntent')
+    end
     if name == 'PZSurvivorToolkit/ActionQueueGeneratorOverlay' then
         return PZSurvivorToolkit.ActionQueueGeneratorOverlay or f.project('ActionQueueGeneratorOverlay')
     end
+    return supportRequire(name)
 end
 local function readText(path, raw)
     if raw and NativeReadRawText then return NativeReadRawText(path) end
@@ -115,7 +120,14 @@ ISBaseTimedAction.begin = function(action)
         isForceComplete = function() return false end, forceComplete = function(self) self.completed = true end,
         forceStop = function() end, getJobDelta = function() return 0 end}
 end
-f.project('ActionQueueOperations'); f.project('ActionQueueDefinitions')
+f.project('ActionQueueOperations')
+local originalAdjacent,originalContainer=luautils.walkAdj,luautils.walkToContainer
+local sharedApproach=f.project('ActionQueueApproach');assert(sharedApproach.install())
+assert(luautils.walkAdj~=originalAdjacent and luautils.walkToContainer~=originalContainer
+    and sharedApproach.nativeHelper(luautils,'walkAdj',luautils.walkAdj)==originalAdjacent
+    and sharedApproach.nativeHelper(luautils,'walkToContainer',luautils.walkToContainer)==originalContainer,
+    'actual shared dispatcher must precede Generator source trust capture')
+f.project('ActionQueueDefinitions')
 local policy = f.project('ActionQueuePolicy')
 local originalProject=f.project
 f.project=function(name)

@@ -143,6 +143,9 @@ local function capture(action,active)
         local command=action.toolkitQueueCommand
         if operations and operations.isCommand(action) and command.callback==enqueueRead
             and plainRecord(command.snapshot,action.character) and command.snapshot.kind=="read" then return copy(command.snapshot) end
+        local approach=Toolkit.ActionQueueApproach
+        local intent=approach and approach.capture(action)
+        if intent then record.kind,record.approach="approach",intent;return record end
         return nil,"unsupported"
     end
     if action.Type=="ISReadABook" then
@@ -199,7 +202,7 @@ function Recovery.capture(action,active)
     return nil,"unavailable"
 end
 
-local fields={version=true,character=true,kind=true,itemId=true,itemType=true,container=true,active=true,
+local fields={version=true,character=true,kind=true,approach=true,itemId=true,itemType=true,container=true,active=true,
     device=true,data=true,square=true,x=true,y=true,z=true,mode=true,value=true,remove=true,mediaIndex=true,
     source=true,destination=true,allowMissing=true}
 plainRecord=function(record,character)
@@ -312,6 +315,10 @@ local function plan(records,character)
                 or not Proof.closure(base.new,"ISBaseTimedAction.lua") then return nil,"unsupported" end
             action=Toolkit.ActionQueueOperations.command(character,enqueueRead,copy(record))
             if not Toolkit.ActionQueueOperations.isCommand(action) then return nil,"unsupported" end
+        elseif record.kind=="approach" then
+            local approach=Toolkit.ActionQueueApproach
+            action=approach and approach.rebuild(character,record.approach)
+            if not action then return nil,"unavailable"end
         elseif record.kind=="walk" then
             local square=record.square
             if not instanceof(square,"IsoGridSquare") or not integer(record.x) or not integer(record.y) or not integer(record.z)

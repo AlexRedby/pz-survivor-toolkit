@@ -276,6 +276,77 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
         self.groups = copy.deepcopy(original);self.records('native','pending')[1]['worldEpoch'] = 0
         with self.assertRaises(ValueError):self.analyze()
 
+    def test_frozen_hotkey_bank_requires_exact_drop_kind_for_every_phase(self):
+        original = copy.deepcopy(self.groups)
+        for hotkey in (False, True):
+            self.selection['options']['cart_hotkey_setdown'] = hotkey
+            self.groups = copy.deepcopy(original)
+            expected = 'ToolkitWoodCartDrop' if hotkey else 'ToolkitWoodCartSetdown'
+            for rows in self.groups.values():
+                for row in rows:
+                    if row.get('kind') == 'ToolkitWoodCartSetdown':row['kind'] = expected
+            selected = copy.deepcopy(self.groups)
+            result = self.analyze()
+            self.assertEqual([row['kind'] for row in result['phases'] if row['phase'].startswith('drop')],
+                             [expected]*3)
+            for phase_index in (1,3,4):
+                self.groups = copy.deepcopy(selected)
+                token = self.records('owner','capture')[phase_index-1]['token']
+                for rows in self.groups.values():
+                    for row in rows:
+                        if row.get('token') == token:
+                            row['kind'] = 'ToolkitWoodCartSetdown' if hotkey else 'ToolkitWoodCartDrop'
+                # Pending starts may predate token publication; mutate that same start too.
+                self.records('native','pending')[phase_index-1]['kind'] = (
+                    'ToolkitWoodCartSetdown' if hotkey else 'ToolkitWoodCartDrop')
+                with self.subTest(hotkey=hotkey,index=phase_index),self.assertRaisesRegex(ValueError,'Native kind differs'):
+                    self.analyze()
+
+    def hotkey_completion_revoked(self, indices=(1,4)):
+        self.selection['options']['cart_hotkey_setdown'] = True
+        for rows in self.groups.values():
+            for row in rows:
+                if row.get('kind') == 'ToolkitWoodCartSetdown':row['kind'] = 'ToolkitWoodCartDrop'
+        for row in self.records('owner','terminal'):
+            if row['index'] in indices:
+                row.update(event='seal-revoked',sealed=False,currentAuthority=False,
+                           reason='operation-generation-changed',observedGeneration=row['captureGeneration']+1)
+                row.pop('state')
+
+    def test_completed_hotkey_drop_keeps_native_done_separate_from_revoked_authority(self):
+        original = copy.deepcopy(self.groups)
+        for indices in ((),(1,),(4,),(1,4)):
+            self.groups=copy.deepcopy(original);self.hotkey_completion_revoked(indices)
+            result=self.analyze()
+            self.assertEqual(result['ownerSealedTerminalAssociations'],4-len(indices))
+            self.assertEqual(result['ownerRevokedSealAssociations'],2+len(indices))
+            for row in result['phases']:
+                if row['index'] in indices:
+                    self.assertEqual(row['ownerNativeReceiptOutcome'],'completed')
+                    self.assertIsNone(row['ownerSealedOutcome'])
+                    self.assertEqual(row['ownerSealRevocationReason'],'operation-generation-changed')
+                    self.assertEqual((row['nativeTerminalState'],row['nativeRetirementReason']),('Done','completed'))
+
+    def test_revoked_hotkey_success_requires_direct_done_and_exact_generation_proof(self):
+        self.hotkey_completion_revoked();original=copy.deepcopy(self.groups)
+        for state,reason in (('Accept','native-remove'),('unavailable','native-absent'),('Reject','rejected')):
+            self.groups=copy.deepcopy(original)
+            self.records('native','retired')[0].update(nativeState=state,reason=reason)
+            with self.subTest(state=state),self.assertRaises(ValueError):self.analyze()
+        for field,value in (('observedGeneration',2),('observedGeneration',True),('reason','observe-unavailable'),
+                            ('sealed',True),('currentAuthority',True),('token','10000000-0000-4000-8000-000000000099')):
+            self.groups=copy.deepcopy(original)
+            next(row for row in self.records('owner','seal-revoked') if row['index']==1)[field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
+        self.groups=copy.deepcopy(original)
+        self.records('owner','native-terminal-receipt')[0]['state']='canceled'
+        with self.assertRaises(ValueError):self.analyze()
+        self.groups=copy.deepcopy(original)
+        revoked=next(row for row in self.records('owner','seal-revoked') if row['index']==1)
+        terminal=dict(revoked,event='terminal',state='completed',sealed=True)
+        self.groups['owner'].append(terminal)
+        with self.assertRaisesRegex(ValueError,'expected sealed outcome/revocation'):self.analyze()
+
     def test_foreign_endpoints_errors_and_process_restarts_fail_closed(self):
         original=copy.deepcopy(self.groups)
         self.records('owner','capture')[0]['actor']='client2'
@@ -336,7 +407,7 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
                 self.analyze()
         self.groups = copy.deepcopy(original)
         result = self.analyze()
-        self.assertIn('no authority survives that reset',result['qualification'])
+        self.assertIn('No authority survives that reset',result['qualification'])
         self.assertEqual(result['ownerSealedTerminalAssociations'],4)
         self.assertEqual(result['ownerRevokedSealAssociations'],2)
 
@@ -371,7 +442,8 @@ class NativeActionAdmissionEvidence(unittest.TestCase):
             self.selection=dict(original,**{field:value})
             with self.subTest(field=field),self.assertRaisesRegex(ValueError,'Frozen selection'):self.analyze()
         for field,value in (('cart_action_admission',1),('cart_actions',False),('mp_host',False),
-                            ('cart_lease_control',True),('cart_inventory_equip',True),('cart_wall_exit','left')):
+                            ('cart_lease_control',True),('cart_inventory_equip',True),('cart_wall_exit','left'),
+                            ('cart_hotkey_setdown',1),('cart_hotkey_setdown','true')):
             self.selection=copy.deepcopy(original);self.selection['options'][field]=value
             with self.subTest(field=field),self.assertRaises(ValueError):self.analyze()
 

@@ -36,7 +36,8 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / SUITE).rglob('*.lua')),
+    return [Path(__file__).with_name('craft.py'), Path(__file__).with_name('quartermaster_supply_units.py'),
+            *sorted((root / SUITE).rglob('*.lua')),
             *(root / 'craft-ui/shared' / name for name in SHARED_FIXTURES),
             *sorted((root / 'craft/scripts').rglob('*.txt')), root / 'health/shared/QueueHealthEvents.lua',
             *sorted((root / 'startup').rglob('*.lua'))]

@@ -232,8 +232,7 @@ local function ownerUnchanged(id)
         end
     end
     if id == "WashFix" and washWalkHelper then
-        local scopedWalk = sourceScope and sourceScope.id == id and sourceScope.walkAdjacentWrapper
-        if luautils ~= washWalkHelper.owner or (luautils.walkAdj ~= washWalkHelper.callback and luautils.walkAdj ~= scopedWalk) then return false end
+        if luautils ~= washWalkHelper.owner or luautils.walkAdj ~= washWalkHelper.callback then return false end
     end
     for _, owner in ipairs(owners[id] or {}) do
         for name, method in pairs(owner.methods) do if owner.target[name] ~= method then return false end end
@@ -692,6 +691,9 @@ local scoped, rememberTidy
 local function adopt(action)
     local context = sourceScope
     if not context then return end
+    -- Verified Toolkit dispatchers already own their scope and lifecycle. A
+    -- foreign producer may enqueue them, but must not replace their executor.
+    if Operations.isCommand and Operations.isCommand(action) then return end
     local class = getmetatable(action)
     local baseline = classes[context.id] and classes[context.id][class]
     if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
@@ -827,8 +829,6 @@ scoped = function(context, callback, ...)
     local insert, add, addAfter, queueActions = table.insert, ISTimedActionQueue.add,
         ISTimedActionQueue.addAfter, ISTimedActionQueue.queueActions
     local addOption = ISContextMenu and ISContextMenu.addOption
-    local walkAdjacent = luautils and luautils.walkAdj
-    local previousWalkWrapper = context.walkAdjacentWrapper
     local function valid() return ownerUnchanged(context.id) and (not context.token or live(context)) end
     ISTimedActionQueue.add = function(action)
         if context.id == "P4TidyUpMeister" and sessions[action.character] then sessions[action.character].restored = true end
@@ -874,18 +874,9 @@ scoped = function(context, callback, ...)
             return addOption(menu, label, target, callback, ...)
         end
     end
-    if walkAdjacent and context.id == "WashFix" then
-        -- Native walkAdj clears existing work before even checking whether the sink is already adjacent.
-        context.walkAdjacentWrapper = function(character, square, keepActions, excluded)
-            return walkAdjacent(character, square, true, excluded)
-        end
-        luautils.walkAdj = context.walkAdjacentWrapper
-    end
     local results = pack(pcall(callback, ...))
     table.insert, ISTimedActionQueue.add, ISTimedActionQueue.addAfter, ISTimedActionQueue.queueActions = insert, add, addAfter, queueActions
     if addOption then ISContextMenu.addOption = addOption end
-    if walkAdjacent then luautils.walkAdj = walkAdjacent end
-    context.walkAdjacentWrapper = previousWalkWrapper
     sourceScope = previous
     if not results[1] then error(results[2], 0) end
     return unpack(results, 2, results.n)

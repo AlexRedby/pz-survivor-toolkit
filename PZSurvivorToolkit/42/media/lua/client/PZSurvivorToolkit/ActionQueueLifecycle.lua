@@ -16,6 +16,28 @@ local function owned(queue, action)
         and queue.current == action and queue.queue[1] == action
 end
 
+-- A server-completed transaction can remove its target before native valid()
+-- reaches update()/Done. Java verifies its exact standard transaction and stop
+-- flags; this gate verifies current queue ownership and the sealed server receipt.
+-- It never executes callbacks, effects or queue advancement.
+function Lifecycle.allowNativeCompletion(action, nativeAction)
+    if not isClient()or not Toolkit.Settings.actionQueue()then return false end
+    local character=action and action.character
+    local queue=character and ISTimedActionQueue.queues[character]
+    if not owned(queue,action)or action.action~=nativeAction or character:isDead()
+        or not character:isLocalPlayer()or getSpecificPlayer(character:getPlayerNum())~=character
+        or queue.toolkitCancel or queue.toolkitStopIntent or queue.toolkitOutcomeWait
+        or queue.toolkitGroupCancel or queue.toolkitResume or queue.toolkitOperationsInvalid
+        or (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled)
+        or character:pressedCancelAction()
+        or (action.stopOnWalk and (character:isPlayerMoving()or character:pressedMovement(false)))
+        or (action.stopOnRun and (character:isRunning()or character:isSprinting()))
+        or (action.stopOnAim and character:isAiming())then return false end
+    local acknowledgements=Toolkit.ActionQueueAcknowledgements
+    local receipt=acknowledgements and acknowledgements.capture(action)
+    return receipt~=nil and acknowledgements.state(action,receipt)=='completed'
+end
+
 -- Policy grants permission before reaching this shared native stop boundary.
 function Lifecycle.requestStop(queue, action, reason, scope, buildReceipt)
     if not owned(queue, action) or not action.action then return false end

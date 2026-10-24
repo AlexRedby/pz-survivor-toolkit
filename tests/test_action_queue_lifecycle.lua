@@ -106,4 +106,68 @@ assert(not pcall(ISQueueActionsAction.start, command) and not command.completed,
 enabled = false
 ISQueueActionsAction.start(command)
 assert(command.nativeStopped, "disabled queue changed native empty-command semantics")
-print("Action queue lifecycle checks passed (SP effects, MP callback tail, native removal, failures, reset, ownership, disabled).")
+-- Exercise the completion gate with the real sealed receipt registry. It must
+-- not turn a server cancellation, stale generation or explicit local stop into
+-- completion, even when the same action/native pointers remain accessible.
+enabled,client=true,true
+-- Earlier cases use minimal isolated actors, not native local player slots.
+ISTimedActionQueue.queues={}
+local receive
+Events={OnServerCommand={Add=function(callback)receive=callback end}}
+local ack=assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
+queue,action,present=fixture()
+local actor=action.character
+actor.getPlayerNum=function()return 0 end
+actor.getOnlineID=function()return 17 end
+actor.isDead=function(self)return self.dead==true end
+actor.isLocalPlayer=function(self)return self.localPlayer~=false end
+actor.pressedCancelAction=function(self)return self.cancel==true end
+actor.isPlayerMoving=function(self)return self.moving==true end
+actor.pressedMovement=function(self)return self.input==true end
+actor.isRunning=function(self)return self.running==true end
+actor.isSprinting=function(self)return self.sprinting==true end
+actor.isAiming=function(self)return self.aiming==true end
+getSpecificPlayer=function(slot)if slot==0 then return actor end end
+local native=action.action
+action.toolkitNativeTransaction,action.toolkitNativeKind=7,'CompletionProbe'
+action.toolkitQueueOperation={}
+action.forceComplete=function()error('the Lua completion gate must stay read-only')end
+local serial=0
+local function deliver(state)
+    receive('PZSurvivorToolkitActions','State',{protocol=1,player=17,transaction=7,
+        kind='CompletionProbe',token=string.format('00000000-0000-0000-0000-%012x',serial),state=state})
+end
+local function permitted()return Lifecycle.allowNativeCompletion(action,native)end
+assert(not permitted(),'missing receipt became a completed native transaction')
+for _,terminal in ipairs({'canceled','rejected'})do
+    ack.reset(queue);serial=serial+1;deliver('started');deliver(terminal)
+    assert(not permitted(),terminal..' receipt became completion')
+end
+ack.reset(queue);serial=serial+1;deliver('started')
+assert(not permitted(),'a started transaction became completion')
+deliver('completed');assert(permitted(),'owned sealed completed transaction was refused')
+assert(not Lifecycle.allowNativeCompletion(action,{}),'another native object acquired completion')
+for _,name in ipairs({'toolkitCancel','toolkitStopIntent','toolkitOutcomeWait','toolkitGroupCancel',
+    'toolkitResume','toolkitOperationsInvalid'})do
+    queue[name]={};assert(not permitted(),name..' was overridden');queue[name]=nil
+end
+action.toolkitQueueOperation.toolkitCancelled=true;assert(not permitted());action.toolkitQueueOperation.toolkitCancelled=nil
+for _,name in ipairs({'dead','cancel'})do actor[name]=true;assert(not permitted(),name..' was overridden');actor[name]=nil end
+actor.localPlayer=false;assert(not permitted());actor.localPlayer=nil
+for _,entry in ipairs({{'stopOnWalk','moving'},{'stopOnWalk','input'},{'stopOnRun','running'},
+    {'stopOnRun','sprinting'},{'stopOnAim','aiming'}})do
+    action[entry[1]],actor[entry[2]]=true,true;assert(not permitted(),'native input cancellation was overridden')
+    action[entry[1]]=false;assert(permitted(),'a non-stopping input blocked paid completion')
+    action[entry[1]],actor[entry[2]]=nil,nil
+end
+enabled=false;assert(not permitted());enabled=true
+client=false;assert(not permitted());client=true
+queue.current={};assert(not permitted());queue.current=action
+queue.queue[1]={};assert(not permitted());queue.queue[1]=action
+assert(permitted())
+queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+assert(not permitted(),'a stale queue generation acquired completion')
+queue.toolkitOperationGeneration=queue.toolkitOperationGeneration-1
+assert(permitted())
+ack.reset(queue);assert(not permitted(),'queue reset revived a retained completed receipt')
+print("Action queue lifecycle checks passed (SP effects, MP callback tail, sealed completion, explicit stops, native removal, failures, reset, ownership, disabled).")

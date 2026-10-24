@@ -118,6 +118,83 @@ assert(not has('"event":"terminal"') and not has('[CART_ADMISSION] ERROR'))
 assert(Ack.observe(action,sealed)==nil)
 ''')
 
+    def test_hotkey_drop_reset_and_late_receipts_cannot_claim_repeated_drop(self):
+        for outcome,before_reset in (('canceled',False),('completed',False),('completed',True)):
+            with self.subTest(outcome=outcome,before_reset=before_reset):
+                self.run_lua('''
+config.options.cart_hotkey_setdown=true
+local nativeOutcome=OUTCOME;local terminalBeforeReset=BEFORE_RESET
+local item={getID=function() return 42 end}
+local operation={};action.Type='ToolkitWoodCartDrop';action.item=item
+action.toolkitNativeKind='ToolkitWoodCartDrop';action.toolkitQueueOperation=operation
+local function state(selectedToken,outcome)
+ event('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=11,
+  kind='ToolkitWoodCartDrop',token=selectedToken,state=outcome})
+end
+-- Isolate reset and repeat: both retain the same byte transaction/cart,
+-- while the native/Lua action, operation, generation and token must be fresh.
+probe.trackQueued(queue.queue,{index=1,phase=OLD_PHASE,id=42})
+state(token,'started');probe.sample();assert(#commands==1)
+local oldReceipt=assert(Ack.capture(action));local r=reply()
+r.phase=OLD_PHASE;r.kind='ToolkitWoodCartDrop'
+event('CartActionAdmissionProbe','Reply',r)
+if terminalBeforeReset then state(token,nativeOutcome) end
+Ack.reset(queue);queue.toolkitOperationGeneration=2
+local repeatedOperation={}
+local repeated={character=player,action={},Type='ToolkitWoodCartDrop',item=item,
+ toolkitNativeTransaction=11,toolkitNativeKind='ToolkitWoodCartDrop',toolkitQueueOperation=repeatedOperation}
+local repeatedToken='00000000-0000-0000-0000-000000000005'
+queue.current=repeated;queue.queue={repeated}
+probe.trackQueued(queue.queue,{index=2,phase='drop-repeat',id=42})
+state(token,'started');probe.sample()
+assert(Ack.capture(action)==nil and Ack.observe(action,oldReceipt)==nil)
+assert(Ack.capture(repeated)==nil and #commands==1,'Old start acquired repeated action rights')
+state(repeatedToken,'started');probe.sample();assert(#commands==2)
+local repeatedReceipt=assert(Ack.capture(repeated))
+local repeatedReply=reply()
+repeatedReply.nonce=commands[2].nonce;repeatedReply.index=2;repeatedReply.phase='drop-repeat'
+repeatedReply.kind='ToolkitWoodCartDrop';repeatedReply.token=repeatedToken;repeatedReply.startGeneration=4
+event('CartActionAdmissionProbe','Reply',repeatedReply)
+-- A terminal delivered before reset or after the repeated action's own receipt
+-- remains historical; neither schedule can settle or recapture the new action.
+if not terminalBeforeReset then state(token,nativeOutcome) end
+state(token,'started');probe.sample()
+assert(Ack.capture(action)==nil and Ack.observe(action,oldReceipt)==nil)
+assert(Ack.capture(repeated)==repeatedReceipt and Ack.observe(repeated,repeatedReceipt)=='started')
+assert(repeatedReceipt.token==repeatedToken and repeatedReceipt.native==repeated.action
+ and repeatedReceipt.generation==2 and repeatedReceipt.state=='started')
+assert(queue.current==repeated and #queue.queue==1 and queue.queue[1]==repeated
+ and queue.toolkitOperationGeneration==2 and repeated.toolkitQueueOperation==repeatedOperation
+ and action.toolkitQueueOperation==operation)
+assert(#commands==2 and commands[1].token==token and commands[2].token==repeatedToken)
+assert(has('"event":"seal-revoked"') and has('"reason":"operation-generation-changed"'))
+assert(has('"event":"native-terminal-receipt"') and has('"state":"'..nativeOutcome..'"'))
+assert(not has('"event":"terminal"'),'Reset action regained sealed terminal authority')
+state(repeatedToken,'completed');probe.sample()
+assert(Ack.observe(repeated,repeatedReceipt)=='completed' and #commands==2)
+assert(not has('[CART_ADMISSION] ERROR'))
+'''.replace('OUTCOME',json.dumps(outcome)).replace('BEFORE_RESET','true' if before_reset else 'false')
+                   .replace('OLD_PHASE',json.dumps('drop-cancel' if outcome=='canceled' else 'drop-complete')))
+
+    def test_completed_hotkey_drop_without_reset_retains_sealed_outcome(self):
+        self.run_lua('''
+config.options.cart_hotkey_setdown=true
+action.Type='ToolkitWoodCartDrop';action.item={getID=function() return 42 end}
+action.toolkitNativeKind='ToolkitWoodCartDrop'
+probe.trackQueued(queue.queue,{index=1,phase='drop-complete',id=42})
+local function state(outcome)
+ event('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=11,
+  kind='ToolkitWoodCartDrop',token=token,state=outcome})
+end
+state('started');probe.sample();local sealed=assert(Ack.capture(action))
+local r=reply();r.phase='drop-complete';r.kind='ToolkitWoodCartDrop'
+event('CartActionAdmissionProbe','Reply',r)
+state('completed');probe.sample()
+assert(Ack.observe(action,sealed)=='completed' and #commands==1)
+assert(has('"event":"terminal"') and has('"event":"native-terminal-receipt"'))
+assert(not has('"event":"seal-revoked"') and not has('[CART_ADMISSION] ERROR'))
+''')
+
     def test_original_terminal_delivery_requires_exact_ingress_and_frozen_transaction(self):
         for mutation in ('ingress=foreign','r.transaction=12'):
             with self.subTest(mutation=mutation):

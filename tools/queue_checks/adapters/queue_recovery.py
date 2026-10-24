@@ -34,7 +34,8 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'queue-recovery').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
+    return [Path(__file__).with_name('tv_controls.py'),
+            *sorted((root / 'queue-recovery').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
 

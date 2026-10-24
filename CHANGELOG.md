@@ -1,50 +1,19 @@
 # Changelog
 
-Functional changes to the repository components. For current behavior and limits, see [features](docs/FEATURES.md) and the [Java guide](JavaPatches/README.md).
+Player-visible changes and fixes, grouped by component. For current behavior and limits, see [features](docs/FEATURES.md) and the [Java guide](JavaPatches/README.md).
 
+- [Selected mod set](#selected-mod-set)
 - [PZ Survivor Toolkit](#pz-survivor-toolkit)
 - [Survivor Wishlist](#survivor-wishlist)
 - [Toolkit Java Patches](#toolkit-java-patches)
 
-Version labels come from committed component metadata, including changes made without a version bump. Parallel branches sometimes reused a label; consolidation entries identify the combined behavior. There are no release tags in this history, so these entries do not assert publication dates. Third-party mod selection is documented in the [catalog](USEFUL_MODS.md).
-
-## Development tools
-
-- **Native equipment checks:** Cover portable-radio P4 returns with separate native scissors, exact device and battery state, client pointer/sound cleanup and ordered Host receipts. Compare each role against its queue-disabled control and require the native unheld-radio off packet to reach the server after return.
-
-- **Native equipment checks:** Preflight ordinary hotbar fixture item shapes through the actual game factory before launching a window. Check native class, attribute/script metadata ownership and an independent plain-item control; retain diagnostics in the run.
-
-- **Native equipment checks:** Extend the common clothing matrix to initially desired held/worn baselines, with authority-only hand/worn setup after inventory delivery, exact cleared-hand checkpoints and P4 Equip/activation/Wear restoration.
-
-- **Native equipment checks:** Use one P4 clothing overlap matrix for temporary primary, secondary and both-hand equipment. Check exact hands, worn/root identity, native cleanup flags/order, activation and authoritative completion before the independent tail.
-
-- **Cart Kotlin tooling:** Replace concatenated Java diagnostic fragments with named Kotlin modules and Kotlin native checks. Share the pinned JVM 25 compiler and private runtime with the project; retain minimal Java only for writable instrumentation slots and cold loader verification. Migrate source inventories, staging and direct-source checks together; preserve the shared monitor and nullable native diagnostic values.
-
-- **Guest cart lifecycle fixture:** Add a separate disposable menu-Host death/Coop-respawn/rejoin scenario, exact native transport activity observation, stale admission checks and strict evidence analysis. Distinguish native prebirth preview cleanup from a fresh, exactly registered equipment incarnation while preserving old tombstones. Keep old cart disposition explicit and production animation unchanged.
-
-- **Cart control lifecycle diagnostics:** Add explicit native-absence invalidation, permanent death-entry retirement and fresh challenge namespaces for recreated test protocols. Measure delivered native command serialization with exact original callback receipts; keep transport wire costs and full Host respawn/reconnect coverage separate.
-
-- **Cart equipment lifetime diagnostics:** Observe native equipment revisions across missed release/reacquire and same-ID replacement cycles, fence stale binds/payloads in the test-only reference, and add a separately selected Host setter bank. Certify complete remote Equip resnapshots separately from release, preserving replay fences through bounded fresh rebinds. Preserve production animation and native effects.
-
-- **Cart retained-parameter diagnostics:** Trace exact remote state-machine replacement calls and monitor native parameter-map birth, escaped aliases, writes and completed consumers before associating replacement proxies with their original packet. Keep unknown provenance unbound and production animation unchanged.
-
-- **Cart observer association pilot:** Add an explicitly selected diagnostic StatePacket marker from the exact owner action start through native relay/apply and observer proxy lifecycle into frozen body/cart draw metadata. Join it to existing sealed owner/server admission evidence, retain repeated/retired proxy diagnostics, and identify altered test wire separately from production authority, transport cost and whole-image timing.
-
-- **Cart native action admission:** Add an opt-in read-only Host transaction trace and exact association with the existing sealed owner receipts for pickup/setdown cancellation and repeat checks. Keep pending/accepted/retired native lifetimes, original transport provenance and logical query counts separate from observer binding, wire costs and production migration. Observe native cancel results independently from the queue reset that revokes the owner seal; never renew action rights for diagnostics.
-
-- **Cart lease admission prototype:** Add a bounded executable grant/lease/sequence controller and deterministic replay regressions, plus an explicitly selected held-only Host challenge/echo probe with exact native transport/source scopes. Keep control-path evidence separate from complete native lifetime coverage and production migration.
-
-- **Native cart timing:** Record exact PlayerPacket body/route and source/ingress/accepted generations without modifying the wire. Keep ambiguous repeated samples explicit and freeze accepted-input metadata with body/cart draws. Add a separately selected, bounded native TimeSync experiment for disposable Host clients; ordinary timeline capture remains passive and source-time playback remains gated. Resolve observer sampling from its exact remote held item and qualify active experiment coverage separately from startup request matching.
-
-- **Cart multiplayer diagnostics:** Add opt-in publication/native-prediction/render timing, qualified native clock exchanges and per-connection transport counters. Separate first delivery from cached repeats, report active motion payload costs and preserve exact body/cart draw identities. Isolate inventory-equip fixtures from ordinary motion and add a portable source-geometry analyzer. Wait for the exact synchronized outfit before Host capture; resend native setup visuals once both recipients exist and keep pending-state polling free of repeated assertions.
-
-- **Cart equip checks:** Add explicit sex/load variants to the isolated public-menu SP reproducer and a separate native menu-Host owner/observer bank with exact cart/cargo identity and canonical server-result completion. Record bounded same-slot attachment gates without modifying runtime state.
-
-- **Native snapshots:** Prefer independent copy-on-write file clones for mod copies on macOS, with ordinary copying when cloning is unavailable. Preserve file metadata, source/snapshot hash checks and conservative disk reserves; writes to a snapshot remain private to that file.
-
-- **B42 mod sources:** Match the game's major/minor branch selection and version/common metadata precedence. Preserve common content alongside future-only branches, accept compatible patch-suffixed folders and reject legacy root metadata/content. Native snapshots use the same selected branch for their empty engine-required directories; original mod files and full-source locks remain unchanged.
+Version labels come from component metadata. Parallel branches sometimes reused a label; consolidation entries describe the combined behavior. These headings are version references, not publication dates. Third-party mod selection and compatibility notes are in the [catalog](docs/MODPACK.md).
 
 ## Selected mod set
+
+- **Added:** Vehicle Repair Overhaul and its B42 Vehicle Salvage Overhaul module from Workshop `2757712197`, loaded base-first after the other vehicle mods (55 Mod IDs / 51 Workshop items). Adds repair options and whole-vehicle salvage; full-pack SP/Host behavior and the upstream sandbox-setting controls remain unverified.
+
+- **Added:** Vehicle Aim Roof Fix (`CarRoofFix`, Workshop `3781616141`) after the VVA pair in the B42.21 selection (54 Mod IDs / 51 Workshop items), to keep visible occupants seated during right-mouse look-around/aiming. Full-pack SP/Host behavior remains unverified.
 
 - **Added:** Nick's Turn Off Fridges to the B42.21 selection (53 Mod IDs / 50 Workshop items), with appliance unplug/replug controls and optional per-appliance automation. Full-pack SP/Host behavior remains unverified; plug appliances back in before removing the mod.
 
@@ -60,117 +29,124 @@ Version labels come from committed component metadata, including changes made wi
 - Fix Host item retention and custom tag assignment rejecting accessible vehicle items when replicated vehicle grid squares differ. Match the exact item, vehicle and compartment while retaining live server range, floor, container, nested-bag and SafeHouse admission.
 - Preserve the physical Shift-selection anchor when a dirty native/CleanUI redraw refreshes inventory rows with detail-column sorting disabled.
 
-### 0.1.242
-
 - Preserve the Shift-selection anchor across consecutive inventory refreshes before the next redraw, including Host item-state updates.
 - Install category/tag/retention grouping after Better Containers finishes replacing inventory methods, preserving exact stack splits in both CleanUI inventory modes.
 - Raise retained (Stick) physical items above ordinary and Better Containers type-pinned items in their inventory section. Separate mixed retained/unretained stacks, keep the selected column order within each group and preserve exact selection through Host updates and release.
-
-### 0.1.241
 
 - Add a shared world tag catalog with custom tags and editable names, colors and native icons. Catalog and assignment editors keep drafts until Save, support reset/cancel and preserve drafts on concurrent-edit conflicts.
 - Add world-wide item-type and exact-instance tag overrides with Automatic / Assign / Remove states. Keep dynamic classification and native categories intact; apply effective tags to inventory chips, filters, context profiles, warehouse views and Quartermaster rules.
 - Synchronize catalog and assignments through Host authority, reject stale/inaccessible edits atomically, and preserve deleted tag identities in saved rules so includes cannot match unrelated items.
 
-### 0.1.240
-
 - **Fixed:** Restore the retained-item marker omitted during the organizedCategories migration. Native/CleanUI inventory details mark mixed stack headers when any instance is protected and only the protected expanded children, including legacy Stick marks; drag previews and icon grids keep their original presentation.
 - **Fixed:** Read CRLF legacy category/settings files and preserve an existing vanilla-defaults classification preference, including filled fluids and explicit manual category overrides.
 
+### 0.1.242
+
+- **Action queue / approach:** Queue native approach preparation through one shared mechanism and resolve its route from the actor's position when the operation reaches the front. Preserve native wall/floor/multi-tile route alternatives, selected cursor state and queue-disabled movement; native vegetation, destruction and moveable cursors use the same routing layer without replacing preceding queued work. Preserve the native fishing-net placement fallback and exact destroy-target selection. A positively identified path failure drops its dependent operation while keeping unrelated work.
+- **Action queue / editing:** Keep deferred approach preparation transparent to whole-operation editing and reconstruct supported pending approach intent during cancelled-queue recovery. Cancel deferred command rows through the same whole-operation boundary used by validation, so required preparation cannot be detached from its body.
+
+### 0.1.241
+
+- Make the container editor easier to read with a larger icon preview, container identity, an opaque background, compact appearance/sorting sections, labelled searches and explicit tag-rule state. Localize its main controls in English and Russian, explain empty search/selection/preset lists, make the tag-rule dialog opaque with a labelled search, keep the scrollbar aligned through resizing and collapse duplicate icon images while retaining their search aliases.
+
+### 0.1.240
+
+- **Wishlist / vehicle mechanics:** Offer replacement-part wishes only for slots with a native installation operation. Fixed parts such as the vanilla glovebox no longer offer Add to wishlist; replaceable parts remain eligible when tools or skills are missing, including modded installable gloveboxes.
+
 ### 0.1.239
 
-- **Added:** Toolkit-owned item classification, including exact selected-pack assignments, fallback rules, fluids and recorded media, while preserving native loot categories and existing tag/storage category IDs. The separate organizedCategories mod is no longer selected.
-- **Added:** Protect items from mass transfer through the inventory context menu, including vehicle supplies during Distribute Loot. Explicit single-row transfers remain available. Host applies and synchronizes accepted changes after validating the exact actor, item and container; existing Stick marks are preserved.
+- **Added:** Toolkit now classifies items for tags and storage, including fluids and recorded media, while preserving native loot categories. The separate organizedCategories mod is no longer selected.
+- **Added:** Protect items from mass transfer through the inventory context menu, including vehicle supplies during Distribute Loot. Single-row transfers still work, and existing Stick marks are preserved.
 
 ### 0.1.238
 
-- **Action queue:** Offer one-shot recovery of the last cancelled remainder from the queue panel. Reconstruct supported pending actions under fresh operation identities, retain skill-book page progress and omit completed or unsafe partly executed work. Revalidate resources and targets before recovery; never overwrite a new queue or reuse cancelled server authority.
+- **Action queue:** Recover the remaining work from the last cancelled queue in one step. Recovery keeps reading progress and skips work that is complete or unsafe to repeat; it checks that items and targets are still available.
 
 ### 0.1.237
 
-- **Action queue / televisions:** Preserve queued work when VHS ejection replicates before native completion. Require the empty television, one newly returned cassette with the expected media index and a correlated Host receipt; retain native effects without replaying them.
-- **Action queue / TV controls:** Allow independent VHS/playback/settings reordering, model power and mute prerequisites, and keep volume-slider changes with their walk preparation. With the queue enabled, an unavailable audited TV command discards its own operation while retaining unrelated work.
+- **Action queue / televisions:** VHS ejection syncing early in Host no longer drops the remaining queue. The queue waits for the cassette to return and keeps native TV effects intact.
+- **Action queue / TV controls:** Reorder independent VHS, playback, volume, channel and mute actions. Power and mute requirements remain in effect; an unavailable TV action is skipped while unrelated work continues.
 
 ### 0.1.236
 
-- **Fixed:** Host workouts send their native stop immediately when the selected duration ends, even if the server's start acknowledgement is late. Equipment restoration and subsequent actions still wait for the matching authoritative outcome; the queue shows server settlement separately from workout progress.
-- **Fixed:** Grouped workout preparation and equipment restoration have distinct labels instead of looking like a second full-duration exercise.
+- **Fixed:** Host workouts stop when the selected duration ends, even if the server acknowledges their start late. Equipment restoration and following actions wait until the workout is settled; the queue shows workout progress separately from server confirmation.
+- **Fixed:** Preparation and equipment restoration no longer look like extra exercise time in the queue.
 
 ### 0.1.235
 
-- **Action queue / P4:** Use shared hotbar cleanup for proven battery flashlights that retain the same item when empty. Keep native activation, battery consumption and deactivation/synchronization on return; charge or light-emission changes no longer exclude required cleanup. Replacement outputs and custom callbacks remain protected.
+- **Action queue / P4:** Battery flashlights can return to their hotbar after use even when their charge or light output changed. Flashlights that transform into another item and custom mod behavior remain protected.
 
 ### 0.1.234
 
-- **Action queue / P4:** Use shared hotbar cleanup for portable battery radios without media. Keep native device settings, battery processing, UI power transitions and sound cleanup instead of treating radio power as item activation.
+- **Action queue / P4:** Portable battery radios without media can return to their hotbar after use while keeping their native settings, power and sound behavior.
 
 ### 0.1.233
 
-- **Action queue / P4:** Use the shared hotbar cleanup contract for stable ordinary non-weapon items as well as weapons. Preserve native hand selection and belt return; devices, unknown components, drying replacements and displaced attachment models remain protected.
+- **Action queue / P4:** Ordinary non-weapon items can return to their hotbar after use, alongside weapons. Devices, items that transform while used, and equipment with uncertain behavior remain protected.
 
 ### 0.1.232
 
-- **Action queue:** Preserve native Mohawk flattening during proven P4 headwear cleanup. Own the exact character appearance separately from item and hand resources, retain mandatory cleanup through hair changes and early Host completion, and reject a replaced visual object without blocking unrelated reading or food.
+- **Action queue:** Returning temporary headwear keeps the game's normal Mohawk hair behavior. If the hair or headwear changes unexpectedly, cleanup is skipped without blocking unrelated queued work.
 
 ### 0.1.231
 
-- **Action queue:** Use shared P4 completion for proven ordinary-clothing replacement and exclusive-slot restoration. Retain every displaced root item as a resource through preceding cleanup and Host effects, preserve native order and required returns, and guard capacity-driven world outputs, including modified worn-weight multipliers. Multi-item slots, displaced special equipment and modified callbacks retain their existing handling.
+- **Action queue:** Ordinary clothing can be restored safely after replacement, including when another item occupies its slot. The queue preserves required returns and avoids dropping items when inventory capacity is tight. Special clothing, multi-item slots and modified callbacks remain protected.
 
 ### 0.1.230
 
-- **Action queue:** Keep proven P4 wristwatch cleanup on the shared completion boundary while its alarm rings or stops naturally. Preserve native alarm behavior, exact item/hand/worn identity, required cleanup and independent following actions; conflicting slots, side conversions and modified callbacks retain their existing handling.
+- **Action queue:** Temporary wristwatch use can finish and clean up while its alarm continues or stops naturally. Conflicting equipment slots, watch conversions and modified callbacks remain protected.
 
 ### 0.1.229
 
-- **Action queue:** Support proven P4 wristwatch cleanup when the same watch is worn and held in either or both hands. Preserve native hand-before-worn restoration, alarm configuration and processing, exact item identity, required cleanup and independent following actions. Ringing watches, conflicting slots and side conversions retain their existing handling.
+- **Action queue:** Temporary wristwatch use can be reordered when the watch is worn and held in one or both hands. Its alarm and normal hand/worn restoration are preserved; conflicting slots, ringing watches and watch conversions remain protected.
 
 ### 0.1.228
 
-- **Action queue:** Use shared native completion for proven P4 restoration and removal of unheld, nonringing wristwatches. Preserve exact watch identity, alarm configuration, native processing, required cleanup and independent following actions. Table alarm clocks, conflicting wrist slots and modified callbacks retain their existing handling.
+- **Action queue:** Unheld, nonringing wristwatch cleanup can be reordered while preserving its alarm settings. Table clocks, conflicting slots and modified callbacks remain protected.
 
 ### 0.1.227
 
-- **Action queue:** Use shared native completion for proven P4 restoration of plain headwear into an empty slot, with unchanged non-Mohawk hair. Preserve exact item identity, required cleanup and independent following actions. Conflicting slots, hairstyle changes and modified callbacks retain their existing handling.
+- **Action queue:** Plain headwear can be restored to an empty slot after temporary use when the hairstyle is unchanged. Conflicting slots and modified callbacks remain protected.
 
 ### 0.1.226
 
-- **Action queue:** Use shared native completion for proven P4 removal of temporary plain headwear with unchanged hair. Keep Mohawk and headwear restoration on their existing handling. Guard clothing cleanup against native capacity-driven world drops and protect unknown, multi-item, exclusive or replaced worn slots; preserve native effects and required cleanup.
+- **Action queue:** Temporary plain headwear can be removed when the hairstyle is unchanged. Mohawks and uncertain clothing slots keep their existing handling, and cleanup avoids capacity-related item drops.
 
 ### 0.1.225
 
-- **Action queue:** Support proven P4 cleanup of ordinary clothing that is both held and worn when cleanup is queued. Preserve native hand/worn removal, preceding hand restoration, exact root item identity, required cleanup and independent following actions. Special clothing and changed source methods retain their existing fallback.
+- **Action queue:** Ordinary clothing that is both held and worn can be cleaned up after queued use. Special clothing and changed mod behavior remain protected.
 
 ### 0.1.224
 
-- **Action queue:** Move proven P4 hand-to-hotbar returns onto shared native completion. Preserve both authoritative hand removal and native attachment effects, exact root item and existing slot/model, required cleanup and independent following actions. Changed hotbar helpers or metadata and special equipment retain their current fallback.
+- **Action queue:** Items borrowed from a hand can return to their original hotbar slot after queued use. Special equipment and modified hotbar behavior remain protected.
 
 ### 0.1.223
 
-- **Craft plans:** Reuse a script-structure catalog and prepare only the selected recipe's possible prerequisite chain and existing material overrides. Recalculating or confirming a plan no longer rereads unrelated recipes or checks their character/workbench availability. Keep all material and tool alternatives, fresh stock and eligibility checks, independent preview choices and native step validation. Reset the catalog at game boundaries and script reloads.
+- **Craft plans:** Recalculating a crafting plan focuses on the selected recipe and its prerequisites, while keeping material and tool alternatives and checking current supplies before crafting.
 
 ### 0.1.222
 
-- **Action queue:** Move proven P4 removal of temporarily worn ordinary clothing onto shared native completion. Preserve exact item/root/slot identity, native server effects and required cleanup before continuing independent actions. Held clothing, activation, special equipment, hotbar and heavy-item drops retain their existing fallback.
+- **Action queue:** Temporary ordinary clothing can be removed and returned before the queue continues. Held items, activated equipment, special clothing and heavy-item drops remain protected.
 
 ### 0.1.221
 
-- **Action queue:** Move proven P4 ordinary-clothing restoration onto the shared native completion boundary. Wait for the native wear effect and action removal before advancing, retain required cleanup and independent following actions, and reject stale or changed clothing identities/helpers. Special equipment branches retain their existing fallback.
+- **Action queue:** Ordinary clothing restoration waits until the game finishes equipping it before the queue continues. Special equipment and changed mod behavior remain protected.
 
 ### 0.1.220
 
-- **Distribution:** Prepare item tag membership lazily once per plan and reuse the destination search to explain unmatched or unavailable storage. Avoid rebuilding the same tag set for every rule and rescanning all destinations after a failed search. Preserve explicit-item priority, exact-category filters, broken-tool exclusions and live capacity/admission checks; subsequent plans read fresh item tags.
+- **Distribution:** Storage matching now handles item tags consistently across rules while preserving explicit-item priority, category filters, broken-tool exclusions and live capacity checks.
 
 ### 0.1.219
 
-- **Action queue:** Describe native firearm racking with exact weapon, ammunition output and equipment dependencies. Unrelated borrowed P4 items no longer become shared merely because the rack action was unknown; current and queued equipment resources remain protected. Active racking stays protected because its effects occur before completion.
+- **Action queue:** Queued firearm racking no longer blocks unrelated borrowed tools and equipment. The active racking action and items it depends on remain protected.
 
 ### 0.1.218
 
-- **Action queue:** Preserve native transfer batching when the queue is disabled, including P4 tool returns and compatible cart transfers. Keep operation ownership isolation while the queue is enabled, native endpoint/callback safeguards and required cleanup after cancellation. Re-enabling the queue does not restore stale exclusive edit rights over adapter transfers that absorbed another operation while it was disabled.
+- **Action queue:** Native transfers continue to batch normally when the queue is disabled, including tool returns and supported cart transfers. Cancellation still performs required cleanup, and enabling the queue does not disrupt transfers already underway.
 
 ### 0.1.217
 
-- **Cart animation:** Use a common root frame for the cart locomotion clips and match their ordinary transition times. Preserve native body and leg poses, stride timing and deferred movement while removing movement introduced by incompatible root frames and overlapping blend weights.
+- **Cart animation:** Fixed unwanted shifts during cart movement and transitions while preserving the character's normal stride and body pose.
 
 ### 0.1.216
 
@@ -178,69 +154,69 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.215
 
-- **Action queue:** Bind observed P4 tool returns to the operation that actually borrowed each item. Activate per-item cleanup records only after the native pickup transaction and exact inventory effect are confirmed; preserve separate ownership through merged transfers and reject ambiguous or stale borrowing episodes. Native scheduling and queue edit permissions remain unchanged.
+- **Action queue:** Borrowed tools now return to the operation that picked them up, even when transfers are combined. Ambiguous or outdated return information is ignored.
 
 
 ### 0.1.214
 
-- **Wishlist:** Compare visible-list revisions and live faction access before building periodic multiplayer updates. Unchanged polls no longer copy or deeply compare entries. Keep immediate edit replies, access revocation, background highlighting, storage recovery and disconnected-player cleanup.
+- **Wishlist:** Multiplayer updates avoid rebuilding unchanged wishlist entries while still applying edits promptly and removing access when membership changes.
 
 ### 0.1.213
 
-- **Action queue:** Track P4 return sequences across native groups and item transactions with separate, ordered receipts. Preserve confirmed item results when a later group fails, stops or expires, without applying its outcome to another attempt. Keep historical receipts separate from live queue capabilities and leave edit permissions and native scheduling unchanged.
+- **Action queue:** Confirmed tool returns are kept even if a later return fails or times out, so cleanup does not misidentify which items made it back.
 
 ### 0.1.212
 
-- **Context menu editor:** Capture menu examples, discover actions and prepare editor layouts only while the editor is open. Select newly captured item examples automatically without changing rule scope. Closing the editor releases raw examples and transient previews/layouts while preserving the catalog and saved rules. Ordinary menus keep applying those rules without the extra capture pass.
+- **Context menu editor:** Menu examples and previews are prepared only while the editor is open. Newly captured items are selected automatically; saved rules continue to apply in ordinary menus.
 
 ### 0.1.211
 
-- **Action queue:** Observe exact per-item results for one native P4 return group, including lightweight transfers merged inside single-player completion. Preserve confirmed partial returns when another item is missing; copied, expired or stale observations cannot invent success. Keep queue edit permissions and multi-transaction cleanup protection unchanged. Isolate a failed transfer observer so it cannot abort or repeat native transfers.
+- **Action queue:** When a group of borrowed items returns only in part, confirmed returns are kept and missing items are not treated as returned. A failed observation cannot stop or repeat the native transfer.
 
 ### 0.1.210
 
-- **Action queue:** Record confirmed results for supported single-item P4 returns using the native item-transaction outcome captured before its removal and the exact item at its saved destination. Keep observations private and bounded; reject stale, missing, rejected or ambiguous transaction results. This is read-only cleanup accounting: native execution, cancellation, queue advancement and unsupported batches remain unchanged.
+- **Action queue:** Cleanup now recognizes a borrowed item only after it reaches its saved destination. Missing, rejected or ambiguous transfers are not counted as successful returns.
 
 ### 0.1.209
 
-- **Smart Deposit:** Reuse a drag-local advisory allocation instead of rescanning all nearby stock every frame. Refresh the hint within 200 ms and invalidate it on selection, target and inventory/UI changes. Drop admission and transfer commands still calculate current routing, capacity and protected-item rules independently.
+- **Smart Deposit:** Drag feedback updates promptly when the selection, target or inventory changes, while the actual drop still checks current storage space and item protections.
 
 ### 0.1.208
 
-- **Action queue:** Match cancelled-operation returns by item ID, full type and original destination. Skip conflicting pickup/return histories and a different item type under a reused ID; preserve same-identity network replicas, deduplication, other required returns and the unrelated queue tail. Native transfer effects remain unchanged.
+- **Action queue:** Cancelled work returns items to their original destinations without confusing different items that happen to share an ID. Conflicting or outdated return information is skipped while unrelated queued work continues.
 
 ### 0.1.207
 
-- **Compatibility:** Preserve P4 and ordinary transfer integration with the selected Nick's Turn Off Fridges observer. Capture the reviewed wrapper before delayed transfer hooks and compose its original delegate and live helper guards with Better Containers. Report the first provenance rejection in read-only integration diagnostics.
-- **Action queue:** Require the matching Host outcome and exact observed item effect for network-marked explicit P4 equipment and pickup intent, including late replies after native queue advancement. Keep native completion checks for SP and unmarked actions. Delay only idle restoration while a marked result is unresolved, with a bounded timeout. Reject failed, stale and duplicate outcomes; retire earlier intent when its item leaves inventory or is returned before another borrowing episode. Queue-disabled native paths keep the same safeguards without replaying effects.
+- **Compatibility:** P4 and ordinary transfers continue to work with the selected Nick's Turn Off Fridges and Better Containers mods.
+- **Action queue:** In Host, equipment and pickup actions wait for the server's result before cleanup continues. Late, failed or repeated replies no longer apply to newer actions. Native single-player behavior is unchanged.
 
 ### 0.1.206
 
-- **Craft from storage:** Fetch native recipe quantities and remaining uses instead of counting every ingredient as one object. Credit carried and nearby supplies first, preserve per-type scales and exclusive alternatives, reuse partial supplies across the batch, and fetch kept tools once. Native walking, transfers and final craft validation remain in control. Avoid rescanning exhausted ingredients for every craft in large batches, and remove the unused competing craft-count helpers.
+- **Craft from storage:** Crafting plans now count recipe quantities, partial supplies and tool uses correctly across a batch, while prioritizing carried and nearby items. The game still handles walking, transfers and final recipe checks.
 
 ### 0.1.205
 
-- **Action queue:** Use shared deferred settlement ownership for P4's delayed restores. Keep unique returns with their source task and shared cleanup independent of individual cancellation; retire stale queue/player scopes without replaying native effects or overriding confirmed equipment intent. Dynamic input selectors and conflicting pickup identities retain protected shared ownership.
+- **Action queue:** Delayed equipment returns stay attached to the action that borrowed the item, while required cleanup can finish even if that action is cancelled. Uncertain item ownership remains protected.
 
 ### 0.1.204
 
-- **Action queue:** Route cancelled-operation returns and existing mask/fitness restoration through one settlement engine. Preserve native effects, exact surviving item IDs, cleanup order and unrelated queued work; reject stale ownership and repeated settlement. Existing adapter permissions and Host completion gates are unchanged.
+- **Action queue:** Cancelling an operation still returns borrowed items and restores masks or fitness equipment when appropriate, without disturbing unrelated queued work.
 
 ### 0.1.203
 
-- **Automatic distribution:** Recheck native capacity and item admission for every actual single-player deposit, including merged items and containers changed after the action started. Skip a confirmed Host transaction rejection without dropping transfers to other containers; preserve native batching, cleanup and ordinary cancellation. Unknown transaction outcomes still stop the haul.
+- **Automatic distribution:** Each deposit checks current container capacity. A rejected Host transfer no longer prevents items destined for other containers from moving; uncertain results still stop the haul.
 
 ### 0.1.202
 
-- **Action queue:** Extend pending full-food replacement edits to normal output items with exactly one proven empty native FluidContainer. Inspect authored components without creating items or sampling initial-amount RNG; keep source identity, output dependencies, native effects and the transfer-capacity barrier.
+- **Action queue:** Queue edits now support ordinary food that is fully consumed and replaced by one empty fluid container. Uncertain or custom replacement behavior remains protected.
 
 ### 0.1.201
 
-- **Action queue:** Allow independent pending edits for guaranteed full consumption of ordinary root-inventory food that creates one proven plain replacement item. Keep original-item prerequisites, native portions, costs, output creation and Host authority. Unknown factory callbacks/components, state-changing or custom food and transfer-capacity prefixes remain protected.
+- **Action queue:** Pending ordinary food can be reordered or cancelled when fully eating it creates one plain replacement item. Custom food and uncertain replacement behavior remain protected.
 
 ### 0.1.200
 
-- **Warehouse:** Rechecking unchanged storage sends bounded sample timestamps instead of item lists and preserves the client aggregation, search and sort caches. Real contents, container state and appearance changes still refresh the list.
+- **Warehouse:** Unchanged storage no longer needs a full item-list refresh; changes to contents, containers or appearance still update the list.
 
 - **Warehouse:** Keep the complete footer above the window's resize strip, wrap longer status text and size controls and item/location rows for the active font. Resizing reserves room for both scrolling lists.
 
@@ -250,8 +226,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.198
 
-- **Actions window:** Ignore completed queue rows between native completion and the next UI refresh, including mouse hit-testing, instead of trying to draw an absent current action.
-- **Drinking water:** Initialize the queue policy before the early SaucedCarts consume-start integration. Preserve the queued tail when native water consumption prunes its final trace before the action timer finishes, or when a Host client receives authoritative zero before completion. Keep native portions, hydration, duration and completion; missing/replaced/unsafe targets and changed callbacks retain their native protection.
+- **Actions window:** Completed queue rows no longer appear clickable during the brief pause before the window refreshes.
+- **Drinking water:** Finishing a water drink no longer discards the rest of the queue in single-player or Host. Portions, hydration and action timing remain native; missing or changed bottles remain protected.
 
 ### 0.1.197
 
@@ -259,47 +235,41 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.196
 
-- **Emptying water:** Keep native active emptying valid after its own fluid update or authoritative client replication reaches zero, so remaining queued work is not discarded. Exact active identity and target checks remain in effect; native duration and emptying effects are preserved.
-- **Action queue:** Pending native emptying of ordinary carried clean-water containers supports independent moves and cancellation. Drinking from the same bottle keeps its dependency; captured-volume peaks, containing bags and full-weight capacity bounds stay protected. Active emptying, mixed fluids, resource/world containers and unknown callbacks retain their existing protection.
+- **Emptying water:** Emptying a bottle no longer interrupts the queue when its volume reaches zero before the native action ends.
+- **Action queue:** Pending emptying of ordinary carried clean-water containers can be reordered or cancelled. Drinking from the same bottle, mixed fluids and world or resource containers remain protected.
 
 ### 0.1.195
 
-- Support the storage Manifest in menu Host through one authoritative warehouse service shared with single-player. Incrementally sample designated containers, retain unloaded areas' last-known contents and send bounded pages only to requesting windows; remove the SP-only transfer interceptor.
-- Open the localized Warehouse from the sidebar tools menu or the existing Storage Manifest notebook. Filter by item name and Toolkit tag, inspect each item's container locations with their configured names/icons/colors, and see sample age and connection state.
-- Separate warehouse aggregation from search and sort. Reuse the received projection and cached sort orders while typing; keep custom names and distinct item/category identities separate. Preserve legacy single-player snapshots until their storage is revisited.
+- The Storage Manifest warehouse now works in menu Host as well as single-player. Open it from the sidebar tools menu or the Storage Manifest notebook to search items, view their configured storage locations, and check when each location was last sampled.
+- Unloaded areas retain their last-known contents. Existing single-player storage snapshots are kept until that storage is visited again.
 
 ### 0.1.194
 
-- Allow pending queue edits for cold cookable food in proven constant-temperature ordinary world storage, including SP nested bags. Validate native outermost ancestry, both transfer endpoints, cooking-state hazards and the full capacity prefix. Hot food, appliances and custom-temperature storage remain protected; original portions, cooking replacements and Host authority stay native.
+- Pending cold food in ordinary world storage can be reordered or cancelled in single-player when it cannot keep cooking. Hot food, appliances and custom-temperature storage remain protected; Host handling is unchanged.
 
 ### 0.1.193
 
-- Resolve Quartermaster's explicit item-name destination candidates once per requested display name and plan. Preserve priority/distance order, per-item carrier/destination admission, capacity overflow and category/tag fallback without enumerating unrelated preset entries.
-- Skip diagnostic designation strings and the extra native contents-weight scan for each storage box when debug logging is off. Keep the required planner snapshot and enabled debug output unchanged.
+- Quartermaster storage sorting avoids repeated work when matching named destinations, while preserving destination priority, capacity and category/tag fallback.
 
 ### 0.1.192
 
-- Allow pending queue edits for supported items picked up from or returned to bags inside adjacent ordinary world storage in single-player. Validate every exact owner and destination capacity; retain required pickups, bag-movement and walking dependencies. Host remains protected because B42.21 cannot encode this nested-world endpoint in its item transaction address.
+- In single-player, supported items can be moved to or from bags inside nearby ordinary world storage while queued. Required pickups and walking remain in order; Host does not support this nested-storage case.
 
 ### 0.1.191
 
-- Reuse a command-scoped, resumable reachable-container lookup for quantity transfers instead of searching the container list for every selected item. Confirmation starts fresh; custom native admission callbacks invalidate the index and retain live lookup, including callbacks that remove themselves or reject an item.
-- Use the same lazy lookup for bulk food preparation, so a single early source does not enumerate unrelated containers. Native dispatch checks and raw proximity-item membership remain unchanged.
+- Large quantity transfers and bulk food preparation now find reachable containers more efficiently. Confirmation still checks current contents and native transfer rules.
 
 ### 0.1.190
 
-- Compare the action queue's current row projection without allocating replacement rows and batch snapshots on unchanged UI updates. Preserve fresh raw-array edits, task titles, grouping, selection and gesture validation.
-- Skip native medicine effect reads when both indicator switches are off, and build descriptions only for visible effect levels. Re-enabling, respawn and authoritative multiplayer readings retain their existing behavior.
+- The action queue and medicine indicators do less work when their displayed state has not changed or both indicators are off. Queue grouping, selection and multiplayer readings are preserved.
 
 ### 0.1.189
 
-- **Improved:** Pending pickup/food/return edits can use adjacent ordinary world crates and shelves when exact container identity, native item effects and capacity are proven. Required pickups and walking dependencies remain protected; favorite outbound items, cookable world transfers, special containers and unknown callbacks keep their safeguards.
-- **Development:** Native tests prefer an isolated AeroSpace workspace. Current-desktop fallback requires a confirmed sleeping display, unavailable owned-window discovery and a valid owned GLFW handshake; other routing failures remain errors. Reports record the effective mode and fallback reason.
+- **Improved:** Pending pickups, food actions and returns can be reordered when using nearby ordinary crates or shelves. Required pickups and walking stay in order; favorite items, cookable food, special containers and uncertain mod behavior remain protected.
 
 ### 0.1.188
 
-- Build inventory category/tag choices when opening their menus instead of classifying every item on each selection restore. Keep the full refresh universe, live instance categories and exact physical-item visibility; selecting a tag or combined rule rebuilds rows once.
-- Skip the detail sorter's selection save/restore when no stack has a sortable prefix of at least two items. Preserve Shift anchors, bounded sorting and native/CleanUI selection semantics.
+- Inventory category and tag menus load more quickly on large inventories, while item visibility, selection and native/CleanUI behavior are preserved.
 
 ### 0.1.187
 
@@ -310,59 +280,51 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.186
 
-- Classify ordinary context-menu options once per rebuild instead of repeating callback discovery for defaults and layout snapshots. New rebuilds remain fresh; opaque mod options retain live classification.
-- Narrow duplicate candidates with a per-rebuild metadata index while retaining exact comparison, custom equality and distinct commands. Preserve false-protected mod option tables consistently in live menus and editor previews.
+- Context menus and editor previews now handle duplicate options more consistently, while preserving distinct commands and options supplied by mods.
 
 ### 0.1.185
 
-- Prepare food selections with one resumable recursive inventory-ID lookup instead of searching the entire source for each item. Small selections stop at the needed prefix; later clicks and action dispatch recheck live items and reachability.
-- Normalize selected rows once per food/firearm menu build and single-food click. One-food commands stop after the first eligible item; native weapon-part callbacks, portions and execution checks are preserved.
+- Food and firearm selection menus prepare large selections more efficiently, while rechecking selected items and tools when an action starts.
 
 ### 0.1.184
 
-- **Improved:** Reviewed ingredient-based food no longer blocks carried-container transfer edits solely because native weight reads construct ingredient items. Queue checks use non-creating upper bounds for food and nested/worn bag loads, preserve native equipment weight reduction and charge incoming capacity conservatively. Uncertain released space, unknown ingredient constructors and full food replacement remain protected.
+- **Improved:** Ingredient-based food no longer blocks otherwise safe queued transfers between carried containers. The queue still protects uncertain capacity changes and full food replacements.
 
 ### 0.1.183
 
-- Avoid scanning unrelated queue tails every tick when pruning food, fire, generator and mod-integration records. Share a fresh tracked-action lookup that stops once all tracked actions are found, preserving delayed Tidy restores, fire retries and cleanup after cancellation or world changes.
+- Queue cleanup for food, fire, generator and mod actions does less repeated work while preserving delayed equipment returns and retries.
 
 ### 0.1.182
 
-- **Improved:** Pending partial portions of food with reviewed native ingredients can be reordered or cancelled while the original dish survives. Ingredient and empty-container state remain protected; unsupported ingredient creation/configuration stays blocked. Queue inspection avoids native ingredient factories; capacity-dependent transfer edits remain protected while their carried contents include ingredient-based food.
+- **Improved:** Some partial portions of ingredient-based food can be reordered or cancelled while the original dish remains. Empty-container state and unsupported ingredient behavior remain protected.
 
 ### 0.1.181
 
-- Reuse measured text-fitting results across UI redraws with bounded storage and automatic invalidation when native fonts change. Preserve exact glyph measurement and Unicode boundaries.
-- Use the same fitting mechanism in the storage Manifest, retaining its font and two-dot suffix while keeping Unicode labels inside narrow columns.
+- Long labels fit more consistently in the UI and Storage Manifest, including narrow columns and Unicode text.
 
 ### 0.1.180
 
-- **Improved:** Pending partial food portions with a custom item weight and a native empty-container replacement can be reordered or cancelled when the original food survives every remaining portion. Queue checks preserve native portions and weight, keep required pickups and capacity constraints, and protect evolved ingredients, callbacks and full replacement consumption.
+- **Improved:** Some partial food portions can be reordered or cancelled when the original food remains and the meal leaves an empty container. Custom callbacks, evolved ingredients and full-item replacements remain protected.
 
 ### 0.1.179
 
-- **Fixed:** Wishlist row highlighting reuses unique item types for visible inventory groups instead of rescanning every hidden child on each frame. Mixed stacks, filters and pin projections remain accurate; Wishlist membership still updates immediately, and refreshes invalidate the summaries.
-- **Fixed:** Crafting menus with many Wishlist alternatives prepare one selected-list entry index rather than scanning every request for every option. Exact entries, completed requests and overlapping vehicle groups keep their removal order and captured target; reopening reads fresh membership.
+- **Fixed:** Wishlist highlighting and crafting alternatives update more efficiently on large inventories while preserving mixed-stack matching, filters and vehicle-part requests.
 
 ### 0.1.178
 
-- **Fixed:** Wishlist reads already-applied recipe ingredients once when calculating missing alternatives, instead of rebuilding and scanning that list for every possible ingredient type. Exclusive choices, relative amounts, partial-item/fluid caveats and fresh state on reopening are preserved.
+- **Fixed:** Wishlist crafting alternatives now account for ingredients already used by a recipe, including exclusive choices and partial items or fluids.
 
 ### 0.1.177
 
-- **Fixed:** Quantity transfers index raw proximity-container membership once while preparing a selection and rebuild that index separately on confirmation. Large selections avoid repeated full scans while still checking changed contents, item protections, sources and destinations.
-- **Changed:** Filtered and quantity transfers share one command-scoped membership implementation. Quartermaster classifies each item once per sort plan when considering alternative destinations; later plans and standalone reads remain fresh. Tag rules build one membership set for their include/exclude checks instead of rebuilding it for every exclusion.
+- **Fixed:** Large filtered and quantity transfers prepare selections more quickly while still checking current items, protections and destinations when confirmed.
 
 ### 0.1.176
 
-- **Development:** Added grouped world-radio queue checks for pending reorder, cancellation and legacy barriers, with queue-disabled controls, native timing, exact device receipts and shared scenario-matrix coverage. Full selected-pack SP and menu-Host checks distinguish server volume/channel effects from native client-local microphone mute.
-- **Fixed:** Filtered bulk transfers and CleanUI transfer previews index raw container membership once per synchronous enumeration instead of scanning the whole container for each candidate. Hidden aggregate items remain excluded, incoming items remain accepted and later commands read fresh contents; native transfer checks are preserved.
-- **Fixed:** Inventory refresh no longer builds and discards a visible-row projection when no category, tag or search filter is active. Category and tag choices still follow current item metadata.
+- **Fixed:** Filtered transfers and inventory refreshes do less repeated work on large inventories while preserving visible-item selection and native transfer checks.
 
 ### 0.1.175
 
-- **Fixed:** Source-origin checks reuse the compile-time filename of loaded Lua functions instead of querying it repeatedly for every queued action. The bounded cache follows the original filename accessor; replacements, live callbacks, item state, capacities and file checksums retain their independent checks.
-- **Fixed:** Multiplayer acknowledgement tracking retains only the current receipt per local player slot, while pending late results remain independently correlated. Completed floor-placement repair records are removed through queue and main-menu cleanup; neither registry relies on unsupported weak-table collection.
+- **Fixed:** Multiplayer queue acknowledgements and floor-placement cleanup no longer retain completed records unnecessarily; late results remain associated with the right player and action.
 
 ### 0.1.174
 
@@ -370,15 +332,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.173
 
-- **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.
-- **Fixed:** Automatic priority skips checks when the request is already at its earliest possible position and creates edit snapshots only when attempting an actual move. Live prerequisite changes remain visible to retries.
-- **Fixed:** Medical and exercise queue bookkeeping checks membership once per relevant queue instead of searching the queue separately for every tracked action.
-- **Fixed:** Dependency analysis indexes disjoint item groups and item-only transfer components before comparing action pairs. Possible overlaps, complex effects and spatial or capacity-sensitive cases retain their existing detailed checks.
+- **Fixed:** Queue hints and reordering respond more efficiently on long queues while continuing to validate current prerequisites and item dependencies.
 
 ### 0.1.172
 
-- **Fixed:** TidyUpMeister floor returns in Host remain valid when their transfer is the first action after disabling the queue. Mode bookkeeping now runs before capturing the return receipt; later cancellation, changed item identity and changed placement still invalidate it.
-- **Fixed:** Corrected Vanilla Vehicles Animated's stale ranger-car separator reference to its existing normal police bars, following the upstream migration. Source and template checks protect unknown versions. The three modern police separator references remain unresolved and visible in the logs.
+- **Fixed:** TidyUpMeister floor returns in Host work when they begin immediately after disabling the queue.
+- **Fixed:** Updated the reviewed Vanilla Vehicles Animated ranger-car bars reference; unknown versions and profiles remain untouched. Three modern police separator references remain unresolved and visible in the logs.
 
 ### 0.1.171
 
@@ -386,15 +345,13 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.170
 
-- **Fixed:** A VHS taken from a backpack can finish insertion after being moved ahead of active shelf reading in Host. The queue follows the replacement client item only after its exact native pickup succeeds; item identity, media contents, endpoints and dependent playback remain checked.
+- **Fixed:** In Host, a VHS taken from a backpack can be moved ahead of active shelf reading without losing the insertion or dependent playback.
 - **Fixed:** Queue move/cancel capacity checks no longer call the unavailable `next()` global in the game's Kahlua runtime. Shelf returns combined with backpack pickups retain their existing capacity checks without errors while drawing or editing the queue.
-- **Fixed:** Corrected the reviewed Vanilla Vehicles Animated references for StepVan trunk decor and modern police-car bars. Existing trunk decor remains applied once; the bars use the mod's existing template. Unknown upstream versions and templates or profiles supplied by other mods keep their own behavior. Missing police-separator templates remain unresolved and visible in the logs.
-- **Development:** Added the worn-backpack VHS variant to the shelf-reading/TV checks, with exact pickup, grouping and server receipts. The shared log audit now recognizes native `LOG: General > ERROR:` records instead of reporting them as clean.
+- **Fixed:** Corrected reviewed Vanilla Vehicles Animated StepVan trunk decor and police-car bars references. Other mod-provided profiles remain untouched; missing police-separator templates remain unresolved and visible in the logs.
 
 ### 0.1.169
 
-- **Fixed:** Long action queues, including magazines read from a container, no longer repeatedly inspect the whole queue while drawing every visible row. Move/cancel hints are calculated for the hovered control; actual edits still validate fresh state.
-- **Fixed:** Bulk and deferred commands update their operation titles incrementally instead of rescanning the queue after every addition. Transfers also reuse their fixed heading while waiting behind other work, including CleanUI's deferred drops. Individual operation boundaries, native action execution and transfer batching are preserved.
+- **Fixed:** Long queues and bulk transfers update more efficiently, keeping queue controls and operation labels responsive.
 
 ### 0.1.168
 
@@ -407,7 +364,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.166
 
-- **Changed:** Container configuration saves now use Quartermaster's existing command transport instead of a separate request/reply and timeout loop. Player identity, access checks, revision conflicts and accepted-field updates are preserved; request tokens no longer modify caller-owned arguments.
+- **Changed:** Container configuration now uses the same reliable save path as other Quartermaster commands, preserving access checks and conflict handling.
 
 ### 0.1.165
 
@@ -415,11 +372,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.164
 
-- **Changed:** Quartermaster's Storage controls and Mod Options share one owner for the crafting preference and availability updates. Each native/Neat crafting window refreshes independently after a change or cancelled haul; pending updates wait for active hauling/crafting to finish and survive a failed refresh. Control placement, saved settings and physical ingredient fetching are preserved.
+- **Changed:** Quartermaster's storage controls and Mod Options now stay in sync across native and Neat crafting windows, including after a cancelled haul.
 
 ### 0.1.163
 
-- **Changed:** Live context menus and editor previews now share explicit per-pass state instead of switching shared temporary variables. Existing grouping, scoped rules, saved preferences and native option ownership are preserved.
+- **Changed:** Context-menu editor previews now match the live menus, including grouping, scoped rules and saved preferences.
 
 ### 0.1.162
 
@@ -427,7 +384,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ### 0.1.161
 
-- **Fixed:** CleanUI inventory transfers retain one operation per drag through deferred enqueueing. Native transfer batching works again, avoiding expensive per-item queue checks while a batch runs. Separate drags remain separate; native transfer timing, capacity checks and multiplayer item authority are preserved.
+- **Fixed:** CleanUI now keeps each inventory drag as one transfer operation, restoring native batching while preserving capacity and multiplayer checks.
 
 ### 0.1.160
 
@@ -795,7 +752,6 @@ Version labels come from committed component metadata, including changes made wi
 ### 0.1.79
 
 - **Fixed:** Shared transfer guards preserve existing completion callbacks and their arguments. Reapplying the guard retains native stop provenance without granting unknown callbacks queue permissions.
-- **Maintenance:** Removed adapters and checks for the excluded Proximity Inventory and Manage Containers mods. Current Better Containers and Quartermaster checks no longer require the old Proximity Inventory Workshop installation.
 
 ### 0.1.78
 
@@ -805,17 +761,9 @@ Version labels come from committed component metadata, including changes made wi
 
 - **Fixed:** Clicking inventory items during transfers follows the pressed item across row changes and stack sorting instead of selecting the replacement row on mouse release. Rapid clicks on different items no longer trigger a double-click action after a transfer.
 
-### 0.1.76
-
-- **Maintenance:** TV videos retain the original mod's catalog and initialization. Removed the duplicate Lua video list and macOS path-depth search; path correction now runs before native video caching.
-
 ### 0.1.75
 
 - **Changed:** Lemongrass displays the native cooldown instead of estimating its maximum duration. Removed the separate Lua countdown and food-action hooks; unsupported readings hide only this indicator.
-
-### 0.1.74
-
-- **Maintenance:** Inventory adapters share class discovery and CleanUI toggle subscriptions while preserving each adapter's installation order, native fallback and existing hooks.
 
 ### 0.1.73
 
@@ -1146,40 +1094,17 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.51
+
+- **Action queue / Host completion:** Let the native engine finish an owned, server-completed action when its replicated target has already disappeared. Preserve its original completion cleanup and subsequent queued work without replaying server effects. Require the exact native transaction and sealed completion receipt; explicit stops, movement, combat, custom synchronization and disabled-queue behavior retain their existing paths.
+
 ### 0.1.50
 
 - **Host radios:** Apply the native power-off update when a portable radio has returned from a hand to its owner's main inventory. Validate the connection, exact item and packet before using the native decoder and relay; held, world, vehicle and other state packets retain their existing paths.
 
-### 0.1.49
-
-- **JVM target:** Compile Java and Kotlin patch classes, early fonts, regressions and supporting tools for Java 25, matching the supported game runtime. Update native-fixture manifests and build instructions.
-- **Kotlin toolchain:** Update the pinned compiler and bundled private standard library to Kotlin 2.4.21; retain isolation from the game runtime and independent early font loading. Update build and preparation instructions.
-- **Kotlin boundaries:** Migrate the read-only crafting, fluid, item-stat, fence and vehicle-trace patch facades to Kotlin while preserving static JVM entry points, patch annotations and class monitors. Retain Java where advice writes back into instrumented arguments/locals/results and where bootstrap tests must start without the mod runtime.
-- **Kotlin style:** Apply a pinned Kotlin-language formatting profile to handwritten runtime and regression sources, add a repeatable format check and simplify safe nullable state reads. Preserve generated numeric tables, native identities, wire data, arithmetic order and initialization behavior.
-
-### 0.1.48
-
-- **Kotlin pilot:** Port the TV/Radio video-path helper to Kotlin while retaining its Java patch wrapper and existing path/cache guards. Build mixed Java/Kotlin sources with the pinned Kotlin 2.3.0 compiler and bundle its standard library in a private package beside the game's Kotlin 1.4.10; keep early font bootstrap Java-only. Add late-JAR runtime loading coverage alongside the native video-path regression.
-- **Kotlin medicine bridge:** Port the native cooldown reader while retaining the static Java entry points and ZombieBuddy Lua global. Preserve exact timer values, read-only access, authoritative-server gating and unavailable values as `nil`.
-- **Kotlin style:** Refine both pilot helpers with typed nullable reads, Elvis returns, a non-null video-containment helper and Kotlin finite-value checks. Preserve static/Lua entry points, lazy directory validation, native exception behavior and signed-zero cooldown values.
-- **Kotlin regression support:** Compile selected Kotlin checks and their helpers with internal application access, then run them with the distributed private runtime. Migrate associated tests alongside runtime helpers, including the two pilot modules; retain the Java cold-loader fixture required to verify late runtime loading.
-- **Kotlin helpers:** Migrate medical body/visual updates, hutch cleanup, fence properties, construction acknowledgements and shared bytecode/source guards while preserving null boundaries, native object identity, class-monitor synchronization and fail-closed compatibility checks.
-- **Kotlin script repairs:** Extract tile/fluid metadata, fence validation, Piano icons, workstation references and item-stat defaults into Kotlin with their native regression tests. Preserve Java patch annotations and writable advice, startup ordering, exact wire data, native recipe/texture identity and guarded repair behavior.
-- **Kotlin persistent repairs:** Migrate basement room lookup/key separation and mannequin-zone repairs with their native serialization and Lua regression tests, preserving save keys, legacy flags, collision refusal and custom-zone priority. Preserve explicit game getter calls where Kotlin property syntax could select a public field.
-- **Kotlin action lifecycle:** Migrate completion/medical scopes, queue ownership, batch admission and action acknowledgements with their native tests. Preserve thread-local nesting, exact callback/buffer identity, class monitors, native effects, receipt ordering and terminal cleanup; retain Java instrumentation and compatibility types where required.
-- **Kotlin vehicle helpers:** Migrate authoritative ownership reconciliation and opt-in sync diagnostics with interpolation/ownership/trace regressions. Keep driver/towing identity, idempotent native authority changes, sampling bounds and existing Java patch suppression.
-- **Kotlin cart mathematics:** Migrate steering, gait filtering, footprint collision, transition transforms and bounded observer poses with Kotlin regressions. Preserve float rounding, reusable state, native query defaults and Java record accessors/equality/formatting. Keep transformer foreign-class guards independent of Kotlin initialization and cover actual cold runtime installation.
-- **Kotlin cart calibration:** Migrate wheelbarrow/shopping profiles and generated clearance/wheel geometry with their generators and associated tests. Preserve numeric data, native matrix mutation order, live array identity and Java record contracts. Retarget/replay tools use a source-verified mixed build artifact; stale artifacts require rebuilding.
-- **Kotlin cart presentation:** Migrate gait/pose blending, calibrated leg clearance, closed grip, grounding and held/world wheel rendering with their Kotlin regression bodies. Preserve thread-local scratch, palette ownership, native getters, class monitors, exact draw scopes and GL cleanup; retain original reflective static entry points.
-- **Kotlin cart impact:** Migrate final pickup approach, bounded impact movement/pose and emergency release with native Kotlin regressions. Preserve exact item/world ownership, authoritative native effects, SP-only impact scope, expiry clocks, atomic palette writes and pooled renderer restoration.
-- **Kotlin cart actions and networking:** Migrate steering hooks, pickup/setdown transitions and cosmetic owner/observer synchronization with their Kotlin regressions and source consumers. Preserve native authority, exact identities, parsing and rate limits, cancellation/recovery deadlines, Lua globals and render scopes.
-- **Kotlin test recording:** Migrate the video recorder and associated regressions, preserving the Lua API, class monitor, render-thread capture, bounded buffers and encoder shutdown. Verify Lua scanner registration and real FFmpeg timeline/error handling with the distributed private runtime.
-- **Kotlin regression bodies:** Migrate the remaining animal/equipment/media/font, food-replacement, Lua-model and metal-grip checks with their fixtures. Retain only runtime-independent Java cold probes and their shared font decoder support, so early loading remains testable before the ordinary mod is appended.
-- **Kotlin registration support:** Extract bytecode support policy, startup sequencing and equipment/animal/media/cart orchestration from `Main.java`. Preserve Java patch identities, writable advice, compatibility fields, lazy guard evaluation and cold target-preparation order.
-
 ### 0.1.47
 
-- **Wooden cart clearance:** Fit the held shafts to the current render slot's bilateral leg/source-trouser cage, with a bounded lateral correction and exact calibrated source hashes. Retain native feet/root movement, the outgoing inventory envelope and closed grip; leave unsupported assets and unavailable corridors unchanged. Selected macOS B42.21 SP/Host inventory and held-motion captures are clean, with no measured source-cage contacts; complete rendered-frame, GPU garment and broader-variant coverage remain open.
+- **Wooden cart clearance:** Adjusted the held wheelbarrow position to reduce contact with the player's legs and clothing while preserving the native gait and grip. Some clothing and character variants still need review.
 
 ### 0.1.46
 
@@ -1187,10 +1112,9 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.45
 
-- **Wooden wheelbarrow:** Add a Blender-authored, zero-endpoint clearance envelope while the outgoing inventory-equip animation retires. Preserve native leg motion, action duration, closed grip and the final cart stance. The selected male/full macOS SP reproduction is clear in captured samples; female, Host and complete rendered-frame coverage remain open.
+- **Wooden wheelbarrow:** Smoothed the transition into the held pose to reduce leg and clothing contact while preserving native leg motion, action timing and grip. Other character variants and Host still need review.
 
-- **Changed:** Coordinate cart locomotion direction, native cadence and clearance across animation blends. Read the displayed body palette and account for masked cart layers and outgoing pelvis/root poses when calculating the fast-pose reserve; fade the available clearance corridor continuously and remove the narrow displacement amplification threshold.
-- **Development:** Add reproducible native locomotion conversion, final-draw trajectory comparisons and a Blender bridge for editing rigid cart clips before baking them back into native assets.
+- **Changed:** Improved wheelbarrow clearance during fast movement and animation transitions while preserving the native cadence and grip.
 
 ### 0.1.44
 
@@ -1373,3 +1297,13 @@ Previously named **PZ Network Fix** through 0.1.1.
 - **Added:** Experimental B42.21 client patches for remote zombie speed decoding and vehicle interpolation recovery, with ZombieBuddy and per-class bytecode guards that disable unsupported patches.
 - **Fixed:** Corrected standard Steam game-path defaults for Windows and Linux and added clear missing-JAR checks.
 - **Fixed:** Required JDK 25 or newer to read B42.21 game dependencies while retaining Java 17 output compatibility.
+
+## Development tools
+
+- **Cart action invalidation diagnostics:** Add a selected native world-identity loss/cancellation/retry bank with exact source and action binding, preserved cart/cargo, all-role endpoints and historical terminal replay refusal. Add a composed native signed-byte reuse regression through the production acknowledgement and Lua receiver; keep natural allocator wrap and production migration separate.
+
+- **Initial inventory-entry diagnostics:** Add a separately selected real inventory Push Cart entry to the menu lifetime bank. Join sealed action receipts to canonical native completion, require all-role held endpoints before the first lifetime, and retain the later same-cart release/pickup fences. Repeated inventory return and production/visual qualification remain separate.
+
+- **Cart public-input diagnostics:** Bind admission to the selected Drop/Setdown kind, keep completed Drop receipts separate from queue-reset revocation, regress delayed old receipts during a fresh Drop, and add an explicit owner world-menu release/pickup lifetime bank with all-role native absence and stale-message fences before and after rebinding. Keep native transport checks callback-scoped and use retained identities only to close old authority. Distinguish hard held/empty transitions from certified same-lease Equip resnapshots.
+
+- **Cart capture sampling:** Preserve each real native motion tick instead of discarding observations under the 100ms state throttle. Keep slower post-motion state logging, independent action sampling and unchanged analyzer coverage limits.
