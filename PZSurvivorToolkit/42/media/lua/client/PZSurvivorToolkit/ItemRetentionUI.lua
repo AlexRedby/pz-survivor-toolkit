@@ -2,22 +2,7 @@ local Retention = require "PZSurvivorToolkit/ItemRetention"
 local Protection = require "PZSurvivorToolkit/InventoryTransferProtection"
 local Classes = require "PZSurvivorToolkit/InventoryClasses"
 local request = 0
-local function itemsIn(entries)
-    local out, seen = {}, {}
-    local function add(item)
-        if instanceof(item, "InventoryItem") and not seen[item] then
-            out[#out + 1], seen[item] = item, true
-        end
-    end
-    for _, entry in ipairs(entries or {}) do
-        if instanceof(entry, "InventoryItem") then add(entry)
-        elseif entry.type ~= "separator" then
-            local first = entry.cleanUILargeStackOptimized and 1 or entry.cleanUIFirstActualIndex or 2
-            for index = first, #(entry.items or {}) do add(entry.items[index]) end
-        end
-    end
-    return out
-end
+local itemsIn = Protection.items
 local function refresh(playerNum)
     for _, getter in ipairs({getPlayerInventory, getPlayerLoot}) do
         local page = getter(playerNum)
@@ -61,7 +46,9 @@ Events.OnFillInventoryObjectContextMenu.Add(function(playerNum, context, rows)
     local key = retained and "release_item" or "retain_item"
     local option = context:addOption(getText("UI_PZSurvivorToolkit_" .. key), playerNum, Retention.toggle, items)
     option.pzstCategory, option.pzstKey = "transfer", retained and "releaseItem" or "retainItem"
-    option.iconTexture = getTexture("media/ui/Entity/keep_item_icon.png")
+    option.iconTexture = getTexture("media/textures/PZSurvivorToolkit/item_retained.png")
+    option.toolTip = ISInventoryPaneContextMenu.addToolTip()
+    option.toolTip.description = getText("UI_PZSurvivorToolkit_" .. key .. "_tip")
 end)
 
 -- Keep the original selection's intent before flattening. Native timed actions
@@ -74,22 +61,53 @@ function Retention.filterTransfer(entries, deliberate)
     end
     return changed and out or entries
 end
-local function dragIsDeliberate()
-    local drag = ISMouseDrag and ISMouseDrag.dragging
-    return drag and Protection.selectionAllowsStuck(drag)
-end
-local paneHooks = {}
+local paneHooks, selectionHooks = {}, {}
 local function installPane(class)
-    if not class or paneHooks[class] then return end
+    if not class then return end
+    local hooks = selectionHooks[class] or {}
+    selectionHooks[class] = hooks
+    for _, name in ipairs({"onContext", "doGrabOnJoypadSelected"}) do
+        local original = class[name]
+        if type(original) == "function" and original ~= hooks[name] then
+            local wrapper = function(pane, ...)
+                local index = name == "onContext" and pane.buttonOption
+                    or pane.joyselection and pane.joyselection + 1
+                local row = index and pane.items and pane.items[index]
+                return Protection.withSelection(row and {row} or {}, pane.player or 0, original, pane, ...)
+            end
+            hooks[name], class[name] = wrapper, wrapper
+        end
+    end
+    if paneHooks[class] then return end
     paneHooks[class] = true
     local transfer = class.transferItemsByWeight
     if transfer then
         class.transferItemsByWeight = function(pane, entries, destination, ...)
-            return transfer(pane, Retention.filterTransfer(entries, dragIsDeliberate()), destination, ...)
+            local drag = ISMouseDrag and ISMouseDrag.dragging
+            local deliberate = drag and Protection.containsSelection(drag, entries)
+            return transfer(pane, Retention.filterTransfer(entries, deliberate), destination, ...)
         end
     end
 end
 local actionHooks = {}
+local actionNames = {"onGrabItems", "onGrabHalfItems", "onGrabOneItems", "onPutItems", "onDropItems", "onMoveItemsTo"}
+local menuHook
+local function rememberMenu(context, selected, playerNum, seen)
+    if not context or seen[context] then return end
+    seen[context] = true
+    for _, option in ipairs(context.options or {}) do
+        for _, name in ipairs(actionNames) do
+            if actionHooks[name] and option.onSelect == actionHooks[name]
+                and ISInventoryPaneContextMenu[name] == actionHooks[name]
+                and type(option.target) == "table" and Protection.containsSelection(selected, option.target) then
+                Protection.rememberSelection(option.target, playerNum)
+            end
+        end
+        if option.subOption and context.getSubMenu then
+            rememberMenu(context:getSubMenu(option.subOption), selected, playerNum, seen)
+        end
+    end
+end
 
 -- Only the installed owner closure is recognized. A replacement callback must
 -- not inherit the action-queue integration's reviewed-wrapper permission.
@@ -101,15 +119,26 @@ local function install()
     Classes.panes(installPane)
     local menu = ISInventoryPaneContextMenu
     if menu then
-        for _, name in ipairs({"onGrabItems", "onGrabHalfItems", "onGrabOneItems", "onPutItems", "onDropItems", "onMoveItemsTo"}) do
+        for _, name in ipairs(actionNames) do
             local original = menu[name]
             if type(original) == "function" and actionHooks[name] == nil then
                 local wrapper = function(entries, ...)
-                    local deliberate = type(entries) == "table" and Protection.selectionAllowsStuck(entries)
+                    local playerNum = name == "onMoveItemsTo" and select(2, ...) or select(1, ...)
+                    local deliberate = type(entries) == "table" and Protection.selectionAllowsStuck(entries, playerNum)
                     return original(Retention.filterTransfer(entries, deliberate), ...)
                 end
                 menu[name], actionHooks[name] = wrapper, wrapper
             end
+        end
+        if type(menu.createMenu) == "function" and menu.createMenu ~= menuHook then
+            local original = menu.createMenu
+            menuHook = function(playerNum, inInventory, rows, ...)
+                local selected = itemsIn(rows)
+                local context = original(playerNum, inInventory, rows, ...)
+                rememberMenu(context, selected, playerNum, {})
+                return context
+            end
+            menu.createMenu = menuHook
         end
     end
     local handler = ISInventoryPageTransferHandler

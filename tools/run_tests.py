@@ -135,7 +135,7 @@ def configure_test_sources(lua, name, args):
         lua.globals().OCItemStickSource = args.oc_stick_source.read_text(encoding="utf-8")
     if name == "test_inventory_filter.lua" and args.oc_display_source:
         lua.globals().OCDisplayOverrideSource = args.oc_display_source.read_text(encoding="utf-8")
-    if name in ("test_action_queue_operations.lua", "test_quantity_transfers.lua") and args.native_inventory_context_menu:
+    if name in ("test_action_queue_operations.lua", "test_quantity_transfers.lua", "test_item_retention.lua") and args.native_inventory_context_menu:
         lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
         if name == "test_quantity_transfers.lua":
             lua.globals().NativeTextBoxSource = (args.native_inventory_context_menu.parent / "ISTextBox.lua").read_text(encoding="utf-8")

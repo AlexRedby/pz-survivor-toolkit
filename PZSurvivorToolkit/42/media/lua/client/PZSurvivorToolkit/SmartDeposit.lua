@@ -70,7 +70,7 @@ function Deposit.plan(pane, items, target)
     local player = getSpecificPlayer(pane.player or 0)
     if not player or not Deposit.isTarget(target) then return result end
     local dragging = ISMouseDrag and ISMouseDrag.dragging
-    local deliberate = dragging and Protection.selectionAllowsStuck(dragging)
+    local deliberate = dragging and Protection.containsSelection(dragging, items)
     local moving, ordered = {}, {}
     for _, item in ipairs(items) do
         if not moving[item] and (deliberate or Protection.allowsAutomatic(item)) then

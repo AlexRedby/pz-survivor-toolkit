@@ -102,6 +102,11 @@ function F.check(state,phase)
   items[i]=found
  end
  if not Retention.isRetained(items[3]) then return false end
+ if phase=='multiple'then
+  return inventory:getItemById(ids[1])~=nil and inventory:getItemById(ids[4])~=nil
+   and trunk:getItemById(ids[2])~=nil and trunk:getItemById(ids[3])~=nil
+   and Retention.isRetained(items[1])and Retention.isRetained(items[4])
+ end
  if phase=='marked'then
   return Retention.isRetained(items[1]) and Retention.isRetained(items[4]) and trunk:getItems():size()==4
  end

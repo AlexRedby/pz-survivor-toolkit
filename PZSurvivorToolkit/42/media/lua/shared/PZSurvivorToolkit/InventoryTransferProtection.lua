@@ -8,33 +8,73 @@ function Protection.allowsAutomatic(item)
     return not PZSurvivorToolkit.ItemRetention.isRetained(item)
 end
 
--- Preserve the user's original pick before a quantity budget flattens its rows.
--- One row with its own children is deliberate. Loose items are one pick when
--- they share both their source container and their displayed stack name.
-function Protection.selectionAllowsStuck(rows)
-    local selectedRow, loose = nil, {}
-    for _, entry in ipairs(rows) do
-        if instanceof(entry, "InventoryItem") then
-            loose[#loose + 1] = entry
-        elseif entry.type ~= "separator" then
-            if selectedRow and selectedRow ~= entry then return false end
-            selectedRow = entry
+function Protection.items(rows)
+    local result, seen = {}, {}
+    local function add(item)
+        if instanceof(item, "InventoryItem") and not seen[item] then
+            result[#result + 1], seen[item] = item, true
         end
     end
-    if selectedRow then
-        local members = {}
-        local first = selectedRow.cleanUILargeStackOptimized and 1 or selectedRow.cleanUIFirstActualIndex or 2
-        for i = first, #(selectedRow.items or {}) do members[selectedRow.items[i]] = true end
-        for _, item in ipairs(loose) do if not members[item] then return false end end
-        return true
+    for _, entry in ipairs(rows or {}) do
+        if instanceof(entry, "InventoryItem") then add(entry)
+        elseif type(entry) == "table" and entry.type ~= "separator" then
+            local first = entry.cleanUILargeStackOptimized and 1 or entry.cleanUIFirstActualIndex or 2
+            for index = first, #(entry.items or {}) do add(entry.items[index]) end
+        end
     end
-    local first = loose[1]
-    if not first then return false end
-    local source, name = first:getContainer(), first:getName()
-    for i = 2, #loose do
-        if loose[i]:getContainer() ~= source or loose[i]:getName() ~= name then return false end
+    return result
+end
+
+local function members(rows)
+    local set = {}
+    for _, item in ipairs(Protection.items(rows)) do set[item] = true end
+    return set
+end
+local function contained(set, rows)
+    local found = false
+    for _, item in ipairs(Protection.items(rows)) do
+        if not set[item] then return false end
+        found = true
     end
-    return true
+    return found
+end
+
+-- Membership comes from the original user pick, never its size, name or source.
+function Protection.containsSelection(rows, entries)
+    return contained(members(rows), entries)
+end
+
+-- Native Kahlua does not collect weak table keys. Bound menu payload snapshots
+-- explicitly; unrelated/new arrays cannot inherit a previous menu's intent.
+local selections, order, scope = {}, {}, nil
+function Protection.rememberSelection(rows, playerNum)
+    if type(rows) ~= "table" then return end
+    local set = members(rows)
+    if not next(set) then return end
+    if not selections[rows] then
+        if #order >= 64 then selections[table.remove(order, 1)] = nil end
+        order[#order + 1] = rows
+    end
+    selections[rows] = {items = set, player = playerNum}
+end
+
+function Protection.selectionAllowsStuck(rows, playerNum)
+    local saved = selections[rows]
+    if saved and saved.player == playerNum and contained(saved.items, rows) then return true end
+    return scope ~= nil and scope.player == playerNum and contained(scope.items, rows)
+end
+
+local function pack(...) return {n = select("#", ...), ...} end
+-- Row buttons, controller picks and quantity commands create fresh arrays.
+-- Bind their synchronous callbacks to exact selected objects, including nested
+-- calls, and restore the previous scope even when a native callback fails.
+function Protection.withSelection(rows, playerNum, callback, ...)
+    local previous = scope
+    scope = {items = members(rows), player = playerNum}
+    local result = pack(pcall(callback, ...))
+    scope = previous
+    if not result[1] then error(result[2], 0) end
+    return unpack(result, 2, result.n)
 end
 
 return Protection

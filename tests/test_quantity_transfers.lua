@@ -137,18 +137,7 @@ dofile(root..'PZSurvivorToolkit/QuantityTransfers.lua')
 local Q=PZSurvivorToolkit.QuantityTransfers
 local Protection=PZSurvivorToolkit.InventoryTransferProtection
 assert(Protection.allowsAutomatic(a), 'unretained items must allow automatic transfers')
-assert(Protection.selectionAllowsStuck({{items={a,a,b}},a,b}), 'one row plus its own children is deliberate')
-assert(Protection.selectionAllowsStuck({{items={a,b},cleanUILargeStackOptimized=true},a,b}),
-    'CleanUI optimized rows include the actual first item')
-assert(not Protection.selectionAllowsStuck({{items={a,a,b}},c}), 'a foreign child makes the selection a batch')
-assert(not Protection.selectionAllowsStuck({{items={a,a,b}},{items={a,a,b}}}), 'two distinct rows are a batch')
-a.name, b.name = 'stack', 'stack'
-assert(Protection.selectionAllowsStuck({a,b}), 'loose items from one source and name are deliberate')
-b.source=second
-assert(not Protection.selectionAllowsStuck({a,b}), 'same names from different sources remain a batch')
-b.source=crate; a.name,b.name=nil,nil
-assert(not Protection.selectionAllowsStuck({a,b}) and not Protection.selectionAllowsStuck({}),
-    'different names and empty selections are not one deliberate pick')
+assert(not Protection.selectionAllowsStuck({a,b},0), 'an array alone does not prove a manual action')
 for _, value in ipairs({'', '0','-1','2.5','nan','inf','1e309','4',false,0/0,math.huge}) do
     assert(Q.parse(value,3)==nil,'invalid amount must be rejected: '..tostring(value))
 end
@@ -198,21 +187,21 @@ PZSurvivorToolkit.ItemRetention={isEnabled=function() return sticking end,
     isRetained=function(x) return x.stuck end}
 a.stuck=true
 local batch=Q.snapshot(0,{{items={a,a,b}},{items={c,c,d}}},inv,true)
-assert(not batch.allowsStuck and #batch.items==3 and batch.items[1]==b)
-assert(Q.transfer(batch,'1')==1 and #queued==1 and queued[1].item==b,
-    'a mixed selection must not become deliberate when budget one leaves only its stuck first item')
+assert(#batch.items==4 and batch.items[1]==a)
+assert(Q.transfer(batch,'1')==1 and #queued==1 and queued[1].item==a,
+    'a manual mixed selection may move a retained item within the common quantity budget')
 queued={}; a.stuck=nil
 local late=Q.snapshot(0,{a,b,c,d},inv,true)
 a.stuck=true
-assert(Q.transfer(late,'1')==1 and #queued==1 and queued[1].item==b,
-    'new protection after opening the dialog must be checked before consuming its budget')
+assert(Q.transfer(late,'1')==1 and #queued==1 and queued[1].item==a,
+    'new retention does not veto an already explicit manual selection')
 queued={}
 local deliberate=Q.snapshot(0,{{items={a,a,b}},a,b},inv,true)
-assert(deliberate.allowsStuck and #deliberate.items==2 and Q.transfer(deliberate,'1')==1
+assert(#deliberate.items==2 and Q.transfer(deliberate,'1')==1
     and queued[1].item==a, 'an original single row with its children keeps the deliberate exception')
 queued={}; a.name,b.name='stack','stack'
 local flat=Q.snapshot(0,{a,b},inv,true)
-assert(flat.allowsStuck and Q.transfer(flat,'1')==1 and queued[1].item==a,
+assert(Q.transfer(flat,'1')==1 and queued[1].item==a,
     'an original flat same-source stack remains deliberate')
 a.name,b.name=nil,nil
 local spanning=Q.snapshot(0,{{items={a,a,c}}},inv,true)
@@ -231,11 +220,11 @@ ISInventoryPaneContextMenu.onMoveItemsTo=function()
     error('fixture individual native callback error')
 end
 assert(not pcall(Q.transfer,spanning,'2'))
-assert(#walkCalls==4 and walkCalls[1][1]==crate and walkCalls[2][1]==second
-    and walkCalls[3][1]==inv and walkCalls[3][2]==1 and walkCalls[4][2]==0,
-    'share only the exact destination/player walk; forward source walks and unrelated native requests')
+assert(#walkCalls==5 and walkCalls[1][1]==crate and walkCalls[2][1]==second
+    and walkCalls[3][1]==inv and walkCalls[3][2]==1 and walkCalls[4][2]==0 and walkCalls[5][2]==0,
+    'one native batch callback keeps all of its native walking behavior')
 assert(luautils.walkToContainer==observedWalk and ISInventoryTransferUtil.newInventoryTransferAction==liveAllocator,
-    'individual callback failures must restore both transient helpers')
+    'callback failures must restore the allocator and leave native walking unchanged')
 luautils.walkToContainer,ISInventoryPaneContextMenu.onMoveItemsTo=liveWalk,liveMove
 PZSurvivorToolkit.ItemRetention={isRetained=function(x) return x.stuck end}
 a.stuck=nil
@@ -302,21 +291,21 @@ do
         rows[2].stuck, rows[3].favorite, rows[4].equipped, rows[5].forbidden, rows[6].heavy = true,true,true,true,true
         reachable={inv,aggregate}
         local selection=Q.snapshot(0,rows,inv,true)
-        assert(#selection.items==count-5 and selection.items[#selection.items]==rows[count],
+        assert(#selection.items==count-4 and selection.items[#selection.items]==rows[count],
             'raw aggregate membership must preserve exact selection and all live protections')
         assert(reads==count and scans==0,
             'one snapshot must read aggregate members once rather than scan per selected item')
         reads,queued=0,{}
-        assert(Q.transfer(selection,tostring(#selection.items))==count-5 and #queued==count-5)
+        assert(Q.transfer(selection,tostring(#selection.items))==count-4 and #queued==count-4)
         assert(reads==count and scans==0, 'confirmation must build its own single membership index')
         -- Change raw contents without changing list identity or count after the dialog opened.
         local removed=rows[count]
         rows[count]=item(40000+count,actual)
         selection.items[1].stuck=true
         reads,queued=0,{}
-        assert(Q.transfer(selection,tostring(#selection.items))==count-7 and #queued==count-7,
-            'confirmation must see same-count raw replacements and newly stuck items')
-        for _, action in ipairs(queued) do assert(action.item~=removed and action.item~=selection.items[1]) end
+        assert(Q.transfer(selection,tostring(#selection.items))==count-5 and #queued==count-5,
+            'confirmation must see same-count raw replacements while retaining explicit picks')
+        for _, action in ipairs(queued) do assert(action.item~=removed) end
         assert(reads==count and scans==0, 'a later confirmation cannot retain the earlier raw index')
     end
     aggregateBatch(256)

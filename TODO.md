@@ -1,3 +1,7 @@
+# Retained-item transfer and indicator verification
+
+- [ ] Run the updated `item-retention/trunk` scenario in isolated macOS B42.21 EN/RU native and CleanUI views with the full selected pack. Check the final child-gutter lock placement, manual transfer of two different retained items and their return, exact authoritative IDs/flags, automatic distribution exclusion and single-item transfer/release. Focused/source-backed regressions pass; full-pack preparation cannot resolve `PZToolkitJavaPatches`, and the four-mod prepared run `/tmp/pz-retained-multi-host-ui-01` could not launch because another exclusive native run held the desktop slot. This does not establish a successful Host run.
+
 # Vehicle entry and exit roof clipping
 
 - [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP/Host checks cover stationary Base.CarNormal driver/passenger transitions, both cancellations, the local seated animation track and authoritative seat occupancy; screenshots include the native occlusion silhouette.
