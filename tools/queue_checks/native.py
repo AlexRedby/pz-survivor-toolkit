@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from . import adapters, worlds, pack, admission, report, coop, snapshot_copy
+from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw
 from .mod_selection import (
     MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
     mod_layers, mod_info, selected_mod_version,
@@ -287,6 +287,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(launch_java), "server_name": "queue-smoke", "window_size": selection["window_size"], "roles": {}}
     output.mkdir(parents=True)
+    if sys.platform == 'darwin':
+        runtime['glfw'] = glfw.prepare(game, output / 'native', launch_java)
     if selection.get('ports_auto'):
         selection = dict(selection, ports=admission.allocate_ports(output, selection) if selection['kind'] == 'mp' else [17343, 17344])
     for index, role in enumerate(roles):
@@ -455,6 +457,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         if sha256(Path(path)) != digest:
             raise RuntimeError("Source changed while preparing snapshot: " + path)
     frozen = {path.name: sha256(path) for path in sorted(output.iterdir()) if path.is_file()}
+    if sys.platform == 'darwin':
+        frozen.update({'native/' + relative: digest for relative, digest in hashes(output / 'native').items()})
     for role in roles:
         for directory in ("mods", "classes", "Lua"):
             frozen.update({role + "/" + directory + "/" + relative: digest

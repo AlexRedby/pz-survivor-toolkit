@@ -19,7 +19,7 @@ public class ToolkitSmokeLauncher {
             GLFW.glfwPollEvents();
             monitor = GLFW.glfwGetPrimaryMonitor();
         }
-        if (monitor == 0) throw new IllegalStateException("No awake display is available; wake/connect the display before running the native fixture.");
+        if (monitor == 0) throw new IllegalStateException("GLFW found no connected display. Check the prepared GLFW compatibility input and launch outside the sandbox in the logged-in macOS session; display sleep alone does not require waking the screen.");
         var mode = GLFW.glfwGetVideoMode(monitor);
         if (mode == null) throw new IllegalStateException("The primary display has no video mode; native fixture cannot start.");
         System.out.println("[QUEUE_TEST] DISPLAY_READY " + mode.width() + "x" + mode.height());

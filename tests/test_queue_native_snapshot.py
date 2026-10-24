@@ -20,6 +20,9 @@ class NativeSnapshotTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        private_glfw = patch.object(native.glfw, 'prepare', side_effect=self.prepare_glfw)
+        private_glfw.start()
+        self.addCleanup(private_glfw.stop)
         disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
         disk.start()
         self.addCleanup(disk.stop)
@@ -63,6 +66,14 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(path / layer / "mod.info", "name=Test\nid = " + identifier + "\n")
         self.write(path / layer / "media/lua/shared/test.lua", "return 'unchanged mod source'\n")
         return path
+
+    @staticmethod
+    def prepare_glfw(game, directory, java):
+        directory.mkdir()
+        library = directory / 'libglfw.dylib'
+        library.write_bytes(b'prepared private GLFW input')
+        return {'library': str(library), 'sha256': native.sha256(library),
+                'compatibility': 'retain-online-displays-during-sleep'}
 
     @staticmethod
     def compile(command, **kwargs):
