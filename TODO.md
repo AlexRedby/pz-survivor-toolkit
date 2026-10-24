@@ -1,6 +1,6 @@
-# Shopping cart arm posture
+# Shopping cart torso posture
 
-- [ ] Inspect the corrected shopping-cart torso and arms in isolated macOS moving, stationary-turn and reverse-turn recordings. The final native launch stopped before creating a window because no display was awake; the fresh `pz-shopping-arms-final-retry` profile is prepared. Keep this visual gate open until the recording confirms the pose.
+- [ ] Reduce the excessive backward torso lean visible during fast shopping-cart turns after the arm-reach correction. Preserve fixed handle contact, native pelvis/legs and the existing rear-axle trajectory; verify the resulting torso/arm pose in moving, stationary-turn and reverse-turn recordings. Current macOS SP evidence is `.codex/investigations/shopping-arms-20261024-final/shopping-current.mp4`; arm reach and all 18 controls phases pass, but this visible torso defect remains.
 
 # Container editor visual states
 
