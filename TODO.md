@@ -1,3 +1,7 @@
+# Retained-item merged-main verification
+
+- [ ] Check the merged inventory refresh/filter/capacity changes with the retained-item regressions and a fresh isolated Host scenario before pushing Toolkit 0.1.251.
+
 # Retained-item full-pack compatibility
 
 - [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.
@@ -132,3 +136,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Inventory infrastructure proposals
 
 - [ ] Remove the discarded details-selection mapping at the known native/CleanUI restore boundary after agreeing the integration: InventoryFilter invokes upstream restore, then InventoryRows wipes its result and maps the final rows again. Retain external mod hooks, final row ordering and unknown/icon-mode fallback; prove render-capped expanded stacks and selection/Shift-anchor correctness before removing the first pass.
+
+# Warehouse client workload
+
+- [ ] Run the corrected `inventory-presentation/scenes` native hidden-loot/reopen stages in CleanUI and vanilla when an awake macOS display is available. Require live raw stock, deferred hidden rows/count/tooltips, fresh reopen and a clean runtime audit; keep the runner's default desktop policy.
+- [ ] Check warehouse movement with the full selected mod set in disposable macOS SP/Host profiles, including another player's container edits, crafting inputs and quick transfers with loot hidden. Measure frame times separately before claiming that the user's stutters are resolved.

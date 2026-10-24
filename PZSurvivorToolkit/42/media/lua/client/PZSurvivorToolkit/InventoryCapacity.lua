@@ -14,6 +14,78 @@ function Capacity.ratio(inventory, player)
     return math.max(0, math.min(inventory:getCapacityWeight() / maximum, 1))
 end
 
+-- Presentation may trail changing nested/fluid/food weight by at most 200ms.
+-- Admission and other callers of ratio() always read the authoritative value.
+-- Records live with their UI owner; no container registry or weak tables.
+local DISPLAY_TTL_MS, ICON_LIMIT = 200, 64
+local generation = 0
+local function clock()
+    if type(getTimestampMs) ~= "function" then return nil end
+    local now = getTimestampMs()
+    if type(now) == "number" and now == now and now >= 0 and now < math.huge then return now end
+end
+
+local function displayRatio(record, inventory, player, now)
+    if not inventory or not player then return nil, nil end
+    if not now then return Capacity.ratio(inventory, player), nil end
+    if record and record.inventory == inventory and record.player == player
+        and record.generation == generation and now >= record.lastTime
+        and now - record.time < DISPLAY_TTL_MS then
+        record.lastTime = now
+        return record.value, record
+    end
+    local value = Capacity.ratio(inventory, player)
+    return value, {inventory=inventory, player=player, generation=generation,
+        time=now, lastTime=now, value=value}
+end
+
+local function iconRatio(pane, inventory, player)
+    local now = clock()
+    if not now or not inventory or not player then
+        pane.toolkitCapacityIcons = nil
+        return Capacity.ratio(inventory, player)
+    end
+    local cache = pane.toolkitCapacityIcons
+    if not cache or cache.player ~= player or cache.inventory ~= pane.inventory
+        or cache.generation ~= generation or now < cache.time then
+        cache = {player=player, inventory=pane.inventory, generation=generation,
+            time=now, records={}, slots={}, nextSlot=1}
+        pane.toolkitCapacityIcons = cache
+    end
+    cache.time = now
+    local record = cache.records[inventory]
+    local value, updated = displayRatio(record, inventory, player, now)
+    if not record then
+        local old = cache.slots[cache.nextSlot]
+        if old then cache.records[old] = nil end
+        cache.slots[cache.nextSlot] = inventory
+        cache.nextSlot = cache.nextSlot % ICON_LIMIT + 1
+    end
+    cache.records[inventory] = updated
+    return value
+end
+
+local function invalidate()
+    generation = generation + 1
+end
+
+local function inventoryRefreshed(page)
+    if not page then return end
+    if page.inventoryPane then page.inventoryPane.toolkitCapacityIcons = nil end
+    -- Buttons are pooled, including reuse for the same container after refresh.
+    for _, button in ipairs(page.backpacks or {}) do button.toolkitCapacitySnapshot = nil end
+    for _, button in ipairs(page.buttonPool or {}) do button.toolkitCapacitySnapshot = nil end
+end
+
+if Events then
+    for _, name in ipairs({"OnContainerUpdate", "OnGameStart", "OnMainMenuEnter", "OnCreatePlayer"}) do
+        if Events[name] then Events[name].Add(invalidate) end
+    end
+    if Events.OnRefreshInventoryWindowContainers then
+        Events.OnRefreshInventoryWindowContainers.Add(inventoryRefreshed)
+    end
+end
+
 local function itemValue(item, method)
     local fn = item and item[method]
     if not fn then return nil end
@@ -68,17 +140,20 @@ function Capacity.drawIcon(pane, item, x, y, width, height, details)
     local visibleY = barY + pane:getYScroll()
     if visibleY < (details and pane.headerHgt or 0) or visibleY > pane.height then return end
     local player = getSpecificPlayer(pane.player or 0)
-    if not player then return end
+    if not player then pane.toolkitCapacityIcons = nil; return end
     if itemValue(item, "IsInventoryContainer") then
-        capacityBar(pane, x + 1, barY, width - 2, Capacity.ratio(item:getInventory(), player))
+        capacityBar(pane, x + 1, barY, width - 2, iconRatio(pane, item:getInventory(), player))
     else
         magazineBar(pane, x + 1, barY, width - 2, magazineRatio(item))
     end
 end
 
 function Capacity.drawButton(button, playerIndex)
+    local value, record = displayRatio(button.toolkitCapacitySnapshot, button.inventory,
+        getSpecificPlayer(playerIndex or 0), clock())
+    button.toolkitCapacitySnapshot = record
     capacityBar(button, 2, button:getHeight() - 6, button:getWidth() - 4,
-        Capacity.ratio(button.inventory, getSpecificPlayer(playerIndex or 0)))
+        value)
 end
 
 return Capacity
