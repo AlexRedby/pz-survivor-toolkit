@@ -1102,6 +1102,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.56
+
+- **Changed:** Shopping-cart turns plan the next foot placement from rendered movement and retain short support contacts, while keeping native foot roll, limb lengths and the current torso/hand fit. Straight walking keeps its existing gait. Abrupt network yaw corrections retain native walking until the root motion is stable, without new network fields or changed cart physics.
+
 ### 0.1.55
 
 - **Changed:** Give shopping-cart forward walking and turning one shared visual phase with a bounded cadence and smooth entry/release. Partial turns no longer mix legs from unrelated phases. Physical movement and multiplayer packet fields/rate retain their existing behavior; reverse and fast gaits retain their native clips.

@@ -31,6 +31,14 @@ internal object CartGrip {
     }
 
     private val matrices = ThreadLocal.withInitial(::Matrices)
+
+    private class FootMatrices {
+        // Kept separate from reach's scratch because aim/adjust reuse matrices during the solve.
+        val poses = arrayOfNulls<Matrix4f>(60)
+        val target = Matrix4f()
+    }
+
+    private val footMatrices = ThreadLocal.withInitial(::FootMatrices)
     private val headNeutrals = WeakHashMap<AnimationClip, WeakHashMap<SkinningData, Quaternionf?>>()
 
     private fun pose(poses: Array<out Matrix4f?>?, index: Int): Matrix4f =
@@ -379,6 +387,77 @@ internal object CartGrip {
             .rotate(state.rotation)
             .translate(-pivot.x, -pivot.y, -pivot.z)
         adjust(poses, actor, root, state.adjustment)
+    }
+
+    /** Fit one cosmetic foot target without committing a failed or partial leg solve. */
+    @JvmStatic
+    fun fitFoot(
+        poses: Array<out Matrix4f?>?,
+        actor: SkinningData?,
+        side: String?,
+        target: Matrix4f?,
+    ): Boolean {
+        if (poses == null || actor == null || target == null || side != "L" && side != "R")
+            return false
+        val scratch = footMatrices.get()
+        val count = actor.numBones()
+        if (count <= 0 || count > scratch.poses.size || count > poses.size) return false
+        val foot = actor.getBone("Bip01_${side}_Foot") ?: return false
+        val calf = foot.parent ?: return false
+        val thigh = calf.parent ?: return false
+        if (calf.name != "Bip01_${side}_Calf" || thigh.name != "Bip01_${side}_Thigh") return false
+        fun indexed(bone: SkinningBone): Boolean =
+            bone.index in 0 until count && actor.getBoneAt(bone.index) === bone
+        if (!indexed(thigh) || !indexed(calf) || !indexed(foot)) return false
+        fun affine(value: Matrix4f): Boolean =
+            value.isFinite() &&
+                Math.abs(value.m03()) < 1e-5f &&
+                Math.abs(value.m13()) < 1e-5f &&
+                Math.abs(value.m23()) < 1e-5f &&
+                Math.abs(value.m33() - 1f) < 1e-5f &&
+                value.determinant3x3().isFinite() &&
+                value.determinant3x3() > 1e-8f
+        fun unit(x: Float, y: Float, z: Float): Boolean =
+            Math.abs(x * x + y * y + z * z - 1f) < 1e-4f
+        // A target may translate and rotate the ankle, but must never resize/shear its descendants.
+        if (
+            !affine(target) ||
+                !unit(target.m00(), target.m01(), target.m02()) ||
+                !unit(target.m10(), target.m11(), target.m12()) ||
+                !unit(target.m20(), target.m21(), target.m22()) ||
+                Math.abs(
+                    target.m00() * target.m10() +
+                        target.m01() * target.m11() +
+                        target.m02() * target.m12(),
+                ) >= 1e-4f ||
+                Math.abs(
+                    target.m00() * target.m20() +
+                        target.m01() * target.m21() +
+                        target.m02() * target.m22(),
+                ) >= 1e-4f ||
+                Math.abs(
+                    target.m10() * target.m20() +
+                        target.m11() * target.m21() +
+                        target.m12() * target.m22(),
+                ) >= 1e-4f
+        )
+            return false
+        scratch.target.set(target)
+        for (i in 0 until count) if (descendant(actor.getBoneAt(i), thigh)) {
+            val source = poses[i] ?: return false
+            if (!affine(source)) return false
+            val working = scratch.poses[i] ?: Matrix4f().also { scratch.poses[i] = it }
+            working.set(source)
+        }
+        if (!reach(scratch.poses, actor, foot.name, scratch.target, null, false, 1f, true))
+            return false
+        for (i in 0 until count) if (
+            descendant(actor.getBoneAt(i), thigh) && !affine(pose(scratch.poses, i))
+        )
+            return false
+        for (i in 0 until count) if (descendant(actor.getBoneAt(i), thigh))
+            pose(poses, i).set(pose(scratch.poses, i))
+        return true
     }
 
     // Solve two links without stretching; leg correction keeps the planted foot target.

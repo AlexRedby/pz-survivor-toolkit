@@ -375,6 +375,188 @@ object CartShoppingTurnTest {
         }
     }
 
+    private fun support(
+        actor: SkinningData,
+        idle: AnimationClip,
+        walk: AnimationClip,
+        left: AnimationClip,
+        right: AnimationClip,
+    ) {
+        val baseline = reference(actor, idle)
+        val root = CartShoppingFeet.Root(10821.5, 10130.5, 2.3)
+        val point = Vector3f(.1f, .06f, -.2f)
+        check(
+            root.local(root.world(point)).distance(point) < .001f,
+            "support world/local transform",
+        )
+        val contactDump = System.getProperty("pz.test.shoppingFeetDump")
+        val dump = StringBuilder("[")
+        var changed = 0
+        var fullSupport = 0
+        var supportDrift = 0.0
+        var nativeDrift = 0.0
+        var jitterDrift = 0.0
+        var jitterNative = 0.0
+        var jitterDeclined = 0
+        for ((turn, clip, jitter) in
+            listOf(
+                Triple(1f, left, false),
+                Triple(-1f, right, false),
+                Triple(.5f, left, false),
+                Triple(-.5f, right, false),
+                Triple(1f, left, true),
+            )) {
+            val state = CartShoppingFeet.State()
+            var previous: Array<Vector3f>? = null
+            var previousNative: Array<Vector3f>? = null
+            val dt = 1.0 / 60
+            var x = 0.0
+            var y = 0.0
+            var angle = 0.0
+            repeat(240) { frame ->
+                val phase = ((frame * dt / .88) % 1).toFloat()
+                // Native render heading for this turn: 1.05 model units/s and 2.48rad/s.
+                angle += turn * 2.48 * dt
+                x +=
+                    (-kotlin.math.cos(angle) * .77 * turn + kotlin.math.sin(angle) * .78) * 1.5 * dt
+                y +=
+                    (-kotlin.math.sin(angle) * .77 * turn - kotlin.math.cos(angle) * .78) * 1.5 * dt
+                // A remote facing correction may arrive in short bursts while position keeps
+                // moving.
+                val drawAngle =
+                    if (jitter) kotlin.math.floor(frame * dt / .2) * .2 * turn * 2.48 else angle
+                val world = CartShoppingFeet.Root(x, y, drawAngle)
+                val view = CartShoppingTurn.View(phase, turn)
+                val poses = Array<Matrix4f?>(baseline.size) { Matrix4f(baseline[it]) }
+                check(CartShoppingTurn.apply(poses, actor, walk, clip, view), "support source")
+                val before = poses.map { Matrix4f(it) }
+                val feet = state.update(world, view, actor, poses, frame * dt)
+                if (jitter && frame > 60 && feet == null) jitterDeclined++
+                CartShoppingFeet.apply(poses, actor, feet)
+                val points =
+                    Array(2) { i ->
+                        world.world(
+                            poses[actor.getBone("Bip01_${if(i==0)"L" else "R"}_Toe0").index]!!
+                                .getTranslation(Vector3f()),
+                        )
+                    }
+                val nativePoints =
+                    Array(2) { i ->
+                        world.world(
+                            before[actor.getBone("Bip01_${if(i==0)"L" else "R"}_Toe0").index]
+                                .getTranslation(Vector3f()),
+                        )
+                    }
+                for ((i, side) in listOf("L", "R").withIndex()) {
+                    val p = (phase + (if (i == 1) .5f else 0f)) % 1f
+                    if (
+                        p in 0.65f..0.90f &&
+                            previous != null &&
+                            frame > 60 &&
+                            kotlin.math.abs(turn) == 1f
+                    ) {
+                        fun flat(a: Vector3f, b: Vector3f) =
+                            kotlin.math.hypot((a.x - b.x).toDouble(), (a.z - b.z).toDouble())
+                        if (jitter) {
+                            jitterDrift += flat(points[i], previous!![i])
+                            jitterNative += flat(nativePoints[i], previousNative!![i])
+                        } else {
+                            supportDrift += flat(points[i], previous!![i])
+                            nativeDrift += flat(nativePoints[i], previousNative!![i])
+                        }
+                        fullSupport++
+                    }
+                    val foot = actor.getBone("Bip01_${side}_Foot").index
+                    if (matrixError(poses[foot]!!, before[foot]) > 1e-4) changed++
+                    for ((a, b) in listOf("Thigh" to "Calf", "Calf" to "Foot")) {
+                        val ai = actor.getBone("Bip01_${side}_$a").index
+                        val bi = actor.getBone("Bip01_${side}_$b").index
+                        close(
+                            poses[ai]!!
+                                .getTranslation(Vector3f())
+                                .distance(poses[bi]!!.getTranslation(Vector3f()))
+                                .toDouble(),
+                            before[ai]
+                                .getTranslation(Vector3f())
+                                .distance(before[bi].getTranslation(Vector3f()))
+                                .toDouble(),
+                            "support lengths",
+                        )
+                    }
+                    for (name in listOf("Pelvis", "Spine", "Spine1", "Head", "L_Hand", "R_Hand")) {
+                        val index = actor.getBone("Bip01_$name").index
+                        check(poses[index] == before[index], "foot support leaves torso/grip $name")
+                    }
+                }
+                previous = points
+                previousNative = nativePoints
+                if (contactDump != null) {
+                    if (dump.length > 1) dump.append(',')
+                    dump.append("{\"time\":${(if(turn>0)0 else 4)+frame*dt},\"bones\":{")
+                    for (i in poses.indices) {
+                        if (i > 0) dump.append(',')
+                        dump.append('"').append(actor.getBoneAt(i).name).append("\":")
+                        dump.append(poses[i]!!.get(FloatArray(16)).joinToString(",", "[", "]"))
+                    }
+                    dump.append("}}")
+                }
+            }
+        }
+        println(
+            "SHOPPING_SUPPORT_DIAGNOSTIC changed=$changed measured=$fullSupport corrected=$supportDrift native=$nativeDrift jitter=$jitterDrift jitterNative=$jitterNative",
+        )
+        check(changed > 100, "support correction actually applied")
+        if (contactDump != null)
+            java.nio.file.Files.writeString(Path.of(contactDump), dump.append(']').toString())
+        check(
+            supportDrift < nativeDrift * .65,
+            "support contacts reduce world sliding: $supportDrift / $nativeDrift",
+        )
+        check(
+            jitterDrift <= jitterNative * 1.01,
+            "remote heading bursts cannot amplify foot sliding: $jitterDrift / $jitterNative",
+        )
+        check(jitterDeclined > 150, "bursty remote roots retain native gait until stable")
+        // Entering a turn midway through a swing starts at the already rendered pose.
+        for (phase in listOf(.25f, .5f)) {
+            val entry = CartShoppingFeet.State()
+            val first = entry.update(root, CartShoppingTurn.View(phase, 1f), actor, baseline, 0.0)
+            check(first == null, "support entry has no first-frame pop at $phase")
+        }
+        val release = CartShoppingFeet.State()
+        var last: CartShoppingFeet.Frame? = null
+        var lastView = CartShoppingTurn.View(.2f, 1f)
+        repeat(30) { i ->
+            lastView = CartShoppingTurn.View(.2f + i / 100f, 1f)
+            last = release.update(root, lastView, actor, baseline, i / 60.0)
+        }
+        val fading = release.update(root, lastView.copy(walk = .5f), actor, baseline, .51)
+        check(
+            last != null && fading != null && fading.influence < last!!.influence,
+            "paused root/phase cannot reuse a stale full-weight contact during release",
+        )
+        check(
+            release.update(root, lastView.copy(walk = 0f), actor, baseline, .52) == null,
+            "fully released contact clears",
+        )
+        check(
+            release.update(root, lastView.copy(phase = Float.NaN), actor, baseline, .53) == null,
+            "invalid phase clears contact",
+        )
+        // An impossible foot goal must not leave a half-solved leg or move the body.
+        val unchanged = Array<Matrix4f?>(baseline.size) { Matrix4f(baseline[it]) }
+        val far =
+            Matrix4f(unchanged[actor.getBone("Bip01_L_Foot").index]).translateLocal(10f, 0f, 0f)
+        check(!CartGrip.fitFoot(unchanged, actor, "L", far), "unreachable foot refused")
+        check(
+            unchanged.indices.all { unchanged[it] == baseline[it] },
+            "unreachable foot transaction",
+        )
+        val straight =
+            CartShoppingFeet.State().update(root, CartShoppingTurn.View(.7f, 0f), actor, unchanged)
+        check(straight == null, "straight gait remains unchanged")
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         controller()
@@ -385,6 +567,13 @@ object CartShoppingTurnTest {
         val baseline = reference(actor, idle)
         val (_, walk) = read(folder.resolve("Toolkit_ShoppingWalk.x"))
         val (_, nativeWalk) = read(folder.resolve("Toolkit_CartPivot_Walk.x"))
+        support(
+            actor,
+            idle,
+            walk,
+            read(folder.resolve("Toolkit_ShoppingTurn_Left.x")).second,
+            read(folder.resolve("Toolkit_ShoppingTurn_Right.x")).second,
+        )
         for (side in listOf("Left", "Right")) {
             val (targetActor, clip) = read(folder.resolve("Toolkit_ShoppingTurn_$side.x"))
             check(actor.boneIndices == targetActor.boneIndices, "bone mapping")

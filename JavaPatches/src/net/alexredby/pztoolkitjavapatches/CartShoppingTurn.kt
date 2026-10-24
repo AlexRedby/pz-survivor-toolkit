@@ -24,7 +24,12 @@ import zombie.inventory.InventoryItem
 
 /** Cosmetic native-walk playback with body-leading turns; never supplies root movement. */
 internal object CartShoppingTurn {
-    data class View(val phase: Float, val turn: Float, val walk: Float = 1f)
+    data class View(
+        val phase: Float,
+        val turn: Float,
+        val walk: Float = 1f,
+        val feet: CartShoppingFeet.Frame? = null,
+    )
 
     /**
      * One cosmetic clock for straight walking and turning, bounded by a relaxed walking cadence.
@@ -110,6 +115,8 @@ internal object CartShoppingTurn {
 
     private class State(val item: InventoryItem) {
         val blend = Blend()
+        val feet = CartShoppingFeet.State()
+        val poses = Array<Matrix4f?>(64) { Matrix4f() }
         var track: AnimationTrack? = null
         var view = View(0f, 0f, 0f)
     }
@@ -230,7 +237,35 @@ internal object CartShoppingTurn {
                 player.getSecondaryHandItem() !== state.item
         )
             return
-        capture(slot, source, state.view)
+        val owner = source?.model ?: return
+        if (slot.character !== player || slot.`object` !== player || owner.`object` !== player)
+            return
+        val animation = owner.animPlayer
+        var view = state.view
+        if (animation != null && animation.hasSkinningData()) {
+            val actor = animation.getSkinningData()
+            val count = actor.numBones()
+            var complete = count <= state.poses.size && count <= animation.getModelTransformsCount()
+            if (complete)
+                for (i in 0 until count) {
+                    val pose = animation.getModelTransformAt(i)
+                    if (pose == null) {
+                        complete = false
+                        break
+                    }
+                    PZMath.convertMatrix(pose, state.poses[i]!!).transpose()
+                }
+            if (complete && apply(state.poses, actor, view)) {
+                val root =
+                    CartShoppingFeet.Root(
+                        slot.x.toDouble(),
+                        slot.y.toDouble(),
+                        animation.getRenderedAngle().toDouble(),
+                    )
+                view = view.copy(feet = state.feet.update(root, view, actor, state.poses))
+            } else state.feet.clear()
+        }
+        capture(slot, source, view)
     }
 
     /** The game-thread stance solve samples the same cosmetic body as the renderer. */
@@ -371,6 +406,7 @@ internal object CartShoppingTurn {
                 sampler.get(),
             )
         }
+        CartShoppingFeet.apply(walk.working, actor, view.feet)
         for (i in 0 until count) poses[i]!!.set(walk.working[i])
         return true
     }
