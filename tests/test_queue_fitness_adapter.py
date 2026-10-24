@@ -34,15 +34,22 @@ class FitnessAdapterTests(unittest.TestCase):
             ids = dict(zip(('front', 'tail', 'bag', 'hammer', 'screwdriver', 'dumbbell'), range(100+n*10, 106+n*10)))
             inventory = dict(items=[dict(id=value, kind=key, container='root') for key, value in ids.items()],
                              primary=False, secondary=False, worn=[])
-            if case == 'closed-ui-restore':
+            if case in fitness.BORROWED_CASES:
                 inventory.update(primary=ids['hammer'], secondary=ids['screwdriver'], worn=[dict(id=ids['bag'], location='Back')])
                 next(row for row in inventory['items'] if row['id']==ids['dumbbell'])['container']=ids['bag']
+            if case in fitness.RESTORATION_CASES:
+                types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
+                             hammer='Base.Torch', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
+                for item in inventory['items']:item['kind']=types[next(key for key,value in ids.items() if value==item['id'])]
             prep = dict(case=case, items=ids, inventory=inventory, before=clinical())
+            if case in fitness.RESTORATION_CASES:prep['activation']={str(ids['hammer']):True}
             if mp:
                 prep.update(peerBook=1000+n, peerOnlineID=2)
                 peers.append(dict(event='case', suite='fitness', kind='mp', mode=mode, actor='client2',
                                   id=case, book=prep['peerBook'], read=True, queueDrained=True))
             final = copy.deepcopy(inventory)
+            if mode=='native' and case in fitness.RESTORATION_CASES:
+                next(row for row in final['items'] if row['id']==ids['dumbbell'])['container']='root'
             if case == 'missing-dumbbell':
                 final['items'] = [row for row in final['items'] if row['id'] != ids['dumbbell']]
             exercises = fitness._expected_exercises(case, mode)
@@ -50,26 +57,26 @@ class FitnessAdapterTests(unittest.TestCase):
             records = []
             for i, exercise in enumerate(exercises):
                 start = i*700000
-                end = start + (100000 if case == 'active-cancel' else minutes * 60000 + 1)
+                end = start + (100000 if case in ('active-cancel', 'active-cancel-restore') else minutes * 60000 + 1)
                 records.append(dict(exercise=exercise, minutes=minutes, maxTime=5000000, reps=10,
                     startMS=start, stopMS=end, lastRepMS=start+1000, before=clinical(), after=clinical(10,.9,1,1),
                     minEndurance=.8, lastRep=clinical(10,.8,1,1), currentExerciseCleared=True,
                     serverStopReturned=True, previousStopSettled=True))
-            if case=='closed-ui-restore':
+            if case in fitness.BORROWED_CASES:
                 for record in records:
                     start_inventory=copy.deepcopy(inventory)
                     start_inventory.update(primary=ids['dumbbell'],secondary=False,worn=[])
                     next(row for row in start_inventory['items'] if row['id']==ids['dumbbell'])['container']='root'
                     record['startEquipment']=start_inventory
             receipt = dict(case=case, inventory=final, before=prep['before'], clinical=clinical(10,.9,1,1) if records else clinical(),
-                records=records, violations=[], tailRead=True, frontRead=case not in ('empty','active-cancel','burpees-30'), currentExerciseCleared=True,
+                records=records, violations=[], tailRead=True, frontRead=case not in fitness.IMMEDIATE_CASES, currentExerciseCleared=True,
                 serverStopSettled=True, peerConnected=True, removed=ids['dumbbell'] if case=='missing-dumbbell' else False,
                 serverSettleMilliseconds=2000)
             if mp:
                 receipt.update(peerRead=True, peerBook=prep['peerBook'], peerOnlineID=prep['peerOnlineID'])
-            command = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in ('empty','active-cancel','burpees-30') else 12,
+            command = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in fitness.IMMEDIATE_CASES else 12,
                 waitingNoExercise=True, waitingNoClinicalEffects=True, waitMS=720000,
-                activeObserved=bool(exercises), activeCancelled=case=='active-cancel', pendingCancelled=mode=='toolkit' and case=='pending-cancel',
+                activeObserved=bool(exercises), activeCancelled=case in ('active-cancel','active-cancel-restore'), pendingCancelled=mode=='toolkit' and case=='pending-cancel',
                 reordered=mode=='toolkit' and case=='pending-reorder', closedUI=case=='closed-ui-restore',
                 queueDrained=True, clientCurrentExerciseCleared=True, clientInventory=final, startedOrder=exercises,
                 activeAcks=['token'+str(i) for i in range(len(exercises))],
@@ -79,8 +86,27 @@ class FitnessAdapterTests(unittest.TestCase):
                 startMS=i*700000,sampleMS=i*700000+120000,label=f'2.0 / {minutes} minutes') for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
             if case=='burpees-30' and mode=='toolkit':command['durationStopDelayMilliseconds']=0
             if case=='pending-reorder' and mode=='toolkit':command['reorderedTailBeforeStart']=True
-            if case=='closed-ui-restore' and mode=='toolkit':
+            if case in fitness.BORROWED_CASES and mode=='toolkit':
                 command.update(borrowedTransferProgress=True,borrowedTool=ids['dumbbell'],borrowedSourceBag=ids['bag'])
+            if case in fitness.RESTORATION_CASES:
+                command.update(beforeTail=dict(inventory=copy.deepcopy(final),activation=copy.deepcopy(prep['activation']),nativeClock=1000000,callback='ISBaseTimedAction.begin'),
+                               cancelCallback='ISFitnessUI:CANCEL' if mode=='native' else 'ActionQueue.cancelOperation',
+                               clientActivation=copy.deepcopy(prep['activation']))
+                receipt['activation']=copy.deepcopy(prep['activation'])
+                if mode=='toolkit':
+                    command.update(confirmedPickup=True,confirmedReturn=True,returnCount=1,propEquipObserved=case=='active-cancel-restore',confirmedPreparation=case=='active-cancel-restore',
+                        settlement=dict(phase='cleanup',steps=[dict(phase='prepare',state='earned',started=True)],
+                            borrowings=[dict(id=ids['dumbbell'],fullType='Base.DumbBell',state='completed')]))
+                if case=='active-cancel-restore' and mode=='toolkit':
+                    command['preparationAtCancel']=dict(steps=[dict(observedPreparation=True,kind=kind,itemId=ids[name],
+                        itemType=types[name],state='earned',started=True) for kind,name in (('ISUnequipAction','hammer'),
+                        ('ISUnequipAction','screwdriver'),('ISUnequipAction','bag'),('ISInventoryTransferAction','dumbbell'),('ISEquipWeaponAction','dumbbell'))])
+                if case=='pickup-cancel-restore':
+                    command.update(pickupCancelled=True,pickupCancel=dict(id=ids['dumbbell'],kind='Base.DumbBell',source=ids['bag'],
+                        destination='root',started=True,progress=.25,transaction=5 if mp else 0))
+                if mp:
+                    receipt['tailStart']=dict(id=ids['tail'],kind='Base.BookFirstAid1',callback='ISReadABook.serverStart',
+                        workouts=len(exercises),observerActive=False,inventory=copy.deepcopy(final),activation=copy.deepcopy(prep['activation']))
             raw.append(('PREPARED', prep))
             if case in ('missing-dumbbell', 'exhaustion'):
                 mutation = dict(case=case, removed=ids['dumbbell'] if case=='missing-dumbbell' else False,
@@ -91,6 +117,55 @@ class FitnessAdapterTests(unittest.TestCase):
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
         rows = [dict(row, suite='fitness', actor='client1', kind=self.selection['kind'], mode=mode) for row in rows]
         return rows, raw, peers
+
+
+    def test_borrowed_cancel_requires_native_progress_confirmed_return_and_tail_boundary(self):
+        for case in fitness.RESTORATION_CASES:
+            self.selection['cases']=[case]
+            for change in ('pickup','return','borrowing','return-count','duplicate-return','boundary-hands','boundary-container','activation','cancel-callback'):
+                evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command']
+                if change=='pickup':command['confirmedPickup']=False
+                elif change=='return':command['confirmedReturn']=False
+                elif change=='borrowing':command['settlement']['borrowings'][0]['state']='active'
+                elif change=='return-count':command['settlement']['borrowings']*=2
+                elif change=='duplicate-return':command['returnCount']=2
+                elif change=='boundary-hands':command['beforeTail']['inventory']['primary']=False
+                elif change=='boundary-container':command['beforeTail']['inventory']['items'][-1]['container']='root'
+                elif change=='activation':command['beforeTail']['activation']={}
+                else:command['cancelCallback']='fixture-synthetic-cancel'
+                with self.subTest(case=case,change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_active_borrowed_cancel_requires_all_exact_native_preparation_effects(self):
+        self.selection['cases']=['active-cancel-restore']
+        for change in ('unearned','missing-step','wrong-id','wrong-type','unstarted','not-observed'):
+            evidence=copy.deepcopy(self.evidence());steps=evidence[0][1]['command']['preparationAtCancel']['steps']
+            if change=='unearned':steps[0]['state']='pending'
+            elif change=='missing-step':steps.pop()
+            elif change=='wrong-id':steps[0]['itemId']+=99
+            elif change=='wrong-type':steps[0]['itemType']='Base.Hammer'
+            elif change=='unstarted':steps[0]['started']=False
+            else:steps[0]['observedPreparation']=False
+            with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_pickup_cancel_rejects_nonstarted_transaction_replayed_workout_and_prop_equip(self):
+        self.selection.update(kind='mp',clients=2,languages=['EN','RU'],options={'mp_host':True},cases=['pickup-cancel-restore'])
+        for change in ('progress','started','transaction','wrong-id','prop-equip','workout','authority-tail'):
+            evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command']
+            if change=='progress':command['pickupCancel']['progress']=0
+            elif change=='started':command['pickupCancel']['started']=False
+            elif change=='transaction':command['pickupCancel']['transaction']=0
+            elif change=='wrong-id':command['pickupCancel']['id']+=1
+            elif change=='prop-equip':command['propEquipObserved']=True
+            elif change=='workout':command['startedOrder']=['bicepscurl']
+            else:evidence[1][-1][1]['tailStart']['inventory']['primary']=False
+            with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_native_borrowed_controls_execute_real_producer_and_keep_native_differences(self):
+        self.selection.update(mode='native',cases=list(fitness.RESTORATION_CASES))
+        result=self.verify()
+        self.assertEqual(result['issues'],[])
+        self.assertEqual([len(row['outcome']['receipt']['records']) for row in result['outcomes']],[1,1])
+        self.assertTrue(all(row['outcome']['command']['cancelCallback']=='ISFitnessUI:CANCEL' for row in result['outcomes']))
 
     def test_burpees_duration_stop_rejects_missing_or_delayed_native_removal(self):
         self.selection['cases'] = ['burpees-30']
@@ -214,6 +289,7 @@ class FitnessAdapterTests(unittest.TestCase):
         source=(ROOT/'tests/native_queue/fitness/shared/QueueFitnessObservation.lua').read_text()
         guard=source.index('if not isServer()then return O end')
         self.assertGreater(source.index('ISFitnessAction[begin]='),guard)
+        self.assertGreater(source.index('ISReadABook.serverStart='),guard)
         self.assertGreater(source.index('ISFitnessAction.exeLooped='),guard)
         self.assertGreater(source.index('ISFitnessAction[method]='),guard)
         self.assertNotIn('setGameSpeed(',source)
@@ -245,6 +321,7 @@ class FitnessAdapterTests(unittest.TestCase):
                  start=function()return 'original' end,
                  stop=function()return 'original' end,
                  perform=function()return 'original' end}
+                ISReadABook={serverStart=function()calls.readStart=(calls.readStart or 0)+1;return 'native-reader-result'end};package.preload['TimedActions/ISReadABook']=function()return ISReadABook end
                 originalStart,originalLoop,originalStop=ISFitnessAction.start,ISFitnessAction.exeLooped,ISFitnessAction.stop
                 package.preload['TimedActions/ISFitnessAction']=function()return ISFitnessAction end
             """)
@@ -265,6 +342,13 @@ class FitnessAdapterTests(unittest.TestCase):
                  assert(#receipt.records==1 and receipt.records[1].reps==2)
                  assert(receipt.records[1].before.fitnessXP==0 and receipt.records[1].after.fitnessXP==10)
                  assert(receipt.serverStopSettled and receipt.currentExerciseCleared)
+                 observer.tailID=42;observer.inventory=function()return {exact='inventory'}end
+                 observer.activation=function()return {exact='activation'}end
+                 local book={getID=function()return 42 end,getFullType=function()return 'Base.BookFirstAid1'end}
+                 assert(ISReadABook.serverStart({character=player,item=book})=='native-reader-result')
+                 assert(calls.readStart==1 and observer.tailStart.id==42 and observer.tailStart.workouts==1
+                  and not observer.tailStart.observerActive and observer.tailStart.inventory.exact=='inventory'
+                  and observer.tailStart.activation.exact=='activation')
                 else
                  assert(ISFitnessAction.exeLooped==originalLoop)
                  observer.sample(action);action.repnb=2;calls.xp=10;advance();observer.sample(action)
@@ -292,7 +376,7 @@ class FitnessAdapterTests(unittest.TestCase):
         fixture=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
         lua.globals().fixture=fixture
         lua.execute("""
-            local player={};local panel={player=player}
+            local player={};local panel={player=player,exeTime={getInternalText=function()return '10'end}}
             local action={Type='ISFitnessAction',character=player,fitnessUI=panel,exercise='bicepscurl',timeToExe=10}
             local wrapper={Type='ISWaitWhileGettingUp',onCompleteFunc=ISTimedActionQueue.add,onCompleteArgs={p1=action}}
             local found,deferred=fixture.requestedAction(wrapper,panel,true,'bicepscurl')
@@ -478,7 +562,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 for _,name in ipairs({'OnGameStart','OnTick','OnServerCommand'})do
                  local event=name;Events[name]={Add=function(fn)handlers[event]=fn end}
                 end
-                PZSurvivorToolkit={ActionQueue={},ActionQueueOperations={},Settings={actionQueue=function()return true end}}
+                PZSurvivorToolkit={ActionQueue={},ActionQueueOperations={},ActionQueueLifecycle={registerObserver=function()return true end},Settings={actionQueue=function()return true end}}
                 PZAPI={ModOptions={getOptions=function()return {getOption=function()return {
                  setValue=function()optionCalls=optionCalls+1 end}end}end}}
                 local config={kind=test_kind,mode='toolkit',cases={'empty'}}
@@ -486,7 +570,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 package.preload['QueueHealthEvents']=function()return {
                  emit=function(row)rows[#rows+1]=row end,encode=function()return '{}'end}end
                 for _,name in ipairs({'PZSurvivorToolkit/ActionQueuePanel','ISUI/ISFitnessUI',
-                 'Definitions/FitnessExercises','TimedActions/ISFitnessAction','QueueFitnessFixture','QueueFitnessObservation'})do
+                 'Definitions/FitnessExercises','TimedActions/ISFitnessAction','QueueFitnessFixture','QueueFitnessObservation','PZSurvivorToolkit/ActionQueueSettlement'})do
                  package.preload[name]=function()return {}end
                 end
                 getTimestampMs=function()return now end;isClient=function()return network end

@@ -1,5 +1,19 @@
 local O=require 'QueueFitnessObservation'
 local F={}
+function F.restorationCase(id)return id=='active-cancel-restore'or id=='pickup-cancel-restore'end
+function F.borrowedCase(id)return id=='closed-ui-restore'or F.restorationCase(id)end
+function F.activation(player)
+ local rows={}
+ local function scan(container)
+  for i=0,container:getItems():size()-1 do
+   local item=container:getItems():get(i)
+   if item:canBeActivated()then rows[tostring(item:getID())]=item:isActivated()end
+   if instanceof(item,'InventoryContainer')then scan(item:getItemContainer())end
+  end
+ end
+ scan(player:getInventory())
+ return rows
+end
 local function identity(item)return item and item:getID()or false end
 function F.requestedAction(action,panel,native,exercise)
  if action.Type=='ISFitnessAction'or action.toolkitFitnessStage=='request'then return action,false end
@@ -56,8 +70,8 @@ function F.prepare(player,id,previous)
  end
  local state={case=id,player=player,items={},ids={case=id,items={}}}
  for _,name in ipairs({'front','tail','bag','hammer','screwdriver','dumbbell'})do
-  local destination=id=='closed-ui-restore'and name=='dumbbell'and state.items.bag:getItemContainer()or player:getInventory()
-  local item=assert(destination:AddItem(types[name]),'missing fitness fixture item '..name)
+  local destination=F.borrowedCase(id)and name=='dumbbell'and state.items.bag:getItemContainer()or player:getInventory()
+  local item=assert(destination:AddItem(F.restorationCase(id)and name=='hammer'and 'Base.Torch'or types[name]),'missing fitness fixture item '..name)
   state.items[name]=item;state.ids.items[name]=item:getID()
  end
  for name,perk in pairs({front=Perks.Woodwork,tail=Perks.Doctor})do
@@ -66,11 +80,15 @@ function F.prepare(player,id,previous)
   book:setAlreadyReadPages(book:getNumberOfPages()-pages);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-pages)
  end
  player:getStats():set(CharacterStat.ENDURANCE,1);player:getStats():set(CharacterStat.FATIGUE,0)
- if id=='closed-ui-restore'then
+ if F.borrowedCase(id)then
   player:setWornItem(state.items.bag:canBeEquipped(),state.items.bag)
   player:setPrimaryHandItem(state.items.hammer);player:setSecondaryHandItem(state.items.screwdriver)
  end
- O.reset(player,id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player)
+ if F.restorationCase(id)then
+  assert(state.items.hammer:canBeActivated(),'fitness activation fixture requires native Torch')
+  state.items.hammer:setCurrentUses(state.items.hammer:getMaxUses());state.items.hammer:setActivated(true)
+ end
+ O.reset(player,id);O.tailID=state.ids.items.tail;state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player)
  if isServer()then
   -- InventoryContainer serialization includes its children. Send the owning root bag
   -- once; sending the nested dumbbell again would create a duplicate replica.
@@ -85,7 +103,7 @@ function F.resolve(player,ids)
  local state={case=ids.case,player=player,ids=ids,items={}}
  for name,id in pairs(ids.items)do
   local item=player:getInventory():getItemById(id);if not item then return end
-  if item:getFullType()~=types[name]then error('fitness ID/type differs '..name)end
+  if item:getFullType()~=(F.restorationCase(ids.case)and name=='hammer'and 'Base.Torch'or types[name])then error('fitness ID/type differs '..name)end
   state.items[name]=item
  end
  return state
@@ -104,7 +122,7 @@ function F.receipt(state)
  result.case=state.case;result.inventory=F.inventory(player);result.removed=state.removed or false
  result.tailRead=player:getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
  result.frontRead=player:getAlreadyReadPages(state.items.front:getFullType())==state.items.front:getNumberOfPages()
- result.before=state.ids.before;result.peerConnected=not isServer()
+ result.activation=F.activation(player);result.before=state.ids.before;result.peerConnected=not isServer()
  if isServer()then
   local online=getOnlinePlayers()
   for i=0,online:size()-1 do if online:get(i):getUsername()=='client2'then result.peerConnected=true end end
@@ -141,5 +159,5 @@ function F.releaseEquipment(state)
  if bag and player:isEquipped(bag)then player:removeWornItem(bag,false)end
  if isServer()then sendClothing(player,state.items.bag:canBeEquipped(),player:getWornItem(state.items.bag:canBeEquipped()));sendEquip(player)end
 end
-O.inventory=F.inventory
+O.inventory=F.inventory;O.activation=F.activation
 return F

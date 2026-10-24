@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -90,3 +90,25 @@ before and after cleanup. Host verifies the same idle boundary before recording
 its failed receipt and recovers only after the client confirms publication of the
 failed case. This allows later controls to run; it never turns the failed case
 into a pass or changes the recorded clinical/tail observations.
+
+The focused `active-cancel-restore` and `pickup-cancel-restore` cases start with an
+active exact-ID Torch and screwdriver held, a schoolbag worn, and the dumbbell
+inside that bag. Active cancellation waits for all four real native equipment
+preparation effects to be earned, confirmed prop pickup, real exercise repetitions
+and (in Toolkit Host) its started acknowledgement. Pickup cancellation instead
+targets the actual positive-progress native transfer and its live Host transaction.
+Toolkit must finish that pickup, return the same dumbbell exactly once, restore
+both original held items, bag and Torch activation before an independent reader,
+and never equip the prop or execute a workout in the pickup-cancel case. Value-only
+settlement snapshots prove native callback/transaction-confirmed effects; queue
+disappearance is never a receipt. A read-only observer at the shared native begin boundary snapshots the original
+equipment before the real reader begins, in both queue modes. The Host reader's
+actual serverStart callback also records live authoritative equipment and activation, delegating once.
+
+Both queue-disabled controls invoke the real Fitness OK and CANCEL callbacks.
+Native CANCEL during pickup does nothing, so that control must complete one full
+native workout with real repetitions and clinical effects. Native active-workout
+CANCEL stops the actual workout. Controls preserve native equipment/UI behavior;
+their final dumbbell remains in root inventory rather than being returned to its
+original bag, and their pre-reader equipment and activation snapshots are retained
+as native baseline differences. They never claim Toolkit restoration guarantees.

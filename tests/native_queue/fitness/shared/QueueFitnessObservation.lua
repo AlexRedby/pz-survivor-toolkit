@@ -15,7 +15,7 @@ function O.clinical(player)
 end
 function O.reset(player,id)
  assert(not O.active and not player:getFitness():getCurrentExe(),'previous native fitness session not settled')
- O.records,O.violations,O.epoch={}, {}, O.epoch+1;O.player,O.case=player,id
+ O.records,O.violations,O.epoch={}, {}, O.epoch+1;O.tailStart=nil;O.player,O.case=player,id
 end
 local function start(action)
  if action.character~=O.player then return end
@@ -34,7 +34,7 @@ local function stopped(action,method)
 end
 function O.receipt(player)
  return {records=O.records,violations=O.violations,currentExerciseCleared=not player:getFitness():getCurrentExe(),
-  serverStopSettled=O.active==nil,clinical=O.clinical(player)}
+  serverStopSettled=O.active==nil,clinical=O.clinical(player),tailStart=O.tailStart}
 end
 -- SP reads the real live action without replacing any source-guarded client method.
 function O.sample(current)
@@ -49,6 +49,15 @@ function O.sample(current)
  end
 end
 if not isServer()then return O end
+require 'TimedActions/ISReadABook'
+local tailStartOriginal=ISReadABook.serverStart
+ISReadABook.serverStart=function(action,...)
+ if action.character==O.player and action.item:getID()==O.tailID then
+  O.tailStart={id=action.item:getID(),kind=action.item:getFullType(),callback='ISReadABook.serverStart',inventory=O.inventory(action.character),
+   activation=O.activation(action.character),workouts=#O.records,observerActive=O.active~=nil}
+ end
+ return tailStartOriginal(action,...)
+end
 local begin='serverStart'
 local beginOriginal=ISFitnessAction[begin]
 ISFitnessAction[begin]=function(action,...)

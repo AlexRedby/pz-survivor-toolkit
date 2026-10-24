@@ -73,6 +73,12 @@ These are implementation and verification gaps, not evidence that every action u
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
 - [ ] Remove the remaining family-specific bypasses after the corresponding SP/MP checks; preserve fallback for unsupported Java/server versions, resource contracts and separate medical/cart sync fixes.
 
+# Fitness preparation live verification
+
+- [ ] Integrate main's ground-storage preparation with earned native drop effects, confirmed cleanup pickups and inherited restoration duties. Rebind an original source bag only through its private exact owner identity after confirmed pickup, preserving native costs, favourite flags, missing/occupied storage and queue-disabled behavior.
+- [ ] Reconcile source-backed Fitness tests and native observation with prop pickup before stowing storage. Count real native return starts by exact live IDs instead of tick polling; retain all original failed reports and native timer/order/replica baseline failures.
+- [ ] Run the selected `fitness` cases `empty,closed-ui-restore,active-cancel-restore,pickup-cancel-restore` in full-pack macOS SP and two-client menu Host with matching queue-disabled controls after an awake display is available. Use the prepared plan in this chat's isolated investigation, with fresh run snapshots. Require exact hand/bag/activation restoration before the independent reader, confirmed pickup/return, no duplicate return or replayed workout and clean logs before delivering the confirmed-effect migration. Do not count the display-blocked startup attempts as gameplay verification.
+
 # Extend cancelled queue recovery
 
 - [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.

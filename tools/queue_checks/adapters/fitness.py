@@ -9,7 +9,7 @@ import shutil
 from ..mod_selection import metadata, mod_ids
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
-         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30']
+         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'active-cancel-restore', 'pickup-cancel-restore']
 PROJECT = Path(__file__).resolve().parents[3]
 MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 SCENARIO_ACTIONS = {'fitness-ui': {
@@ -134,12 +134,17 @@ def _exhaustion_without_training(before, after):
                     for key, value in before[group].items()))
 
 
+RESTORATION_CASES = ('active-cancel-restore', 'pickup-cancel-restore')
+IMMEDIATE_CASES = ('empty', 'active-cancel', 'burpees-30', *RESTORATION_CASES)
+BORROWED_CASES = ('closed-ui-restore', *RESTORATION_CASES)
+
+
 def _expected_exercises(case, mode):
-    if case == 'exhaustion' or mode == 'toolkit' and case in ('pending-cancel', 'missing-dumbbell'):
+    if case == 'exhaustion' or mode == 'toolkit' and case in ('pending-cancel', 'missing-dumbbell', 'pickup-cancel-restore'):
         return []
     if case == 'burpees-30':
         return ['burpees']
-    return ['squats', 'pushups'] if case == 'sequential' else ['bicepscurl' if case in ('missing-dumbbell', 'closed-ui-restore') else 'squats']
+    return ['squats', 'pushups'] if case == 'sequential' else ['bicepscurl' if case in ('missing-dumbbell', *BORROWED_CASES) else 'squats']
 
 
 def _case(case, row, prep, receipt, selection, mutation=None):
@@ -154,31 +159,34 @@ def _case(case, row, prep, receipt, selection, mutation=None):
             or not _inventory(prep.get('inventory')) or not _clinical(prep.get('before'))):
         return ['Fitness exact preparation differs: ' + case]
     expected = copy.deepcopy(prep['inventory'])
+    if native and case in RESTORATION_CASES:
+        for item in expected['items']:
+            if item['id'] == items['dumbbell']:item['container'] = 'root'
     if case == 'missing-dumbbell':
         expected['items'] = [item for item in expected['items'] if item['id'] != items['dumbbell']]
     if (not _inventory(receipt.get('inventory')) or not _same(receipt['inventory'], expected)
             or not _same(command.get('clientInventory'), expected)):
         issues.append('Fitness exact inventory/container/hand/worn identities differ: ' + case)
-    if (not _matches(receipt, {'case': case, 'tailRead': True, 'frontRead': case not in ('empty', 'active-cancel', 'burpees-30'),
+    if (not _matches(receipt, {'case': case, 'tailRead': True, 'frontRead': case not in IMMEDIATE_CASES,
                                'currentExerciseCleared': True, 'serverStopSettled': True, 'peerConnected': True,
                                'removed': items['dumbbell'] if case == 'missing-dumbbell' else False})
             or not _same(receipt.get('before'), prep['before']) or not _clinical(receipt.get('clinical'))
             or not _matches(row, {'status': 'passed', 'reason': None, 'receipt': receipt})
             or not _number(receipt.get('serverSettleMilliseconds')) or receipt['serverSettleMilliseconds'] < 2000):
         issues.append('Fitness authoritative settled effects/independent tail differ: ' + case)
-    expected_fields = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in ('empty', 'active-cancel', 'burpees-30') else 12,
+    expected_fields = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in IMMEDIATE_CASES else 12,
         activeObserved=bool(_expected_exercises(case, selection['mode'])), queueDrained=True, clientCurrentExerciseCleared=True,
         pendingCancelled=not native and case == 'pending-cancel', reordered=not native and case == 'pending-reorder',
-        activeCancelled=case == 'active-cancel', closedUI=case == 'closed-ui-restore')
+        activeCancelled=case in ('active-cancel', 'active-cancel-restore'), closedUI=case == 'closed-ui-restore')
     if case == 'burpees-30' and not native:
         delay = command.get('durationStopDelayMilliseconds')
         if not _number(delay) or not 0 <= delay < 5000:
             issues.append('Fitness native stop remained active after selected duration: ' + case)
-    if case == 'closed-ui-restore' and not native:
+    if case in BORROWED_CASES and not native:
         expected_fields.update(borrowedTransferProgress=True, borrowedTool=items['dumbbell'], borrowedSourceBag=items['bag'])
     if case == 'pending-reorder' and not native:
         expected_fields['reorderedTailBeforeStart'] = True
-    if case not in ('empty', 'active-cancel', 'burpees-30'):
+    if case not in IMMEDIATE_CASES:
         expected_fields['waitingNoExercise'] = True
         if case != 'exhaustion':
             expected_fields['waitingNoClinicalEffects'] = True
@@ -215,7 +223,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                        or abs(sample['elapsed'] - max(0, min(minutes, (sample['sampleMS']-sample['startMS'])/60000))) > 1e-6
                        or not isinstance(sample.get('label'), str) or not sample['label'] for sample in progress)):
             issues.append('Fitness visible progress does not match selected native elapsed time: ' + case)
-    if case == 'closed-ui-restore':
+    if case in BORROWED_CASES:
         initial_tool = next((item for item in prep['inventory']['items'] if item['id'] == items['dumbbell']), {})
         if initial_tool.get('container') != items['bag']:
             issues.append('Fitness restoration did not borrow exact dumbbell from worn bag: ' + case)
@@ -226,6 +234,62 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or start_inventory.get('primary') != items['dumbbell'] or start_inventory.get('secondary') is not False
                     or any(item['id'] == items['bag'] for item in start_inventory.get('worn', []))):
                 issues.append('Fitness authoritative start lacked borrowed dumbbell/unequipped bag: ' + case)
+    if case in RESTORATION_CASES:
+        # Vanilla keeps its native UI restoration and never returns its prop to the
+        # source bag. Its baseline records this difference without claiming Toolkit cleanup.
+        expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
+                              hammer='Base.Torch', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
+        if (any(next((item for item in prep['inventory']['items'] if item['id'] == identity), {}).get('kind') != expected_types[name]
+                for name, identity in items.items())
+                or not _same(prep.get('activation'), {str(items['hammer']): True})):
+            issues.append('Fitness borrowed cancellation exact gear/type/activation setup differs: ' + case)
+        before_tail = command.get('beforeTail', {})
+        if (before_tail.get('callback') != 'ISBaseTimedAction.begin' or not _inventory(before_tail.get('inventory')) or not _number(before_tail.get('nativeClock'))
+                or not isinstance(before_tail.get('activation'), dict)
+                or not _matches(command, dict(cancelCallback='ISFitnessUI:CANCEL' if native else 'ActionQueue.cancelOperation'))):
+            issues.append('Fitness independent tail boundary/native cancel callback missing: ' + case)
+        if not native:
+            settlement = command.get('settlement', {})
+            if (command.get('confirmedPickup') is not True or command.get('confirmedReturn') is not True or not _matches(command, dict(returnCount=1))
+                    or settlement.get('borrowings') != [dict(id=items['dumbbell'], fullType='Base.DumbBell', state='completed')]
+                    or not _same(before_tail.get('inventory'), expected)
+                    or not _same(before_tail.get('activation'), prep['activation'])
+                    or not _same(command.get('clientActivation'), prep['activation'])
+                    or not _same(receipt.get('activation'), prep['activation'])):
+                issues.append('Fitness cancellation lacked confirmed pickup/return or exact restoration before reader: ' + case)
+            if case == 'active-cancel-restore':
+                steps = command.get('preparationAtCancel', {}).get('steps', [])
+                observed = [step for step in steps if step.get('observedPreparation') is True]
+                expected_preparation = [('ISUnequipAction', items['hammer'], 'Base.Torch'),
+                                        ('ISUnequipAction', items['screwdriver'], 'Base.Screwdriver'),
+                                        ('ISUnequipAction', items['bag'], 'Base.Bag_Schoolbag'),
+                                        ('ISInventoryTransferAction', items['dumbbell'], 'Base.DumbBell'),
+                                        ('ISEquipWeaponAction', items['dumbbell'], 'Base.DumbBell')]
+                if (command.get('confirmedPreparation') is not True or len(observed) != 5
+                        or [(step.get('kind'), step.get('itemId'), step.get('itemType')) for step in observed] != expected_preparation
+                        or any(not _matches(step, dict(state='earned', started=True)) for step in observed)):
+                    issues.append('Fitness active cancellation preceded confirmed preparation: ' + case)
+            if case == 'pickup-cancel-restore' and command.get('propEquipObserved') is not False:
+                issues.append('Fitness canceled pickup still equipped workout prop: ' + case)
+        if case == 'pickup-cancel-restore' and not native:
+            if not _exhaustion_without_training(prep['before'], receipt.get('clinical')):
+                issues.append('Fitness canceled pickup changed native training effects: ' + case)
+        if case == 'pickup-cancel-restore':
+            pickup = command.get('pickupCancel', {})
+            if (not _matches(command, dict(pickupCancelled=True))
+                    or not _matches(pickup, dict(id=items['dumbbell'], kind='Base.DumbBell', source=items['bag'], destination='root', started=True))
+                    or not _number(pickup.get('progress')) or not 0 < pickup['progress'] < 1
+                    or type(pickup.get('transaction')) is not int or pickup['transaction'] < (1 if mp else 0)):
+                issues.append('Fitness cancellation did not target exact in-flight native pickup: ' + case)
+        if mp:
+            tail_start = receipt.get('tailStart', {})
+            if (not _matches(tail_start, dict(id=items['tail'], kind='Base.BookFirstAid1', callback='ISReadABook.serverStart',
+                                             workouts=len(exercises), observerActive=False))
+                    or not _inventory(tail_start.get('inventory'))
+                    or not isinstance(tail_start.get('activation'), dict)
+                    or not native and (not _same(tail_start['inventory'], expected)
+                                       or not _same(tail_start['activation'], prep['activation']))):
+                issues.append('Fitness authoritative reader callback lacked restored live Host replicas: ' + case)
     last_stop = None
     for record in records:
         before, after, rep = record.get('before'), record.get('after'), record.get('lastRep')
@@ -245,7 +309,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                              (('legs',) if record['exercise'] == 'squats' else ('arms',)))
                      and all(after[key] >= rep[key] for key in ('fitnessXP', 'strengthXP'))
                      and (last_stop is None or record['startMS'] >= last_stop)
-                     and (duration < 600000 if case == 'active-cancel' else duration >= minutes * 60000))
+                     and (duration < 600000 if case in ('active-cancel', 'active-cancel-restore') else duration >= minutes * 60000))
             last_stop = record['stopMS']
         if not valid:
             issues.append('Fitness lacks real native repetitions/XP/endurance/stiffness or full duration: ' + case)
@@ -358,8 +422,8 @@ def verify(root, selection, catalog):
             emptyStartVerified=not problems and case=='empty', queuedStartVerified=not problems and case=='queued',
             sequentialVerified=not problems and case=='sequential', waitingCancelVerified=not problems and case=='pending-cancel' and selection['mode']=='toolkit',
             independentMoveVerified=not problems and case=='pending-reorder' and selection['mode']=='toolkit',
-            activeCancelVerified=not problems and case=='active-cancel', missingItemVerified=not problems and case=='missing-dumbbell',
-            restoreVerified=not problems and case=='closed-ui-restore', receipt=receipt, command=row.get('command'))
+            activeCancelVerified=not problems and case in ('active-cancel', 'active-cancel-restore'), missingItemVerified=not problems and case=='missing-dumbbell',
+            restoreVerified=not problems and case in BORROWED_CASES, receipt=receipt, command=row.get('command'))
         outcomes.append(dict(actor='client1', case=case, status='failed' if problems else 'passed', reason='; '.join(problems), outcome=outcome))
     if len(set(used_ids)) != len(used_ids):
         issues.append('Fitness fixture IDs overlap between cases')
