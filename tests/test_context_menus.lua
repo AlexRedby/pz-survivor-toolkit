@@ -1050,3 +1050,84 @@ do
  Organizer.reset()
 end
 print('PASS editor-only capture, closed-menu rules, raw Lua sample release, preserved catalog/preferences and fresh reopening')
+
+-- VRO filters native fixing entries after their parent has already been added.
+-- The source menu must lose that empty shell even with organization disabled.
+do
+ Organizer.reset();Organizer.endCapture()
+ local originalText=getText
+ getText=function(key) return key=='ContextMenu_Repair' and 'Починить' or originalText(key) end
+ local repairLabel=getText('ContextMenu_Repair')
+ local function repairMenu(inventory,content)
+  local menu=ISContextMenu:new(nil);root=menu
+  menu.toolkitContextKind=inventory and 'inventory' or 'vehicle'
+  local before=menu:addOption('Before',nil,function() end)
+  local repair=menu:addOption(repairLabel..(inventory and ' Капот' or ''),nil,nil)
+  local child=menu:getNew(menu);menu:addSubMenu(repair,child)
+  if content then content(child) end
+  local after=menu:addOption('After',nil,function() end)
+  menu.mouseOver=after.id
+  return menu,repair,child,before,after
+ end
+ for _,organization in ipairs({false,true}) do
+  enabled=organization
+  for _,inventory in ipairs({false,true}) do
+   local menu,repair,child,before,after=repairMenu(inventory,function(child)
+    local ancestor=child:addOption('Back',child,ISContextMenu.displayAncestor)
+    ancestor.isDefaultOption=true
+    child:addOption('Repair requirements').isTitle=true
+   end)
+   menu.subMenu=child
+   menu:prerender()
+   assert(#menu.options==2 and menu.options[1]==before and menu.options[2]==after,
+    'empty installed/inventory repair parent survived final presentation')
+   assert(menu.numOptions==3 and before.id==1 and after.id==2 and menu.mouseOver==2,
+    'removing repair must retain selected row identity and native indices')
+   assert(child.hidden and not menu.subMenu,'removed repair submenu stayed open')
+   menu:prerender();Organizer.restore(menu)
+   assert(#menu.options==2,'restoration resurrected a removed repair parent')
+   local pooled=0
+   for _,option in ipairs(menu.optionPool) do if option==repair then pooled=pooled+1 end end
+   assert(pooled==1,'removed repair parent must be pooled once in its owning menu')
+   -- A pooled repair option can become a live action on the next native rebuild.
+   menu:clear()
+   local rebuilt=menu:addOption(repairLabel,nil,function() return 'repair' end)
+   menu:prerender()
+   assert(menu.options[1]==rebuilt and rebuilt.onSelect()=='repair','rebuild lost a real repair action')
+  end
+  local menu,repair,child=repairMenu(false,function(child)
+   local choice=child:addOption('1 SheetMetal',nil,nil)
+   choice.notAvailable=true;choice.toolTip={description='Mechanics 2 required'}
+  end)
+  menu:prerender()
+  assert(menu.options[2]==repair and child.options[1].notAvailable
+   and child.options[1].toolTip.description=='Mechanics 2 required',
+   'unavailable repair choices must retain their requirements')
+  local menu,repair,child=repairMenu(true,function(child)
+   child:addOption('1 SheetMetal',nil,function() return 'fix' end)
+  end)
+  menu:prerender()
+  assert(menu.options[2]==repair and child.options[1].onSelect()=='fix','available repair changed')
+  Organizer.restore(menu)
+ end
+ enabled=false
+ local menu,repair,child=repairMenu(false)
+ repair.onSelect=function() return 'direct repair' end
+ menu:prerender();assert(menu.options[2]==repair,'callback-bearing repair parent was removed')
+ repair.onSelect=nil;repair.subOption=-100
+ menu:prerender();assert(menu.options[2]==repair,'missing submenu was treated as known empty')
+ menu,repair,child=repairMenu(false);repair.name='Unrelated menu'
+ menu:prerender();assert(menu.options[2]==repair,'unrelated empty submenu was removed')
+ menu,repair,child=repairMenu(false);menu.mouseOver=repair.id
+ menu:prerender();assert(menu.mouseOver==-1,'removed selected repair moved selection to another action')
+ -- A user profile hiding a child is different from a mod providing no choices.
+ enabled=true
+ menu,repair,child=repairMenu(false,function(child) child:addOption('Hidden repair material',nil,function() end) end)
+ Organizer.setOverride('label:Hidden repair material','hidden')
+ menu:prerender();assert(menu.options[2]==repair and #child.options==0)
+ menu:prerender();assert(menu.options[2]==repair,'presentation pruned the organized rather than source tree')
+ enabled=false;menu:prerender()
+ assert(menu.options[2]==repair and #child.options==1,'disabling organization failed to restore a real choice')
+ getText=originalText;enabled=true;Organizer.reset()
+end
+print('PASS empty installed/inventory repairs, localized names, disabled requirements, native navigation, pooling/rebuild and profile restoration')
