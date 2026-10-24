@@ -2148,6 +2148,12 @@ do
                 'a later source-dependent pickup must prevent waiving its required book location')
             return
         end
+        local oldIntent=PZSurvivorToolkit.ActionQueueTidyIntent
+        PZSurvivorToolkit.ActionQueueTidyIntent={canKeepReturn=function()return false end}
+        assert(api.cancelReason(owner,returned)=='dependent' and not api.cancel(owner,returned)
+            and owner:indexOf(returned)~=-1 and settlement.operationState(reading).borrowings[1].state=='active',
+            'an unavailable restoration integration must deny before changing the earned return')
+        PZSurvivorToolkit.ActionQueueTidyIntent=oldIntent
         assert(target and not refusal,'earned pending return cross must be available: '..tostring(refusal)
             ..' native='..tostring(PZSurvivorToolkit.ActionQueuePolicy.matchesNative(returned))
             ..' ledger='..tostring(settlement.canWaivePendingReturn(returned,function()return true end)))

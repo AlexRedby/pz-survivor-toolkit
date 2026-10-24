@@ -1307,6 +1307,54 @@ for _, client in ipairs({false, true}) do
     assert(s.counts() == 0 and s.queue.queue[2] == s.tail and s.root.items[181] == action.item,
         'later cancellation must not resurrect a waived loan from its legacy pickup hint')
 end
+-- A committed keep intent crosses to the existing restoration integration only
+-- at the synchronous private boundary; neither preview nor history can replay it.
+for _, client in ipairs({false, true}) do
+    local s = pendingReturnFixture(client)
+    local action = s.pendingReturn
+    local handle = s.settlement.pendingReturnWaiver(action, s.returnGuard)
+    assert(not s.settlement.returnRetention({}, action) and not s.settlement.returnRetention(handle, action))
+    local oldIntent = PZSurvivorToolkit.ActionQueueTidyIntent
+    local receipt, calls
+    calls = 0
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        calls = calls + 1
+        assert(actual == action and capability == handle)
+        assert(not s.settlement.returnRetention(capability, s.current))
+        receipt = assert(s.settlement.returnRetention(capability, actual))
+        assert(not s.settlement.returnRetention(capability, actual), 'a committed keep receipt is one-use')
+        return true
+    end}
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard))
+    assert(calls == 1 and receipt.character == action.character and receipt.queue == s.queue
+        and receipt.generation == (s.queue.toolkitOperationGeneration or 0)
+        and receipt.item == action.item and receipt.source == s.root and receipt.destination == action.destContainer)
+    assert(not s.settlement.returnRetention(handle, action)
+        and not s.settlement.waivePendingReturn(handle, action, s.returnGuard),
+        'a historical waiver cannot re-arm a later restoration session')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
+for _, failure in ipairs({'reject', 'error'}) do
+    local s = pendingReturnFixture(false)
+    local action = s.pendingReturn
+    local handle = s.settlement.pendingReturnWaiver(action, s.returnGuard)
+    local oldIntent = PZSurvivorToolkit.ActionQueueTidyIntent
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        assert(s.settlement.returnRetention(capability, actual))
+        if failure == 'error' then error('fixture unavailable integration') end
+        return false
+    end}
+    assert(not s.settlement.waivePendingReturn(handle, action, s.returnGuard)
+        and s.settlement.operationState(s.current).borrowings[1].state == 'active'
+        and s.queue.queue[2] == action and s.counts() == 0,
+        'unavailable restoration integration must not partially waive/remove the return')
+    assert(not s.settlement.returnRetention(handle, action))
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        return s.settlement.returnRetention(capability, actual) ~= nil
+    end}
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard), 'failed publication must preserve the usable original cancellation')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
 for _, client in ipairs({false, true}) do
     local s = pendingReturnFixture(client, true)
     assert(not s.settlement.canWaivePendingReturn(s.pendingReturn, s.returnGuard)

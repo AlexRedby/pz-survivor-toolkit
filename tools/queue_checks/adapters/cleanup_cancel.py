@@ -32,7 +32,9 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [Path(__file__).with_name('tv_controls.py'), Path(project) / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePanel.lua', *sorted((root / 'cleanup-cancel').rglob('*.lua')),
+    code = Path(project) / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit'
+    return [Path(__file__).with_name('tv_controls.py'), code / 'ActionQueuePanel.lua', code / 'ActionQueueTidyIntent.lua',
+            *sorted((root / 'cleanup-cancel').rglob('*.lua')),
             *sorted((root / 'startup').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
 

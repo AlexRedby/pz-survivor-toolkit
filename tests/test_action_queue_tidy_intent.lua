@@ -272,6 +272,139 @@ local function fixture(client)
     return h
 end
 
+-- Settlement publishes a one-use copy only during a committed waiver. These
+-- isolated Intent checks model that private boundary; Settlement tests own seals.
+local function retainReturn(h,item,destination,owner)
+    local action=h.transfer(item,destination)
+    local handle={}
+    local dto={character=h.player,queue=h.queue,generation=h.queue.toolkitOperationGeneration or 0,
+        item=item,source=h.inventory,destination=destination,owner=owner}
+    local published=true
+    h.settlement.returnRetention=function(candidate,original)
+        if not published or candidate~=handle or original~=action then return end
+        published=false
+        return dto
+    end
+    return action,handle,dto
+end
+for _,client in ipairs({false,true}) do
+    test('committed return intent creates idle state and preserves other restoration '..tostring(client),function()
+        local h=fixture(client)
+        local kept,other,torch,secondary=h.item(),h.item(),h.item(),h.item()
+        torch.activatable=true
+        local action,handle=retainReturn(h,kept,h.source)
+        assert(h.intent.canKeepReturn(action)and h.intent.keepReturn(action,handle))
+        assert(not h.intent.keepReturn(action,handle),'a consumed publication must not re-arm old keep intent')
+        assert(#h.queue.queue==0 and kept:getContainer()==h.inventory,'retention publication must not execute inventory effects')
+        h.restore(function()
+            ISTimedActionQueue.add(h.transfer(kept,h.source))
+            ISTimedActionQueue.add(h.transfer(other,h.source))
+            ISTimedActionQueue.add(h.equip(torch,true,false))
+            ISTimedActionQueue.add(h.equip(secondary,false,false))
+            ISTimedActionQueue.add(P4RestoreAction:new(h.player,torch,true))
+        end)
+        assert(#h.queue.queue==4,'only the exact waived return may disappear from the native P4 batch')
+        h.drain()
+        assert(kept:getContainer()==h.inventory and other:getContainer()==h.source)
+        assert(h.player.primary==torch and h.player.secondary==secondary and torch:isActivated())
+        h.tick();h.tick()
+        h.restore(function()ISTimedActionQueue.add(h.transfer(kept,h.source))end)
+        assert(#h.queue.queue==1,'finished P4 idle session must not retain a permanent item exemption')
+    end)
+    test('return intent matches only its exact native endpoints '..tostring(client),function()
+        for _,mutation in ipairs({'destination','source','item','guard','multi-item','unknown-floor'})do
+            local h=fixture(client)
+            local kept,other=h.item(),h.item()
+            local action,handle=retainReturn(h,kept,h.source)
+            assert(h.intent.keepReturn(action,handle))
+            h.restore(function()
+                local returned=h.transfer(kept,h.source)
+                if mutation=='destination'then returned.destContainer={items={}}
+                elseif mutation=='source'then returned.srcContainer={items={}}
+                elseif mutation=='item'then returned=h.transfer(other,h.source)
+                elseif mutation=='guard'then returned.changed=true
+                elseif mutation=='multi-item'then returned.queueList[1].items[2]=other
+                elseif mutation=='unknown-floor'then returned=P4RestoreFloorAction:new(h.player,kept)end
+                ISTimedActionQueue.add(returned)
+            end)
+            assert(#h.queue.queue==1,mutation..': uncertain or unrelated restoration was suppressed')
+        end
+    end)
+    test('return retention expires on generation loss missing root and proven departure '..tostring(client),function()
+        for _,boundary in ipairs({'generation','missing-root','departure','type-change'})do
+            local h=fixture(client)
+            local kept=h.item()
+            local action,handle=retainReturn(h,kept,h.source)
+            assert(h.intent.keepReturn(action,handle))
+            if boundary=='generation'then h.queue.toolkitOperationGeneration=1
+            elseif boundary=='missing-root'then h.move(kept,h.source);h.tick();h.move(kept,h.inventory)
+            elseif boundary=='departure'then
+                ISTimedActionQueue.add(h.transfer(kept,h.source));h.drain()
+                ISTimedActionQueue.add(h.transfer(kept,h.inventory));h.drain()
+            elseif boundary=='type-change'then kept.kind='Base.Foreign';h.tick();kept.kind='Base.Hammer'end
+            h.restore(function()ISTimedActionQueue.add(h.transfer(kept,h.source))end)
+            assert(#h.queue.queue==1,boundary..': old intent leaked into a later borrowing episode')
+        end
+    end)
+    test('return retention handles only exact carried bag owner replicas '..tostring(client),function()
+        for _,mutation in ipairs({'exact','foreign-id','foreign-type','not-carried'})do
+            local h=fixture(client)
+            local kept,bag=h.item(),h.item(nil,50,'Base.Bag')
+            local old={items={}};bag.contents=old;function bag:getInventory()return self.contents end
+            local action,handle=retainReturn(h,kept,old,{id=bag:getID(),fullType=bag:getFullType()})
+            assert(h.intent.keepReturn(action,handle))
+            local replacement=h.item(nil,mutation=='foreign-id'and 51 or 50,mutation=='foreign-type'and'Base.OtherBag'or'Base.Bag')
+            replacement.contents={items={}};function replacement:getInventory()return self.contents end
+            if mutation=='foreign-id'then h.inventory.items[50]=nil end
+            if mutation=='not-carried'then h.move(replacement,h.source)end
+            h.restore(function()ISTimedActionQueue.add(h.transfer(kept,replacement.contents))end)
+            assert(#h.queue.queue==(mutation=='exact'and 0 or 1),mutation..': wrong bag replica ownership decision')
+        end
+    end)
+    test('exact waived floor return suppresses only its paired native placement '..tostring(client),function()
+        local h=fixture(client)
+        local kept,other=h.item(),h.item()
+        h.source.getType=function()return'floor'end
+        local action,handle=retainReturn(h,kept,h.source)
+        assert(h.intent.keepReturn(action,handle))
+        h.restore(function()
+            ISTimedActionQueue.add(P4RestoreFloorAction:new(h.player,kept))
+            ISTimedActionQueue.add(h.transfer(kept,h.source))
+            ISTimedActionQueue.add(P4RestoreFloorAction:new(h.player,other))
+            ISTimedActionQueue.add(h.transfer(other,h.source))
+        end)
+        assert(#h.queue.queue==2 and h.queue.queue[1].item==other and h.queue.queue[2].item==other,
+            'paired exact placement was retained or unrelated floor restoration was removed')
+    end)
+end
+test('keepReturn rejects uncommitted copied and stale DTO publications',function()
+    for _,mutation in ipairs({'forged','source','destination','item','generation','queue','actor','guard','local-actor','helper'})do
+        local h=fixture()
+        local kept=h.item()
+        local action,handle,dto=retainReturn(h,kept,h.source)
+        if mutation=='forged'then handle={}
+        elseif mutation=='source'then dto.source={}
+        elseif mutation=='destination'then dto.destination={}
+        elseif mutation=='item'then dto.item=h.item()
+        elseif mutation=='generation'then dto.generation=1
+        elseif mutation=='queue'then dto.queue={}
+        elseif mutation=='actor'then dto.character={}
+        elseif mutation=='guard'then h.valid=false
+        elseif mutation=='local-actor'then getSpecificPlayer=function()return{}end
+        elseif mutation=='helper'then ISInventoryTransferUtil.newInventoryTransferAction=function()end end
+        assert(not h.intent.keepReturn(action,handle),mutation..': invalid publication admitted keep intent')
+    end
+end)
+test('loaded P4 requires installed source proof but absent P4 needs no keep adapter',function()
+    local h=fixture()
+    local unloaded=assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'))()
+    P4TidyUpMeister={}
+    assert(not unloaded.canKeepReturn(h.transfer(h.item(),h.source)))
+    assert(not unloaded.keepReturn(h.transfer(h.item(),h.source),{}))
+    P4TidyUpMeister=nil
+    assert(unloaded.canKeepReturn(nil)and unloaded.keepReturn(nil,{}),'missing optional P4 must remain a no-op')
+end)
+
 test("confirmed explicit pickup keeps item and borrowed tool returns", function()
     local h = fixture()
     local kept, borrowed = h.item(h.source), h.item(h.inventory)

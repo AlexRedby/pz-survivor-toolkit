@@ -966,6 +966,28 @@ function Settlement.pendingReturnWaiver(action, guard)
     return handle
 end
 
+-- Only the synchronous commit recipient can consume this private, one-use
+-- receipt. A historical waiver cannot re-arm a later P4 restoration session.
+function Settlement.returnRetention(handle, action)
+    local seal = type(handle) == "table" and rawget(handle, returnWaiverMarker)
+    local proof = type(seal) == "function" and seal(handle)
+    if not proof or not proof.publishing or proof.retentionRead or not proof.used
+        or proof.action ~= action or proof.candidate.phase ~= "waived"
+        or not operationLive(proof.record) then return end
+    local character, candidate = proof.record.character, proof.candidate
+    local inventory = character:getInventory()
+    local item = inventory:getItemById(candidate.id)
+    if getSpecificPlayer(character:getPlayerNum()) ~= character or item ~= proof.item
+        or not sameMember(item, candidate) or item:getContainer() ~= inventory
+        or proof.source ~= inventory or action.srcContainer ~= proof.source
+        or action.destContainer ~= proof.destination or action.item ~= item then return end
+    proof.retentionRead = true
+    local owner = candidate.sourceOwner
+    return {character = character, queue = proof.record.queue, generation = proof.record.generation,
+        item = item, source = inventory, destination = proof.destination,
+        owner = owner and {id = owner.id, fullType = owner.fullType} or nil}
+end
+
 -- The caller commits immediately before its reviewed empty native forceCancel
 -- and removal. Re-querying after reset, start, identity changes or another stop
 -- cannot turn the old capability into a cleanup exemption.
@@ -978,6 +1000,16 @@ function Settlement.waivePendingReturn(handle, action, guard)
     local candidate, scope, record = returnWaiverCandidate(action, guard)
     if candidate ~= proof.candidate or scope ~= proof.scope or record ~= proof.record then return false end
     proof.used, candidate.phase = true, "waived"
+    local intent = Toolkit.ActionQueueTidyIntent
+    if intent and type(intent.keepReturn) == "function" then
+        proof.publishing = true
+        local ok, kept = pcall(intent.keepReturn, action, handle)
+        proof.publishing = false
+        if not ok or kept ~= true then
+            proof.used, proof.retentionRead, candidate.phase = false, nil, "active"
+            return false
+        end
+    end
     return true
 end
 

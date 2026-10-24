@@ -549,7 +549,7 @@ class CleanupCancelChecks(unittest.TestCase):
                     return panel
                 end
                 return{T=T,state={player={getPlayerNum=function()return 0 end}},queue=function()return q end,
-                    byAction={[body]={sequence=2},[returning]={sequence=3}},itemID=function(action)return action.item.id end,
+                    byAction={[body]={sequence=2,actionRef='registered-body'},[returning]={sequence=3,actionRef='registered-return'}},itemID=function(action)return action.item.id end,
                     now=function()return 100 end,target=whole and body or returning,stats=stats}
             end
         """)
@@ -561,6 +561,10 @@ class CleanupCancelChecks(unittest.TestCase):
                     if reason is None:
                         evidence = cancel(f.target, whole)
                         self.assertTrue(evidence.previewAllowed and evidence.pressed and evidence.released)
+                        self.assertEqual('registered-body' if whole else 'registered-return', evidence.actionRef)
+                        self.assertEqual('registered-body', evidence.bodyRef)
+                        self.assertNotEqual(lua.eval('tostring')(f.target), evidence.actionRef,
+                                            'current mutable Kahlua dumps must not replace registered exact-object identities')
                         self.assertEqual((1, 1, True), (f.stats.presses, f.stats.releases, f.stats.removed))
                     else:
                         with self.assertRaisesRegex(LuaError, 'real cancel preview denied operation_dependent'):

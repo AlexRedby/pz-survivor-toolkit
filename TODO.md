@@ -1,5 +1,6 @@
 # Enabled queue cancellation verification
 
+- [ ] Propagate the sealed committed keep-return intent to the existing P4 idle-restoration filter, scoped to exact actor/item/source/queue generation. Preserve other cleanup, clear the intent after departure/reset/idle, and prevent old capabilities or later borrowing episodes from inheriting it. The SP run confirmed P4 creates a new late return after the original return is cancelled.
 - [ ] Verify grouped container-book reading through the real panel/Queue API in matching full-pack SP/Host controls and Toolkit runs: whole-group cancellation, a pending return cancelled while reading continues and the exact book stays carried, no regenerated return after later cancellation, retained mandatory cleanup and independent work. Preserve historical failed reports; rerun with the source-backed native-duration bracket check.
 - [ ] Audit native source snapshots and logs, recheck current main and the delivered Toolkit version, then push the verified cancellation fixes to main. Offline policy, settlement, UI and fixture regressions already cover the change; native Toolkit outcomes remain required before delivery.
 

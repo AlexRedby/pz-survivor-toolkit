@@ -1401,6 +1401,10 @@ pendingReturnGuard = function(action, reference)
     if not nativePendingCancelHasNoEffects() or action.forceCancel ~= nativeForceCancel
         or not callbacksSafe(action) or action.item:getID() ~= reference.id
         or action.item:getFullType() ~= reference.fullType then return false end
+    local intent = Toolkit.ActionQueueTidyIntent
+    if intent and type(intent.canKeepReturn) == "function" then
+        if not intent.canKeepReturn(action) then return false end
+    elseif P4TidyUpMeister then return false end
     local groups = action.queueList
     if groups == nil then return true end
     if type(groups) ~= "table" or getmetatable(groups) then return false end
