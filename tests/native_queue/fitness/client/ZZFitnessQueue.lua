@@ -18,7 +18,7 @@ local peersReady,peersReceipt,isolationAuthority,isolationFinalAuthority=false,n
 local function case()return config.cases[index]end
 local function minutes()return case()=='burpees-30'and 30 or 10 end
 local function exerciseForCase(id)return id=='burpees-30'and 'burpees'or (id=='missing-dumbbell'or F.borrowedCase(id))and 'bicepscurl'or 'squats'end
-local function immediate(id)return id=='empty'or id=='active-cancel'or id=='burpees-30'or F.restorationCase(id)end
+local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or F.restorationCase(id)end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
 -- The shared native begin boundary runs before native actions allocate/start,
@@ -193,6 +193,7 @@ local function enqueue(exercise)
  end
  if not requestAction then rejectedRequest(exercise,before+1,#queue().queue);error('native fitness/request action missing')end
  requests[#requests+1]=requestAction
+ if native and case()=='empty-restore'then command.requestNativeClock={constructorStartMS=requestAction.startMS,deadlineMS=requestAction.endMS}end
  if native and F.borrowedCase(case())then state.requestedCurrent=requestAction.fitness:getCurrentExe()end
  if not native then
   local managed=T.ActionQueueFitness.isManaged(requestAction)and requestAction.toolkitFitnessExercise==exercise
@@ -284,6 +285,8 @@ local function observe()
   command.activeObserved=true
   if not seen[current]then
    seen[current]=true;command.startedOrder[#command.startedOrder+1]=current.exeDataType
+   if case()=='empty-restore'then command.nativeWorkoutClock={constructorStartMS=current.startMS,deadlineMS=current.endMS,
+    observedBodyStartMS=O.clock(),source='actual started ISFitnessAction'}end
    if case()=='pending-reorder'and not native then
     command.reorderedTailBeforeStart=getPlayer():getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
    end
@@ -317,6 +320,14 @@ local function observe()
     if native then ui:onClick(ui.cancel)else cancel(current,'active fitness cancellation rejected')end
     command.activeCancelled=true
     if F.restorationCase(case())then command.cancelCallback=native and 'ISFitnessUI:CANCEL'or 'ActionQueue.cancelOperation' end
+   end
+  end
+ end
+ if case()=='empty-restore'and command.nativeWorkoutClock and not command.nativeWorkoutClock.observedRemovalMS then
+  for action in pairs(seen)do
+   if action.Type=='ISFitnessAction'and not player:getCharacterActions():contains(action.action)then
+    local clock=command.nativeWorkoutClock;clock.observedRemovalMS=O.clock()
+    clock.constructorStartAtRemovalMS=action.startMS;clock.deadlineAtRemovalMS=action.endMS
    end
   end
  end

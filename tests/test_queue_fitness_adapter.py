@@ -80,14 +80,18 @@ class FitnessAdapterTests(unittest.TestCase):
                     startMS=start, stopMS=end, lastRepMS=start+1000, before=clinical(), after=clinical(10,.9,1,1),
                     minEndurance=.8, lastRep=clinical(10,.8,1,1), currentExerciseCleared=True,
                     serverStopReturned=True, previousStopSettled=True))
+            if case=='empty-restore':
+                records[0].update(startMS=120000,lastRepMS=121000,nativeClock=dict(constructorStartMS=0,deadlineMS=600000,
+                    constructorStartAtStopMS=0,deadlineAtStopMS=600000,observedBodyStartMS=120000,
+                    source='ISFitnessAction.serverStart' if mp else 'SP first started sample'))
             if case in fitness.BORROWED_CASES:
                 for record in records:
                     start_inventory=copy.deepcopy(inventory)
                     start_inventory.update(primary=ids['dumbbell'],secondary=False,worn=[])
                     next(row for row in start_inventory['items'] if row['id']==ids['dumbbell'])['container']='root'
-                    if case in fitness.RESTORATION_CASES:
+                    if case in (*fitness.RESTORATION_CASES,'empty-restore'):
                         start_inventory=ground_inventory(ids,inventory);start_inventory.update(primary=ids['dumbbell'])
-                        record['startStorage']=storage_snapshot(ids,inventory,'world',True)
+                        record['startStorage']=dict(storage_snapshot(ids,inventory,'world',True),favorite=prep['storage']['favorite'])
                     record['startEquipment']=start_inventory
             receipt = dict(case=case, inventory=final, before=prep['before'], clinical=clinical(10,.9,1,1) if records else clinical(),
                 records=records, violations=[], tailRead=True, frontRead=case not in fitness.IMMEDIATE_CASES, currentExerciseCleared=True,
@@ -103,6 +107,10 @@ class FitnessAdapterTests(unittest.TestCase):
                 activeAcks=['token'+str(i) for i in range(len(exercises))],
                 terminalAcks=[dict(token='token'+str(i), state='canceled') for i in range(len(exercises))])
             command['initialClinical']=copy.deepcopy(prep['before'])
+            if case=='empty-restore':
+                command['nativeWorkoutClock']=dict(constructorStartMS=0,deadlineMS=600000,constructorStartAtRemovalMS=0,deadlineAtRemovalMS=600000,
+                    observedBodyStartMS=120000,observedRemovalMS=660000,source='actual started ISFitnessAction')
+                if mode=='native':command['requestNativeClock']=dict(constructorStartMS=0,deadlineMS=600000)
             command['progressSamples']=[dict(exercise=exercise,total=minutes,elapsed=2,fraction=2/minutes,
                 startMS=i*700000,sampleMS=i*700000+120000,label=f'2.0 / {minutes} minutes') for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
             if case=='burpees-30' and mode=='toolkit':command['durationStopDelayMilliseconds']=0
@@ -111,8 +119,8 @@ class FitnessAdapterTests(unittest.TestCase):
                 command.update(borrowedTransferProgress=True,borrowedTool=ids['dumbbell'],borrowedSourceBag=ids['bag'])
             if case in fitness.BORROWED_CASES:
                 command.update(beforeTail=dict(inventory=copy.deepcopy(final),activation=copy.deepcopy(prep['activation']),nativeClock=1000000,callback='ISBaseTimedAction.begin'),
-                               cancelCallback='ISFitnessUI:CANCEL' if mode=='native' else 'ActionQueue.cancelOperation',
                                clientActivation=copy.deepcopy(prep['activation']),clientStorage=copy.deepcopy(prep['storage']))
+                if case in fitness.RESTORATION_CASES:command['cancelCallback']='ISFitnessUI:CANCEL' if mode=='native' else 'ActionQueue.cancelOperation'
                 receipt['activation']=copy.deepcopy(prep['activation']);receipt['storage']=copy.deepcopy(prep['storage'])
                 command['beforeTail']['storage']=copy.deepcopy(prep['storage'])
                 placed=mode=='native' or case!='pickup-cancel-restore'
@@ -125,7 +133,7 @@ class FitnessAdapterTests(unittest.TestCase):
                     boundary['storage']=dict(storage_snapshot(ids,inventory,'world',True),favorite=prep['storage']['favorite'])
                     if case in fitness.RESTORATION_CASES:boundary['activation'][str(ids['hammer'])]=False
                 if mode=='toolkit':
-                    command.update(confirmedPickup=True,confirmedReturn=True,returnCount=1,propEquipObserved=case=='active-cancel-restore',confirmedPreparation=case=='active-cancel-restore',
+                    command.update(confirmedPickup=True,confirmedReturn=True,returnCount=1,propEquipObserved=case not in fitness.EARLY_CANCEL_CASES,confirmedPreparation=case=='active-cancel-restore',
                         settlement=dict(phase='cleanup',steps=[dict(phase='prepare',state='earned',started=True,kind='ISDropWorldItemAction',
                             itemId=ids['bag'],itemType='Base.Bag_Schoolbag',observedPreparation=True)] if placed else [],
                             borrowings=[dict(id=ids['dumbbell'],fullType='Base.DumbBell',state='completed')]))
@@ -225,6 +233,116 @@ class FitnessAdapterTests(unittest.TestCase):
             self.assertEqual(row['receipt']['inventory'],prep['inventory'])
             row['receipt']['records'][0]['stopMS']=row['receipt']['records'][0]['startMS']+1
             self.assertTrue(self.verify(evidence)['issues'],'native constructor/duration failure must remain failed')
+
+    def test_empty_restore_is_natural_full_duration_borrowed_workout_with_no_front_or_ui_cancel(self):
+        for mode in ('native','toolkit'):
+            for kind in ('sp','mp'):
+                self.selection.update(mode=mode,kind=kind,cases=['empty-restore'],clients=2 if kind=='mp' else 1,
+                    languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+                evidence=self.evidence();result=self.verify(evidence);row=evidence[0][1];prep=evidence[1][0][1]
+                with self.subTest(mode=mode,kind=kind):
+                    self.assertEqual(result['issues'],[])
+                    self.assertEqual(row['command']['frontMinutes'],0);self.assertFalse(row['receipt']['frontRead'])
+                    self.assertFalse(row['command']['closedUI']);self.assertFalse(row['command']['activeCancelled'])
+                    self.assertNotIn('cancelCallback',row['command']);self.assertEqual(row['command']['startedOrder'],['bicepscurl'])
+                    self.assertEqual(next(value for value in prep['inventory']['items'] if value['id']==prep['items']['hammer'])['kind'],'Base.Hammer')
+                    self.assertFalse(prep['storage']['favorite']);self.assertEqual(row['receipt']['records'][0]['minutes'],10)
+                    self.assertTrue(all(value['status']=='passed' for value in result['outcomes']))
+
+    def test_empty_restore_separates_native_constructor_deadline_from_shorter_body(self):
+        for mode in ('native','toolkit'):
+            for kind in ('sp','mp'):
+                self.selection.update(mode=mode,kind=kind,cases=['empty-restore'],clients=2 if kind=='mp' else 1,
+                    languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+                evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+                self.assertLess(record['stopMS']-record['startMS'],600000)
+                self.assertEqual(self.verify(evidence)['issues'],[])
+                unavailable=copy.deepcopy(evidence);telemetry=unavailable[0][1]['receipt']['records'][0]['nativeClock']
+                for key in ('constructorStartMS','deadlineMS','constructorStartAtStopMS','deadlineAtStopMS'):telemetry.pop(key)
+                self.assertEqual(bool(self.verify(unavailable)['issues']),kind!='mp')
+                for change in ('missing','span','reset-request','reset-body','expired-start','early-stop','missing-body-clock','authority-reset','body-conflated'):
+                    evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command'];record=evidence[0][1]['receipt']['records'][0]
+                    clock=command['nativeWorkoutClock']
+                    if change=='missing':command.pop('nativeWorkoutClock')
+                    elif change=='span':clock['deadlineMS']-=60000;clock['deadlineAtRemovalMS']-=60000
+                    elif change=='reset-request':
+                        if mode!='native':continue
+                        command['requestNativeClock']['constructorStartMS']+=60000
+                    elif change=='reset-body':clock['constructorStartAtRemovalMS']+=60000
+                    elif change=='expired-start':clock['observedBodyStartMS']=clock['deadlineMS']
+                    elif change=='early-stop':clock['observedRemovalMS']=clock['deadlineMS']
+                    elif change=='missing-body-clock':record.pop('nativeClock')
+                    elif change=='authority-reset':record['nativeClock']['deadlineAtStopMS']+=60000
+                    else:record['startMS']=record['nativeClock']['constructorStartMS']
+                    with self.subTest(mode=mode,kind=kind,change=change):self.assertTrue(self.verify(evidence)['issues'])
+        # Existing controls keep their strict authoritative body-duration guard.
+        self.selection.update(kind='mp',mode='native',cases=['closed-ui-restore'],clients=2,languages=['EN','RU'],options={'mp_host':True})
+        evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0];record['stopMS']=record['startMS']+480000
+        self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+
+    def test_empty_restore_actual_dispatch_enqueues_only_one_workout_and_tail(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for natural borrowed-workout dispatch checks')
+        lua=LuaRuntime()
+        lua.execute("""
+            package.preload['QueueFitnessObservation']=function()return {}end
+            case=function()return 'empty-restore'end;minutes=function()return 10 end
+            getTimestampMs=function()return 1000 end;getPlayer=function()return {}end
+            O={clock=function()return 1000 end,clinical=function()return {}end}
+            state={items={front={},tail={}}};enqueues=0;reads=0
+            enqueue=function(exercise)assert(exercise=='bicepscurl');enqueues=enqueues+1;return {}end
+            read=function(book)assert(book==state.items.tail,'natural empty-start dispatch ran the front reader');reads=reads+1;return {}end
+            ui={onClick=function()error('natural empty-start dispatch clicked UI close/cancel')end}
+            API={cancelOperation=function()error('unexpected cancel')end,move=function()error('unexpected reorder')end}
+            request=function()error('unexpected mutation request')end
+        """)
+        lua.globals().F=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        for name in ('immediate','exerciseForCase'):
+            line=next(line for line in source.splitlines() if line.startswith('local function '+name+'('))
+            lua.execute(line.replace('local function ','function ',1))
+        start=source.index('local function dispatch()');end=source.index('local function observe()',start)
+        lua.execute(source[start:end].replace('local function dispatch()','function dispatch()',1))
+        lua.execute("""
+            assert(F.borrowedCase('empty-restore')and not F.restorationCase('empty-restore'))
+            for _,mode in ipairs({true,false})do
+             native=mode;front=nil;enqueues=0;reads=0;dispatch()
+             assert(enqueues==1 and reads==1 and phase=='running'and command.minutes==10 and command.frontMinutes==0)
+             assert(not command.closedUI and not command.activeCancelled and not command.pendingCancelled and command.returnCount==0)
+            end
+        """)
+
+    def test_empty_restore_rejects_shortened_canceled_and_late_cleanup_even_with_exact_final_inventory(self):
+        for mode in ('native','toolkit'):
+            for kind in ('sp','mp'):
+                self.selection.update(mode=mode,kind=kind,cases=['empty-restore'],clients=2 if kind=='mp' else 1,
+                    languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+                changes=['shortened','active-cancel','pickup-cancel','placement-cancel','cancel-callback','front-reader','ui-close','no-world-bag']
+                if mode=='toolkit':changes+=['late-return','late-start','unconfirmed-return','authority-late-return'] if kind=='mp' else ['late-return','late-start','unconfirmed-return']
+                for change in changes:
+                    evidence=copy.deepcopy(self.evidence());row=evidence[0][1];command=row['command'];receipt=row['receipt'];prep=evidence[1][0][1]
+                    final=copy.deepcopy(receipt['inventory'])
+                    if change=='shortened':
+                        receipt['records'][0]['stopMS']=599999;command['nativeWorkoutClock']['observedRemovalMS']=599999
+                    elif change=='active-cancel':command['activeCancelled']=True
+                    elif change=='pickup-cancel':command['pickupCancelled']=True
+                    elif change=='placement-cancel':command['placementCancelled']=True
+                    elif change=='cancel-callback':command['cancelCallback']='ISFitnessUI:CANCEL'
+                    elif change=='front-reader':command['frontMinutes']=12;receipt['frontRead']=True
+                    elif change=='ui-close':command['closedUI']=True
+                    elif change=='no-world-bag':receipt['records'][0]['startStorage']['endpoint']='root'
+                    elif change=='late-return':
+                        next(value for value in command['beforeTail']['inventory']['items'] if value['id']==prep['items']['dumbbell'])['container']='root'
+                        command['beforeTail']['storage']['contents']=[]
+                    elif change=='late-start':command['returnStarts'][0]['nativeClock']=command['beforeTail']['nativeClock']+1
+                    elif change=='unconfirmed-return':command['settlement']['borrowings'][0]['state']='active'
+                    else:
+                        next(value for value in receipt['tailStart']['inventory']['items'] if value['id']==prep['items']['dumbbell'])['container']='root'
+                    with self.subTest(mode=mode,kind=kind,change=change):
+                        self.assertEqual(receipt['inventory'],final)
+                        self.assertTrue(self.verify(evidence)['issues'])
 
     def test_active_borrowed_cancel_requires_all_exact_native_preparation_effects(self):
         self.selection['cases']=['active-cancel-restore']
@@ -696,6 +814,15 @@ class FitnessAdapterTests(unittest.TestCase):
                  assert(#receipt.records==1 and receipt.records[1].reps==2)
                  assert(receipt.serverStopSettled and receipt.currentExerciseCleared)
                 end
+                observer.captureStorage=false;observer.reset(player,'empty-restore');action.fitnessWitness=nil;action.startMS=-60000;action.endMS=540000
+                if server_mode then ISFitnessAction.serverStart(action)else observer.sample(action)end
+                local natural=observer.records[1]
+                assert(natural.nativeClock.constructorStartMS==-60000 and natural.nativeClock.deadlineMS==540000
+                 and natural.startMS==natural.nativeClock.observedBodyStartMS and natural.startMS~=action.startMS,
+                 'observer conflated constructor and actual body start')
+                advance()
+                if server_mode then ISFitnessAction.serverStop(action)else observer.sample(nil)end
+                assert(natural.nativeClock.constructorStartAtStopMS==-60000 and natural.nativeClock.deadlineAtStopMS==540000)
             """)
         lua=LuaRuntime()
         for path in (ROOT/'tests/native_queue/fitness').rglob('*.lua'):

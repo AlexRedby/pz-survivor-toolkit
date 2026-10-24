@@ -24,12 +24,15 @@ local function start(action)
   startMS=clock(),before=O.clinical(action.character),minEndurance=O.clinical(action.character).endurance,
   previousStopSettled=not O.active,startEquipment=O.inventory and O.inventory(action.character)or nil,
   startStorage=O.captureStorage and O.storage(action.character)or nil}
+ if O.case=='empty-restore'then row.nativeClock={constructorStartMS=action.startMS,deadlineMS=action.endMS,
+  observedBodyStartMS=row.startMS,source=isServer()and 'ISFitnessAction.serverStart'or 'SP first started sample'}end
  O.records[#O.records+1]=row;O.active=action;action.fitnessWitness=row
 end
 local function stopped(action,method)
  local row=action.fitnessWitness
  if not row or row.stopMS then return end
  row.stopMS=clock();row.stopMethod=method;row.after=O.clinical(action.character)
+ if row.nativeClock then row.nativeClock.constructorStartAtStopMS=action.startMS;row.nativeClock.deadlineAtStopMS=action.endMS end
  row.currentExerciseCleared=action.character:getFitness():getCurrentExe()==nil
  row.serverStopReturned=not isClient();if O.active==action then O.active=nil end
 end
@@ -42,7 +45,9 @@ function O.sample(current)
  if isClient()or isServer()then return end
  if O.active and O.active~=current then stopped(O.active,'observed-native-removal')end
  if not current or current.Type~='ISFitnessAction'or not current:isStarted()then return end
- if not current.fitnessWitness then start(current);current.fitnessWitness.startMS=current.startMS end
+ if not current.fitnessWitness then
+  start(current);if O.case~='empty-restore'then current.fitnessWitness.startMS=current.startMS end
+ end
  local row=current.fitnessWitness
  if current.repnb>row.reps then
   row.reps=current.repnb;row.lastRepMS=clock();row.lastRep=O.clinical(current.character)

@@ -8,9 +8,7 @@
 
 # Exercise ground storage
 
-- [ ] Capture the queue-disabled Host preparation boundary with current sources: exact native action/transaction/receipt, target replication, validity and stop/reset cause. Keep old failed controls immutable; do not enable queue controls to make the control pass.
-- [ ] Fix the shared confirmed-native-completion boundary only if that evidence establishes its cause. Cover queue off/on, exact paid completion, explicit stop/input/reset, missing/stale/custom receipts and preserve native callbacks/costs; verify affected SP/Host cases with log/source audits before delivery.
-- [ ] Diagnose queue-disabled full-pack menu Host Fitness preparation aborting the independent tail before any workout starts. The four `run-ground02/host-native` controls reproduce it with clean runtime logs; preserve those failed receipts and identify the actual native removal/validation boundary before changing behavior. This is a selected-pack observation, not an established vanilla-engine cause.
+- [ ] Verify the shared queue-disabled native-completion fix in fresh full-pack SP/Host `empty-restore` native/toolkit pairs. Require real native workout timing, exact bag/prop IDs, independent-tail survival and clean log/source audits. Keep the original failed Host controls and their diagnostic reports unchanged; check explicit cancellation separately.
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 
 # Container editor visual states

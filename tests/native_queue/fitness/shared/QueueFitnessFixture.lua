@@ -1,7 +1,7 @@
 local O=require 'QueueFitnessObservation'
 local F={}
 function F.restorationCase(id)return id=='active-cancel-restore'or id=='pickup-cancel-restore'or id=='placement-cancel-restore'end
-function F.borrowedCase(id)return id=='closed-ui-restore'or F.restorationCase(id)end
+function F.borrowedCase(id)return id=='closed-ui-restore'or id=='empty-restore'or F.restorationCase(id)end
 function F.activation(player)
  local rows={}
  local function scan(container)

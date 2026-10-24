@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -114,6 +114,25 @@ case checks. No item or gear is reconstructed. Each wait is bounded to 45 real
 seconds; a rejected gate or timeout emits `ISOLATION_FAILED` and stops without
 advancing to the next case. This isolation does not establish the cause of the
 original native failure or turn it into a pass.
+
+The `empty-restore` case starts with an empty queue, the original Hammer and
+screwdriver held, a non-favourite schoolbag worn and the exact dumbbell inside it.
+It uses the real ten-minute biceps-curl menu request, leaves the UI open and queues
+only the independent tail reader after the workout request. It never requests
+cancellation or runs the front reader. A pass requires one full natural workout
+with real clinical effects, the exact world bag and contents at workout start,
+real native placement/recovery, and the ordinary borrowed-equipment return gates.
+Toolkit must complete its exact shared prop return and restore equipment before
+the tail begins; native pre-tail differences and genuine native failures remain
+visible under the existing checks. This case adds an ordinary-completion control
+without changing the queued closed-UI or active-cancel controls. Its separate
+clock telemetry records the native constructor window, actual observed workout
+start and removal. Vanilla constructs the ten-minute deadline before equipment
+preparation; a natural Host body can therefore last less than ten minutes. This
+new case requires an unchanged selected constructor window and client removal
+strictly after that native deadline, while preserving real authoritative workout
+effects and measuring its body duration separately. Existing cases retain their
+original duration assertions.
 
 The focused `active-cancel-restore`, `pickup-cancel-restore` and
 `placement-cancel-restore` cases start with an

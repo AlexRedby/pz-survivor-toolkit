@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.255
+
+- **Action queue / Host:** Let an exactly matched, server-completed native action finish its original client callback when the optional queue is disabled. Preserve explicit cancellation, movement, reset and stale-transaction guards; disabling queue controls no longer makes confirmed preparation clear unrelated queued work.
+
 ### 0.1.254
 
 - Add a separate Host server recording switch beside local vehicle diagnostics. Authenticate the real Host connection, show confirmed server status and file paths, and handle delayed or missing replies without claiming success.

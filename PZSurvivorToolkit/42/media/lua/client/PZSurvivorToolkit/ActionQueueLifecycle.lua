@@ -93,16 +93,19 @@ end
 function Lifecycle.allowNativeCompletion(action, nativeAction)
     local character=action and action.character
     local queue=character and ISTimedActionQueue.queues[character]
-    if not isClient()or not Toolkit.Settings.actionQueue()then
+    if not isClient()then
         if queue then finishStepCancellations[queue] = nil end
         return false
     end
-    local finishing = queue and finishingCanceledStep(queue, action, nativeAction)
-    if not owned(queue,action)or action.action~=nativeAction or character:isDead()
+    local editing = Toolkit.Settings.actionQueue()
+    if not editing and queue then finishStepCancellations[queue] = nil end
+    local finishing = editing and queue and finishingCanceledStep(queue, action, nativeAction)
+    if not owned(queue,action)or action.action~=nativeAction or character:isDead()or character:isAsleep()
         or not character:isLocalPlayer()or getSpecificPlayer(character:getPlayerNum())~=character
         or queue.toolkitCancel or queue.toolkitStopIntent or queue.toolkitOutcomeWait
-        or (queue.toolkitGroupCancel and not finishing) or queue.toolkitResume or queue.toolkitOperationsInvalid
-        or (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled and not finishing)
+        or (queue.toolkitGroupCancel and not finishing) or queue.toolkitResume
+        or (editing and queue.toolkitOperationsInvalid)
+        or (editing and action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled and not finishing)
         or character:pressedCancelAction()
         or (action.stopOnWalk and (character:isPlayerMoving()or character:pressedMovement(false)))
         or (action.stopOnRun and (character:isRunning()or character:isSprinting()))
@@ -112,6 +115,8 @@ function Lifecycle.allowNativeCompletion(action, nativeAction)
     end
     local acknowledgements=Toolkit.ActionQueueAcknowledgements
     local receipt=acknowledgements and acknowledgements.capture(action)
+    if not editing and not (receipt and acknowledgements.allowsDisabledNativeCompletion
+        and acknowledgements.allowsDisabledNativeCompletion(action,receipt)) then return false end
     return receipt~=nil and acknowledgements.state(action,receipt)=='completed'
 end
 
