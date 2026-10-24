@@ -1,10 +1,12 @@
 """Release owned GUI clients after routing or a verified display-sleep fallback."""
 from pathlib import Path
 import ctypes
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -42,6 +44,16 @@ def display_state():
         return unknown(type(error).__name__ + ': ' + str(error))
 
 
+def require_gui_access():
+    """Reject an inaccessible GUI session before launching a native client."""
+    probe = display_state()
+    if probe['state'] not in ('awake', 'asleep'):
+        raise RuntimeError('GUI display access unavailable (' + probe.get('reason', 'unknown probe')
+                           + '); run this command outside the sandbox in the logged-in macOS session; '
+                           'no game launched. Waking the display is not a remedy for inaccessible CoreGraphics.')
+    return probe
+
+
 class Desktop:
     def __init__(self, selection):
         options = selection.get('options', {})
@@ -49,9 +61,11 @@ class Desktop:
         if self.requested_mode not in ('auto', 'aerospace', 'current'):
             raise ValueError('desktop_mode must be auto, aerospace or current')
         self.mode = 'aerospace'
+        self.recovery_gates = {}
         self.evidence = {'mode': self.mode, 'requested_mode': self.requested_mode,
                          'workspace': None, 'windows': {}, 'glfw_handles': {},
-                         'client_modes': {}, 'fallback_reason': None, 'display_probes': {}}
+                         'client_modes': {}, 'fallback_reason': None, 'display_probes': {},
+                         'discovery_probes': {}, 'wake_graces': {}}
         self.workspace = options.get('test_workspace', 'PZ-TEST')
         if not isinstance(self.workspace, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', self.workspace):
             raise ValueError('test_workspace must be a workspace name using letters, digits, - or _')
@@ -89,14 +103,18 @@ class Desktop:
         if not agent.is_file():
             raise RuntimeError('Prepared macOS test-window agent is missing; prepare a fresh run')
         gate = Path(cache) / 'Lua/test-window-routed.txt'
-        if gate.exists() or gate.is_symlink():
+        visible = gate.with_name('test-window-visible.txt')
+        if any(path.exists() or path.is_symlink() for path in (gate, visible)):
             raise RuntimeError('Test-window routing acknowledgement already exists; prepare a fresh run')
         return ['-javaagent:' + str(agent),
                 '-Dtoolkit.test.windowGate=' + str(gate)]
 
     def route(self, process, cache, log):
-        deadline = time.monotonic() + 30
+        startup_deadline = time.monotonic() + 120
+        discovery_deadline = None
         saw_owned = False
+        saw_asleep = False
+        wake_grace_used = False
         fallback = False
         while True:
             if process.poll() is not None:
@@ -105,35 +123,66 @@ class Desktop:
             saw_owned = saw_owned or bool(rows)
             text = Path(log).read_text(errors='replace')
             ready = re.findall(r'\[QUEUE_TEST\] WINDOW_ROUTING_READY pid=(\d+) glfw=(\d+)', text)
+            now = time.monotonic()
             if ready:
                 pid, handle = ready[-1]
                 if pid != str(process.pid):
                     raise RuntimeError('Window routing request is outside the owned client PID')
                 if int(handle) <= 0:
                     raise RuntimeError('Owned client GLFW window handle must be nonzero')
+                if discovery_deadline is None:
+                    if now >= startup_deadline:
+                        raise RuntimeError('Owned client did not report a valid WINDOW_ROUTING_READY GLFW handle '
+                                           'within 120 seconds; no window acknowledged')
+                    discovery_deadline = now + 30
+                    probe = display_state()
+                    self.evidence['discovery_probes'][pid] = probe
+                    saw_asleep = probe['state'] == 'asleep'
                 if rows:
                     break
-            if time.monotonic() >= deadline:
-                if self.requested_mode != 'aerospace' and ready and not saw_owned:
+            if discovery_deadline is None and now >= startup_deadline:
+                raise RuntimeError('Owned client did not report a valid WINDOW_ROUTING_READY GLFW handle '
+                                   'within 120 seconds; no window acknowledged')
+            if discovery_deadline is not None and now >= discovery_deadline:
+                if ready and not saw_owned:
                     probe = display_state()
                     self.evidence['display_probes'][str(process.pid)] = probe
-                    if probe['state'] == 'asleep':
+                    saw_asleep = saw_asleep or probe['state'] == 'asleep'
+                    if self.requested_mode != 'aerospace' and probe['state'] == 'asleep':
                         fallback = True
                         break
-                raise RuntimeError('Owned client window was not detected by AeroSpace within 30 seconds; '
+                    if probe['state'] == 'awake' and saw_asleep and not wake_grace_used:
+                        wake_grace_used = True
+                        discovery_deadline = now + 15
+                        self.evidence['wake_graces'][pid] = {
+                            'seconds': 15, 'reason': 'display-woke-before-window-discovery', 'probe': probe}
+                        continue
+                timeout = 45 if wake_grace_used else 30
+                raise RuntimeError(f'Owned client window was not detected by AeroSpace within {timeout} seconds; '
                                    'current desktop fallback requires sleeping displays and an owned GLFW handle')
             time.sleep(0.1)
         if fallback:
             if process.poll() is not None:
                 raise RuntimeError('Owned client exited before window acknowledgement')
             with (Path(cache) / 'Lua/test-window-routed.txt').open('x') as gate:
-                gate.write(pid + ':' + handle + '\n')
+                gate.write(pid + ':' + handle + ':current\n')
             self.mode = 'current'
             self.evidence.update(mode='current', workspace=None,
                                  fallback_reason='display-asleep-owned-window-discovery-timeout')
             self.evidence['glfw_handles'][pid] = handle
             self.evidence['client_modes'][pid] = 'current'
+            self.recovery_gates[pid] = Path(cache) / 'Lua/test-window-visible.txt'
             return
+        placed = self.place(process, rows)
+        if process.poll() is not None:
+            raise RuntimeError('Owned client exited before window acknowledgement')
+        gate = Path(cache) / 'Lua/test-window-routed.txt'
+        with gate.open('x') as stream:
+            stream.write(pid + ':' + handle + '\n')
+        self.record_placement(process, placed)
+
+    def place(self, process, rows):
+        """Move exactly the discovered owned windows without affecting global focus."""
         for window in rows:
             # Revalidate the process and exact ID before every mutation; never act on global focus.
             if window not in self.owned(process):
@@ -143,20 +192,47 @@ class Desktop:
                 raise RuntimeError('Owned client window disappeared before moving')
             self.call('move-node-to-workspace', '--window-id', window, self.workspace)
         placed = self.owned(process)
-        if not placed or any(workspace != self.workspace for workspace in placed.values()):
+        if set(placed) != set(rows) or any(workspace != self.workspace for workspace in placed.values()):
             raise RuntimeError('AeroSpace did not isolate all owned client windows')
-        if process.poll() is not None:
-            raise RuntimeError('Owned client exited before window acknowledgement')
-        gate = Path(cache) / 'Lua/test-window-routed.txt'
-        with gate.open('x') as stream:
-            stream.write(pid + ':' + handle + '\n')
+        return placed
+
+    def record_placement(self, process, placed):
         self.evidence['windows'][str(process.pid)] = list(placed)
         self.evidence['client_modes'][str(process.pid)] = 'aerospace'
+        self.mode = 'current' if 'current' in self.evidence['client_modes'].values() else 'aerospace'
+        self.evidence.update(mode=self.mode, workspace=None if self.mode == 'current' else self.workspace)
+
+    def acknowledge_visible(self, process, placed):
+        """Publish a complete recovery token exclusively, after the last ownership check."""
+        pid = str(process.pid)
+        gate = self.recovery_gates[pid]
+        descriptor, name = tempfile.mkstemp(prefix='.test-window-visible-', dir=gate.parent)
+        temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, 'w') as stream:
+                stream.write(pid + ':' + self.evidence['glfw_handles'][pid] + '\n')
+            observed = self.owned(process)
+            if set(observed) != set(placed) or any(workspace != self.workspace for workspace in observed.values()):
+                raise RuntimeError('Owned client window changed before visibility acknowledgement')
+            if process.poll() is not None:
+                raise RuntimeError('Owned client exited before visibility acknowledgement')
+            # link() publishes a closed, complete file and refuses existing files or symlinks.
+            os.link(temporary, gate)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def check(self, process):
-        if str(process.pid) in self.evidence['glfw_handles']:
+        if self.evidence['client_modes'].get(str(process.pid)) == 'current':
             if process.poll() is not None:
                 raise RuntimeError('Owned client exited during current-desktop run')
+            rows = self.owned(process)
+            placed = self.place(process, rows) if rows else None
+            if process.poll() is not None:
+                raise RuntimeError('Owned client exited during current-desktop run')
+            if placed:
+                # Current-desktop windows stay transparent until this separate recovery token.
+                self.acknowledge_visible(process, placed)
+                self.record_placement(process, placed)
             return
         # Observation is allowed; only window ownership and placement define isolation.
         rows = self.owned(process)

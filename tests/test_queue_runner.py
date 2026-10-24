@@ -35,6 +35,11 @@ class NativeRunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        for context in (
+                patch.object(runner.desktop, 'require_gui_access', return_value={'state': 'awake', 'displays': [{'id': 1, 'asleep': False}]}),
+                patch.object(runner.glfw, 'arguments', return_value=['-Dorg.lwjgl.glfw.libname=/owned/native/libglfw.dylib'])):
+            context.start()
+            self.addCleanup(context.stop)
         disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
         disk.start()
         self.addCleanup(disk.stop)
@@ -42,7 +47,7 @@ class NativeRunnerTests(unittest.TestCase):
         (self.root / "client1").mkdir()
         (self.root / "client1/options.ini").write_text("voiceEnable=false\n")
         self.selection = {"suite": "health", "kind": "sp", "mods": [], "cases": ["nativeStop"], "timeout_seconds": 10}
-        self.runtime = {"game": str(self.root), "java": "/fake/java", "roles": {"client1": {"cache": str(self.root / "client1"), "classes": str(self.root / "classes")}}}
+        self.runtime = {"game": str(self.root), "java": "/fake/java", "glfw": {'compatibility': 'test input'}, "roles": {"client1": {"cache": str(self.root / "client1"), "classes": str(self.root / "classes")}}}
         (self.root / "selection.json").write_text(json.dumps(self.selection))
         (self.root / "runtime.json").write_text(json.dumps(self.runtime))
         self.seal_settings()
@@ -112,8 +117,21 @@ class NativeRunnerTests(unittest.TestCase):
         result, kills = self.invoke()
         self.assertEqual(result["status"], "completed")
         self.assertIn("-novoip", self.commands[1])
+        self.assertIn('-Dorg.lwjgl.glfw.libname=/owned/native/libglfw.dylib', self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
+
+    def test_unavailable_gui_access_does_not_start_caffeinate_or_java(self):
+        with patch.object(runner.desktop, 'require_gui_access', side_effect=RuntimeError('GUI access unavailable; outside the sandbox')):
+            with self.assertRaisesRegex(RuntimeError, 'outside the sandbox'):
+                self.invoke()
+        self.assertEqual(self.commands, [])
+
+    def test_unsealed_glfw_input_does_not_start_caffeinate_or_java(self):
+        with patch.object(runner.glfw, 'arguments', side_effect=ValueError('prepare a fresh run')):
+            with self.assertRaisesRegex(ValueError, 'fresh run'):
+                self.invoke()
+        self.assertEqual(self.commands, [])
 
     def test_idle_guard_preserves_display_sleep_and_cleans_up_owned_process(self):
         popen = self.popen
