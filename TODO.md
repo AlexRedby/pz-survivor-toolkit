@@ -8,7 +8,6 @@
 
 # Exercise ground storage
 
-- [ ] Finish the Toolkit Host `empty-restore` gate for shared native completion after the second client failed before startup with `No awake display`. The fresh SP native/toolkit pair passes. Queue-disabled Host now completes preparation and exercises with clean logs, but retains the separate native equipment/order failures below; preserve all failed reports.
 - [ ] Diagnose queue-disabled full-pack Host Fitness equipment restoration: the exact dumbbell remains in root instead of returning to its recovered source bag (both replicas agree; no item loss), and the server retains the original secondary-hand item at workout start. Require actual native return/equip transactions and exact final IDs. Preserve the native get-up callback ordering difference that runs the already-queued reader before appending the workout; do not relabel it a Toolkit ordering pass.
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 
