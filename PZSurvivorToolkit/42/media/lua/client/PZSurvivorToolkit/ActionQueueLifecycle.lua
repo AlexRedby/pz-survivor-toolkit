@@ -5,6 +5,7 @@ local Lifecycle = {}
 Toolkit.ActionQueueLifecycle = Lifecycle
 
 local pending = setmetatable({}, {__mode = "k"})
+local finishStepCancellations = {} -- At most one current capability per queue; explicitly revoked below.
 local observers, observerIds = {}, {}
 -- Observation at the common native boundary does not grant edit permissions.
 -- Failed observers are quarantined: observation must never abort a paid native
@@ -31,6 +32,9 @@ local function observe(phase, ...)
     return accepted
 end
 function Lifecycle.started(action)
+    local queue = action and ISTimedActionQueue.queues[action.character]
+    local seal = queue and finishStepCancellations[queue]
+    if seal and (seal.action ~= action or seal.native ~= action.action) then finishStepCancellations[queue] = nil end
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.started(action) end
     observe("started", action)
 end
@@ -45,23 +49,67 @@ local function owned(queue, action)
         and queue.current == action and queue.queue[1] == action
 end
 
+-- Seal only the current preparation accepted by the actual cancellation decision,
+-- before its token is invalidated. Public group/cancel flags alone grant nothing.
+function Lifecycle.acceptFinishStepCancellation(queue, action, request, decision)
+    local policy = Toolkit.ActionQueuePolicy
+    if not isClient() or not Toolkit.Settings.actionQueue() or not owned(queue, action) or not action.action
+        or type(request) ~= "table" or request.action ~= action or request.token ~= action.toolkitQueueOperation
+        or type(request.token) ~= "table" or request.token.toolkitCancelled
+        or not decision or decision.allowed ~= true or decision.first ~= 1
+        or not policy or not policy.editUnchanged(queue, decision.snapshot)
+        or policy.stoppable(action) or not policy.preparationCanFinish(action) then return false end
+    local contract, adapter, behavior = policy.inspect(action)
+    if not contract or contract.interrupt ~= "finish-step" or not behavior then return false end
+    finishStepCancellations[queue] = {action = action, native = action.action, request = request, token = request.token,
+        generation = queue.toolkitOperationGeneration or 0, policy = policy, inspect = policy.inspect,
+        preparationCanFinish = policy.preparationCanFinish, stoppable = policy.stoppable, adapter = adapter, behavior = behavior}
+    return true
+end
+local function finishingCanceledStep(queue, action, nativeAction)
+    local seal = finishStepCancellations[queue]
+    if not seal then return false end
+    local policy = Toolkit.ActionQueuePolicy
+    local valid = owned(queue, action) and seal.action == action and seal.native == nativeAction
+        and action.action == nativeAction and queue.toolkitGroupCancel == seal.request
+        and seal.request.action == action and seal.request.token == seal.token
+        and action.toolkitQueueOperation == seal.token and seal.token.toolkitCancelled == true
+        and (queue.toolkitOperationGeneration or 0) == seal.generation
+        and policy == seal.policy and policy.inspect == seal.inspect
+        and policy.preparationCanFinish == seal.preparationCanFinish and policy.stoppable == seal.stoppable
+    if valid then
+        local contract, adapter, behavior = policy.inspect(action)
+        valid = contract and contract.interrupt == "finish-step" and adapter == seal.adapter and behavior == seal.behavior
+            and not policy.stoppable(action) and policy.preparationCanFinish(action)
+    end
+    if not valid then finishStepCancellations[queue] = nil end
+    return valid == true
+end
+
 -- A server-completed transaction can remove its target before native valid()
 -- reaches update()/Done. Java verifies its exact standard transaction and stop
 -- flags; this gate verifies current queue ownership and the sealed server receipt.
 -- It never executes callbacks, effects or queue advancement.
 function Lifecycle.allowNativeCompletion(action, nativeAction)
-    if not isClient()or not Toolkit.Settings.actionQueue()then return false end
     local character=action and action.character
     local queue=character and ISTimedActionQueue.queues[character]
+    if not isClient()or not Toolkit.Settings.actionQueue()then
+        if queue then finishStepCancellations[queue] = nil end
+        return false
+    end
+    local finishing = queue and finishingCanceledStep(queue, action, nativeAction)
     if not owned(queue,action)or action.action~=nativeAction or character:isDead()
         or not character:isLocalPlayer()or getSpecificPlayer(character:getPlayerNum())~=character
         or queue.toolkitCancel or queue.toolkitStopIntent or queue.toolkitOutcomeWait
-        or queue.toolkitGroupCancel or queue.toolkitResume or queue.toolkitOperationsInvalid
-        or (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled)
+        or (queue.toolkitGroupCancel and not finishing) or queue.toolkitResume or queue.toolkitOperationsInvalid
+        or (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled and not finishing)
         or character:pressedCancelAction()
         or (action.stopOnWalk and (character:isPlayerMoving()or character:pressedMovement(false)))
         or (action.stopOnRun and (character:isRunning()or character:isSprinting()))
-        or (action.stopOnAim and character:isAiming())then return false end
+        or (action.stopOnAim and character:isAiming())then
+        if queue then finishStepCancellations[queue] = nil end
+        return false
+    end
     local acknowledgements=Toolkit.ActionQueueAcknowledgements
     local receipt=acknowledgements and acknowledgements.capture(action)
     return receipt~=nil and acknowledgements.state(action,receipt)=='completed'
@@ -70,6 +118,7 @@ end
 -- Policy grants permission before reaching this shared native stop boundary.
 function Lifecycle.requestStop(queue, action, reason, scope, buildReceipt)
     if not owned(queue, action) or not action.action then return false end
+    finishStepCancellations[queue] = nil
     local acknowledgements = Toolkit.ActionQueueAcknowledgements
     local receipt = acknowledgements and acknowledgements.capture(action)
     queue.toolkitCancel = action
@@ -107,6 +156,8 @@ function Lifecycle.finish(action, phase, succeeded)
     local intent=Toolkit.ActionQueueTidyIntent
     if intent then intent.finish(action,phase,succeeded) end
     local queue = action and ISTimedActionQueue.queues[action.character]
+    local seal = queue and finishStepCancellations[queue]
+    if seal and seal.action == action then finishStepCancellations[queue] = nil end
     local state = queue and pending[queue]
     if not state or state.action ~= action then return end
     state.depth = math.max(0, state.depth - 1)
@@ -130,7 +181,7 @@ function Lifecycle.completionEntered(queue, action)
 end
 
 function Lifecycle.reset(queue)
-    pending[queue] = nil
+    pending[queue], finishStepCancellations[queue] = nil, nil
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.reset(queue) end
 end
 

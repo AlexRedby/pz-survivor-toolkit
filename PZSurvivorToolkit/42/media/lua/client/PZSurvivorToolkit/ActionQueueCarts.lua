@@ -1,5 +1,6 @@
 if not getActivatedMods or not getActivatedMods():contains("SaucedCarts") then return end
 require "SaucedCarts/TimedActions/ISCartTransferAction"
+require "TimedActions/ISDropWorldItemAction"
 
 local Toolkit = PZSurvivorToolkit
 local Carts = {}
@@ -197,6 +198,61 @@ function Carts.equipmentSafe(character)
     return isUnequipConstructor(ISUnequipAction.new) and character
         and ordinaryEquipment(character:getPrimaryHandItem()) and ordinaryEquipment(character:getSecondaryHandItem()) or false
 end
+-- Fitness uses the ordinary-bag branches of the pinned global cart drop hooks.
+-- Capture native predecessors before OnGameStart, then retain exact replacements.
+local dropGuard, dropPrevious, dropReplacement
+local dropMethods = {new = true, isValid = true, complete = true}
+local function dropCallbacksSafe()
+    if not dropGuard or not dropGuard() then return false end
+    for name, callback in pairs(dropReplacement or dropPrevious) do
+        if ISDropWorldItemAction[name] ~= callback then return false end
+    end
+    return true
+end
+function Carts.isDropCallback(name, callback)
+    return dropMethods[name] and dropCallbacksSafe()
+        and (callback == dropPrevious[name] or dropReplacement and callback == dropReplacement[name]) or false
+end
+function Carts.isNonCartDrop(action)
+    if not dropCallbacksSafe() or getmetatable(action) ~= ISDropWorldItemAction or action.Type ~= "ISDropWorldItemAction"
+        or not instanceof(action.item, "InventoryContainer") or not ordinaryEquipment(action.item)
+        or action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.retriggerLastAction
+        or action.onFailFunc or action.additionalTest then return false end
+    for name, callback in pairs(dropReplacement or dropPrevious) do if action[name] ~= callback then return false end end
+    return true
+end
+local function installFitnessStorageDrop()
+    local sourceQuery = compat and compat.isCartMaskSource
+    local owner = ISDropWorldItemAction
+    if type(sourceQuery) ~= "function" or not sourceQuery() or not owner then return end
+    local previous, lifecycle = {}, {}
+    for name, callback in pairs(owner) do
+        if type(callback) == "function" then
+            if name ~= "derive" and filename(callback) ~= "ISDropWorldItemAction.lua" then return end
+            if dropMethods[name] then previous[name] = callback else lifecycle[name] = callback end
+        end
+    end
+    for name in pairs(dropMethods) do if type(previous[name]) ~= "function" then return end end
+    local cartTypes, classifier = core.CartTypes, core.safeIsCart
+    if type(cartTypes) ~= "table" or getmetatable(cartTypes) ~= nil or filename(classifier) ~= "Core.lua" then return end
+    dropPrevious = previous
+    dropGuard = function()
+        if not unchanged() or ISDropWorldItemAction ~= owner or Toolkit.ActionQueueCompat ~= compat
+            or compat.isCartMaskSource ~= sourceQuery or core.CartTypes ~= cartTypes
+            or core.safeIsCart ~= classifier or getmetatable(cartTypes) ~= nil then return false end
+        for name, callback in pairs(lifecycle) do if owner[name] ~= callback then return false end end
+        return true
+    end
+    Events.OnGameStart.Add(function()
+        local replacement = {}
+        for name in pairs(dropMethods) do
+            if filename(owner[name]) ~= "ContainerRestrictions.lua" then dropGuard = nil; return end
+            replacement[name] = owner[name]
+        end
+        dropReplacement = replacement
+    end)
+end
+
 local function installFoodMaskRemoval()
     local sourceQuery = compat and compat.isCartMaskSource
     if type(sourceQuery) ~= "function" or not sourceQuery() or not ISUnequipAction
@@ -304,6 +360,7 @@ function Carts.install()
     if not loadHooks("SaucedCarts/Restrictions/TransferRestrictions")
         or not loadHooks("SaucedCarts/CartState/VisualUpdateQueue") then trusted=false;trustFailure=trustFailure or "hook_registration_missing" end
     installFoodMaskRemoval()
+    installFitnessStorageDrop()
     installCapacity()
     Toolkit.ActionQueueDefinitions.registerBehavior("compat.cart-transfer", {
         types = {"ISCartTransferAction"}, matches = Carts.isTransfer, inspect = inspect,

@@ -15,14 +15,15 @@ function O.clinical(player)
 end
 function O.reset(player,id)
  assert(not O.active and not player:getFitness():getCurrentExe(),'previous native fitness session not settled')
- O.records,O.violations,O.epoch={}, {}, O.epoch+1;O.player,O.case=player,id
+ O.records,O.violations,O.epoch={}, {}, O.epoch+1;O.tailStart=nil;O.placements={};O.player,O.case=player,id
 end
 local function start(action)
  if action.character~=O.player then return end
  if O.active then O.violations[#O.violations+1]='next-workout-before-server-stop'end
  local row={exercise=action.exeDataType,minutes=action.timeToExe,maxTime=action:getDuration(),reps=0,
   startMS=clock(),before=O.clinical(action.character),minEndurance=O.clinical(action.character).endurance,
-  previousStopSettled=not O.active,startEquipment=O.inventory and O.inventory(action.character)or nil}
+  previousStopSettled=not O.active,startEquipment=O.inventory and O.inventory(action.character)or nil,
+  startStorage=O.captureStorage and O.storage(action.character)or nil}
  O.records[#O.records+1]=row;O.active=action;action.fitnessWitness=row
 end
 local function stopped(action,method)
@@ -34,7 +35,7 @@ local function stopped(action,method)
 end
 function O.receipt(player)
  return {records=O.records,violations=O.violations,currentExerciseCleared=not player:getFitness():getCurrentExe(),
-  serverStopSettled=O.active==nil,clinical=O.clinical(player)}
+  serverStopSettled=O.active==nil,clinical=O.clinical(player),tailStart=O.tailStart,placements=O.placements}
 end
 -- SP reads the real live action without replacing any source-guarded client method.
 function O.sample(current)
@@ -49,6 +50,24 @@ function O.sample(current)
  end
 end
 if not isServer()then return O end
+require 'TimedActions/ISReadABook'
+local tailStartOriginal=ISReadABook.serverStart
+ISReadABook.serverStart=function(action,...)
+ if action.character==O.player and action.item:getID()==O.tailID then
+  O.tailStart={id=action.item:getID(),kind=action.item:getFullType(),callback='ISReadABook.serverStart',inventory=O.inventory(action.character),
+   activation=O.activation(action.character),storage=O.captureStorage and O.storage(action.character)or nil,workouts=#O.records,observerActive=O.active~=nil}
+ end
+ return tailStartOriginal(action,...)
+end
+require 'TimedActions/ISDropWorldItemAction'
+local dropCompleteOriginal=ISDropWorldItemAction.complete
+ISDropWorldItemAction.complete=function(action,...)
+ local result=dropCompleteOriginal(action,...)
+ if O.captureStorage and action.character==O.player and action.item and action.item:getID()==O.bagID then
+  O.placements[#O.placements+1]=O.placement(action.character,'ISDropWorldItemAction.complete',result==true)
+ end
+ return result
+end
 local begin='serverStart'
 local beginOriginal=ISFitnessAction[begin]
 ISFitnessAction[begin]=function(action,...)

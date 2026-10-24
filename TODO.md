@@ -1,6 +1,6 @@
 # Retained-item merged-main verification
 
-- [ ] Check the merged inventory refresh/filter/capacity changes with the retained-item regressions and a fresh isolated Host scenario before pushing Toolkit 0.1.251.
+- [ ] Check the merged inventory refresh/filter/capacity changes with the retained-item regressions and a fresh isolated Host scenario before pushing Toolkit 0.1.252.
 
 # Retained-item full-pack compatibility
 
@@ -12,7 +12,8 @@
 
 # Exercise ground storage
 
-- [ ] Check the exercise ground-storage change in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags (including favourites), contents/IDs, dumbbells borrowed from a bag, natural completion and cancellation during placement/pickup, closed Fitness window with queue controls off, movement away and a second player's competing pickup. Require authoritative conservation and unchanged exercise effects; Lua source-backed doubles do not establish live network ordering or rendering.
+- [ ] Diagnose queue-disabled full-pack menu Host Fitness preparation aborting the independent tail before any workout starts. The four `run-ground02/host-native` controls reproduce it with clean runtime logs; preserve those failed receipts and identify the actual native removal/validation boundary before changing behavior. This is a selected-pack observation, not an established vanilla-engine cause.
+- [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 
 # Container editor visual states
 
@@ -28,7 +29,7 @@
 
 # Fitness completion verification
 
-- [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host after the missing `VanillaVehiclesAnimated` source and any further unresolved pack inputs are available. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass; the game run remains blocked at pack resolution.
+- [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass and the pack sources are available; the thirty-minute live duration gate remains unverified.
 
 # Nick's Turn Off Fridges selection
 
@@ -67,7 +68,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 - [ ] Extend the version-1 edit contract to remaining world-container pickup/return (hot cookable food and special containers) and craft inputs. Describe exact identity versus late selector scope, bounded native effects and complete resource domains; retain legacy protection for missing contracts. Do not infer semantics from action names or treat same-item access alone as a dependency.
 - [ ] Extend the conservative full-current-weight transfer gate to proven quantity-dependent capacity effects and remaining world-container ancestry. Do not credit uncertain MP releases or reserve future inventory. Add exact native producer/consumer and return-container gates before expanding permissions.
-- [ ] Extend persistent prepare/body/cleanup effect records to the remaining legacy pickup and family-owned restoration paths, including fitness preparation. Replace a family proof only after exact native effects and corresponding SP/Host gates are proven. Preserve shared ownership, confirmed explicit equipment intent, earned output and paid costs; never infer an effect from queue disappearance or replay authoritative work.
+- [ ] Extend persistent prepare/body/cleanup effect records to the remaining legacy pickup and family-owned restoration paths. Replace a family proof only after exact native effects and corresponding SP/Host gates are proven. Preserve shared ownership, confirmed explicit equipment intent, earned output and paid costs; never infer an effect from queue disappearance or replay authoritative work.
 - [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
 - [ ] Extend the generated edit oracle and existing scenario matrix to native partial completion, cleanup, replaced resources and delayed/duplicate outcomes. Gate each additional consumable/transfer adapter on exact conservation and at-most-once effects, without enumerating every pair of action names.
 - [ ] Extend the new required-state/resource/capacity/in-flight/unknown denial reasons to remaining legacy adapters and surface the specific prerequisite or missing integration in the UI. Preserve independent edits around genuinely unrelated work.
@@ -106,7 +107,7 @@ The medical packet mismatch below is an unresolved runtime observation; its caus
 
 Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
 
-- [ ] SaucedCarts: world/vehicle/floor endpoints and custom callbacks need separate contracts. Add correlated server results with protection against duplicate/late responses before removing protection for active MP transfer and MP returns; check failure/partial batch without predicting success. Separately check replacing/resetting the cart itself while held; generators are currently protected while the cart is held. If needed, extend the capacity proof to deferred installation of upstream hooks and proven effects of the freed space.
+- [ ] SaucedCarts: investigate the source-backed SP borrowed-item cancellation check in `test_action_queue_carts.lua` that loses the expected exact cart return; the same check fails on unchanged main `c504040e` with the selected SaucedCarts source, so native reproduction is still needed. World/vehicle/floor endpoints and custom callbacks need separate contracts. Add correlated server results with protection against duplicate/late responses before removing protection for active MP transfer and MP returns; check failure/partial batch without predicting success. Separately check replacing/resetting the cart itself while held; generators are currently protected while the cart is held. If needed, extend the capacity proof to deferred installation of upstream hooks and proven effects of the freed space.
 - [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 from MP10 using the preserved diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
 
 Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.

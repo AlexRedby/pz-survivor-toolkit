@@ -79,25 +79,69 @@ function Settlement.earn(handle, receipt, observed)
     return true
 end
 
-function Settlement.cleanup(action, prerequisite)
-    local before = stepProof(prerequisite)
-    local handle = Settlement.track(action, "cleanup")
+function Settlement.earned(handle)
     local step = stepProof(handle)
-    if not before or not step or before.operation ~= step.operation or before == step
-        or before.phase == "cleanup" or step.prerequisite then return false end
-    step.prerequisite = before
-    step.kind = action.Type
+    return step and operationLive(step.operation) and step.state == "earned"
+        and step.action.character == step.operation.character
+        and step.action.toolkitQueueOperation == step.operation.token or false
+end
+
+function Settlement.cleanupAfter(action, prerequisites)
+    if type(prerequisites) ~= "table" then return false end
+    local handle = Settlement.track(action, "cleanup")
+    local step, before = stepProof(handle), {}
+    if not step or step.prerequisites then return false end
+    for _, prerequisite in ipairs(prerequisites) do
+        local previous = stepProof(prerequisite)
+        if not previous or previous.operation ~= step.operation or previous == step
+            or previous.phase == "cleanup" then return false end
+        before[#before + 1] = previous
+    end
+    step.prerequisites, step.kind = before, action.Type
     if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
     return true
 end
 
-local function requiredCleanup(action)
+function Settlement.cleanup(action, prerequisite)
+    return Settlement.cleanupAfter(action, {prerequisite})
+end
+
+local function requiredCleanup(action, expanding)
     local record = action and operation(action.character, action.toolkitQueueOperation)
     local step = record and record.actions[action]
-    return step and step.phase == "cleanup" and step.prerequisite and step.prerequisite.state == "earned"
-        and action.Type == step.kind and (not step.item or action.item and action.item:getID() == step.item.id
-            and action.item:getFullType() == step.item.fullType)
-        and Toolkit.ActionQueuePolicy and Toolkit.ActionQueuePolicy.inspect(action) ~= nil
+    if not step or step.phase ~= "cleanup" then return false end
+    local reviewed = Toolkit.ActionQueuePolicy and type(Toolkit.ActionQueuePolicy.inspect) == "function"
+        and Toolkit.ActionQueuePolicy.inspect(action)
+    if not reviewed and expanding and action._isAddingActions and action.Type == "ISQueueActionsAction"
+        and Toolkit.ActionQueueOperations and Toolkit.ActionQueueOperations.isCommand(action)
+        and Toolkit.ActionQueueDefinitions then
+        reviewed = Toolkit.ActionQueueDefinitions.inspect(action)
+    end
+    if action.Type ~= step.kind
+        or step.item and (not action.item or action.item:getID() ~= step.item.id
+            or action.item:getFullType() ~= step.item.fullType)
+        or not reviewed then return false end
+    if step.required then return true end
+    for _, previous in ipairs(step.prerequisites or {}) do
+        if previous.state == "earned" then return true end
+    end
+    return false
+end
+
+-- Only a live, reviewed cleanup command can pass its private obligation to the
+-- children it is currently expanding. Copied flags and historical handles do not.
+function Settlement.inheritCleanup(action, parent)
+    local queue = parent and ISTimedActionQueue.queues[parent.character]
+    if not queue or queue.current ~= parent or queue.queue[1] ~= parent
+        or parent.Type ~= "ISQueueActionsAction" or not requiredCleanup(parent, true)
+        or action.character ~= parent.character or action.toolkitQueueOperation ~= parent.toolkitQueueOperation then return false end
+    local step = stepProof(Settlement.track(action, "cleanup"))
+    if not step or not Toolkit.ActionQueuePolicy.inspect(action) then return false end
+    local parentRecord = operation(parent.character, parent.toolkitQueueOperation)
+    step.kind, step.required = action.Type, true
+    step.prerequisites = parentRecord.actions[parent].prerequisites
+    if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
+    return true
 end
 
 -- Value-only diagnostics. Callers cannot mutate proof, renew it after reset or
@@ -107,7 +151,10 @@ function Settlement.operationState(action)
     if not record then return end
     local result = {phase = record.phase, generation = record.generation, steps = {}}
     for _, step in ipairs(record.steps) do
-        result.steps[#result.steps + 1] = {phase = step.phase, state = step.state, started = step.started == true}
+        result.steps[#result.steps + 1] = {phase = step.phase, state = step.state, started = step.started == true,
+            observedPreparation = step.preparation ~= nil, kind = step.action.Type,
+            plannedTransfer = step.returning ~= nil, transferDirection = step.returning and step.returning.direction,
+            itemId = step.item and step.item.id, itemType = step.item and step.item.fullType}
     end
     result.borrowings = {}
     for _, binding in ipairs(record.borrowings) do
@@ -154,10 +201,16 @@ function Settlement.isCleanup(action)
 end
 
 local function insert(queue, action, index)
+    local previous = operation(action.character, action.toolkitQueueOperation)
+    local inherited = previous and previous.actions[action]
     -- Required work gets a fresh operation: cancelling its former owner cannot revoke it.
     action.toolkitQueueOperation, action.toolkitQueueReturn = {}, cleanupMarker
     local step = stepProof(Settlement.track(action, "cleanup"))
-    if step then step.required = true end
+    if step then
+        step.required, step.kind = true, action.Type
+        step.prerequisites = inherited and inherited.prerequisites
+        if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
+    end
     table.insert(queue.queue, index, action)
 end
 
@@ -261,7 +314,8 @@ function Settlement.remember(scope, action, contract)
     if scope.seen[action] then return false end
     scope.seen[action] = true
     local task = scope.tasks[token]
-    if not task then task = {items = {}, pickups = {}}; scope.tasks[token] = task end
+    if not task then task = {items = {}, pickups = {}, actions = {}}; scope.tasks[token] = task end
+    task.actions[action] = true
     if not contract or contract.knownInputs == false or contract.dynamicInputs or contract.dynamicInputsByType then
         task.unknownInputs = true
     end
@@ -709,13 +763,30 @@ end
 -- The exact native pickup proves its original owner without relying on the
 -- older enqueue-only pickup map. Competing task claims still prevent exclusive
 -- cleanup; this classification grants no operation edit permission.
+local function restoringBorrowing(scope, task, candidate)
+    local present = false
+    for action in pairs(task.actions or {}) do
+        present = true
+        local record = operation(scope.character, action.toolkitQueueOperation)
+        local step = record and record.actions[action]
+        if not step or not step.required or step.phase ~= "cleanup" then return false end
+        local owned = false
+        for _, previous in ipairs(step.prerequisites or {}) do
+            if previous == candidate.step and previous.state == "earned" then owned = true; break end
+        end
+        if not owned then return false end
+    end
+    return present
+end
+
 sharedBorrowing = function(scope, candidate)
     if not scope.tasks[candidate.owner] then return true end
     for token, task in pairs(scope.tasks) do
         local pickup = task.pickups[candidate.id]
         if pickup and (pickup.ambiguous or pickup.fullType ~= candidate.fullType
             or pickup.container ~= candidate.source or token ~= candidate.owner) then return true end
-        if token ~= candidate.owner and claimedInput(scope, task, candidate.id) then return true end
+        if token ~= candidate.owner and claimedInput(scope, task, candidate.id)
+            and not restoringBorrowing(scope, task, candidate) then return true end
     end
     return false
 end
@@ -732,6 +803,10 @@ function Settlement.preparePickup(scope, action)
     pollPickups(scope)
     local candidate = {id = id, fullType = fullType, source = action.srcContainer, destination = action.destContainer,
         owner = action.toolkitQueueOperation, phase = "prepare"}
+    local holder = type(candidate.source.getContainingItem) == "function" and candidate.source:getContainingItem()
+    if holder and type(holder.getInventory) == "function" and holder:getInventory() == candidate.source then
+        candidate.sourceOwner = {id = holder:getID(), fullType = holder:getFullType()}
+    end
     -- No outbound proof separates two unresolved borrowing episodes. Never let
     -- a late old pickup acquire the new episode merely because its ID matches.
     for _, previous in ipairs(ledger.candidates) do
@@ -739,8 +814,10 @@ function Settlement.preparePickup(scope, action)
     end
     local record = operation(scope.character, candidate.owner, true)
     if not record then return false end
-    record.borrowings[#record.borrowings + 1] = {scope = scope, candidate = candidate}
+    local binding = {scope = scope, candidate = candidate}
+    record.borrowings[#record.borrowings + 1] = binding
     candidate.step = stepProof(Settlement.track(action, "prepare"))
+    candidate.step.borrowing = binding
     ledger.candidates[#ledger.candidates + 1], ledger.actions[action] = candidate, candidate
     ledger.executors[action] = {[id] = candidate}
     return true
@@ -893,7 +970,8 @@ bindOwnership = function(proof, member)
     for _, candidate in ipairs(ledger and ledger.candidates or {}) do
         if candidate.id == member.id and candidate.fullType == member.fullType and not candidate.ambiguous
             and candidate.phase == "active" and (not candidate.returning or candidate.returning == proof)
-            and candidate.source == proof.destination and candidate.destination == proof.source then
+            and (candidate.source == proof.destination or candidate.returnDestination == proof.destination)
+            and candidate.destination == proof.source then
             if found then return end
             found = candidate
         end
@@ -934,6 +1012,197 @@ function Settlement.close(scope)
     if deferred(scope) then scope.phase = "retired" end
 end
 
+-- Preparation observation shares the native boundary and transfer merge observer;
+-- it does not replace a native callback or grant permission to interrupt it.
+local preparationObserver
+local function preparationStep(action)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    return step and step.preparation and step or nil
+end
+local function preparationGuard(action)
+    local step = preparationStep(action)
+    if not step or step.preparation.failed then return false end
+    local ok, valid = pcall(step.preparation.guard, action)
+    if not ok or valid ~= true then step.preparation.failed = true; return false end
+    return true
+end
+local function preparationState(step)
+    local watch = step.preparation
+    if step.state == "earned" then return "ready" end
+    if watch.failed then return "failed" end
+    if not watch.started or watch.empty then return "ready" end
+    if not preparationGuard(step.action) then return "failed" end
+    if not watch.finished then return "waiting" end
+    if watch.scope then
+        pollPickups(watch.scope)
+        if step.state == "earned" then return "ready" end
+        local candidate = step.borrowing and step.borrowing.candidate
+        local member, proof = candidate and candidate.member, candidate and candidate.proof
+        if not member or not member.attempt or not proof or proof.invalid then return "failed" end
+        local state = observeAttempt(proof, proof.attempts[member.attempt])
+        return state == "waiting" and "waiting" or state == "rejected" and "ready" or "failed"
+    end
+    if not step.receipt then return "failed" end
+    local ok, observed = pcall(watch.observed, step.action, watch.before)
+    if not ok then watch.failed = true; return "failed" end
+    local state = Settlement.effectState(step.receipt, observed == true)
+    if state == "completed" then
+        return Settlement.earn(step.handle, step.receipt, observed == true) and "ready" or "failed"
+    end
+    return state == "waiting" and "waiting" or (state == "rejected" or state == "canceled") and "ready" or "failed"
+end
+
+local plannedReturnObserver
+function Settlement.observePlannedReturns()
+    local transfers = Toolkit.ActionQueueTidyIntent
+    if plannedReturnObserver then
+        return transfers == plannedReturnObserver.transfers and transfers.observeTransfers == plannedReturnObserver.observe
+            and plannedReturnObserver.valid
+    end
+    if not transfers or type(transfers.observeTransfers) ~= "function" then return false end
+    local function guard(action)
+        local policy = Toolkit.ActionQueuePolicy
+        return getmetatable(action) == ISInventoryTransferAction and policy and policy.matchesNative(action)
+            and (policy.isOrdinaryTransfer(action) or Settlement.isCleanupPickup(action))
+    end
+    local previous = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
+    transfers.observeTransfers(function(action) Settlement.refreshPlannedReturn(action) end,
+        function(action) return Settlement.plannedReturnMatches(action) end, {
+            begin = function(action) return guard(action) and Settlement.beginPlannedReturn(action, guard) end,
+            finish = function(action, succeeded) return Settlement.finishPlannedReturn(action, succeeded) end,
+        })
+    local replacement = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
+    local valid, policy = previous == replacement, Toolkit.ActionQueuePolicy
+    if not valid and policy and type(policy.adoptTransferQueueObserver) == "function" then
+        valid = policy.adoptTransferQueueObserver(previous, replacement) == true
+    end
+    plannedReturnObserver = {transfers = transfers, observe = transfers.observeTransfers, valid = valid}
+    return valid
+end
+
+function Settlement.preparationAvailable()
+    local lifecycle, transfers = Toolkit.ActionQueueLifecycle, Toolkit.ActionQueueTidyIntent
+    if preparationObserver then
+        return preparationObserver.valid and lifecycle == preparationObserver.lifecycle and lifecycle.registerObserver == preparationObserver.register
+            and transfers == preparationObserver.transfers and transfers.observeTransfers == preparationObserver.observe
+    end
+    if not lifecycle or type(lifecycle.registerObserver) ~= "function"
+        or not transfers or type(transfers.observeTransfers) ~= "function" then return false end
+    if not Settlement.observePlannedReturns() then return false end
+    local observer = {
+        started = function(action)
+            local step = preparationStep(action)
+            if not step or not preparationGuard(action) then return end
+            local watch = step.preparation
+            if watch.started then watch.failed = true; return end
+            watch.started = true
+            local ok, before = pcall(watch.capture, action)
+            if not ok or before ~= nil and type(before) ~= "table" then watch.failed = true; return end
+            watch.before, watch.empty = before, before == nil
+        end,
+        begin = function(action, phase)
+            local step = preparationStep(action)
+            if not step or step.preparation.scope or phase ~= "perform" then return false end
+            local watch = step.preparation
+            if watch.empty then return false end
+            if not watch.started or not preparationGuard(action) or watch.begun
+                or isClient() and (action.toolkitNativeTransaction == nil or action.toolkitNativeKind == nil) then
+                watch.failed = true; return false
+            end
+            watch.begun = true
+            return Settlement.bindEffect(step.handle, Settlement.captureEffect(action))
+        end,
+        finish = function(action, phase, succeeded)
+            local step = preparationStep(action)
+            if not step or step.preparation.scope then return end
+            local watch = step.preparation
+            if not succeeded then watch.failed = true end
+            if phase == (isClient() and "perform" or "complete") then
+                watch.finished = true
+                preparationState(step)
+            end
+        end,
+    }
+    if not lifecycle.registerObserver("settlement-preparation", observer) then return false end
+    local previous = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
+    transfers.observeTransfers(function(action)
+        local step = preparationStep(action)
+        if step and step.preparation.scope then Settlement.refreshPickup(step.preparation.scope, action) end
+    end, function(action)
+        local step = preparationStep(action)
+        return step and step.preparation.scope and preparationGuard(action) or false
+    end, {
+        merging = function(action)
+            local step = preparationStep(action)
+            return step and step.preparation.scope and Settlement.beforePickupMerge(step.preparation.scope, action, preparationGuard) or false
+        end,
+        begin = function(action)
+            local step = preparationStep(action)
+            if not step or not step.preparation.scope then return false end
+            local watch = step.preparation
+            if not watch.started or watch.empty or not preparationGuard(action) then watch.failed = true; return false end
+            return Settlement.beginPickup(watch.scope, action, preparationGuard)
+        end,
+        finish = function(action, succeeded)
+            local step = preparationStep(action)
+            if not step or not step.preparation.scope then return false end
+            local watch = step.preparation
+            if not succeeded then watch.failed = true end
+            watch.finished = true
+            local result = Settlement.finishPickup(watch.scope, action, succeeded)
+            preparationState(step)
+            return result
+        end,
+    })
+    local replacement = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
+    local valid = previous == replacement
+    local policy = Toolkit.ActionQueuePolicy
+    if not valid and policy and type(policy.adoptTransferQueueObserver) == "function" then
+        valid = policy.adoptTransferQueueObserver(previous, replacement) == true
+    end
+    preparationObserver = {lifecycle = lifecycle, register = lifecycle.registerObserver,
+        transfers = transfers, observe = transfers.observeTransfers, valid = valid}
+    return valid
+end
+
+function Settlement.observePreparation(action, specification)
+    if not Settlement.preparationAvailable() or type(specification) ~= "table"
+        or type(specification.guard) ~= "function" or type(specification.capture) ~= "function"
+        or type(specification.observed) ~= "function" then return end
+    local step = stepProof(Settlement.track(action, "prepare"))
+    if not step or step.started or step.preparation then return end
+    step.preparation = {guard = specification.guard, capture = specification.capture, observed = specification.observed}
+    if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
+    if action.Type == "ISInventoryTransferAction" then
+        local record, binding = step.operation, step.borrowing
+        local scope = binding and binding.scope
+        if binding then
+            -- P4 observes synchronous enqueue before the family adapter binds its
+            -- preparation. Both observers must use that same native borrowing.
+            local candidate, ledger = binding.candidate, borrowing(scope)
+            if not borrowingLive(scope) or scope.character ~= record.character or scope.queue ~= record.queue
+                or scope.generation ~= record.generation or not scope.tasks[record.token]
+                or not candidate or candidate.step ~= step or candidate.owner ~= record.token
+                or candidate.phase ~= "prepare" or candidate.ambiguous or not ledger
+                or ledger.actions[action] ~= candidate or not ledger.executors[action]
+                or ledger.executors[action][candidate.id] ~= candidate
+                or candidate.source ~= action.srcContainer or candidate.destination ~= action.destContainer
+                or candidate.destination ~= record.character:getInventory()
+                or not sameMember(action.item, candidate) or action.item:getContainer() ~= candidate.source then
+                step.preparation.failed = true; return
+            end
+        else
+            record.preparationScope = record.preparationScope or Settlement.deferred(action.character, record.token)
+            scope = record.preparationScope
+            Settlement.remember(scope, action, {knownInputs = true, items = {[action.item:getID()] = true}})
+            if not Settlement.preparePickup(scope, action) then step.preparation.failed = true; return end
+        end
+        step.preparation.scope = scope
+    end
+    return step.handle
+end
+
 -- Do not release an independent tail while a preparation result can still
 -- arrive. Pending unstarted work has no receipt; a rejected attempt is isolated.
 -- A lost/expired authority is a failure, never an invitation to guess or retry.
@@ -943,7 +1212,11 @@ function Settlement.cancellationState(queue, action)
     local record = operation(action.character, request.token)
     if not record then return "ready" end
     for _, step in ipairs(record.steps) do
-        if step.phase == "prepare" and step.state ~= "earned" and step.receipt then
+        if step.preparation then
+            local state = preparationState(step)
+            if state ~= "ready" then return state end
+        end
+        if not step.preparation and step.phase == "prepare" and step.state ~= "earned" and step.receipt then
             local state = Settlement.effectState(step.receipt, false)
             if state == "waiting" then return "waiting" end
             if state ~= "canceled" and state ~= "rejected" then return "failed" end
@@ -970,6 +1243,11 @@ local function plannedReturn(action)
 end
 
 function Settlement.completionState(queue, action)
+    local step = preparationStep(action)
+    if step then
+        local state = preparationState(step)
+        if state ~= "ready" then return state end
+    end
     local planned = plannedReturn(action)
     if planned then
         local state = Settlement.returnState(planned.obligation)
@@ -992,7 +1270,16 @@ function Settlement.beginPlannedReturn(action, guard)
     local planned = plannedReturn(action)
     if not planned or type(guard) ~= "function" then return false end
     planned.guard = planned.guard or function(value)
-        return value == action and plannedReturn(value) == planned and guard(value)
+        if value ~= action or plannedReturn(value) ~= planned or not guard(value) then return false end
+        if planned.item and (not sameMember(value.item, planned.item) or value.srcContainer ~= planned.source
+            or value.destContainer ~= planned.destination) then return false end
+        if planned.owner then
+            local holder = value.character:getInventory():getItemById(planned.owner.id)
+            if not sameMember(holder, planned.owner) or type(holder.getInventory) ~= "function"
+                or holder:getInventory() ~= value.destContainer
+                or not Toolkit.ActionQueuePolicy.isCarriedContainer(value.destContainer, value.character) then return false end
+        end
+        return true
     end
     return Settlement.beginReturn(action, planned.obligation, planned.guard)
 end
@@ -1005,6 +1292,117 @@ end
 function Settlement.finishPlannedReturn(action, succeeded)
     local planned = plannedReturn(action)
     return planned and Settlement.finishReturn(planned.obligation, succeeded) or false
+end
+
+local function makeReturn(queue, id, expected, containers)
+    local inventory, destination = queue.character:getInventory(), expected.destination
+    local owner = expected.borrowed and expected.borrowed.sourceOwner
+    if owner then
+        local holder = inventory:getItemById(owner.id)
+        -- Ground placement/Host pickup may replace the Java bag/container replica.
+        -- Rebind only its captured exact owner, still carried by this actor.
+        if not sameMember(holder, owner) or type(holder.getInventory) ~= "function" then return end
+        destination = holder:getInventory()
+        if not Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character) then return end
+    end
+    local item = not expected.ambiguous and inventory:getItemById(id)
+    if not destination or not item or item:getID() ~= id or item:getFullType() ~= expected.fullType
+        or item:getContainer() ~= inventory or item:getIsCraftingConsumed()
+        or not destination:isExistYet() or not (containers:contains(destination)
+            or Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character)) then return end
+    local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
+    if action.Type ~= "ISInventoryTransferAction"
+        and (isClient() or not Toolkit.ActionQueueCarts or not Toolkit.ActionQueueCarts.isTransfer(action)) then return end
+    if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
+    action:setAllowMissingItems(true)
+    return action
+end
+
+local function bindPlannedReturn(action, scope, candidate)
+    local step = stepProof(Settlement.track(action, "cleanup"))
+    local owner, obligation = action.toolkitQueueOperation, {token = action.toolkitQueueOperation}
+    obligation[obligationScope] = function(value) if value == obligation then return scope, owner end end
+    step.returning = {obligation = obligation, item = {id = action.item:getID(), fullType = action.item:getFullType()},
+        source = action.srcContainer, destination = action.destContainer, owner = candidate.sourceOwner}
+    candidate.plannedReturn, candidate.returnDestination = action, action.destContainer
+end
+
+-- An earned ground placement may require a native floor pickup before equipment
+-- restoration. Observe that cleanup transaction without creating a new borrowing
+-- obligation that would put the recovered bag back on the floor.
+function Settlement.isCleanupPickup(action)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    local planned = step and step.returning
+    return step and step.required == true and step.phase == "cleanup" and planned and planned.direction == "pickup"
+        and planned.preparation and planned.preparation.state == "earned"
+        and action.Type == "ISInventoryTransferAction" and sameMember(action.item, planned.item)
+        and action.srcContainer == planned.source and action.destContainer == planned.destination
+        and planned.source:getType() == "floor" and planned.destination == record.character:getInventory() or false
+end
+
+function Settlement.observeCleanupTransfer(action, parent)
+    local queue = parent and ISTimedActionQueue.queues[parent.character]
+    local policy = Toolkit.ActionQueuePolicy
+    if not action or action.Type ~= "ISInventoryTransferAction" or not action.item or not parent
+        or not queue or queue.current ~= parent or queue.queue[1] ~= parent
+        or parent.Type ~= "ISQueueActionsAction" or not requiredCleanup(parent, true)
+        or action.character ~= parent.character or action.toolkitQueueOperation ~= parent.toolkitQueueOperation
+        or not action.srcContainer or action.srcContainer:getType() ~= "floor"
+        or action.destContainer ~= action.character:getInventory() or action.item:getContainer() ~= action.srcContainer
+        or not policy or not policy.matchesCleanupPickupBinding(action) then return false end
+    local parentRecord = operation(parent.character, parent.toolkitQueueOperation)
+    local preparation
+    for _, previous in ipairs(parentRecord.actions[parent].prerequisites or {}) do
+        if previous.state == "earned" and previous.phase == "prepare" and previous.preparation
+            and previous.action.Type == "ISDropWorldItemAction" and sameMember(action.item, previous.item) then
+            preparation = previous; break
+        end
+    end
+    local world = action.item:getWorldItem()
+    local square = preparation and preparation.preparation.before and preparation.preparation.before.square
+    if not preparation or not square or not world or world:getItem() ~= action.item or world:getSquare() ~= square
+        or not square:getWorldObjects():contains(world) then return false end
+    local step = stepProof(Settlement.track(action, "cleanup"))
+    if step.returning then return false end
+    Toolkit.BulkActions.guardTransfer(action)
+    local scope, owner = Settlement.deferred(action.character, action.toolkitQueueOperation), action.toolkitQueueOperation
+    local obligation = {token = owner}
+    obligation[obligationScope] = function(value) if value == obligation then return scope, owner, "pickup" end end
+    step.kind, step.required, step.prerequisites = action.Type, true, parentRecord.actions[parent].prerequisites
+    step.item = {id = action.item:getID(), fullType = action.item:getFullType()}
+    step.returning = {obligation = obligation, item = step.item, direction = "pickup", preparation = preparation,
+        source = action.srcContainer, destination = action.destContainer}
+    return true
+end
+
+function Settlement.enqueueBorrowedReturn(handle)
+    local step = stepProof(handle)
+    local binding = step and step.borrowing
+    if not binding or not operationLive(step.operation) then return end
+    local scope, candidate = binding.scope, binding.candidate
+    pollPickups(scope)
+    local queue = scope.queue
+    local parent = queue and queue.current
+    if not borrowingLive(scope) or candidate.phase ~= "active" or candidate.ambiguous
+        or candidate.returning or candidate.plannedReturn or sharedBorrowing(scope, candidate)
+        or not parent or queue.queue[1] ~= parent or parent.Type ~= "ISQueueActionsAction"
+        or not requiredCleanup(parent, true) or parent.character ~= scope.character then return end
+    local parentRecord = operation(parent.character, parent.toolkitQueueOperation)
+    local authorized = false
+    for _, prerequisite in ipairs(parentRecord.actions[parent].prerequisites or {}) do
+        if prerequisite == step then authorized = true; break end
+    end
+    if not authorized then return end
+    local action = makeReturn(queue, candidate.id, {fullType = candidate.fullType, destination = candidate.source, borrowed = candidate},
+        ISInventoryPaneContextMenu.getContainers(queue.character))
+    if not action or action.Type ~= "ISInventoryTransferAction" then return end
+    action.toolkitQueueOperation = parent.toolkitQueueOperation
+    -- Bind before enqueue: even an immediate native start must see its owner.
+    if not Settlement.inheritCleanup(action, parent) then return end
+    bindPlannedReturn(action, scope, candidate)
+    ISTimedActionQueue.add(action)
+    return action
 end
 
 -- Called only after the current native step/Host receipt has settled. Pickup
@@ -1032,7 +1430,7 @@ function Settlement.finish(queue, request, discard)
         pollPickups(scope)
         observed[candidate.id] = true
         if borrowingLive(scope) and candidate.phase == "active" and not candidate.ambiguous
-            and not candidate.returning and not sharedBorrowing(scope, candidate) then
+            and not candidate.returning and not candidate.plannedReturn and not sharedBorrowing(scope, candidate) then
             local previous = returns[candidate.id]
             if previous then previous.ambiguous = true
             else returns[candidate.id] = {fullType = candidate.fullType, destination = candidate.source, borrowed = candidate, scope = scope} end
@@ -1077,28 +1475,15 @@ function Settlement.finish(queue, request, discard)
     for id, expected in pairs(returns) do
         -- Replica replacement must preserve the exact ID/type. Conflicting history
         -- cannot choose a source by table iteration order or reclaim another item.
-        local destination = expected.destination
-        local item = not expected.ambiguous and inventory:getItemById(id)
-        if not ownedPickup(current, id) and item and item:getID() == id and item:getFullType() == expected.fullType
-            and item:getContainer() == inventory and not item:getIsCraftingConsumed()
-            and destination:isExistYet() and (containers:contains(destination)
-                or Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character)) then
-            local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
-            if action.Type == "ISInventoryTransferAction"
-                or (not isClient() and Toolkit.ActionQueueCarts and Toolkit.ActionQueueCarts.isTransfer(action)) then
-                if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
-                action:setAllowMissingItems(true)
-                insert(queue, action, index)
-                if expected.borrowed and action.Type == "ISInventoryTransferAction" then
-                    local handle = Settlement.track(action, "cleanup")
-                    local step, scope, owner = stepProof(handle), expected.scope, action.toolkitQueueOperation
-                    local obligation = {token = owner}
-                    obligation[obligationScope] = function(value) if value == obligation then return scope, owner end end
-                    step.returning = {obligation = obligation}
-                end
-                state.obligations[#state.obligations + 1] = {kind = "return", itemId = id, itemType = expected.fullType, destination = destination, action = action}
-                index = index + 1
+        local action = not ownedPickup(current, id) and makeReturn(queue, id, expected, containers)
+        if action then
+            insert(queue, action, index)
+            if expected.borrowed and action.Type == "ISInventoryTransferAction" then
+                bindPlannedReturn(action, expected.scope, expected.borrowed)
             end
+            state.obligations[#state.obligations + 1] = {kind = "return", itemId = id,
+                itemType = expected.fullType, destination = action.destContainer, action = action}
+            index = index + 1
         end
     end
     state.phase, record.phase = "scheduled", "cleanup"

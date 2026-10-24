@@ -69,6 +69,21 @@ Events.OnClientCommand.Add(function(module,name,player,args)
   elseif name=='Verify'then
    assert(state and not pending,'fitness verify out of order');assert(args.clientQuiescent==true,'fitness verify requires empty actor queue')
    pending={since=getTimestampMs(),quiet=nil,clientQuiescent=true,waitingFor='native-stop'}
+  elseif name=='IsolationReady'then
+   assert(config.mode=='native'and state and state.verified and not pending and args.failedCaseRecorded==true
+    and args.clientQuiescent==true and F.borrowedCase(state.case)
+    and (args.isolationPhase=='before'or args.isolationPhase=='after'),'native isolation before recorded case')
+   local count=0;for key,id in pairs(args.items or {})do
+    assert(state.ids.items[key]==id,'native isolation exact IDs differ');count=count+1
+   end
+   assert(count==6 and #O.records==0 and not O.active and not player:getFitness():getCurrentExe()
+    and not player:hasTimedActions()and player:getCharacterActions():isEmpty(),'native isolation authority not idle/zero-workout')
+   local inventory,storage=F.inventory(player),F.storage(player,state.ids.items.bag)
+   assert(F.conservedStorage(state,inventory,storage,args.isolationPhase=='after'),'native isolation authority item conservation differs')
+   local witness={case=state.case,phase=args.isolationPhase,items=state.ids.items,serverIdle=true,inventory=inventory,storage=storage,
+    activation=F.activation(player),clinical=O.clinical(player),
+    currentExerciseCleared=true,records=0,observerActive=false,nativeActions=0,failedCaseRecorded=true}
+   raw('ISOLATION_READY',witness);sendServerCommand(player,module,'IsolationReady',witness)
   elseif name=='Next'then
    assert(state and state.verified and not pending,'fitness next before receipt')
    if state.strandedCurrent then

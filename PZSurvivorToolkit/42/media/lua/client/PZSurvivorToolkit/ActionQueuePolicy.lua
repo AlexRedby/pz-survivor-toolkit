@@ -390,9 +390,14 @@ local function ordinaryTransferContainer(container, character)
         or ItemEditAdapters and type(ItemEditAdapters.worldContainer) == "function"
             and ItemEditAdapters.worldContainer(container, character) ~= nil
 end
-ordinaryTransfer = function(action)
+local function transferHelpersMatch()
     if not transferMethodsAdopted then return true end
     for _, guard in ipairs(transferHelperGuards) do if not guard() then return false end end
+    return true
+end
+ordinaryTransfer = function(action)
+    if not transferHelpersMatch() then return false end
+    if not transferMethodsAdopted then return true end
     return ordinaryTransferContainer(action.srcContainer, action.character)
         and ordinaryTransferContainer(action.destContainer, action.character)
 end
@@ -422,10 +427,17 @@ local function callbacksSafe(action)
             and action.onCompleteFunc == action.toolkitQueueSafeOnComplete and action.toolkitTransferGuard
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, action.toolkitTransferGuard.original)))
 end
-local function nativeMatches(action, snapshot)
+local function nativeMatches(action, snapshot, observingCleanup)
     if getmetatable(action) ~= snapshot.class or action.Type ~= snapshot.class.Type or not callbacksSafe(action) then return false end
     if snapshot.startHelperGuard and not snapshot.startHelperGuard() then return false end
-    if snapshot.class == ISInventoryTransferAction and not ordinaryTransfer(action) then return false end
+    if snapshot.class == ISInventoryTransferAction then
+        if not transferHelpersMatch() then return false end
+        if not ordinaryTransfer(action) and not observingCleanup then
+            local settlement = Toolkit.ActionQueueSettlement
+            if not settlement or type(settlement.isCleanupPickup) ~= "function"
+                or not settlement.isCleanupPickup(action) then return false end
+        end
+    end
     for _, name in ipairs(lifecycle) do
         if action[name] ~= snapshot.methods[name] and not (name == "stop" and action.Type == "ISInventoryTransferAction"
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, snapshot.methods.stop)) then return false end
@@ -446,6 +458,15 @@ function Policy.matchesNative(action)
     local snapshot = snapshots[getmetatable(action)]
     return snapshot ~= nil and nativeMatches(action, snapshot)
 end
+-- Binding verification only: this does not grant queue edit permission. Shared
+-- settlement must separately prove the exact earned drop/current cleanup owner.
+function Policy.matchesCleanupPickupBinding(action)
+    local snapshot = snapshots[getmetatable(action)]
+    return snapshot ~= nil and snapshot.class == ISInventoryTransferAction
+        and action.srcContainer and action.srcContainer:getType() == "floor"
+        and action.destContainer == action.character:getInventory()
+        and nativeMatches(action, snapshot, true)
+end
 local function resources(action)
     local result = {items = {}, itemTypes = {}, targets = {}, cancelWaiting = true, interrupt = "finish-step"}
     for _, field in ipairs({"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}) do
@@ -457,7 +478,7 @@ local function resources(action)
     end
     return result
 end
-local function registerNative(name, inspector, helpers)
+local function registerNative(name, inspector, helpers, applies)
     local class = _G[name]
     if not class or snapshots[class] then return end
     local snapshot = {class = class, methods = {}, helpers = {}}
@@ -469,7 +490,8 @@ local function registerNative(name, inspector, helpers)
     snapshots[class] = snapshot
     Definitions.registerBehavior("native." .. name, {
         types = {name},
-        matches = function(action) return nativeMatches(action, snapshot) end,
+        -- Family-owned native cleanup must not claim unrelated uses of the same class.
+        matches = function(action) return nativeMatches(action, snapshot) and (not applies or applies(action)) end,
         inspect = inspector,
     })
 end

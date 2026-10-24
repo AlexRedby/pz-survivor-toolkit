@@ -653,7 +653,11 @@ if NativeActionRoot then
         local active, restore = q.current
         for _, candidate in ipairs(q.queue) do if Bulk.isCleanup(candidate) then restore = candidate end end
         tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
-        assert(restore and Policy.inspect(restore), 'only the native owned mask restoration gets a cleanup contract')
+        assert(restore,'owned mask restoration was not queued')
+        local restoreContract,restoreAdapter=Policy.inspect(restore)
+        assert(restoreContract and restoreAdapter=='native.ISWearClothing', 'only the native owned mask restoration gets its native cleanup contract')
+        local foreignWear=ISWearClothing:new(player,restore.item,50)
+        assert(not Policy.inspect(foreignWear), 'an identical unowned Wear cannot borrow the food cleanup registration')
         local complete = restore.complete; restore.complete = function() end
         assert(not Controller.cancelOperation(q, active), 'changed mask effects cannot inherit group cancellation permission')
         restore.complete = complete

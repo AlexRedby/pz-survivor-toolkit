@@ -43,6 +43,23 @@ function Equipment.refreshFloor(player)
     if loot then loot:refreshBackpacks() end
 end
 
+-- Native placement/replication can precede refresh of the UI floor projection.
+-- Confirm the exact real world object without changing that projection or gameplay.
+function Equipment.placed(ref, square)
+    if not square then return end
+    local result
+    local objects = square:getWorldObjects()
+    for i = 0, objects:size() - 1 do
+        local world = objects:get(i)
+        local item = world:getItem()
+        if matches(item, ref) then
+            if result or world:getSquare() ~= square or item:getWorldItem() ~= world then return end
+            result = item
+        end
+    end
+    return result
+end
+
 function Equipment.ground(player, ref)
     local floor = ISInventoryPage.GetFloorContainer(player:getPlayerNum())
     local item = floor:getItemById(ref.id)
