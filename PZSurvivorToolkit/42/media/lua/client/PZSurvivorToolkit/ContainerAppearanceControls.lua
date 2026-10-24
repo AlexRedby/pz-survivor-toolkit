@@ -3,12 +3,23 @@ require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
 require "ISUI/ISColorPickerHSB"
 local Appearance = require "PZSurvivorToolkit/ContainerAppearance"
+local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Controls = {}
 local function text(key) return getText("UI_PZST_Container" .. key) end
 
+-- Use the real compartment type even when the appearance draft has a custom name/icon.
+function Controls.identity(picker)
+    local container = picker.targetObj and picker.targetObj:getContainerByIndex(picker.targetCI)
+    local kind = container and container:getType()
+    local name = kind and (getTextOrNull("IGUI_ContainerTitle_" .. kind) or kind) or text("Default")
+    return name, kind and ContainerButtonIcons and ContainerButtonIcons[kind]
+end
+
 function Controls.refresh(picker)
     local draft = picker.toolkitAppearance
-    local texture = draft.icon and require("BetterContainers/Helpers").getIconTexture(draft.icon)
+    local _, defaultIcon = Controls.identity(picker)
+    local texture = draft.icon and require("BetterContainers/Helpers").getIconTexture(draft.icon) or defaultIcon
+    texture = texture or getTexture("media/ui/Container_Crate.png")
     picker.appearanceIcon:setImage(texture)
     picker.appearanceIcon:setTitle(texture and "" or text("Icon"))
     local color = draft.color
@@ -100,16 +111,22 @@ function Controls.create(picker)
             a = color.a and channel(color.a) or 1}
     end
     picker.toolkitAppearanceInitialName = picker.toolkitAppearance.name or ""
+    local identity = Controls.identity(picker)
+    picker.appearanceHeading = ISLabel:new(10, 0, 24, text("Target") .. ": " .. identity,
+        0.85, 0.9, 1, 1, UIFont.Medium, true)
+    picker.appearanceHeading:setTooltip(text("Target") .. ": " .. identity)
     picker.appearanceLabel = ISLabel:new(10, 0, 24, text("Name"), 1, 1, 1, 1, UIFont.Small, true)
     picker.appearanceName = ISTextEntryBox:new(picker.toolkitAppearanceInitialName, 82, 0, 240, 24)
     picker.appearanceName.font = UIFont.Medium
     picker.appearanceName:setTooltip(text("NameHint"))
-    picker.appearanceIcon = ISButton:new(10, 0, 100, 26, text("Icon"), picker, Controls.chooseIcon)
-    picker.appearanceIcon:forceImageSize(22, 22)
+    picker.appearanceIcon = ISButton:new(10, 0, 64, 64, text("Icon"), picker, Controls.chooseIcon)
+    picker.appearanceIcon:forceImageSize(44, 44)
     picker.appearanceIcon:setTooltip(text("Icon"))
+    picker.appearanceIconLabel = ISLabel:new(10, 0, 20, text("IconLabel"), 0.8, 0.8, 0.8, 1, UIFont.Small, true)
     picker.appearanceColor = ISButton:new(120, 0, 100, 26, text("Color"), picker, Controls.chooseColor)
     picker.appearanceReset = ISButton:new(230, 0, 100, 26, text("ResetAppearance"), picker, Controls.reset)
-    for _, child in ipairs({picker.appearanceLabel, picker.appearanceName, picker.appearanceIcon,
+    for _, child in ipairs({picker.appearanceHeading, picker.appearanceLabel, picker.appearanceName,
+        picker.appearanceIcon, picker.appearanceIconLabel,
         picker.appearanceColor, picker.appearanceReset}) do
         child:initialise(); child:instantiate(); picker:addChild(child)
     end
@@ -120,15 +137,27 @@ end
 function Controls.layout(picker, top)
     if not picker.appearanceName then return top end
     local w, gap = picker:getWidth() - 20, 6
+    local rowH = math.max(26, getTextManager():getFontHeight(UIFont.Medium) + 8)
+    local iconSize = math.max(64, rowH * 2 + gap)
+    local identity = Controls.identity(picker)
+    picker.appearanceHeading:setName(UIStyle.fit(text("Target") .. ": " .. identity, w, UIFont.Medium))
+    picker.appearanceHeading:setY(top); picker.appearanceHeading:setHeight(rowH)
+    top = top + rowH + gap
+    picker.appearanceIcon:setX(10); picker.appearanceIcon:setY(top)
+    picker.appearanceIcon:setWidth(iconSize); picker.appearanceIcon:setHeight(iconSize)
+    picker.appearanceIconLabel:setY(top + iconSize)
+    local rightX = 10 + iconSize + 12
+    local rightW = w - iconSize - 12
     local labelW = getTextManager():MeasureStringX(UIFont.Small, text("Name")) + 12
-    picker.appearanceLabel:setY(top)
-    picker.appearanceName:setX(10 + labelW); picker.appearanceName:setY(top)
-    picker.appearanceName:setWidth(w - labelW)
-    local bw = (w - gap * 2) / 3
-    for index, child in ipairs({picker.appearanceIcon, picker.appearanceColor, picker.appearanceReset}) do
-        child:setX(10 + (index - 1) * (bw + gap)); child:setY(top + 30); child:setWidth(bw)
+    picker.appearanceLabel:setX(rightX); picker.appearanceLabel:setY(top); picker.appearanceLabel:setHeight(rowH)
+    picker.appearanceName:setX(rightX + labelW); picker.appearanceName:setY(top)
+    picker.appearanceName:setWidth(rightW - labelW); picker.appearanceName:setHeight(rowH)
+    local bw = (rightW - gap) / 2
+    for index, child in ipairs({picker.appearanceColor, picker.appearanceReset}) do
+        child:setX(rightX + (index - 1) * (bw + gap)); child:setY(top + rowH + gap)
+        child:setWidth(bw); child:setHeight(rowH)
     end
-    return top + 64
+    return top + iconSize + 24
 end
 
 function Controls.value(picker)

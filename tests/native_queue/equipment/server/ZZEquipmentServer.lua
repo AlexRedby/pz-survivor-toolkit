@@ -96,9 +96,9 @@ Events.OnTick.Add(function()
   assert(getTimestampMs()-pending.since<20000,'authoritative equipment state did not converge')
   local idle=Fixture.transactionsSettled()
   local settled=not pending.checkpoint or Fixture.settled(session,Selection.mode,true)
-  -- Check the independently seeded native server baseline: the unheld
-  -- selector0 gap retains its initial power state despite client UI cleanup.
-  -- Never copy client values into authority or wait for an unsupported edge.
+  -- Equip acknowledgement can precede the native unheld radio off packet.
+  -- Keep this request pending until the repaired native receiver applies it;
+  -- never copy client values into the independently seeded server device.
   if Hotbar.radio(session)and not pending.checkpoint then settled=settled and Hotbar.radioReady(session,pending.tidy)end
   if Hotbar.flashlight(session)then settled=settled and Hotbar.flashlightReady(session,not pending.checkpoint and pending.tidy)end
   if Clothing.wristwatch(session)then

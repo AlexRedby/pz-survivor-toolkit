@@ -324,6 +324,30 @@ assert(nativeStops>0,'managed exercise did not use native forceStop')
 for name,callback in pairs(nativeFitness)do assert(ISFitnessAction[name]==callback,'adapter replaced native effect callback '..name)end
 print('PASS deferred fitness native constructor, elapsed progress and no effect replay')
 
+do
+ reset()
+ local burpeesPending,burpeesQueue=request('burpees',30)
+ local heading=fitnessQueue.describe(burpeesPending).title
+ expand(burpeesPending,burpeesQueue)
+ local preparation=fitnessQueue.describe(burpeesQueue.queue[1])
+ assert(preparation.role=='preparation' and preparation.title~=heading and not preparation.target,
+  'fitness preparation was labelled as another full workout')
+ local burpees=reachExercise(burpeesQueue)
+ local cleanup=assert(burpeesQueue.queue[2])
+ assert(#burpeesQueue.queue==2 and burpees.Type=='ISFitnessAction' and cleanup.Type=='ISQueueActionsAction'
+  and cleanup.toolkitFitnessStage=='cleanup' and cleanup.toolkitQueueOperation==burpees.toolkitQueueOperation,
+  'one burpees workout must group only its exercise and deferred cleanup')
+ local description=fitnessQueue.describe(cleanup)
+ assert(description.role=='return' and description.title~=heading and not description.target
+  and description.signature=='fitness:burpees','fitness cleanup was labelled as another full workout')
+ assert(burpees.timeToExe==30 and fitnessQueue.progress(burpees).total==30,
+  'stage presentation changed the selected workout duration')
+ assert(PZSurvivorToolkit.ActionQueueDefinitions.taskTitle(burpeesQueue,1,2)==heading,
+  'fitness stage presentation replaced the operation heading')
+ finish(burpeesQueue,burpees)
+ print('PASS single 30-minute burpees workout groups distinct preparation and restoration stages')
+end
+
 reset()
 pending,q=request('squats',10)
 window=panel('pushups',20);window:onClick({internal='OK'})
@@ -638,25 +662,38 @@ print('PASS in-flight placement cancellation and storage taken between pickup pl
 ISTimedActionQueue.onCompleted=nativeCompleted
 
 reset();client=true
-pending,q=request('squats',10);expand(pending,q);workout=reachExercise(q)
+pending,q=request('burpees',30);expand(pending,q);workout=reachExercise(q)
 local stopsBefore=nativeStops
 assert(not fitnessQueue.canPreserveStop(workout) and not q.toolkitCancel,'Host stop preserved queue without authoritative started receipt')
 local noReceiptContract=assert(policy.inspect(workout))
 assert(noReceiptContract.interrupt=='finish-step' and noReceiptContract.cancelOperation==false,
     'Host operation allowed managed interruption before server start was acknowledged')
-workout:forceStop()
-assert(nativeStops==stopsBefore and currentExercise=='squats','Host stop proceeded before started receipt')
-receipt={state='started',token='fixture-receipt'}
-workout:forceStop()
-assert(nativeStops==stopsBefore+1,'acknowledged Host stop bypassed native forceStop')
-assert(q.toolkitCancel==workout and q.toolkitOutcomeWait and q.toolkitOutcomeWait.acknowledgement==receipt
-    and q.toolkitOutcomeWait.generic and not q.toolkitOutcomeWait.operation,'Host fitness stop did not use shared same-action receipt gate')
-assert(q.toolkitOutcomeWait.deadline==now+30000,'Host stop receipt wait has no bounded deadline')
+now=workout.endMS+1
+workout:update()
+assert(nativeStops==stopsBefore+1 and currentExercise==nil,'expired Host workout delayed native stop until started receipt')
+assert(player.vars.ExerciseStarted==false and player.vars.ExerciseEnded==true,'expired workout did not use native animation ending')
+local waiting=assert(q.toolkitOutcomeWait)
+assert(q.toolkitCancel==workout and waiting.pendingStart and waiting.generic,'missing started receipt did not hold continuation')
+assert(waiting.pendingStart.native==workout.action and waiting.deadline==now+30000,'pending receipt wait lacks native identity or bounded deadline')
+local ending=assert(fitnessQueue.progress(workout))
+assert(ending.fraction==1 and ending.stopping and fitnessQueue.describe(workout).target=='UI_PZSurvivorToolkit_queue_fitness_stopping',
+    'server stop wait still looks like a running 100 percent workout')
+local deadline=waiting.deadline
+now=now+1000;workout:forceStop()
+assert(q.toolkitOutcomeWait==waiting and waiting.deadline==deadline,'repeated native stop extended authoritative deadline')
 assert(repeats==effects,'Host stop replayed authoritative exercise effects')
 fitnessPrune()
 assert(fitnessQueue.isManaged(workout) and fitnessQueue.isManaged(q.queue[2]),
     'queued receipt-waiting exercise or required cleanup lost its record')
-print('PASS Host fitness preservation requires authoritative started receipt')
+
+reset();client=true
+pending,q=request('squats',10);expand(pending,q);workout=reachExercise(q)
+receipt={state='started',token='fixture-receipt'}
+stopsBefore=nativeStops;workout:forceStop()
+assert(nativeStops==stopsBefore+1,'acknowledged Host stop bypassed native forceStop')
+assert(q.toolkitCancel==workout and q.toolkitOutcomeWait.acknowledgement==receipt
+    and not q.toolkitOutcomeWait.pendingStart,'acknowledged Host fitness stop lost existing receipt gate')
+print('PASS Host fitness stops immediately, holds late receipts and shows server settlement separately')
 
 reset();client=true;receipt={state='started',token='storage-fixture-receipt'}
 backpack=item('Bag_BigHikingBag',nil,'BACK');backpack.favorite=true

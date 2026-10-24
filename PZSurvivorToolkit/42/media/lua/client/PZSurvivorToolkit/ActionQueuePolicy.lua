@@ -190,6 +190,35 @@ local function dynamicConflict(a, b, context)
     return false
 end
 
+-- Audited property setters are independent of VHS inventory/playback effects.
+-- Playback retains its asynchronous native state; this only removes a disjoint
+-- target edge, never power/media ordering, item or capacity dependencies.
+local mediaSetterModes = {SetVolume = true, SetChannel = true, MuteMicrophone = true,
+    MuteVolume = true, UnMuteVolume = true}
+local function mediaSetterIndependent(a, b, context)
+    local setter, media = a, b
+    if not mediaSetterModes[setter.mode] then setter, media = b, a end
+    if not mediaSetterModes[setter.mode] or not EditAdapters then return false end
+    local edit = EditAdapters.radio(setter)
+    if not edit or not instanceof(setter.device, "IsoTelevision") then return false end
+    if not inspect then return false end
+    local contract, source = inspect(media, context)
+    local cassette = source == "native.device-media-insert" or source == "native.device-media-eject"
+    local playback = source == "native.ISRadioAction" and media.mode == "TogglePlayMedia"
+        and media.device == setter.device and EditAdapters.radioCallbacksTrusted(media) and media.maxTime == 30
+    if not contract or not (cassette and media.Type == "ISDeviceMediaAction" or playback)
+        or media.character ~= setter.character
+        or media.action or media.started or media._isAddingActions
+        or (type(media.toolkitQueueOperation) == "table" and media.toolkitQueueOperation.toolkitStarted)
+        or media.deviceData ~= setter.deviceData or setter.deviceData:getParent() ~= setter.device then return false end
+    local targetCount = 0
+    for target in pairs(contract.targets or {}) do
+        if target ~= setter.device then return false end
+        targetCount = targetCount + 1
+    end
+    return targetCount == 1
+end
+
 local function sharedWorldTarget(a, b, context)
     local generators = Toolkit.ActionQueueGenerators
     if generators and generators.sharesTarget then
@@ -200,7 +229,9 @@ local function sharedWorldTarget(a, b, context)
     if left and right then
         if sharedEditResource and sharedEditResource(left, right) then return true end
         for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
-        for target in pairs(left.targets or {}) do if right.targets and right.targets[target] then return target end end
+        for target in pairs(left.targets or {}) do
+            if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+        end
         if left.hands and left.hands == right.hands then return left.hands end
         if (left.equipment and left.equipment == right.hands) or (right.equipment and right.equipment == left.hands) then return left.equipment or right.equipment end
     end
@@ -868,6 +899,18 @@ end, inspect = function(action)
     local result = resources(action); result.unknownOutputs, result.bulk = true, true; return result
 end})
 
+Definitions.registerBehavior("toolkit.approach", {types = {"ISQueueActionsAction"}, matches = function(action)
+    local approach=Toolkit.ActionQueueApproach
+    return approach and approach.isAction(action)
+end, inspect = function(action)
+    local result=resources(action)
+    result.deferred,result.preparation,result.preparationFinish=true,true,true
+    result.cancelWaiting=true
+    result.positions={[action.character]=true}
+    result.capacityNonIncreasing=true
+    return result
+end})
+
 Definitions.registerBehavior("toolkit.food", {types = {"ISQueueActionsAction"}, matches = function(action)
     local Food = Toolkit.BulkFood
     return Food and (Food.isCommand(action) or (Food.isOpeningWait and Food.isOpeningWait(action)))
@@ -884,9 +927,15 @@ inspect = function(action, context)
         if context then context.contracts[action] = {} end
         return
     end
-    if not context then return Definitions.inspect(action) end
     local result = {Definitions.inspect(action)}
-    context.contracts[action] = result
+    local settlement = Toolkit.ActionQueueSettlement
+    if result[1] and settlement and settlement.requiredStep(action) then
+        local contract = {}
+        for key, value in pairs(result[1]) do contract[key] = value end
+        contract.cancelOperation, contract.cancelWaiting = false, false
+        result[1] = contract
+    end
+    if context then context.contracts[action] = result end
     return unpack(result, 1, 3)
 end
 Policy.inspect = inspect
@@ -1283,7 +1332,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
             for _, batch in ipairs(action.queueList or {}) do
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
-        elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
+        elseif not capacityNeutral[action.Type] and source~="toolkit.approach" and not boundedWaterDrink(action, character, source)
             and not (source=="native.ISFluidEmptyAction" and contract.edit and contract.capacityNonIncreasing==true)
             and not (source == "native.ISEatFoodAction" and contract.edit
                 and (contract.capacityNonIncreasing == true or conditionalCapacity[action]

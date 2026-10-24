@@ -25,16 +25,4 @@ py -3 tools/check_action_queue.py run $Output --suite forge `
 
 Allow the outer shell more than 660 seconds, or disable its timeout. Preparation copies/seals all selected mods, fixture sources, native Lua/scripts and initial settings; a retry requires a new output directory. The Windows client and native `CoopServer` use the game's bundled runtime, isolated approvals and silent/VOIP-disabled settings. Preserve `report.json`, `coverage.json`, `execution.json`, manifests and complete client/server logs outside Git.
 
-## Recorded result
-
-The local forge candidate used version label 0.1.23 before concurrent upstream medicine/TV releases were merged. The combined published version is 0.1.25; the historical live comparison below is not whole-merge gameplay acceptance.
-
-The local runs `forge-baseline-05` and `forge-candidate-01` used B42.21, all 48 selected Mod IDs and identical gameplay fixture files. Their production manifests differed only in `PZToolkitJavaPatches` (0.1.22 versus 0.1.23).
-
-| Case | Pre-fix | Fixed |
-|---|---|---|
-| Hand craft | One log, three planks, idle | Same |
-| Unchanged forge | Two material items, one blade, idle | Same |
-| Forge index 5 → 4 | 100% for 15+ seconds; no material debit/output; action/UI busy; server `loadComponent` NPE | Exactly one charcoal and iron-bar-quarter debit, one new blade, both tool IDs retained, action/UI idle |
-
-Both invocations completed and audited zero surviving owned processes. The baseline correctly remains failed. The fixed invocation has **functional PASS for all three cases and zero server action errors**, but seven client startup font errors shared with the baseline keep its overall report **needs-review**. These errors have not been hidden or reclassified as background. This is not a clean whole-pack, macOS, WAN or two-client verdict, nor a claim that every possible forge stall is repaired. The separate native Java `CraftBenchChecks` and `MedicalTimedActionChecks` cover decoder guards and their neighboring medical path.
+The native Java `CraftBenchChecks` and `MedicalTimedActionChecks` cover decoder guards and their neighboring medical path. Current gameplay evidence belongs to each run's report; old local run summaries are not maintained here.

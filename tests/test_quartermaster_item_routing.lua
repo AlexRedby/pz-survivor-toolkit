@@ -1,3 +1,5 @@
+local worldTags={}
+ModData={getOrCreate=function()return worldTags end}
 local shared = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 package.path = shared .. '?.lua;' .. package.path
 local enabled = true
@@ -484,3 +486,20 @@ do
     assert(destinations[record]==category,'a later plan reused an earlier name index')
 end
 print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, destination admission, capacity/carriers/leftovers and failure safety.')
+
+-- Routing consumes effective exact tags instead of a cached category projection.
+local customId='custom:12345678-1234-1234-1234-123456789abc'
+local C=require 'PZSurvivorToolkit/TagCustomization'
+worldTags.definitions[customId]={name='Workshop'}
+worldTags.types['base.candy']={[customId]='add'}
+local delta={}
+candy.ref.hasModData=function()return true end
+candy.ref.getModData=function()return {[C.FIELD]=delta}end
+local customDestination=box({mode='all',include={customId},exclude={}})
+destinations=checkPlan({candy,sunflower},{customDestination})
+assert(destinations[candy]==customDestination and not destinations[sunflower])
+delta[customId]='remove'
+destinations=checkPlan({candy},{customDestination});assert(not destinations[candy])
+delta[customId]=nil;worldTags.definitions[customId]={deleted=true}
+destinations=checkPlan({candy},{customDestination});assert(not destinations[candy],
+ 'deleted tag routed an item through a saved include')

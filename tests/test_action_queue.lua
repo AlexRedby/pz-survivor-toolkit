@@ -921,6 +921,16 @@ assert(list.items[1].header and list.items[1].tooltip:find('[42%]',1,true)
     and list.items[1].tooltip:find('queue_remaining(3)',1,true) and list.lastTexture=='close-icon')
 assert(table.concat(list.drawnTexts,'\n'):find('ContextMenu_Read',1,true))
 assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_steps(3)')
+do
+    local previousFitness=PZSurvivorToolkit.ActionQueueFitness
+    PZSurvivorToolkit.ActionQueueFitness={progress=function(action)
+        if action==a then return {fraction=1,stopping=true} end
+    end}
+    list.doDrawItem(list,0,list.items[1],false)
+    assert(list.items[1].tooltip:find('[...]',1,true) and not list.items[1].tooltip:find('[100%]',1,true),
+        'server settlement still renders a running 100 percent workout')
+    PZSurvivorToolkit.ActionQueueFitness=previousFitness
+end
 local title=list.items[1].task
 list.items[1].task=string.rep('Long recipe ',50);list.clips={}
 list.doDrawItem(list,0,list.items[1],false)
@@ -1685,6 +1695,10 @@ frame(p)
 local returned=q.current
 assert(returned.Type=='ISInventoryTransferAction' and returned~=restore and returned.item==a.item)
 assert(returned.allowMissingItems and #q.queue==2 and q.queue[2]==d and not q.toolkitGroupCancel)
+assert(api.cancelReason(q,returned)=='dependent' and api.cancelOperationReason(q,returned)=='operation_dependent',
+    'a second UI cancellation cannot revoke earned mandatory cleanup')
+assert(not api.cancel(q,returned) and not api.cancelOperation(q,returned) and q.current==returned and q.queue[2]==d)
+
 assert(not b.action and not p.actions[a.action], 'group stop must precede native cleanup; remaining work never starts')
 returned.action.done=true;frame(p)
 assert(a.item.container==bag and q.current==d, 'borrowed item returns once, then the unrelated operation starts')
@@ -1856,6 +1870,55 @@ end
 PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
 print('Generic native outcomes: local stop/removal waits for receipt; only canceled resumes, completed/rejected preserve independent tail without replay.')
 
+-- An expired workout can send native stop before its server started message arrives.
+-- Keep the stopped Lua action current so only the ordinary sealed receipt may advance it.
+do
+    local originalAcknowledgements=PZSurvivorToolkit.ActionQueueAcknowledgements
+    for _,scenario in ipairs({'late-start','late-terminal','timeout','native','transaction','kind','generation'}) do
+        p=player();a,b,c=leaf(p,'stopped-workout'),leaf(p,'restore-equipment'),leaf(p,'independent-tail')
+        q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c);frame(p)
+        a.toolkitNativeTransaction,a.toolkitNativeKind=42,'ISFitnessAction'
+        local receipt
+        PZSurvivorToolkit.ActionQueueAcknowledgements={
+            capture=function(action) if action==a then return receipt end end,
+            state=function(action,record) if action==a and record and record==receipt then return record.state end end,
+            reset=function()end,
+        }
+        q.toolkitCancel=a
+        q.toolkitOutcomeWait={generic=true,deadline=acknowledgementClock+30000,pendingStart={
+            native=a.action,transaction=42,kind='ISFitnessAction',generation=q.toolkitOperationGeneration or 0}}
+        local wait=q.toolkitOutcomeWait
+        local before=#completions
+        a:forceStop();frame(p)
+        assert(q.current==a and #q.queue==3 and q.toolkitCancelStopped and not p.actions[a.action]
+            and #completions==before,'native removal advanced cleanup before late authoritative receipt')
+        if scenario=='late-start' or scenario=='late-terminal' then
+            receipt={state=scenario=='late-start' and 'started' or 'canceled'}
+            q:tick()
+            assert(wait.acknowledgement==receipt and not wait.pendingStart,'late receipt was not captured by current stopped action')
+            if scenario=='late-start' then
+                assert(q.current==a and #completions==before,'started receipt advanced stopped workout before terminal')
+                receipt.state='canceled';q:tick()
+            end
+            assert(q.current==b and not q.toolkitOutcomeWait and #completions==before,'late terminal lost cleanup or replayed workout')
+            frame(p);b.action.done=true;frame(p)
+            assert(q.current==c and completions[#completions]=='restore-equipment','required cleanup did not precede independent tail')
+        else
+            if scenario=='timeout' then acknowledgementClock=wait.deadline
+            elseif scenario=='native' then a.action=LuaTimedActionNew.new(a)
+            elseif scenario=='transaction' then a.toolkitNativeTransaction=43
+            elseif scenario=='kind' then a.toolkitNativeKind='other'
+            elseif scenario=='generation' then q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1 end
+            q:tick()
+            assert(#q.queue==0 and not q.toolkitOutcomeWait and #completions==before,
+                'uncertain or stale late receipt wait advanced work instead of resetting safely: '..scenario)
+        end
+    end
+    PZSurvivorToolkit.ActionQueueAcknowledgements=originalAcknowledgements
+end
+print('Late started receipts: native stop is immediate; cleanup/tail wait for terminal and stale identity/timeouts fail closed.')
+
+
 -- A replicated BBQ effect can invalidate native isValid() before local completion/Done arrives.
 do
     load('shared/TimedActions/ISBBQLightFromPetrol.lua')
@@ -1975,3 +2038,36 @@ do
     isClient,ZomboidGlobals,IsoObjectChange=previousClient,oldGlobals,oldChange
 end
 print('Native BBQ stop race: correlated completed/canceled/rejected outcomes, native removal, exact returns, independent reading and conservative abort guards passed.')
+
+-- Recovery remains reachable after a whole clear, without stale press/release IDs.
+do
+    local saved={id=101,count=2,skipped=1};local restored,forgotten
+    local previousRecovery=PZSurvivorToolkit.ActionQueueRecovery
+    PZSurvivorToolkit.ActionQueueRecovery={
+        info=function()return saved end,
+        preview=function()return saved and {id=saved.id,count=saved.count,available=true}end,
+        restore=function(_,id)restored=id;return true end,
+        forget=function(_,id)forgotten=id;saved=nil;return true end,
+    }
+    ISButton=widget:derive('ISButton')
+    function ISButton:new(x,y,w,h,title,target,callback)
+        local button=widget.new(self,x,y,w,h);button.title,button.target,button.onclick=title,target,callback;return button
+    end
+    function ISButton:onMouseDown()return true end
+    function ISButton:setTitle(title)self.title=title end
+    function widget:setY(value)self.y=value end
+    p=player();q=ISTimedActionQueue.getTimedActionQueue(p)
+    refresh();local view=ui[#ui];view:update()
+    assert(view.visible and #view.list.items==0 and view.restoreButton.visible and view.restoreButton.enabled,
+        'cancelled history keeps an empty queue window and its restore control visible')
+    assert(view.list.height==view.height-view.list.y-42 and view.restoreButton.tooltip:find('recovery_skipped',1,true))
+    view.restoreButton:onMouseDown(1,1)
+    saved={id=102,count=1,skipped=0};view.recoveryAt=nil;view:update()
+    view:restoreCancelled(view.restoreButton)
+    assert(restored==101,'a press must retain its original history ID; backend rejects a replacement')
+    view.restoreButton:onMouseDown(1,1);view:restoreCancelled(view.restoreButton);assert(restored==102)
+    view.forgetButton:onMouseDown(1,1);view:forgetCancelled(view.forgetButton);assert(forgotten==102)
+    refresh();assert(not view.visible and not view.restoreButton.visible)
+    PZSurvivorToolkit.ActionQueueRecovery=previousRecovery
+    print('Queue recovery UI: empty-window access, skipped-task hint, footer layout, one-click restore/forget and stale history press passed.')
+end

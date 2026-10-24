@@ -2,12 +2,10 @@ local Protection = {}
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 PZSurvivorToolkit.InventoryTransferProtection = Protection
 
--- Ask the optional owner at use time: its options and hooks can change after load.
+require "PZSurvivorToolkit/ItemRetention"
+
 function Protection.allowsAutomatic(item)
-    local oc = OrganizedCategories
-    return not (oc and type(oc.isItemStickingEnabled) == "function"
-        and type(oc.isItemStuck) == "function" and oc.isItemStickingEnabled()
-        and oc.isItemStuck(item))
+    return not PZSurvivorToolkit.ItemRetention.isRetained(item)
 end
 
 -- Preserve the user's original pick before a quantity budget flattens its rows.

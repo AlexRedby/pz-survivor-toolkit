@@ -23,7 +23,7 @@ for _, mp in ipairs({false, true}) do
     local previousRequire = require
     require = function(module)
         assert(module ~= 'LootSorter_Manifest', 'queue compatibility must not install a Manifest transfer observer')
-        if module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then return {} end
+        if module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then return {observeTransfers=function() end} end
         if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then return {active = function() return false end} end
         if module == 'PZSurvivorToolkit/ActionQueueMembership' then
             return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()

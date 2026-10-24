@@ -5,6 +5,35 @@ local Lifecycle = {}
 Toolkit.ActionQueueLifecycle = Lifecycle
 
 local pending = setmetatable({}, {__mode = "k"})
+local observers, observerIds = {}, {}
+-- Observation at the common native boundary does not grant edit permissions.
+-- Failed observers are quarantined: observation must never abort a paid native
+-- callback and make it eligible for replay. An incomplete proof earns no effect.
+function Lifecycle.registerObserver(id, observer)
+    if type(id) ~= "string" or type(observer) ~= "table" or observerIds[id] then return false end
+    for key, callback in pairs(observer) do
+        if (key ~= "started" and key ~= "begin" and key ~= "finish") or type(callback) ~= "function" then return false end
+    end
+    local entry = {}
+    for key, callback in pairs(observer) do entry[key] = callback end
+    observers[#observers + 1], observerIds[id] = entry, true
+    return true
+end
+local function observe(phase, ...)
+    local accepted = false
+    for _, observer in ipairs(observers) do
+        if not observer.failed and observer[phase] then
+            local ok, result = pcall(observer[phase], ...)
+            if not ok then observer.failed = true
+            elseif result == true then accepted = true end
+        end
+    end
+    return accepted
+end
+function Lifecycle.started(action)
+    if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.started(action) end
+    observe("started", action)
+end
 local function enabled(action)
     local media=Toolkit.ActionQueueMedia
     return Toolkit.Settings and Toolkit.Settings.actionQueue() or media and media.tracks(action)
@@ -14,6 +43,28 @@ local function owned(queue, action)
     return queue and action and queue.character == action.character
         and ISTimedActionQueue.queues[action.character] == queue
         and queue.current == action and queue.queue[1] == action
+end
+
+-- A server-completed transaction can remove its target before native valid()
+-- reaches update()/Done. Java verifies its exact standard transaction and stop
+-- flags; this gate verifies current queue ownership and the sealed server receipt.
+-- It never executes callbacks, effects or queue advancement.
+function Lifecycle.allowNativeCompletion(action, nativeAction)
+    if not isClient()or not Toolkit.Settings.actionQueue()then return false end
+    local character=action and action.character
+    local queue=character and ISTimedActionQueue.queues[character]
+    if not owned(queue,action)or action.action~=nativeAction or character:isDead()
+        or not character:isLocalPlayer()or getSpecificPlayer(character:getPlayerNum())~=character
+        or queue.toolkitCancel or queue.toolkitStopIntent or queue.toolkitOutcomeWait
+        or queue.toolkitGroupCancel or queue.toolkitResume or queue.toolkitOperationsInvalid
+        or (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled)
+        or character:pressedCancelAction()
+        or (action.stopOnWalk and (character:isPlayerMoving()or character:pressedMovement(false)))
+        or (action.stopOnRun and (character:isRunning()or character:isSprinting()))
+        or (action.stopOnAim and character:isAiming())then return false end
+    local acknowledgements=Toolkit.ActionQueueAcknowledgements
+    local receipt=acknowledgements and acknowledgements.capture(action)
+    return receipt~=nil and acknowledgements.state(action,receipt)=='completed'
 end
 
 -- Policy grants permission before reaching this shared native stop boundary.
@@ -34,8 +85,9 @@ end
 -- Called by the supported native LuaTimedActionNew boundary, never by individual action adapters.
 function Lifecycle.begin(action, phase)
     if phase ~= "perform" and phase ~= "complete" then return false end
+    local observing = observe("begin", action, phase)
     local intent=Toolkit.ActionQueueTidyIntent
-    local observing=intent and intent.begin(action,phase)
+    if intent and intent.begin(action,phase) then observing = true end
     if not enabled(action) then return observing==true end
     local queue = action and ISTimedActionQueue.queues[action.character]
     if not owned(queue, action) or not action.action then return observing==true end
@@ -51,6 +103,7 @@ function Lifecycle.begin(action, phase)
 end
 
 function Lifecycle.finish(action, phase, succeeded)
+    observe("finish", action, phase, succeeded)
     local intent=Toolkit.ActionQueueTidyIntent
     if intent then intent.finish(action,phase,succeeded) end
     local queue = action and ISTimedActionQueue.queues[action.character]
@@ -68,6 +121,12 @@ function Lifecycle.deferCompletion(queue, action)
         return true
     end
     return false
+end
+
+-- Recovery must not infer unfinished work from a row awaiting native removal.
+function Lifecycle.completionEntered(queue, action)
+    local state = pending[queue]
+    return state ~= nil and state.action == action
 end
 
 function Lifecycle.reset(queue)
@@ -112,8 +171,11 @@ function Lifecycle.flush(queue)
     if media and media.tracks(action) then mediaState=media.continuationState(action)
     else mediaState=reading and reading.mediaCompletionState and reading.mediaCompletionState(queue, action) end
     if mediaState == "waiting" then return "waiting", action end
+    local settlement = Toolkit.ActionQueueSettlement
+    local cancellation = settlement and settlement.completionState(queue, action)
+    if cancellation == "waiting" then return "waiting", action end
     pending[queue] = nil
-    if mediaState == "failed" then return "failed", action end
+    if cancellation == "failed" or mediaState == "failed" then return "failed", action end
     if reading and reading.completedPickup then reading.completedPickup(queue, action) end
     queue:onCompleted(action)
     return "completed", action

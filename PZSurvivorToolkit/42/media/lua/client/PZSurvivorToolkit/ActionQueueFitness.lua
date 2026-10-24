@@ -269,7 +269,7 @@ function Fitness.onClick(panel,button,...)
  return click(panel,button,...)
 end
 ui.onClick=Fitness.onClick
-local function preserve(action)
+local function preserve(action,pendingStart)
  local record=validRecord(action)
  if not record or action.Type~='ISFitnessAction' or not enabled() then return false end
  local player=action.character;local queue=ISTimedActionQueue.queues[player]
@@ -277,10 +277,16 @@ local function preserve(action)
   or player:isPlayerMoving() or player:pressedMovement(false) then return false end
  if queue.toolkitCancel==action then return true end
  local receipt=Toolkit.ActionQueueAcknowledgements.capture(action)
- if isClient() and not receipt then return false end
+ if isClient() and not receipt and not pendingStart then return false end
  queue.toolkitCancel=action
  queue.toolkitStopIntent={reason='fitness-ended',scope='action'}
- if receipt then queue.toolkitOutcomeWait={acknowledgement=receipt,generic=true,deadline=getTimestampMs()+30000} end
+ if receipt or isClient() then
+  queue.toolkitOutcomeWait={acknowledgement=receipt,generic=true,deadline=getTimestampMs()+30000}
+  if not receipt then
+   queue.toolkitOutcomeWait.pendingStart={native=action.action,transaction=action.toolkitNativeTransaction,
+    kind=action.toolkitNativeKind,generation=queue.toolkitOperationGeneration or 0}
+  end
+ end
  return true
 end
 function Fitness.canPreserveStop(action) return preserve(action) end
@@ -292,16 +298,12 @@ class.start=function(action)
  return native.start(action)
 end
 class.forceStop=function(action)
- local record=validRecord(action)
- if record and enabled() and isClient() and not action.character:isDead() and not preserve(action) and not action.character:isPlayerMoving()
-  and not action.character:pressedMovement(false) then
-  -- Do not advance to another workout while the server may still apply repetitions.
-  record.stopDeadline=record.stopDeadline or getTimestampMs()+30000
-  if getTimestampMs()<record.stopDeadline then return end
- end
- preserve(action)
+ -- Stop native repetitions immediately. A late started/terminal receipt gates
+ -- continuation, never the outgoing native stop request.
+ if preserve(action,true) then records[action].stopping=isClient() end
  return native.forceStop(action)
 end
+
 local forceCancel=class.forceCancel
 class.forceCancel=function(action)
  local record=validRecord(action)
@@ -370,16 +372,22 @@ function Fitness.progress(action)
  local record=validRecord(action)
  if not record or action.Type~='ISFitnessAction' or not record.started then return end
  local elapsed=math.max(0,math.min(record.saved.minutes,(now()-action.startMS)/60000))
- return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes}
+ return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes,stopping=record.stopping==true}
 end
 function Fitness.describe(action)
  local record=validRecord(action)
  if not record or (action.Type~='ISQueueActionsAction' and action.Type~='ISFitnessAction') then return end
  local saved=record.saved;local progress=Fitness.progress(action)
- local text=progress and getText('UI_PZSurvivorToolkit_queue_fitness_progress',string.format('%.1f',progress.elapsed),saved.minutes)
-  or getText('UI_PZSurvivorToolkit_queue_fitness_duration',saved.minutes)
- return {id='toolkit.fitness',title=getText(keys[saved.exercise]),signature='fitness:'..saved.exercise,
-  target=text,role=record.stage=='cleanup' and 'return' or record.stage=='preparation' and 'preparation' or nil,
+ local role=record.stage=='cleanup' and 'return' or record.stage=='preparation' and 'preparation' or nil
+ local title=role and getText('UI_PZSurvivorToolkit_queue_fitness_'..record.stage) or getText(keys[saved.exercise])
+ local text
+ if not role then
+  text=progress and progress.stopping and getText('UI_PZSurvivorToolkit_queue_fitness_stopping')
+   or progress and getText('UI_PZSurvivorToolkit_queue_fitness_progress',string.format('%.1f',progress.elapsed),saved.minutes)
+   or getText('UI_PZSurvivorToolkit_queue_fitness_duration',saved.minutes)
+ end
+ return {id='toolkit.fitness',title=title,signature='fitness:'..saved.exercise,
+  target=text,role=role,
   icon=function() return getItemTex(saved.data.item or 'Base.DumbBell') or getTexture('media/ui/Entity/Icon_Tools_48x48.png') end}
 end
 Events.OnTick.Add(function()

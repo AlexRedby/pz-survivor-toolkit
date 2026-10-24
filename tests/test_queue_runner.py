@@ -7,7 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from queue_checks import runner, admission, coop
@@ -114,6 +114,26 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn("-novoip", self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
+
+    def test_idle_guard_preserves_display_sleep_and_cleans_up_owned_process(self):
+        popen = self.popen
+        def launch(command, **kwargs):
+            process = popen(command, **kwargs)
+            if command[0] == '/usr/bin/caffeinate':
+                process.terminate = Mock(wraps=process.terminate)
+                process.wait = Mock(wraps=process.wait)
+                process.kill = Mock(wraps=process.kill)
+            return process
+        self.popen = launch
+        result, kills = self.invoke()
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(self.commands[0], ['/usr/bin/caffeinate', '-i', '-w', str(runner.os.getpid())])
+        guard = self.processes[0]
+        guard.terminate.assert_called_once_with()
+        guard.wait.assert_called_once_with(timeout=5)
+        guard.kill.assert_not_called()
+        self.assertEqual(guard.returncode, -15)
+        self.assertEqual([call.args[0] for call in kills], [101])
 
     def test_crash_after_completion_marker_is_failed_after_cleanup(self):
         original_popen = self.popen
@@ -781,6 +801,68 @@ class InventoryEquipEnvironmentTests(unittest.TestCase):
                       {'PZ_CART_RUNTIME_FILE': 'relative.lua'}, {'PZ_CART_COMMAND_FILE': True}):
             with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'fixture-owned'):
                 runner._fixture_environment(self.selection(), 'client1', Path('/owned/cache'), dict(extra, PZ_CART_INVENTORY_EQUIP='true'))
+
+
+class InventoryLifetimeEnvironmentTests(unittest.TestCase):
+    def selection(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict.fromkeys(('mp_host','cart_lease_inventory','cart_lease_menu','cart_lease_lifetimes',
+                                           'cart_lease_control','cart_timeline','cart_fast_motion'),True))
+
+    def test_only_exact_initial_inventory_chain_admits_client_probe(self):
+        for role in ('client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selection(),role,Path('/owned/cache'),
+                {'PZ_CART_INVENTORY_EQUIP':'true'})['PZ_CART_INVENTORY_EQUIP'],'true')
+        for role in ('server','client3'):
+            with self.subTest(role=role),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+        for flag in self.selection()['options']:
+            for value in (False,'true',1,None):
+                selected=self.selection();selected['options'][flag]=value
+                with self.subTest(flag=flag,value=value),self.assertRaises(ValueError):
+                    runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+        for flag,value in [('cart_inventory_equip',True),('cart_actions',True),('cart_time_alignment',True),
+                           ('cart_wall_exit','front'),('cart_variant','shopping-cart')]:
+            selected=self.selection();selected['options'][flag]=value
+            with self.subTest(flag=flag),self.assertRaises(ValueError):
+                runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+
+    def test_inherited_inventory_probe_is_stripped_even_for_selected_entry(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_INVENTORY_EQUIP':'true'}):
+            for role in ('server','client1','client2'):
+                self.assertNotIn('PZ_CART_INVENTORY_EQUIP',runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{}))
+
+
+class ActionInvalidationEnvironmentTests(unittest.TestCase):
+    def selection(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict(cart_action_invalidation=True,mp_host=True,cart_timeline=True,cart_fast_motion=True))
+
+    def test_new_fixture_flag_requires_exact_sealed_selection_and_owned_role(self):
+        flags=dict(PZ_CART_ACTION_INVALIDATION='true',PZ_CART_ACTION_ADMISSION='true',PZ_CART_LEASE_CONTROL='true')
+        for role in ('server','client1','client2'):
+            env=runner._fixture_environment(self.selection(),role,Path('/owned/cache'),flags)
+            self.assertEqual(env['PZ_CART_ACTION_INVALIDATION'],'true')
+        for key in self.selection()['options']:
+            for value in (False,1,'true',None):
+                selection=self.selection();selection['options'][key]=value
+                with self.subTest(key=key,value=value),self.assertRaises(ValueError):
+                    runner._fixture_environment(selection,'client1',Path('/owned/cache'),flags)
+        for key,value in [('cart_actions',True),('cart_action_admission',True),('cart_lease_control',True),
+                          ('cart_lease_lifetimes',True),('cart_lease_inventory',True),('cart_inventory_equip',True),
+                          ('cart_time_alignment',True),('cart_wall_exit','front'),('cart_variant','shopping-cart')]:
+            selection=self.selection();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),flags)
+        with self.assertRaises(ValueError):runner._fixture_environment(self.selection(),'client3',Path('/owned/cache'),flags)
+        for value in ('false',True,1,None):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selection(),'client1',Path('/owned/cache'),dict(flags,PZ_CART_ACTION_INVALIDATION=value))
+
+    def test_inherited_mutating_fixture_flag_is_stripped_from_all_roles(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_ACTION_INVALIDATION':'true'}):
+            for role in ('server','client1','client2'):
+                self.assertNotIn('PZ_CART_ACTION_INVALIDATION',runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{}))
 
 
 class CartTimelineEnvironmentTests(unittest.TestCase):

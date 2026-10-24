@@ -49,6 +49,7 @@ Queue.updateOperationState = updateOperationState
 
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.started(action) end
     -- Initialize disabled-mode bookkeeping before native allocation/receipts.
     -- Its first tick must not revoke a freshly captured media transaction.
     updateOperationState(ISTimedActionQueue.queues[action.character])
@@ -56,6 +57,7 @@ ISBaseTimedAction.begin = function(action)
     if media then media.start(action) end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and isClient() then intent.start(action) end
+    Toolkit.ActionQueueLifecycle.started(action)
     local token = action.toolkitQueueOperation
     if type(token) == "table" then token.toolkitStarted = true end
     local result = begin(action)
@@ -69,6 +71,9 @@ function Queue.cancel(queue, action)
     Policy.record("cancel", action, decision)
     if not decision.allowed then return false, decision.reason end
     if craft(action) then return Queue.cancelOperation(queue, action) end
+    -- Policy validates deferred commands as complete operations. Execute that
+    -- same edit, so required preparation cannot be detached from its body.
+    if action.Type == "ISQueueActionsAction" then return Queue.cancelOperation(queue, action) end
     if appliance(action) then return Queue.cancelOperation(queue, action) end
     local contract = Policy.inspect(action)
     if contract and contract.cancelWaiting and not stoppable(action) then return Queue.cancelOperation(queue, action) end
@@ -133,6 +138,8 @@ end
 
 local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
+    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.completed(action) end
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.completed(action) end
     if Toolkit.ActionQueueLifecycle.deferCompletion(queue, action) then return end
     if Operations.deferCompletion and Operations.deferCompletion(queue, action) then return end
     if queue.toolkitOutcomeWait and queue.toolkitCancel == action and queue.current == action and queue.queue[1] == action then
@@ -144,11 +151,11 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         and not (action.action and action.action.hasStalled and action.action:hasStalled()) then Batch.completed(action) end
     local request = queue.toolkitGroupCancel
     if request and request.action == action then
-        queue.toolkitGroupCancel = nil
         if live(queue) and queue.current == action and queue.queue[1] == action
             and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false) then
-            finishGroup(queue, request)
+            if not finishGroup(queue, request) then queue:resetQueue(); return end
         end
+        queue.toolkitGroupCancel = nil
     end
     if processPriority then processPriority(queue, false) end
     if Toolkit.Settings.actionQueue() and Toolkit.BulkFood and queue.current == action and queue.queue[1] == action then
@@ -249,6 +256,8 @@ end
 
 local stop = ISBaseTimedAction.stop
 ISBaseTimedAction.stop = function(action)
+    local approach = Toolkit.ActionQueueApproach
+    if approach then approach.onStop(action) end
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.stop(action) end
     local queue = ISTimedActionQueue.queues[action.character]
     local world = Toolkit.ActionQueueWorld
@@ -275,7 +284,9 @@ ISBaseTimedAction.stop = function(action)
         local fireUnavailable = fire and fire.canSkip and fire.canSkip(action)
         if (generators and generators.canSkip and generators.canSkip(action))
             or fireUnavailable
-            or (health and health.canPreserveStop and health.canPreserveStop(action)) then
+            or (health and health.canPreserveStop and health.canPreserveStop(action))
+            or (Toolkit.ActionQueueMedia and Toolkit.ActionQueueMedia.canSkipUnavailable
+                and Toolkit.ActionQueueMedia.canSkipUnavailable(action)) then
             local request = {action = action, token = action.toolkitQueueOperation}
             local receipt = fireUnavailable and Toolkit.ActionQueueAcknowledgements.capture(action)
             if receipt then
@@ -313,6 +324,8 @@ if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop"
 -- Native reset/clear delegate here even when another mod retains an earlier reset wrapper.
 local cancelQueue = ISTimedActionQueue.cancelQueue
 ISTimedActionQueue.cancelQueue = function(queue)
+    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.reset(queue) end
+    if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.capture(queue) end
     Toolkit.ActionQueueLifecycle.reset(queue)
     Toolkit.ActionQueueAcknowledgements.reset(queue)
     if Operations.invalidateQueue then Operations.invalidateQueue(queue) end
@@ -347,10 +360,22 @@ ISTimedActionQueue.tick = function(queue)
             return
         elseif queue.toolkitOutcomeWait then
             local wait = queue.toolkitOutcomeWait
+            if wait.pendingStart then
+                local binding = wait.pendingStart
+                if action.action ~= binding.native or action.toolkitNativeTransaction ~= binding.transaction
+                    or action.toolkitNativeKind ~= binding.kind
+                    or (queue.toolkitOperationGeneration or 0) ~= binding.generation then
+                    queue:resetQueue()
+                    queue.character:setIsFarming(false)
+                    return
+                end
+                wait.acknowledgement = Toolkit.ActionQueueAcknowledgements.capture(action)
+                if wait.acknowledgement then wait.pendingStart = nil end
+            end
             local state = wait.generic and Toolkit.ActionQueueAcknowledgements.state(action, wait.acknowledgement)
                 or not wait.generic and Toolkit.ActionQueueWorld.buildState(action, wait.acknowledgement)
             if queue.character:isPlayerMoving() or queue.character:pressedMovement(false)
-                or getTimestampMs() >= wait.deadline or not state
+                or getTimestampMs() >= wait.deadline or (not state and not wait.pendingStart)
                 or (wait.operation and (wait.operation.action ~= action or wait.operation.token ~= action.toolkitQueueOperation
                     or (type(wait.operation.token) == "table" and wait.operation.token.toolkitCancelled))) then
                 if getTimestampMs() >= wait.deadline then
@@ -360,7 +385,7 @@ ISTimedActionQueue.tick = function(queue)
                 queue.character:setIsFarming(false)
                 return
             end
-            if queue.character:getCharacterActions():contains(action.action)
+            if wait.pendingStart or queue.character:getCharacterActions():contains(action.action)
                 or state == "started" or not (queue.toolkitCancelStopped or wait.localCompleted) then return end
             if wait.operation and state ~= "completed" then
                 Operations.invalidate(wait.operation.token)
@@ -413,6 +438,9 @@ ISTimedActionQueue.tick = function(queue)
         and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false)
         and ((health and health.canSkip(current) and health.canPreserveStop(current))
             or (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.canSkip(current)
+                and not Toolkit.ActionQueueAcknowledgements.capture(current))
+            or (Toolkit.ActionQueueMedia and Toolkit.ActionQueueMedia.canSkipUnavailable
+                and Toolkit.ActionQueueMedia.canSkipUnavailable(current)
                 and not Toolkit.ActionQueueAcknowledgements.capture(current))) then
         Operations.invalidate(current.toolkitQueueOperation)
         queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
@@ -434,4 +462,5 @@ require "PZSurvivorToolkit/ActionQueueFitness"
 require "PZSurvivorToolkit/ActionQueueReading"
 require "PZSurvivorToolkit/ActionQueueMedia"
 if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end
+require "PZSurvivorToolkit/ActionQueueRecovery"
 return Queue

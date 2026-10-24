@@ -60,6 +60,13 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
             drawItemDetails=function() fallbacks=fallbacks+1 end,
             refreshContainer=function(pane)
                 if pane.failRefresh then error('refresh failure') end
+                if pane.rebuiltGroups then
+                    -- CleanUI refresh cannot capture an anchor after dirty
+                    -- rendering wiped the physical row cache.
+                    pane.itemslist=pane.rebuiltGroups
+                    pane.selected={[4]=a}
+                    pane.firstSelect=nil
+                end
                 return 'refreshed'
             end}
     end
@@ -84,6 +91,10 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     local handleDetails=true
     local lastLayout
     local indicatorDraws={}
+    local retentionDraws, retentionInvalidations = 0, 0
+    modules['PZSurvivorToolkit/InventoryRetention']={
+        draw=function(pane) assert(#pane.items==#pane.rows);retentionDraws=retentionDraws+1 end,
+        invalidate=function() retentionInvalidations=retentionInvalidations+1 end}
     modules['PZSurvivorToolkit/InventoryIndicators']={drawIcon=function(_,item,x,y,w,h,details,group)
         indicatorDraws[#indicatorDraws+1]={item=item,group=group,details=details}
     end}
@@ -94,13 +105,19 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     local freshnessOptions={showFoodFreshnessPercentage=true}
     modules['BetterContainers/_Options']=freshnessOptions
     modules['BetterContainers/Upgrades/FoodFreshness']=freshness
-    modules['PZSurvivorToolkit/InventoryDetailSort']={refresh=function(_,_,anchor) sorts=sorts+1; assert(anchor==a) end}
+    local detailSortEnabled,realDetailSort=true,nil
+    modules['PZSurvivorToolkit/InventoryDetailOptions']={enableSort={getValue=function() return detailSortEnabled end}}
+    modules['PZSurvivorToolkit/InventoryDetailSort']={refresh=function(pane,class,anchor)
+        sorts=sorts+1; assert(anchor==a)
+        if not detailSortEnabled then return realDetailSort.refresh(pane,class,anchor) end
+    end}
     require=function(name)
         if modules[name] then return modules[name] end
         if not name:match('^PZSurvivorToolkit/') and name~='PZSurvivorWishlist/Inventory' then return end
         if not modules[name] then modules[name]=dofile(root..name..'.lua') end
         return modules[name]
     end
+    realDetailSort=dofile(root..'PZSurvivorToolkit/InventoryDetailSort.lua')
     local presenter=require 'PZSurvivorToolkit/InventoryPresentation'
     assert(#callbacks==1)
     local freshnessClass=ISInventoryPane
@@ -126,7 +143,9 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         setmetatable(pane,{__index=ISInventoryPane})
         rects={}
         local before=nativeCalls
+        local retainedBefore=retentionDraws
         assert(pane:renderdetails(false)=='rendered' and nativeCalls==before+1)
+        assert(retentionDraws==retainedBefore+1, 'retention markers missing or duplicated across UI class changes')
         local bars=backgrounds()
         assert(#bars==3,'bag/magazine indicator missing or duplicated')
         assert(bars[1][1]==27 and bars[1][2]==60 and bars[1][3]==42,'actual scaled icon geometry lost')
@@ -146,13 +165,34 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
             freshnessOptions.showFoodFreshnessPercentage=true
         else assert(lastLayout==nil,'freshness space reserved on a class without the overlay') end
         local sorted=sorts
+        local invalidated=retentionInvalidations
         assert(pane:refreshContainer()=='refreshed' and sorts==sorted+1)
+        assert(retentionInvalidations==invalidated+1, 'retention cache survived refresh')
+        retainedBefore=retentionDraws
         rects={}; pane:renderdetails(true); assert(#rects==0,'drag preview decorated')
         rects={}; pane:rendericons(); assert(#backgrounds()==3,'icon view lost overlays')
+        assert(retentionDraws==retainedBefore, 'drag/icon grid received retention row markers')
     end
     -- Native dirty rendering clears row identities before it invokes refresh.
     local beforeSort=sorts; pane.dirty=true; pane:renderdetails(false)
     assert(sorts==beforeSort+1,'dirty render did not refresh with its physical Shift anchor')
+    -- Stack/retention ordering is independent of optional detail sorting.
+    -- Mirror CleanUI's wipe-before-refresh and nil-anchor restoration, then
+    -- require the exact physical child to follow its moved group.
+    local target,other={name='target',items={a,a}},{name='other',items={b,b}}
+    for _,enhanced in ipairs({true,false}) do
+        toggle(enhanced);setmetatable(pane,{__index=ISInventoryPane})
+        pane.items={target,a,other,b};pane.firstSelect=2
+        pane.itemslist={target,other};pane.collapsed={}
+        pane.rebuiltGroups={other,target};pane.rows={other,b,target,a}
+        detailSortEnabled=false;pane.dirty=true;pane:renderdetails(false)
+        assert(pane.firstSelect==4 and pane.items[pane.firstSelect]==a,
+            'dirty refresh lost the physical Shift anchor with detail sorting disabled')
+        assert(pane.selected[4]==a and pane.items[4]==a,
+            'anchor restoration changed the exact physical selection')
+    end
+    pane.rebuiltGroups=nil;pane.itemslist=nil;detailSortEnabled=true
+    pane.rows={a,'separator',b,magazine,weapon};pane.firstSelect=1
     pane.items={a}
     -- Unscaled icon view uses texture dimensions, including non-square icons.
     pane.iconSize=nil; pane.rows={a}; rects={}; pane:rendericons()

@@ -1,3 +1,5 @@
+isClient=function()return false end
+ModData={getOrCreate=function()return {} end}
 local pickerOptions, presetMenuOptions
 local tagReads = 0
 require = function(name)
@@ -11,7 +13,7 @@ require = function(name)
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
-        or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership" then
+        or name == "PZSurvivorToolkit/TagCustomization" or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership" then
         local module = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
         if name == "PZSurvivorToolkit/ItemTags" then
             local forItem = module.forItem
@@ -417,7 +419,9 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             if name=='PZSurvivorToolkit/InventoryPlantingTooltip' or name=='PZSurvivorToolkit/InventoryMediaTooltip'
                 or name=='PZSurvivorToolkit/InventoryClothingTooltip' then return {install=function() end} end
             if name=='ISUI/ISInventoryPane' or name=='ISUI/ISInventoryPage' then return end
-            if name=='PZSurvivorWishlist/Inventory' then return {draw=function() end,invalidate=function() end} end
+            if name=='PZSurvivorWishlist/Inventory' or name=='PZSurvivorToolkit/InventoryRetention' then
+                return {draw=function() end,invalidate=function() end}
+            end
             return require(name)
         end
         for _,name in ipairs({'saveSelection','restoreSelection','refreshContainer'}) do

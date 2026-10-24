@@ -66,6 +66,15 @@ public final class Main {
         MainSupport.startup();
     }
 
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="valid", warmUp=true, strictMatch=true)
+    public static class RemoteActionValidity {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
+                @Patch.Return(readOnly=false) boolean valid) {
+            valid = ActionCompletion.restoreNativeCompletion(action, valid, Main.COMPLETION_SUPPORTED);
+        }
+    }
+
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="perform", warmUp=true, strictMatch=true)
     public static class ActionPerformed {
         @Patch.OnEnter

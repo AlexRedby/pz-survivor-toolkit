@@ -54,8 +54,9 @@ end
 -- Loaded scripts and their tag projection are a snapshot for this window. Text/selection filters
 -- consume it, and the rule preview uses the same source. No session-wide cache survives a reopen.
 function Adapter.catalog(picker)
-    if picker.toolkitTagCatalog then return picker.toolkitTagCatalog end
-    local catalog = {scriptItems = LootSorter.getTagScriptItems(), groups = {}}
+    local revision = Tags.revision and Tags.revision() or 0
+    if picker.toolkitTagCatalog and picker.toolkitTagCatalog.revision == revision then return picker.toolkitTagCatalog end
+    local catalog = {scriptItems = LootSorter.getTagScriptItems(), groups = {}, revision = revision}
     for _, script in ipairs(catalog.scriptItems) do
         local category = Categories.forScript(script)
         if category then
@@ -105,6 +106,16 @@ function Adapter.rows(picker, categoryList)
                 -- Native specific-item keys are localized names; item refinements need a stable tag rule.
                 row.requiresRule = true
             end
+        end
+    end
+    -- Semantic tag selections remain live when an individual instance gains or
+    -- loses a tag. Exact category assignments keep their existing saved meaning.
+    for _, row in ipairs(rows) do if row.tag then row.requiresRule = true end end
+    for _, id in ipairs(Tags.allIds and Tags.allIds() or {}) do
+        if id:sub(1, 7) == "custom:" and not byTag[id] then
+            local row = {tag=id, label=Tags.label(id), categories={}, sourceCategories=categoryList,
+                toolkitTagRow=true, requiresRule=true}
+            byTag[id], rows[#rows + 1] = row, row
         end
     end
     for _, row in ipairs(rows) do

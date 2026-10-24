@@ -17,9 +17,10 @@ MARKER='[CART_LEASE_LIFETIME] '
 NATIVE='[CART_EQUIPMENT] '
 
 
-def fixture(cart=42,injected=False,receipt_gap=False):
+def fixture(cart=42,injected=False,receipt_gap=False,menu=False,menu_parses=False,menu_race=False):
     selection,prefixes,held=CONTROL['fixture']()
     selection['options']['cart_lease_lifetimes']=True
+    if menu: selection['options']['cart_lease_menu']=True
     logs={role:prefixes[role]+['[CART_LEASE] '+json.dumps(row) for row in held[role]] for role in ROLES}
     if cart!=42:
         logs={role:[line.replace('"primary": 42','"primary": '+str(cart)).replace('"secondary": 42','"secondary": '+str(cart)).replace('"cart": 42','"cart": '+str(cart)).replace('"id": 42','"id": '+str(cart)) for line in lines] for role,lines in logs.items()}
@@ -32,7 +33,8 @@ def fixture(cart=42,injected=False,receipt_gap=False):
         row=dict(event=event,process='native-'+role,ownerID=7,actorEpoch=101,connectionEpoch=201,revision=s['revision'],hardRevision=s['hard'],
                  depth=depth,mutationSerial=serial,parseSerial=parse,ingressGeneration=ingress,reason=reason,directCalls=(2 if event=='resnapshot' else 0),genericCalls=0,
                  oldPrimaryEpoch=old[0],oldSecondaryEpoch=old[1],primaryEpoch=primary,secondaryEpoch=secondary,
-                 primaryID=cart if primary else None,secondaryID=cart if secondary else None,success=True,poisoned=False,retired=False,monoNs=len(rows[role])+100,**extra)
+                 primaryID=cart if primary else None,secondaryID=cart if secondary else None,success=True,poisoned=False,retired=False,monoNs=len(rows[role])+100)
+        row.update(extra)
         rows[role].append((NATIVE,row))
     def setter(role,reason,new,parse=0,ingress=0):
         s=state[role]; old=(s['primary'],s['secondary']); s['revision']+=1; s['serial']+=1
@@ -49,6 +51,51 @@ def fixture(cart=42,injected=False,receipt_gap=False):
         values=dict(name=API['PHASES'][phase-1],cart=cart,before=before,after=tok(role),cargoID=313,cargoWeight=30,sameItem=True)
         if role!='server': values.update(staleReplyAccepted=False,stalePayloadAccepted=False,staleNonce=f'{role}-pending-{phase-1}')
         lua(role,'cycle',phase,**values)
+    def menu_action(phase,kind,event):
+        code=phase*10+(1 if kind=='release' else 2)
+        row=dict(actor='client1',owner=7,phase=phase,cart=cart,kind=kind,event=event,
+                 actionType='ToolkitWoodCartSetdown' if kind=='release' else 'ToolkitWoodCartPickup',
+                 localActionEpoch=code,operation=code+100,localSourceEpoch=1,source='native-owner-connection',
+                 queuedSource='ToolkitWoodCartSetdown' if kind=='release' else 'ToolkitWoodCartPickup',generation=1,
+                 wall=127000+len(rows['client1']))
+        if event!='queued':row.update(localNativeEpoch=code+200,token=f'00000000-0000-0000-0000-{code:012d}',
+                                      transaction=code,state='started' if event=='start' else 'completed',sealed=True)
+        rows['client1'].append(('[CART_LEASE_MENU] ',row))
+    def menu_cycles(phase):
+        before={role:tok(role) for role in ROLES}
+        original={role:state[role]['primary'] for role in ROLES}
+        menu_action(phase,'release','queued');menu_action(phase,'release','start')
+        for role in ROLES:
+            if menu_parses and role=='client2': menu_parse(role,0)
+            else: setter(role,'primary',0);setter(role,'secondary',0)
+            if role=='client1':menu_action(phase,'release','terminal')
+            fields=dict(before=before[role],nativeLifetimeAbsent=True)
+            if role!='server':fields.update(staleReplyAccepted=False,stalePayloadAccepted=False,staleNonce=f'{role}-pending-{phase-1}')
+            lua(role,'absence',phase,**fields)
+        for role in ('client1','client2'):
+            lua('server','absent-source',phase,requester=role,before=before['server'],nativeLifetimeAbsent=True,
+                stalePayloadAccepted=False,guarded=True,seq=2,**binding(phase-1))
+        lua('server','menu-resume',phase,nativeLifetimeAbsent=True)
+        for role in ('client1','client2'):lua(role,'menu-resume-received',phase,nativeLifetimeAbsent=True)
+        menu_action(phase,'pickup','queued');menu_action(phase,'pickup','start')
+        for role in ROLES:
+            if menu_parses and role!='server': menu_parse(role,9000+state[role]['parse'])
+            else: setter(role,'primary',original[role]);setter(role,'secondary',original[role])
+            if role=='client1':menu_action(phase,'pickup','terminal')
+            fields=dict(name=API['MENU_PHASES'][phase-1],cart=cart,before=before[role],after=tok(role),
+                        cargoID=313,cargoWeight=30,sameItem=True,menu=True)
+            if role!='server':fields.update(staleReplyAccepted=False,stalePayloadAccepted=False,staleNonce=f'{role}-pending-{phase-1}')
+            lua(role,'cycle',phase,**fields)
+    def menu_parse(role,new):
+        s=state[role];old=(s['primary'],s['secondary']);before=s['revision'];at=len(rows[role])
+        s['parse']+=1;s['ingress']+=3
+        for reason in ('primary','secondary'):
+            s['hard']=s['revision']+1
+            setter(role,reason,new,s['parse'],s['ingress'])
+        for offset,(_,row) in enumerate(rows[role][at:]):
+            row.update(directCalls=offset//2+1,beforeRevision=before,afterRevision=row['revision'])
+        native(role,'resnapshot','remote-equip-resnapshot',old=old,parse=s['parse'],ingress=s['ingress'],
+               beforeRevision=before,afterRevision=s['revision'],certified=False,success=False)
     def gap(role,phase):
         s=state[role]; before=tok(role); oldrev=s['revision']; old=(s['primary'],s['secondary']); s['parse']+=1;s['ingress']+=3
         new=7000+s['parse']; parse=s['parse']; ingress=s['ingress']
@@ -68,6 +115,9 @@ def fixture(cart=42,injected=False,receipt_gap=False):
         lua('server','echo',phase,requester=role,attempt=attempt,nonce=nonce,seq=seq,accepted=role=='client1',guarded=True,**binding(phase))
         if gap_receipt: gap(role,phase)
         lua(role,'receipt',phase,attempt=attempt,nonce=nonce,lifetime=lifetime,currentLifetime=tok(role),seq=seq,accepted=role=='client1',guarded=True,**binding(phase))
+        if menu and phase>1:
+            lua(role,'post-bind-stale',phase,attempt=attempt,nonce=f'{role}-pending-{phase-1}',freshLifetime=tok(role),
+                staleReplyAccepted=False,stalePayloadAccepted=False,guarded=True,seq=2,**binding(phase-1))
         latest[role]=attempt
     for role in ROLES: native(role,'baseline','admitted-current')
     for role in ('client1','client2'):
@@ -76,10 +126,12 @@ def fixture(cart=42,injected=False,receipt_gap=False):
     for phase in (1,2,3):
         if phase>1:
             if injected and phase==3: gap('client2',2)
-            for role in ROLES: cycle(role,phase)
+            if menu: menu_cycles(phase)
+            else:
+                for role in ROLES: cycle(role,phase)
         for role in ('client1','client2'):
             if phase>1: lua('server','stale',phase,requester=role,attempt=attempts[role]+1,guarded=True,accepted=False,**binding(phase-1))
-            if injected and phase==2 and role=='client2': chain(role,phase,race=True)
+            if (injected or menu_race) and phase==2 and role=='client2': chain(role,phase,race=True)
             chain(role,phase,gap_receipt=receipt_gap and phase==2 and role=='client2')
             if receipt_gap and phase==2 and role=='client2': chain(role,phase)
             if phase<3:
@@ -117,6 +169,151 @@ class EquipmentLifetimeEvidenceTests(unittest.TestCase):
             self.rows=copy.deepcopy(original)
             self.find(role,event,phase,marker)[0].update(changes)
             with self.subTest(role=role,event=event,changes=changes),self.assertRaises(ValueError): self.analyze()
+    def test_menu_cycles_require_actual_actions_all_role_absence_and_post_bind_refusals(self):
+        self.selection,self.logs,self.rows=fixture(menu=True)
+        result=self.analyze()
+        self.assertTrue(result['evidenceComplete']);self.assertTrue(result['menu'])
+        self.assertEqual(len(result['menuEvidence']['ownerMenuActions']),4)
+        self.assertEqual(result['logicalCommandMessages']['fixture'],50)
+        self.assertEqual(result['logicalCommandMessages']['maximumFixture'],90)
+        self.assertEqual(result['menuEvidence']['postBindClientPayloadsRefused'],4)
+        self.assertIn('Inventory-menu equip',result['qualification'])
+
+    def test_menu_hard_equip_transitions_are_separate_from_certified_reply_races(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True,menu_race=True)
+        result=self.analyze()
+        self.assertTrue(result['evidenceComplete'])
+        self.assertEqual(result['certifiedResnapshots'],1)
+        self.assertEqual(result['refusedRacedReplies'],1)
+        self.assertEqual(result['completedNativeCycles'],6)
+        self.assertEqual(result['logicalCommandMessages']['fixture'],52)
+        for role,count in (('client1',2),('client2',4)):
+            ready=self.find(role,'ready')[0]['lifetime'];selected=API['token'](ready)
+            log=(self.profile/(role+'-launch.log')).read_text();cutoff=len(log.splitlines())-1
+            _,_,certificates,generic=API['native_trace'](log,selected,7,42,cutoff,True)
+            self.assertEqual(len(generic),count)
+            self.assertTrue(set(generic).isdisjoint(certificates))
+
+    def test_menu_generic_parse_closure_cannot_be_omitted_or_forged_as_certificate(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True,menu_race=True)
+        original=copy.deepcopy(self.rows)
+        for role in ('client1','client2'):
+            self.rows=copy.deepcopy(original)
+            entry=next(e for e in self.rows[role] if e[0]==NATIVE and e[1]['event']=='resnapshot' and e[1]['certified'] is False)
+            self.rows[role].remove(entry)
+            with self.subTest(role=role),self.assertRaisesRegex(ValueError,'terminal closure'):self.analyze()
+        self.rows=copy.deepcopy(original)
+        end=next(r for m,r in self.rows['client1'] if m==NATIVE and r['event']=='resnapshot')
+        end.update(success=True,certified=True)
+        with self.assertRaises(ValueError):self.analyze()
+
+    def test_menu_generic_parse_poison_shape_fence_identity_and_scope_are_strict(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True)
+        original=copy.deepcopy(self.rows)
+        for changes in (dict(poisoned=True),dict(retired=True),dict(success=0),dict(certified=0),
+                        dict(directCalls=1),dict(directCalls=True),dict(genericCalls=1),dict(genericCalls=False),
+                        dict(parseSerial=0),dict(ingressGeneration=0),dict(parseSerial=99),dict(ingressGeneration=99),
+                        dict(hardRevision=3),dict(depth=1),dict(mutationSerial=1),dict(oldPrimaryEpoch=999),
+                        dict(primaryID=43),dict(reason='generic-equip'),dict(beforeRevision=True),dict(afterRevision=5.0)):
+            self.rows=copy.deepcopy(original)
+            self.find('client1','resnapshot',marker=NATIVE)[0].update(changes)
+            with self.subTest(changes=changes),self.assertRaises(ValueError):self.analyze()
+        for changes in (dict(success=False),dict(depth=2),dict(parseSerial=99),dict(ingressGeneration=99),
+                        dict(genericCalls=1),dict(directCalls=2),dict(reason='item-load'),dict(hardRevision=3),
+                        dict(beforeRevision=True),dict(beforeRevision=3.0),dict(afterRevision=True),dict(afterRevision=4.0)):
+            self.rows=copy.deepcopy(original)
+            row=next(r for m,r in self.rows['client1'] if m==NATIVE and r['event']=='mutation-enter' and r['parseSerial']>0)
+            row.update(changes)
+            with self.subTest(write=changes),self.assertRaises(ValueError):self.analyze()
+
+    def test_generic_equip_cannot_heal_a_lua_resnapshot_or_unselected_setter_bank(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True)
+        original=copy.deepcopy(self.rows)
+        cycle=self.find('client1','cycle',2)[0];rows=self.rows['client1']
+        at=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r is cycle)
+        healing=dict(actor='client1',owner=7,event='resnapshot',phase=2,before=cycle['before'],after=cycle['after'],
+                     cart=42,cargoID=313,cargoWeight=30,nativeCertified=True,wall=cycle['wall'])
+        rows.insert(at,(MARKER,healing))
+        with self.assertRaisesRegex(ValueError,'Uncertified native equipment gap'):self.analyze()
+        self.rows=copy.deepcopy(original)
+        self.write();log=(self.profile/'client1-launch.log').read_text();ready=self.find('client1','ready')[0]['lifetime']
+        with self.assertRaisesRegex(ValueError,'cannot heal'):
+            API['native_trace'](log,API['token'](ready),7,42,len(log.splitlines())-1,False)
+
+    def test_generic_transition_outside_declared_menu_cycle_remains_unlinked(self):
+        self.selection,self.logs,self.rows=fixture(menu=True,menu_parses=True)
+        rows=self.rows['client2'];native=[r for m,r in rows if m==NATIVE];last=native[-1]
+        first_end=next(r for r in native if r['event']=='resnapshot')
+        group=[copy.deepcopy(r) for r in native if r['parseSerial']==first_end['parseSerial']]
+        delta=last['revision']-first_end['beforeRevision'];serial=max(r['mutationSerial'] for r in native)
+        for row in group:
+            row['revision']+=delta;row['hardRevision']=row['revision']
+            row['beforeRevision']=last['revision'];row['afterRevision']=row['revision']
+            row['parseSerial']=last['parseSerial']+1;row['ingressGeneration']=last['ingressGeneration']+3
+            if row['mutationSerial']:row['mutationSerial']+=serial
+            for field in ('primaryEpoch','secondaryEpoch','oldPrimaryEpoch','oldSecondaryEpoch'):
+                if row[field]:row[field]=last['primaryEpoch']
+        at=next(i for i,(m,r) in enumerate(rows) if m==MARKER and r['event']=='complete')
+        rows[at:at]=[(NATIVE,row) for row in group]
+        for i,(marker,row) in enumerate(rows):
+            if marker==NATIVE:row['monoNs']=100+i
+        self.write();log=(self.profile/'client2-launch.log').read_text()
+        selected=API['token'](self.find('client2','ready')[0]['lifetime'])
+        # The extra parse is structurally valid, but no declared menu cycle authorizes it.
+        self.assertEqual(len(API['native_trace'](log,selected,7,42,len(log.splitlines())-1,True)[3]),5)
+        with self.assertRaisesRegex(ValueError,'native revision window|Unlinked|outside verified menu cycle'):self.analyze()
+
+    def test_menu_proof_rejects_missing_barrier_input_or_stale_refusal(self):
+        self.selection,self.logs,self.rows=fixture(menu=True)
+        self.assert_mutations_fail([
+            ('server','absence',2,dict(nativeLifetimeAbsent=False),MARKER),
+            ('client1','absence',2,dict(staleReplyAccepted=True),MARKER),
+            ('client2','absence',3,dict(staleNonce='other'),MARKER),
+            ('server','absent-source',2,dict(guarded=False),MARKER),
+            ('client1','post-bind-stale',2,dict(freshLifetime='1|client1|1|1|999'),MARKER),
+            ('client2','post-bind-stale',3,dict(stalePayloadAccepted=True),MARKER),
+            ('client1','cycle',2,dict(menu=False),MARKER),
+            ('client1','queued',2,dict(actionType='ToolkitWoodCartDrop'),'[CART_LEASE_MENU] '),
+            ('client1','start',3,dict(source='foreign'),'[CART_LEASE_MENU] '),
+            ('client1','terminal',2,dict(state='canceled'),'[CART_LEASE_MENU] '),
+        ])
+        original=copy.deepcopy(self.rows)
+        for role,marker,event in [('server',MARKER,'menu-resume'),('client2',MARKER,'absence'),
+                                  ('client1','[CART_LEASE_MENU] ','queued')]:
+            self.rows=copy.deepcopy(original)
+            self.rows[role]=[(m,r) for m,r in self.rows[role] if not (m==marker and r['event']==event and r['phase']==2)]
+            with self.subTest(role=role,event=event),self.assertRaises(ValueError):self.analyze()
+
+    def test_menu_barrier_requires_current_native_absence_not_an_old_empty_snapshot(self):
+        self.selection,self.logs,self.rows=fixture(menu=True)
+        original=copy.deepcopy(self.rows)
+        for role,event in [('server','absence'),('server','menu-resume'),('client1','absence'),('client1','menu-resume-received')]:
+            self.rows=copy.deepcopy(original)
+            restored=[pair for pair in self.rows[role] if pair[0]==NATIVE and pair[1].get('revision') in (4,5)]
+            self.rows[role]=[pair for pair in self.rows[role] if not (pair[0]==NATIVE and pair[1].get('revision') in (4,5))]
+            at=next(i for i,(m,r) in enumerate(self.rows[role]) if m==MARKER and r['event']==event and r['phase']==2)
+            self.rows[role][at:at]=restored
+            with self.subTest(role=role,event=event),self.assertRaisesRegex(ValueError,'barrier'):
+                self.analyze()
+
+    def test_menu_receipts_use_native_signed_nonzero_transaction_and_uuid(self):
+        self.selection,self.logs,self.rows=fixture(menu=True)
+        for marker,row in self.rows['client1']:
+            if marker=='[CART_LEASE_MENU] ' and row['event'] in ('start','terminal'):row['transaction']=-128
+        self.assertTrue(self.analyze()['evidenceComplete'])
+        original=copy.deepcopy(self.rows)
+        for key,value in [('transaction',0),('transaction',128),('transaction',-129),('transaction',True),('token','arbitrary-token')]:
+            self.rows=copy.deepcopy(original)
+            for marker,row in self.rows['client1']:
+                if marker=='[CART_LEASE_MENU] ' and row['event'] in ('start','terminal'):row[key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(ValueError):self.analyze()
+
+    def test_menu_selection_cannot_relabel_the_setter_bank(self):
+        self.selection,self.logs,self.rows=fixture(menu=True)
+        for value in (False,'true',1):
+            self.selection['options']['cart_lease_menu']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):self.analyze()
+
     def test_complete_six_native_cycles_and_guarded_chains_are_narrowly_reported(self):
         result=self.analyze()
         self.assertTrue(result['evidenceComplete']); self.assertTrue(result['diagnosticOnly'])

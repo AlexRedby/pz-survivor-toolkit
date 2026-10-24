@@ -4,6 +4,9 @@ if not NativeActionRoot then
     return
 end
 require = function(name)
+    if name == 'PZSurvivorToolkit/SourceProof' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
+    end
     if name == 'PZSurvivorToolkit/InventoryClasses' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
@@ -539,4 +542,79 @@ operations.runWith(completedPrimaryToken, function() ISTimedActionQueue.add(acti
 assert(completedPrimaryToken.presentation.title == 'ContextMenu_Read',
     'completed primary title must survive its remaining lower-rank transfers')
 definitions.describe, operations.bounds, getText = describe, bounds, previousGetText
-print('Action operation grouping native-contract checks passed.')
+
+-- Native volume-bar direct and deferred callbacks must group their approach
+-- and radio control when no ISButton callback is still on the stack.
+do
+    getText=function(key)return key end
+    reset()
+    ISPanel,ISPanelJoypad=ISBaseObject,ISBaseObject
+    load('client/RadioCom/RadioWindowModules/RWMPanel.lua')
+    UIFont={Small='Small'};getTextManager=function()return {getFontHeight=function()return 12 end}end
+    load('client/RadioCom/RadioWindowModules/RWMVolume.lua')
+    load('client/RadioCom/ISUIRadio/ISVolumeBar.lua')
+    load('shared/RadioCom/ISRadioAction.lua')
+    getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    getGameFilesInput=function(path)
+        local file=assert(io.open(NativeActionRoot..'/'..path:gsub('^media/lua/','')))
+        return {readLine=function()local line=file:read('*l');return line and line:gsub('\r$','')end,
+            close=function()file:close()end}
+    end
+    local nativeVolume=RWMVolume.onVolumeChange
+    assert(operations.installVolumeProducer())
+    local scopedVolume=RWMVolume.onVolumeChange
+    assert(scopedVolume~=nativeVolume and operations.installVolumeProducer() and RWMVolume.onVolumeChange==scopedVolume,
+        'repeated installation cannot stack native producer wrappers')
+    local data={canPlayerRemoteInteract=function()return false end}
+    local square={};local device={getSquare=function()return square end,getDeviceData=function()return data end}
+    local panel=setmetatable({player=player,device=device,deviceData=data,deviceType='IsoObject',
+        volumeBar={getVolumeSteps=function()return 10 end}},RWMVolume)
+    luautils={walkAdj=function(p,s)
+        assert(p==player and s==square)
+        ISTimedActionQueue.add(action('ISWalkToTimedAction'));return true
+    end}
+    local lastToken
+    local function check(commit)
+        reset();enqueue();commit()
+        local walk,setter=q.queue[2],q.queue[3]
+        assert(#q.queue==3 and walk.Type=='ISWalkToTimedAction' and setter.Type=='ISRadioAction'and setter.mode=='SetVolume')
+        assert(walk.toolkitQueueOperation==setter.toolkitQueueOperation and walk.toolkitQueueOperation~=lastToken,
+            'each native commit groups only its own walk and setter')
+        lastToken=walk.toolkitQueueOperation
+    end
+    check(function()panel:onVolumeChange(4)end)
+    local slider=setmetatable({volumeSteps=10,dragInside=true,getWidth=function()return 100 end,
+        getIsVisible=function()return true end,onVolumeChange=RWMVolume.onVolumeChange,
+        onVolumeChangeTarget=panel},ISVolumeBar)
+    check(function()slider:onMouseUp(35,0)end)
+    ISPanel.update=function()end
+    UIManager={getMillisSinceLastUpdate=function()return 600 end}
+    local bar=setmetatable({joyMeter=500,hoverVolume=6,onVolumeChange=RWMVolume.onVolumeChange,
+        onVolumeChangeTarget=panel},ISVolumeBar)
+    check(function()bar:update()end)
+    local walked=panel.doWalkTo
+    panel.doWalkTo=function()ISTimedActionQueue.add(action('ForeignWalk'));return true end
+    reset();enqueue();panel:onVolumeChange(5)
+    assert(q.queue[2].toolkitQueueOperation~=q.queue[3].toolkitQueueOperation,
+        'changed upstream walk helper cannot acquire a native producer scope')
+    panel.doWalkTo=walked
+    RWMVolume.onVolumeChange=function()error('foreign replacement')end
+    assert(not operations.installVolumeProducer(),'foreign replacement cannot be adopted or wrapped again')
+end
+
+-- An unexpected producer error must stay visible without leaving subsequent
+-- independent enqueues inside the failed command's insertion boundary.
+reset()
+local broken = operations.command(player, function() error('producer failure sentinel') end, {})
+local untouched = action()
+q.queue, q.current = {broken, untouched}, broken
+local succeeded, failure = pcall(broken.start, broken)
+assert(not succeeded and tostring(failure):find('producer failure sentinel', 1, true))
+assert(not q:isCurrentActionAddingOtherActions(), 'failed expansion retained the native insertion boundary')
+local following = enqueue()
+assert(q.queue[2] == untouched and q.queue[3] == following,
+    'independent enqueue was inserted into the failed producer instead of after the existing tail')
+assert(following.toolkitQueueOperation ~= broken.toolkitQueueOperation)
+reset()
+
+print('Action operation grouping: native contracts, volume slider/deferred commits and foreign helper guards passed.')

@@ -9,7 +9,7 @@ from .. import report
 
 SUITE = 'quartermaster-presets'
 TRANSFER_SUITE = 'quartermaster-transfers'
-MODS = ['PZSurvivorToolkit', 'organizedCategories_core']
+MODS = ['PZSurvivorToolkit']
 STORES = ('PZSTQuartermasterPresets_a.txt', 'PZSTQuartermasterPresets_b.txt')
 LEGACY_STORES = ('QuartermasterPresets.txt', 'PZSTQuartermasterTagRules.txt')
 MARKER = '[QM_PRESET] '

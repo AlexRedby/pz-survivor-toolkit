@@ -11,8 +11,8 @@ ROLES=LIFE['ROLES']; MAX=9007199254740991
 NATIVE='[CART_LEASE_BYTES] '
 INBOUND={
  'CartLeaseProbe':{'server':{'bind':'Bind','echo':'Echo'},'client':{'bound':'Bound','receipt':'Receipt'}},
- 'CartLeaseLifetimes':{'server':{'ready':'Ready','bind':'Bind','echo':'Echo','prepare':'Prepare','done':'Done','finished':'Finished'},
-  'client':{'begin':'Begin','cycle':'Cycle','bound':'Bound','reply-refused':'Bound','receipt':'Receipt','complete-offer':'Complete'}}}
+ 'CartLeaseLifetimes':{'server':{'ready':'Ready','bind':'Bind','echo':'Echo','prepare':'Prepare','done':'Done','finished':'Finished','absent-source':'MenuAbsent'},
+  'client':{'begin':'Begin','cycle':'Cycle','bound':'Bound','reply-refused':'Bound','receipt':'Receipt','complete-offer':'Complete','menu-resume-received':'MenuResume'}}}
 MARKERS={'[CART_LEASE] ':'CartLeaseProbe',LIFE['MARKER']:'CartLeaseLifetimes'}
 
 def stats(rows):

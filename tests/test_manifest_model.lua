@@ -2,9 +2,11 @@ local model = TestManifestModel
 if not model then
     local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
     local originalRequire = require
+    local loaded = {}
     require = function(name)
-        assert(name == 'PZSurvivorToolkit/ItemCategories')
-        return dofile(root .. name .. '.lua')
+        assert(name:match('^PZSurvivorToolkit/'))
+        if not loaded[name] then loaded[name] = dofile(root .. name .. '.lua') end
+        return loaded[name]
     end
     model = dofile(root .. 'PZSurvivorToolkit/ManifestModel.lua')
     require = originalRequire
@@ -26,3 +28,8 @@ assert(model.text('a' .. emoji, #emoji) == 'a', 'partial emoji must be removed c
 assert(model.text('a' .. emoji, 1 + #emoji) == 'a' .. emoji, 'complete emoji must survive the cap')
 assert(model.text(('x'):rep(513)) == ('x'):rep(512), 'default payload limit changed')
 print('Manifest model text: native UTF16/Lua UTF8 caps preserve Cyrillic, emoji and Latin-1 boundaries.')
+
+local first=model.tagIdentity({food='remove',tool='add'})
+assert(first==model.tagIdentity({tool='add',food='remove'}))
+assert(first~=model.tagIdentity({food='add',tool='remove'}))
+assert(model.tagIdentity({})=='')

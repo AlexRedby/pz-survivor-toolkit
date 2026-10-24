@@ -317,7 +317,9 @@ function Generators.install()
         {ISInventoryPaneContextMenu, "transferIfNeeded", "ISInventoryPaneContextMenu.lua"}}) do
         local callback = entry[1] and entry[1][entry[2]]
         local equipment = entry[1] == ISWorldObjectContextMenu and (entry[2] == "equip" or entry[2] == "transferIfNeeded")
-        local valid = nativeClosure(callback, entry[3])
+        local approach = Toolkit.ActionQueueApproach
+        local original = approach and approach.nativeHelper(entry[1], entry[2], callback) or callback
+        local valid = nativeClosure(original, entry[3])
         trusted, basicTrusted = trusted and valid, basicTrusted and (equipment or valid)
         helpers[#helpers + 1] = {owner = entry[1] or {}, name = entry[2], callback = callback, equipment = equipment}
     end

@@ -9,11 +9,11 @@ import shutil
 from ..mod_selection import metadata, mod_ids
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
-         'missing-dumbbell', 'exhaustion', 'closed-ui-restore']
+         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30']
 PROJECT = Path(__file__).resolve().parents[3]
 MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 SCENARIO_ACTIONS = {'fitness-ui': {
-    'scope': 'Actual ISFitnessUI OK; native ten-minute squats/pushups/biceps curl, long native reader, exact held/worn IDs, and authoritative real repetitions/clinical changes. Host uses a second actual independent reader.',
+    'scope': 'Actual ISFitnessUI OK; native ten-minute squats/pushups/biceps curl and thirty-minute burpees, long native reader, exact held/worn IDs, and authoritative real repetitions/clinical changes. Host uses a second actual independent reader.',
     'checks': {
         'success-empty': {'empty': {'effectsVerified': True, 'emptyStartVerified': True}},
         'success-queued': {'queued': {'effectsVerified': True, 'queuedStartVerified': True},
@@ -115,7 +115,8 @@ def _inventory(value):
 def _clinical(value):
     return (isinstance(value, dict) and all(_number(value.get(key)) for key in ('fitnessXP', 'strengthXP', 'endurance'))
             and 0 <= value['endurance'] <= 1
-            and all(isinstance(value.get(group), dict) and set(value[group]) == set(keys)
+            and all(isinstance(value.get(group), dict)
+                    and (set(value[group]) == set(keys) or group == 'regularity' and set(value[group]) == set(keys) | {'burpees'})
                     and all(_number(number) for number in value[group].values()) for group, keys in (
                         ('regularity', ('squats', 'pushups', 'bicepscurl')),
                         ('stiffness', ('legs', 'arms', 'chest', 'abs')),
@@ -136,12 +137,15 @@ def _exhaustion_without_training(before, after):
 def _expected_exercises(case, mode):
     if case == 'exhaustion' or mode == 'toolkit' and case in ('pending-cancel', 'missing-dumbbell'):
         return []
+    if case == 'burpees-30':
+        return ['burpees']
     return ['squats', 'pushups'] if case == 'sequential' else ['bicepscurl' if case in ('missing-dumbbell', 'closed-ui-restore') else 'squats']
 
 
 def _case(case, row, prep, receipt, selection, mutation=None):
     issues = []
     native, mp = selection['mode'] == 'native', selection['kind'] == 'mp'
+    minutes = 30 if case == 'burpees-30' else 10
     command = row.get('command', {})
     items = prep.get('items', {})
     if (not _matches(prep, {'case': case}) or not isinstance(items, dict)
@@ -155,22 +159,26 @@ def _case(case, row, prep, receipt, selection, mutation=None):
     if (not _inventory(receipt.get('inventory')) or not _same(receipt['inventory'], expected)
             or not _same(command.get('clientInventory'), expected)):
         issues.append('Fitness exact inventory/container/hand/worn identities differ: ' + case)
-    if (not _matches(receipt, {'case': case, 'tailRead': True, 'frontRead': case not in ('empty', 'active-cancel'),
+    if (not _matches(receipt, {'case': case, 'tailRead': True, 'frontRead': case not in ('empty', 'active-cancel', 'burpees-30'),
                                'currentExerciseCleared': True, 'serverStopSettled': True, 'peerConnected': True,
                                'removed': items['dumbbell'] if case == 'missing-dumbbell' else False})
             or not _same(receipt.get('before'), prep['before']) or not _clinical(receipt.get('clinical'))
             or not _matches(row, {'status': 'passed', 'reason': None, 'receipt': receipt})
             or not _number(receipt.get('serverSettleMilliseconds')) or receipt['serverSettleMilliseconds'] < 2000):
         issues.append('Fitness authoritative settled effects/independent tail differ: ' + case)
-    expected_fields = dict(menuDispatched=True, nativeDurations=True, minutes=10, frontMinutes=0 if case in ('empty', 'active-cancel') else 12,
+    expected_fields = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in ('empty', 'active-cancel', 'burpees-30') else 12,
         activeObserved=bool(_expected_exercises(case, selection['mode'])), queueDrained=True, clientCurrentExerciseCleared=True,
         pendingCancelled=not native and case == 'pending-cancel', reordered=not native and case == 'pending-reorder',
         activeCancelled=case == 'active-cancel', closedUI=case == 'closed-ui-restore')
+    if case == 'burpees-30' and not native:
+        delay = command.get('durationStopDelayMilliseconds')
+        if not _number(delay) or not 0 <= delay < 5000:
+            issues.append('Fitness native stop remained active after selected duration: ' + case)
     if case == 'closed-ui-restore' and not native:
         expected_fields.update(borrowedTransferProgress=True, borrowedTool=items['dumbbell'], borrowedSourceBag=items['bag'])
     if case == 'pending-reorder' and not native:
         expected_fields['reorderedTailBeforeStart'] = True
-    if case not in ('empty', 'active-cancel'):
+    if case not in ('empty', 'active-cancel', 'burpees-30'):
         expected_fields['waitingNoExercise'] = True
         if case != 'exhaustion':
             expected_fields['waitingNoClinicalEffects'] = True
@@ -201,10 +209,10 @@ def _case(case, row, prep, receipt, selection, mutation=None):
         progress = command.get('progressSamples')
         if (not isinstance(progress, list) or [sample.get('exercise') for sample in progress] != exercises
                 or any(not all(_number(sample.get(key)) for key in ('total', 'elapsed', 'fraction', 'startMS', 'sampleMS'))
-                       or sample.get('total') != 10 or not 0 < sample.get('elapsed', 0) <= 10
+                       or sample.get('total') != minutes or not 0 < sample.get('elapsed', 0) <= minutes
                        or not 0 < sample.get('fraction', 0) <= 1
-                       or abs(sample['fraction'] - sample['elapsed']/10) > 1e-6
-                       or abs(sample['elapsed'] - max(0, min(10, (sample['sampleMS']-sample['startMS'])/60000))) > 1e-6
+                       or abs(sample['fraction'] - sample['elapsed']/minutes) > 1e-6
+                       or abs(sample['elapsed'] - max(0, min(minutes, (sample['sampleMS']-sample['startMS'])/60000))) > 1e-6
                        or not isinstance(sample.get('label'), str) or not sample['label'] for sample in progress)):
             issues.append('Fitness visible progress does not match selected native elapsed time: ' + case)
     if case == 'closed-ui-restore':
@@ -221,10 +229,11 @@ def _case(case, row, prep, receipt, selection, mutation=None):
     last_stop = None
     for record in records:
         before, after, rep = record.get('before'), record.get('after'), record.get('lastRep')
-        valid = (_matches(record, dict(minutes=10, maxTime=5000000, previousStopSettled=True,
+        valid = (_matches(record, dict(minutes=minutes, maxTime=5000000, previousStopSettled=True,
                                         currentExerciseCleared=True, serverStopReturned=True))
                  and type(record.get('reps')) is int and record['reps'] > 0
                  and all(_clinical(value) for value in (before, after, rep))
+                 and all(record.get('exercise') in value['regularity'] for value in (before, after, rep))
                  and all(_number(record.get(key)) for key in ('startMS', 'stopMS', 'lastRepMS', 'minEndurance')))
         if valid:
             duration = record['stopMS'] - record['startMS']
@@ -236,7 +245,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                              (('legs',) if record['exercise'] == 'squats' else ('arms',)))
                      and all(after[key] >= rep[key] for key in ('fitnessXP', 'strengthXP'))
                      and (last_stop is None or record['startMS'] >= last_stop)
-                     and (duration < 600000 if case == 'active-cancel' else duration >= 600000))
+                     and (duration < 600000 if case == 'active-cancel' else duration >= minutes * 60000))
             last_stop = record['stopMS']
         if not valid:
             issues.append('Fitness lacks real native repetitions/XP/endurance/stiffness or full duration: ' + case)

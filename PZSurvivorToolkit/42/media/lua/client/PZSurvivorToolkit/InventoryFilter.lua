@@ -207,6 +207,10 @@ local function showCategories(pane, button)
     local all = menu:addOption(getText("UI_PZSurvivorToolkit_all_categories"), pane, selectCategory)
     menu:setOptionChecked(all, pane.toolkitCategory == nil)
     if Tags.enabled() then
+        local manage = menu:addOption(getText("UI_PZST_TagEdit_Catalog"), pane, function(target)
+            require("PZSurvivorToolkit/TagEditor").open({playerNum=target.player,owner=target,items=target.toolkitFilterItems})
+        end)
+        manage.pzstKey = "manageTags"
         local combined = menu:addOption(getText("UI_PZST_TagRule"), pane, showTagRule)
         menu:setOptionChecked(combined, Tags.ruleActive(pane.toolkitTagRule))
         PresetsMenu.add(menu, {owner=pane, player=pane.player, rule=tagRule(pane),

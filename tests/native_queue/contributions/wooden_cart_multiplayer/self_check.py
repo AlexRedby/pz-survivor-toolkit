@@ -661,7 +661,7 @@ def check_action_sampling(lua):
     signature='local function sampleActionPresentation(owner,now,elapsed)'
     assert client.count(signature)==1 and client.count('  sampleActionPresentation(owner,now,elapsed)')==1
     helper=signature+client.split(signature,1)[1].split('\nend',1)[0]+'\nend'
-    motion=client.split('  if now-lastSample>=100 then',1)[1].split('\n  end',1)[0]
+    motion=client.split('  if elapsed<=duration or now-lastSample>=100 then',1)[1].split('\n  end',1)[0]
     assert 'CART_MP_STATE' in motion and 'actions.sample' not in motion
     code=r"""
 for _,name in ipairs({'SaucedCarts/ContextMenu','ISUI/ISContextMenu','ISUI/ISInventoryPaneContextMenu','TimedActions/ISTimedActionQueue'}) do package.preload[name]=function() return {} end end
@@ -712,7 +712,7 @@ actions.command('ActionPhase',{index=6,phase='pickup-repeat',id=42})
 actionsFinished=true;now=now+32;sampleActionPresentation(owner,now,duration+550);assert(#presentations==count,'Finished action bank sampled')
 """.replace('SOURCE',json.dumps(str(HERE/'actions.lua'))).replace('HELPER',helper)
     subprocess.run([lua,'-e',code],check=True,capture_output=True)
-    return 'PASS (short observer progress crossing captured at25ms; motion100ms, phase closure and bank bounds retained; no new sends)'
+    return 'PASS (short observer progress crossing captured at25ms; motion/action sampling separated, phase closure and bank bounds retained; no new sends)'
 
 
 def check_java(game, jdk, patch, kotlin_home=None):
@@ -767,12 +767,14 @@ def check_java(game, jdk, patch, kotlin_home=None):
         (root/'Lua').mkdir()
         for name, marker, flags in [
                 ('ActionAdmissionCheck', 'ACTION_ADMISSION_CHECK_PASS', {}),
+                ('zombie.core.ActionAdmissionIncarnationCheck', 'ACTION_ADMISSION_INCARNATION_CHECK_PASS',
+                 {'PZ_CART_ACTION_INVALIDATION':'true'}),
                 ('NullableDiagnosticCheck', 'NULLABLE_DIAGNOSTIC_CHECK_PASS',
                  {'PZ_CART_TIMELINE': 'true', 'PZ_CART_OBSERVER_ASSOCIATION': 'true'})]:
             result = subprocess.run([str(java), '-javaagent:' + str(game/'ZombieBuddy.jar')
                 + '=config_dir=' + str(root) + ',policy=deny-new,verbosity=1',
                 '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.',
-                '-cp', classpath, 'ObserverLoaderCheck', str(lab), name], cwd=game,
+                '-cp', classpath, 'ObserverLoaderCheck', str(lab), name, str(HERE.parents[3])], cwd=game,
                 env=dict(clean_environment(), PZ_CART_LEASE_CONTROL='true', PZ_CART_ACTION_ADMISSION='true',
                          PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),
                          PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt'), **flags),
@@ -847,13 +849,16 @@ def main():
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
         for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua',
-                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-lifecycle.lua', 'action-admission.lua'):
+                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-menu-actions.lua', 'lease-inventory-state.lua', 'action-invalidation.lua', 'lease-lifecycle.lua', 'action-admission.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')
         bank=subprocess.run([lua,str(HERE/'LeaseLifetimeBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
         assert 'LEASE_LIFETIME_BANK_CHECK_PASS messages=42 cycles=6 staleSourceRefusals=4' in bank.stdout,bank.stdout+bank.stderr
         print('Equipment bank: PASS (actual Lua controller and42-message baseline plus injected resnapshot/resync races across three mocked native API contexts; native setter proof is separate)')
+        menu_bank=subprocess.run([lua,str(HERE/'LeaseMenuBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
+        assert 'LEASE_MENU_BANK_CHECK_PASS messages=50 ownerActions=4 absenceObservations=6' in menu_bank.stdout,menu_bank.stdout+menu_bank.stderr
+        print('Menu lifetime bank: PASS (actual Lua protocol across mocked native roles; owner input driver and native game proof checked separately)')
         lifecycle=subprocess.run([lua,str(HERE/'LeaseLifecycleBankCheck.lua'),str(HERE)],check=True,capture_output=True,text=True,timeout=15)
         assert 'LIFECYCLE_STATE_MACHINE_MOCK_PASS' in lifecycle.stdout,lifecycle.stdout+lifecycle.stderr
         print('Lifecycle state machine: PASS (mock native authority, continued Host absence polling and exact nonce logs; actual game evidence is separate)')

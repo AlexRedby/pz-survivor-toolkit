@@ -69,7 +69,7 @@ SCENARIO_ACTIONS = {
         },
     },
     'tidy-hotbar': {
-        'scope': 'Native onRackGun on empty Shotgun/Pistol or native hotbar equip plus plain CutHair on ordinary belt tools; P4 generates one fromHotbar Unequip back to its exact native slot. Ordinary tools cover secondary selection from empty hands and primary selection preserving a prior secondary. Portable radio cases seed the installed off-radio UI volume default (0.1) or on-radio volume0.25, and use the native hotbar equip and separate native scissors/plain haircut, preserving DeviceData settings/ownership, natural power consumption and client UI power-off after return with equipped-radio pointer cleanup. Host authority retains the independently seeded native power state because vanilla ignores unheld selector0 packets; this gate preserves that role-specific baseline and does not fix the protocol. Native flashlight cases use FlashLight_AngleHead on SCBA_notank WebbingLeft with charged, empty and one-use natural-depletion baselines; native equip/start cleanup owns activation and SyncItemActivated, with separate unchanged scissors/hair. Depletion uses an explicit longer native CutHair constructor, with no clock/Use/power setters after setup. Native attachConnect/model, UI icon, root/worn/hands conservation and independent reading tail.',
+        'scope': 'Native onRackGun on empty Shotgun/Pistol or native hotbar equip plus plain CutHair on ordinary belt tools; P4 generates one fromHotbar Unequip back to its exact native slot. Ordinary tools cover secondary selection from empty hands and primary selection preserving a prior secondary. Portable radio cases seed the installed off-radio UI volume default (0.1) or on-radio volume0.25, and use the native hotbar equip and separate native scissors/plain haircut, preserving DeviceData settings/ownership, natural power consumption and client UI power-off after return with equipped-radio pointer cleanup. Host authority must independently observe the same final off state through the repaired native unheld selector0/state0/off receive path; device activation is never normalized between roles. Native flashlight cases use FlashLight_AngleHead on SCBA_notank WebbingLeft with charged, empty and one-use natural-depletion baselines; native equip/start cleanup owns activation and SyncItemActivated, with separate unchanged scissors/hair. Depletion uses an explicit longer native CutHair constructor, with no clock/Use/power setters after setup. Native attachConnect/model, UI icon, root/worn/hands conservation and independent reading tail.',
         'mods': ['P4TidyUpMeister'],
         'checks': {
             'restore-hotbar': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in HOTBAR_CASES},
@@ -672,14 +672,12 @@ def _hotbar_authority_equal(authority, expected):
             spec = HOTBAR_CASES[wanted['case']]
             if not _radio_hotbar_valid(wanted.get('radio'), spec['on'], not wanted.get('attached'), wanted.get('radioBaseline')):
                 return False
-            if not _radio_hotbar_valid(actual.get('radio'), spec['on'], False, baseline, powered=spec['on']):
+            if not _radio_hotbar_valid(actual.get('radio'), spec['on'], False, baseline, powered=spec['on'] and not wanted.get('attached')):
                 return False
             actual, wanted = copy.deepcopy(actual), copy.deepcopy(wanted)
-            # Both role-specific states were validated independently above. Vanilla
-            # authority retains its initial on bit; only the client UI switches it
-            # off after return. Compare the remaining semantics without hiding an
-            # unexpected server power transition. Battery packets may lag locally.
-            actual['radio']['turnedOn'] = wanted['radio']['turnedOn']
+            # Validate the exact phase's on/off state independently on both
+            # roles. Only native battery consumption may differ while packets
+            # lag; never hide a retained authoritative on bit after return.
             actual['radio']['power'] = wanted['radio']['power']
             wanted['radio']['equippedRadio'] = False
             wanted['radio']['emitter'] = False

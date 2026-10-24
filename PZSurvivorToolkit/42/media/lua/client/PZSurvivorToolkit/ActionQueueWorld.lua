@@ -15,6 +15,7 @@ Toolkit.ActionQueueWorld = World
 local commandMarker = {}
 local resumeMarker = {}
 local nativeTryBuild
+local moveableCreateProof
 local buildTokens = {}
 local wreckMethods = {}
 local lifecycle = {"new", "start", "stop", "perform", "complete", "isValid", "update", "forceCancel", "forceStop"}
@@ -51,6 +52,14 @@ function World.isDeferredAction(action)
         and Toolkit.ActionQueueOperations.isCommand(action)
 end
 World.isCommand = World.isDeferredAction
+
+-- Shared approach recognizes this owned create wrapper without accepting a
+-- foreign replacement or pretending the wrapper itself is a native closure.
+function World.nativeMoveableCreate(callback)
+    local proof=moveableCreateProof
+    if proof and ISMoveableCursor==proof.class and callback==proof.wrapper
+        and ISMoveableCursor.create==callback then return proof.original end
+end
 
 local function pending(character)
     local queue = ISTimedActionQueue.queues[character]
@@ -378,7 +387,7 @@ local function install()
         return defer(character, disassemble, snapshot)
     end
 
-    ISMoveableCursor.create = function(cursor, x, y, z, north, sprite)
+    local moveableCreate = function(cursor, x, y, z, north, sprite)
         if ISMoveableCursor.mode[cursor.player] ~= "scrap" or not pending(cursor.character)
             or cursor:cannotCreate(x, y, z) then
             return Toolkit.ActionQueueOperations.run(create, cursor, x, y, z, north, sprite)
@@ -391,6 +400,8 @@ local function install()
         cursor.cursorFacing, cursor.joypadFacing, cursor.objectListCache = nil, nil, nil
         return defer(cursor.character, scrapFromCursor, target)
     end
+    ISMoveableCursor.create = moveableCreate
+    moveableCreateProof = {class = ISMoveableCursor, original = create, wrapper = moveableCreate}
 end
 
 local function wreckFromSnapshot(character, target)

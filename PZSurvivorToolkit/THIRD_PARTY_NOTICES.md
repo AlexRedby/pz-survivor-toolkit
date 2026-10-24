@@ -1,3 +1,21 @@
+# Inventory classification and retained items
+
+Toolkit's classification data and bounded fallback/fluid/media rules derive from
+**organizedCategories**, by **augustaugur**:
+[Steam Workshop item 3370707195](https://steamcommunity.com/sharedfiles/filedetails/?id=3370707195).
+`tools/generate_item_categories.py` records the reviewed source hashes in the
+owned classification table; EN/RU category labels retain the original IDs.
+Toolkit applies these classifications to inventory instances without changing
+the ScriptItem categories used for native loot generation.
+
+The retained-item behavior follows the mod's Stick distinction between mass
+transfers and deliberate single-row transfers. Toolkit owns its menu, item
+state, transfer hooks and validated Host protocol, and reads existing `ocStuck`
+marks for migration. The separate organizedCategories mod must be disabled.
+Its other editors, display-order pins and item-name changes are not bundled.
+The installed source package contains no separate license file; attribution
+does not grant additional redistribution rights.
+
 # Quartermaster
 
 The built-in storage designation, distribution, Manifest and crafting features

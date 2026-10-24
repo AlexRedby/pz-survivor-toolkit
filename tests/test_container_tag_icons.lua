@@ -27,6 +27,7 @@ local function setup(active, ready)
             if not w.ready then error('BC helpers have not loaded yet') end
             return w.helpers
         end
+        if name=='PZSurvivorToolkit/TagCustomization' then return {getRevision=function()return 0 end,cacheRevision=function()return "0:0" end,definition=function()end} end
         if loaded[name] then return loaded[name] end
         local path = name == 'PZSurvivorToolkit/ContainerAppearance' and 'shared/'
             or name == 'PZSurvivorToolkit/TagVisuals' and 'client/'

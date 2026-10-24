@@ -2,32 +2,25 @@
 
 - [ ] Check the exercise ground-storage change in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags (including favourites), contents/IDs, dumbbells borrowed from a bag, natural completion and cancellation during placement/pickup, closed Fitness window with queue controls off, movement away and a second player's competing pickup. Require authoritative conservation and unchanged exercise effects; Lua source-backed doubles do not establish live network ordering or rendering.
 
-# Cart capture coverage
+# Container editor visual states
 
-- [ ] Close the ordinary menu-Host capture's client2 owner-state trailing-edge gap in the turn window with the available 43-mod subset. Require a real sample in `[epoch+7150, epoch+7500]` under the existing 350ms edge tolerance; retain the unchanged motion/render analyzer, AeroSpace/PID/resource/provenance gates and separate full-pack checks below.
+- [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.
 
-# Cart game regression follow-up
+# Vehicle Repair Overhaul verification
 
-Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host profiles and saves, without installing into the user's game. Current preflight resolves 43 IDs; required local sources are missing for VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. Follow the native runner's AeroSpace placement and owned-window/focus gates.
+- [ ] Resolve both VRO modules from Workshop 2757712197 or explicit sources, then check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
 
-- [ ] Verify cart pose/contact and split-wheel GPU behavior in isolated full-pack SP captures where headless native matrices, palette/slot lifecycle checks and source-equivalence review do not establish actual rendering. Preserve the separate visual-design gaps; check held/world continuity and GL state restoration without changing gameplay.
-- [ ] Verify SP/Host cart input/action effects and two-client owner/observer presentation with the full pack. Preserve native authority, exact cart/cargo identity, cancellation/recovery deadlines and existing SP-only guards; parser/rate/reset tests and native JVM regressions do not establish live Host delivery or GPU presentation.
+# Vehicle aim roof fix verification
+
+- [ ] Resolve CarRoofFix through Workshop or an explicit source override, then verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
+
+# Fitness completion verification
+
+- [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host after the missing `VanillaVehiclesAnimated` source and any further unresolved pack inputs are available. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass; the game run remains blocked at pack resolution.
 
 # Nick's Turn Off Fridges selection
 
 - [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
-
-# Shopping cart animation port
-
-- [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
-- [ ] Extend shopping-cart cancellation/retry beyond the two selected restart scenes to moving recovery and the remaining interruption routes. Close the shared analyzer's selected-retry grip-phase coverage gap; exact native lifecycle/ownership and clock evidence do not replace that gate.
-- [ ] Extend shopping-cart wheel/caster presentation to the remaining load/sex/speed/obstacle combinations. Four independent tire phases, smoothed front caster direction, tire support and held/world continuity are checked in selected light/full SP recordings; this is not the full matrix or a collision check.
-- [ ] Review shopping-cart tight pivots before changing handling: the preserved nose-pivot path can slide the fixed rear tires sideways. Agree on the desired steering path before changing it; retain grip, natural stepping, collision and manual reverse.
-
-# Metal wheelbarrow animation port
-
-- [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
-- [ ] Review the remaining coarse stock-skin overlap around metal shafts with the closed grip; current bounded checks allow up to 1.1 mm male / 0.5 mm female. Preserve the accepted arm/cart stance and closed fist; do not obtain clearance by opening the fingers.
 
 # Selected QoL additions
 
@@ -54,61 +47,6 @@ Run these checks with all 53 selected Mod IDs in separate macOS SP/menu-Host pro
 - [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.
 - [ ] Inspect passenger expanded/retracted controls and dashboard scaling in game; the current live scenario covers the stationary driver and programmatic callbacks.
 
-# Wooden wheelbarrow collisions
-
-- [ ] Extend relative-key manual reverse Host wall exits to Run/Sprint approaches and the remaining sex/load combinations, including empty carts. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms owner sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.
-- [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
-
-# Natural wooden wheelbarrow animation
-
-## Maneuvers and transitions
-
-- [ ] Extend live checks of forward/backward transitions at the reverse 130°/140° boundary and during collision, state reset and cart replacement; the math and hook regressions for these cases already exist. The full visual gate remains open until the pose defects below are resolved.
-- [ ] Extend collision interruption checks to load changes, combat/releasing the cart, Host fall/recovery and safe state reset. Preserve exact cart/cargo identity, native collision and manual reverse. The movement/doorway matrix does not verify these interruption paths or Run/Sprint observer clearance.
-
-## Pickup and put-down
-
-- [ ] After the newly selected VanillaVehiclesAnimated/AnimatedVehiclePartsFix pair is installed, recheck the blocked-handle approach against its vehicle geometry. The current SP checks use the installed 45-mod set; these two unavailable mods are excluded explicitly.
-
-- [ ] Extend moving cancellation to steering input/nonzero bank: blend the captured grip policy and torso into the moving endpoint before adopting its lean; verify the first recovery frame and final handoff.
-- [ ] Extend pickup clearance checks to the remaining approach angles and clothing combinations. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip.
-- [ ] Investigate the ordinary wrong-side ground-pickup approach walking through the wooden shafts before the pickup action starts. The selected current macOS SP reproduction has visible overlap and 23 paired geometry contact observations; classify approach routing separately from the pickup clip and held-pose correction below. Preserve native collision and agree on the intended approach before changing routing.
-- [ ] For pickup/put-down, extend live checks to cancellation before MP handoff, a late network result, item loss/replacement, cart destruction, stairs, combat/fall/death and restarting after these events. Preserve verified exact IDs/load and world/held handoff; do not delay emergency instant-drop. Lua/hook regressions do not replace the native visual gate and MP owner+observer.
-
-## Pose review and remaining coverage
-
-- [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
-- [ ] Review the existing multi-frame fore-aft clearance ramps during Walk side-clearance acquisition and fast-gait handoffs with the user before changing their speed or shape. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance; sampled trajectory continuity is not aesthetic acceptance.
-- [ ] Extend worn-clothing clearance to the unselected sex/load/gait/angle combinations, other outfits and Host owner/observer, including startup and release. Check actual garment palette/VBO provenance before claiming exact rendered-cloth clearance; source trousers re-skinned with body bones and sampled recordings do not establish every rendered frame. Keep synthetic instant-equip setup contacts separate from ordinary inventory-menu equip and wrong-side approach routing.
-- [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.
-
-## Inventory-equip clothing clearance
-
-- [ ] Complete the current-candidate isolated Host pickup/setdown/cancel/repeat handoff bank with exact cart/cargo identities and unthrottled transition-solver receipts. It depends on an AeroSpace launch that retains both owned windows through readiness; do not bypass the window-ownership gate. Related inventory and held-motion captures do not cover these action handoffs.
-- [ ] Extend held-fit positive inventory coverage to the heavier late residual-Walk phase (22.498 mm is covered by source/actual-Java-IK replay, not a new live candidate), remaining sex/load variants and actual garment GPU evidence where claimed. Measure isolated native fit cost with matched cohorts before attributing capture-to-draw age changes to the correction; keep sampled source geometry separate from every rendered frame.
-- [ ] Review adjacent held start/stop and the temporary cart excursion across the remaining variants. Keep the initial attachment correction separate from the Blender clearance envelope and independent direct candidate; do not combine them without evidence.
-- [ ] Close the remaining 3–8 ms native lifecycle-boundary evidence gaps and review the transition in a close Host-observer native-camera view. Sampled source geometry and Blender replay do not establish every rendered frame, actual garment GPU vertices or full-pack clearance. Keep wrong-side world-approach routing separate.
-
-# Cart multiplayer presentation
-
-## Current v2 admission gate
-
-### Remaining native lifetime and traffic gates
-
-- [ ] Extend native lifetime coverage to ordinary menu equip/release and the remaining actor-removal/disconnection routes beyond the verified guest native-death/Coop-respawn/menu-rejoin path. Keep exact native incarnation and transport provenance, permanent retirement and replay fences.
-- [ ] Extend native action-admission coverage beyond selected Setdown/Pickup completion/cancel/repeat to hotkey Drop, pending/native rejection, transaction-byte reuse, late/duplicate outcomes, item/cart loss or replacement, actor removal/respawn and disconnect/reconnect. Preserve exact source/action/table/item/world bindings, explicit classifier refusals and permanent retirement. Keep guarded historical terminal delivery separate from current owner authority; a queue reset must never renew a revoked seal.
-- [ ] Measure RakNet/IP/UDP control costs, retransmissions/lost sends and actual relevant-recipient fan-out for bounded bind/resync bursts. Keep delivered native command serialization separate from wire totals; establish the production codec/rate budget against a matching motion baseline.
-- [ ] Connect the verified admission reference to production motion/action together only after those authority/lifetime and traffic gates pass. Preserve durable high-water fences and native root catch-up; remove the replaced v1 consumers in the same change after verification. Source-time playback remains behind its separate timing gate.
-
-Design and dependencies: [multiplayer presentation plan](docs/CART_MULTIPLAYER.md). Remaining work follows the implemented timing baseline and same-native-render clearance fallback; the current cart protocol remains active.
-
-- [ ] Complete the baseline with exact relevant-recipient fan-out, IP/UDP wire scope and explicit native animation/root-budget attribution. Reuse the implemented opt-in publication/receive/prediction/render traces, conditional TimeSync intervals and active-window serialized/native connection counters; keep first delivery separate from cached repeats. Gate: matched active maneuvers with reproducible costs and timing; the complete current Host motion/inventory captures do not establish full wire cost or source image age.
-- [ ] Close the native-time alignment gate before source-time playback: bound clock drift/jumps between measured exchanges and native prediction generation/consumption. Human Prediction.update has no owner timestamp; use the current immutable native render revision without cart-only delay as the clearance fallback, preserving root catch-up. Gate: a measured common presentation time or a justified bounded fallback; TimeSync readiness and exchange-only intervals are insufficient.
-- [ ] Prove authoritative v2 admission before implementing the codec: bind a server-owned actor incarnation and shared motion/action lease to actual native connection/actor/item/action lifetimes, validate before VariableSync stores/relays state, and prove ordered bind/retire delivery or a fresh challenge/reply. Retain comparable high-water fences independently of visual Sender/Remote pruning. Gate: unknown old lease, cached state after ConnectedPlayer, reconnect/ID reuse, END-before-OPEN and motion/action handoff cannot revive retired presentation; packet rejection preserves native root catch-up.
-- [ ] Specify and implement a versioned compact cosmetic state with cart/session epoch, monotonic sequence, source time, semantic movement/action mode and only measured necessary phase anchors. Retain native equipment/effect authority and bounded resynchronization. Gate: duplicate/reordered/old-session/clock-wrap/late-join/cancel/replacement tests, matching endpoints and a payload budget within the measured baseline (at most 10% proposed overhead for required metadata).
-- [ ] Add bounded time-based playback only after native-time alignment is proven: interpolate continuous values, apply discrete changes at their event time, handle circular phase and bounded underrun, and retain immediate protected-state release with history/phase-anchor invalidation and an epoch/sequence fence against late-state revival (without splitting an already queued immutable camera/slot draw). Gate: deterministic jitter/loss/reordering/release-then-late-state trace replay, no backward playback or double smoothing delay, followed by matched native owner/observer draws.
-- [ ] Validate macOS SP/Host with the available mod set, sex/load variants, starts/stops/turns/reverse/collision/equip/cancel, late join/reconnect and owned-endpoint network impairment. Measure same-time pose error, grip/feet/mesh clearance, p50/p95/p99 age, underruns, actual wire bytes and relevant-recipient scaling. Change the transport only if measured reliable-ordered backlog prevents the target; first prove an isolated packet registration/relay path, then migrate its consumers completely.
-
 # Root fix for the action queue
 
 These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
@@ -117,7 +55,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 - [ ] Extend the version-1 edit contract to remaining world-container pickup/return (hot cookable food and special containers) and craft inputs. Describe exact identity versus late selector scope, bounded native effects and complete resource domains; retain legacy protection for missing contracts. Do not infer semantics from action names or treat same-item access alone as a dependency.
 - [ ] Extend the conservative full-current-weight transfer gate to proven quantity-dependent capacity effects and remaining world-container ancestry. Do not credit uncertain MP releases or reserve future inventory. Add exact native producer/consumer and return-container gates before expanding permissions.
-- [ ] Extend the shared cancellation settlement from its current cleanup selection to persistent prepare/body/cleanup operation records driven by confirmed effects. Use the effect-bound P4 pickup and return records in cancellation planning, preserving shared ownership, confirmed explicit equipment intent and required cleanup. Prove correlated mask-removal effects rather than inferring them from queue disappearance before replacing that adapter's existing proof. Keep earned output, paid costs and required cleanup; never recreate or roll back authoritative results. Allow independent tails only after isolation from an uncertain in-flight result is proven.
+- [ ] Extend persistent prepare/body/cleanup effect records to the remaining legacy pickup and family-owned restoration paths, including fitness preparation. Replace a family proof only after exact native effects and corresponding SP/Host gates are proven. Preserve shared ownership, confirmed explicit equipment intent, earned output and paid costs; never infer an effect from queue disappearance or replay authoritative work.
 - [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
 - [ ] Extend the generated edit oracle and existing scenario matrix to native partial completion, cleanup, replaced resources and delayed/duplicate outcomes. Gate each additional consumable/transfer adapter on exact conservation and at-most-once effects, without enumerating every pair of action names.
 - [ ] Extend the new required-state/resource/capacity/in-flight/unknown denial reasons to remaining legacy adapters and surface the specific prerequisite or missing integration in the UI. Preserve independent edits around genuinely unrelated work.
@@ -126,30 +64,33 @@ These are implementation and verification gaps, not evidence that every action u
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
 - [ ] Remove the remaining family-specific bypasses after the corresponding SP/MP checks; preserve fallback for unsupported Java/server versions, resource contracts and separate medical/cart sync fixes.
 
+# Extend cancelled queue recovery
+
+- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
+
 # Further action queue migration
 
 The executor remains `ISTimedActionQueue`. Add families through Definitions and the shared dependency/effect contract, keeping any dependency model read-only: it validates edits, never executes game effects, replaces the native scheduler or reserves future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
 
 ## Known limits of move/cancel controls
 
-These operations can execute normally while some queue controls remain disabled. The work below is to prove safe edits; real shared dependencies and required cleanup must remain protected. Current behavior is described in the [action queue limits](docs/FEATURES.md#supported-actions-and-limits).
+These operations can execute normally while some queue controls remain disabled. The work below is to prove safe edits; real shared dependencies and required cleanup must remain protected. Current behavior is described in the [action queue limits](docs/features/ACTION_QUEUE.md#supported-actions-and-limits).
 
 - [ ] Vehicle fuel and wreck dismantling: reordering and individual cancellation remain protected because containers/tools are chosen at execution time. Define exact contracts for shared cans, hoses, masks and blowtorches before enabling these controls. Preserve deferred selection, native fuel transactions, wreck removal and the unrelated queue tail.
 - [ ] Project Cook evolved recipes: ingredient application and compensating consumed-spice cleanup protect the operation from cancellation. Define which edits, if any, are independent of already-applied ingredients; preserve authoritative consumption and required cleanup rather than dropping the cleanup step.
 - [ ] Complex handcraft recipes: identify concrete blocked recipes with Lua callbacks, fluid/energy inputs, unrestricted item selection or replacement/depletion/break effects. Add narrow resource/output contracts where practical; keep actual shared materials and shared crafting UI ordered. Plain-item crafting support is not an unfinished item here.
 - [ ] Medical world pickups and unknown treatment producers: add exact item/patient/wound contracts for specific unsupported entry points before allowing edits. Preserve native wound checks, supplies and clothing effects; do not mark all medicine unsupported.
 - [ ] Carried-container capacity: MP does not credit space that a previous pending pickup may free; synthetic proximity endpoints and unknown capacity callbacks also remain protected. Prove exact source/destination/ancestor capacity and authoritative transfer effects before relaxing a concrete blocked case.
+- [ ] Haircuts: define a source-bound waiting-action contract before allowing operation cancellation after scissors preparation. Native `ISCutHair.complete` can choose gel/spray dynamically for some styles, so keep active cancellation/reordering protected until tool, cosmetic-state and consumable effects are described; the confirmed-pickup cancellation gate currently reports `operation_dependent` correctly.
 - [ ] Unknown mod actions and asynchronous continuations: capture the concrete action type, producer, continuation and cleanup when an operation is split into separate rows or becomes an edit barrier. Add scoped grouping/edit contracts for reviewed entry points; unknown or modified callbacks must retain a clear denial reason.
 
 ## Shared game sessions and build regression
 
 - [ ] Extend the common scenario contracts beyond equipment, verified food/fluid cases and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
-- [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
-
 ## Near-term adapters
 
-The medical packet mismatch below is an unresolved runtime observation; its cause has not been attributed to queue scheduling. Cart work remains owned by the cart chat.
+The medical packet mismatch below is an unresolved runtime observation; its cause has not been attributed to queue scheduling.
 
 Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
 
@@ -157,10 +98,6 @@ Add contracts in Definitions/Policy/Operations for each family. Expose only veri
 - [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 from MP10 using the preserved diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
 
 Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.
-
-## Native unheld-radio state in Host
-
-- [ ] Separately repair B42.21's missing server inventory-radio selector `0` route. The native sender writes player index + unheld item ID, but the server handles only held selectors `1`/`2`; an on radio switched off by the client UI after unequip stays on in the server snapshot even without the queue. Require an exact connection-owned root Radio, bounded native payload parsing, negative ownership/malformed-packet regressions and native Host controls. The P4 return gate preserves and checks this existing role difference; it does not repair the protocol.
 
 ## Remaining families
 
@@ -182,7 +119,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 53-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
+- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 55-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
 
 # Inventory infrastructure proposals
 

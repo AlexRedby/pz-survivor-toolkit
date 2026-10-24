@@ -11,6 +11,8 @@ local snapshot
 local captureMarker={}
 local active=setmetatable({},{__mode='k'})
 local source='native.device-media-insert'
+local ejectSource='native.device-media-eject'
+local ejectMarker={}
 local function from(callback,file)return type(callback)=='function'and Proof.closure(callback,file)end
 local function unchanged()
  local saved=snapshot
@@ -25,9 +27,9 @@ local function unchanged()
  end
  return true
 end
-local function callbacksTrusted(action,completing)
+local function callbacksTrusted(action,completing,removing)
  if not unchanged()or getmetatable(action)~=snapshot.class or action.Type~=snapshot.class.Type
-  or action.isRemove~=false or (not completing and action.maxTime~=30)or action.stopOnWalk~=false or action.stopOnRun~=true
+  or action.isRemove~=(removing==true) or (not completing and action.maxTime~=30)or action.stopOnWalk~=false or action.stopOnRun~=true
   or action.ignoreHandsWounds~=true or not instanceof(action.character,'IsoPlayer')
   or action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.retriggerLastAction
   or action.onFailFunc or action.additionalTest then return false end
@@ -54,6 +56,98 @@ end
 function Media.matches(action)return describe(action)~=nil end
 function Media.inspect(action)return describe(action)end
 function Media.isInstalled()return unchanged()end
+-- Ejection creates a new item ID; it does not restore the original inserted item.
+-- Keep insertion's public receipt separate: reading promotion consumes that API.
+local function ejectTarget(action,completing)
+ if not callbacksTrusted(action,completing,true)or action.secondaryItem~=nil then return end
+ local data=action.deviceData
+ if not instanceof(data,'DeviceData')or data:getMediaType()~=1 then return end
+ local television=data:getParent()
+ if not instanceof(television,'IsoTelevision')or television:getObjectIndex()<0
+  or not television:getSquare()or action.parameter~=television:getSquare()
+  or action.parameter:getDeviceData()~=data or television:getDeviceData()~=data then return end
+ return television,data
+end
+function Media.inspectEject(action)
+ local tv=ejectTarget(action)
+ if not tv then return end
+ -- Returning a VHS increases carried weight. Never call this capacity-neutral.
+ return {items={},targets={[tv]=true},cancelWaiting=true,interrupt='finish-step'}
+end
+function Media.matchesEject(action)return Media.inspectEject(action)~=nil end
+function Media.captureEject(action)
+ local television,data=ejectTarget(action)
+ if not television then return end
+ local root=action.character:getInventory()
+ if not instanceof(root,'ItemContainer')or not data:hasMedia()then return end
+ local index=data:getMediaIndex()
+ if type(index)~='number'or index<0 or index%1~=0 then return end
+ local ids,seen={},{}
+ local function capture(container)
+  if not instanceof(container,'ItemContainer')or seen[container]then return false end
+  seen[container]=true
+  local items=container:getItems()
+  for i=0,items:size()-1 do
+   local item=items:get(i);local id=item:getID()
+   if ids[id]then return false end
+   ids[id]=true
+   if instanceof(item,'InventoryContainer')and not capture(item:getInventory())then return false end
+  end
+  return true
+ end
+ -- A pre-existing tape moved out of a worn bag is not the native new output.
+ if not capture(root)then return end
+ return {marker=ejectMarker,action=action,character=action.character,root=root,
+  television=television,data=data,parameter=action.parameter,mediaIndex=index,mediaType=data:getMediaType(),ids=ids}
+end
+local function ejectState(action,saved)
+ if type(saved)~='table'or saved.marker~=ejectMarker or saved.action~=action
+  or not callbacksTrusted(action,true,true)or action.secondaryItem~=nil
+  or action.character~=saved.character or action.character:getInventory()~=saved.root
+  or action.deviceData~=saved.data or action.parameter~=saved.parameter then return end
+ local tv,data=saved.television,saved.data
+ if tv:getObjectIndex()<0 or tv:getSquare()~=saved.parameter or data:getParent()~=tv
+  or tv:getDeviceData()~=data or saved.parameter:getDeviceData()~=data
+  or data:getMediaType()~=saved.mediaType
+  or data:hasMedia()and data:getMediaIndex()~=saved.mediaIndex
+  or not data:hasMedia()and data:getMediaIndex()~=-1 then return 'unavailable' end
+ local output,count,items=nil,0,saved.root:getItems()
+ for i=0,items:size()-1 do
+  local item=items:get(i)
+  if not saved.ids[item:getID()]and item:getContainer()==saved.root and item:isRecordedMedia()
+   and item:getRecordedMediaIndex()==saved.mediaIndex and item:getMediaType()==saved.mediaType then
+   output,count=item,count+1
+  end
+ end
+ if count>1 or saved.outputID and(not output or output:getID()~=saved.outputID
+  or output:getFullType()~=saved.outputType)then return 'unavailable' end
+ if output then saved.outputID,saved.outputType=output:getID(),output:getFullType()end
+ if output and not data:hasMedia()then return 'matched',true end
+ return 'waiting',output~=nil or not data:hasMedia()
+end
+function Media.ejectCompletionState(action,record)return ejectState(action,record)end
+-- An unavailable, audited TV command has no effect to replay. Native stop may
+-- discard that operation, but must not erase unrelated work when queue editing is on.
+function Media.canSkipUnavailable(action)
+ if not Toolkit.Settings.actionQueue()then return false end
+ local tv,data=ejectTarget(action,true)
+ if tv then return not data:hasMedia()end
+ local adapters=Toolkit.ActionQueueEditAdapters
+ if not adapters or not adapters.radioCallbacksTrusted(action)then return false end
+ tv,data=action.device,action.deviceData
+ if not instanceof(tv,'IsoTelevision')or not instanceof(data,'DeviceData')
+  or data:getParent()~=tv or tv:getDeviceData()~=data then return false end
+ if tv:getObjectIndex()<0 or not tv:getSquare()then return true end
+ return not action:isValid()
+end
+local function completionState(action,record)
+ if record.marker==ejectMarker then return ejectState(action,record)end
+ return Media.completionState(action,record)
+end
+local function replicatedEffect(action,record)
+ if record.marker==ejectMarker then local state,effect=ejectState(action,record);return state~=nil and state~='unavailable'and effect==true end
+ return Media.hasReplicatedEffect(action,record)
+end
 -- Only a previously audited insertion may use this lifecycle escape.
 -- Opaque records retain the original identities even after their resources vanish.
 function Media.capture(action)
@@ -123,17 +217,18 @@ function Media.canSkip(action,record)
  return saved.tape:getContainer()~=saved.root or data:hasMedia()
 end
 
--- Ordinary insertion also races with device/item replication. Capture only at
--- native begin, after any pickup, while the exact tape and empty TV still exist.
+-- Ordinary media actions also race with device/item replication. Capture only at
+-- native begin, after pickups, while the exact input or inserted media still exists.
 -- Promoted reading retains its separate dependency cleanup and failure policy.
 function Media.start(action)
  active[action]=nil
  if not isClient()or action.Type~='ISDeviceMediaAction'or action.action or action.toolkitReadingMove then return end
- local record=Media.capture(action)
+ local record=action.isRemove and Media.captureEject(action)or Media.capture(action)
  local queue=ISTimedActionQueue.queues[action.character]
  if not record or not queue or queue.current~=action or queue.queue[1]~=action
-  or not Toolkit.ActionQueuePolicy.live(queue)or record.tape:getContainer()~=record.root
-  or record.root:getItemById(record.tape:getID())~=record.tape or record.data:hasMedia()then return end
+  or not Toolkit.ActionQueuePolicy.live(queue)then return end
+ if record.marker~=ejectMarker and(record.tape:getContainer()~=record.root
+  or record.root:getItemById(record.tape:getID())~=record.tape or record.data:hasMedia())then return end
  active[action]={receipt=record,queue=queue,generation=queue.toolkitOperationGeneration or 0,
   enabled=Toolkit.Settings.actionQueue()}
 end
@@ -169,21 +264,21 @@ end
 function Media.keepPending(action)
  local record=currentRecord(action)
  if not record or not action.action:isStarted()
-  or not Media.hasReplicatedEffect(action,record.receipt)then return false end
+  or not replicatedEffect(action,record.receipt)then return false end
  local state=acknowledgement(action,record)
  return (state=='started'or state=='completed')and getTimestampMs()<record.deadline
 end
 function Media.canCancelWait(action)
  local record=currentRecord(action)
- return record~=nil and Media.completionState(action,record.receipt)~=nil
+ return record~=nil and completionState(action,record.receipt)~=nil
 end
 function Media.continuationState(action)
  if not Media.tracks(action)then return end
  local record=currentRecord(action)
  if not record then return 'failed' end
- local result=Media.completionState(action,record.receipt)
+ local result=completionState(action,record.receipt)
  local player=action.character
- local container=record.receipt.tape:getContainer()
+ local container=record.receipt.tape and record.receipt.tape:getContainer()
  if not result or result=='unavailable'
   or container and container~=record.receipt.root
   or (action.stopOnRun and (player:isRunning()or player:isSprinting())and player:isPlayerMoving())
@@ -245,6 +340,7 @@ function Media.install()
   methods.isValid=class.isValid
  end
  Toolkit.ActionQueueDefinitions.registerBehavior(source,{types={'ISDeviceMediaAction'},matches=Media.matches,inspect=Media.inspect})
+ Toolkit.ActionQueueDefinitions.registerBehavior(ejectSource,{types={'ISDeviceMediaAction'},matches=Media.matchesEject,inspect=Media.inspectEject})
  return unchanged()
 end
 return Media

@@ -52,6 +52,9 @@ local function setup(foreign, changedSource)
         data.getMinChannelRange = function(self) return self.minimum end
         data.getMaxChannelRange = function(self) return self.maximum end
         data.getIsTelevision = function() return object.class == 'IsoTelevision' end
+        data.getIsBatteryPowered = function(self) return self.batteryPowered or false end
+        data.canBePoweredHere = function(self) return self.powerable ~= false end
+        data.setIsTurnedOn = function(self, value) self.on = value; self.writes = self.writes + 1 end
         data.stopOrTriggerSoundByName = function() state.sounds = (state.sounds or 0) + 1 end
         data.playSoundSend = function() state.sounds = (state.sounds or 0) + 1 end
         data.setDeviceVolume = function(self, value) self.volume = math.max(0, math.min(1, value)); self.writes = self.writes + 1 end
@@ -146,11 +149,13 @@ do
     assert(s.data.writes == 0, 'actual Queue load and policy inspection execute no radio effects')
 end
 
--- Native mute/unmute have a strict volume-state dependency; they remain a legacy barrier.
+-- Native mute/unmute retain their strict state dependency in the projection.
 do
     local s = setup()
     local mute, unmute = s.action('MuteVolume'), s.action('UnMuteVolume', 0.4)
-    assert(not s.adapters.radio(mute) and not s.adapters.radio(unmute))
+    assert(s.adapters.radio(mute) and s.adapters.radio(unmute))
+    assert(s.model.evaluate({s.entry(mute), s.entry(unmute)}).status == 'allowed')
+    assert(s.model.evaluate({s.entry(unmute), s.entry(mute)}).status == 'denied')
     assert(mute:isValid() and not unmute:isValid(), 'unmuting audible native volume is invalid')
     mute:perform(); assert(s.data.volume == 0 and unmute:isValid())
     unmute:perform(); assert(s.data.volume == 0.4 and mute:isValid())
@@ -221,7 +226,7 @@ end
 
 do
     local s = setup()
-    for _, mode in ipairs({'ToggleOnOff', 'TogglePlayMedia', 'AddHeadphones', 'RemoveHeadphones', 'MuteVolume', 'UnMuteVolume'}) do
+    for _, mode in ipairs({'TogglePlayMedia', 'AddHeadphones', 'RemoveHeadphones'}) do
         assert(not s.adapters.radio(s.action(mode, 0.5)), 'unsupported effect retains the existing policy: ' .. mode)
     end
     for _, value in ipairs({false, {}, 0 / 0, math.huge}) do assert(not s.adapters.radio(s.action('SetVolume', value))) end
@@ -245,4 +250,31 @@ do
         assert(not s.adapters.radio(action), 'unsupported pending/resource state rejects ' .. change)
     end
 end
+
+-- Mains-powered TV controls use native powerability, preserve toggles and setter prerequisites.
+do
+    local s = setup()
+    local power, volume = s.action('ToggleOnOff'), s.action('SetVolume', 0.25)
+    s.data.on = false
+    assert(s.adapters.radioCallbacksTrusted(power) and s.adapters.radioCallbacksTrusted(s.action('TogglePlayMedia')))
+    assert(s.model.evaluate({s.entry(power), s.entry(volume)}).status == 'allowed')
+    assert(s.model.evaluate({s.entry(volume), s.entry(power)}).status == 'denied')
+    assert(s.model.evaluate({s.entry(volume), {action=power, edit=s.adapters.radio(power), snapshotOnly=true}}).status == 'denied',
+        'cancelling a required power-on must not retain the setter')
+    power:perform(); volume:perform()
+    assert(s.data.on and s.data.volume == 0.25, 'native power and setter callbacks retain their effects')
+    assert(s.model.evaluate({s.entry(power), s.entry(volume)}).status == 'denied', 'setter after native power-off is invalid')
+    s.data.powerable = false
+    assert(s.model.evaluate({s.entry(power)}).status == 'denied', 'charge cannot replace missing mains electricity')
+    s.data.powerable = true; s.data.power = 0; s.data.on = false
+    assert(s.model.evaluate({s.entry(power)}).status == 'allowed', 'native mains powerability does not require battery charge')
+    assert(s.model.evaluate({s.entry(power), s.entry(volume)}).status == 'denied', 'setter retains native getPower predicate')
+    s.data.batteryPowered = true
+    assert(not s.adapters.radio(power), 'battery-backed variants retain the conservative power contract')
+    local radio = s.device('IsoRadio')
+    assert(not s.adapters.radio(s.action('ToggleOnOff', nil, radio)), 'power expansion remains TV-only')
+    power.performToggleOnOff = function() error('foreign control callback') end
+    assert(not s.adapters.radioCallbacksTrusted(power) and not s.adapters.radio(power))
+end
+
 print('Radio pending edit adapters: upstream setter order/effects, native prerequisites, legacy barriers, source/helper guards and pure inspection passed.')

@@ -1291,9 +1291,11 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
   local data=state.pickup:getDeviceData()
   data.on=true;quietReady(false);data.on=false;quietReady(true)
   local savedServer=isServer;isServer=function()return true end
-  local nativeOn=caseID=='tidy-hotbar-radio-on'
-  data.on=nativeOn;assert(Hotbar.radioReady(state,true),'server must retain independently seeded native power state')
-  data.on=not nativeOn;assert(not Hotbar.radioReady(state,true),'unexpected server power transition must fail')
+  local initialOn=caseID=='tidy-hotbar-radio-on'
+  data.on=initialOn;assert(Hotbar.radioReady(state,false),'server held checkpoint must preserve configured power')
+  data.on=not initialOn;assert(not Hotbar.radioReady(state,false),'wrong server held power must fail')
+  data.on=false;assert(Hotbar.radioReady(state,true),'server must observe native off packet after return')
+  data.on=true;assert(not Hotbar.radioReady(state,true),'retained server on must not pass after return')
   data.on=false;isServer=savedServer;quietReady(true)
   data.parent={};quietReady(false);data.parent=state.pickup
   data.power=0.8;quietReady(true);data.power=1.1;quietReady(false);data.power=1

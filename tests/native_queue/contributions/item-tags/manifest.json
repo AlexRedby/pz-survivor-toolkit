@@ -11,8 +11,7 @@
     "NeatUI_Framework",
     "CleanUI",
     "PZSurvivorToolkit",
-    "EURY_CONTAINERS",
-    "organizedCategories_core"
+    "EURY_CONTAINERS"
   ],
   "expected_screenshots": [
     "tags-01-quartermaster-tags.png",

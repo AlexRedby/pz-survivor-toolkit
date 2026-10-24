@@ -95,6 +95,55 @@ def native_rows(rows, role, spec):
     return bodies
 
 
+def native_lifecycle(rows, spec, queued_wall):
+    """Require one exact native inventory action through canonical ActionManager Done."""
+    lifecycle = [row for row in rows if row.get('event') == 'lifecycle']
+    require(lifecycle, 'Owner native lifecycle missing')
+    ids = {row.get('actionId') for row in lifecycle}
+    require(len(ids) == 1 and all(type(i) is int and i > 0 for i in ids), 'Missing/multiple native action lifecycle IDs')
+    action_id = next(iter(ids))
+    for row in lifecycle:
+        require(row.get('id') == spec['id'] and row.get('actionType') == 'ISCartEquipAction'
+                and row.get('sourceType') == 'inventory' and row.get('maxTime') == 30
+                and number(row.get('luaMaxTime')) and row.get('luaCharacterExact') is True
+                and row.get('threw') is False and row.get('forceStop') is False and row.get('networkRejected') is False,
+                'Native lifecycle does not bind exact non-rejected inventory action')
+        require(row.get('method') not in ('stop', 'interruptWaitToStart'), 'Native menu equip cancelled')
+    began = [row for row in lifecycle if row.get('method') == 'start' and row.get('stage') == 'enter']
+    ended = [row for row in lifecycle if row.get('method') == 'perform' and row.get('stage') == 'exit']
+    require(len(began) == len(ended) == 1 and began[0]['wall'] >= queued_wall - 100
+            and ended[0].get('waitForFinished') is True and ended[0].get('forceComplete') is True
+            and ended[0].get('progress') == 1 and number(ended[0].get('time')) and ended[0]['time'] >= 30
+            and 200 <= ended[0]['wall'] - began[0]['wall'] <= 4000,
+            'Native start/perform/finished boundaries missing')
+    registered = [row for row in lifecycle if row.get('method') == 'start' and row.get('stage') == 'exit']
+    require(len(registered) == 1 and registered[0].get('waitForFinished') is True
+            and registered[0].get('networkActionPresent') is True and registered[0].get('networkActionExact') is True
+            and registered[0].get('networkActionType') == 'ISCartEquipAction'
+            and registered[0].get('networkOwnerID') == spec['ownerID']
+            and type(registered[0].get('transactionId')) is int, 'Native exact MP transaction registration missing')
+    transaction = registered[0]['transactionId']
+    for row in lifecycle:
+        if row.get('method') == 'start' and row.get('stage') == 'enter': continue
+        require(row.get('transactionId') == transaction and row.get('networkOwnerID') == spec['ownerID'],
+                'Native lifecycle changed exact MP owner/transaction identity')
+    canonical = [row for row in lifecycle if row.get('method') == 'update' and row.get('stage') == 'exit'
+                 and row.get('networkActionPresent') is True and row.get('networkActionExact') is True
+                 and row.get('networkActionType') == 'ISCartEquipAction' and row.get('networkDone') is True
+                 and row.get('waitForFinished') is True and row.get('forceComplete') is True
+                 and row.get('progress') == 1 and number(row.get('time')) and row['time'] >= 30]
+    require(canonical and registered[0]['wall'] < canonical[0]['wall'] <= ended[0]['wall'],
+            'Missing exact ActionManager server-done receipt before native perform')
+    require(all(row.get('forceComplete') is False for row in lifecycle if row['wall'] < canonical[0]['wall']),
+            'Native action forced before canonical server-done receipt')
+    progress = [row.get('progress') for row in lifecycle if row.get('method') == 'update']
+    require(len(progress) >= 2 and all(number(v) and 0 <= v <= 1 for v in progress)
+            and max(progress) - min(progress) >= .3, 'Native action made no measured progress')
+    return dict(nativeActionID=action_id, nativeTransactionID=transaction,
+                nativeStartWall=began[0]['wall'], nativePerformWall=ended[0]['wall'],
+                canonicalServerDoneWall=canonical[0]['wall'])
+
+
 def analyze_data(logs, native, poses, cameras, variant='female-empty'):
     require(variant in VARIANTS, 'Unknown inventory-equip variant')
     rows = {role: records(logs[role], role) for role in ('server', 'client1', 'client2')}
@@ -163,48 +212,8 @@ def analyze_data(logs, native, poses, cameras, variant='female-empty'):
         complete = one(rows[role], 'complete', role)
         require(complete.get('ok') is True and complete.get('id') == spec['id']
                 and complete['wall'] >= acknowledgement['wall'], role + ': incomplete authoritative session')
-    lifecycle = [row for row in native['client1'] if row.get('event') == 'lifecycle']
-    require(lifecycle, 'Owner native lifecycle missing')
-    ids = {row.get('actionId') for row in lifecycle}
-    require(len(ids) == 1 and all(type(i) is int and i > 0 for i in ids), 'Missing/multiple native action lifecycle IDs')
-    action_id = next(iter(ids))
-    for row in lifecycle:
-        require(row.get('id') == spec['id'] and row.get('actionType') == 'ISCartEquipAction'
-                and row.get('sourceType') == 'inventory' and row.get('maxTime') == 30
-                and number(row.get('luaMaxTime')) and row.get('luaCharacterExact') is True
-                and row.get('threw') is False and row.get('forceStop') is False and row.get('networkRejected') is False,
-                'Native lifecycle does not bind exact non-rejected inventory action')
-        require(row.get('method') not in ('stop', 'interruptWaitToStart'), 'Native menu equip cancelled')
-    began = [row for row in lifecycle if row.get('method') == 'start' and row.get('stage') == 'enter']
-    ended = [row for row in lifecycle if row.get('method') == 'perform' and row.get('stage') == 'exit']
-    require(len(began) == len(ended) == 1 and began[0]['wall'] >= queued['wall'] - 100
-            and ended[0].get('waitForFinished') is True and ended[0].get('forceComplete') is True
-            and ended[0].get('progress') == 1 and number(ended[0].get('time')) and ended[0]['time'] >= 30
-            and 200 <= ended[0]['wall'] - began[0]['wall'] <= 4000,
-            'Native start/perform/finished boundaries missing')
-    registered = [row for row in lifecycle if row.get('method') == 'start' and row.get('stage') == 'exit']
-    require(len(registered) == 1 and registered[0].get('waitForFinished') is True
-            and registered[0].get('networkActionPresent') is True and registered[0].get('networkActionExact') is True
-            and registered[0].get('networkActionType') == 'ISCartEquipAction'
-            and registered[0].get('networkOwnerID') == spec['ownerID']
-            and type(registered[0].get('transactionId')) is int, 'Native exact MP transaction registration missing')
-    transaction = registered[0]['transactionId']
-    for row in lifecycle:
-        if row.get('method') == 'start' and row.get('stage') == 'enter': continue
-        require(row.get('transactionId') == transaction and row.get('networkOwnerID') == spec['ownerID'],
-                'Native lifecycle changed exact MP owner/transaction identity')
-    canonical = [row for row in lifecycle if row.get('method') == 'update' and row.get('stage') == 'exit'
-                 and row.get('networkActionPresent') is True and row.get('networkActionExact') is True
-                 and row.get('networkActionType') == 'ISCartEquipAction' and row.get('networkDone') is True
-                 and row.get('waitForFinished') is True and row.get('forceComplete') is True
-                 and row.get('progress') == 1 and number(row.get('time')) and row['time'] >= 30]
-    require(canonical and registered[0]['wall'] < canonical[0]['wall'] <= ended[0]['wall'],
-            'Missing exact ActionManager server-done receipt before native perform')
-    require(all(row.get('forceComplete') is False for row in lifecycle if row['wall'] < canonical[0]['wall']),
-            'Native action forced before canonical server-done receipt')
-    progress = [row.get('progress') for row in lifecycle if row.get('method') == 'update']
-    require(len(progress) >= 2 and all(number(v) and 0 <= v <= 1 for v in progress)
-            and max(progress) - min(progress) >= .3, 'Native action made no measured progress')
+    lifecycle = native_lifecycle(native['client1'], spec, queued['wall'])
+    action_id = lifecycle['nativeActionID'];transaction = lifecycle['nativeTransactionID']
     phase_counts = {}
     for role in ('client1', 'client2'):
         bodies = native_rows(native[role], role, spec)
@@ -229,12 +238,12 @@ def analyze_data(logs, native, poses, cameras, variant='female-empty'):
                         and isinstance(stage.get('bones'), dict) and 'Bip01_L_Hand' in stage['bones'] and 'Bip01_R_Hand' in stage['bones'],
                         role + ': missing same-slot attachment cart/body matrices')
         pair_times = sorted(pair['wall'] for pair in pairs)
-        require(pair_times[0] <= ended[0]['wall'] + 800 and pair_times[-1] - pair_times[0] >= 80,
+        require(pair_times[0] <= lifecycle['nativePerformWall'] + 800 and pair_times[-1] - pair_times[0] >= 80,
                 role + ': first-attachment diagnostic window missing')
         before = covered(bodies, epoch + 300, epoch + 1700, role + ' pre-Walk')
         require(any(row.get('moving') is True for row in before)
                 and all(row.get('primaryID') == row.get('secondaryID') == -1 for row in before), role + ': missing bare native pre-Walk')
-        during = covered(bodies, began[0]['wall'], ended[0]['wall'], role + ' equip', minimum=3)
+        during = covered(bodies, lifecycle['nativeStartWall'], lifecycle['nativePerformWall'], role + ' equip', minimum=3)
         if role == 'client1':
             require(any(any(action.get('actionId') == action_id and action.get('id') == spec['id']
                     and action.get('type') == 'ISCartEquipAction' for action in row.get('actions', [])) for row in during),
@@ -268,7 +277,7 @@ def analyze_data(logs, native, poses, cameras, variant='female-empty'):
     return dict(evidenceComplete=True, animationEquivalencePass=False, cartInventoryEquip=True, selectedVariant=variant,
                 authoritativeCartID=spec['id'], ownerOnlineID=spec['ownerID'], nativeActionID=action_id,
                 nativeClientCompleteRequired=False, nativeClientFinishedFlagRequired=False, nativeTransactionID=transaction,
-                canonicalServerDoneWall=canonical[0]['wall'], phases=phase_counts, cargo=dict(ids=spec['cargoIDs'], weight=spec['cargoWeight']),
+                canonicalServerDoneWall=lifecycle['canonicalServerDoneWall'], phases=phase_counts, cargo=dict(ids=spec['cargoIDs'], weight=spec['cargoWeight']),
                 scope='One selected disposable menu-Host inventory equip, native start/progress/exact ActionManager server-done/perform plus authoritative server and observer endpoints; body matrices, native outfit/model and rendered held-cart tail captured. Visual fit, wheel/feet/grip quality and animation equivalence still require independent review.')
 
 

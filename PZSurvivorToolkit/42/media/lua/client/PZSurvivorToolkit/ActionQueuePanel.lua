@@ -162,6 +162,64 @@ function Panel:createChildren()
     self.list.dragTexture = getTexture("media/ui/dragModIcon.png")
     self.list.cancelTexture = self.closeButtonTexture
     self:addChild(self.list)
+    if Toolkit.ActionQueueRecovery then
+        self.restoreButton = ISButton:new(8, self.height - 34, self.width - 50, 24, "", self, Panel.restoreCancelled)
+        self.restoreButton:initialise(); self.restoreButton:instantiate(); self:addChild(self.restoreButton)
+        self.forgetButton = ISButton:new(self.width - 34, self.height - 34, 24, 24, "x", self, Panel.forgetCancelled)
+        self.forgetButton:initialise(); self.forgetButton:instantiate(); self:addChild(self.forgetButton)
+        self.forgetButton:setTooltip(getText("UI_PZSurvivorToolkit_queue_recovery_forget"))
+        for _, button in ipairs({self.restoreButton, self.forgetButton}) do
+            local down = button.onMouseDown
+            button.onMouseDown = function(control, x, y)
+                control.recoveryId = self.recoveryView and self.recoveryView.id
+                return down(control, x, y)
+            end
+            button:setVisible(false)
+        end
+    end
+end
+
+function Panel:restoreCancelled(button)
+    local view = self.recoveryView
+    local expected = button.recoveryId or view and view.id
+    if not expected then return end
+    Toolkit.ActionQueueRecovery.restore(self.queue.character, expected)
+    button.recoveryId = nil; self.recoveryAt = nil; self:update()
+end
+
+function Panel:forgetCancelled(button)
+    local expected = button.recoveryId or self.recoveryView and self.recoveryView.id
+    if expected then Toolkit.ActionQueueRecovery.forget(self.queue.character, expected) end
+    button.recoveryId = nil; self.recoveryAt = nil; self:update()
+end
+
+function Panel:updateRecovery()
+    if not self.restoreButton then return end
+    local recovery, player = Toolkit.ActionQueueRecovery, self.queue.character
+    local info = recovery.info(player)
+    local visible = info ~= nil
+    if self.recoveryVisible ~= visible then
+        self.recoveryVisible = visible
+        self:onResize()
+    end
+    self.restoreButton:setVisible(visible); self.forgetButton:setVisible(visible)
+    if not info then self.recoveryView, self.recoveryAt = nil, nil; return end
+    local now = getTimestampMs()
+    if not self.recoveryAt or now < self.recoveryAt or now - self.recoveryAt >= 250
+        or not self.recoveryView or self.recoveryView.id ~= info.id then
+        self.recoveryView, self.recoveryAt = recovery.preview(player), now
+    end
+    local view = self.recoveryView
+    self.restoreButton:setTitle(getText("UI_PZSurvivorToolkit_queue_recovery_restore", info.count))
+    self.restoreButton:setEnable(view and view.available == true)
+    local tooltip = getText("UI_PZSurvivorToolkit_queue_recovery_tip")
+    if info.skipped > 0 then tooltip = tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_recovery_skipped", info.skipped) end
+    if view and view.blocked then
+        local reason = view.blocked
+        if reason ~= "busy" and reason ~= "moving" and reason ~= "settling" then reason = "unavailable" end
+        tooltip = tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_recovery_" .. reason)
+    end
+    self.restoreButton:setTooltip(tooltip)
 end
 
 function Panel.drawRow(list, y, row, alt)
@@ -207,7 +265,7 @@ function Panel.drawRow(list, y, row, alt)
     if current and action.action then
         local fitness = Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.progress(action)
         local fraction = fitness and fitness.fraction or action:getJobDelta()
-        prefix = "[" .. tostring(math.floor(fraction * 100)) .. "%] "
+        prefix = fitness and fitness.stopping and "[...] " or "[" .. tostring(math.floor(fraction * 100)) .. "%] "
     end
     local top = math.max(0, y + list:getYScroll())
     local label = prefix .. description.title .. (description.target and ": " .. description.target or "")
@@ -357,6 +415,7 @@ function Panel:update()
         self.list:setYScroll(scroll)
     end
     self.title = getText("UI_PZSurvivorToolkit_queue_title", tasks)
+    self:updateRecovery()
 end
 
 function Panel:clearSnapshots()
@@ -369,7 +428,11 @@ function Panel:onResize()
     ISCollapsableWindow.onResize(self)
     if not self.list then return end
     self.list:setWidth(self.width - 16)
-    self.list:setHeight(self.height - self.list.y - 12)
+    self.list:setHeight(self.height - self.list.y - 12 - (self.recoveryVisible and 30 or 0))
+    if self.restoreButton then
+        self.restoreButton:setY(self.height - 34); self.restoreButton:setWidth(self.width - 50)
+        self.forgetButton:setY(self.height - 34); self.forgetButton:setX(self.width - 34)
+    end
     self.list:clearGesture()
 end
 
@@ -377,6 +440,9 @@ function Panel.refresh()
     for playerNum = 0, getNumActivePlayers() - 1 do
         local player = getSpecificPlayer(playerNum)
         local queue = player and ISTimedActionQueue.queues[player]
+        local recovery = Toolkit.ActionQueueRecovery
+        local saved = recovery and player and recovery.info(player)
+        if saved and not queue then queue = ISTimedActionQueue.getTimedActionQueue(player) end
         local panel = panels[playerNum]
         if panel and panel.queue ~= queue then
             positions[playerNum] = {x = panel:getX(), y = panel:getY()}
@@ -385,7 +451,7 @@ function Panel.refresh()
             panels[playerNum], panel = nil, nil
         end
         local visible = Toolkit.Settings.actionQueue() and player and not player:isDead()
-            and queue and #queue.queue > 0
+            and queue and (#queue.queue > 0 or saved ~= nil)
         if visible and not panel then
             local position = positions[playerNum]
             local x = position and position.x or getPlayerScreenLeft(playerNum) + math.max(80, getPlayerScreenWidth(playerNum) - 440)

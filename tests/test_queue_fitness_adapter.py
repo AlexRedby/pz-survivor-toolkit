@@ -13,7 +13,7 @@ from queue_checks.adapters import fitness
 
 def clinical(xp=0, endurance=1, regularity=0, stiffness=0):
     return dict(fitnessXP=xp, strengthXP=xp, endurance=endurance,
-                regularity=dict(squats=regularity, pushups=regularity, bicepscurl=regularity),
+                regularity=dict(squats=regularity, pushups=regularity, bicepscurl=regularity, burpees=regularity),
                 stiffness=dict(legs=stiffness, arms=stiffness, chest=stiffness, abs=stiffness),
                 timers=dict(legs=100, arms=100, chest=100, abs=100))
 
@@ -46,11 +46,12 @@ class FitnessAdapterTests(unittest.TestCase):
             if case == 'missing-dumbbell':
                 final['items'] = [row for row in final['items'] if row['id'] != ids['dumbbell']]
             exercises = fitness._expected_exercises(case, mode)
+            minutes = 30 if case == 'burpees-30' else 10
             records = []
             for i, exercise in enumerate(exercises):
                 start = i*700000
-                end = start + (100000 if case == 'active-cancel' else 600001)
-                records.append(dict(exercise=exercise, minutes=10, maxTime=5000000, reps=10,
+                end = start + (100000 if case == 'active-cancel' else minutes * 60000 + 1)
+                records.append(dict(exercise=exercise, minutes=minutes, maxTime=5000000, reps=10,
                     startMS=start, stopMS=end, lastRepMS=start+1000, before=clinical(), after=clinical(10,.9,1,1),
                     minEndurance=.8, lastRep=clinical(10,.8,1,1), currentExerciseCleared=True,
                     serverStopReturned=True, previousStopSettled=True))
@@ -61,12 +62,12 @@ class FitnessAdapterTests(unittest.TestCase):
                     next(row for row in start_inventory['items'] if row['id']==ids['dumbbell'])['container']='root'
                     record['startEquipment']=start_inventory
             receipt = dict(case=case, inventory=final, before=prep['before'], clinical=clinical(10,.9,1,1) if records else clinical(),
-                records=records, violations=[], tailRead=True, frontRead=case not in ('empty','active-cancel'), currentExerciseCleared=True,
+                records=records, violations=[], tailRead=True, frontRead=case not in ('empty','active-cancel','burpees-30'), currentExerciseCleared=True,
                 serverStopSettled=True, peerConnected=True, removed=ids['dumbbell'] if case=='missing-dumbbell' else False,
                 serverSettleMilliseconds=2000)
             if mp:
                 receipt.update(peerRead=True, peerBook=prep['peerBook'], peerOnlineID=prep['peerOnlineID'])
-            command = dict(menuDispatched=True, nativeDurations=True, minutes=10, frontMinutes=0 if case in ('empty','active-cancel') else 12,
+            command = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in ('empty','active-cancel','burpees-30') else 12,
                 waitingNoExercise=True, waitingNoClinicalEffects=True, waitMS=720000,
                 activeObserved=bool(exercises), activeCancelled=case=='active-cancel', pendingCancelled=mode=='toolkit' and case=='pending-cancel',
                 reordered=mode=='toolkit' and case=='pending-reorder', closedUI=case=='closed-ui-restore',
@@ -74,8 +75,9 @@ class FitnessAdapterTests(unittest.TestCase):
                 activeAcks=['token'+str(i) for i in range(len(exercises))],
                 terminalAcks=[dict(token='token'+str(i), state='canceled') for i in range(len(exercises))])
             command['initialClinical']=copy.deepcopy(prep['before'])
-            command['progressSamples']=[dict(exercise=exercise,total=10,elapsed=2,fraction=.2,
-                startMS=i*700000,sampleMS=i*700000+120000,label='2.0 / 10 minutes') for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
+            command['progressSamples']=[dict(exercise=exercise,total=minutes,elapsed=2,fraction=2/minutes,
+                startMS=i*700000,sampleMS=i*700000+120000,label=f'2.0 / {minutes} minutes') for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
+            if case=='burpees-30' and mode=='toolkit':command['durationStopDelayMilliseconds']=0
             if case=='pending-reorder' and mode=='toolkit':command['reorderedTailBeforeStart']=True
             if case=='closed-ui-restore' and mode=='toolkit':
                 command.update(borrowedTransferProgress=True,borrowedTool=ids['dumbbell'],borrowedSourceBag=ids['bag'])
@@ -89,6 +91,27 @@ class FitnessAdapterTests(unittest.TestCase):
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
         rows = [dict(row, suite='fitness', actor='client1', kind=self.selection['kind'], mode=mode) for row in rows]
         return rows, raw, peers
+
+    def test_burpees_duration_stop_rejects_missing_or_delayed_native_removal(self):
+        self.selection['cases'] = ['burpees-30']
+        for delay in (None, -1, 5000, 30000, float('nan')):
+            with self.subTest(delay=delay):
+                evidence = self.evidence()
+                evidence[0][1]['command']['durationStopDelayMilliseconds'] = delay
+                self.assertTrue(any('stop remained active' in issue for issue in self.verify(evidence)['issues']))
+
+    def test_original_regularity_receipts_remain_valid_for_existing_cases(self):
+        self.selection['cases'] = ['empty']
+        evidence = self.evidence()
+        def legacy(value):
+            if isinstance(value, dict):
+                if 'regularity' in value:
+                    value['regularity'].pop('burpees', None)
+                for child in value.values():legacy(child)
+            elif isinstance(value, list):
+                for child in value:legacy(child)
+        legacy(evidence[0]);legacy(evidence[1])
+        self.assertEqual(self.verify(evidence)['issues'], [])
 
     def verify(self, evidence=None):
         rows, raw, peers = evidence or self.evidence()

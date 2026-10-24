@@ -145,6 +145,22 @@ assert(state(build) == nil, 'generic type matched native build')
 deliver(message(first, 'started', buildToken, 127, 'build'))
 deliver(message(first, 'completed', buildToken, 127, 'build'))
 assert(state(build) == 'completed', 'native build outcome was not recognized')
+-- A stopped native action may still own the Lua head while started/terminal
+-- messages are in flight. Physical Java membership must not replace receipt identity.
+do
+    local stopped = action(first, 126, 'ISFitnessAction')
+    currentQueue.current, currentQueue.queue = stopped, {stopped}
+    first.getCharacterActions = function() return {contains=function() return false end} end
+    local identity = token()
+    assert(not acknowledgements.capture(stopped))
+    deliver(message(first, 'started', identity, 126, 'ISFitnessAction'))
+    local captured = assert(acknowledgements.capture(stopped), 'late start could not bind stopped current workout')
+    assert(captured.state == 'started')
+    deliver(message(first, 'canceled', identity, 126, 'ISFitnessAction'))
+    assert(acknowledgements.state(stopped, captured) == 'canceled', 'late terminal lost exact stopped workout')
+    currentQueue.current, currentQueue.queue = build, {build}
+    assert(not acknowledgements.capture(stopped), 'late workout receipt granted rights after Lua ownership ended')
+end
 -- Native retriggering can reuse the Lua table with a fresh Java action.
 local reused = action(first, 123, 'ToolkitAckProbe')
 currentQueue.current, currentQueue.queue = reused, {reused}

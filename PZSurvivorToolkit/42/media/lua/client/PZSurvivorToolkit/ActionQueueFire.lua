@@ -110,7 +110,9 @@ local unequipMethods = {}
 for name, callback in pairs(unequipClass or {}) do if type(callback) == "function" then unequipMethods[name] = callback end end
 local transferWalk = luautils.walkToContainer
 local transferPredicate = luautils.haveToBeTransfered
-trusted = trusted and nativeClosure(transferPredicate, "luautils.lua") and nativeClosure(transferWalk, "luautils.lua")
+local approach = Toolkit.ActionQueueApproach
+local nativeTransferWalk = approach and approach.nativeHelper(luautils, "walkToContainer", transferWalk) or transferWalk
+trusted = trusted and nativeClosure(transferPredicate, "luautils.lua") and nativeClosure(nativeTransferWalk, "luautils.lua")
 local transferHelpers = {}
 for name, callback in pairs(ISInventoryTransferUtil) do
     if type(callback) == "function" then

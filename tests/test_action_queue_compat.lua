@@ -67,16 +67,19 @@ DebugType = {Action = {warn = function() end}}
 luautils = {getCorrectSquareForWall=function(_, square) return square end,
     haveToBeTransfered = function(character, item) return item:getContainer() ~= character:getInventory() end}
 assert(loadstring(read(NativeActionRoot .. '/client/ISUI/ISXuiSkin.lua')))()
-assert(loadstring(read(NativeActionRoot .. '/shared/TimedActions/ISBaseTimedAction.lua')))()
-assert(loadstring(read(NativeActionRoot .. '/client/TimedActions/ISTimedActionQueue.lua')))()
-assert(loadstring(read(NativeActionRoot .. '/client/TimedActions/ISQueueActionsAction.lua')))()
+getFilenameOfClosure=function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
+assert(loadstring(read(NativeActionRoot .. '/shared/TimedActions/ISBaseTimedAction.lua'),'@media/lua/shared/TimedActions/ISBaseTimedAction.lua'))()
+assert(loadstring(read(NativeActionRoot .. '/client/TimedActions/ISTimedActionQueue.lua'),'@media/lua/client/TimedActions/ISTimedActionQueue.lua'))()
+assert(loadstring(read(NativeActionRoot .. '/client/TimedActions/ISQueueActionsAction.lua'),'@media/lua/client/TimedActions/ISQueueActionsAction.lua'))()
 local walkSource=read(NativeActionRoot .. '/shared/luautils.lua')
-assert(loadstring(assert(walkSource:match('(function luautils.walkAdj%(playerObj, square, keepActions, excludeList%).-\nend)'))))()
+assert(loadstring(assert(walkSource:match('(function luautils.walkAdj%(playerObj, square, keepActions, excludeList%).-\nend)')),'@media/lua/shared/luautils.lua'))()
+assert(loadstring(assert(walkSource:match('(luautils.getCorrectSquareForWall = function%(playerObj, square%).-\nend)')),'@media/lua/shared/luautils.lua'))()
 local nativeWalk=luautils.walkAdj
 local nativeClears=0
+local nativeClear=ISTimedActionQueue.clear
 ISTimedActionQueue.clear=function(character)
     nativeClears=nativeClears+1
-    local queue=ISTimedActionQueue.getTimedActionQueue(character); queue.queue,queue.current={},nil
+    return nativeClear(character)
 end
 ISBaseTimedAction.begin = function(self)
     self.action = {forceComplete = function() end, isStarted = function() return true end,
@@ -210,6 +213,9 @@ PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'))()
 local operations, definitions = PZSurvivorToolkit.ActionQueueOperations, PZSurvivorToolkit.ActionQueueDefinitions
+local sharedApproach=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueApproach.lua'))()
+assert(sharedApproach.install()and sharedApproach.nativeHelper(luautils,'walkAdj',luautils.walkAdj)==nativeWalk)
+nativeWalk=luautils.walkAdj
 local adoptReturns, returnAdoptions = operations.adoptReturnMethods, 0
 operations.adoptReturnMethods = function(...)
     assert(adoptReturns(...), 'actual Better Containers wrappers must remain recognized native returns')
@@ -358,6 +364,7 @@ fixturePolicy.resumableWorld=function() return false end
 fixturePolicy.replaceStop=function() end
 fixturePolicy.adoptBegin=function() end
 fixturePolicy.inspect=definitions.inspect
+fixturePolicy.matchesNative=function()return false end -- real Policy is used by the planned-return observer regression below
 PZSurvivorToolkit.ActionQueueLabels={label=function() end}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
@@ -436,8 +443,10 @@ inventory.getParent = function() end
 inventory.getType = function() return 'inventory' end
 inventory.getContainingItem=function() end
 inventory.setDrawDirty=function()end
+IsoFlagType={collideW='collideW',collideN='collideN'}
 local square = {getX = function() return 0 end, getY = function() return 0 end, getZ = function() return 0 end,
-    canReachTo=function() return true end}
+    canReachTo=function() return true end,has=function()return false end}
+getCell=function()return{getGridSquare=function()return square end}end
 local player = {class = 'IsoPlayer', getInventory = function() return inventory end, getPlayerNum = function() return 0 end,
     isDead = function() return dead end, isAsleep = function() return false end, isLocalPlayer = function() return true end,
     isDraggingCorpse = function() return false end, isFarming = function() return false end, getSquare = function() return square end,
@@ -445,7 +454,7 @@ local player = {class = 'IsoPlayer', getInventory = function() return inventory 
     hasTimedActions = function() return false end, getModData = function() return {P4TidyUpMeister = {doNotReequip = doNotReequip}} end,
     getWornItems = function() return list({}) end, getPrimaryHandItem = function(self) return self.primary end,
     getSecondaryHandItem = function(self) return self.secondary end, isEquipped = function() return false end, setIsFarming = function() end,
-    isTimedActionInstant = function() return false end, hasTrait = function() return false end}
+    isTimedActionInstant = function() return false end, hasTrait = function() return false end,StopAllActionQueue=function()end}
 player.setPrimaryHandItem=function(self,value)self.primary=value end
 player.setSecondaryHandItem=function(self,value)self.secondary=value end
 player.removeWornItem=function()end
@@ -633,20 +642,35 @@ end
 local function wash(value)
     menu.options = {}; WS.WMI_BuildWashMenu(menu, {value}, player, sink)
     local option = menu.options[1]; option.callback(option.target, unpack(option.args))
+    -- Deep source cases begin at the transfer boundary. Execute a genuine head
+    -- approach when it is ready; keep deferred preparation behind other work.
+    local approach=queue.queue[1]
+    if sharedApproach.isAction(approach)then approach:begin();approach:start();approach:perform()end
     return queue.queue[1]
 end
 reset()
 local front=tail(); local frontClears=nativeClears
 local frontBag={class='ItemContainer',getParent=function() end,getType=function() return 'none' end,getContainingItem=function() end}
-wash(item(frontBag,21)); local waitingWash=queue.queue[2]; local back=tail()
-assert(queue.queue[1]==front and waitingWash.Type=='ISInventoryTransferAction' and nativeClears==frontClears,
-    'real native walkAdj preserves existing front work in the verified Wash source scope')
-operations.invalidate(waitingWash.toolkitQueueOperation); table.remove(queue.queue,2)
+wash(item(frontBag,21)); local approachCommand,waitingWash=queue.queue[2],queue.queue[3];local back=tail()
+assert(queue.queue[1]==front and sharedApproach.isAction(approachCommand)and waitingWash.Type=='ISInventoryTransferAction'
+    and approachCommand.toolkitQueueOperation==waitingWash.toolkitQueueOperation and nativeClears==frontClears,
+    'real shared walkAdj defers intact native clearing behind unrelated work in the Wash source scope; got '
+        ..tostring(approachCommand and approachCommand.Type)..' command='..tostring(operations.isCommand(approachCommand))
+        ..' approach='..tostring(sharedApproach.isAction(approachCommand))..' tracked='..tostring(compat.fixtureRegistries[1][approachCommand]~=nil))
+assert(luautils.walkAdj==nativeWalk,'Wash callback must leave the shared dispatcher installed')
+operations.invalidate(waitingWash.toolkitQueueOperation);table.remove(queue.queue,3);table.remove(queue.queue,2)
 assert(queue.queue[1]==front and queue.queue[2]==back,'waiting Wash cancellation preserves both unrelated ends')
-assert(luautils.walkAdj==nativeWalk,'Wash entry restores native walking after success')
-local oldReach=square.canReachTo; square.canReachTo=function() error('native walking failure') end
-assert(not pcall(function() wash(item(frontBag,22)) end)); square.canReachTo=oldReach
-assert(luautils.walkAdj==nativeWalk,'Wash entry restores native walking after a source exception')
+-- Run the actual queued native helper at its turn; no temporary keepActions wrapper exists.
+reset();front=tail();wash(item(frontBag,22));approachCommand,waitingWash=queue.queue[2],queue.queue[3];back=tail()
+queue:removeFromQueue(front);queue.current=approachCommand;frontClears=nativeClears
+approachCommand:begin();approachCommand:start();approachCommand:perform()
+assert(queue.current==waitingWash and queue.queue[#queue.queue]==back and nativeClears==frontClears+1 and luautils.walkAdj==nativeWalk,
+    'native walkAdj clear at the shared command head must preserve its dependent transfer and independent tail')
+reset();front=tail();wash(item(frontBag,26));approachCommand=queue.queue[2]
+queue:removeFromQueue(front);queue.current=approachCommand
+local oldReach=square.canReachTo;square.canReachTo=function()error('native walking failure')end
+approachCommand:begin();assert(not pcall(function()approachCommand:start()end));square.canReachTo=oldReach
+assert(luautils.walkAdj==nativeWalk,'native routing exception must not replace the shared dispatcher')
 reset(); local actorParent={class='IsoGameCharacter'}; local oldParent=inventory.getParent
 inventory.getParent=function() return actorParent end
 wash(item(frontBag,23)); local ownedTransfer=queue.queue[1]
@@ -673,6 +697,8 @@ do
     reset()
     local visits = assert(loadfile(ProjectRoot .. '/tests/support/queue_registry_visits.lua'))()
     local queuedSource = wash(item(bag, 19050))
+    -- Release the completed real approach before measuring steady queued-source pruning.
+    compat.prune()
     queue.queue, queue.current = {queuedSource}, queuedSource
     for i = 2, 4097 do queue.queue[i] = {} end
     assert(visits(queue.queue, compat.prune) == 1 and records[queuedSource],
@@ -2712,6 +2738,78 @@ do
         assert(first.container==destination and second.container==destination and not TidyFixture.restoring[player]
             and not TidyFixture.sessions[player],
             'native grouped P4 effects and cleanup must finish after '..mode..' ownership validation')
+    end
+    -- Actual Compat transfer observation must admit Settlement's native guarded
+    -- return without weakening P4's original source/instance matcher. Only the
+    -- private ledger's exact owned-action binding is stubbed here; native Policy,
+    -- BulkActions guard bodies and TidyIntent's observer dispatcher stay real.
+    do
+        reset()
+        local previousPolicy,previousBulk=PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions
+        local source=read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua')
+        local first=assert(source:find('function Actions.guardTransfer(',1,true))
+        local last=assert(source:find('function Actions.transfer(',first,true))
+        local bulk=assert(loadstring('local Actions={};local transferGuard={}\n'..source:sub(first,last-1)..'\nreturn Actions',
+            '@PZSurvivorToolkit/BulkActions.lua'))()
+        PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=actualPolicy,bulk
+        local settlement=PZSurvivorToolkit.ActionQueueSettlement
+        local intent=PZSurvivorToolkit.ActionQueueTidyIntent
+        local beforeBegin,beforeFinish=settlement.beginPlannedReturn,settlement.finishPlannedReturn
+        local owned,begun;local captures,finishes=0,0
+        settlement.beginPlannedReturn=function(action,guard)
+            if action~=owned then return false end
+            assert(guard(action)and actualPolicy.matchesNative(action),'planned return lost full native binding proof')
+            begun=action;captures=captures+1;return true
+        end
+        settlement.finishPlannedReturn=function(action,succeeded)
+            if action~=begun then return false end
+            assert(succeeded,'native planned return failed');finishes=finishes+1;begun=nil;return true
+        end
+        local function returning(id)
+            return bulk.guardTransfer(ISInventoryTransferAction:new(player,item(inventory,id),inventory,tidyBag))
+        end
+        owned=returning(19401)
+        assert(actualPolicy.matchesNative(owned)and actualPolicy.isOrdinaryTransfer(owned),'actual guarded return must match native Policy')
+        assert(not intent.status(owned),'owned stop/no-op callback must not widen P4 source-instance permissions')
+        assert(intent.begin(owned,'perform'),'actual Compat listener must capture an owned guarded planned return')
+        intent.finish(owned,'perform',true)
+        assert(captures==1 and finishes==1,'owned guarded return did not pair its real observer begin/finish')
+        local outside=returning(19402)
+        assert(not intent.begin(outside,'perform'),'valid but unowned guard cannot mint a planned return')
+        for _,change in ipairs({'guard','callback','helper'})do
+            local beforeCaptures,beforeFinishes=captures,finishes
+            owned=returning(19403)
+            local restore
+            if change=='guard'then
+                local original=owned.toolkitTransferGuard
+                owned.toolkitTransferGuard={stop=original.stop,original=original.original}
+                restore=function()owned.toolkitTransferGuard=original end
+            elseif change=='callback'then
+                local original=owned.onCompleteFunc;owned.onCompleteFunc=function()error('foreign completion must not run')end
+                restore=function()owned.onCompleteFunc=original end
+            else
+                local original=ISInventoryTransferAction.getNotFullFloorSquare
+                ISInventoryTransferAction.getNotFullFloorSquare=function()error('foreign helper must not run')end
+                restore=function()ISInventoryTransferAction.getNotFullFloorSquare=original end
+            end
+            assert(not actualPolicy.matchesNative(owned)and not intent.begin(owned,'perform'),
+                'forged '..change..' obtained planned native return observation')
+            assert(captures==beforeCaptures and finishes==beforeFinishes,'rejected '..change..' reached the private ledger begin')
+            restore()
+            assert(intent.begin(owned,'perform'),'restored exact '..change..' did not regain its native observation')
+            intent.finish(owned,'perform',true)
+            assert(captures==beforeCaptures+1 and finishes==beforeFinishes+1,'restored '..change..' did not pair its native observer finish')
+        end
+        local ordinary=ISInventoryTransferAction:new(player,item(inventory,19404),inventory,tidyBag)
+        assert(intent.status(ordinary),'unchanged P4 source instance lost its own ordinary pickup guard')
+        local sourcePolicy=P4TidyUpMeister.registerActionPolicy
+        P4TidyUpMeister.registerActionPolicy=function()end
+        assert(not intent.status(ordinary),'planned return migration widened a changed P4 owner proof')
+        P4TidyUpMeister.registerActionPolicy=sourcePolicy
+        assert(intent.status(ordinary),'restored exact P4 owner did not regain source permissions')
+        settlement.beginPlannedReturn,settlement.finishPlannedReturn=beforeBegin,beforeFinish
+        PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=previousPolicy,previousBulk
+        reset()
     end
     round,player.getOnlineID,inventory.getVehiclePart=previousRound,previousOnline,previousVehiclePart
     tidyBag.isExistYet,tidyBag.getItemById=previousExists,previousLookup

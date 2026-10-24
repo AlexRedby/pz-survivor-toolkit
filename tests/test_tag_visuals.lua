@@ -1,3 +1,7 @@
+package.path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/?.lua;'..package.path
+isClient=function()return false end
+local world={}
+ModData={getOrCreate=function()return world end}
 local calls, textures = {}, {}
 getTexture = function(name)
     assert(type(name) == 'string' and name ~= '', 'texture lookup needs a name')
@@ -55,3 +59,19 @@ for tag, icon in pairs({prepared='Item_GlassWine', equipment='Item_SheepShears',
     assert(Visuals.get(tag).texture == textures[icon], 'wrong semantic icon for '..tag)
 end
 assert(Visuals.get('category:UnknownMod') == unknown and calls.Item_Clipboard == 1, 'category icon cache missed')
+
+local Custom=require 'PZSurvivorToolkit/TagCustomization'
+world.definitions.food={color={r=0.9,g=0.1,b=0.2},icon='Item_Wrench'};world.revision=1
+local changed=Visuals.get('food')
+assert(changed.r==0.9 and changed.texture==textures.Item_Wrench and changed.icon=='Item_Wrench')
+assert(Visuals.get('perishable',{'food','perishable'}).r==0.9,'qualifier lost edited family color')
+assert(Visuals.defaults('food').texture==food.texture,'default reset inherited customization')
+world.definitions.food=nil;world.revision=2
+assert(Visuals.get('food').r==food.r,'definition reset left stale appearance')
+
+-- Equal server revisions across saves must not retain a prior world's style.
+world.definitions.food={color={r=.6,g=.2,b=.1}};world.revision=3;Custom.changed({})
+assert(Visuals.get('food').r==.6)
+world={version=1,revision=3,nextId=1,definitions={food={color={r=.1,g=.6,b=.2}}},types={}}
+Custom.resetReceived()
+assert(Visuals.get('food').r==.1,'equal-revision world reset retained cached tag appearance')

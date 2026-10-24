@@ -275,17 +275,19 @@ tape.getDisplayName=function()return 'Different locale same recording'end
 assert(recording.key==Model.item(tape).key)
 assert(Model.text('a'..string.rep('Ж',256),512)=='a'..string.rep('Ж',255))
 assert(Model.text('abc'..string.rep('🧟',200),512)=='abc'..string.rep('🧟',127))
--- Category preparation is delegated per sampled instance, with distinct category identities.
+-- Category preparation uses the owned boundary per sampled instance.
 local prepared=0
-OrganizedCategories={applyItemDisplayOverride=function(value)
+local Categories=require 'PZSurvivorToolkit/ItemCategories'
+local originalPrepare=Categories.prepareItem
+Categories.prepareItem=function(value)
     prepared=prepared+1
     value.category='RecordedMedia'
-end}
+end
 local media=item('Base.HomeVHS','Tape')
 media.getDisplayCategory=function()return media.category or 'Food'end
 local result=Model.item(media)
 assert(prepared==1 and result.cat=='RecordedMedia')
-OrganizedCategories=nil
+Categories.prepareItem=originalPrepare
 assert(result.key~=Model.item(item('Base.HomeVHS','Tape')).key)
 assert(Authority.requestPage(player,{revision='1'})=='invalid')
 assert(Authority.requestPage(player,{cursor=0/0})=='invalid')
@@ -309,3 +311,13 @@ while compactingPage.cursor do
     assert(continuations<20)
 end
 print('Manifest authority: bounded migration/scans/RPC, identities, origins, presets, mutations and stale retention passed.')
+
+local exactA,exactB=item('Base.Identical','Same'),item('Base.Identical','Same')
+local modA,modB={PZSTItemTags={food='remove'}},{PZSTItemTags={tool='add'}}
+for _,entry in ipairs({{exactA,modA},{exactB,modB}})do
+ entry[1].hasModData=function()return true end
+ entry[1].getModData=function()return entry[2]end
+end
+local projectedA,projectedB=Model.item(exactA),Model.item(exactB)
+assert(projectedA.key~=projectedB.key and projectedA.tagDelta.food=='remove'
+ and projectedB.tagDelta.tool=='add','warehouse merged different physical tag assignments')

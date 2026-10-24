@@ -84,7 +84,30 @@ def stage_kotlin_runtime(home, destination):
         shutil.copyfile(home / 'license' / name, target)
 
 
-CHECKS = {'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
+def _run_compiler(command):
+    return subprocess.run(command, check=True)
+
+
+def compile_kotlin(jdk, home, classpath, destination, sources, *,
+                   module_name=KOTLIN_MODULE, options=(), run=None):
+    """Share compiler policy while callers retain classpaths, source order and execution policy."""
+    command = [str(Path(jdk) / 'bin/java'), '-jar', str(Path(home) / 'lib/kotlin-compiler.jar'),
+               '-kotlin-home', str(home), '-jvm-target', JVM_TARGET, '-module-name', module_name,
+               '-no-stdlib', '-no-reflect', *options, '-classpath', classpath,
+               '-d', str(destination), *map(str, sources)]
+    return (run or _run_compiler)(command)
+
+
+def build_kotlin_relocator(jdk, home, destination, *, run=None):
+    """Compile the build-only tool once and return its invocation prefix for explicit scopes."""
+    compiler = str(Path(home) / 'lib/kotlin-compiler.jar')
+    (run or _run_compiler)([str(Path(jdk) / 'bin/javac'), '--release', JVM_TARGET,
+                           '-cp', compiler, '-d', str(destination), str(ROOT / 'tools/RelocateKotlin.java')])
+    return [str(Path(jdk) / 'bin/java'), '-cp', os.pathsep.join([str(destination), compiler]), 'RelocateKotlin']
+
+
+CHECKS = {'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
+          'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
           'net.alexredby.javapatchfixture.KotlinRuntimeChecks': 'KOTLIN_RUNTIME_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
@@ -104,6 +127,7 @@ CHECKS = {'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
           'zombie.core.ItemBatchAdmissionChecks': 'ITEM_BATCH_ADMISSION_CHECKS_PASS',
           'zombie.core.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
           'zombie.characters.CharacterTimedActions.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
+          'zombie.characters.CharacterTimedActions.ActionValidityChecks': 'ACTION_VALIDITY_CHECKS_PASS',
           'zombie.characters.AnimalChecks': 'ANIMAL_CHECKS_PASS',
           'zombie.network.packets.EquipmentChecks': 'EQUIPMENT_CHECKS_PASS',
           'zombie.network.packets.MedicalBodyDamageChecks': 'MEDICAL_BODY_DAMAGE_CHECKS_PASS',
@@ -161,6 +185,85 @@ def positive_timeout(value):
     return seconds
 
 
+def _without_comments(text, kotlin=False):
+    """Mask comments as whitespace; retain literals and reflection references.
+
+    Kotlin block comments nest and its string templates can contain quoted
+    expressions. Java block comments stop at the first closer, and Java text
+    blocks allow escapes. This only locates comments, not language dependencies.
+    """
+    tokens = re.compile(r'"""|["\'`]|//[^\r\n]*|/\*')
+    blocks = re.compile(r'/\*|\*/')
+    comments = []
+
+    def comment_end(start):
+        depth, end = 1, start + 2
+        while delimiter := blocks.search(text, end):
+            end = delimiter.end()
+            if delimiter.group() == '*/':
+                depth -= 1
+            elif kotlin:
+                depth += 1
+            if not depth:
+                return end
+        return len(text)
+
+    def quoted_end(start, quote):
+        end = start + len(quote)
+        while end < len(text):
+            if text.startswith(quote, end):
+                return end + len(quote)
+            if kotlin and quote in ('"', '"""') and text.startswith('${', end):
+                end = template_end(end + 2)
+            elif text[end] == '\\' and quote != '`' and not (kotlin and quote == '"""'):
+                end += 2
+            else:
+                end += 1
+        return len(text)
+
+    def template_end(end):
+        depth = 1
+        while end < len(text):
+            if text.startswith('/*', end):
+                stop = comment_end(end)
+                comments.append((end, stop))
+                end = stop
+            elif text.startswith('//', end):
+                newline = text.find('\n', end)
+                stop = len(text) if newline < 0 else newline + 1
+                comments.append((end, stop))
+                end = stop
+            elif text[end] in ('"', "'", '`'):
+                quote = '"""' if text.startswith('"""', end) else text[end]
+                end = quoted_end(end, quote)
+            else:
+                if text[end] == '{':
+                    depth += 1
+                elif text[end] == '}':
+                    depth -= 1
+                    if not depth:
+                        return end + 1
+                end += 1
+        return end
+
+    cursor = 0
+    while match := tokens.search(text, cursor):
+        token = match.group()
+        if token.startswith('//') or token == '/*':
+            end = comment_end(match.start()) if token == '/*' else match.end()
+            comments.append((match.start(), end))
+        else:
+            end = quoted_end(match.start(), token)
+        cursor = end
+    parts, cursor = [], 0
+    for start, end in comments:
+        parts.append(text[cursor:start])
+        parts.append(re.sub(r'[^\r\n]', ' ', text[start:end]))
+        cursor = end
+    parts.append(text[cursor:])
+    return ''.join(parts)
+
+
 def check_sources(names):
     """Select migrated checks and reachable Java/Kotlin helpers without unrelated checks."""
     directory = ROOT / 'tests'
@@ -170,6 +273,8 @@ def check_sources(names):
         kotlin = source.with_suffix('.kt')
         selected.append(kotlin if kotlin.is_file() else source.with_suffix('.java'))
     candidates = sorted(path for path in directory.rglob('*') if path.suffix in ('.java', '.kt'))
+    texts = {path: _without_comments(path.read_text(encoding="utf-8"), kotlin=path.suffix == ".kt")
+             for path in candidates}
     symbols = {}
     for candidate in candidates:
         exported = {candidate.stem}
@@ -182,7 +287,7 @@ def check_sources(names):
                 r'data|sealed|enum|value|open|abstract|actual|expect)\s+)*'
                 r'(?:(?:class|object|interface|val|var)\s+([A-Za-z_]\w*)|'
                 r'fun\s+(?:<[^>\n]+>\s*)?(?:[\w.*?<>]+\.)?([A-Za-z_]\w*)\s*\()',
-                candidate.read_text(encoding='utf-8'), re.MULTILINE)
+                texts[candidate], re.MULTILINE)
             exported.update(match.group(1) or match.group(2) for match in declarations)
         symbols[candidate] = exported
     pending, visited = list(selected), set()
@@ -191,7 +296,7 @@ def check_sources(names):
         if source in visited or not source.is_file():
             continue
         visited.add(source)
-        text = source.read_text(encoding='utf-8')
+        text = texts[source]
         identifiers = set(re.findall(r'\b[A-Za-z_]\w*\b', text))
         for candidate in candidates:
             if candidate in visited or not symbols[candidate].intersection(identifiers):
@@ -211,7 +316,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.49',
+    'version': '0.1.51',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',
@@ -294,10 +399,8 @@ def main(argv=None):
         compilepath = classpath
         if kotlin_home is not None:
             stdlib = kotlin_home / 'lib/kotlin-stdlib.jar'
-            subprocess.run([str(args.jdk / 'bin/java'), '-jar', str(kotlin_home / 'lib/kotlin-compiler.jar'),
-                            '-kotlin-home', str(kotlin_home), '-jvm-target', JVM_TARGET, '-module-name', KOTLIN_MODULE,
-                            '-no-stdlib', '-no-reflect', '-classpath', os.pathsep.join([str(stdlib), classpath]),
-                            '-d', str(classes), *map(str, kotlin_sources), *map(str, java_sources)], check=True)
+            compile_kotlin(args.jdk, kotlin_home, os.pathsep.join([str(stdlib), classpath]),
+                           classes, [*kotlin_sources, *java_sources])
             compilepath = os.pathsep.join([str(classes), str(stdlib), classpath])
         # Match the supported game's Java 25 runtime for both Kotlin and Java output.
         subprocess.run([javac, '--release', JVM_TARGET, '-cp', compilepath, '-d', str(classes), *map(str, java_sources)], check=True)
@@ -325,11 +428,8 @@ def main(argv=None):
             # relying on system-classpath ordering or replacing the game's runtime.
             build_tools = temporary / 'build-tools'
             build_tools.mkdir()
-            compiler_jar = str(kotlin_home / 'lib/kotlin-compiler.jar')
-            subprocess.run([javac, '--release', JVM_TARGET, '-cp', compiler_jar, '-d', str(build_tools),
-                            str(ROOT / 'tools/RelocateKotlin.java')], check=True)
-            subprocess.run([str(args.jdk / 'bin/java'), '-cp', os.pathsep.join([str(build_tools), compiler_jar]),
-                            'RelocateKotlin', str(classes)], check=True)
+            relocator = build_kotlin_relocator(args.jdk, kotlin_home, build_tools)
+            subprocess.run([*relocator, str(classes)], check=True)
             runtime_entries = ['-C', str(classes), KOTLIN_RUNTIME_PACKAGE]
         subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches', *runtime_entries, '-C', str(classes), 'META-INF'], check=True)
         subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(fontjar), '--manifest', str(manifest), '-C', str(classes), 'net/alexredby/pztoolkitbootstrap'], check=True)
@@ -342,16 +442,13 @@ def main(argv=None):
             testclasses.mkdir(exist_ok=True)
             checks = {name: CHECKS[name] for name in selected}
             if kotlin_tests:
-                subprocess.run([str(args.jdk / 'bin/java'), '-jar', compiler_jar,
-                                '-kotlin-home', str(kotlin_home), '-jvm-target', JVM_TARGET,
-                                '-module-name', KOTLIN_MODULE + '_tests', '-no-stdlib', '-no-reflect',
-                                '-Xfriend-paths=' + str(test_api), '-Xjava-source-roots=' + str(ROOT / 'tests'),
-                                '-classpath', os.pathsep.join([str(stdlib), str(test_api), classpath]),
-                                '-d', str(testclasses), *map(str, kotlin_tests)], check=True)
+                compile_kotlin(args.jdk, kotlin_home, os.pathsep.join([str(stdlib), str(test_api), classpath]),
+                               testclasses, kotlin_tests, module_name=KOTLIN_MODULE + '_tests',
+                               options=['-Xfriend-paths=' + str(test_api),
+                                        '-Xjava-source-roots=' + str(ROOT / 'tests')])
                 # Only Kotlin-produced test classes exist yet. Keep cold Java fixtures' literal
                 # runtime probes and initial classpaths untouched when javac compiles them next.
-                subprocess.run([str(args.jdk / 'bin/java'), '-cp', os.pathsep.join([str(build_tools), compiler_jar]),
-                                'RelocateKotlin', str(testclasses), '--tests'], check=True)
+                subprocess.run([*relocator, str(testclasses), '--tests'], check=True)
             java_tests = [source for source in test_sources if source.suffix == '.java']
             if java_tests:
                 subprocess.run([javac, '--release', JVM_TARGET, '-cp', os.pathsep.join([str(testclasses), classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, java_tests)], check=True)

@@ -1,4 +1,4 @@
--- Regression for the real Compat installer accepting organizedCategories' late Grab wrappers.
+-- Regression for the real Compat installer accepting Toolkit's exact late retention Grab wrappers.
 -- Run with --wishlist-workshop-root; unrelated cooking/equipment integrations are not loaded.
 if not NativeWishlistWorkshopRoot then
     print('Grab compatibility source checks skipped (pass Workshop root).')
@@ -8,8 +8,9 @@ local function read(path)
     if NativeReadText then return (NativeReadText(path):gsub('\r','')) end
     local input=assert(io.open(path));local text=input:read('*a');input:close();return (text:gsub('\r',''))
 end
-local paths={P4TidyUpMeister='2769706949/mods/P4TidyUpMeister/42.20',
-    organizedCategories_core='3370707195/mods/organizedCategoriesCore/42'}
+local function checkOrder(latePublication)
+P4TidyUpMeister=nil
+local paths={P4TidyUpMeister='2769706949/mods/P4TidyUpMeister/42.20'}
 local function reader(text)
     local cursor=1
     return {close=function()end,readLine=function()
@@ -69,6 +70,10 @@ require=function(module)
     if loaded[module]then return loaded[module]end
     local path
     if module=='PZSurvivorToolkit/SourceProof'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
+    elseif module=='PZSurvivorToolkit/ItemAccess' or module=='PZSurvivorToolkit/ItemRetention' or module=='PZSurvivorToolkit/InventoryTransferProtection'then
+        path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
+    elseif module=='PZSurvivorToolkit/ItemRetentionUI' or module=='PZSurvivorToolkit/InventoryClasses'then
+        path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/QuartermasterCraftContainers'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ActionQueueTidyIntent'then
         intent=assert(loadstring(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'),'@ActionQueueTidyIntent.lua'))()
@@ -82,31 +87,39 @@ require=function(module)
     else return end
     local value=assert(loadstring(read(path),'@'..path))()or true;loaded[module]=value;return value
 end
+local retention
+if not latePublication then retention=require 'PZSurvivorToolkit/ItemRetentionUI' end
 local compat=assert(loadstring(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'),'@ActionQueueCompat.lua'))()
 assert(compat.isInstalled('P4TidyUpMeister'),'real pinned P4 source must install')
 assert(valid and valid()and approved,'real Compat installer must supply valid late-wrapper proof')
 local before={}
 for _,name in ipairs({'onGrabItems','onGrabOneItems','onGrabHalfItems'})do before[name]=ISInventoryPaneContextMenu[name]end
--- Execute the complete unmodified third-party source and its actual late installer.
-local stickPath=NativeWishlistWorkshopRoot..'/'..paths.organizedCategories_core..'/media/lua/client/organizedCategories_itemStick.lua'
-assert(loadstring(read(stickPath),'@'..stickPath))()
-assert(handlers.OnGameStart and #handlers.OnGameStart==1,'actual stick late installer missing')
+if latePublication then retention=require 'PZSurvivorToolkit/ItemRetentionUI' end
+-- Install the actual owned wrapper late, outside Compat's existing Tidy closure.
+assert(handlers.OnGameStart and #handlers.OnGameStart==1,'owned retention late installer missing')
 handlers.OnGameStart[1]()
 for name,callback in pairs(before)do
     local wrapped=ISInventoryPaneContextMenu[name]
-    assert(wrapped~=callback and ISInventoryPaneContextMenu['_ocStick_'..name]==wrapped,'actual late wrapper missing: '..name)
+    assert(wrapped~=callback and retention.isContextWrapper(ISInventoryPaneContextMenu,name),'actual late wrapper missing: '..name)
     local first,second=wrapped({{items={}}},0)
     local key=name=='onGrabItems'and 'grab'or name=='onGrabOneItems'and 'one'or 'half'
     assert(first==key and second=='forwarded'and calls[key]==1,'late wrapper must reach native Grab delegate exactly once')
-    assert(approved(ISInventoryPaneContextMenu,name),'installer must approve real source-pinned late wrapper: '..name)
-    local marker=ISInventoryPaneContextMenu['_ocStick_'..name]
-    ISInventoryPaneContextMenu['_ocStick_'..name]=nil
-    assert(not approved(ISInventoryPaneContextMenu,name),'missing source marker must fail closed')
-    ISInventoryPaneContextMenu['_ocStick_'..name]=marker
-    local origin=getFilenameOfClosure
-    getFilenameOfClosure=function(fn)if fn==wrapped then return 'unreviewed_wrapper.lua' end;return origin(fn)end
-    assert(not approved(ISInventoryPaneContextMenu,name),'wrong source filename must fail closed')
-    getFilenameOfClosure=origin
+    assert(approved(ISInventoryPaneContextMenu,name),'installer must approve real owned late wrapper: '..name)
+    ISInventoryPaneContextMenu[name]=function(...)return wrapped(...)end
+    assert(not approved(ISInventoryPaneContextMenu,name),'foreign callback replacement must fail closed')
+    retention.install()
+    assert(not approved(ISInventoryPaneContextMenu,name),'reinstall must not approve a replaced delegate')
+    ISInventoryPaneContextMenu[name]=wrapped
+    local predicate=retention.isContextWrapper
+    retention.isContextWrapper=function()return true end
+    assert(not approved(ISInventoryPaneContextMenu,name),'replaced owner predicate must fail closed')
+    retention.isContextWrapper=predicate
+    PZSurvivorToolkit.ItemRetention={isContextWrapper=predicate}
+    assert(not approved(ISInventoryPaneContextMenu,name),'replaced retention namespace must fail closed')
+    PZSurvivorToolkit.ItemRetention=retention
     assert(not approved({},name),'foreign menu owner must fail closed')
 end
-print('Source-pinned Grab / Grab One late compatibility guard checks passed.')
+end
+checkOrder(false)
+checkOrder(true)
+print('Owned retention Grab late guards passed with early/late owner publication and actual P4 source.')

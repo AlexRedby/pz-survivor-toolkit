@@ -311,7 +311,7 @@ class EquipmentTests(unittest.TestCase):
                     effect = {key: row['outcome']['tidyHotbar'][key] for key in equipment.hotbar_authority_keys(case)}
                     if equipment.HOTBAR_CASES[case].get('radio'):
                         effect = copy.deepcopy(effect)
-                        effect['radio']['turnedOn'] = equipment.HOTBAR_CASES[case]['on']
+                        effect['radio']['turnedOn'] = equipment.HOTBAR_CASES[case]['on'] and not effect['attached']
                         effect['radio']['equippedRadio'] = False
                         effect['radio']['emitter'] = False
                     with (self.root / 'server-launch.log').open('a') as log:
@@ -483,9 +483,9 @@ config.cases={expected[1],expected[1]};assert(not pcall(dofile,arg[1]))
                     original = server.read_text()
                     marker = next(line for line in original.splitlines() if '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' in line and 'tidy-hotbar-radio-on' in line)
                     authority = json.loads(marker.split('HOTBAR_AUTHORITY ', 1)[1])
-                    authority['radio']['turnedOn'] = False
+                    authority['radio']['turnedOn'] = True
                     server.write_text(original.replace(marker, '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' + json.dumps(authority)))
-                    self.assertTrue(self.verify(self.logs())['issues'], 'unexpected server off must fail the native role baseline')
+                    self.assertTrue(self.verify(self.logs())['issues'], 'retained server on must fail repaired native off receipt')
                     server.write_text(original)
 
     def test_tidy_clothing_requires_exact_p4_generation_shared_phases_and_conserved_effects(self):

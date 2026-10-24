@@ -8,7 +8,7 @@ from . import craft, quartermaster_supply_units as supply
 
 SUITE = 'quartermaster-crafting'
 CASES = ['vanilla', 'neat', 'uses']
-MODS = craft.MODS + ['organizedCategories_core', 'NeatUI_Framework', 'Neat_Crafting']
+MODS = craft.MODS + ['NeatUI_Framework', 'Neat_Crafting']
 MARKER = '[QM_CRAFT] '
 SHARED_FIXTURES = ('QueueCraftUIFixture.lua', 'QueueCookEvolvedFixture.lua')
 RECEIPT_KEYS = {'materialIds', 'consumed', 'outputIds', 'outputs', 'resources', 'toolsReturned',
@@ -36,7 +36,8 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / SUITE).rglob('*.lua')),
+    return [Path(__file__).with_name('craft.py'), Path(__file__).with_name('quartermaster_supply_units.py'),
+            *sorted((root / SUITE).rglob('*.lua')),
             *(root / 'craft-ui/shared' / name for name in SHARED_FIXTURES),
             *sorted((root / 'craft/scripts').rglob('*.txt')), root / 'health/shared/QueueHealthEvents.lua',
             *sorted((root / 'startup').rglob('*.lua'))]

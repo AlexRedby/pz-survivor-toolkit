@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import runpy
+import uuid
 
 HELD=runpy.run_path(str(Path(__file__).with_name('analyze-lease.py')))
 require,parse,integer,text=(HELD[name] for name in ('require','parse','integer','text'))
@@ -13,6 +14,7 @@ MARKER='[CART_LEASE_LIFETIME] '; NATIVE='[CART_EQUIPMENT] '
 MAX=9007199254740991
 IDENTITY=('session','grant','lease','cart')
 PHASES=('baseline','release-reacquire','same-id-replacement')
+MENU_PHASES=('baseline','menu-release-pickup','menu-release-pickup-repeat')
 CHAIN_EVENTS=('request','bind','bound','echo','receipt','reply-refused')
 
 
@@ -40,7 +42,7 @@ def identity(row):
     return tuple(row[field] for field in IDENTITY)
 
 
-def native_trace(log,selected,owner,cart,cutoff):
+def native_trace(log,selected,owner,cart,cutoff,menu=False):
     """Replay exact actor scopes, retaining hard fences and whole-parse certificates."""
     process,actor,connection,_=selected
     target,clocks=[],{}
@@ -53,7 +55,7 @@ def native_trace(log,selected,owner,cart,cutoff):
             require(row.get('actorEpoch')==actor,'Native owner actor incarnation changed')
         if proc==process and row.get('actorEpoch')==actor: target.append((line,row))
     require(target,'Missing exact native lifetime trace')
-    stack,snapshots,certificates=[],{},{}
+    stack,snapshots,certificates,generic_ends,open_parses=[],{},{},{},{}
     revision,current,prior_serial,hard,prior_parse,prior_ingress=None,None,0,1,0,0
     for line,row in target:
         require(integer(row,'ownerID',0,32767)==owner,'Native owner changed')
@@ -67,8 +69,11 @@ def native_trace(log,selected,owner,cart,cutoff):
         state=tuple(row[key] for key in ('primaryEpoch','secondaryEpoch','primaryID','secondaryID'))
         for epoch,id_ in ((state[0],state[2]),(state[1],state[3])):
             require((epoch==0 and id_ is None) or (epoch>0 and type(id_) is int and -2147483648<=id_<=2147483647),'Native hand epoch/ID mismatch')
-        require(row.get('success') is True and row.get('poisoned') is False and row.get('retired') is False,'Failed/poisoned/retired native lifetime cannot heal')
         event,reason=row.get('event'),text(row,'reason',80)
+        generic_end=menu and event=='resnapshot' and row.get('success') is False and row.get('certified') is False
+        require((row.get('success') is True or generic_end) and row.get('poisoned') is False and row.get('retired') is False,'Failed/poisoned/retired native lifetime cannot heal')
+        if event in ('mutation-enter','mutation-exit') and parse_serial:
+            open_parses.setdefault((parse_serial,ingress),[]).append(row)
         if event=='baseline':
             require(revision is None and not stack and serial==0 and depth==0 and reason=='admitted-current' and parse_serial==0,'Repeated or invalid native baseline')
             require(rev==hard==1 and state[0]==state[1] and state[0]>0 and state[2]==state[3]==cart,'Invalid native held baseline')
@@ -88,31 +93,54 @@ def native_trace(log,selected,owner,cart,cutoff):
         elif event=='resnapshot':
             require(not stack and depth==serial==0 and revision==rev and state==current,'Incomplete native Equip parse certificate')
             before=integer(row,'beforeRevision',1,rev-1); after=integer(row,'afterRevision',before+1,rev)
-            require(after==rev and after==before+2 and hard<=before and row.get('certified') is True
-                    and reason=='remote-equip-resnapshot' and parse_serial>prior_parse and ingress>prior_ingress,
-                    'Uncertified/reused native Equip resnapshot')
+            require(after==rev and after==before+2 and reason=='remote-equip-resnapshot'
+                    and parse_serial>prior_parse and ingress>prior_ingress,'Uncertified/reused native Equip resnapshot')
             require(before in snapshots,'Native certificate missing preparse snapshot')
             integer(row,'directCalls',2,2); integer(row,'genericCalls',0,0)
             original=snapshots[before][1]
-            require(original[0]==original[1]>0 and original[2]==original[3]==cart
-                    and (row['oldPrimaryEpoch'],row['oldSecondaryEpoch'])==original[:2]
-                    and state[0]==state[1]>0 and state[0]!=original[0] and state[2]==state[3]==cart,
-                    'Native resnapshot is not exact same-ID new-reference Equip')
+            require((row['oldPrimaryEpoch'],row['oldSecondaryEpoch'])==original[:2],'Native parse original references differ')
             window=[r for n,r in target if n<line and before<r.get('revision',0)<=after and r.get('event') in ('mutation-enter','mutation-exit')]
             require(len(window)==4 and [r['event'] for r in window]==['mutation-enter','mutation-exit']*2
                     and [r['reason'] for r in window]==['primary','primary','secondary','secondary']
                     and [r['depth'] for r in window]==[1,0,1,0]
-                    and all(r['parseSerial']==parse_serial and r['ingressGeneration']==ingress and r['hardRevision']==hard for r in window),
+                    and all(r['parseSerial']==parse_serial and r['ingressGeneration']==ingress for r in window)
+                    and open_parses.pop((parse_serial,ingress),None)==window,
                     'Native Equip certificate contains generic/nested/unknown mutation')
             primary=window[1]
-            require(primary['primaryEpoch']==state[0] and primary['secondaryEpoch']==original[1]
-                    and primary['primaryID']==primary['secondaryID']==cart,'Native Equip primary write differs')
-            require(before not in certificates,'Overlapping native Equip certificates')
-            certificates[before]=(after,line,row); prior_parse,prior_ingress=parse_serial,ingress
+            if generic_end:
+                # success is the continuity certificate here, not parse execution success.
+                # A hard transition cannot populate the certificate map or heal old authority.
+                empty=(0,0,None,None)
+                held=lambda s:s[0]==s[1]>0 and s[2]==s[3]==cart
+                require(hard==after and ((held(original) and state==empty) or (original==empty and held(state))),
+                        'Generic native Equip must hard-fence exact held/empty transition')
+                for write in window:
+                    integer(write,'beforeRevision',before,before); integer(write,'afterRevision',write['revision'],write['revision'])
+                require([r.get('directCalls') for r in window]==[1,1,2,2]
+                        and all(type(r.get('directCalls')) is int and r.get('genericCalls')==0 and type(r.get('genericCalls')) is int
+                                and r['hardRevision']==r['revision'] and r.get('beforeRevision')==before
+                                and r.get('afterRevision')==r['revision'] for r in window),
+                        'Generic native Equip contains non-direct/unfenced writes')
+                require((primary['primaryEpoch'],primary['secondaryEpoch'],primary['primaryID'],primary['secondaryID'])
+                        ==(state[0],original[1],state[2],original[3]),'Generic native Equip primary write differs')
+                require(before not in generic_ends,'Overlapping generic native Equip transitions')
+                generic_ends[before]=(after,line,row)
+            else:
+                require(hard<=before and row.get('certified') is True and all(r['hardRevision']==hard for r in window),
+                        'Uncertified/reused native Equip resnapshot')
+                require(original[0]==original[1]>0 and original[2]==original[3]==cart
+                        and state[0]==state[1]>0 and state[0]!=original[0] and state[2]==state[3]==cart,
+                        'Native resnapshot is not exact same-ID new-reference Equip')
+                require(primary['primaryEpoch']==state[0] and primary['secondaryEpoch']==original[1]
+                        and primary['primaryID']==primary['secondaryID']==cart,'Native Equip primary write differs')
+                require(before not in certificates,'Overlapping native Equip certificates')
+                certificates[before]=(after,line,row)
+            prior_parse,prior_ingress=parse_serial,ingress
         else: raise ValueError('Unknown/retired native event: '+str(event))
         if not stack: snapshots[revision]=(line,current)
     require(not stack,'Unfinished native mutation scope')
-    return target,snapshots,certificates
+    require(not open_parses,'Native Equip parse mutations lack terminal closure')
+    return target,snapshots,certificates,generic_ends
 
 
 def analyze(root):
@@ -120,6 +148,9 @@ def analyze(root):
     require(isinstance(selection,dict) and isinstance(selection.get('options'),dict)
             and selection['options'].get('cart_lease_lifetimes') is True and selection['options'].get('cart_lease_control') is True,
             'Explicit lifetime and held lease control selection required')
+    menu=selection['options'].get('cart_lease_menu',False)
+    require(type(menu) is bool,'Frozen menu lifetime selection must be boolean')
+    names=MENU_PHASES if menu else PHASES
     control=HELD['analyze'](root); require(control.get('evidenceComplete') is True and control.get('roundsPerClient')==3,'Held lease control prerequisite failed')
     owner,cart=control['ownerID'],control['cartID']
     logs={role:(root/(role+'-launch.log')).read_text() for role in ROLES}
@@ -127,6 +158,9 @@ def analyze(root):
     rows,index,positions={},{},{}
     fixed_server=Counter(ready=2,begin=1,cycle=2,prepare=4,stale=4,done=2,**{'complete-offer':1,'finished':2,'complete':1})
     fixed_client=Counter(ready=1,begin=1,cycle=2,prepare=2,done=1,**{'complete-offer':1,'complete':1})
+    if menu:
+        fixed_server.update({'absence':2,'absent-source':4,'menu-resume':2})
+        fixed_client.update({'absence':2,'menu-resume-received':2,'post-bind-stale':2})
     for role in ROLES:
         rows[role]=records(logs[role],MARKER,256); counts=Counter()
         wall,phases=-1,[]
@@ -137,7 +171,7 @@ def analyze(root):
             now=integer(row,'wall',0,MAX); require(now>=wall,role+': lifetime wall clock regressed'); wall=now
             phase=integer(row,'phase',0,3); phases.append(phase)
             require(phase==0 if event=='ready' else phase==3 if event in ('done','complete-offer','finished','complete') else phase>=0 if event=='resnapshot' else phase>=1,role+': invalid event phase')
-            requester=row.get('requester') if role=='server' and event in ('ready','bind','echo','prepare','stale','done','finished') else role
+            requester=row.get('requester') if role=='server' and event in ('ready','bind','echo','prepare','stale','done','finished','absent-source') else role
             require(requester in CLIENTS or requester=='server','Unknown native requester')
             attempt=integer(row,'attempt',1,8) if event in CHAIN_EVENTS else None
             key=role,phase,requester,event,attempt
@@ -155,7 +189,7 @@ def analyze(root):
             if event in ('stale','reply-refused'): require(row.get('accepted') is False,'Retired payload/reply was not refused')
         require(phases==sorted(phases),role+': lifetime phase order regressed')
         require(rows[role] and rows[role][-1][1]['event']=='complete',role+': lifetime completion must be final')
-        require(rows[role][-1][1]['wall']-rows[role][0][1]['wall']<=20000,'Lifetime fixture deadline exceeded')
+        require(rows[role][-1][1]['wall']-rows[role][0][1]['wall']<=(45000 if menu else 20000),'Lifetime fixture deadline exceeded')
         variable=('bind','echo') if role=='server' else ('request','bound','receipt','reply-refused','resnapshot')
         require(Counter({k:v for k,v in counts.items() if k not in variable})==(fixed_server if role=='server' else fixed_client),role+': lifetime event counts differ')
         if role!='server':
@@ -167,13 +201,14 @@ def analyze(root):
 
     # Match every native mutation to an explicit local cycle or a certified remote parse.
     cycles,gaps,live_tokens=[],[],{}
-    processes=set(); cargo_identity=None
+    processes=set(); cargo_identity=None; native_by_role={}
     for role in ROLES:
         ready=[row for _,row in rows[role] if row['event']=='ready']; initial=ready[0]['lifetime']; selected=token(initial)
         require(all(row['lifetime']==initial for row in ready),'Server initial native lifetime changed between Ready')
         require(selected[0] not in processes,'Native process identity reused across roles'); processes.add(selected[0])
-        _,cutoff=get(role,3,'complete'); trace,snapshots,certificates=native_trace(logs[role],selected,owner,cart,cutoff)
-        current=initial; covered=set(); used_certificates=set(); live_tokens[role]={}
+        _,cutoff=get(role,3,'complete'); trace,snapshots,certificates,generic_ends=native_trace(logs[role],selected,owner,cart,cutoff,menu)
+        native_by_role[role]=trace
+        current=initial; covered=set(); used_certificates=set(); used_generic=set(); live_tokens[role]={}
         def eligible(value,line):
             tok=token(value); require(tok[:3]==selected[:3] and tok[3] in snapshots,'Unknown/stale native token revision')
             start,state=snapshots[tok[3]]
@@ -203,16 +238,34 @@ def analyze(root):
                     require(revision==after[3],'Incomplete native resnapshot interval')
                     gaps.append(dict(actor=role,phase=phase,before=row['before'],after=row['after'],parseSerials=certs))
                 else:
-                    require(phase in (2,3) and row.get('name')==PHASES[phase-1] and row.get('sameItem') is True,'Setter fixture original cart restoration missing')
-                    require(before[3] in snapshots and snapshots[before[3]][1]==snapshots[after[3]][1],'Native setter original references not restored before cycle')
+                    require(phase in (2,3) and row.get('name')==names[phase-1],'Native cycle route differs from frozen selection')
                     window=[(n,r) for n,r in trace if before[3]<r['revision']<=after[3]]
-                    require(window and all(r['event'] in ('mutation-enter','mutation-exit') and r['reason'] in ('primary','secondary') and r['parseSerial']==r['ingressGeneration']==0 for _,r in window),'Unknown/interleaving mutation in setter cycle')
-                    completed=[r for _,r in window if r['event']=='mutation-exit']; exits=[r for r in completed if r['depth']==0]
-                    require(len(completed)>=4 and {r['reason'] for r in completed}=={'primary','secondary'},'Completed native setter writes missing')
-                    original=snapshots[before[3]][1]
-                    intermediate=[r for r in exits if r['primaryEpoch']==r['secondaryEpoch']==0 and r['primaryID'] is None and r['secondaryID'] is None] if phase==2 else [r for r in exits if r['primaryEpoch']==r['secondaryEpoch']>0 and r['primaryEpoch']!=original[0] and r['primaryID']==r['secondaryID']==cart]
-                    require(intermediate,'No completed native both-hands release' if phase==2 else 'No completed same-ID different-reference replacement')
-                    require(exits.index(intermediate[0])<len(exits)-1,'Intermediate setter state was not later restored')
+                    if menu:
+                        require(row.get('menu') is True,'Menu cycle must use actual owner callbacks')
+                        require(window and all(r['event'] in ('mutation-enter','mutation-exit','resnapshot')
+                                and r['reason'] in ('primary','secondary','world-item','item-load','remote-equip-resnapshot') for _,r in window),
+                                'Unknown mutation in native menu cycle')
+                        completed=[r for _,r in window if r['event']=='mutation-exit'];exits=[r for r in completed if r['depth']==0]
+                        require(any(r['primaryEpoch']==r['secondaryEpoch']==0 and r['primaryID'] is None and r['secondaryID'] is None for r in exits),
+                                'Menu cycle lacks completed native empty hands')
+                        for revision,(end,native_line,certificate) in certificates.items():
+                            if before[3]<=revision and end<=after[3]:
+                                require(revision not in used_certificates,'Menu native certificate reused')
+                                used_certificates.add(revision)
+                        for revision,(end,native_line,transition) in generic_ends.items():
+                            if before[3]<=revision and end<=after[3]:
+                                require(revision not in used_generic and native_line<line,'Menu native hard transition reused/reordered')
+                                used_generic.add(revision)
+                    else:
+                        require(phase in (2,3) and row.get('name')==PHASES[phase-1] and row.get('sameItem') is True,'Setter fixture original cart restoration missing')
+                        require(before[3] in snapshots and snapshots[before[3]][1]==snapshots[after[3]][1],'Native setter original references not restored before cycle')
+                        require(window and all(r['event'] in ('mutation-enter','mutation-exit') and r['reason'] in ('primary','secondary') and r['parseSerial']==r['ingressGeneration']==0 for _,r in window),'Unknown/interleaving mutation in setter cycle')
+                        completed=[r for _,r in window if r['event']=='mutation-exit']; exits=[r for r in completed if r['depth']==0]
+                        require(len(completed)>=4 and {r['reason'] for r in completed}=={'primary','secondary'},'Completed native setter writes missing')
+                        original=snapshots[before[3]][1]
+                        intermediate=[r for r in exits if r['primaryEpoch']==r['secondaryEpoch']==0 and r['primaryID'] is None and r['secondaryID'] is None] if phase==2 else [r for r in exits if r['primaryEpoch']==r['secondaryEpoch']>0 and r['primaryEpoch']!=original[0] and r['primaryID']==r['secondaryID']==cart]
+                        require(intermediate,'No completed native both-hands release' if phase==2 else 'No completed same-ID different-reference replacement')
+                        require(exits.index(intermediate[0])<len(exits)-1,'Intermediate setter state was not later restored')
                     covered.update(range(before[3]+1,after[3]+1))
                     cycles.append(dict(actor=role,phase=phase,name=row['name'],before=row['before'],after=row['after'],completedSetterWrites=len(completed),nativeLineStart=window[0][0]+1,nativeLineEnd=snapshots[after[3]][0]+1))
                 current=row['after']
@@ -227,6 +280,7 @@ def analyze(root):
             live_tokens[role][line]=current
         require({r['revision'] for _,r in trace if r['event']=='mutation-enter'}==covered,'Unlinked native mutation before final lifetime completion')
         require(set(certificates)==used_certificates,'Unlinked native Equip certificate')
+        require(set(generic_ends)==used_generic,'Generic native Equip transition outside verified menu cycle')
 
     chains,refused,nonces=[],[],set()
     successful={}; server_binding={}
@@ -286,13 +340,99 @@ def analyze(root):
     expected_echoes=sum(1 for _,r in rows['server'] if r['event']=='echo')
     require(expected_bindings==len(chains)+len(refused) and expected_echoes==len(chains),'Unmatched extra server lifetime attempt')
     require(len(cycles)==6,'Six exact native setter cycles required')
-    c2s=expected_bindings+expected_echoes+10; s2c=expected_bindings+expected_echoes+8
-    return dict(schema=2,diagnosticOnly=True,evidenceComplete=True,ownerID=owner,cartID=cart,phases=list(PHASES),completeChains=len(chains),completedNativeCycles=6,
+    menu_evidence=analyze_menu(logs,rows,get,native_by_role,owner,cart) if menu else None
+    require(menu or all('[CART_LEASE_MENU] ' not in log for log in logs.values()),'Unselected native menu evidence')
+    c2s=expected_bindings+expected_echoes+10+(4 if menu else 0); s2c=expected_bindings+expected_echoes+8+(4 if menu else 0)
+    return dict(schema=2,diagnosticOnly=True,evidenceComplete=True,ownerID=owner,cartID=cart,phases=list(names),menu=menu,menuEvidence=menu_evidence,completeChains=len(chains),completedNativeCycles=6,
                 certifiedResnapshots=len(gaps),refusedRacedReplies=len(refused),stalePreparedRepliesRefused=4,staleClientPayloadsRefused=4,staleServerPayloadsRefused=4,
                 heldLeaseControl=dict(evidenceComplete=True,roundsPerClient=3,completeChains=control['completeChains']),
-                logicalCommandMessages=dict(fixture=c2s+s2c,clientToServer=c2s,serverToClient=s2c,includingHeldControl=c2s+s2c+24,maximumFixture=82),
+                logicalCommandMessages=dict(fixture=c2s+s2c,clientToServer=c2s,serverToClient=s2c,includingHeldControl=c2s+s2c+24,maximumFixture=90 if menu else 82),
                 chains=chains,refusedReplies=refused,cycles=cycles,resnapshots=gaps,sourceFiles={role:role+'-launch.log' for role in ROLES},
-                qualification='Native setter fixture and strictly certified remote Equip resnapshot only, with exact restored original cart/cargo, guarded fresh binds, preserved same-lease sequence floors and stale refusals. No normal menu release, complete reconnect lifecycle, production migration or runtime PASS is established. Logical command counts are not wire bytes or delivery acknowledgements.')
+                qualification=('Actual owner menu release/ground-pickup with native absence on all roles, prepared and post-bind stale refusals, exact cart/cargo and guarded fresh leases. Inventory-menu equip, other removal/reconnect routes, production migration, animation equivalence and wire totals remain unverified.' if menu else 'Native setter fixture and strictly certified remote Equip resnapshot only, with exact restored original cart/cargo, guarded fresh binds, preserved same-lease sequence floors and stale refusals. No normal menu release, complete reconnect lifecycle, production migration or runtime PASS is established. Logical command counts are not wire bytes or delivery acknowledgements.'))
+
+
+
+def analyze_menu(logs,rows,get,native,owner,cart):
+    """Join real owner menu receipts to native absence and fresh lifetime barriers."""
+    marker='[CART_LEASE_MENU] '
+    inputs={role:records(logs[role],marker,32) for role in ROLES}
+    require(not inputs['server'] and not inputs['client2'] and len(inputs['client1'])==12,
+            'Only the native owner may invoke the four menu actions')
+    tokens=set(); actions=set(); operations=set(); natives=set(); source=None; result=[]
+    def empty_at(role,line):
+        preceding=[r for n,r in native[role] if n<line]
+        require(preceding,'Native menu barrier lacks original equipment state')
+        last=preceding[-1]
+        require(last['event']!='mutation-enter' and last['depth']==0 and last['primaryEpoch']==last['secondaryEpoch']==0
+                and last['primaryID'] is None and last['secondaryID'] is None,
+                'Native menu barrier is not currently empty or has an unfinished mutation')
+    for phase in (2,3):
+        server_absence,sa=get('server',phase,'absence');_,resume=get('server',phase,'menu-resume');server_cycle,sc=get('server',phase,'cycle')
+        require(server_absence.get('nativeLifetimeAbsent') is True and sa<resume<sc,'Server menu absence barrier order differs')
+        empty_at('server',sa);empty_at('server',resume)
+        for role in ROLES:
+            absence,ap=get(role,phase,'absence');cycle,cp=get(role,phase,'cycle')
+            require(absence.get('before')==cycle['before'] and absence.get('nativeLifetimeAbsent') is True and ap<cp,
+                    'Menu absence identity/order missing')
+            before,after=token(cycle['before']),token(cycle['after'])
+            empty=[(n,r) for n,r in native[role] if before[3]<r['revision']<=after[3] and r['event']=='mutation-exit'
+                   and r['depth']==0 and r['primaryEpoch']==r['secondaryEpoch']==0 and r['primaryID'] is None and r['secondaryID'] is None]
+            require(empty and any(n<ap for n,_ in empty),'Menu absence not backed by original completed native setters')
+            empty_at(role,ap)
+            if role=='server':continue
+            require(absence.get('staleReplyAccepted') is False and absence.get('stalePayloadAccepted') is False,
+                    'Menu-absent receiver admitted stale authority')
+            prepared,_=get(role,phase-1,'prepare')
+            require(absence.get('staleNonce')==prepared['nonce'],'Menu absence prepared challenge changed')
+            received,rp=get(role,phase,'menu-resume-received')
+            require(received.get('nativeLifetimeAbsent') is True and ap<rp<cp,'Pickup escaped client empty-hands barrier')
+            if role=='client1':empty_at(role,rp)
+            stale,ss=get('server',phase,'absent-source',role)
+            empty_at('server',ss)
+            require(stale.get('guarded') is True and stale.get('nativeLifetimeAbsent') is True and stale.get('stalePayloadAccepted') is False
+                    and stale.get('before')==server_cycle['before'] and identity(stale)==identity(get('server',phase-1,'prepare',role)[0])
+                    and sa<ss<resume,'Menu-absent server replay guard or authority differs')
+            post,pp=get(role,phase,'post-bind-stale')
+            bound,bp=get(role,phase,'bound',attempt=integer(post,'attempt',1,8))
+            require(post.get('guarded') is True and post.get('staleReplyAccepted') is False and post.get('stalePayloadAccepted') is False
+                    and post.get('nonce')==prepared['nonce'] and post.get('freshLifetime')==bound['lifetime']
+                    and identity(post)==identity(get('server',phase-1,'prepare',role)[0]) and cp<bp<pp,
+                    'Fresh menu binding revived old reply/payload or changed its identity')
+        for kind,typ in (('release','ToolkitWoodCartSetdown'),('pickup','ToolkitWoodCartPickup')):
+            selected=[(n,r) for n,r in inputs['client1'] if r.get('phase')==phase and r.get('kind')==kind]
+            require(len(selected)==3 and [r.get('event') for _,r in selected]==['queued','start','terminal'],
+                    'Menu action must retain exact queued/start/completed receipts')
+            first,start,last=(r for _,r in selected)
+            for _,r in selected:
+                require(r.get('actor')=='client1' and r.get('owner')==owner and r.get('cart')==cart and r.get('actionType')==typ,
+                        'Foreign menu action owner/cart/kind')
+                for key in ('localActionEpoch','operation','localSourceEpoch'):integer(r,key,1,MAX)
+                integer(r,'generation',0,MAX)
+                require(all(r.get(k)==first.get(k) for k in ('localActionEpoch','operation','localSourceEpoch','source','generation','queuedSource')),
+                        'Menu source/action/operation replaced')
+                require(r.get('queuedSource') in ((typ,'ISWalkToTimedActionF') if kind=='pickup' else (typ,)),
+                        'Wrong native queued menu source')
+                require(source is None or source==r.get('source'),'Native menu connection changed');source=text(r,'source',240)
+            require(first['localActionEpoch'] not in actions and first['operation'] not in operations,'Native menu action/operation reused')
+            actions.add(first['localActionEpoch']);operations.add(first['operation'])
+            require(start.get('sealed') is True and last.get('sealed') is True and start.get('state')=='started' and last.get('state')=='completed',
+                    'Native menu action canceled, unsealed or incomplete')
+            value=text(start,'token',80)
+            try:canonical=str(uuid.UUID(value))==value
+            except ValueError:canonical=False
+            require(canonical,'Invalid native menu receipt UUID')
+            require(integer(start,'transaction',-128,127)!=0,'Zero native menu transaction')
+            integer(start,'localNativeEpoch',1,MAX)
+            require(value not in tokens and start['localNativeEpoch'] not in natives
+                    and all(last.get(k)==start.get(k) for k in ('token','transaction','localNativeEpoch')),'Native menu token/receipt reused or replaced')
+            tokens.add(value);natives.add(start['localNativeEpoch'])
+            _,absent=get('client1',phase,'absence');_,resumed=get('client1',phase,'menu-resume-received');_,cycled=get('client1',phase,'cycle')
+            require(selected[-1][0]<absent if kind=='release' else resumed<selected[0][0]<selected[-1][0]<cycled,
+                    'Native menu action crossed release/pickup barrier')
+            result.append(dict(phase=phase,kind=kind,actionType=typ,token=value))
+    return dict(evidenceComplete=True,ownerMenuActions=result,nativeAbsenceRoles=list(ROLES),
+                absentPreparedRepliesRefused=4,absentClientPayloadsRefused=4,absentServerPayloadsRefused=4,
+                postBindPreparedRepliesRefused=4,postBindClientPayloadsRefused=4)
 
 
 def main():

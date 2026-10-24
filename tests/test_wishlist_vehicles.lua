@@ -34,10 +34,13 @@ ScriptManager = {instance={FindItem=function(_, fullType)
     if valid[fullType] then return {getFullName=function() return fullType end} end
 end}}
 local function part(class, fullType)
+    local install, uninstall = {}, {}
     return {getItemType=function()return list({"Base.OldTire"..class,"Base.NormalTire"..class,"Base.ModernTire"..class})end,
-        getVehicle=function()return{getScript=function()return{getMechanicType=function()return class end}end}end,
+        getVehicle=function()return{getScript=function()return{getMechanicType=function()return class end}end,
+            canInstallPart=function()return false end,canUninstallPart=function()return false end}end,
         getInventoryItem=function()return fullType and item(fullType) or nil end,
-        getTable=function()return nil end,getWindow=function()return nil end,isContainer=function()return false end,
+        getTable=function(_,name)return name=="install" and install or name=="uninstall" and uninstall or nil end,
+        getWindow=function()return nil end,isContainer=function()return false end,
         getId=function()return "TireFrontLeft" end,getCondition=function()return 50 end,
         getScriptPart=function()return{isRepairMechanic=function()return false end}end}
 end
@@ -61,6 +64,7 @@ if NativeWishlistGameRoot then
     ISContextMenu={get=function()menu.options,menu.numOptions,menu.visible={},1,true;return menu end}
     FixingManager={getFixes=function()return list({})end}
     JoypadState={players={}}
+    ISVehiclePartMenu={}
     dofile(NativeWishlistGameRoot .. "/media/lua/client/Vehicles/ISUI/ISVehicleMechanics.lua")
     ISVehicleMechanics.getWrench=function()end
     ISVehicleMechanics.getScrewdriver=function()end
@@ -79,32 +83,69 @@ end
 assert(V.isWanted(0,part(2,"Base.ModernTire2")) and not V.isWanted(0,empty))
 assert(not V.isWanted(0,part(1,"Base.ModernTire1")))
 assert(C.carriedCount({['Base.OldTire2']=1,['Base.NormalTire2']=2,['Base.ModernTire2']=3,['Base.ModernTire1']=50},request.fullType,request)==6)
-local window=setmetatable({playerNum=0,chr=player,getAbsoluteX=function()return 0 end,getAbsoluteY=function()return 0 end}, {__index=ISVehicleMechanics})
+local window=setmetatable({playerNum=0,chr=player,doMenuTooltip=function()end,getAbsoluteX=function()return 0 end,getAbsoluteY=function()return 0 end}, {__index=ISVehicleMechanics})
 local added, edited
 C.edit=function(num,action,values)
     assert(num==0);edited={action=action,values=values};added=values.entries and values.entries[1]
 end
+local function wishlistOption()
+    local found
+    for _,option in ipairs(menu.options)do
+        if option.name=="UI_PZSW_AddVehicleWanted" or option.name=="UI_PZSW_RemoveVehicleWanted" then
+            assert(not found,"menu must contain only one Wishlist option")
+            found=option
+        end
+    end
+    return found
+end
 snapshot({})
+-- Native GloveBox advertises an item type but has no replacement recipe.
+for _,id in ipairs({"GloveBox","Chassis"})do
+    local fixed=part(2,"Base."..id)
+    valid["Base."..id]=true
+    fixed.getId=function()return id end
+    fixed.getItemType=function()return list({"Base."..id})end
+    fixed.getTable=function()return nil end
+    window:doPartContextMenu(fixed,0,0)
+    assert(not wishlistOption(),"nonreplaceable "..id.." must not be offered in Wishlist")
+    fixed.getInventoryItem=function()return nil end
+    window:doPartContextMenu(fixed,0,0)
+    assert(not wishlistOption(),"empty nonreplaceable "..id.." must not be offered in Wishlist")
+    if id=="GloveBox" then
+        fixed.getTable=function(_,name)return name=="install" and {} or nil end
+        window:doPartContextMenu(fixed,0,0)
+        local option=assert(wishlistOption(),"modded replaceable glovebox must remain supported")
+        option.onSelect(option.target)
+        assert(added.fullType=="Base.GloveBox")
+    end
+end
+assert(V.entry(part(2,"Base.ModernTire2")).fullType=="Base.OldTire2","installed replaceable tire remains requestable")
 for _=1,3 do
     window:doPartContextMenu(empty,0,0)
-    assert(#menu.options==1 and menu.visible,"reused native menu must regain its only Wishlist option")
-    menu.options[1].onSelect(menu.options[1].target)
+    local option=assert(wishlistOption(),"reused native menu must regain its Wishlist option")
+    assert(menu.visible and #menu.options==(NativeWishlistGameRoot and 2 or 1))
+    if NativeWishlistGameRoot then
+        assert(menu.options[1].name=="IGUI_Install" and menu.options[1].notAvailable,
+            "temporarily unavailable native install must still allow Wishlist")
+        assert(not option.notAvailable)
+    end
+    option.onSelect(option.target)
     assert(added.vehicleTypes[3]=="Base.ModernTire2")
 end
-local options=menu.options
-paused=true;window:doPartContextMenu(empty,0,0);assert(menu.options==options and #menu.options==1);paused=false
-seated=true;window:doPartContextMenu(empty,0,0);assert(menu.options==options and #menu.options==1);seated=false
+local options,optionCount=menu.options,#menu.options
+paused=true;window:doPartContextMenu(empty,0,0);assert(menu.options==options and #menu.options==optionCount);paused=false
+seated=true;window:doPartContextMenu(empty,0,0);assert(menu.options==options and #menu.options==optionCount);seated=false
 local group={amount=1,done=true,vehicleTypes=request.vehicleTypes,vehicleClass=2}
 snapshot({['vehicle:Base.OldTire2']=group})
 window:doPartContextMenu(part(2,"Base.ModernTire2"),0,0)
-assert(menu.options[1].name=="UI_PZSW_RemoveVehicleWanted", "done group on another donor is removable")
+assert(wishlistOption().name=="UI_PZSW_RemoveVehicleWanted", "done group on another donor is removable")
 C.receive(0,{lists={{id="bob",owner="bob",revision=0,entries={},members={}},
     {id="alice",owner="alice",revision=0,entries={['vehicle:Base.OldTire2']=group},members={}}}})
-C.select(0,"bob");menu.options[1].onSelect(menu.options[1].target)
+C.select(0,"bob");local remove=wishlistOption();remove.onSelect(remove.target)
 assert(edited.action=="remove" and edited.values.listId=="alice" and edited.values.fullType=="vehicle:Base.OldTire2")
 window:doPartContextMenu(part(1,"Base.ModernTire1"),0,0)
-assert(menu.options[1].name=="UI_PZSW_AddVehicleWanted", "another vehicle class retains Add")
-C.select(0,"alice");menu.options[1].onSelect(menu.options[1].target)
+assert(wishlistOption().name=="UI_PZSW_AddVehicleWanted", "another vehicle class retains Add")
+C.select(0,"alice");local add=wishlistOption();add.onSelect(add.target)
 assert(edited.action=="addMany" and edited.values.listId=="bob" and added.vehicleClass==1)
 snapshot({['vehicle:Base.OldTire2']={amount=1,done=false,vehicleTypes=request.vehicleTypes,vehicleClass=2}})
 local draws=0
@@ -121,4 +162,4 @@ snapshot({['Base.OldTire2']={amount=2,done=false}})
 assert(C.isWanted(0,"Base.OldTire2") and not C.isWanted(0,"Base.NormalTire2"))
 snapshot({});assert(not C.isWanted(0,"Base.OldTire2"),"revocation clears expanded matching")
 local invalid=part(2);invalid.getItemType=function()return list({"Missing.ModPart"})end;assert(V.entry(invalid)==nil)
-print("PASS vehicle wishlist: native-compatible variants, classes, empty slots, repeated menu, early exits, row highlight, counts, done and revocation")
+print("PASS vehicle wishlist: native-compatible variants, classes, replaceable and fixed slots, repeated menu, early exits, row highlight, counts, done and revocation")
