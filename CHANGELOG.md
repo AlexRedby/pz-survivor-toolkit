@@ -31,14 +31,17 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.249
 
+- **Action queue / cleanup:** Scope the food-mask clothing contract to its own restoration actions so it cannot block bag restoration and borrowed-prop returns after exercising.
+- **Action queue / fitness:** Restore hands, worn bags and borrowed exercise props only after their native preparation effects are confirmed, including grounded storage and its exact native pickup. Wait for Host transactions and exact item replication on normal completion and cancellation; share guarded prop returns so repeated cleanup cannot duplicate a return. Preserve native workout duration, costs, stop behavior and queue-disabled controls.
+
+### 0.1.249
+
 - **Inventory:** Allow deliberate transfers of several retained items through drag-and-drop, context menus, quantity commands and Smart Deposit. Keep protection during Take/Transfer All, automatic Move to Floor and loot distribution; manual moves keep their retained flags.
 
 - **Inventory:** Replace the compressed Keep marker with a high-contrast lock drawn at up to 16 pixels. Put expanded-child markers in the empty icon gutter so they do not cover condition or fluid values. Use the same lock in the retention menu, with clearer EN/RU wording and a tooltip explaining mass-transfer protection and deliberate manual moves.
 
 ### 0.1.248
 
-- **Action queue / cleanup:** Scope the food-mask clothing contract to its own restoration actions so it cannot block bag restoration and borrowed-prop returns after exercising.
-- **Action queue / fitness:** Restore hands, worn bags and borrowed exercise props only after their native preparation effects are confirmed, including grounded storage and its exact native pickup. Wait for Host transactions and exact item replication on normal completion and cancellation; share guarded prop returns so repeated cleanup cannot duplicate a return. Preserve native workout duration, costs, stop behavior and queue-disabled controls.
 - **Changed:** Vehicle glass is replacement-only: remove Vehicle Repair Overhaul repairs for windshields, side/rear windows and military glass in both Lua and script-recipe modes. Keep glass removal/installation, other vehicle repairs and metal window armor/frame repairs.
 - **Fixed:** Hide empty Repair submenus for installed and loose vehicle parts when Vehicle Repair Overhaul offers no repairs, including fully broken parts with their repair option disabled. Keep unavailable choices that explain missing materials or skills, and preserve sandbox repair rules.
 
