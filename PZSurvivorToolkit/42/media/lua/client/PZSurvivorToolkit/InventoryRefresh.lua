@@ -78,7 +78,7 @@ end
 
 function Refresh.flush(page)
     local state = page and page.toolkitRefreshState
-    if not state or state.force or not (state.rowsPending or state.countPending) then return end
+    if not state or state.force or not (state.rowsPending or state.countPending or state.tooltipsPending) then return end
     local previous = state.force
     state.force = true
     -- Reopen refreshes discovery too, covering remote changes since the last
@@ -91,6 +91,23 @@ end
 local function install(class)
     if not class or installed[class] or type(class.refreshBackpacks) ~= "function" then return end
     installed[class] = true
+    local add = class.addContainerButton
+    if add then
+        class.addContainerButton = function(page, ...)
+            local state = stateFor(page)
+            -- CleanUI sums the entire container just to build this invisible
+            -- tooltip. Keep button identity/discovery live and rebuild on show.
+            if getmetatable(page) == CleanUI_Clean_ISInventoryPage and mayDefer(page, state)
+                and select("#", ...) >= 4 and select(4, ...) then
+                local args = pack(...)
+                args[4] = nil
+                state.tooltipRevision = (state.tooltipRevision or 0) + 1
+                state.tooltipsPending = true
+                return add(page, unpack(args, 1, args.n))
+            end
+            return add(page, ...)
+        end
+    end
     local backpacks = class.refreshBackpacks
     class.refreshBackpacks = function(page, ...)
         local state = stateFor(page)
@@ -98,10 +115,11 @@ local function install(class)
         local player = getSpecificPlayer(page.player)
         local square = player and player:getCurrentSquare()
         local direction = player and player:getDir()
-        local scope = state.scope
+        local scope, tooltipRevision = state.scope, state.tooltipRevision
         if supported then state.scope = scope + 1 end
         local values = pack(pcall(backpacks, page, ...))
         state.scope = scope
+        if values[1] and state.tooltipRevision == tooltipRevision then state.tooltipsPending = false end
         if values[1] and not supported then state.rowsPending = false end
         if not values[1] then
             -- Native update writes one pose field before calling discovery.

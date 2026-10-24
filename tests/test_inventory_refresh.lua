@@ -235,3 +235,266 @@ run(nil,'doubles',NativeBCProximitySource)
 if NativeInventoryPageSource then run(NativeInventoryPageSource,'native B42',NativeBCProximitySource) end
 if CleanUIInventoryPageSource then run(CleanUIInventoryPageSource,'CleanUI',NativeBCProximitySource) end
 if CleanUIVanillaInventoryPageSource then run(CleanUIVanillaInventoryPageSource,'CleanUI vanilla',NativeBCProximitySource) end
+
+-- CleanUI builds capacity tooltip text inside addContainerButton. Suppression
+-- must retain the call contract and keep an independent reopen obligation even
+-- when discovery stops before row/count construction.
+do
+    local function pack(...)return {n=select('#',...),...}end
+    local stats={weights=0,late=0,rows=0,counts=0}
+    local inventory={weight=10}
+    function inventory:getCapacityWeight()stats.weights=stats.weights+1;return self.weight end
+    local Pane={};Pane.__index=Pane
+    function Pane:refreshContainer()stats.rows=stats.rows+1;self.builtWeight=inventory.weight end
+    local Page={};Page.__index=Page
+    function Page:getIsVisible()return self.visible end
+    function Page:setVisible(value)self.visible=value;return 'visible',nil,'end',nil end
+    function Page:addContainerButton(container,texture,name,tooltip,...)
+        stats.args=pack(container,texture,name,tooltip,...)
+        local button={inventory=container,name=name}
+        if tooltip then button.tooltip=tooltip..':'..container:getCapacityWeight() end
+        return button,nil,31,nil
+    end
+    function Page:refreshBackpacks()
+        stats.returns=pack(self:addContainerButton(inventory,'texture','crate','capacity','extra',nil))
+        self.button=stats.returns[1]
+        if self.failAfterButton then error('failed after tooltip creation')end
+        if self.earlyAfterButton then return 'early',nil end
+        self.inventoryPane:refreshContainer()
+        self:updateItemCount()
+    end
+    function Page:updateItemCount()stats.counts=stats.counts+1;self.countedWeight=inventory.weight end
+    function Page:update()end
+    function Page:prerender()end
+    PZSurvivorToolkit={};ISMouseDrag={}
+    ISInventoryPage=Page;CleanUI_Clean_ISInventoryPage=Page;CleanUI_Vanilla_ISInventoryPage=nil
+    local player={getJoypadBind=function()return -1 end,getCurrentSquare=function()return 1 end,getDir=function()return 1 end}
+    getSpecificPlayer=function()return player end
+    Events={OnGameBoot={Add=function()end},OnGameStart={Add=function()end}}
+    require=function(name)if name=='PZSurvivorToolkit/InventoryClasses'then return{onToggle=function()end}end end
+    local R=dofile(client..'PZSurvivorToolkit/InventoryRefresh.lua');R.install()
+    local prior=Page.addContainerButton
+    Page.addContainerButton=function(...)stats.late=stats.late+1;return prior(...)end
+    local function page()
+        local p=setmetatable({player=0,visible=false},Page)
+        p.inventoryPane=setmetatable({mode='details',selected={},items={},parent=p},Pane)
+        return p
+    end
+    local hidden=page()
+    hidden:refreshBackpacks()
+    assert(stats.weights==0 and stats.late==1 and hidden.button.inventory==inventory and hidden.button.tooltip==nil,
+        'hidden CleanUI tooltip suppression changed button identity or read stock weight')
+    assert(stats.args.n==6 and stats.args[1]==inventory and stats.args[2]=='texture'
+        and stats.args[3]=='crate' and stats.args[4]==nil and stats.args[5]=='extra' and stats.args[6]==nil,
+        'tooltip suppression lost trailing nil arguments or changed another argument')
+    assert(stats.returns.n==4 and stats.returns[2]==nil and stats.returns[3]==31 and stats.returns[4]==nil,
+        'tooltip suppression changed addContainerButton return arity')
+    assert(hidden.toolkitRefreshState.tooltipsPending)
+    inventory.weight=99
+    local visibleReturns=pack(hidden:setVisible(true))
+    assert(visibleReturns.n==4 and visibleReturns[1]=='visible' and visibleReturns[4]==nil
+        and stats.weights==1 and stats.late==2 and hidden.button.tooltip=='capacity:99'
+        and hidden.inventoryPane.builtWeight==99 and hidden.countedWeight==99
+        and not hidden.toolkitRefreshState.tooltipsPending,
+        'show did not restore fresh complete CleanUI tooltip/rows/count')
+    hidden.visible=false
+    local before=stats.weights
+    local direct=pack(hidden:addContainerButton(inventory,'texture','crate','direct',nil))
+    assert(stats.weights==before+1 and direct.n==4 and direct[1].tooltip=='direct:99',
+        'explicit button construction outside discovery was suppressed')
+    for _,kind in ipairs({'early','failure'})do
+        local pending=page()
+        pending.earlyAfterButton=kind=='early';pending.failAfterButton=kind=='failure'
+        local ok=pcall(pending.refreshBackpacks,pending)
+        assert(ok==(kind=='early'))
+        local state=pending.toolkitRefreshState
+        assert(state.tooltipsPending and not state.rowsPending and not state.countPending and state.scope==0,
+            'early/failed discovery lost the separate tooltip flush obligation')
+        pending.earlyAfterButton,pending.failAfterButton=false,false
+        inventory.weight=inventory.weight+1
+        before=stats.weights
+        pending:setVisible(true)
+        assert(stats.weights==before+1 and pending.button.tooltip=='capacity:'..inventory.weight
+            and pending.inventoryPane.builtWeight==inventory.weight and pending.countedWeight==inventory.weight
+            and not state.tooltipsPending and not state.force,
+            'opening after early/failed discovery left a missing or stale tooltip')
+    end
+    for _,kind in ipairs({'icons','opaque','other-class','character'})do
+        local immediate=page()
+        if kind=='icons'then immediate.inventoryPane.mode='icons'
+        elseif kind=='opaque'then immediate.inventoryPane.refreshContainer=function()end
+        elseif kind=='other-class'then CleanUI_Clean_ISInventoryPage={}
+        elseif kind=='character'then immediate.onCharacter=true end
+        before=stats.weights
+        immediate:refreshBackpacks()
+        assert(stats.weights==before+1 and immediate.button.tooltip=='capacity:'..inventory.weight,
+            kind..' path unexpectedly suppressed an immediate tooltip')
+        CleanUI_Clean_ISInventoryPage=Page
+    end
+    print('PASS CleanUI hidden tooltip workload: zero hidden weight reads; argument/result arity, late hooks, reopen, early/failure obligations and immediate fallbacks preserved')
+end
+
+-- Unlike the scheduling fixture above, execute the entire installed CleanUI
+-- discovery body and the actual BC begin/buttonsAdded handlers. World/UI leaves
+-- are doubles, so this isolates Lua lifecycle from native object side effects.
+if CleanUIInventoryPageSource and NativeBCProximitySource then
+    local stats={rows=0,counts=0,weights=0,phases={}}
+    local function list(values)
+        local result={values=values or {}}
+        function result:size()return #self.values end
+        function result:get(index)return self.values[index+1]end
+        function result:clear()self.values={}end
+        function result:addAll(other)for _,value in ipairs(other.values)do self.values[#self.values+1]=value end end
+        return result
+    end
+    local function inventory(kind,values)
+        local result={items=list(values)}
+        function result:getItems()return self.items end
+        function result:getType()return kind end
+        function result:getParent()end
+        function result:getCustomName()end
+        function result:getMaxWeight()return 100 end
+        function result:getEffectiveCapacity()return 100 end
+        function result:getCapacityWeight()stats.weights=stats.weights+1;return self.items:size()end
+        function result:clear()self.items:clear()end
+        function result:removeItemsFromProcessItems()end
+        function result:AddItem(value)self.items.values[#self.items.values+1]=value end
+        function result:setExplored()end
+        function result:setOnlyAcceptCategory()end
+        function result:setCapacity()end
+        return result
+    end
+    local function item(id)return{id=id,getCategory=function()return 'Item'end}end
+    local ground={item('ground')}
+    local floor=inventory('floor')
+    local chest=inventory('crate',{item('stock1'),item('stock2')})
+    local chestObject={getContainerCount=function()return 1 end,getContainerByIndex=function()return chest end}
+    local worldObjects={size=function()return #ground end,get=function(_,index)
+        return{getItem=function()return ground[index+1]end}
+    end}
+    local square={getWorldObjects=function()return worldObjects end,getStaticMovingObjects=function()return list()end,
+        getObjects=function()return list({chestObject})end,getVehicleContainer=function()end,canReachTo=function()return true end}
+    local player={getX=function()return .5 end,getY=function()return .5 end,getZ=function()return 0 end,
+        getDir=function()return 1 end,getCurrentSquare=function()return square end,
+        getVehicle=function()end,getJoypadBind=function()return -1 end}
+    local Pane={};Pane.__index=Pane
+    function Pane:hideButtons()end
+    function Pane:bringToTop()end
+    function Pane:refreshContainer()
+        stats.rows=stats.rows+1
+        self.itemslist={}
+        for _,value in ipairs(self.inventory:getItems().values)do self.itemslist[#self.itemslist+1]=value end
+    end
+    local Page={};Page.__index=Page
+    function Page.GetFloorContainer()return floor end
+    function Page:getIsVisible()return self.visible end
+    function Page:setVisible(value)self.visible=value end
+    function Page:checkExplored()end
+    function Page:refreshWeight()end -- actual CleanUI method is an empty return
+    function Page:titleBarHeight()return 20 end
+    function Page:updateItemCount()stats.counts=stats.counts+1;self.totalItems=self.inventoryPane.inventory:getItems():size()end
+    function Page:addContainerButton(container,texture,name,tooltip)
+        local button={inventory=container,name=name,capacity=container:getEffectiveCapacity(player),
+            getBottom=function()return 24 end,setTextureRGBA=function()end}
+        if tooltip then button.tooltip=tooltip..':'..container:getCapacityWeight()end
+        self.backpacks[#self.backpacks+1]=button
+        return button
+    end
+    local eff={proximityActive=true}
+    local proximity
+    local env=setmetatable({PZSurvivorToolkit={},ISInventoryPage=Page,CleanUI_Clean_ISInventoryPage=Page,
+        CleanUI_Vanilla_ISInventoryPage=false,ISMouseDrag={},ISHandCraftPanel={},ISBuildPanel={},
+        ContainerButtonIcons={floor={}},IsoDirections={},
+        getSpecificPlayer=function()return player end,getTimestampMs=function()return 100 end,
+        getText=function(value)return value end,getTextOrNull=function(value)return value end,
+        instanceof=function()return false end,isClient=function()return true end,
+        SafeHouse={isSafehouseAllowLoot=function()return true end},
+        ItemContainer={new=function(kind)return inventory(kind)end},getTexture=function()return{}end,
+        Events={OnGameBoot={Add=function()end},OnGameStart={Add=function()end}},
+        getCell=function()return{getGridSquare=function(_,x,y,z)
+            if math.floor(x)==0 and math.floor(y)==0 and z==0 then return square end
+        end}end}, {__index=_G})
+    env.require=function(name)
+        if name=='PZSurvivorToolkit/InventoryClasses'then return{onToggle=function()end}end
+        if name=='BetterContainers/_Options'then return{getEffectivePermissions=function()return eff end}end
+        return{}
+    end
+    env.triggerEvent=function(_,page,phase)
+        stats.phases[phase]=(stats.phases[phase]or 0)+1
+        if phase=='begin'then proximity.OnBeginRefresh(page)
+        elseif phase=='buttonsAdded'then proximity.OnButtonsAdded(page)end
+    end
+    local bc=assert(loadstring(NativeBCProximitySource));setfenv(bc,env);proximity=bc()
+    local body=assert(method(CleanUIInventoryPageSource,'refreshBackpacks'),'missing full CleanUI refreshBackpacks')
+    local full=assert(loadstring('local sqsContainers,sqsVehicles={},{}\n'..body));setfenv(full,env);full()
+    local owner=assert(loadfile(client..'PZSurvivorToolkit/InventoryRefresh.lua'));setfenv(owner,env)
+    local R=owner();R.install()
+    local aggregate=proximity.GetItemContainer(0)
+    local pane=setmetatable({inventory=aggregate,mode='details',selected={},items={}},Pane)
+    local page=setmetatable({player=0,visible=true,lookDir=player:getDir(),inventory=aggregate,inventoryPane=pane,
+        backpacks={},buttonPool={},height=200,padding=2,containerButtonPanelWidth=40,
+        resizeWidget={bringToTop=function()end},containerButtonPanel={removeChild=function()end,
+            setHeight=function()end,setWidth=function()end,setScrollHeight=function()end}},Page)
+    pane.parent=page
+    page:refreshBackpacks()
+    assert(stats.rows==1 and stats.counts==1 and pane.inventory==aggregate and aggregate:getItems():size()==3,
+        'full CleanUI/BC body baseline did not discover chest and floor contents')
+    local oldRows,oldCount=pane.itemslist,page.totalItems
+    page:setVisible(false)
+    ground[#ground+1]=item('late-ground')
+    page:refreshBackpacks();page:refreshBackpacks()
+    local state=assert(page.toolkitRefreshState)
+    assert(state.rowsPending and state.countPending and state.tooltipsPending,
+        'full actual CleanUI discovery body did not retain hidden pending work')
+    assert(stats.rows==1 and stats.counts==1 and pane.itemslist==oldRows and page.totalItems==oldCount,
+        'full actual CleanUI discovery unexpectedly rebuilt hidden rows/count')
+    assert(aggregate:getItems():size()==4 and floor:getItems():size()==2
+        and stats.phases.begin==3 and stats.phases.buttonsAdded==3 and stats.phases['end']==3,
+        'full actual CleanUI/BC phase lifecycle lost live stock discovery')
+    page:setVisible(true)
+    assert(not state.rowsPending and not state.countPending and not state.tooltipsPending
+        and stats.rows==2 and stats.counts==2 and page.totalItems==4 and #pane.itemslist==4,
+        'full actual CleanUI body did not synchronously rebuild on reopen: rows='..stats.rows..' counts='..stats.counts..' total='..tostring(page.totalItems)..' rowCount='..#pane.itemslist..' pending='..tostring(state.rowsPending)..'/'..tostring(state.countPending)..'/'..tostring(state.tooltipsPending))
+    print('PASS full actual CleanUI refreshBackpacks + BC begin/buttonsAdded: hidden rows/count/tooltips defer, floor/aggregate remain live, reopen fresh')
+    if NativeBCProximityPaneSource then
+        -- Actual BC update assumes every group has a duplicate header. A
+        -- headerless singleton has no j=2 children, so it selects the header
+        -- without mouse/controller input after a rendered baseline.
+        local oldRequire=env.require
+        env.require=function(name)
+            if name=='BetterContainers/Proximity'then return proximity end
+            return oldRequire(name)
+        end
+        env.ISInventoryPane=Pane
+        env.getPlayerInventory=function()end;env.getPlayerLoot=function()end
+        Pane.update=function()end;Pane.updateTooltip=function()end
+        local adapter=assert(loadstring(NativeBCProximityPaneSource));setfenv(adapter,env)
+        adapter().install()
+        local physical={class='InventoryItem'}
+        env.instanceof=function(value,name)return type(value)=='table'and value.class==name end
+        local singleton={name='singleton',items={physical},cleanUIFirstActualIndex=1}
+        pane.items={singleton};pane.collapsed={singleton=false};pane.selected={}
+        pane:update()
+        assert(pane.selected[1]==singleton,'actual BC update did not reproduce headerless singleton auto-selection')
+        local dummy={name='dummy',items={physical,physical}}
+        pane.items={dummy};pane.collapsed={dummy=false};pane.selected={};pane:update()
+        assert(pane.selected[1]==nil,'native duplicate-header control was spuriously selected')
+        pane.items={singleton};pane.collapsed={singleton=true};pane.selected={};pane:update()
+        assert(pane.selected[1]==nil,'collapsed singleton control was spuriously selected')
+        pane.collapsed.singleton=false;pane:update()
+        assert(pane.selected[1]==singleton)
+        page:setVisible(false)
+        local beforeRows,beforeCounts=stats.rows,stats.counts
+        page:refreshBackpacks()
+        assert(stats.rows==beforeRows+1 and stats.counts==beforeCounts+1
+            and not state.rowsPending and not state.countPending,
+            'BC-selected singleton must preserve immediate input-safe refresh fallback')
+        pane.selected={} -- same-frame fixture setup, with no intervening BC update
+        beforeRows,beforeCounts=stats.rows,stats.counts
+        page:refreshBackpacks()
+        assert(stats.rows==beforeRows and stats.counts==beforeCounts
+            and state.rowsPending and state.countPending and #pane.items==0,
+            'same-frame cleared selection did not restore hidden deferral')
+        print('PASS actual BC pane.update: headerless singleton auto-selects without input, guard retains immediate rows/count; same-frame cleared selection defers')
+    end
+end

@@ -136,7 +136,5 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Warehouse client workload
 
-- [ ] Coalesce movement-triggered loot rebuilds and defer hidden presentation work while keeping reachable-container data fresh for native/mod consumers; verify reopen, remote changes, nesting, transfers and UI-mode switches.
-- [ ] Remove avoidable full-item snapshot/selection work in the owned filter pipeline without changing live metadata, filtering or selection behavior.
-- [ ] Bound capacity-indicator redraw work without caching transfer admission; preserve fresh item/fluid/nested-container state and clean lifecycle ownership.
-- [ ] Add source-backed workload regressions for native/CleanUI/Better Containers, review integration boundaries, run affected checks and update shipped version/changelog. Run isolated native checks if source-backed tests cannot establish the required behavior.
+- [ ] Run the corrected `inventory-presentation/scenes` native hidden-loot/reopen stages in CleanUI and vanilla when an awake macOS display is available. Require live raw stock, deferred hidden rows/count/tooltips, fresh reopen and a clean runtime audit; keep the runner's default desktop policy.
+- [ ] Check warehouse movement with the full selected mod set in disposable macOS SP/Host profiles, including another player's container edits, crafting inputs and quick transfers with loot hidden. Measure frame times separately before claiming that the user's stutters are resolved.

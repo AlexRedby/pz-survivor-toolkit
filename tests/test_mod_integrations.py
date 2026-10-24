@@ -66,6 +66,7 @@ class ModIntegrations(unittest.TestCase):
         if full:
             self.write(root / 'Proximity/Proximity_SmartDeposit.lua', 'BC smart deposit')
             self.write(root / 'Proximity.lua', 'BC proximity')
+            self.write(root / 'Proximity/Proximity_ISInventoryPane.lua', 'BC proximity pane')
             self.write(root / 'Customize/Customize_ISInventoryPage.lua', 'BC page customizer')
         return root
 
@@ -270,6 +271,7 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual('BC smart deposit', smart['NativeBCSmartDepositSource'])
         refresh = self.bound(args, 'test_inventory_refresh.lua')
         self.assertEqual('BC proximity', refresh['NativeBCProximitySource'])
+        self.assertEqual('BC proximity pane', refresh['NativeBCProximityPaneSource'])
         self.assertEqual('CleanUI page', refresh['CleanUIInventoryPageSource'])
         self.assertEqual('CleanUI page', smart['CleanUIInventoryPageSource'])
         self.assertEqual('BC page customizer',

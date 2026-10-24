@@ -666,6 +666,9 @@ local function setupHiddenRefresh(clean)
     local floor=ISInventoryPage.GetFloorContainer(0)
     for _,entry in ipairs(loot.backpacks) do if entry.inventory==floor then found=true end end
     assert(found and listHas(floor:getItems(),bag),'native floor discovery missing')
+    -- The visible baseline may restore a prior row/anchor. Start the hidden
+    -- workload with explicitly idle input, in the same step before UI updates.
+    target.selected={}; target.firstSelect=nil
     hiddenRefresh={page=loot,pane=target,selected=selected,square=square,bag=bag,
         rows=target.itemslist,count=loot.totalItems,mode=clean and 'clean' or 'vanilla'}
     loot:setVisible(false)
@@ -684,6 +687,15 @@ local function checkHiddenRefresh()
     local found=false
     for _,entry in ipairs(test.page.backpacks) do if entry.inventory==floor then found=true end end
     assert(found and listHas(floor:getItems(),added),'hidden native floor/backpacks discovery is stale')
+    if not (state.rowsPending and state.countPending) then
+        local p=test.pane
+        local selections=0; for _ in pairs(p.selected or {}) do selections=selections+1 end
+        print('[INVENTORY_SCREEN] HIDDEN_DIAGNOSTIC rows='..tostring(state.rowsPending)..' count='..tostring(state.countPending)
+            ..' scope='..tostring(state.scope)..' pane='..tostring(state.pane==p)..' gate='..tostring(rawget(p,'refreshContainer')==state.gate)
+            ..' mode='..tostring(p.mode)..' selections='..selections..' firstSelect='..tostring(p.firstSelect)
+            ..' controller='..tostring(p.doController)..' drag='..tostring(p.dragStarted)..' filter='..tostring(p.toolkitVisibleItems)
+            ..' search='..tostring(p.searchText)..' categorySearch='..tostring(p.searchCategoryText))
+    end
     assert(state.rowsPending and state.countPending,'hidden native rows/count were not deferred')
     assert(test.pane.itemslist==test.rows and not rowsHave(test.pane.itemslist,added),
         'hidden refresh rebuilt/classified the native row list')
@@ -694,7 +706,16 @@ local function reopenHiddenRefresh()
     local test=hiddenRefresh
     test.page:setVisible(true) -- Public visibility API must synchronously flush.
     local state=test.page.toolkitRefreshState
-    assert(not state.rowsPending and not state.countPending,'reopening left native refresh work pending')
+    assert(not state.rowsPending and not state.countPending and not state.tooltipsPending,
+        'reopening left native refresh work pending')
+    if test.mode=='clean' then
+        local bagButton
+        for _,button in ipairs(test.page.backpacks) do
+            if button.inventory==test.bag:getInventory() then bagButton=button end
+        end
+        assert(bagButton and type(bagButton.tooltip)=='string' and bagButton.tooltip:find(' / ',1,true),
+            'reopening did not restore the CleanUI capacity tooltip')
+    end
     assert(test.pane.inventory==test.selected and rowsHave(test.pane.itemslist,test.added),
         'reopening did not build fresh rows for the unchanged selected container')
     local expected=luautils.countItemsRecursive({luautils.findRootInventory(test.selected)})
@@ -708,12 +729,9 @@ local function reopenHiddenRefresh()
     test.page:refreshBackpacks()
     hiddenRefresh=nil
 end
-add(function() setupHiddenRefresh(true) end)
-add(checkHiddenRefresh)
-add(reopenHiddenRefresh)
-add(function() setupHiddenRefresh(false) end)
-add(checkHiddenRefresh)
-add(reopenHiddenRefresh)
+local hiddenSteps={function() setupHiddenRefresh(true); checkHiddenRefresh() end,reopenHiddenRefresh,
+    function() setupHiddenRefresh(false); checkHiddenRefresh() end,reopenHiddenRefresh}
+for i=#hiddenSteps,1,-1 do table.insert(steps,1,hiddenSteps[i]) end
 add(function() print('[INVENTORY_SCREEN] COMPLETE'); done=true end)
 Events.OnMainMenuEnter.Add(function() entered=true end)
 Events.OnPreUIDraw.Add(function()
