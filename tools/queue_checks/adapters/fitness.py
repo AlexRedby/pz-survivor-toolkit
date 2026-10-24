@@ -9,7 +9,7 @@ import shutil
 from ..mod_selection import metadata, mod_ids
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
-         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'active-cancel-restore', 'pickup-cancel-restore']
+         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore']
 PROJECT = Path(__file__).resolve().parents[3]
 MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 SCENARIO_ACTIONS = {'fitness-ui': {
@@ -134,17 +134,40 @@ def _exhaustion_without_training(before, after):
                     for key, value in before[group].items()))
 
 
-RESTORATION_CASES = ('active-cancel-restore', 'pickup-cancel-restore')
+RESTORATION_CASES = ('active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore')
+EARLY_CANCEL_CASES = ('pickup-cancel-restore', 'placement-cancel-restore')
 IMMEDIATE_CASES = ('empty', 'active-cancel', 'burpees-30', *RESTORATION_CASES)
 BORROWED_CASES = ('closed-ui-restore', *RESTORATION_CASES)
 
 
 def _expected_exercises(case, mode):
-    if case == 'exhaustion' or mode == 'toolkit' and case in ('pending-cancel', 'missing-dumbbell', 'pickup-cancel-restore'):
+    if case == 'exhaustion' or mode == 'toolkit' and case in ('pending-cancel', 'missing-dumbbell', *EARLY_CANCEL_CASES):
         return []
     if case == 'burpees-30':
         return ['burpees']
     return ['squats', 'pushups'] if case == 'sequential' else ['bicepscurl' if case in ('missing-dumbbell', *BORROWED_CASES) else 'squats']
+
+
+def _storage(value, prep, endpoint, fetched):
+    items = prep['items']
+    contents = [row for row in prep['inventory']['items'] if row['container'] == items['bag']
+                and (not fetched or row['id'] != items['dumbbell'])]
+    if (not _matches(value, dict(id=items['bag'], kind='Base.Bag_Schoolbag', favorite=True,
+                                 endpoint=endpoint, occurrences=1, contents=contents))):
+        return False
+    world = value.get('world')
+    return (world is False if endpoint == 'root' else isinstance(world, dict)
+            and set(world) == {'x', 'y', 'z', 'linked'} and world['linked'] is True
+            and all(type(world[key]) is int for key in ('x', 'y', 'z')))
+
+
+def _ground_conservation(value, prep):
+    inventory = value.get('inventory', {})
+    bag, prop = prep['items']['bag'], prep['items']['dumbbell']
+    expected = [dict(row, container='root') if row['id'] == prop else row
+                for row in prep['inventory']['items'] if row['id'] != bag and (row['container'] != bag or row['id'] == prop)]
+    return (_storage(value.get('storage'), prep, 'world', True) and _inventory(inventory)
+            and _same(inventory['items'], expected))
 
 
 def _case(case, row, prep, receipt, selection, mutation=None):
@@ -232,44 +255,61 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or any(item['id'] == items['bag'] for item in start_inventory.get('worn', []))):
                 issues.append('Fitness authoritative start lacked borrowed dumbbell/unequipped bag: ' + case)
     if case in RESTORATION_CASES:
+        for record in records:
+            if not _ground_conservation(dict(storage=record.get('startStorage'), inventory=record.get('startEquipment')), prep):
+                issues.append('Fitness authoritative workout lacked exact world bag/content conservation: ' + case)
+    if case in RESTORATION_CASES:
         # The selected P4 restores the native control after the independent reader.
         # Toolkit additionally owes that exact restoration before its reader starts.
         expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
                               hammer='Base.Torch', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
         if (any(next((item for item in prep['inventory']['items'] if item['id'] == identity), {}).get('kind') != expected_types[name]
                 for name, identity in items.items())
-                or not _same(prep.get('activation'), {str(items['hammer']): True})):
+                or not _same(prep.get('activation'), {str(items['hammer']): True})
+                or not _storage(prep.get('storage'), prep, 'root', False)
+                or next((item for item in prep['inventory']['items'] if item['id'] == items['front']), {}).get('container') != items['bag']):
             issues.append('Fitness borrowed cancellation exact gear/type/activation setup differs: ' + case)
         before_tail = command.get('beforeTail', {})
         if (before_tail.get('callback') != 'ISBaseTimedAction.begin' or not _inventory(before_tail.get('inventory')) or not _number(before_tail.get('nativeClock'))
                 or not isinstance(before_tail.get('activation'), dict)
                 or not _matches(command, dict(cancelCallback='ISFitnessUI:CANCEL' if native else 'ActionQueue.cancelOperation'))):
             issues.append('Fitness independent tail boundary/native cancel callback missing: ' + case)
-        if (not _same(command.get('clientActivation'), prep['activation'])
+        if (not _storage(receipt.get('storage'), prep, 'root', False)
+                or not _storage(command.get('clientStorage'), prep, 'root', False)
+                or not _same(command.get('clientActivation'), prep['activation'])
                 or not _same(receipt.get('activation'), prep['activation'])):
             issues.append('Fitness exact settled equipment activation differs: ' + case)
         if not native:
+            starts = command.get('returnStarts')
+            if (not isinstance(starts, list) or len(starts) != 1
+                    or not _matches(starts[0], dict(ordinal=1, id=items['dumbbell'], kind='Base.DumbBell',
+                        source='root', destination=items['bag'], callback='ISBaseTimedAction.begin'))
+                    or not _number(starts[0].get('nativeClock'))
+                    or not _number(before_tail.get('nativeClock')) or starts[0]['nativeClock'] > before_tail['nativeClock']):
+                issues.append('Fitness exact native return start/count before reader differs: ' + case)
             settlement = command.get('settlement', {})
             if (command.get('confirmedPickup') is not True or command.get('confirmedReturn') is not True or not _matches(command, dict(returnCount=1))
                     or settlement.get('borrowings') != [dict(id=items['dumbbell'], fullType='Base.DumbBell', state='completed')]
                     or not _same(before_tail.get('inventory'), expected)
-                    or not _same(before_tail.get('activation'), prep['activation'])):
+                    or not _same(before_tail.get('activation'), prep['activation'])
+                    or not _storage(before_tail.get('storage'), prep, 'root', False)):
                 issues.append('Fitness cancellation lacked confirmed pickup/return or exact restoration before reader: ' + case)
             if case == 'active-cancel-restore':
                 steps = command.get('preparationAtCancel', {}).get('steps', [])
                 observed = [step for step in steps if step.get('observedPreparation') is True]
-                expected_preparation = [('ISUnequipAction', items['hammer'], 'Base.Torch'),
+                expected_preparation = [('ISInventoryTransferAction', items['dumbbell'], 'Base.DumbBell'),
+                                        ('ISUnequipAction', items['hammer'], 'Base.Torch'),
                                         ('ISUnequipAction', items['screwdriver'], 'Base.Screwdriver'),
                                         ('ISUnequipAction', items['bag'], 'Base.Bag_Schoolbag'),
-                                        ('ISInventoryTransferAction', items['dumbbell'], 'Base.DumbBell'),
+                                        ('ISDropWorldItemAction', items['bag'], 'Base.Bag_Schoolbag'),
                                         ('ISEquipWeaponAction', items['dumbbell'], 'Base.DumbBell')]
-                if (command.get('confirmedPreparation') is not True or len(observed) != 5
+                if (command.get('confirmedPreparation') is not True or len(observed) != 6
                         or [(step.get('kind'), step.get('itemId'), step.get('itemType')) for step in observed] != expected_preparation
                         or any(not _matches(step, dict(state='earned', started=True)) for step in observed)):
                     issues.append('Fitness active cancellation preceded confirmed preparation: ' + case)
-            if case == 'pickup-cancel-restore' and command.get('propEquipObserved') is not False:
+            if case in EARLY_CANCEL_CASES and command.get('propEquipObserved') is not False:
                 issues.append('Fitness canceled pickup still equipped workout prop: ' + case)
-        if case == 'pickup-cancel-restore' and not native:
+        if case in EARLY_CANCEL_CASES and not native:
             if not _exhaustion_without_training(prep['before'], receipt.get('clinical')):
                 issues.append('Fitness canceled pickup changed native training effects: ' + case)
         if case == 'pickup-cancel-restore':
@@ -286,8 +326,54 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or not _inventory(tail_start.get('inventory'))
                     or not isinstance(tail_start.get('activation'), dict)
                     or not native and (not _same(tail_start['inventory'], expected)
-                                       or not _same(tail_start['activation'], prep['activation']))):
+                                       or not _same(tail_start['activation'], prep['activation'])
+                                       or not _storage(tail_start.get('storage'), prep, 'root', False))):
                 issues.append('Fitness authoritative reader callback lacked restored live Host replicas: ' + case)
+        placements = receipt.get('placements')
+        placement_expected = native or case != 'pickup-cancel-restore'
+        if (not isinstance(placements, list) or len(placements) != int(placement_expected)
+                or any(not _matches(value, dict(callback='ISDropWorldItemAction.complete', succeeded=True))
+                       or not _number(value.get('nativeClock')) or not _ground_conservation(value, prep) for value in placements)):
+            issues.append('Fitness native bag placement callback/world contents differ: ' + case)
+        if not native:
+            recovery = command.get('recoveryStarts')
+            recovered = case != 'pickup-cancel-restore'
+            settlements = command.get('recoverySettlements')
+            if (not isinstance(recovery, list) or len(recovery) != int(recovered)
+                    or not isinstance(settlements, list) or len(settlements) != int(recovered)):
+                issues.append('Fitness native bag recovery start/count differs: ' + case)
+            else:
+                for start, settled in zip(recovery, settlements):
+                    steps = settled.get('steps', []) if isinstance(settled, dict) else []
+                    pickups = [step for step in steps if step.get('plannedTransfer') is True and step.get('transferDirection') == 'pickup']
+                    if (not _matches(start, dict(ordinal=1, id=items['bag'], kind='Base.Bag_Schoolbag', source='world',
+                                               destination='root', callback='ISBaseTimedAction.begin'))
+                            or not _number(start.get('nativeClock')) or start['nativeClock'] > before_tail.get('nativeClock', -1)
+                            or not _ground_conservation(start, prep) or len(pickups) != 1
+                            or not isinstance(placements, list) or len(placements) != 1
+                            or not _number(placements[0].get('nativeClock')) or placements[0]['nativeClock'] > start['nativeClock']
+                            or not _matches(pickups[0], dict(kind='ISInventoryTransferAction', itemId=items['bag'],
+                                itemType='Base.Bag_Schoolbag', state='earned', started=True, phase='cleanup'))):
+                        issues.append('Fitness bag recovery lacks exact completed native pickup receipt: ' + case)
+            if case == 'pickup-cancel-restore':
+                initial = command.get('pickupCancelInventory', {})
+                if (not _inventory(initial) or initial['primary'] != prep['inventory']['primary']
+                        or initial['secondary'] != prep['inventory']['secondary'] or not _same(initial['worn'], prep['inventory']['worn'])
+                        or not any(_storage(command.get('pickupCancelStorage'), prep, 'root', fetched) for fetched in (False, True))):
+                    issues.append('Fitness pickup cancellation removed hands/bag before pickup settled: ' + case)
+            elif not any(_matches(step, dict(kind='ISDropWorldItemAction', itemId=items['bag'], itemType='Base.Bag_Schoolbag',
+                                             state='earned', started=True, observedPreparation=True)) for step in command.get('settlement', {}).get('steps', [])):
+                issues.append('Fitness cancellation lacks confirmed native bag placement: ' + case)
+        if case == 'placement-cancel-restore':
+            placement = command.get('placementCancel', {})
+            square = placement.get('square', {})
+            if (command.get('placementCancelled') is not True or not _matches(placement, dict(id=items['bag'], kind='Base.Bag_Schoolbag', started=True, isPlaceItem=True))
+                    or not _number(placement.get('progress')) or not 0 < placement['progress'] < 1
+                    or not _storage(placement.get('storage'), prep, 'root', True)
+                    or not isinstance(square, dict) or set(square) != {'x','y','z'}
+                    or not all(type(square[key]) is int for key in square)
+                    or isinstance(placements, list) and placements and not _matches(placements[0].get('storage', {}).get('world'), square)):
+                issues.append('Fitness cancellation did not target exact active native bag placement: ' + case)
     last_stop = None
     for record in records:
         before, after, rep = record.get('before'), record.get('after'), record.get('lastRep')

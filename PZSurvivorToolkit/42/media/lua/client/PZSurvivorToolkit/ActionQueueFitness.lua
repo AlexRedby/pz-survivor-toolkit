@@ -231,8 +231,7 @@ local function preparation(action,saved,kind,storage)
   observed=function(value,before)
    local player=value.character;local item=root(player,ref)
    if kind=='drop' then
-    local grounded=Equipment.ground(player,ref)
-    return not item and grounded~=nil and grounded:getWorldItem():getSquare()==before.square
+    return not item and Equipment.placed(ref,before.square)~=nil
    end
    if not item then return false end
    if kind=='pickup' then return item:getContainer()==mode.destination end
@@ -294,8 +293,11 @@ local function cleanup(player,saved)
  end
  local parent=ISTimedActionQueue.queues[player].current
  Equipment.pickups(player,storage,function(action,ref)
-  add(action,saved,'cleanup');records[action].storage=ref
-  Settlement.observeCleanupTransfer(action,parent)
+  tag(action,saved,'cleanup');records[action].storage=ref
+  action.toolkitQueueOperation=parent.toolkitQueueOperation
+  -- Bind the earned native pickup before enqueue; unsupported cleanup may not
+  -- run without its authoritative continuation gate.
+  if Settlement.observeCleanupTransfer(action,parent) then ISTimedActionQueue.add(action) end
  end)
  add(command(player,restore,saved,'cleanup'),saved,'cleanup')
 end

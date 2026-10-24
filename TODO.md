@@ -75,9 +75,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 # Fitness preparation live verification
 
-- [ ] Integrate main's ground-storage preparation with earned native drop effects, confirmed cleanup pickups and inherited restoration duties. Rebind an original source bag only through its private exact owner identity after confirmed pickup, preserving native costs, favourite flags, missing/occupied storage and queue-disabled behavior.
-- [ ] Reconcile source-backed Fitness tests and native observation with prop pickup before stowing storage. Count real native return starts by exact live IDs instead of tick polling; retain all original failed reports and native timer/order/replica baseline failures.
-- [ ] Run the selected `fitness` cases `empty,closed-ui-restore,active-cancel-restore,pickup-cancel-restore` in full-pack macOS SP and two-client menu Host with matching queue-disabled controls after an awake display is available. Use the prepared plan in this chat's isolated investigation, with fresh run snapshots. Require exact hand/bag/activation restoration before the independent reader, confirmed pickup/return, no duplicate return or replayed workout and clean logs before delivering the confirmed-effect migration. Do not count the display-blocked startup attempts as gameplay verification.
+- [ ] Run `closed-ui-restore,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore` in disposable full-pack macOS SP and two-client menu Host with matching queue-disabled controls on the integrated ground-storage code. Require exact hand/bag/favourite/content/activation restoration before the independent reader, confirmed native drop and recovery, one shared pickup/return episode and no replayed workout with clean runtime logs. Preserve original failed runs and native timing/order/replica failures; do not reclassify them as passes. Deliver the migration only after the affected Toolkit gates pass.
 
 # Extend cancelled queue recovery
 

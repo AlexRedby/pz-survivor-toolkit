@@ -153,6 +153,7 @@ function Settlement.operationState(action)
     for _, step in ipairs(record.steps) do
         result.steps[#result.steps + 1] = {phase = step.phase, state = step.state, started = step.started == true,
             observedPreparation = step.preparation ~= nil, kind = step.action.Type,
+            plannedTransfer = step.returning ~= nil, transferDirection = step.returning and step.returning.direction,
             itemId = step.item and step.item.id, itemType = step.item and step.item.fullType}
     end
     result.borrowings = {}
@@ -313,7 +314,8 @@ function Settlement.remember(scope, action, contract)
     if scope.seen[action] then return false end
     scope.seen[action] = true
     local task = scope.tasks[token]
-    if not task then task = {items = {}, pickups = {}}; scope.tasks[token] = task end
+    if not task then task = {items = {}, pickups = {}, actions = {}}; scope.tasks[token] = task end
+    task.actions[action] = true
     if not contract or contract.knownInputs == false or contract.dynamicInputs or contract.dynamicInputsByType then
         task.unknownInputs = true
     end
@@ -761,13 +763,30 @@ end
 -- The exact native pickup proves its original owner without relying on the
 -- older enqueue-only pickup map. Competing task claims still prevent exclusive
 -- cleanup; this classification grants no operation edit permission.
+local function restoringBorrowing(scope, task, candidate)
+    local present = false
+    for action in pairs(task.actions or {}) do
+        present = true
+        local record = operation(scope.character, action.toolkitQueueOperation)
+        local step = record and record.actions[action]
+        if not step or not step.required or step.phase ~= "cleanup" then return false end
+        local owned = false
+        for _, previous in ipairs(step.prerequisites or {}) do
+            if previous == candidate.step and previous.state == "earned" then owned = true; break end
+        end
+        if not owned then return false end
+    end
+    return present
+end
+
 sharedBorrowing = function(scope, candidate)
     if not scope.tasks[candidate.owner] then return true end
     for token, task in pairs(scope.tasks) do
         local pickup = task.pickups[candidate.id]
         if pickup and (pickup.ambiguous or pickup.fullType ~= candidate.fullType
             or pickup.container ~= candidate.source or token ~= candidate.owner) then return true end
-        if token ~= candidate.owner and claimedInput(scope, task, candidate.id) then return true end
+        if token ~= candidate.owner and claimedInput(scope, task, candidate.id)
+            and not restoringBorrowing(scope, task, candidate) then return true end
     end
     return false
 end
@@ -1045,7 +1064,7 @@ function Settlement.observePlannedReturns()
     local function guard(action)
         local policy = Toolkit.ActionQueuePolicy
         return getmetatable(action) == ISInventoryTransferAction and policy and policy.matchesNative(action)
-            and policy.isOrdinaryTransfer(action)
+            and (policy.isOrdinaryTransfer(action) or Settlement.isCleanupPickup(action))
     end
     local previous = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
     transfers.observeTransfers(function(action) Settlement.refreshPlannedReturn(action) end,
@@ -1311,20 +1330,48 @@ end
 -- An earned ground placement may require a native floor pickup before equipment
 -- restoration. Observe that cleanup transaction without creating a new borrowing
 -- obligation that would put the recovered bag back on the floor.
+function Settlement.isCleanupPickup(action)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    local planned = step and step.returning
+    return step and step.required == true and step.phase == "cleanup" and planned and planned.direction == "pickup"
+        and planned.preparation and planned.preparation.state == "earned"
+        and action.Type == "ISInventoryTransferAction" and sameMember(action.item, planned.item)
+        and action.srcContainer == planned.source and action.destContainer == planned.destination
+        and planned.source:getType() == "floor" and planned.destination == record.character:getInventory() or false
+end
+
 function Settlement.observeCleanupTransfer(action, parent)
-    if not action or action.Type ~= "ISInventoryTransferAction" or not action.item
-        or not action.srcContainer or action.destContainer ~= action.character:getInventory()
-        or action.srcContainer == action.destContainer or action.item:getContainer() ~= action.srcContainer
-        or not Toolkit.ActionQueuePolicy.matchesNative(action)
-        or not Toolkit.ActionQueuePolicy.isOrdinaryTransfer(action)
-        or not Settlement.inheritCleanup(action, parent) then return false end
+    local queue = parent and ISTimedActionQueue.queues[parent.character]
+    local policy = Toolkit.ActionQueuePolicy
+    if not action or action.Type ~= "ISInventoryTransferAction" or not action.item or not parent
+        or not queue or queue.current ~= parent or queue.queue[1] ~= parent
+        or parent.Type ~= "ISQueueActionsAction" or not requiredCleanup(parent, true)
+        or action.character ~= parent.character or action.toolkitQueueOperation ~= parent.toolkitQueueOperation
+        or not action.srcContainer or action.srcContainer:getType() ~= "floor"
+        or action.destContainer ~= action.character:getInventory() or action.item:getContainer() ~= action.srcContainer
+        or not policy or not policy.matchesCleanupPickupBinding(action) then return false end
+    local parentRecord = operation(parent.character, parent.toolkitQueueOperation)
+    local preparation
+    for _, previous in ipairs(parentRecord.actions[parent].prerequisites or {}) do
+        if previous.state == "earned" and previous.phase == "prepare" and previous.preparation
+            and previous.action.Type == "ISDropWorldItemAction" and sameMember(action.item, previous.item) then
+            preparation = previous; break
+        end
+    end
+    local world = action.item:getWorldItem()
+    local square = preparation and preparation.preparation.before and preparation.preparation.before.square
+    if not preparation or not square or not world or world:getItem() ~= action.item or world:getSquare() ~= square
+        or not square:getWorldObjects():contains(world) then return false end
     local step = stepProof(Settlement.track(action, "cleanup"))
     if step.returning then return false end
     Toolkit.BulkActions.guardTransfer(action)
     local scope, owner = Settlement.deferred(action.character, action.toolkitQueueOperation), action.toolkitQueueOperation
     local obligation = {token = owner}
     obligation[obligationScope] = function(value) if value == obligation then return scope, owner, "pickup" end end
-    step.returning = {obligation = obligation, item = {id = action.item:getID(), fullType = action.item:getFullType()},
+    step.kind, step.required, step.prerequisites = action.Type, true, parentRecord.actions[parent].prerequisites
+    step.item = {id = action.item:getID(), fullType = action.item:getFullType()}
+    step.returning = {obligation = obligation, item = step.item, direction = "pickup", preparation = preparation,
         source = action.srcContainer, destination = action.destContainer}
     return true
 end

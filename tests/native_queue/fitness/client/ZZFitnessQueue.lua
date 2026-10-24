@@ -12,7 +12,7 @@ local T=PZSurvivorToolkit
 local API,Ops=T.ActionQueue,T.ActionQueueOperations
 local state,authority,previous,ids,receipt,mutation,command,ui,front,tail,requests,seen,ack,progressSeen,menuGate
 local started,done,phase,index,failed,since,quiet,idle=false,false,'prepare',1,0,0,nil,0
-local peerCase,peerBook,peerComplete,actor,stopReached,returnSeen
+local peerCase,peerBook,peerComplete,actor,stopReached,returnSeen,recoverySeen,recoveryActions
 local ready,setupSince=false,0
 local peersReady,peersReceipt=false,nil
 local function case()return config.cases[index]end
@@ -21,13 +21,32 @@ local function exerciseForCase(id)return id=='burpees-30'and 'burpees'or (id=='m
 local function immediate(id)return id=='empty'or id=='active-cancel'or id=='burpees-30'or F.restorationCase(id)end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
--- The shared native begin boundary runs before ISReadABook allocates/starts,
+-- The shared native begin boundary runs before native actions allocate/start,
 -- including queue-disabled mode. Observation changes no callback or queue work.
 assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{started=function(action)
- if command and state and F.restorationCase(case())and action.Type=='ISReadABook'and action.item==state.items.tail
-  and action.character==getPlayer()then
+ if not command or not state or not F.restorationCase(case())then return end
+ if action.Type=='ISEquipWeaponAction'and getmetatable(action)==ISEquipWeaponAction and action.character==state.player
+  and action.item and action.item:getID()==state.ids.items.dumbbell and action.item:getFullType()=='Base.DumbBell'then
+  command.propEquipObserved=true
+ end
+ local returned=F.observeReturnStart(state,action,returnSeen)
+ if returned then
+  command.returnCount=command.returnCount+1;returned.ordinal=command.returnCount
+  command.returnStarts[#command.returnStarts+1]=returned
+ end
+ local recovered=F.observeRecoveryStart(state,action,recoverySeen)
+ if recovered then
+  recovered.ordinal=#command.recoveryStarts+1;command.recoveryStarts[#command.recoveryStarts+1]=recovered
+  recoveryActions[#recoveryActions+1]=action
+ end
+ if action.Type=='ISReadABook'and action.item==state.items.tail and action.character==getPlayer()then
   command.beforeTail={inventory=F.inventory(action.character),activation=F.activation(action.character),nativeClock=O.clock(),
-   callback='ISBaseTimedAction.begin'}
+   callback='ISBaseTimedAction.begin',storage=F.storage(action.character,state.ids.items.bag)}
+ end
+end,finish=function(action,phase,succeeded)
+ if not isClient()and not isServer()and command and state and F.restorationCase(case())
+  and action.Type=='ISDropWorldItemAction'and action.item and action.item:getID()==state.ids.items.bag and phase=='complete'then
+  O.placements[#O.placements+1]=F.placement(action.character,state.ids.items.bag,'ISDropWorldItemAction.complete',succeeded==true)
  end
 end}),'fitness native reader boundary observer unavailable')
 local function emit(row)
@@ -145,14 +164,14 @@ local function enqueue(exercise)
  return first,requestAction
 end
 local function dispatch()
- local id=case();requests,seen,ack,progressSeen,stopReached,returnSeen={},{},{},{},{},{}
+ local id=case();requests,seen,ack,progressSeen,stopReached,returnSeen,recoverySeen,recoveryActions={},{},{},{},{},{},{},{}
  command={menuDispatched=true,nativeDurations=true,minutes=minutes(),frontMinutes=immediate(id)and 0 or 12,
   waitingNoExercise=true,waitingNoClinicalEffects=true,activeObserved=false,activeCancelled=false,pendingCancelled=false,
   reordered=false,closedUI=false,startedOrder={},activeAcks={},terminalAcks={},progressSamples={},queueDrained=false}
  if not immediate(id)then front=read(state.items.front)end
  local first=enqueue(exerciseForCase(id))
  if id=='sequential'then enqueue('pushups')end
- if F.restorationCase(id)then command.propEquipObserved=false;command.returnCount=0 end
+ if F.restorationCase(id)then command.propEquipObserved=false;command.returnCount=0;command.returnStarts={};command.recoveryStarts={} end
  tail=read(state.items.tail)
  command.waitStartMS=O.clock();command.initialClinical=O.clinical(getPlayer())
  if front then command.waitingNoExercise=not getPlayer():getFitness():getCurrentExe()end
@@ -178,6 +197,7 @@ local function observe()
   command.borrowedTransferProgress=true;command.borrowedTool=state.ids.items.dumbbell
   command.borrowedSourceBag=state.ids.items.bag
   if case()=='pickup-cancel-restore'and not command.pickupCancelled then
+   command.pickupCancelInventory=F.inventory(player);command.pickupCancelStorage=F.storage(player,state.ids.items.bag)
    command.pickupCancel={id=current.item:getID(),kind=current.item:getFullType(),source=state.ids.items.bag,
     destination='root',progress=current:getJobDelta(),started=current:isStarted(),transaction=current.transactionId or 0}
    if native then ui:onClick(ui.cancel);command.cancelCallback='ISFitnessUI:CANCEL'
@@ -186,7 +206,18 @@ local function observe()
    assert(queue():indexOf(tail)~=-1,'pickup cancellation removed independent tail')
   end
  end
+ if case()=='placement-cancel-restore'and current and current.Type=='ISDropWorldItemAction'and current.item
+  and current.item:getID()==state.ids.items.bag and current:isStarted()and current:getJobDelta()>0 and not command.placementCancelled then
+  command.placementCancel={id=current.item:getID(),kind=current.item:getFullType(),progress=current:getJobDelta(),started=true,
+   isPlaceItem=current.isPlaceItem==true,square={x=current.sq:getX(),y=current.sq:getY(),z=current.sq:getZ()},storage=F.storage(player,state.ids.items.bag),inventory=F.inventory(player)}
+  if native then ui:onClick(ui.cancel);command.cancelCallback='ISFitnessUI:CANCEL'
+  else assert(API.cancelOperation(queue(),current),'in-flight fitness placement cancellation rejected');command.cancelCallback='ActionQueue.cancelOperation'end
+  command.placementCancelled=true
+  assert(queue():indexOf(tail)~=-1,'placement cancellation removed independent tail')
+ end
  if not native and F.restorationCase(case())then
+  command.recoverySettlements={}
+  for _,action in ipairs(recoveryActions)do command.recoverySettlements[#command.recoverySettlements+1]=Settlement.operationState(action)or false end
   local status=Settlement.operationState(requests[1])
   if status then
    command.settlement=status
@@ -201,17 +232,9 @@ local function observe()
     for _,step in ipairs(status.steps)do
      if step.observedPreparation then count=count+1;if step.state~='earned'then earned=false end end
     end
-    if earned and count==5 then command.confirmedPreparation=true;command.preparationAtCancel=status end
+    if earned and count==6 then command.confirmedPreparation=true;command.preparationAtCancel=status end
    end
   end
- end
- if F.restorationCase(case())and current and current.Type=='ISInventoryTransferAction'and current.item==state.items.dumbbell
-  and current.srcContainer==player:getInventory()and current.destContainer==state.items.bag:getItemContainer()and current:isStarted()
-  and not returnSeen[current]then
-  returnSeen[current]=true;command.returnCount=command.returnCount+1
- end
- if F.restorationCase(case())and current and current.item==state.items.dumbbell and current.Type=='ISEquipWeaponAction'and current:isStarted()then
-  command.propEquipObserved=true
  end
  if front and queue():indexOf(front)~=-1 then
   command.waitMS=O.clock()-command.waitStartMS
@@ -278,7 +301,7 @@ end
 local function finishCase()
  local localInventory=F.inventory(getPlayer())
  command.queueDrained=empty();command.clientInventory=localInventory
- if F.restorationCase(case())then command.clientActivation=F.activation(getPlayer())end
+ if F.restorationCase(case())then command.clientActivation=F.activation(getPlayer());command.clientStorage=F.storage(getPlayer(),state.ids.items.bag)end
  command.clientCurrentExerciseCleared=not getPlayer():getFitness():getCurrentExe()
  local problem
  if not receipt.tailRead then problem='independent-tail-not-preserved'
@@ -341,7 +364,7 @@ Events.OnTick.Add(function()
     end
     getPlayer():getStats():set(CharacterStat.ENDURANCE,1);getPlayer():getStats():set(CharacterStat.FATIGUE,0)
    end
-   if F.restorationCase(case())and not state.items.hammer:isActivated()then return end
+   if F.restorationCase(case())and (not state.items.hammer:isActivated()or not state.items.bag:isFavorite())then return end
    if F.borrowedCase(case())and (getPlayer():getPrimaryHandItem()~=state.items.hammer
     or getPlayer():getSecondaryHandItem()~=state.items.screwdriver or getPlayer():getWornItem(state.items.bag:canBeEquipped())~=state.items.bag)then return end
    open();ui.selectedExe=exerciseForCase(case())

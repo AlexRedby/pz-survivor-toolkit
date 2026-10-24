@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -91,15 +91,23 @@ its failed receipt and recovers only after the client confirms publication of th
 failed case. This allows later controls to run; it never turns the failed case
 into a pass or changes the recorded clinical/tail observations.
 
-The focused `active-cancel-restore` and `pickup-cancel-restore` cases start with an
+The focused `active-cancel-restore`, `pickup-cancel-restore` and
+`placement-cancel-restore` cases start with an
 active exact-ID Torch and screwdriver held, a schoolbag worn, and the dumbbell
-inside that bag. Active cancellation waits for all four real native equipment
-preparation effects to be earned, confirmed prop pickup, real exercise repetitions
+inside that bag together with the unused front book as conserved contents. The
+bag is a favourite and must keep that flag on both replicas. Active cancellation
+waits for six confirmed native preparation effects in order: prop pickup, both
+original hand removals, bag unequip, actual ground placement and prop equip. It
+also waits for real exercise repetitions
 and (in Toolkit Host) its started acknowledgement. Pickup cancellation instead
-targets the actual positive-progress native transfer and its live Host transaction.
-Toolkit must finish that pickup, return the same dumbbell exactly once, restore
+targets the actual positive-progress native transfer and its live Host transaction,
+before either hand or the worn bag is removed. Placement cancellation targets a
+real positive-progress native `ISDropWorldItemAction`. Toolkit must finish the
+atomic placement, recover the same world bag through a completed native transfer,
+then restore equipment and return the prop. Neither early-cancel case may equip
+the prop or execute a workout. Toolkit must finish the borrowed prop pickup, return the same dumbbell exactly once, restore
 both original held items, bag and Torch activation before an independent reader,
-and never equip the prop or execute a workout in the pickup-cancel case. Value-only
+and preserve the independent reader. Value-only
 settlement snapshots prove native callback/transaction-confirmed effects; queue
 disappearance is never a receipt. A read-only observer at the shared native begin boundary snapshots the original
 equipment before the real reader begins, in both queue modes. The Host reader's
@@ -116,3 +124,13 @@ preparation inventory and activation. Native pre-reader equipment and activation
 snapshots retain the observed baseline differences; only Toolkit requires complete
 restoration before the reader begins. The native closed-UI control's existing
 constructor-clock and duration failures remain failures.
+
+World storage receipts verify the exact bag ID/type, native world-object linkage,
+placement square, favourite flag and conserved front-book contents. The prop is
+separately accounted for in root inventory while its bag is on the ground. SP
+records actual placement completion through the shared read-only boundary; Host
+records it after the real server `complete`, delegated exactly once. Recovery
+requires an actual native begin witness plus the sealed completed pickup state;
+root/world disappearance alone proves no effect. Queue-disabled CANCEL during
+placement is the real native no-op, so its workout, order and timer failures remain
+visible under the same guards.

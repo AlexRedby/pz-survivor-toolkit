@@ -1,6 +1,6 @@
 local O=require 'QueueFitnessObservation'
 local F={}
-function F.restorationCase(id)return id=='active-cancel-restore'or id=='pickup-cancel-restore'end
+function F.restorationCase(id)return id=='active-cancel-restore'or id=='pickup-cancel-restore'or id=='placement-cancel-restore'end
 function F.borrowedCase(id)return id=='closed-ui-restore'or F.restorationCase(id)end
 function F.activation(player)
  local rows={}
@@ -13,6 +13,60 @@ function F.activation(player)
  end
  scan(player:getInventory())
  return rows
+end
+-- A start witness is independent of the later completed native borrowing receipt.
+-- Resolve live endpoints by exact ID/type; Host may replace the original item replicas.
+function F.observeReturnStart(state,action,seen)
+ if not state or not seen or not action or seen[action]or action.character~=state.player
+  or action.Type~='ISInventoryTransferAction'or getmetatable(action)~=ISInventoryTransferAction or not action.item then return end
+ local player=state.player;local inventory=player:getInventory();local ids=state.ids.items
+ local item=inventory:getItemById(ids.dumbbell);local bag=inventory:getItemById(ids.bag)
+ if action.item:getID()~=ids.dumbbell or action.item:getFullType()~='Base.DumbBell'
+  or not item or item:getID()~=ids.dumbbell or item:getFullType()~='Base.DumbBell'or item:getContainer()~=inventory
+  or not bag or bag:getID()~=ids.bag or bag:getFullType()~='Base.Bag_Schoolbag'
+  or action.srcContainer~=inventory or action.destContainer~=bag:getItemContainer()then return end
+ seen[action]=true
+ return {id=ids.dumbbell,kind='Base.DumbBell',source='root',destination=ids.bag,
+  callback='ISBaseTimedAction.begin',nativeClock=O.clock()}
+end
+-- Exact carried/world storage witnesses; never infer a placement from queue removal.
+function F.storage(player,id)
+ local inventory=player:getInventory();local bag=inventory:getItemById(id);local count=0;local endpoint,world=false,false
+ if bag and bag:getContainer()==inventory then count=1;endpoint='root'else bag=nil end
+ local square=player:getCurrentSquare();local objects=square and square:getWorldObjects()
+ for i=0,(objects and objects:size()or 0)-1 do
+  local object=objects:get(i);local item=instanceof(object,'IsoWorldInventoryObject')and object:getItem()
+  if item and item:getID()==id then
+   count=count+1;bag=item;endpoint='world'
+   world={x=square:getX(),y=square:getY(),z=square:getZ(),linked=object:getSquare()==square and item:getWorldItem()==object}
+  end
+ end
+ local contents={}
+ local function scan(container,parent)
+  for i=0,container:getItems():size()-1 do
+   local item=container:getItems():get(i);contents[#contents+1]={id=item:getID(),kind=item:getFullType(),container=parent}
+   if instanceof(item,'InventoryContainer')then scan(item:getItemContainer(),item:getID())end
+  end
+ end
+ if bag and instanceof(bag,'InventoryContainer')then scan(bag:getItemContainer(),id)end
+ table.sort(contents,function(a,b)return a.id<b.id end)
+ return {id=id,kind=bag and bag:getFullType()or false,favorite=bag and bag:isFavorite()or false,
+  endpoint=endpoint,occurrences=count,contents=contents,world=world}
+end
+function F.observeRecoveryStart(state,action,seen)
+ if not state or not seen or not action or seen[action]or action.character~=state.player
+  or action.Type~='ISInventoryTransferAction'or getmetatable(action)~=ISInventoryTransferAction or not action.item then return end
+ local bag=state.ids.items.bag;local player=state.player
+ if action.item:getID()~=bag or action.item:getFullType()~='Base.Bag_Schoolbag'
+  or not action.srcContainer or action.srcContainer:getType()~='floor'or action.destContainer~=player:getInventory()then return end
+ local storage=F.storage(player,bag)
+ if storage.endpoint~='world'or storage.occurrences~=1 or storage.kind~='Base.Bag_Schoolbag'or not storage.world.linked then return end
+ seen[action]=true
+ return {id=bag,kind='Base.Bag_Schoolbag',source='world',destination='root',storage=storage,inventory=F.inventory(player),
+  callback='ISBaseTimedAction.begin',nativeClock=O.clock()}
+end
+function F.placement(player,id,callback,succeeded)
+ return {callback=callback,succeeded=succeeded,nativeClock=O.clock(),storage=F.storage(player,id),inventory=F.inventory(player)}
 end
 local function identity(item)return item and item:getID()or false end
 function F.requestedAction(action,panel,native,exercise)
@@ -69,8 +123,9 @@ function F.prepare(player,id,previous)
   end
  end
  local state={case=id,player=player,items={},ids={case=id,items={}}}
- for _,name in ipairs({'front','tail','bag','hammer','screwdriver','dumbbell'})do
-  local destination=F.borrowedCase(id)and name=='dumbbell'and state.items.bag:getItemContainer()or player:getInventory()
+ local order=F.restorationCase(id)and {'bag','front','tail','hammer','screwdriver','dumbbell'}or {'front','tail','bag','hammer','screwdriver','dumbbell'}
+ for _,name in ipairs(order)do
+  local destination=(F.borrowedCase(id)and name=='dumbbell'or F.restorationCase(id)and name=='front')and state.items.bag:getItemContainer()or player:getInventory()
   local item=assert(destination:AddItem(F.restorationCase(id)and name=='hammer'and 'Base.Torch'or types[name]),'missing fitness fixture item '..name)
   state.items[name]=item;state.ids.items[name]=item:getID()
  end
@@ -86,9 +141,10 @@ function F.prepare(player,id,previous)
  end
  if F.restorationCase(id)then
   assert(state.items.hammer:canBeActivated(),'fitness activation fixture requires native Torch')
+  state.items.bag:setFavorite(true)
   state.items.hammer:setCurrentUses(state.items.hammer:getMaxUses());state.items.hammer:setActivated(true)
  end
- O.reset(player,id);O.tailID=state.ids.items.tail;state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player)
+ O.reset(player,id);O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.restorationCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.restorationCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
  if isServer()then
   -- InventoryContainer serialization includes its children. Send the owning root bag
   -- once; sending the nested dumbbell again would create a duplicate replica.
@@ -122,7 +178,7 @@ function F.receipt(state)
  result.case=state.case;result.inventory=F.inventory(player);result.removed=state.removed or false
  result.tailRead=player:getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
  result.frontRead=player:getAlreadyReadPages(state.items.front:getFullType())==state.items.front:getNumberOfPages()
- result.activation=F.activation(player);result.before=state.ids.before;result.peerConnected=not isServer()
+ result.activation=F.activation(player);if F.restorationCase(state.case)then result.storage=F.storage(player,state.ids.items.bag)end;result.before=state.ids.before;result.peerConnected=not isServer()
  if isServer()then
   local online=getOnlinePlayers()
   for i=0,online:size()-1 do if online:get(i):getUsername()=='client2'then result.peerConnected=true end end
@@ -160,4 +216,6 @@ function F.releaseEquipment(state)
  if isServer()then sendClothing(player,state.items.bag:canBeEquipped(),player:getWornItem(state.items.bag:canBeEquipped()));sendEquip(player)end
 end
 O.inventory=F.inventory;O.activation=F.activation
+O.storage=function(player)return F.storage(player,O.bagID)end
+O.placement=function(player,callback,succeeded)return F.placement(player,O.bagID,callback,succeeded)end
 return F

@@ -1893,4 +1893,144 @@ for _, changed in ipairs({'source', 'generation', 'retired'}) do
         changed .. ': rejecting reuse created a replacement borrowing episode')
 end
 
+-- Floor cleanup is an earned-drop capability, not a generic floor edit grant.
+-- Native transfer authority and exact replication still gate the following work.
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'completed', 'unearned', 'wrong-world', 'different-item', 'changed-binding', 'rejected', 'timeout', 'reset'}) do
+        local s = setup(client)
+        s.root.isExistYet = function() return true end
+        s.source.getType = function() return 'floor' end
+        local observer
+        PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+        local value = s.item(211, s.root);s.root.items[211] = value
+        local world, square = {}, {}
+        world.getItem = function() return value end
+        world.getSquare = function() return square end
+        square.getWorldObjects = function() return {contains = function(_, item) return item == world end} end
+        value.getWorldItem = function() return world end
+        local drop = s.action();drop.Type, drop.action, drop.item = 'ISDropWorldItemAction', {}, value
+        s.queue.current, s.queue.queue = drop, {drop, s.tail}
+        local handle = s.settlement.observePreparation(drop, {guard = function() return true end,
+            capture = function() return {square = square} end, observed = function() return value.container == s.source end})
+        s.settlement.started(drop);observer.started(drop)
+        if client then drop.toolkitNativeTransaction,drop.toolkitNativeKind = 75,drop.Type;s.receipt(drop,'started') end
+        observer.begin(drop,'perform')
+        s.root.items[211],s.source.items[211],value.container = nil,value,s.source
+        if outcome ~= 'unearned' then
+            if client then s.receipt(drop,'completed') end
+            observer.finish(drop,client and 'perform' or 'complete',true)
+            assert(s.settlement.earned(handle))
+        end
+        local parent = s.action();parent.Type = 'ISQueueActionsAction'
+        assert(s.settlement.cleanup(parent,handle))
+        s.queue.current,s.queue.queue = parent,{parent,s.tail}
+        local action = s.action();action.Type,action.action,action.item = 'ISInventoryTransferAction',{},value
+        action.srcContainer,action.destContainer,action.queueList,action.transactionId = s.source,s.root,{{items={value}}},19
+        local policy=PZSurvivorToolkit.ActionQueuePolicy
+        policy.inspect=function(current)
+            if current.Type == 'ISInventoryTransferAction' then return s.settlement.isCleanupPickup(current) and {} or nil end
+            return {}
+        end
+        policy.matchesCleanupPickupBinding=function(current) return outcome~='changed-binding' and current==action end
+        policy.matchesNative=function(current) return s.settlement.isCleanupPickup(current) end
+        policy.isOrdinaryTransfer=function() return false end
+        if outcome=='wrong-world' then world.getSquare=function() return {} end end
+        if outcome=='different-item' then action.item=s.item(212,s.source);action.item.getWorldItem=function() return world end end
+        local allowed=outcome~='unearned' and outcome~='wrong-world' and outcome~='different-item' and outcome~='changed-binding'
+        assert(s.settlement.observeCleanupTransfer(action,parent)==allowed,outcome..': only exact earned floor recovery may be observed')
+        assert(s.settlement.isCleanupPickup(action)==allowed)
+        local copy={};for key,v in pairs(action)do copy[key]=v end
+        assert(not s.settlement.isCleanupPickup(copy),'copied safe fields cannot authorize a floor pickup')
+        if allowed then
+            s.queue.current,s.queue.queue=action,{action,s.tail}
+            if outcome=='rejected' and client then s.transaction.done,s.transaction.rejected=false,true end
+            assert(s.settlement.beginPlannedReturn(action,policy.matchesNative))
+            action.queueList,action.transactionId={},0
+            assert(s.settlement.finishPlannedReturn(action,true))
+            if outcome=='reset' then
+                s.queue.toolkitOperationGeneration=1
+                assert(not s.settlement.isCleanupPickup(action) and not s.settlement.requiredStep(action)
+                    and not s.settlement.operationState(action) and not s.settlement.plannedReturnMatches(action))
+            elseif outcome=='rejected' and client then
+                assert(s.settlement.completionState(s.queue,action)=='ready','a rejected native cleanup is isolated, never replayed')
+            else
+                assert(s.settlement.completionState(s.queue,action)=='waiting','native completion alone cannot replace replica proof')
+                if outcome=='timeout' then s.advance(30001);assert(s.settlement.completionState(s.queue,action)=='failed')
+                else
+                    s.source.items[211],s.root.items[211],value.container=nil,value,s.root
+                    assert(s.settlement.completionState(s.queue,action)=='ready')
+                    local state=s.settlement.operationState(action)
+                    local step=state.steps[#state.steps]
+                    assert(step.phase=='cleanup' and step.state=='earned' and step.plannedTransfer and step.transferDirection=='pickup')
+                    assert(#state.borrowings==0,'recovering a grounded bag must not borrow it back from the floor')
+                end
+            end
+        end
+    end
+end
+
+-- A source container can be reidentified only through its private exact owner
+-- after native pickup replaces that bag's Java/container replica.
+for _, client in ipairs({false,true}) do
+    for _, ownerState in ipairs({'replaced','different-type','not-carried','missing'})do
+        local s=setup(client)
+        s.root.isExistYet=function()return true end
+        local oldOwner=s.item(221,s.root);oldOwner.fullType='Base.Bag_Schoolbag'
+        oldOwner.getInventory=function()return s.source end
+        s.source.getContainingItem=function()return oldOwner end
+        s.root.items[221]=oldOwner
+        local value=s.item(222,s.source);s.source.items[222]=value
+        local pickup=s.action();pickup.Type,pickup.action,pickup.item='ISInventoryTransferAction',{},value
+        pickup.srcContainer,pickup.destContainer,pickup.queueList,pickup.transactionId=s.source,s.root,{{items={value}}},20
+        local scope=s.settlement.deferred(s.player,s.token)
+        assert(s.settlement.remember(scope,pickup,{knownInputs=true,items={[222]=true}}))
+        assert(s.settlement.preparePickup(scope,pickup))
+        local handle=s.settlement.track(pickup,'prepare')
+        s.queue.current,s.queue.queue=pickup,{pickup,s.tail}
+        local guard=function()return true end
+        assert(s.settlement.beginPickup(scope,pickup,guard))
+        s.source.items[222],s.root.items[222],value.container=nil,value,s.root
+        pickup.queueList,pickup.transactionId={},0
+        assert(s.settlement.finishPickup(scope,pickup,true) and s.settlement.earned(handle))
+        local fresh={items={},carried=ownerState~='not-carried',isExistYet=function()return true end}
+        fresh.getItemById=function(self,id)return self.items[id]end
+        local owner=s.item(221,s.root);owner.fullType=ownerState=='different-type' and 'Base.Bag_Other' or 'Base.Bag_Schoolbag'
+        owner.getInventory=function()return fresh end
+        s.root.items[221]=ownerState~='missing' and owner or nil
+        local parent=s.action();parent.Type='ISQueueActionsAction'
+        PZSurvivorToolkit.ActionQueuePolicy.inspect=function()return {}end
+        assert(s.settlement.cleanup(parent,handle))
+        s.queue.current,s.queue.queue=parent,{parent,s.tail}
+        ISTimedActionQueue.add=function(action)table.insert(s.queue.queue,2,action)end
+        if ownerState=='replaced' then
+            -- A cancelled workout cannot return its prop while its bag is still
+            -- on the ground. Its retained restoration later recovers that owner.
+            s.root.items[221]=nil
+            s.queue.current,s.queue.queue=s.current,{s.current,parent,s.tail}
+            assert(s.settlement.finish(s.queue,{action=s.current,token=s.token},s.discard))
+            assert(s.counts()==0 and s.queue.queue[2]==parent)
+            s.root.items[221]=owner
+            s.queue.current,s.queue.queue=parent,{parent,s.tail}
+            local child={Type='ISQueueActionsAction',character=s.player,toolkitQueueOperation=parent.toolkitQueueOperation}
+            assert(s.settlement.remember(scope,child,{knownInputs=true,items={[222]=true}}))
+            assert(not s.settlement.enqueueBorrowedReturn(handle),'an unproved new-token claim remains shared')
+            assert(s.settlement.inheritCleanup(child,parent))
+        end
+        local action=s.settlement.enqueueBorrowedReturn(handle)
+        assert((action~=nil)==(ownerState=='replaced'),ownerState..': source owner proof must remain exact and carried')
+        if action then
+            assert(action.destContainer==fresh and action.destContainer~=s.source)
+            s.queue.current,s.queue.queue=action,{action,s.tail}
+            action.action,action.transactionId,action.queueList={},21,{{items={value}}}
+            assert(s.settlement.beginPlannedReturn(action,guard))
+            s.root.items[222],fresh.items[222],value.container=nil,value,fresh
+            action.queueList,action.transactionId={},0
+            assert(s.settlement.finishPlannedReturn(action,true))
+            assert(s.settlement.completionState(s.queue,action)=='ready')
+            assert(s.settlement.operationState(pickup).borrowings[1].state=='completed')
+        end
+    end
+end
+
 print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')

@@ -539,6 +539,33 @@ reset()
 backpack=item('Bag_BigHikingBag',nil,'BACK');dumbbell=item('DumbBell',backpack.inner)
 player.worn.BACK=backpack
 pending,q=request('bicepscurl',10);expand(pending,q);workout=reachExercise(q)
+local cleanupBinding=policy.matchesCleanupPickupBinding
+local nativeEnqueue=ISTimedActionQueue.add
+local rejectedPickups,rejectedPropReturns=0,0
+policy.matchesCleanupPickupBinding=function()return false end
+ISTimedActionQueue.add=function(action)
+    if action.Type=='ISInventoryTransferAction'then
+        if action.srcContainer==floor then rejectedPickups=rejectedPickups+1 end
+        if action.item==dumbbell and action.destContainer~=player.inventory then rejectedPropReturns=rejectedPropReturns+1 end
+    end
+    return nativeEnqueue(action)
+end
+finish(q,workout)
+ISTimedActionQueue.add=nativeEnqueue
+policy.matchesCleanupPickupBinding=cleanupBinding
+assert(rejectedPickups==0 and rejectedPropReturns==0,
+    'rejected cleanup binding enqueued an unproved pickup or invented prop return')
+assert(backpack:getWorldItem() and #worlds==1 and not player.inventory:contains(backpack,true) and not player.worn.BACK,
+    'rejected cleanup binding recovered or re-equipped the dropped bag without proof')
+assert(dumbbell:getContainer()==player.inventory and not player.primary and not player.secondary,
+    'rejected bag pickup invented equipment restoration or returned the prop to an absent carrier')
+print('PASS rejected cleanup binding leaves exact grounded storage without unproved pickup or prop return')
+
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');dumbbell=item('DumbBell',backpack.inner)
+player.worn.BACK=backpack
+pending,q=request('bicepscurl',10);expand(pending,q);workout=reachExercise(q)
 local replica=item('Bag_BigHikingBag',nil,'BACK');player.inventory:Remove(replica)
 replica.id=backpack.id;replica.favorite=backpack.favorite
 replica.inner=container(replica)

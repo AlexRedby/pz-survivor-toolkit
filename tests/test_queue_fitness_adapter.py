@@ -18,6 +18,20 @@ def clinical(xp=0, endurance=1, regularity=0, stiffness=0):
                 timers=dict(legs=100, arms=100, chest=100, abs=100))
 
 
+def storage_snapshot(ids, inventory, endpoint='root', fetched=False):
+    return dict(id=ids['bag'], kind='Base.Bag_Schoolbag', favorite=True, endpoint=endpoint, occurrences=1,
+        contents=[dict(row) for row in inventory['items'] if row['container']==ids['bag'] and (not fetched or row['id']!=ids['dumbbell'])],
+        world=dict(x=1,y=2,z=0,linked=True) if endpoint=='world' else False)
+
+
+def ground_inventory(ids, inventory):
+    value=copy.deepcopy(inventory)
+    value['items']=[dict(row,container='root') if row['id']==ids['dumbbell'] else row for row in value['items']
+        if row['id']!=ids['bag'] and (row['container']!=ids['bag'] or row['id']==ids['dumbbell'])]
+    value.update(primary=False,secondary=False,worn=[row for row in value['worn'] if row['id']!=ids['bag']])
+    return value
+
+
 class FitnessAdapterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -38,11 +52,13 @@ class FitnessAdapterTests(unittest.TestCase):
                 inventory.update(primary=ids['hammer'], secondary=ids['screwdriver'], worn=[dict(id=ids['bag'], location='Back')])
                 next(row for row in inventory['items'] if row['id']==ids['dumbbell'])['container']=ids['bag']
             if case in fitness.RESTORATION_CASES:
+                next(row for row in inventory['items'] if row['id']==ids['front'])['container']=ids['bag']
                 types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
                              hammer='Base.Torch', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
                 for item in inventory['items']:item['kind']=types[next(key for key,value in ids.items() if value==item['id'])]
             prep = dict(case=case, items=ids, inventory=inventory, before=clinical())
-            if case in fitness.RESTORATION_CASES:prep['activation']={str(ids['hammer']):True}
+            if case in fitness.RESTORATION_CASES:
+                prep['activation']={str(ids['hammer']):True};prep['storage']=storage_snapshot(ids,inventory)
             if mp:
                 prep.update(peerBook=1000+n, peerOnlineID=2)
                 peers.append(dict(event='case', suite='fitness', kind='mp', mode=mode, actor='client2',
@@ -65,6 +81,9 @@ class FitnessAdapterTests(unittest.TestCase):
                     start_inventory=copy.deepcopy(inventory)
                     start_inventory.update(primary=ids['dumbbell'],secondary=False,worn=[])
                     next(row for row in start_inventory['items'] if row['id']==ids['dumbbell'])['container']='root'
+                    if case in fitness.RESTORATION_CASES:
+                        start_inventory=ground_inventory(ids,inventory);start_inventory.update(primary=ids['dumbbell'])
+                        record['startStorage']=storage_snapshot(ids,inventory,'world',True)
                     record['startEquipment']=start_inventory
             receipt = dict(case=case, inventory=final, before=prep['before'], clinical=clinical(10,.9,1,1) if records else clinical(),
                 records=records, violations=[], tailRead=True, frontRead=case not in fitness.IMMEDIATE_CASES, currentExerciseCleared=True,
@@ -89,29 +108,50 @@ class FitnessAdapterTests(unittest.TestCase):
             if case in fitness.RESTORATION_CASES:
                 command.update(beforeTail=dict(inventory=copy.deepcopy(final),activation=copy.deepcopy(prep['activation']),nativeClock=1000000,callback='ISBaseTimedAction.begin'),
                                cancelCallback='ISFitnessUI:CANCEL' if mode=='native' else 'ActionQueue.cancelOperation',
-                               clientActivation=copy.deepcopy(prep['activation']))
-                receipt['activation']=copy.deepcopy(prep['activation'])
+                               clientActivation=copy.deepcopy(prep['activation']),clientStorage=copy.deepcopy(prep['storage']))
+                receipt['activation']=copy.deepcopy(prep['activation']);receipt['storage']=copy.deepcopy(prep['storage'])
+                command['beforeTail']['storage']=copy.deepcopy(prep['storage'])
+                placed=mode=='native' or case!='pickup-cancel-restore'
+                receipt['placements']=[dict(callback='ISDropWorldItemAction.complete',succeeded=True,nativeClock=800000,
+                    storage=storage_snapshot(ids,inventory,'world',True),inventory=ground_inventory(ids,inventory))] if placed else []
                 if mode=='native':
                     # P4 restores after this reader; native timing and callbacks stay intact.
                     boundary=command['beforeTail']
-                    boundary['inventory'].update(primary=ids['dumbbell'],secondary=False,worn=[])
-                    next(row for row in boundary['inventory']['items'] if row['id']==ids['dumbbell'])['container']='root'
+                    boundary['inventory']=ground_inventory(ids,inventory);boundary['inventory'].update(primary=ids['dumbbell'])
+                    boundary['storage']=storage_snapshot(ids,inventory,'world',True)
                     boundary['activation'][str(ids['hammer'])]=False
                 if mode=='toolkit':
                     command.update(confirmedPickup=True,confirmedReturn=True,returnCount=1,propEquipObserved=case=='active-cancel-restore',confirmedPreparation=case=='active-cancel-restore',
-                        settlement=dict(phase='cleanup',steps=[dict(phase='prepare',state='earned',started=True)],
+                        settlement=dict(phase='cleanup',steps=[dict(phase='prepare',state='earned',started=True,kind='ISDropWorldItemAction',
+                            itemId=ids['bag'],itemType='Base.Bag_Schoolbag',observedPreparation=True)] if placed else [],
                             borrowings=[dict(id=ids['dumbbell'],fullType='Base.DumbBell',state='completed')]))
+                if mode=='toolkit':
+                    command['returnStarts']=[dict(ordinal=1,id=ids['dumbbell'],kind='Base.DumbBell',source='root',
+                        destination=ids['bag'],callback='ISBaseTimedAction.begin',nativeClock=900000)]
+                if mode=='toolkit':
+                    command['recoveryStarts']=[dict(ordinal=1,id=ids['bag'],kind='Base.Bag_Schoolbag',source='world',destination='root',
+                        callback='ISBaseTimedAction.begin',nativeClock=850000,storage=storage_snapshot(ids,inventory,'world',True),
+                        inventory=ground_inventory(ids,inventory))] if placed else []
+                    command['recoverySettlements']=[dict(steps=[dict(plannedTransfer=True,transferDirection='pickup',kind='ISInventoryTransferAction',
+                        itemId=ids['bag'],itemType='Base.Bag_Schoolbag',state='earned',started=True,phase='cleanup')])] if placed else []
                 if case=='active-cancel-restore' and mode=='toolkit':
                     command['preparationAtCancel']=dict(steps=[dict(observedPreparation=True,kind=kind,itemId=ids[name],
-                        itemType=types[name],state='earned',started=True) for kind,name in (('ISUnequipAction','hammer'),
-                        ('ISUnequipAction','screwdriver'),('ISUnequipAction','bag'),('ISInventoryTransferAction','dumbbell'),('ISEquipWeaponAction','dumbbell'))])
+                        itemType=types[name],state='earned',started=True) for kind,name in (('ISInventoryTransferAction','dumbbell'),('ISUnequipAction','hammer'),
+                        ('ISUnequipAction','screwdriver'),('ISUnequipAction','bag'),('ISDropWorldItemAction','bag'),('ISEquipWeaponAction','dumbbell'))])
                 if case=='pickup-cancel-restore':
+                    command.update(pickupCancelInventory=copy.deepcopy(inventory),pickupCancelStorage=copy.deepcopy(prep['storage']))
                     command.update(pickupCancelled=True,pickupCancel=dict(id=ids['dumbbell'],kind='Base.DumbBell',source=ids['bag'],
                         destination='root',started=True,progress=.25,transaction=5 if mp else 0))
+                if case=='placement-cancel-restore':
+                    cancel_inventory=copy.deepcopy(inventory)
+                    next(row for row in cancel_inventory['items'] if row['id']==ids['dumbbell'])['container']='root'
+                    cancel_inventory.update(primary=False,secondary=False,worn=[])
+                    command.update(placementCancelled=True,placementCancel=dict(id=ids['bag'],kind='Base.Bag_Schoolbag',started=True,isPlaceItem=True,
+                        progress=.25,square=dict(x=1,y=2,z=0),storage=storage_snapshot(ids,inventory,'root',True),inventory=cancel_inventory))
                 if mp:
                     receipt['tailStart']=dict(id=ids['tail'],kind='Base.BookFirstAid1',callback='ISReadABook.serverStart',
                         workouts=len(exercises),observerActive=False,inventory=copy.deepcopy(command['beforeTail']['inventory']),
-                        activation=copy.deepcopy(command['beforeTail']['activation']))
+                        activation=copy.deepcopy(command['beforeTail']['activation']),storage=copy.deepcopy(command['beforeTail']['storage']))
             raw.append(('PREPARED', prep))
             if case in ('missing-dumbbell', 'exhaustion'):
                 mutation = dict(case=case, removed=ids['dumbbell'] if case=='missing-dumbbell' else False,
@@ -173,7 +213,7 @@ class FitnessAdapterTests(unittest.TestCase):
             evidence=self.evidence();result=self.verify(evidence)
             with self.subTest(kind=kind):
                 self.assertEqual(result['issues'],[])
-                self.assertEqual([len(row['outcome']['receipt']['records']) for row in result['outcomes'][:2]],[1,1])
+                self.assertEqual([len(row['outcome']['receipt']['records']) for row in result['outcomes'][:3]],[1,1,1])
                 for row in evidence[0][1:-1]:
                     command=row['command'];prep=next(value for marker,value in evidence[1] if marker=='PREPARED' and value['case']==row['id'])
                     self.assertEqual(command['cancelCallback'],'ISFitnessUI:CANCEL')
@@ -196,6 +236,174 @@ class FitnessAdapterTests(unittest.TestCase):
                 with self.subTest(case=case,change=change):
                     issues=self.verify(evidence)['issues']
                     self.assertTrue(any(('exact inventory' if change=='prop-root' else 'settled equipment activation') in issue for issue in issues))
+
+    def test_return_start_witness_rejects_wrong_identity_endpoint_duplicates_and_late_start(self):
+        self.selection.update(kind='mp',clients=2,languages=['EN','RU'],options={'mp_host':True},cases=['pickup-cancel-restore'])
+        for change in ('absent','duplicate','wrong-id','wrong-type','wrong-source','wrong-bag','wrong-callback','late','nonfinite'):
+            evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command'];starts=command['returnStarts']
+            if change=='absent':command.pop('returnStarts')
+            elif change=='duplicate':starts.append(dict(starts[0],ordinal=2))
+            elif change=='wrong-id':starts[0]['id']+=99
+            elif change=='wrong-type':starts[0]['kind']='Base.Hammer'
+            elif change=='wrong-source':starts[0]['source']='floor'
+            elif change=='wrong-bag':starts[0]['destination']+=99
+            elif change=='wrong-callback':starts[0]['callback']='fixture-poll'
+            elif change=='late':starts[0]['nativeClock']=command['beforeTail']['nativeClock']+1
+            else:starts[0]['nativeClock']=float('nan')
+            with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_lua_native_return_begin_observes_recreated_host_items_without_polling_or_completing(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for native return begin checks')
+        lua=LuaRuntime()
+        lua.execute("""
+            package.preload['QueueFitnessObservation']=function()return {clock=function()return 900000 end}end
+            ISInventoryTransferAction={};root={items={}}
+            function root:getItemById(id)return self.items[id]end
+            player={getInventory=function()return root end}
+            function item(id,kind,container)
+             return {getID=function()return id end,getFullType=function()return kind end,getContainer=function()return container end}
+            end
+            local oldBagContainer={};local liveBagContainer={}
+            oldProp=item(10,'Base.DumbBell',root);liveProp=item(10,'Base.DumbBell',root)
+            oldBag=item(20,'Base.Bag_Schoolbag',root);oldBag.getItemContainer=function()return oldBagContainer end
+            liveBag=item(20,'Base.Bag_Schoolbag',root);liveBag.getItemContainer=function()return liveBagContainer end
+            root.items[10]=liveProp;root.items[20]=liveBag
+            state={player=player,ids={items={dumbbell=10,bag=20}},items={dumbbell=oldProp,bag=oldBag}}
+            function action()
+             return setmetatable({Type='ISInventoryTransferAction',character=player,item=item(10,'Base.DumbBell',root),
+              srcContainer=root,destContainer=liveBagContainer,isStarted=function()error('must not poll native start')end},ISInventoryTransferAction)
+            end
+        """)
+        lua.globals().fixture=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
+        lua.execute("""
+            local seen={};local first=action();local witness=fixture.observeReturnStart(state,first,seen)
+            assert(witness and witness.id==10 and witness.destination==20 and witness.callback=='ISBaseTimedAction.begin')
+            assert(first.item~=state.items.dumbbell and root.items[20]~=state.items.bag,'test needs replaced Host replicas')
+            -- A native transfer may complete before the next fixture tick. The start
+            -- witness remains true; this helper never fabricates its completion.
+            root.items[10]=nil
+            assert(not fixture.observeReturnStart(state,first,seen))
+            assert(seen[first] and witness.nativeClock==900000 and root.items[10]==nil)
+            root.items[10]=liveProp
+            local second=action();assert(fixture.observeReturnStart(state,second,seen),'distinct second native begin must be observable')
+            assert(seen[first] and seen[second],'a duplicate distinct return cannot collapse into one witness')
+            for _,change in ipairs({
+             function(a)a.character={}end,function(a)a.item=item(11,'Base.DumbBell',root)end,
+             function(a)a.item=item(10,'Base.Hammer',root)end,function(a)a.srcContainer={}end,
+             function(a)a.destContainer=state.items.bag:getItemContainer()end,function(a)setmetatable(a,{})end
+            })do local candidate=action();change(candidate)
+             assert(not fixture.observeReturnStart(state,candidate,{}),'wrong actor/identity/type/endpoint/class counted')
+            end
+        """)
+
+    def test_lua_world_bag_witness_uses_actual_linked_object_contents_and_recreated_recovery_item(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for world-bag recovery checks')
+        lua=LuaRuntime()
+        lua.execute("""
+            package.preload['QueueFitnessObservation']=function()return {clock=function()return 100 end}end
+            ISInventoryTransferAction={}
+            function list(values)return {values=values,size=function(self)return #self.values end,get=function(self,i)return self.values[i+1]end}end
+            function item(id,kind,container)
+             return {getID=function()return id end,getFullType=function()return kind end,getContainer=function()return container end}
+            end
+            instanceof=function(value,kind)return value and value.class==kind end
+            root={items=list({})};function root:getItems()return self.items end
+            function root:getItemById(id)for _,value in ipairs(self.items.values)do if value:getID()==id then return value end end end
+            floor={getType=function()return 'floor'end};bagContainer={items=list({})}
+            function bagContainer:getItems()return self.items end
+            local bagParent=floor
+            bag=item(20,'Base.Bag_Schoolbag',floor);bag.class='InventoryContainer'
+            bag.getContainer=function()return bagParent end;bag.getItemContainer=function()return bagContainer end
+            bag.isFavorite=function()return true end
+            book=item(30,'Base.BookCarpentry1',bagContainer);bagContainer.items.values={book}
+            prop=item(10,'Base.DumbBell',root);root.items.values={prop}
+            objects=list({});square={getX=function()return 5 end,getY=function()return 6 end,getZ=function()return 0 end,
+             getWorldObjects=function()return objects end}
+            world={class='IsoWorldInventoryObject',getItem=function()return bag end,getSquare=function()return square end}
+            bag.getWorldItem=function()return bagParent==floor and world or nil end;objects.values={world}
+            player={getInventory=function()return root end,getCurrentSquare=function()return square end,
+             getPrimaryHandItem=function()end,getSecondaryHandItem=function()end,getWornItems=function()return list({})end}
+            state={player=player,ids={items={bag=20,dumbbell=10}},items={bag={oldReplica=true}}}
+            function recover()
+             return setmetatable({Type='ISInventoryTransferAction',character=player,item=item(20,'Base.Bag_Schoolbag',floor),
+              srcContainer=floor,destContainer=root,isStarted=function()error('no polling')end},ISInventoryTransferAction)
+            end
+            function finishPickup()objects.values={};root.items.values={prop,bag};bagParent=root end
+        """)
+        lua.globals().fixture=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
+        lua.execute("""
+            local snapshot=fixture.storage(player,20)
+            assert(snapshot.endpoint=='world' and snapshot.occurrences==1 and snapshot.favorite and snapshot.world.linked)
+            assert(#snapshot.contents==1 and snapshot.contents[1].id==30 and snapshot.contents[1].container==20)
+            local seen={};local action=recover();local witness=fixture.observeRecoveryStart(state,action,seen)
+            assert(witness and witness.id==20 and witness.storage.world.linked and witness.storage.favorite)
+            assert(action.item~=bag and #witness.inventory.items==1 and witness.inventory.items[1].id==10)
+            world.getSquare=function()return {}end
+            assert(not fixture.storage(player,20).world.linked)
+            world.getSquare=function()return square end;objects.values={world,world}
+            assert(fixture.storage(player,20).occurrences==2 and not fixture.observeRecoveryStart(state,recover(),{}))
+            objects.values={};assert(fixture.storage(player,20).occurrences==0)
+            objects.values={world};finishPickup()
+            assert(not fixture.observeRecoveryStart(state,action,seen),'same action counted twice')
+            assert(fixture.storage(player,20).endpoint=='root' and fixture.storage(player,20).favorite)
+            assert(#fixture.storage(player,20).contents==1 and fixture.storage(player,20).contents[1].id==30)
+        """)
+
+    def test_world_bag_and_contents_require_exact_native_effect_and_completed_recovery(self):
+        self.selection.update(kind='mp',clients=2,languages=['EN','RU'],options={'mp_host':True},cases=['placement-cancel-restore'])
+        for change in ('no-placement','failed-callback','unlinked-world','wrong-world-bag','duplicate-bag','lost-content','changed-content-type',
+                       'lost-root-prop','favourite-cleared','duplicate-recovery','no-receipt','unearned-recovery','wrong-direction','wrong-recovery-id',
+                       'drop-not-earned','early-recovery','prop-equip','replayed-workout'):
+            evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command'];receipt=evidence[0][1]['receipt']
+            if change=='no-placement':receipt['placements']=[]
+            elif change=='failed-callback':receipt['placements'][0]['succeeded']=False
+            elif change=='unlinked-world':receipt['placements'][0]['storage']['world']['linked']=False
+            elif change=='wrong-world-bag':receipt['placements'][0]['storage']['id']+=99
+            elif change=='duplicate-bag':receipt['placements'][0]['storage']['occurrences']=2
+            elif change=='lost-content':receipt['placements'][0]['storage']['contents']=[]
+            elif change=='changed-content-type':receipt['placements'][0]['storage']['contents'][0]['kind']='Base.Pencil'
+            elif change=='lost-root-prop':receipt['placements'][0]['inventory']['items'].pop()
+            elif change=='favourite-cleared':command['beforeTail']['storage']['favorite']=False
+            elif change=='duplicate-recovery':command['recoveryStarts']*=2
+            elif change=='no-receipt':command['recoverySettlements']=[]
+            elif change=='unearned-recovery':command['recoverySettlements'][0]['steps'][0]['state']='pending'
+            elif change=='wrong-direction':command['recoverySettlements'][0]['steps'][0]['transferDirection']='return'
+            elif change=='wrong-recovery-id':command['recoverySettlements'][0]['steps'][0]['itemId']+=99
+            elif change=='drop-not-earned':command['settlement']['steps'][0]['state']='pending'
+            elif change=='early-recovery':command['recoveryStarts'][0]['nativeClock']=receipt['placements'][0]['nativeClock']-1
+            elif change=='prop-equip':command['propEquipObserved']=True
+            else:command['startedOrder']=['bicepscurl']
+            with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_placement_cancel_requires_actual_positive_native_progress_exact_square_and_favourite(self):
+        self.selection['cases']=['placement-cancel-restore']
+        for change in ('not-canceled','progress','not-started','not-place','wrong-square','wrong-bag','favourite','missing-source-content'):
+            evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command'];placement=command['placementCancel']
+            if change=='not-canceled':command['placementCancelled']=False
+            elif change=='progress':placement['progress']=0
+            elif change=='not-started':placement['started']=False
+            elif change=='not-place':placement['isPlaceItem']=False
+            elif change=='wrong-square':placement['square']['x']+=1
+            elif change=='wrong-bag':placement['id']+=1
+            elif change=='favourite':placement['storage']['favorite']=False
+            else:placement['storage']['contents']=[]
+            with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_pickup_cancel_precedes_hand_removal_and_bag_placement(self):
+        self.selection['cases']=['pickup-cancel-restore']
+        for change in ('hand','worn','placed','recovery'):
+            evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command']
+            if change=='hand':command['pickupCancelInventory']['primary']=False
+            elif change=='worn':command['pickupCancelInventory']['worn']=[]
+            elif change=='placed':evidence[0][1]['receipt']['placements']=[{}]
+            else:command['recoveryStarts']=[{}]
+            with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
 
     def test_burpees_duration_stop_rejects_missing_or_delayed_native_removal(self):
         self.selection['cases'] = ['burpees-30']
@@ -320,6 +528,7 @@ class FitnessAdapterTests(unittest.TestCase):
         guard=source.index('if not isServer()then return O end')
         self.assertGreater(source.index('ISFitnessAction[begin]='),guard)
         self.assertGreater(source.index('ISReadABook.serverStart='),guard)
+        self.assertGreater(source.index('ISDropWorldItemAction.complete='),guard)
         self.assertGreater(source.index('ISFitnessAction.exeLooped='),guard)
         self.assertGreater(source.index('ISFitnessAction[method]='),guard)
         self.assertNotIn('setGameSpeed(',source)
@@ -351,6 +560,7 @@ class FitnessAdapterTests(unittest.TestCase):
                  start=function()return 'original' end,
                  stop=function()return 'original' end,
                  perform=function()return 'original' end}
+                ISDropWorldItemAction={complete=function()calls.dropComplete=(calls.dropComplete or 0)+1;return true end};package.preload['TimedActions/ISDropWorldItemAction']=function()return ISDropWorldItemAction end
                 ISReadABook={serverStart=function()calls.readStart=(calls.readStart or 0)+1;return 'native-reader-result'end};package.preload['TimedActions/ISReadABook']=function()return ISReadABook end
                 originalStart,originalLoop,originalStop=ISFitnessAction.start,ISFitnessAction.exeLooped,ISFitnessAction.stop
                 package.preload['TimedActions/ISFitnessAction']=function()return ISFitnessAction end
@@ -379,6 +589,11 @@ class FitnessAdapterTests(unittest.TestCase):
                  assert(calls.readStart==1 and observer.tailStart.id==42 and observer.tailStart.workouts==1
                   and not observer.tailStart.observerActive and observer.tailStart.inventory.exact=='inventory'
                   and observer.tailStart.activation.exact=='activation')
+                 observer.captureStorage=true;observer.bagID=55
+                 observer.placement=function(_,callback,succeeded)return {callback=callback,succeeded=succeeded}end
+                 assert(ISDropWorldItemAction.complete({character=player,item={getID=function()return 55 end}})==true)
+                 assert(calls.dropComplete==1 and #observer.placements==1 and observer.placements[1].succeeded
+                  and observer.placements[1].callback=='ISDropWorldItemAction.complete')
                 else
                  assert(ISFitnessAction.exeLooped==originalLoop)
                  observer.sample(action);action.repnb=2;calls.xp=10;advance();observer.sample(action)
