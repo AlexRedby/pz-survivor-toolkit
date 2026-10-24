@@ -25,7 +25,7 @@
 
 # Fitness completion verification
 
-- [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host after the missing `VanillaVehiclesAnimated` source and any further unresolved pack inputs are available. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass; the game run remains blocked at pack resolution.
+- [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass and the pack sources are available; the thirty-minute live duration gate remains unverified.
 
 # Nick's Turn Off Fridges selection
 
@@ -107,7 +107,7 @@ The medical packet mismatch below is an unresolved runtime observation; its caus
 
 Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
 
-- [ ] SaucedCarts: world/vehicle/floor endpoints and custom callbacks need separate contracts. Add correlated server results with protection against duplicate/late responses before removing protection for active MP transfer and MP returns; check failure/partial batch without predicting success. Separately check replacing/resetting the cart itself while held; generators are currently protected while the cart is held. If needed, extend the capacity proof to deferred installation of upstream hooks and proven effects of the freed space.
+- [ ] SaucedCarts: investigate the source-backed SP borrowed-item cancellation check in `test_action_queue_carts.lua` that loses the expected exact cart return; the same check fails on unchanged main `c504040e` with the selected SaucedCarts source, so native reproduction is still needed. World/vehicle/floor endpoints and custom callbacks need separate contracts. Add correlated server results with protection against duplicate/late responses before removing protection for active MP transfer and MP returns; check failure/partial batch without predicting success. Separately check replacing/resetting the cart itself while held; generators are currently protected while the cart is held. If needed, extend the capacity proof to deferred installation of upstream hooks and proven effects of the freed space.
 - [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 from MP10 using the preserved diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
 
 Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.

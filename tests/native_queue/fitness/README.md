@@ -91,6 +91,24 @@ its failed receipt and recovers only after the client confirms publication of th
 failed case. This allows later controls to run; it never turns the failed case
 into a pass or changes the recorded clinical/tail observations.
 
+Host native restoration controls can also leave a client constructor stranded after
+an authoritative zero-workout failure. After publishing that unchanged failed row,
+the fixture may isolate `closed-ui-restore` or one of the three focused restoration
+cases. It requires the exact constructor captured at the original request and
+failure, empty client native/Lua queues, inactive observers, no started workouts,
+and a fresh read-only server idle snapshot with the same six IDs. Only that local
+constructor is cleared. `ISOLATION_STARTED`, server `ISOLATION_READY` and
+`ISOLATION_SETTLED` witnesses retain the original failure, immediate before/after
+state and actual native cleanup. A grounded bag must return through its genuine
+native begin, completed item transaction and successful perform callback; final
+client and fresh server snapshots must conserve every exact item ID/type, bag
+contents and favourite flag, with the bag carried again. Actual native hand,
+activation and prop endpoint differences remain recorded and failed by the original
+case checks. No item or gear is reconstructed. Each wait is bounded to 45 real
+seconds; a rejected gate or timeout emits `ISOLATION_FAILED` and stops without
+advancing to the next case. This isolation does not establish the cause of the
+original native failure or turn it into a pass.
+
 The focused `active-cancel-restore`, `pickup-cancel-restore` and
 `placement-cancel-restore` cases start with an
 active exact-ID Torch and screwdriver held, a schoolbag worn, and the dumbbell

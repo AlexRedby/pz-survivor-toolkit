@@ -144,7 +144,7 @@ function F.prepare(player,id,previous)
   state.items.bag:setFavorite(true)
   state.items.hammer:setCurrentUses(state.items.hammer:getMaxUses());state.items.hammer:setActivated(true)
  end
- O.reset(player,id);O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.restorationCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.restorationCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
+ O.reset(player,id);O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.restorationCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.borrowedCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
  if isServer()then
   -- InventoryContainer serialization includes its children. Send the owning root bag
   -- once; sending the nested dumbbell again would create a duplicate replica.
@@ -178,7 +178,7 @@ function F.receipt(state)
  result.case=state.case;result.inventory=F.inventory(player);result.removed=state.removed or false
  result.tailRead=player:getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
  result.frontRead=player:getAlreadyReadPages(state.items.front:getFullType())==state.items.front:getNumberOfPages()
- result.activation=F.activation(player);if F.restorationCase(state.case)then result.storage=F.storage(player,state.ids.items.bag)end;result.before=state.ids.before;result.peerConnected=not isServer()
+ result.activation=F.activation(player);if F.borrowedCase(state.case)then result.storage=F.storage(player,state.ids.items.bag)end;result.before=state.ids.before;result.peerConnected=not isServer()
  if isServer()then
   local online=getOnlinePlayers()
   for i=0,online:size()-1 do if online:get(i):getUsername()=='client2'then result.peerConnected=true end end
@@ -206,6 +206,135 @@ function F.recoverStranded(state)
  result.cleared=not player:getFitness():getCurrentExe();result.after=O.clinical(player);result.inventoryAfter=F.inventory(player)
  assert(result.cleared,'stranded fitness constructor did not clear')
  return result
+end
+local function sameValues(a,b)
+ if type(a)~=type(b)then return false end
+ if type(a)~='table'then return a==b end
+ for key,value in pairs(a)do if not sameValues(value,b[key])then return false end end
+ for key in pairs(b)do if a[key]==nil then return false end end
+ return true
+end
+local function unchangedFailure(state)
+ local JSON=require 'QueueHealthEvents'
+ return state.failedRow and state.failedCaseRecorded and state.failedRow.status=='failed'
+  and JSON.encode(state.failedRow)==state.failedRowEncoding
+end
+-- Compare real carried/world item identities, allowing native endpoint/hand differences.
+function F.conservedStorage(state,inventory,storage,rootRequired)
+ if storage.id~=state.ids.items.bag or storage.kind~='Base.Bag_Schoolbag'or storage.occurrences~=1
+  or storage.favorite~=state.ids.storage.favorite or (rootRequired and storage.endpoint~='root')
+  or (storage.endpoint~='root'and (storage.endpoint~='world'or not storage.world or not storage.world.linked))then return false end
+ local expected,actual,contents={},{},{}
+ for _,row in ipairs(state.ids.inventory.items)do expected[row.id]=row.kind end
+ local function add(row)
+  if actual[row.id]or expected[row.id]~=row.kind then return false end
+  actual[row.id]=row.kind;return true
+ end
+ for _,row in ipairs(inventory.items)do
+  if not add(row)then return false end
+  if row.container==storage.id then contents[#contents+1]=row end
+ end
+ if storage.endpoint=='world'then
+  if not add({id=storage.id,kind=storage.kind})then return false end
+  for _,row in ipairs(storage.contents)do if not add(row)then return false end end
+ else
+  if storage.world~=false or not sameValues(contents,storage.contents)then return false end
+ end
+ for id in pairs(expected)do if not actual[id]then return false end end
+ return true
+end
+function F.beginNativeIsolation(state,authority)
+ local selection=require 'QueueTestSelection';local player=state.player;local row=state.failedRow
+ assert(selection.mode=='native'and selection.kind=='mp'and isClient()and not isServer()
+  and F.borrowedCase(state.case),'isolation outside exact native Host restoration case')
+ assert(not state.isolation and unchangedFailure(state),'isolation requires unchanged published failure and no repeat')
+ assert(row.id==state.case and row.receipt==state.lastReceipt and row.receipt.currentExerciseCleared==true
+  and row.receipt.serverStopSettled==true and #row.receipt.records==0 and #row.receipt.violations==0
+  and row.command.queueDrained==true and row.command.clientCurrentExerciseCleared==false
+  and row.command.activeObserved==false and #row.command.startedOrder==0,'isolation cannot clear a started workout')
+ assert(authority and authority.phase=='before'and authority.case==state.case and sameValues(authority.items,state.ids.items)
+  and authority.serverIdle==true and authority.currentExerciseCleared==true and authority.records==0
+  and authority.observerActive==false and authority.nativeActions==0 and authority.failedCaseRecorded==true,
+  'isolation requires fresh exact server idle/zero-workout witness')
+ local queue=ISTimedActionQueue.getTimedActionQueue(player)
+ assert(#queue.queue==0 and not queue.current and not player:hasTimedActions()and player:getCharacterActions():isEmpty()
+  and not O.active and #O.records==0,'isolation requires empty local native/Lua queues and observer')
+ local current=player:getFitness():getCurrentExe()
+ assert(current and current==state.requestedCurrent and current==state.strandedCurrent,'isolation constructor object changed')
+ local storage=F.storage(player,state.ids.items.bag)
+ assert(storage.occurrences==1 and storage.id==state.ids.items.bag and storage.kind=='Base.Bag_Schoolbag'
+  and (storage.endpoint=='root'or storage.endpoint=='world'and storage.world.linked),'isolation exact storage missing or ambiguous')
+ local before=O.clinical(player);local inventory=F.inventory(player);local activation=F.activation(player)
+ assert(F.conservedStorage(state,inventory,storage,false)and F.conservedStorage(state,authority.inventory,authority.storage,false),'isolation lost or duplicated exact original items')
+ state.isolation={status='started',since=getTimestampMs(),seen={},begins={},authoritySnapshot=authority,storage=storage,
+  before=before,recoveryRequired=storage.endpoint=='world',callbacks=0}
+ player:getFitness():setCurrentExercise(nil)
+ local after=O.clinical(player);local inventoryAfter=F.inventory(player);local activationAfter=F.activation(player)
+ assert(not player:getFitness():getCurrentExe()and sameValues(before,after)and sameValues(inventory,inventoryAfter)
+  and sameValues(activation,activationAfter),'isolation clear changed measured gameplay state')
+ return {case=state.case,actor='client1',mode='native',kind='mp',phase='started',failedCaseRecorded=true,failedRowUnchanged=true,
+  exactObjectMatched=true,queueEmpty=true,nativeActions=0,observerActive=false,localRecords=0,cleared=true,authority=authority,
+  before=before,after=after,inventoryBefore=inventory,inventoryAfter=inventoryAfter,activationBefore=activation,
+  activationAfter=activationAfter,storageBefore=storage,recoveryRequired=state.isolation.recoveryRequired}
+end
+function F.isolationStarted(state,action)
+ local isolation=state and state.isolation
+ if not isolation or isolation.status~='started'or not action or action.character~=state.player or isolation.seen[action]then return end
+ if action.Type=='ISFitnessAction'then isolation.invalid=true;error('isolation cannot start a native workout')end
+ isolation.seen[action]=true
+ isolation.begins[#isolation.begins+1]={kind=action.Type,id=action.item and action.item:getID()or false,callback='ISBaseTimedAction.begin'}
+ if action.Type=='ISInventoryTransferAction'and getmetatable(action)==ISInventoryTransferAction and action.item
+  and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'
+  and action.srcContainer and action.srcContainer:getType()=='floor'and action.destContainer==state.player:getInventory()then
+  local storage=F.storage(state.player,state.ids.items.bag)
+  assert(storage.occurrences==1 and storage.endpoint=='world'and storage.world.linked,'isolation recovery lacks exact live world bag')
+  if isolation.recoveryAction then isolation.invalid=true;error('isolation native bag recovery repeated')end
+  isolation.recoveryStart=assert(F.observeRecoveryStart(state,action,{}),'isolation recovery lacks real native start witness')
+  isolation.recoveryAction=action
+ end
+end
+function F.isolationBegin(state,action,phase)
+ local isolation=state and state.isolation
+ if not isolation or isolation.status~='started'or isolation.recoveryAction~=action or phase~='perform'then return false end
+ local id=action.transactionId
+ isolation.transaction=id;isolation.authority=id and id~=0 and isItemTransactionDone(id)==true and isItemTransactionRejected(id)==false
+ return true
+end
+function F.isolationFinish(state,action,phase,succeeded)
+ local isolation=state and state.isolation
+ if isolation and isolation.status=='started'and isolation.recoveryAction==action and phase=='perform'then
+  isolation.callbacks=isolation.callbacks+1;isolation.callbackSucceeded=succeeded==true
+ end
+end
+function F.finishNativeIsolation(state,authority)
+ local isolation=assert(state.isolation);local player=state.player;local queue=ISTimedActionQueue.getTimedActionQueue(player)
+ assert(isolation.status=='started'and not isolation.invalid and unchangedFailure(state),'isolation failed row changed or phase repeated')
+ assert(#queue.queue==0 and not queue.current and not player:hasTimedActions()and player:getCharacterActions():isEmpty()
+  and not player:getFitness():getCurrentExe()and not O.active and #O.records==0,'isolation native cleanup not idle')
+ assert(#isolation.begins>0 and (not isolation.recoveryRequired or isolation.recoveryAction and isolation.callbacks==1
+  and isolation.callbackSucceeded and isolation.authority and type(isolation.transaction)=='number'and isolation.transaction~=0),
+  'isolation native recovery callback/transaction not completed')
+ local clinical=O.clinical(player);local inventory=F.inventory(player);local activation=F.activation(player)
+ local storage=F.storage(player,state.ids.items.bag)
+ assert(F.conservedStorage(state,inventory,storage,true),'isolation native cleanup lost or duplicated original equipment')
+ assert(authority and authority.phase=='after'and authority.case==state.case and sameValues(authority.items,state.ids.items)
+  and authority.serverIdle==true and authority.currentExerciseCleared==true and authority.records==0
+  and authority.observerActive==false and authority.nativeActions==0 and authority.failedCaseRecorded==true
+  and F.conservedStorage(state,authority.inventory,authority.storage,true),'isolation authority cleanup not replicated/idle/conserved')
+ assert(clinical.fitnessXP==isolation.before.fitnessXP and clinical.strengthXP==isolation.before.strengthXP,'isolation replayed workout XP')
+ assert(authority.clinical.fitnessXP==isolation.authoritySnapshot.clinical.fitnessXP and authority.clinical.strengthXP==isolation.authoritySnapshot.clinical.strengthXP,'isolation authority replayed XP')
+ for _,group in ipairs({'regularity','stiffness'})do for key,value in pairs(isolation.authoritySnapshot.clinical[group])do
+  assert(authority.clinical[group][key]<=value,'isolation authority replayed training effects')
+ end end
+ for _,group in ipairs({'regularity','stiffness'})do for key,value in pairs(isolation.before[group])do
+  assert(clinical[group][key]<=value,'isolation replayed training effects')
+ end end
+ isolation.status='settled'
+ return {case=state.case,actor='client1',mode='native',kind='mp',phase='settled',failedCaseRecorded=true,failedRowUnchanged=true,
+  queueEmpty=true,nativeActions=0,observerActive=false,localRecords=0,currentExerciseCleared=true,
+  nativeBegins=isolation.begins,recoveryRequired=isolation.recoveryRequired,recoveryCallbacks=isolation.callbacks,
+  recoveryCallbackSucceeded=isolation.callbackSucceeded or false,recoveryTransaction=isolation.transaction or 0,
+  recoveryAuthorityCompleted=isolation.authority or false,recoveryStart=isolation.recoveryStart or false,authority=authority,clinical=clinical,inventory=inventory,activation=activation,storage=storage}
 end
 function F.releaseEquipment(state)
  -- Fixture cleanup only after a recorded case and the real native queue has settled.

@@ -450,6 +450,114 @@ def _recoveries(text, actor, selection, results):
     return issues, [row for _, row in raw]
 
 
+def _conserved_storage(inventory, storage, prep, carried):
+    if (not isinstance(prep, dict) or not isinstance(prep.get('items'), dict) or not isinstance(prep.get('storage'), dict)
+            or not _inventory(prep.get('inventory')) or not _inventory(inventory) or not isinstance(storage, dict)
+            or not _matches(storage, dict(id=prep['items']['bag'], kind='Base.Bag_Schoolbag',
+                occurrences=1, favorite=prep['storage']['favorite']))
+            or carried and storage.get('endpoint') != 'root'):
+        return False
+    actual = copy.deepcopy(inventory['items'])
+    if storage.get('endpoint') == 'world':
+        world = storage.get('world')
+        if (not isinstance(world, dict) or not _matches(world, dict(linked=True))
+                or any(type(world.get(key)) is not int for key in ('x', 'y', 'z'))
+                or not isinstance(storage.get('contents'), list)):
+            return False
+        actual += [dict(id=storage['id'], kind=storage['kind'], container='root'), *storage['contents']]
+    elif (storage.get('endpoint') != 'root' or storage.get('world') is not False
+            or not _same(storage.get('contents'), [row for row in inventory['items'] if row['container'] == storage['id']])):
+        return False
+    expected = {row['id']: row['kind'] for row in prep['inventory']['items']}
+    return (len(actual) == len(expected) and len({row.get('id') for row in actual}) == len(actual)
+            and all(set(row) == {'id', 'kind', 'container'} and expected.get(row['id']) == row['kind'] for row in actual))
+
+
+def _no_training(before, after):
+    return (_clinical(before) and _clinical(after) and all(after[key] == before[key] for key in ('fitnessXP', 'strengthXP'))
+            and all(after[group][key] <= value for group in ('regularity', 'stiffness') for key, value in before[group].items()))
+
+
+def _isolations(text, authority_text, selection, results, raw):
+    markers = [(match.start(), match[1], json.loads(match[2])) for match in re.finditer(
+        r'\[FITNESS_TEST\] (ISOLATION_STARTED|ISOLATION_SETTLED|ISOLATION_FAILED)\s+([^\n]*)', text)]
+    ready = [(match.start(), json.loads(match[1])) for match in re.finditer(
+        r'\[FITNESS_TEST\] ISOLATION_READY\s+([^\n]*)', authority_text)]
+    expected = [row['id'] for row in results if selection['mode'] == 'native' and selection['kind'] == 'mp'
+                and row.get('id') in BORROWED_CASES and row.get('status') == 'failed'
+                and row.get('receipt', {}).get('currentExerciseCleared') is True
+                and row.get('receipt', {}).get('records') == []
+                and row.get('command', {}).get('clientCurrentExerciseCleared') is False]
+    issues = []
+    if ([(marker, row.get('case')) for _, marker, row in markers]
+            != [(marker, case) for case in expected for marker in ('ISOLATION_STARTED', 'ISOLATION_SETTLED')]
+            or [(row.get('case'), row.get('phase')) for _, row in ready]
+            != [(case, phase) for case in expected for phase in ('before', 'after')]):
+        issues.append('Fitness native isolation case/phase/order differs')
+    for case in expected:
+        row = next(entry for entry in results if entry['id'] == case)
+        prep = next((value for marker, value in raw if marker == 'PREPARED' and value.get('case') == case), {})
+        if not isinstance(prep.get('items'), dict) or not isinstance(prep.get('storage'), dict):
+            issues.append('Fitness native isolation preparation missing: ' + case)
+            continue
+        found = [(position, marker, value) for position, marker, value in markers if value.get('case') == case]
+        if len(found) != 2 or [marker for _, marker, _ in found] != ['ISOLATION_STARTED', 'ISOLATION_SETTLED']:
+            continue
+        start_pos, _, start = found[0]; end_pos, _, end = found[1]
+        prefix = text[:start_pos]
+        published = [json.loads(line.split('[QUEUE_CHECK] ', 1)[1]) for line in prefix.splitlines() if '[QUEUE_CHECK] ' in line]
+        following = [json.loads(line.split('[QUEUE_CHECK] ', 1)[1]) for line in text[start_pos:end_pos].splitlines() if '[QUEUE_CHECK] ' in line]
+        if not any(_same(value, row) for value in published) or following or '[FITNESS_TEST] MENU_READY ' in text[start_pos:end_pos]:
+            issues.append('Fitness native isolation preceded failure or overlapped next case: ' + case)
+        context = dict(case=case, actor='client1', mode='native', kind='mp', failedCaseRecorded=True, failedRowUnchanged=True,
+                       queueEmpty=True, nativeActions=0, observerActive=False, localRecords=0)
+        if (not _matches(row.get('command'), dict(queueDrained=True, activeObserved=False, startedOrder=[], clientCurrentExerciseCleared=False))
+                or not _matches(row.get('receipt'), dict(currentExerciseCleared=True, serverStopSettled=True, records=[], violations=[]))
+                or not _matches(start, dict(context, phase='started', exactObjectMatched=True, cleared=True))
+                or not _matches(end, dict(context, phase='settled', currentExerciseCleared=True))):
+            issues.append('Fitness native isolation exact idle/zero-workout gates differ: ' + case)
+        if (not _clinical(start.get('before')) or not _same(start.get('before'), start.get('after'))
+                or not _same(start.get('inventoryBefore'), start.get('inventoryAfter'))
+                or not _same(start.get('activationBefore'), start.get('activationAfter'))
+                or not _conserved_storage(start.get('inventoryBefore'), start.get('storageBefore'), prep, False)
+                or not _conserved_storage(end.get('inventory'), end.get('storage'), prep, True)
+                or not _no_training(start.get('before'), end.get('clinical'))):
+            issues.append('Fitness native isolation changed/lost exact items or clinical effects: ' + case)
+        snapshots = [value for _, value in ready if value.get('case') == case]
+        for phase, witness in (('before', start.get('authority')), ('after', end.get('authority'))):
+            if (not isinstance(witness, dict) or not _matches(witness, dict(case=case, phase=phase, items=prep.get('items'), serverIdle=True,
+                    currentExerciseCleared=True, records=0, observerActive=False, nativeActions=0, failedCaseRecorded=True))
+                    or sum(_same(witness, value) for value in snapshots) != 1
+                    or not _conserved_storage(witness.get('inventory'), witness.get('storage'), prep, phase == 'after')):
+                issues.append('Fitness native isolation authority identity/replication witness differs: ' + case)
+        if len(snapshots) == 2 and not _no_training(snapshots[0].get('clinical'), snapshots[1].get('clinical')):
+            issues.append('Fitness native isolation authority gained workout effects: ' + case)
+        for position, value in ready:
+            if value.get('case') == case:
+                preceding = [json.loads(line.split('[FITNESS_TEST] VERIFIED ', 1)[1]) for line in authority_text[:position].splitlines()
+                             if '[FITNESS_TEST] VERIFIED ' in line]
+                if not any(_same(receipt, row['receipt']) for receipt in preceding):
+                    issues.append('Fitness native isolation authority preceded original receipt: ' + case)
+        begins = end.get('nativeBegins')
+        if (not isinstance(begins, list) or not begins or any(not isinstance(value, dict) or value.get('kind') == 'ISFitnessAction'
+                or not isinstance(value.get('kind'), str) or value.get('callback') != 'ISBaseTimedAction.begin' for value in begins)):
+            issues.append('Fitness native isolation lacked genuine cleanup starts: ' + case)
+        recovery = start.get('storageBefore', {}).get('endpoint') == 'world'
+        if type(start.get('recoveryRequired')) is not bool or start['recoveryRequired'] != recovery or end.get('recoveryRequired') != recovery:
+            issues.append('Fitness native isolation recovery requirement differs: ' + case)
+        if recovery:
+            witness = end.get('recoveryStart', {})
+            transaction = end.get('recoveryTransaction')
+            if (not _matches(end, dict(recoveryCallbacks=1, recoveryCallbackSucceeded=True, recoveryAuthorityCompleted=True))
+                    or type(transaction) is not int or transaction <= 0
+                    or not _matches(witness, dict(id=prep['items']['bag'], kind='Base.Bag_Schoolbag', source='world', destination='root', callback='ISBaseTimedAction.begin'))
+                    or not _conserved_storage(witness.get('inventory'), witness.get('storage'), prep, False)
+                    or witness.get('storage', {}).get('endpoint') != 'world'
+                    or not isinstance(begins, list) or sum(isinstance(value, dict) and value.get('kind') == 'ISInventoryTransferAction' and value.get('id') == prep['items']['bag'] for value in begins) != 1):
+                issues.append('Fitness native isolation recovery lacks exact native transaction/callback: ' + case)
+    return issues, [dict(marker=marker, **row) for _, marker, row in markers]
+
+
 def verify(root, selection, catalog):
     from ..report import events
     root = Path(root)
@@ -490,6 +598,8 @@ def verify(root, selection, catalog):
     if selection['kind'] == 'mp':
         server_issues, server_recoveries = _recoveries(authority, 'server', selection, results)
         issues.extend(server_issues);recovery_proofs.extend(server_recoveries)
+    isolation_issues, isolation_proofs = _isolations(text, authority, selection, results, raw)
+    issues.extend(isolation_issues)
     used_ids = []
     for case in cases:
         row = next((row for row in results if row.get('id') == case), {})
@@ -528,7 +638,7 @@ def verify(root, selection, catalog):
         for outcome in outcomes:
             outcome.update(status='failed', reason='; '.join([*shared, outcome['reason']]).strip('; '))
             outcome['outcome'].update(effectsVerified=False, serverAuthorityVerified=False)
-    return dict(issues=issues, outcomes=outcomes, evidence={'recoveries': recovery_proofs, 'limits': [
+    return dict(issues=issues, outcomes=outcomes, evidence={'recoveries': recovery_proofs, 'isolations': isolation_proofs, 'limits': [
         'Programmatic native Fitness OK callbacks; physical mouse/controller input is not covered.',
         'Native ten-minute workouts and real native repetitions/XP; no time or action acceleration.',
         'Host uses two actual clients; the peer reads an independent exact-ID native book.',

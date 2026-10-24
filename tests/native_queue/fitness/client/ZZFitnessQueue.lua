@@ -14,7 +14,7 @@ local state,authority,previous,ids,receipt,mutation,command,ui,front,tail,reques
 local started,done,phase,index,failed,since,quiet,idle=false,false,'prepare',1,0,0,nil,0
 local peerCase,peerBook,peerComplete,actor,stopReached,returnSeen,recoverySeen,recoveryActions
 local ready,setupSince=false,0
-local peersReady,peersReceipt=false,nil
+local peersReady,peersReceipt,isolationAuthority,isolationFinalAuthority=false,nil,nil,nil
 local function case()return config.cases[index]end
 local function minutes()return case()=='burpees-30'and 30 or 10 end
 local function exerciseForCase(id)return id=='burpees-30'and 'burpees'or (id=='missing-dumbbell'or F.borrowedCase(id))and 'bicepscurl'or 'squats'end
@@ -24,6 +24,7 @@ local function empty()return #queue().queue==0 and not getPlayer():hasTimedActio
 -- The shared native begin boundary runs before native actions allocate/start,
 -- including queue-disabled mode. Observation changes no callback or queue work.
 assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{started=function(action)
+ if state and state.isolation and state.isolation.status=='started'then F.isolationStarted(state,action);return end
  if not command or not state or not F.restorationCase(case())then return end
  if action.Type=='ISEquipWeaponAction'and getmetatable(action)==ISEquipWeaponAction and action.character==state.player
   and action.item and action.item:getID()==state.ids.items.dumbbell and action.item:getFullType()=='Base.DumbBell'then
@@ -43,9 +44,18 @@ assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{start
   command.beforeTail={inventory=F.inventory(action.character),activation=F.activation(action.character),nativeClock=O.clock(),
    callback='ISBaseTimedAction.begin',storage=F.storage(action.character,state.ids.items.bag)}
  end
+end,begin=function(action,phase)
+ if state and state.isolation and state.isolation.status=='started'then return F.isolationBegin(state,action,phase)end
+ -- Queue-disabled ActionCompletion dispatches finish only for an accepted observer.
+ return command~=nil and state~=nil and F.restorationCase(case())and action~=nil
+  and (phase=='perform'or phase=='complete')and action.character==state.player
+  and action.Type=='ISDropWorldItemAction'and getmetatable(action)==ISDropWorldItemAction and action.item~=nil
+  and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'
 end,finish=function(action,phase,succeeded)
+ if state and state.isolation and state.isolation.status=='started'then F.isolationFinish(state,action,phase,succeeded);return end
  if not isClient()and not isServer()and command and state and F.restorationCase(case())
-  and action.Type=='ISDropWorldItemAction'and action.item and action.item:getID()==state.ids.items.bag and phase=='complete'then
+  and action.character==state.player and action.Type=='ISDropWorldItemAction'and getmetatable(action)==ISDropWorldItemAction
+  and action.item and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'and phase=='complete'then
   O.placements[#O.placements+1]=F.placement(action.character,state.ids.items.bag,'ISDropWorldItemAction.complete',succeeded==true)
  end
 end}),'fitness native reader boundary observer unavailable')
@@ -75,7 +85,7 @@ local function finish()
  print('[FITNESS_TEST] COMPLETE');done=true
 end
 local function request(name)
- if isClient()then sendClientCommand('FitnessQueueTest',name,{case=case(),clientQuiescent=empty(),failedCaseRecorded=state and state.failedCaseRecorded==true});return end
+ if isClient()then sendClientCommand('FitnessQueueTest',name,{case=case(),clientQuiescent=empty(),failedCaseRecorded=state and state.failedCaseRecorded==true,items=state and state.ids.items or nil,isolationPhase=state and state.isolation and 'after'or 'before'});return end
  if name=='Prepare'then
   authority=F.prepare(getPlayer(),case(),previous);previous=nil;ids=authority.ids;raw('PREPARED',ids)
  elseif name=='Mutate'then mutation=F.mutate(authority);raw('MUTATED',mutation)
@@ -85,10 +95,16 @@ end
 Events.OnServerCommand.Add(function(module,name,value)
  if module~='FitnessQueueTest'then return end
  if name=='Failed'then
+  if phase=='isolation-ready'or phase=='isolating'or phase=='isolation-verifying'then
+   raw('ISOLATION_FAILED',{case=case(),actor='client1',mode='native',kind='mp',phase='failed',reason=tostring(value and value.error),failedCaseRecorded=true})
+  end
   print('[QUEUE_TEST] FAIL fitness authority '..tostring(value and value.error))
   emit({event='error',id=case(),reason=tostring(value and value.error)});done=true;return
  end
- if name=='Prepared'then ids=value elseif name=='Verified'then receipt=value elseif name=='Mutated'then mutation=value
+ if name=='IsolationReady'then
+  assert(value.case==case(),'native isolation authority case differs')
+  if value.phase=='before'then isolationAuthority=value elseif value.phase=='after'then isolationFinalAuthority=value else error('native isolation authority phase differs')end
+ elseif name=='Prepared'then ids=value elseif name=='Verified'then receipt=value elseif name=='Mutated'then mutation=value
  elseif name=='NativeRep'then
   if command and value.case==case()then command.authoritativeReps=value.reps end
  elseif name=='Released'then phase='released'elseif name=='Peer'then peerCase,peerBook=value.case,value.book
@@ -133,9 +149,9 @@ local function rejectedRequest(exercise,first,last)
   return type(fn)=='function'and getFilenameOfClosure and getFilenameOfClosure(fn)or 'unavailable'
  end
  local callbacks={uiClick=closure(ISFitnessUI.onClick)}
- for _,kind in ipairs({'ISFitnessAction','ISQueueActionsAction','ISUnequipAction','ISEquipWeaponAction','ISInventoryTransferAction','ISWearClothing'})do
+ for _,kind in ipairs({'ISFitnessAction','ISQueueActionsAction','ISUnequipAction','ISEquipWeaponAction','ISInventoryTransferAction','ISWearClothing','ISDropWorldItemAction'})do
   local class=_G[kind];local methods={}
-  for _,name in ipairs({'new','start','perform','complete'})do methods[name]=closure(class and class[name])end
+  for _,name in ipairs({'new','isValid','start','perform','complete'})do methods[name]=closure(class and class[name])end
   callbacks[kind]=methods
  end
  raw('REQUEST_REJECTED',{case=case(),exercise=exercise,children=children,callbacks=callbacks})
@@ -156,6 +172,7 @@ local function enqueue(exercise)
  end
  if not requestAction then rejectedRequest(exercise,before+1,#queue().queue);error('native fitness/request action missing')end
  requests[#requests+1]=requestAction
+ if native and F.borrowedCase(case())then state.requestedCurrent=requestAction.fitness:getCurrentExe()end
  if not native then
   local managed=T.ActionQueueFitness.isManaged(requestAction)and requestAction.toolkitFitnessExercise==exercise
    and requestAction.toolkitFitnessMinutes==minutes()
@@ -306,9 +323,16 @@ local function finishCase()
  local problem
  if not receipt.tailRead then problem='independent-tail-not-preserved'
  elseif not receipt.serverStopSettled or not receipt.currentExerciseCleared then problem='native-fitness-stop-not-settled'end
- emit({event='case',id=case(),status=problem and 'failed'or 'passed',reason=problem,command=command,receipt=receipt})
+ local published={event='case',id=case(),status=problem and 'failed'or 'passed',reason=problem,command=command,receipt=receipt}
+ emit(published)
  if problem then failed=failed+1 end
  if ui then ui:onClick(ui.close);ui=nil end
+ if native and isClient()and F.borrowedCase(case())and problem and #receipt.records==0
+  and receipt.currentExerciseCleared and not command.clientCurrentExerciseCleared then
+  state.failedCaseRecorded,state.lastReceipt,state.failedRow=true,receipt,published
+  state.failedRowEncoding=JSON.encode(published);state.strandedCurrent=getPlayer():getFitness():getCurrentExe()
+  phase='isolation-ready';since=getTimestampMs();quiet=nil;isolationAuthority=nil;request('IsolationReady');return
+ end
  -- Preserve the failed row and original receipt before fixture-only recovery.
  if native and problem and not receipt.currentExerciseCleared and #receipt.records==0
   and (case()=='missing-dumbbell'or case()=='exhaustion')then
@@ -392,6 +416,28 @@ Events.OnTick.Add(function()
     if getTimestampMs()-quiet>=2000 then phase='receipt';request('Verify')end
    else quiet=nil end
   elseif phase=='receipt'and receipt then finishCase()
+  elseif phase=='isolation-ready'then
+   assert(getTimestampMs()-since<45000,'native isolation server-ready deadline')
+   if isolationAuthority then
+    raw('ISOLATION_STARTED',F.beginNativeIsolation(state,isolationAuthority));phase='isolating';since=getTimestampMs();quiet=nil
+   end
+  elseif phase=='isolating'then
+   if getTimestampMs()-since>=45000 then
+    error('native isolation cleanup deadline; original failure retained')
+   end
+   assert(not O.active and #O.records==0 and not getPlayer():getFitness():getCurrentExe(),'native isolation started a workout')
+   if empty()then
+    quiet=quiet or getTimestampMs()
+    if getTimestampMs()-quiet>=2000 then
+     phase='isolation-verifying';since=getTimestampMs();isolationFinalAuthority=nil;request('IsolationReady')
+    end
+   else quiet=nil end
+  elseif phase=='isolation-verifying'then
+   assert(getTimestampMs()-since<45000,'native isolation final authority deadline')
+   assert(not O.active and #O.records==0 and empty()and not getPlayer():getFitness():getCurrentExe(),'native isolation final boundary not idle')
+   if isolationFinalAuthority then
+    raw('ISOLATION_SETTLED',F.finishNativeIsolation(state,isolationFinalAuthority));phase='release';request('Next')
+   end
   elseif phase=='released'then
    index=index+1
    if not case()then finish();return end
@@ -400,6 +446,9 @@ Events.OnTick.Add(function()
   end
  end)
  if not ok then
+  if phase=='isolation-ready'or phase=='isolating'or phase=='isolation-verifying'then
+   raw('ISOLATION_FAILED',{case=case(),actor='client1',mode='native',kind='mp',phase='failed',reason=tostring(problem),failedCaseRecorded=true})
+  end
   print('[QUEUE_TEST] FAIL fitness client '..tostring(problem));emit({event='error',id=case(),reason=tostring(problem)});done=true
  end
 end)

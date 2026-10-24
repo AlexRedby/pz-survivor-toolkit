@@ -53,10 +53,13 @@ class FitnessAdapterTests(unittest.TestCase):
                 next(row for row in inventory['items'] if row['id']==ids['dumbbell'])['container']=ids['bag']
             if case in fitness.RESTORATION_CASES:
                 next(row for row in inventory['items'] if row['id']==ids['front'])['container']=ids['bag']
+            if case in fitness.BORROWED_CASES:
                 types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
-                             hammer='Base.Torch', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
+                             hammer='Base.Torch' if case in fitness.RESTORATION_CASES else 'Base.Hammer', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
                 for item in inventory['items']:item['kind']=types[next(key for key,value in ids.items() if value==item['id'])]
             prep = dict(case=case, items=ids, inventory=inventory, before=clinical())
+            if case in fitness.BORROWED_CASES:
+                prep['storage']=storage_snapshot(ids,inventory);prep['storage']['favorite']=case in fitness.RESTORATION_CASES
             if case in fitness.RESTORATION_CASES:
                 prep['activation']={str(ids['hammer']):True};prep['storage']=storage_snapshot(ids,inventory)
             if mp:
@@ -353,6 +356,51 @@ class FitnessAdapterTests(unittest.TestCase):
             assert(not fixture.observeRecoveryStart(state,action,seen),'same action counted twice')
             assert(fixture.storage(player,20).endpoint=='root' and fixture.storage(player,20).favorite)
             assert(#fixture.storage(player,20).contents==1 and fixture.storage(player,20).contents[1].id==30)
+        """)
+
+    def test_native_sp_placement_observer_accepts_real_lifecycle_begin_with_queue_disabled(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for queue-disabled placement observation')
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        start=source.index("assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail'")
+        end=source.index("),'fitness native reader boundary observer unavailable')",start)+len("),'fitness native reader boundary observer unavailable')")
+        lua=LuaRuntime()
+        lua.execute("""
+            package.preload['TimedActions/ISQueueActionsAction']=function()return {}end
+            ISQueueActionsAction={start=function()end};ISDropWorldItemAction={}
+            queueEnabled=false;PZSurvivorToolkit={Settings={actionQueue=function()return queueEnabled end}}
+            ISTimedActionQueue={queues={}};isClient=function()return false end;isServer=function()return false end
+            player={};state={player=player,ids={items={bag=20}}};command={};O={placements={}}
+            F={restorationCase=function(id)return id=='placement-cancel-restore'end,
+             placement=function(_,id,callback,succeeded)return {id=id,callback=callback,succeeded=succeeded}end}
+            case=function()return 'placement-cancel-restore'end
+            function action()
+             return setmetatable({Type='ISDropWorldItemAction',character=player,item={
+              getID=function()return 20 end,getFullType=function()return 'Base.Bag_Schoolbag'end}},ISDropWorldItemAction)
+            end
+        """)
+        lua.globals().T=lua.globals().PZSurvivorToolkit
+        lua.execute((ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua').read_text())
+        lua.execute(source[start:end])
+        lua.execute("""
+            local lifecycle=T.ActionQueueLifecycle
+            for _,enabled in ipairs({false,true})do
+             queueEnabled=enabled;local exact=action();local before=#O.placements
+             assert(lifecycle.begin(exact,'perform'),'native perform finish observation must remain active with queue disabled')
+             lifecycle.finish(exact,'perform',true);assert(#O.placements==before,'perform is not completed placement')
+             assert(lifecycle.begin(exact,'complete'),'native complete finish observation must remain active with queue disabled')
+             lifecycle.finish(exact,'complete',true)
+            end
+            assert(#O.placements==2 and O.placements[1].id==20 and O.placements[1].succeeded)
+            queueEnabled=false
+            for _,change in ipairs({function(a)a.character={}end,function(a)a.item.getID=function()return 21 end end,
+             function(a)a.item.getFullType=function()return 'Base.Pencil'end end,
+             function(a)setmetatable(a,{})end,function(a)a.Type='ISUnequipAction'end})do
+             local wrong=action();change(wrong);assert(not lifecycle.begin(wrong,'complete'),'unrelated callback accepted')
+            end
+            assert(not lifecycle.begin(action(),'stop')and not lifecycle.begin(nil,'complete'))
         """)
 
     def test_world_bag_and_contents_require_exact_native_effect_and_completed_recovery(self):
@@ -743,6 +791,183 @@ class FitnessAdapterTests(unittest.TestCase):
         path.write_text(line+'\n'+text.replace(line+'\n',''))
         result=fitness.verify(self.root,self.selection,{})
         self.assertTrue(any('recovery preceded' in issue for issue in result['issues']))
+
+    def isolation_evidence(self, case='closed-ui-restore'):
+        self.selection.update(kind='mp', mode='native', cases=[case], clients=2, languages=['EN','RU'], options={'mp_host':True})
+        evidence=self.evidence();rows,raw,_=evidence;row=rows[1];prep=raw[0][1];ids=prep['items']
+        initial=ground_inventory(ids,prep['inventory']);storage=storage_snapshot(ids,prep['inventory'],'world',True)
+        storage['favorite']=prep['storage']['favorite'];activation={str(ids['hammer']):False}
+        row.update(status='failed',reason='independent-tail-not-preserved')
+        row['command'].update(queueDrained=True,activeObserved=False,startedOrder=[],clientCurrentExerciseCleared=False,clientInventory=initial)
+        row['receipt'].update(tailRead=False,records=[],violations=[],inventory=initial,clinical=clinical(),currentExerciseCleared=True,serverStopSettled=True)
+        rows[-1]['failed']=1
+        context=dict(case=case,actor='client1',mode='native',kind='mp',failedCaseRecorded=True,failedRowUnchanged=True,
+                     queueEmpty=True,nativeActions=0,observerActive=False,localRecords=0)
+        authority=dict(case=case,phase='before',items=ids,serverIdle=True,currentExerciseCleared=True,records=0,
+            observerActive=False,nativeActions=0,failedCaseRecorded=True,inventory=initial,storage=storage,clinical=clinical(),activation=activation)
+        start=dict(context,phase='started',exactObjectMatched=True,cleared=True,authority=authority,before=clinical(),after=clinical(),
+            inventoryBefore=initial,inventoryAfter=initial,activationBefore=activation,activationAfter=activation,storageBefore=storage,recoveryRequired=True)
+        final=copy.deepcopy(prep['inventory']);final.update(primary=False,secondary=ids['screwdriver'],worn=[])
+        next(value for value in final['items'] if value['id']==ids['dumbbell'])['container']='root'
+        carried=copy.deepcopy(storage);carried.update(endpoint='root',world=False)
+        settled_authority=dict(authority,phase='after',inventory=final,storage=carried)
+        end=dict(context,phase='settled',currentExerciseCleared=True,nativeBegins=[dict(kind='ISInventoryTransferAction',id=ids['bag'],callback='ISBaseTimedAction.begin')],
+            recoveryRequired=True,recoveryCallbacks=1,recoveryCallbackSucceeded=True,recoveryTransaction=17,recoveryAuthorityCompleted=True,
+            recoveryStart=dict(id=ids['bag'],kind='Base.Bag_Schoolbag',source='world',destination='root',callback='ISBaseTimedAction.begin',
+                storage=storage,inventory=initial,nativeClock=2000),authority=settled_authority,clinical=clinical(),inventory=final,activation=activation,storage=carried)
+        return evidence,start,end
+
+    def verify_isolation(self,evidence,start,end,order='normal',ready_order='normal'):
+        self.verify(evidence);rows,raw,_=evidence
+        marker=lambda key,value:'[FITNESS_TEST] '+key+' '+json.dumps(value)+'\n'
+        line=lambda value:'[QUEUE_CHECK] '+json.dumps(value)+'\n'
+        started=marker('ISOLATION_STARTED',start);settled=marker('ISOLATION_SETTLED',end)
+        middle=started+line(rows[1])+settled if order=='before-failure' else line(rows[1])+started+settled
+        if order=='next-overlap':middle=line(rows[1])+started+'[FITNESS_TEST] MENU_READY {}\n'+settled
+        if order=='duplicate':middle+=started+settled
+        client=line(rows[0])+middle+line(rows[-1])+'[FITNESS_TEST] COMPLETE\n'
+        authority=''.join(marker(key,value) for key,value in raw)
+        ready=marker('ISOLATION_READY',start['authority'])+marker('ISOLATION_READY',end['authority'])
+        authority=ready+authority if ready_order=='early' else authority+ready
+        (self.root/'client1-launch.log').write_text(client);(self.root/'server-launch.log').write_text(authority)
+        return fitness.verify(self.root,self.selection,{})
+
+    def test_native_isolation_keeps_failed_rows_and_native_equipment_differences(self):
+        for case in fitness.BORROWED_CASES:
+            with self.subTest(case=case):
+                evidence,start,end=self.isolation_evidence(case)
+                result=self.verify_isolation(evidence,start,end)
+                self.assertEqual([issue for issue in result['issues'] if 'isolation' in issue],[])
+                self.assertEqual(len(result['evidence']['isolations']),2)
+                self.assertTrue(all(value['status']=='failed' for value in result['outcomes']))
+                self.assertEqual(evidence[0][1]['status'],'failed')
+                self.assertNotEqual(end['inventory'],evidence[1][0][1]['inventory'])
+
+    def test_native_isolation_rejects_order_live_workouts_loss_and_unconfirmed_recovery(self):
+        for change in ('before-failure','next-overlap','duplicate','authority-early','mode','not-failed','workout','local-active','server-active',
+                       'wrong-ids','lost','duplicate-item','type','favorite','bag-world','effects','authority-effects','callback','transaction','fake-start','no-start','repeat-start','row-mutated'):
+            evidence,start,end=self.isolation_evidence();order='normal';ready_order='normal'
+            if change in ('before-failure','next-overlap','duplicate'):order=change
+            elif change=='authority-early':ready_order='early'
+            elif change=='mode':self.selection['mode']='toolkit'
+            elif change=='not-failed':evidence[0][1]['status']='passed'
+            elif change=='workout':evidence[0][1]['receipt']['records']=[{}]
+            elif change=='local-active':start['observerActive']=True
+            elif change=='server-active':end['authority']['nativeActions']=1
+            elif change=='wrong-ids':end['authority']['items']=dict(end['authority']['items'],bag=999)
+            elif change=='lost':end['inventory']['items'].pop()
+            elif change=='duplicate-item':end['inventory']['items'].append(end['inventory']['items'][0])
+            elif change=='type':end['inventory']['items'][0]['kind']='Base.Pencil'
+            elif change=='favorite':end['storage']['favorite']=not end['storage']['favorite']
+            elif change=='bag-world':end['storage'].update(endpoint='world',world=dict(x=1,y=2,z=0,linked=True))
+            elif change=='effects':end['clinical']['strengthXP']+=1
+            elif change=='authority-effects':end['authority']['clinical']=clinical(xp=1)
+            elif change=='callback':end['recoveryCallbackSucceeded']=False
+            elif change=='transaction':end['recoveryAuthorityCompleted']=False
+            elif change=='fake-start':end['recoveryStart']['callback']='fixture-poll'
+            elif change=='no-start':end['nativeBegins']=[]
+            elif change=='repeat-start':end['nativeBegins']*=2
+            else:end['failedRowUnchanged']=False
+            with self.subTest(change=change):
+                self.assertTrue(any('isolation' in issue for issue in self.verify_isolation(evidence,start,end,order,ready_order)['issues']))
+
+    def test_lua_native_isolation_exact_object_gates_and_real_disabled_lifecycle_receipt(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for native isolation ownership checks')
+        lua=LuaRuntime()
+        lua.execute("""
+            function copy(value)if type(value)~='table'then return value end local result={}
+             for key,entry in pairs(value)do result[key]=copy(entry)end return result end
+            selection={mode='native',kind='mp'};observer={records={},clock=function()return 1000 end}
+            package.preload['QueueFitnessObservation']=function()return observer end
+            package.preload['QueueTestSelection']=function()return selection end
+            package.preload['TimedActions/ISQueueActionsAction']=function()return {}end
+            ISQueueActionsAction={start=function()end};ISInventoryTransferAction={}
+            isClient=function()return true end;isServer=function()return false end;getTimestampMs=function()return 1000 end
+            PZSurvivorToolkit={Settings={actionQueue=function()return false end}}
+            q={queue={}};ISTimedActionQueue={queues={},getTimedActionQueue=function()return q end}
+            nativeCount=0;clearCalls=0;root={};ghost={}
+            fit={current=ghost,getCurrentExe=function(self)return self.current end,
+             setCurrentExercise=function(self,value)clearCalls=clearCalls+1;self.current=value end}
+            player={getFitness=function()return fit end,getInventory=function()return root end,
+             hasTimedActions=function()return nativeCount>0 end,getCharacterActions=function()return {isEmpty=function()return nativeCount==0 end}end}
+            clinical={fitnessXP=0,strengthXP=0,endurance=1,regularity={bicepscurl=0},stiffness={arms=0}}
+            observer.clinical=function()return copy(clinical)end
+            original={items={{id=10,kind='Base.BookCarpentry1',container=12},{id=11,kind='Base.BookFirstAid1',container='root'},
+             {id=12,kind='Base.Bag_Schoolbag',container='root'},{id=13,kind='Base.Torch',container='root'},
+             {id=14,kind='Base.Screwdriver',container='root'},{id=15,kind='Base.DumbBell',container=12}},primary=13,secondary=14,worn={{id=12,location='Back'}}}
+            initialStorage={id=12,kind='Base.Bag_Schoolbag',favorite=true,endpoint='root',occurrences=1,
+             contents={copy(original.items[1]),copy(original.items[6])},world=false}
+            function reset()
+             selection.mode='native';selection.kind='mp';nativeCount=0;clearCalls=0;fit.current=ghost
+             q.queue={};q.current=nil;observer.records={};observer.active=nil;clinical.fitnessXP=0;clinical.strengthXP=0
+             inventory={items={copy(original.items[2]),copy(original.items[4]),copy(original.items[5]),copy(original.items[6])},primary=false,secondary=14,worn={}}
+             inventory.items[4].container='root'
+             storage=copy(initialStorage);storage.endpoint='world';storage.world={x=1,y=2,z=0,linked=true};storage.contents={copy(original.items[1])}
+             state={case='placement-cancel-restore',player=player,requestedCurrent=ghost,strandedCurrent=ghost,failedCaseRecorded=true,
+              ids={items={front=10,tail=11,bag=12,hammer=13,screwdriver=14,dumbbell=15},inventory=copy(original),storage=copy(initialStorage)}}
+             state.lastReceipt={currentExerciseCleared=true,serverStopSettled=true,records={},violations={}}
+             state.failedRow={id=state.case,status='failed',receipt=state.lastReceipt,command={queueDrained=true,clientCurrentExerciseCleared=false,activeObserved=false,startedOrder={}}}
+             state.failedRowEncoding=JSON.encode(state.failedRow)
+             authority={case=state.case,phase='before',items=state.ids.items,serverIdle=true,currentExerciseCleared=true,records=0,
+              observerActive=false,nativeActions=0,failedCaseRecorded=true,inventory=copy(inventory),storage=copy(storage),clinical=copy(clinical)}
+            end
+        """)
+        lua.globals().JSON=lua.execute((ROOT/'tests/native_queue/health/shared/QueueHealthEvents.lua').read_text())
+        lua.execute("package.preload['QueueHealthEvents']=function()return JSON end")
+        lua.globals().fixture=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
+        lua.execute("""
+            fixture.inventory=function()return copy(inventory)end;fixture.storage=function()return copy(storage)end
+            fixture.activation=function()return {['13']=false}end
+            local changes={function()selection.mode='toolkit'end,function()selection.kind='sp'end,
+             function()state.case='empty'end,function()state.failedCaseRecorded=false end,
+             function()state.failedRow.status='passed'end,function()state.failedRow.command.activeObserved=true end,
+             function()state.failedRow.command.startedOrder={'bicepscurl'}end,function()state.lastReceipt.records={{}}end,
+             function()state.requestedCurrent={}end,function()state.strandedCurrent={}end,
+             function()q.queue={{}}end,function()q.current={}end,function()nativeCount=1 end,
+             function()observer.active={}end,function()observer.records={{}}end,
+             function()authority.records=1 end,function()authority.currentExerciseCleared=false end,
+             function()authority.items=copy(authority.items);authority.items.bag=999 end,
+             function()authority.case='closed-ui-restore'end,function()storage.favorite=false end,
+             function()inventory.items[1].kind='Base.Pencil'end,function()storage.contents={}end}
+            for _,change in ipairs(changes)do
+             reset();change();local old=fit.current
+             assert(not pcall(fixture.beginNativeIsolation,state,authority),'unsafe native isolation accepted')
+             assert(clearCalls==0 and fit.current==old,'rejected gate changed live constructor')
+            end
+            reset();local witness=fixture.beginNativeIsolation(state,authority)
+            assert(clearCalls==1 and fit.current==nil and witness.cleared and witness.exactObjectMatched)
+            assert(not pcall(fixture.beginNativeIsolation,state,authority)and clearCalls==1,'isolation repeated clear')
+            assert(not pcall(fixture.finishNativeIsolation,state,authority),'queue disappearance fabricated cleanup')
+            F=fixture;O=observer;T=PZSurvivorToolkit;command={};case=function()return state.case end
+        """)
+        lua.execute((ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua').read_text())
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        start=source.index("assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail'")
+        end=source.index("),'fitness native reader boundary observer unavailable')",start)+len("),'fitness native reader boundary observer unavailable')")
+        lua.execute(source[start:end])
+        lua.execute("""
+            isItemTransactionDone=function(id)return id==17 end;isItemTransactionRejected=function()return false end
+            local action=setmetatable({Type='ISInventoryTransferAction',character=player,transactionId=17,
+             srcContainer={getType=function()return 'floor'end},destContainer=root,item={getID=function()return 12 end,
+             getFullType=function()return 'Base.Bag_Schoolbag'end}},ISInventoryTransferAction)
+            local lifecycle=T.ActionQueueLifecycle;lifecycle.started(action)
+            assert(lifecycle.begin(action,'perform'),'queue-disabled recovery did not opt into actual finish observation')
+            lifecycle.finish(action,'perform',true)
+            assert(state.isolation.callbacks==1 and state.isolation.authority and clearCalls==1)
+            -- Emulate separately completed native replication. The observer never moves or equips an item.
+            inventory=copy(original);inventory.primary=false;inventory.secondary=14;inventory.worn={};inventory.items[6].container='root'
+            storage=copy(initialStorage);storage.contents={copy(original.items[1])}
+            local final=copy(authority);final.phase='after';final.inventory=copy(inventory);final.storage=copy(storage)
+            local saved=state.failedRowEncoding
+            local result=fixture.finishNativeIsolation(state,final)
+            assert(result.recoveryCallbacks==1 and result.recoveryTransaction==17 and result.recoveryAuthorityCompleted)
+            assert(result.inventory.primary==false and result.activation['13']==false,'native baseline differences were repaired')
+            assert(JSON.encode(state.failedRow)==saved and state.failedRow.status=='failed'and clearCalls==1)
+            assert(not pcall(fixture.finishNativeIsolation,state,final),'settled isolation was repeated')
+        """)
 
     def test_lua_recovery_refuses_live_or_unrecorded_or_unowned_state(self):
         try:
