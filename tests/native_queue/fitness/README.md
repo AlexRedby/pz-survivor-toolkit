@@ -54,7 +54,13 @@ worn schoolbag, then closes the actual window immediately after enqueue. Toolkit
 must show real native pickup progress and the authority must observe that dumbbell
 in the primary hand, with the bag unequipped, at workout start. Final receipts
 require the dumbbell back inside that exact bag, both original held IDs restored,
-the same schoolbag worn again and every other inventory endpoint preserved.
+the same schoolbag worn again and every other inventory endpoint preserved. Toolkit also requires one real native
+root-to-source-bag return begin and its completed shared borrowing receipt before
+the independent reader. Read-only client begin and Host serverStart snapshots must
+already contain the returned exact-ID/type dumbbell inside the recovered original
+bag, with both original hands and worn bag restored. A late final P4 restoration
+cannot satisfy this normal-cleanup boundary. Native controls keep their actual
+pre-reader differences and original timer/order failures.
 
 The observer never replaces source-guarded client/SP action methods. SP reads the
 real live `repnb` and clinical state; the server wraps its own native

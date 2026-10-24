@@ -25,7 +25,7 @@ local function empty()return #queue().queue==0 and not getPlayer():hasTimedActio
 -- including queue-disabled mode. Observation changes no callback or queue work.
 assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{started=function(action)
  if state and state.isolation and state.isolation.status=='started'then F.isolationStarted(state,action);return end
- if not command or not state or not F.restorationCase(case())then return end
+ if not command or not state or not F.borrowedCase(case())then return end
  if action.Type=='ISEquipWeaponAction'and getmetatable(action)==ISEquipWeaponAction and action.character==state.player
   and action.item and action.item:getID()==state.ids.items.dumbbell and action.item:getFullType()=='Base.DumbBell'then
   command.propEquipObserved=true
@@ -47,13 +47,13 @@ assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{start
 end,begin=function(action,phase)
  if state and state.isolation and state.isolation.status=='started'then return F.isolationBegin(state,action,phase)end
  -- Queue-disabled ActionCompletion dispatches finish only for an accepted observer.
- return command~=nil and state~=nil and F.restorationCase(case())and action~=nil
+ return command~=nil and state~=nil and F.borrowedCase(case())and action~=nil
   and (phase=='perform'or phase=='complete')and action.character==state.player
   and action.Type=='ISDropWorldItemAction'and getmetatable(action)==ISDropWorldItemAction and action.item~=nil
   and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'
 end,finish=function(action,phase,succeeded)
  if state and state.isolation and state.isolation.status=='started'then F.isolationFinish(state,action,phase,succeeded);return end
- if not isClient()and not isServer()and command and state and F.restorationCase(case())
+ if not isClient()and not isServer()and command and state and F.borrowedCase(case())
   and action.character==state.player and action.Type=='ISDropWorldItemAction'and getmetatable(action)==ISDropWorldItemAction
   and action.item and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'and phase=='complete'then
   O.placements[#O.placements+1]=F.placement(action.character,state.ids.items.bag,'ISDropWorldItemAction.complete',succeeded==true)
@@ -207,7 +207,7 @@ local function dispatch()
  if not immediate(id)then front=read(state.items.front)end
  local first=enqueue(exerciseForCase(id))
  if id=='sequential'then enqueue('pushups')end
- if F.restorationCase(id)then command.propEquipObserved=false;command.returnCount=0;command.returnStarts={};command.recoveryStarts={} end
+ if F.borrowedCase(id)then command.propEquipObserved=false;command.returnCount=0;command.returnStarts={};command.recoveryStarts={} end
  tail=read(state.items.tail)
  command.waitStartMS=O.clock();command.initialClinical=O.clinical(getPlayer())
  if front then command.waitingNoExercise=not getPlayer():getFitness():getCurrentExe()end
@@ -251,7 +251,7 @@ local function observe()
   command.placementCancelled=true
   assert(queue():indexOf(tail)~=-1,'placement cancellation removed independent tail')
  end
- if not native and F.restorationCase(case())then
+ if not native and F.borrowedCase(case())then
   command.recoverySettlements={}
   for _,action in ipairs(recoveryActions)do command.recoverySettlements[#command.recoverySettlements+1]=Settlement.operationState(action)or false end
   local status=Settlement.operationState(requests[1])
@@ -337,7 +337,7 @@ end
 local function finishCase()
  local localInventory=F.inventory(getPlayer())
  command.queueDrained=empty();command.clientInventory=localInventory
- if F.restorationCase(case())then command.clientActivation=F.activation(getPlayer());command.clientStorage=F.storage(getPlayer(),state.ids.items.bag)end
+ if F.borrowedCase(case())then command.clientActivation=F.activation(getPlayer());command.clientStorage=F.storage(getPlayer(),state.ids.items.bag)end
  command.clientCurrentExerciseCleared=not getPlayer():getFitness():getCurrentExe()
  local problem
  if not receipt.tailRead then problem='independent-tail-not-preserved'

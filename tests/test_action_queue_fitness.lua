@@ -241,6 +241,33 @@ local nativeFitness={complete=ISFitnessAction.complete,exeLooped=ISFitnessAction
 local lifecycle=f.project('ActionQueueLifecycle')
 f.project('ActionQueueTidyIntent')
 local fitnessQueue=f.project('ActionQueueFitness')
+-- BulkFood installs this native binding after ActionQueue/Fitness loads. Execute
+-- its real registration so broad native matches cannot hide a second owner.
+local foodContractSource=assert(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkFood.lua')
+    :match('(local function installCleanupContract%(%).-\nend)'))
+local function installFoodWearContract()
+    local cleanup={}
+    local bulk={isCleanup=function(action)return cleanup[action]==true end}
+    local install=assert(loadstring('local Toolkit,Bulk,Settlement=...\n'..foodContractSource..'\nreturn installCleanupContract',
+        '@PZSurvivorToolkit/BulkFood.lua'))(PZSurvivorToolkit,bulk,PZSurvivorToolkit.ActionQueueSettlement)
+    install()
+    return cleanup,bulk
+end
+local foodWear,foodOwner=installFoodWearContract()
+do
+    local bag=item('Bag_Schoolbag',nil,'BACK')
+    local owned=ISWearClothing:new(player,bag)
+    foodWear[owned]=true
+    local contract,adapter=policy.inspect(owned)
+    assert(contract and adapter=='native.ISWearClothing','registered food cleanup lost its native contract')
+    local foreign=ISWearClothing:new(player,bag)
+    assert(not policy.inspect(foreign),'native food registration claimed an unrelated identical Wear')
+    foodOwner.isCleanup=function()return true end
+    assert(not policy.inspect(foreign),'replacement food predicate widened its captured native applicability')
+    local complete=owned.complete;owned.complete=function()end
+    assert(not policy.inspect(owned),'registered food cleanup accepted a changed native callback')
+    owned.complete=complete
+end
 local equipmentTick=assert(tickCallbacks[#tickCallbacks-1],'native fitness storage cleanup did not register its window-independent callback')
 local settlement=PZSurvivorToolkit.ActionQueueSettlement
 local fitnessPrune=assert(tickCallbacks[#tickCallbacks],'fitness did not register explicit record pruning')
@@ -265,6 +292,11 @@ end
 local function runCurrent(q)
     local action=assert(q.queue[1]);q.current=action
     if fitnessQueue.canSkip(action)then removeCurrent(q);return action end
+    if action.Type=='ISWearClothing'and fitnessQueue.isManaged(action)then
+        local contract,adapter=policy.inspect(action)
+        assert(contract and adapter=='toolkit.fitness','native food registration made managed Wear ownership ambiguous')
+        assert(settlement.requiredStep(action),'managed Wear lost its exact earned cleanup prerequisite')
+    end
     action.action=nativeAction()
     lifecycle.started(action)
     if client and fitnessQueue.isManaged(action) and action.Type~='ISInventoryTransferAction'
@@ -1076,6 +1108,7 @@ if SaucedCartsSource then
   if mode=='preinstalled'then hook()else Events.OnGameStart.Add(hook)end
   local carts=source(admissionCode,clientRoot..'ActionQueueCarts.lua')
   fitnessQueue=f.project('ActionQueueFitness')
+  installFoodWearContract()
   for _,callback in ipairs(callbacks)do callback()end
   -- Mirror Compat's synchronous enqueue observation before Fitness binds preparation.
   local nativeAdd=ISTimedActionQueue.add

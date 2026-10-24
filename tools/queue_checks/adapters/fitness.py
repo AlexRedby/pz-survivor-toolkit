@@ -152,7 +152,7 @@ def _storage(value, prep, endpoint, fetched):
     items = prep['items']
     contents = [row for row in prep['inventory']['items'] if row['container'] == items['bag']
                 and (not fetched or row['id'] != items['dumbbell'])]
-    if (not _matches(value, dict(id=items['bag'], kind='Base.Bag_Schoolbag', favorite=True,
+    if (not _matches(value, dict(id=items['bag'], kind='Base.Bag_Schoolbag', favorite=prep['case'] in RESTORATION_CASES,
                                  endpoint=endpoint, occurrences=1, contents=contents))):
         return False
     world = value.get('world')
@@ -258,21 +258,21 @@ def _case(case, row, prep, receipt, selection, mutation=None):
         for record in records:
             if not _ground_conservation(dict(storage=record.get('startStorage'), inventory=record.get('startEquipment')), prep):
                 issues.append('Fitness authoritative workout lacked exact world bag/content conservation: ' + case)
-    if case in RESTORATION_CASES:
+    if case in BORROWED_CASES:
         # The selected P4 restores the native control after the independent reader.
         # Toolkit additionally owes that exact restoration before its reader starts.
         expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
-                              hammer='Base.Torch', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
+                              hammer='Base.Torch' if case in RESTORATION_CASES else 'Base.Hammer', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
         if (any(next((item for item in prep['inventory']['items'] if item['id'] == identity), {}).get('kind') != expected_types[name]
                 for name, identity in items.items())
-                or not _same(prep.get('activation'), {str(items['hammer']): True})
+                or case in RESTORATION_CASES and not _same(prep.get('activation'), {str(items['hammer']): True})
                 or not _storage(prep.get('storage'), prep, 'root', False)
-                or next((item for item in prep['inventory']['items'] if item['id'] == items['front']), {}).get('container') != items['bag']):
-            issues.append('Fitness borrowed cancellation exact gear/type/activation setup differs: ' + case)
+                or case in RESTORATION_CASES and next((item for item in prep['inventory']['items'] if item['id'] == items['front']), {}).get('container') != items['bag']):
+            issues.append('Fitness borrowed exact gear/type/activation setup differs: ' + case)
         before_tail = command.get('beforeTail', {})
         if (before_tail.get('callback') != 'ISBaseTimedAction.begin' or not _inventory(before_tail.get('inventory')) or not _number(before_tail.get('nativeClock'))
-                or not isinstance(before_tail.get('activation'), dict)
-                or not _matches(command, dict(cancelCallback='ISFitnessUI:CANCEL' if native else 'ActionQueue.cancelOperation'))):
+                or not (isinstance(before_tail.get('activation'), dict) or before_tail.get('activation') == [])
+                or case in RESTORATION_CASES and not _matches(command, dict(cancelCallback='ISFitnessUI:CANCEL' if native else 'ActionQueue.cancelOperation'))):
             issues.append('Fitness independent tail boundary/native cancel callback missing: ' + case)
         if (not _storage(receipt.get('storage'), prep, 'root', False)
                 or not _storage(command.get('clientStorage'), prep, 'root', False)
@@ -293,7 +293,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or not _same(before_tail.get('inventory'), expected)
                     or not _same(before_tail.get('activation'), prep['activation'])
                     or not _storage(before_tail.get('storage'), prep, 'root', False)):
-                issues.append('Fitness cancellation lacked confirmed pickup/return or exact restoration before reader: ' + case)
+                issues.append('Fitness borrowed equipment lacked confirmed pickup/return or exact restoration before reader: ' + case)
             if case == 'active-cancel-restore':
                 steps = command.get('preparationAtCancel', {}).get('steps', [])
                 observed = [step for step in steps if step.get('observedPreparation') is True]
@@ -324,7 +324,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
             if (not _matches(tail_start, dict(id=items['tail'], kind='Base.BookFirstAid1', callback='ISReadABook.serverStart',
                                              workouts=len(exercises), observerActive=False))
                     or not _inventory(tail_start.get('inventory'))
-                    or not isinstance(tail_start.get('activation'), dict)
+                    or not (isinstance(tail_start.get('activation'), dict) or tail_start.get('activation') == [])
                     or not native and (not _same(tail_start['inventory'], expected)
                                        or not _same(tail_start['activation'], prep['activation'])
                                        or not _storage(tail_start.get('storage'), prep, 'root', False))):

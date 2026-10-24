@@ -9,6 +9,7 @@
 
 # Exercise ground storage
 
+- [ ] Diagnose queue-disabled full-pack menu Host Fitness preparation aborting the independent tail before any workout starts. The four `run-ground02/host-native` controls reproduce it with clean runtime logs; preserve those failed receipts and identify the actual native removal/validation boundary before changing behavior. This is a selected-pack observation, not an established vanilla-engine cause.
 - [ ] Check the exercise ground-storage change in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags (including favourites), contents/IDs, dumbbells borrowed from a bag, natural completion and cancellation during placement/pickup, closed Fitness window with queue controls off, movement away and a second player's competing pickup. Require authoritative conservation and unchanged exercise effects; Lua source-backed doubles do not establish live network ordering or rendering.
 
 # Container editor visual states
@@ -75,6 +76,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 # Fitness preparation live verification
 
+- [ ] Keep native cleanup contracts scoped to their actual owning family: food-mask restoration must not claim Fitness bag wear. Check unique contract selection, required cleanup inheritance and exact prop return before rerunning the affected SP/Host gates below.
 - [ ] Run `closed-ui-restore,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore` in disposable full-pack macOS SP and two-client menu Host with matching queue-disabled controls on the integrated ground-storage code. Require exact hand/bag/favourite/content/activation restoration before the independent reader, confirmed native drop and recovery, one shared pickup/return episode and no replayed workout with clean runtime logs. Preserve original failed runs and native timing/order/replica failures; do not reclassify them as passes. Deliver the migration only after the affected Toolkit gates pass.
 
 # Extend cancelled queue recovery

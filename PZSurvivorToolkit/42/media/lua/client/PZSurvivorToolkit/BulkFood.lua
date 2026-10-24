@@ -274,7 +274,7 @@ local function installCleanupContract()
         return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true},
             targets = {}, hands = action.character, preparationFinish = true, cancelWaiting = true,
             cancelOperation = not Settlement.isCleanup(action), interrupt = "finish-step"}
-    end)
+    end, nil, Bulk.isCleanup)
 end
 installCleanupContract()
 Events.OnGameStart.Add(installCleanupContract)

@@ -59,6 +59,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 for item in inventory['items']:item['kind']=types[next(key for key,value in ids.items() if value==item['id'])]
             prep = dict(case=case, items=ids, inventory=inventory, before=clinical())
             if case in fitness.BORROWED_CASES:
+                prep['activation']=[]
                 prep['storage']=storage_snapshot(ids,inventory);prep['storage']['favorite']=case in fitness.RESTORATION_CASES
             if case in fitness.RESTORATION_CASES:
                 prep['activation']={str(ids['hammer']):True};prep['storage']=storage_snapshot(ids,inventory)
@@ -108,7 +109,7 @@ class FitnessAdapterTests(unittest.TestCase):
             if case=='pending-reorder' and mode=='toolkit':command['reorderedTailBeforeStart']=True
             if case in fitness.BORROWED_CASES and mode=='toolkit':
                 command.update(borrowedTransferProgress=True,borrowedTool=ids['dumbbell'],borrowedSourceBag=ids['bag'])
-            if case in fitness.RESTORATION_CASES:
+            if case in fitness.BORROWED_CASES:
                 command.update(beforeTail=dict(inventory=copy.deepcopy(final),activation=copy.deepcopy(prep['activation']),nativeClock=1000000,callback='ISBaseTimedAction.begin'),
                                cancelCallback='ISFitnessUI:CANCEL' if mode=='native' else 'ActionQueue.cancelOperation',
                                clientActivation=copy.deepcopy(prep['activation']),clientStorage=copy.deepcopy(prep['storage']))
@@ -116,13 +117,13 @@ class FitnessAdapterTests(unittest.TestCase):
                 command['beforeTail']['storage']=copy.deepcopy(prep['storage'])
                 placed=mode=='native' or case!='pickup-cancel-restore'
                 receipt['placements']=[dict(callback='ISDropWorldItemAction.complete',succeeded=True,nativeClock=800000,
-                    storage=storage_snapshot(ids,inventory,'world',True),inventory=ground_inventory(ids,inventory))] if placed else []
+                    storage=dict(storage_snapshot(ids,inventory,'world',True),favorite=prep['storage']['favorite']),inventory=ground_inventory(ids,inventory))] if placed else []
                 if mode=='native':
                     # P4 restores after this reader; native timing and callbacks stay intact.
                     boundary=command['beforeTail']
                     boundary['inventory']=ground_inventory(ids,inventory);boundary['inventory'].update(primary=ids['dumbbell'])
-                    boundary['storage']=storage_snapshot(ids,inventory,'world',True)
-                    boundary['activation'][str(ids['hammer'])]=False
+                    boundary['storage']=dict(storage_snapshot(ids,inventory,'world',True),favorite=prep['storage']['favorite'])
+                    if case in fitness.RESTORATION_CASES:boundary['activation'][str(ids['hammer'])]=False
                 if mode=='toolkit':
                     command.update(confirmedPickup=True,confirmedReturn=True,returnCount=1,propEquipObserved=case=='active-cancel-restore',confirmedPreparation=case=='active-cancel-restore',
                         settlement=dict(phase='cleanup',steps=[dict(phase='prepare',state='earned',started=True,kind='ISDropWorldItemAction',
@@ -133,7 +134,7 @@ class FitnessAdapterTests(unittest.TestCase):
                         destination=ids['bag'],callback='ISBaseTimedAction.begin',nativeClock=900000)]
                 if mode=='toolkit':
                     command['recoveryStarts']=[dict(ordinal=1,id=ids['bag'],kind='Base.Bag_Schoolbag',source='world',destination='root',
-                        callback='ISBaseTimedAction.begin',nativeClock=850000,storage=storage_snapshot(ids,inventory,'world',True),
+                        callback='ISBaseTimedAction.begin',nativeClock=850000,storage=dict(storage_snapshot(ids,inventory,'world',True),favorite=prep['storage']['favorite']),
                         inventory=ground_inventory(ids,inventory))] if placed else []
                     command['recoverySettlements']=[dict(steps=[dict(plannedTransfer=True,transferDirection='pickup',kind='ISInventoryTransferAction',
                         itemId=ids['bag'],itemType='Base.Bag_Schoolbag',state='earned',started=True,phase='cleanup')])] if placed else []
@@ -182,6 +183,48 @@ class FitnessAdapterTests(unittest.TestCase):
                 elif change=='activation':command['beforeTail']['activation']={}
                 else:command['cancelCallback']='fixture-synthetic-cancel'
                 with self.subTest(case=case,change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_closed_ui_normal_cleanup_requires_shared_return_before_reader(self):
+        for kind in ('sp','mp'):
+            self.selection.update(kind=kind,clients=2 if kind=='mp' else 1,languages=['EN','RU'] if kind=='mp' else ['EN'],
+                options={'mp_host':True} if kind=='mp' else {},cases=['closed-ui-restore'])
+            self.assertEqual(self.verify()['issues'],[])
+            for change in ('late-prop','late-start','missing-start','duplicate-return','wrong-bag','unconfirmed-return','active-loan',
+                           'wrong-content-type','missing-recovery-receipt','wrong-drop','authority-late-prop','authority-content'):
+                if change.startswith('authority-') and kind!='mp':continue
+                evidence=copy.deepcopy(self.evidence());row=evidence[0][1];command=row['command'];prep=evidence[1][0][1]
+                final=copy.deepcopy(row['receipt']['inventory'])
+                if change=='late-prop':
+                    next(value for value in command['beforeTail']['inventory']['items'] if value['id']==prep['items']['dumbbell'])['container']='root'
+                    command['beforeTail']['storage']['contents']=[]
+                elif change=='late-start':command['returnStarts'][0]['nativeClock']=command['beforeTail']['nativeClock']+1
+                elif change=='missing-start':command['returnStarts']=[]
+                elif change=='duplicate-return':command['returnCount']=2;command['returnStarts']*=2
+                elif change=='wrong-bag':command['returnStarts'][0]['destination']+=100
+                elif change=='unconfirmed-return':command['confirmedReturn']=False
+                elif change=='active-loan':command['settlement']['borrowings'][0]['state']='active'
+                elif change=='wrong-content-type':command['beforeTail']['storage']['contents'][0]['kind']='Base.Pencil'
+                elif change=='missing-recovery-receipt':command['recoverySettlements']=[]
+                elif change=='wrong-drop':row['receipt']['placements'][0]['storage']['id']+=100
+                elif change=='authority-late-prop':
+                    next(value for value in row['receipt']['tailStart']['inventory']['items'] if value['id']==prep['items']['dumbbell'])['container']='root'
+                else:row['receipt']['tailStart']['storage']['contents']=[]
+                with self.subTest(kind=kind,change=change):
+                    self.assertEqual(row['receipt']['inventory'],final,'regression must retain exact late final restoration')
+                    self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_closed_ui_native_control_retains_real_pre_reader_differences(self):
+        for kind in ('sp','mp'):
+            self.selection.update(mode='native',kind=kind,clients=2 if kind=='mp' else 1,languages=['EN','RU'] if kind=='mp' else ['EN'],
+                options={'mp_host':True} if kind=='mp' else {},cases=['closed-ui-restore'])
+            evidence=self.evidence();self.assertEqual(self.verify(evidence)['issues'],[])
+            row=evidence[0][1];prep=evidence[1][0][1]
+            self.assertEqual(next(value for value in prep['inventory']['items'] if value['id']==prep['items']['hammer'])['kind'],'Base.Hammer')
+            self.assertFalse(prep['storage']['favorite']);self.assertEqual(row['command']['frontMinutes'],12)
+            self.assertNotEqual(row['command']['beforeTail']['inventory'],prep['inventory'])
+            self.assertEqual(row['receipt']['inventory'],prep['inventory'])
+            row['receipt']['records'][0]['stopMS']=row['receipt']['records'][0]['startMS']+1
+            self.assertTrue(self.verify(evidence)['issues'],'native constructor/duration failure must remain failed')
 
     def test_active_borrowed_cancel_requires_all_exact_native_preparation_effects(self):
         self.selection['cases']=['active-cancel-restore']
@@ -373,9 +416,9 @@ class FitnessAdapterTests(unittest.TestCase):
             queueEnabled=false;PZSurvivorToolkit={Settings={actionQueue=function()return queueEnabled end}}
             ISTimedActionQueue={queues={}};isClient=function()return false end;isServer=function()return false end
             player={};state={player=player,ids={items={bag=20}}};command={};O={placements={}}
-            F={restorationCase=function(id)return id=='placement-cancel-restore'end,
+            F={borrowedCase=function(id)return id=='placement-cancel-restore'or id=='closed-ui-restore'end,
              placement=function(_,id,callback,succeeded)return {id=id,callback=callback,succeeded=succeeded}end}
-            case=function()return 'placement-cancel-restore'end
+            caseID='placement-cancel-restore';case=function()return caseID end
             function action()
              return setmetatable({Type='ISDropWorldItemAction',character=player,item={
               getID=function()return 20 end,getFullType=function()return 'Base.Bag_Schoolbag'end}},ISDropWorldItemAction)
@@ -386,6 +429,7 @@ class FitnessAdapterTests(unittest.TestCase):
         lua.execute(source[start:end])
         lua.execute("""
             local lifecycle=T.ActionQueueLifecycle
+            for _,id in ipairs({'placement-cancel-restore','closed-ui-restore'})do caseID=id;O.placements={}
             for _,enabled in ipairs({false,true})do
              queueEnabled=enabled;local exact=action();local before=#O.placements
              assert(lifecycle.begin(exact,'perform'),'native perform finish observation must remain active with queue disabled')
@@ -401,6 +445,7 @@ class FitnessAdapterTests(unittest.TestCase):
              local wrong=action();change(wrong);assert(not lifecycle.begin(wrong,'complete'),'unrelated callback accepted')
             end
             assert(not lifecycle.begin(action(),'stop')and not lifecycle.begin(nil,'complete'))
+            end
         """)
 
     def test_world_bag_and_contents_require_exact_native_effect_and_completed_recovery(self):

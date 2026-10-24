@@ -144,7 +144,7 @@ function F.prepare(player,id,previous)
   state.items.bag:setFavorite(true)
   state.items.hammer:setCurrentUses(state.items.hammer:getMaxUses());state.items.hammer:setActivated(true)
  end
- O.reset(player,id);O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.restorationCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.borrowedCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
+ O.reset(player,id);O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.borrowedCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.borrowedCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
  if isServer()then
   -- InventoryContainer serialization includes its children. Send the owning root bag
   -- once; sending the nested dumbbell again would create a duplicate replica.

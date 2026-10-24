@@ -478,7 +478,7 @@ local function resources(action)
     end
     return result
 end
-local function registerNative(name, inspector, helpers)
+local function registerNative(name, inspector, helpers, applies)
     local class = _G[name]
     if not class or snapshots[class] then return end
     local snapshot = {class = class, methods = {}, helpers = {}}
@@ -490,7 +490,8 @@ local function registerNative(name, inspector, helpers)
     snapshots[class] = snapshot
     Definitions.registerBehavior("native." .. name, {
         types = {name},
-        matches = function(action) return nativeMatches(action, snapshot) end,
+        -- Family-owned native cleanup must not claim unrelated uses of the same class.
+        matches = function(action) return nativeMatches(action, snapshot) and (not applies or applies(action)) end,
         inspect = inspector,
     })
 end
