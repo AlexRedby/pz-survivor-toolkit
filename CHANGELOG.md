@@ -11,6 +11,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Added:** New Music (`NewMusic`, Workshop `3739256725`) to the B42.21 selection (59 Mod IDs / 54 Workshop items), for audible cassette/CD/vinyl playback. The base includes a Zomboid OST recording; additional song packs are selected separately. Full-pack SP/Host playback, performance and TV & Radio ReInvented coexistence remain unverified.
+
 - **Added:** Spongie's Open Jackets (`SpnOpenClothBase` before `SpnOpenCloth`, Workshop `2812326159`) and Climb Ladders (`SubirEscaleras`, Workshop `3774776279`) to the B42.21 selection (58 Mod IDs / 53 Workshop items). Adds open/rolled clothing variants and world-ladder climbing. Optional Fluffy Hair and Build Ladders remain unselected; full-pack SP/Host behavior is unverified.
 
 - **Added:** Vehicle Repair Overhaul and its B42 Vehicle Salvage Overhaul module from Workshop `2757712197`, loaded base-first after the other vehicle mods (55 Mod IDs / 51 Workshop items). Adds repair options and whole-vehicle salvage; full-pack SP/Host behavior and the upstream sandbox-setting controls remain unverified.

@@ -1,3 +1,7 @@
+# New Music selection
+
+- [ ] After installation is requested, check audible media playback, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
+
 # Open Jackets and Climb Ladders selection
 
 - [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, plus ladder ascent/descent, occupied exits, moved ladders, reload and second-player synchronization in isolated full-pack macOS B42.21 SP/Host saves. Selection and author support claims do not establish runtime compatibility.

@@ -15,7 +15,7 @@ This is the project’s selected set, not a general recommendation list. The INI
 
 **Vehicles, carts and archery:** [Realistic Dashboard & Gauges](#35-realistic-dashboard--gauges), [Navigator](#36-navigator), [SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft](#40-saucedcarts-saucedwheelbarrow-and-wheelbarrow-craft), [Nepenthe's High Beams](#44-nepenthes-high-beams), [Reverse Drive Lights](#45-reverse-drive-lights), [Vanilla Vehicles Animated](#46-vanilla-vehicles-animated), [Animated Vehicle Parts Fix](#47-animated-vehicle-parts-fix), [Archery Nexus + Wilderness Progression](#48-archery-nexus--wilderness-progression), [Vehicle Aim Roof Fix](#53-vehicle-aim-roof-fix), [Vehicle Repair Overhaul](#54-vehicle-repair-overhaul).
 
-**Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
+**Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [New Music](#57-new-music), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
 
 
 ## 1 Show VHS Skills in Tooltip
@@ -384,3 +384,14 @@ Enable both modules, with Base (`SpnOpenClothBase`) before Vanilla Items (`SpnOp
 Adds **Climb up the ladder** and **Climb down the ladder** to world ladders, including moved ladders. Hold **E** for about half a second or use the ladder's context menu to climb up; right-click the ground near the top opening to climb down. The shortcut is configurable under Options > Key Bindings > Climb Ladders. The author declares B42.15+ and SP/MP support, with server-confirmed movement broadcast to other players.
 
 The author says the mod adds no items, recipes or tiles and does not modify the saved world. The separate Build Ladders companion adds construction recipes and is optional; it is not selected. The author describes exit checks and climb restrictions for exhaustion, an unsplinted broken leg and overloading. Existing-world/removal safety and full-pack B42.21 SP/Host ascent/descent, moved/multistorey ladders, blocked exits, Toolkit menus/queue and remote animation remain unverified. Workshop reports include a Muldraugh police-station roof ladder moving a player through a wall; verify target ladders in a disposable save before relying on them for an escape.
+
+
+## 57 New Music
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3739256725) · Workshop `3739256725` · Mod `NewMusic`
+
+Plays audible cassette, CD and vinyl recordings through portable and world devices, with headphones, covers and multiplayer playback tracking. The base mod includes a Zomboid OST media item; additional artists and songs come from separate music packs. Only the base is selected at present. The author links B42-compatible packs from the Workshop page; older True Music packs can require conversion and are not automatic dependencies.
+
+The author declares Build 42, single-player and hosted multiplayer support, and permits adding the mod mid-save. No required framework or Java loader is listed. Install the Workshop item on Host and every client and enable `NewMusic` as supplied in the INI. Keep existing sandbox settings; the INI supplies neither media-spawn settings nor player volume preferences. The author describes a separate playback system rather than vanilla radio internals; coexistence with TV & Radio ReInvented still requires a full-pack check.
+
+Full-pack macOS B42.21 SP/Host audio output, device/battery controls, ground-to-hand continuity, save/reload and second-player synchronization remain unverified. Recent Workshop reports mention performance costs with large music collections and inventory/loot-panel problems on controllers; these reports do not establish a cause or resolution in this set. Check audible playback and responsiveness in a disposable profile before using a gameplay world. Do not remove a content mod from an existing save without checking its removal instructions and preserving backups.
