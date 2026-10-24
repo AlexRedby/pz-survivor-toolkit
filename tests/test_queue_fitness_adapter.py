@@ -48,8 +48,6 @@ class FitnessAdapterTests(unittest.TestCase):
                 peers.append(dict(event='case', suite='fitness', kind='mp', mode=mode, actor='client2',
                                   id=case, book=prep['peerBook'], read=True, queueDrained=True))
             final = copy.deepcopy(inventory)
-            if mode=='native' and case in fitness.RESTORATION_CASES:
-                next(row for row in final['items'] if row['id']==ids['dumbbell'])['container']='root'
             if case == 'missing-dumbbell':
                 final['items'] = [row for row in final['items'] if row['id'] != ids['dumbbell']]
             exercises = fitness._expected_exercises(case, mode)
@@ -93,6 +91,12 @@ class FitnessAdapterTests(unittest.TestCase):
                                cancelCallback='ISFitnessUI:CANCEL' if mode=='native' else 'ActionQueue.cancelOperation',
                                clientActivation=copy.deepcopy(prep['activation']))
                 receipt['activation']=copy.deepcopy(prep['activation'])
+                if mode=='native':
+                    # P4 restores after this reader; native timing and callbacks stay intact.
+                    boundary=command['beforeTail']
+                    boundary['inventory'].update(primary=ids['dumbbell'],secondary=False,worn=[])
+                    next(row for row in boundary['inventory']['items'] if row['id']==ids['dumbbell'])['container']='root'
+                    boundary['activation'][str(ids['hammer'])]=False
                 if mode=='toolkit':
                     command.update(confirmedPickup=True,confirmedReturn=True,returnCount=1,propEquipObserved=case=='active-cancel-restore',confirmedPreparation=case=='active-cancel-restore',
                         settlement=dict(phase='cleanup',steps=[dict(phase='prepare',state='earned',started=True)],
@@ -106,7 +110,8 @@ class FitnessAdapterTests(unittest.TestCase):
                         destination='root',started=True,progress=.25,transaction=5 if mp else 0))
                 if mp:
                     receipt['tailStart']=dict(id=ids['tail'],kind='Base.BookFirstAid1',callback='ISReadABook.serverStart',
-                        workouts=len(exercises),observerActive=False,inventory=copy.deepcopy(final),activation=copy.deepcopy(prep['activation']))
+                        workouts=len(exercises),observerActive=False,inventory=copy.deepcopy(command['beforeTail']['inventory']),
+                        activation=copy.deepcopy(command['beforeTail']['activation']))
             raw.append(('PREPARED', prep))
             if case in ('missing-dumbbell', 'exhaustion'):
                 mutation = dict(case=case, removed=ids['dumbbell'] if case=='missing-dumbbell' else False,
@@ -160,12 +165,37 @@ class FitnessAdapterTests(unittest.TestCase):
             else:evidence[1][-1][1]['tailStart']['inventory']['primary']=False
             with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
 
-    def test_native_borrowed_controls_execute_real_producer_and_keep_native_differences(self):
-        self.selection.update(mode='native',cases=list(fitness.RESTORATION_CASES))
-        result=self.verify()
-        self.assertEqual(result['issues'],[])
-        self.assertEqual([len(row['outcome']['receipt']['records']) for row in result['outcomes']],[1,1])
-        self.assertTrue(all(row['outcome']['command']['cancelCallback']=='ISFitnessUI:CANCEL' for row in result['outcomes']))
+    def test_native_borrowed_controls_restore_after_reader_and_keep_native_boundary_differences(self):
+        for kind in ('sp','mp'):
+            self.selection.update(mode='native',kind=kind,clients=2 if kind=='mp' else 1,
+                languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {},
+                cases=list(fitness.RESTORATION_CASES))
+            evidence=self.evidence();result=self.verify(evidence)
+            with self.subTest(kind=kind):
+                self.assertEqual(result['issues'],[])
+                self.assertEqual([len(row['outcome']['receipt']['records']) for row in result['outcomes'][:2]],[1,1])
+                for row in evidence[0][1:-1]:
+                    command=row['command'];prep=next(value for marker,value in evidence[1] if marker=='PREPARED' and value['case']==row['id'])
+                    self.assertEqual(command['cancelCallback'],'ISFitnessUI:CANCEL')
+                    self.assertEqual(row['receipt']['inventory'],prep['inventory'])
+                    self.assertEqual(row['receipt']['activation'],prep['activation'])
+                    self.assertNotEqual(command['beforeTail']['inventory'],prep['inventory'])
+                    self.assertNotEqual(command['beforeTail']['activation'],prep['activation'])
+
+    def test_native_borrowed_controls_reject_unreturned_final_prop_or_wrong_activation(self):
+        for case in fitness.RESTORATION_CASES:
+            self.selection.update(mode='native',cases=[case])
+            for change in ('prop-root','authority-activation','client-activation'):
+                evidence=copy.deepcopy(self.evidence());row=evidence[0][1]
+                prep=evidence[1][0][1]
+                if change=='prop-root':
+                    for inventory in (row['receipt']['inventory'],row['command']['clientInventory']):
+                        next(item for item in inventory['items'] if item['id']==prep['items']['dumbbell'])['container']='root'
+                elif change=='authority-activation':row['receipt']['activation'][str(prep['items']['hammer'])]=False
+                else:row['command']['clientActivation'][str(prep['items']['hammer'])]=False
+                with self.subTest(case=case,change=change):
+                    issues=self.verify(evidence)['issues']
+                    self.assertTrue(any(('exact inventory' if change=='prop-root' else 'settled equipment activation') in issue for issue in issues))
 
     def test_burpees_duration_stop_rejects_missing_or_delayed_native_removal(self):
         self.selection['cases'] = ['burpees-30']

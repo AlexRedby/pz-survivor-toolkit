@@ -159,9 +159,6 @@ def _case(case, row, prep, receipt, selection, mutation=None):
             or not _inventory(prep.get('inventory')) or not _clinical(prep.get('before'))):
         return ['Fitness exact preparation differs: ' + case]
     expected = copy.deepcopy(prep['inventory'])
-    if native and case in RESTORATION_CASES:
-        for item in expected['items']:
-            if item['id'] == items['dumbbell']:item['container'] = 'root'
     if case == 'missing-dumbbell':
         expected['items'] = [item for item in expected['items'] if item['id'] != items['dumbbell']]
     if (not _inventory(receipt.get('inventory')) or not _same(receipt['inventory'], expected)
@@ -235,8 +232,8 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or any(item['id'] == items['bag'] for item in start_inventory.get('worn', []))):
                 issues.append('Fitness authoritative start lacked borrowed dumbbell/unequipped bag: ' + case)
     if case in RESTORATION_CASES:
-        # Vanilla keeps its native UI restoration and never returns its prop to the
-        # source bag. Its baseline records this difference without claiming Toolkit cleanup.
+        # The selected P4 restores the native control after the independent reader.
+        # Toolkit additionally owes that exact restoration before its reader starts.
         expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
                               hammer='Base.Torch', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
         if (any(next((item for item in prep['inventory']['items'] if item['id'] == identity), {}).get('kind') != expected_types[name]
@@ -248,14 +245,15 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                 or not isinstance(before_tail.get('activation'), dict)
                 or not _matches(command, dict(cancelCallback='ISFitnessUI:CANCEL' if native else 'ActionQueue.cancelOperation'))):
             issues.append('Fitness independent tail boundary/native cancel callback missing: ' + case)
+        if (not _same(command.get('clientActivation'), prep['activation'])
+                or not _same(receipt.get('activation'), prep['activation'])):
+            issues.append('Fitness exact settled equipment activation differs: ' + case)
         if not native:
             settlement = command.get('settlement', {})
             if (command.get('confirmedPickup') is not True or command.get('confirmedReturn') is not True or not _matches(command, dict(returnCount=1))
                     or settlement.get('borrowings') != [dict(id=items['dumbbell'], fullType='Base.DumbBell', state='completed')]
                     or not _same(before_tail.get('inventory'), expected)
-                    or not _same(before_tail.get('activation'), prep['activation'])
-                    or not _same(command.get('clientActivation'), prep['activation'])
-                    or not _same(receipt.get('activation'), prep['activation'])):
+                    or not _same(before_tail.get('activation'), prep['activation'])):
                 issues.append('Fitness cancellation lacked confirmed pickup/return or exact restoration before reader: ' + case)
             if case == 'active-cancel-restore':
                 steps = command.get('preparationAtCancel', {}).get('steps', [])

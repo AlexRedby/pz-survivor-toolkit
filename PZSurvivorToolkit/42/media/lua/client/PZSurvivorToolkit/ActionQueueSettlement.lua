@@ -1156,11 +1156,29 @@ function Settlement.observePreparation(action, specification)
     step.preparation = {guard = specification.guard, capture = specification.capture, observed = specification.observed}
     if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
     if action.Type == "ISInventoryTransferAction" then
-        local record = step.operation
-        record.preparationScope = record.preparationScope or Settlement.deferred(action.character, record.token)
-        local scope = record.preparationScope
-        Settlement.remember(scope, action, {knownInputs = true, items = {[action.item:getID()] = true}})
-        if not Settlement.preparePickup(scope, action) then step.preparation.failed = true; return end
+        local record, binding = step.operation, step.borrowing
+        local scope = binding and binding.scope
+        if binding then
+            -- P4 observes synchronous enqueue before the family adapter binds its
+            -- preparation. Both observers must use that same native borrowing.
+            local candidate, ledger = binding.candidate, borrowing(scope)
+            if not borrowingLive(scope) or scope.character ~= record.character or scope.queue ~= record.queue
+                or scope.generation ~= record.generation or not scope.tasks[record.token]
+                or not candidate or candidate.step ~= step or candidate.owner ~= record.token
+                or candidate.phase ~= "prepare" or candidate.ambiguous or not ledger
+                or ledger.actions[action] ~= candidate or not ledger.executors[action]
+                or ledger.executors[action][candidate.id] ~= candidate
+                or candidate.source ~= action.srcContainer or candidate.destination ~= action.destContainer
+                or candidate.destination ~= record.character:getInventory()
+                or not sameMember(action.item, candidate) or action.item:getContainer() ~= candidate.source then
+                step.preparation.failed = true; return
+            end
+        else
+            record.preparationScope = record.preparationScope or Settlement.deferred(action.character, record.token)
+            scope = record.preparationScope
+            Settlement.remember(scope, action, {knownInputs = true, items = {[action.item:getID()] = true}})
+            if not Settlement.preparePickup(scope, action) then step.preparation.failed = true; return end
+        end
         step.preparation.scope = scope
     end
     return step.handle

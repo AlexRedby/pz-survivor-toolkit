@@ -108,7 +108,11 @@ actual serverStart callback also records live authoritative equipment and activa
 Both queue-disabled controls invoke the real Fitness OK and CANCEL callbacks.
 Native CANCEL during pickup does nothing, so that control must complete one full
 native workout with real repetitions and clinical effects. Native active-workout
-CANCEL stops the actual workout. Controls preserve native equipment/UI behavior;
-their final dumbbell remains in root inventory rather than being returned to its
-original bag, and their pre-reader equipment and activation snapshots are retained
-as native baseline differences. They never claim Toolkit restoration guarantees.
+CANCEL stops the actual workout. Controls preserve native equipment/UI behavior.
+The selected P4 Tidy Up Meister 2.0.8 restores the original hands, worn bag and
+activation and returns the dumbbell to its captured source bag after the native
+queue drains, following the independent reader. Both modes require the exact final
+preparation inventory and activation. Native pre-reader equipment and activation
+snapshots retain the observed baseline differences; only Toolkit requires complete
+restoration before the reader begins. The native closed-UI control's existing
+constructor-clock and duration failures remain failures.

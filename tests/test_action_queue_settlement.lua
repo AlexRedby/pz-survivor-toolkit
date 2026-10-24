@@ -1801,4 +1801,96 @@ for _, client in ipairs({false, true}) do
     end
 end
 
+-- P4 sees synchronous enqueue first. Family preparation must reuse its exact
+-- borrowing episode, including P4's foreign-task claims and transaction history.
+for _, client in ipairs({false, true}) do
+    for _, shared in ipairs({false, true}) do
+        local s = pickupFixture(client)
+        local observer, listeners = nil, {}
+        ISInventoryTransferAction = {}
+        setmetatable(s.pickup, ISInventoryTransferAction)
+        PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(callback, canObserve, events)
+            listeners[#listeners + 1] = {callback = callback, events = events}
+        end}
+        PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+        PZSurvivorToolkit.ActionQueuePolicy.matchesNative = s.guard
+        PZSurvivorToolkit.ActionQueuePolicy.isOrdinaryTransfer = function() return true end
+        ISTimedActionQueue.add = function(action) table.insert(s.queue.queue, 2, action) end
+        local constructor = ISInventoryTransferUtil.newInventoryTransferAction
+        ISInventoryTransferUtil.newInventoryTransferAction = function(...)
+            local action = constructor(...)
+            action.action, action.transactionId, action.queueList = {}, 71, {{items = {action.item}}}
+            return setmetatable(action, ISInventoryTransferAction)
+        end
+        local function event(name, action, ...)
+            local accepted = false
+            for _, listener in ipairs(listeners) do
+                local callback = listener.events and listener.events[name]
+                if callback and callback(action, ...) then accepted = true end
+            end
+            return accepted
+        end
+        local function merge(action)
+            event('merging', action)
+            for _, listener in ipairs(listeners) do listener.callback(action) end
+        end
+        if shared then
+            local reader = {character = s.player, toolkitQueueOperation = {}}
+            assert(s.settlement.remember(s.scope, reader, {knownInputs = true, items = {[181] = true}}))
+        end
+        local handle = s.settlement.observePreparation(s.pickup, {guard = s.guard,
+            capture = function() return {source = s.source} end,
+            observed = function() return s.members[1].container == s.root end})
+        assert(handle and #s.settlement.operationState(s.pickup).borrowings == 1,
+            'family observation duplicated the P4 native pickup episode')
+        s.settlement.started(s.pickup); observer.started(s.pickup)
+        assert(event('begin', s.pickup)); merge(s.pickup)
+        s.movePickup(1)
+        s.pickup.queueList, s.pickup.transactionId = {}, 0
+        assert(event('finish', s.pickup, true))
+        assert(s.settlement.completionState(s.queue, s.pickup) == 'ready' and s.settlement.earned(handle))
+        local state = s.settlement.operationState(s.pickup)
+        assert(#state.borrowings == 1 and state.borrowings[1].state == 'active',
+            'shared observers did not earn one exact native pickup')
+        local restoration = s.action(); restoration.Type = 'ISQueueActionsAction'
+        assert(s.settlement.cleanupAfter(restoration, {handle}))
+        s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
+        local returning = s.settlement.enqueueBorrowedReturn(handle)
+        assert(not s.settlement.enqueueBorrowedReturn(handle), 'one pickup scheduled a duplicate return')
+        if shared then
+            assert(not returning and s.counts() == 0,
+                'family observation lost P4 foreign-task ownership and created an exclusive return')
+        else
+            assert(returning and s.counts() == 1 and s.queue.queue[2] == returning,
+                'the single shared native pickup must schedule one exact return')
+            s.queue.current, s.queue.queue = returning, {returning, s.tail}
+            assert(event('begin', returning)); merge(returning)
+            local value = s.members[1]
+            s.root.items[181], s.source.items[181], value.container = nil, value, s.source
+            returning.queueList, returning.transactionId = {}, 0
+            assert(event('finish', returning, true))
+            assert(s.settlement.completionState(s.queue, returning) == 'ready')
+            state = s.settlement.operationState(s.pickup)
+            assert(#state.borrowings == 1 and state.borrowings[1].state == 'completed' and s.counts() == 1,
+                'the shared pickup and return did not close one exact borrowing episode')
+        end
+    end
+end
+
+-- A stale or changed pre-enqueue binding cannot be replaced with a fresh claim.
+for _, changed in ipairs({'source', 'generation', 'retired'}) do
+    local s = pickupFixture(false)
+    PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function() return true end}
+    PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+    if changed == 'source' then s.pickup.srcContainer = {}
+    elseif changed == 'generation' then s.scope.generation = s.scope.generation + 1
+    else s.settlement.close(s.scope) end
+    assert(not s.settlement.observePreparation(s.pickup, {guard = s.guard,
+        capture = function() return {} end, observed = function() return true end}),
+        changed .. ': a mismatched existing pickup acquired preparation proof')
+    assert(#s.settlement.operationState(s.pickup).borrowings == 1,
+        changed .. ': rejecting reuse created a replacement borrowing episode')
+end
+
 print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')
