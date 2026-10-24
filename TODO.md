@@ -1,7 +1,3 @@
-# Cart delivery and manual playground
-
-- [ ] Launch the prepared isolated manual CartLab playground for the user, confirm bootstrap readiness and provide controls and diagnostic/log locations without changing personal saves or installation.
-
 # Container editor visual states
 
 - [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.
