@@ -311,3 +311,13 @@ while compactingPage.cursor do
     assert(continuations<20)
 end
 print('Manifest authority: bounded migration/scans/RPC, identities, origins, presets, mutations and stale retention passed.')
+
+local exactA,exactB=item('Base.Identical','Same'),item('Base.Identical','Same')
+local modA,modB={PZSTItemTags={food='remove'}},{PZSTItemTags={tool='add'}}
+for _,entry in ipairs({{exactA,modA},{exactB,modB}})do
+ entry[1].hasModData=function()return true end
+ entry[1].getModData=function()return entry[2]end
+end
+local projectedA,projectedB=Model.item(exactA),Model.item(exactB)
+assert(projectedA.key~=projectedB.key and projectedA.tagDelta.food=='remove'
+ and projectedB.tagDelta.tool=='add','warehouse merged different physical tag assignments')

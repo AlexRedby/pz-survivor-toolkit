@@ -928,7 +928,7 @@ function Rules.getMediaBaseCategory(category)
 end
 
 function Rules.fluidCategory(item)
-    if not item then
+    if not item or Legacy.useVanillaDefaults() then
         return
     end
 
@@ -979,6 +979,7 @@ end
 
 local function baseForScript(script)
     if not script then return nil end
+    if Legacy.useVanillaDefaults() then return script:getDisplayCategory() end
     local name = tostring(script:getFullName())
     local exact = data[string.lower(name)]
     if exact then return exact end
@@ -993,12 +994,13 @@ end
 
 -- OC autosorts at OnGameBoot and retains those claims. In particular late
 -- SkillBook registration must not reclassify an already resolved literature item.
-local bootCategories, bootSeen
+local bootCategories, bootSeen, bootVanilla
 function Rules.snapshotScripts()
     if not getAllItems then return end
     local scripts = getAllItems()
     if not scripts then return end
     bootCategories, bootSeen = {}, {}
+    bootVanilla = Legacy.useVanillaDefaults()
     for index = 0, scripts:size() - 1 do
         local script = scripts:get(index)
         local key = string.lower(tostring(script:getFullName()))
@@ -1013,7 +1015,7 @@ function Rules.forScript(script)
     local legacy = Legacy.forType(name)
     if legacy then return legacy end
     local key = string.lower(name)
-    if bootSeen and bootSeen[key] then return bootCategories[key] end
+    if bootSeen and bootSeen[key] and bootVanilla == Legacy.useVanillaDefaults() then return bootCategories[key] end
     return baseForScript(script)
 end
 
@@ -1024,6 +1026,10 @@ function Rules.forItem(item)
     if override then return override end
     local script = item.getScriptItem and item:getScriptItem()
     local category = Rules.forScript(script)
+    if Legacy.useVanillaDefaults() then
+        if not category or category == "" then return item:getCategory() end
+        return Rules.refineMediaCategory(item, category) or category
+    end
     if not category then return nil end
     if item.isFluidContainer and item:isFluidContainer() then
         local fluid = Rules.fluidCategory(item)

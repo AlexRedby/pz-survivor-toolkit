@@ -37,4 +37,12 @@ end
 files[global]={'T=Base.Thread=Good'};files['ModOptions.ini']={'tickbox|organizedCategories_core|perSaveDisplayOverrides|maybe'}
 Legacy.reset();assert(Legacy.forType('Base.Thread')==nil and not Legacy.instancesEnabled(),'invalid mode activated assignments')
 assert(closes>0,'readers were not closed')
+files[global]={'T=Base.Thread=SavedCRLF'}
+files['ModOptions.ini']={'tickbox|organizedCategories_core|perSaveDisplayOverrides|false\r',
+ 'tickbox|organizedCategories_core|sessionOnlyDisplayOverrides|false\r'}
+Legacy.reset()
+assert(Legacy.forType('Base.Thread')=='SavedCRLF' and Legacy.instancesEnabled(),
+ 'CRLF options disabled saved category assignments')
+files['ModOptions.ini']=nil;files[global]={'T=Base.Thread=SavedCRLF\r'}
+Legacy.reset();assert(Legacy.forType('Base.Thread')=='SavedCRLF','CRLF assignments were rejected')
 print('LegacyItemCategories: read-only atomic global/per-save migration, exact IDs, session-only scope and corrupt/missing files passed.')

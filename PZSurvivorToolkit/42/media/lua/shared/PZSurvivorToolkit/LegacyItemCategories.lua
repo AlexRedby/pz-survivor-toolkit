@@ -13,7 +13,7 @@ local function readLines(name, maxBytes, maxLines)
         while true do
             local value = reader:readLine()
             if value == nil then break end
-            local line = tostring(value)
+            local line = tostring(value):gsub('\r$', '')
             bytes = bytes + #line + 1
             assert(bytes <= maxBytes and #lines < maxLines, 'legacy category file exceeds bounds')
             lines[#lines + 1] = line
@@ -25,18 +25,19 @@ end
 
 local function settings()
     if mode then return mode end
-    mode = {perSave=false, sessionOnly=false}
+    mode = {perSave=false, sessionOnly=false, vanilla=false}
     local lines = readLines('ModOptions.ini', 2097152, 20000)
     if not lines then mode.invalid=true;return mode end
     for _, line in ipairs(lines) do
         if line:find('|organizedCategories_core|', 1, true) then
             local kind, key, value = line:match('^([^|]+)|organizedCategories_core|([^|]+)|([^|]+)$')
-            if key == 'perSaveDisplayOverrides' or key == 'sessionOnlyDisplayOverrides' then
+            if key == 'perSaveDisplayOverrides' or key == 'sessionOnlyDisplayOverrides' or key == 'useVanillaDefaults' then
                 if kind ~= 'tickbox' or (value ~= 'true' and value ~= 'false') then
                     mode.invalid=true;return mode
                 end
                 if key == 'perSaveDisplayOverrides' then mode.perSave=value=='true'
-                else mode.sessionOnly=value=='true' end
+                elseif key == 'sessionOnlyDisplayOverrides' then mode.sessionOnly=value=='true'
+                else mode.vanilla=value=='true' end
             elseif not kind then
                 mode.invalid=true;return mode
             end
@@ -98,6 +99,11 @@ end
 function Legacy.instancesEnabled()
     local options = settings()
     return not options.invalid and not (options.perSave and options.sessionOnly)
+end
+
+function Legacy.useVanillaDefaults()
+    local options = settings()
+    return not options.invalid and options.vanilla
 end
 
 function Legacy.reset()

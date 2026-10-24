@@ -47,3 +47,11 @@ assert(view:setPayload({containers = {}}))
 assert(#view:select('', nil, 'name', true) == 0 and #view.tagOptions == 0, 'removed sources must disappear')
 table.sort = originalSort
 print('Manifest view: 10,000 source records, cached query/order, tag filtering, locations and distinct identities passed.')
+
+local revision=1;tags.revision=function()return revision end
+assert(view:setPayload(payload))
+local before=described
+assert(not view:setPayload(payload))
+revision=2
+assert(view:setPayload(payload) and described==before+100,
+ 'unchanged payload ignored changed tag catalog/type assignments')

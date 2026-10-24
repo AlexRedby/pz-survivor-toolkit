@@ -21,6 +21,20 @@ local function visit(pane, accept)
     end
 end
 
+-- Priority/filter decorators can clear the rendered map before another packet
+-- refresh. firstSelect already addresses the current projected view, so recover
+-- its physical/group identity there until render publishes pane.items again.
+function Rows.captureAnchor(pane)
+    if not pane.firstSelect then return end
+    if pane.items and #pane.items > 0 then return pane.items[pane.firstSelect] end
+    if not pane.itemslist then return end
+    local anchor
+    visit(pane, function(index, value)
+        if index == pane.firstSelect then anchor = value; return true end
+    end)
+    return anchor
+end
+
 function Rows.restoreAnchor(pane, anchor)
     if not anchor then return end
     pane.firstSelect = nil

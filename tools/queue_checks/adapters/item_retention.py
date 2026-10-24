@@ -86,9 +86,36 @@ def verify(root, selection, catalog):
             if any(evidence[role][key] != evidence['server'][key] for key in ('ids', 'truckId')):
                 raise ValueError('Owner/observer/server native identities differ')
             if not reload:
-                shot = root / role / 'Screenshots' / 'item-retention-menu.png'
-                if shot.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n':
-                    raise ValueError('Missing real item context-menu screenshot: ' + role)
+                text = (root / (role + '-launch.log')).read_text(errors='replace')
+                markers = receipts.records(text, MARKER, 'MARKERS')
+                if (len(markers) != 1 or set(markers[0]) != {'role', 'markedRows', 'retainedIds'}
+                        or markers[0]['role'] != role or markers[0]['retainedIds'] != 3
+                        or type(markers[0]['markedRows']) is not int or markers[0]['markedRows'] < 3):
+                    raise ValueError('Missing exact retained-item marker evidence: ' + role)
+                orders = receipts.records(text, MARKER, 'ORDER')
+                expected_modes = ['clean', 'vanilla'] if role == 'client1' else ['vanilla', 'clean']
+                if len(orders) != 2:
+                    raise ValueError('Missing native/CleanUI retained ordering evidence: ' + role)
+                for index, order in enumerate(orders):
+                    if (set(order) != {'role', 'mode', 'hostUpdate', 'physicalOrder', 'selectedId',
+                                       'retainedBeforePinned', 'mixedCopiesSplit', 'exactSelection',
+                                       'repeatedRefresh'}
+                            or order['role'] != role or order['mode'] != expected_modes[index]
+                            or order['hostUpdate'] is not (index == 0)
+                            or any(order[key] is not True for key in ('retainedBeforePinned',
+                                      'mixedCopiesSplit', 'exactSelection', 'repeatedRefresh'))
+                            or type(order['selectedId']) is not int
+                            or order['selectedId'] != evidence[role]['ids'][1]
+                            or not isinstance(order['physicalOrder'], list)
+                            or len(order['physicalOrder']) != 4
+                            or any(type(value) is not int for value in order['physicalOrder'])
+                            or set(order['physicalOrder']) != set(evidence[role]['ids'])
+                            or order['physicalOrder'][-1] != evidence[role]['ids'][1]):
+                        raise ValueError('Invalid physical retained ordering/selection evidence: ' + role)
+                for name in ('item-retention-menu.png', 'item-retention-markers.png'):
+                    shot = root / role / 'Screenshots' / name
+                    if shot.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n':
+                        raise ValueError('Missing real inventory screenshot: ' + role + '/' + name)
     except (OSError, ValueError, KeyError, TypeError) as error:
         issues.append(str(error))
     return {'issues': issues,

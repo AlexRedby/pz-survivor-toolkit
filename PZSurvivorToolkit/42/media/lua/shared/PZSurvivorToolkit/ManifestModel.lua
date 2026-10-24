@@ -1,5 +1,6 @@
 -- Locale-independent, world-owned warehouse snapshots. Names are custom/legacy labels only.
 local Categories = require "PZSurvivorToolkit/ItemCategories"
+local Custom = require "PZSurvivorToolkit/TagCustomization"
 local Model = {SCHEMA = 2, STORE = "LootSorter_Manifest", PAGE_ROWS = 96, PAGE_CONTAINERS = 24,
     PAGE_BYTES = 24000, POLL_MS = 2000}
 PZSurvivorToolkit = PZSurvivorToolkit or {}
@@ -29,6 +30,16 @@ function Model.identity(ft, name, cat, media)
     ft, name, cat, media = ft or "", name or "", cat or "", media or ""
     return #ft .. ":" .. ft .. #name .. ":" .. name .. #cat .. ":" .. cat .. #media .. ":" .. media
 end
+function Model.tagIdentity(delta)
+    local ids, out = {}, {}
+    for id in pairs(delta or {}) do ids[#ids + 1] = id end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+        local operation = delta[id]
+        out[#out + 1] = #id .. ":" .. id .. ":" .. operation
+    end
+    return table.concat(out)
+end
 function Model.item(item)
     Categories.prepareItem(item)
     local ft = Model.text(item:getFullType())
@@ -45,7 +56,12 @@ function Model.item(item)
     else mediaIndex = nil end
     local cat = Model.text(item:getDisplayCategory(), 256)
     local mediaKey = mediaId or (mediaIndex and ("#" .. tostring(mediaIndex)))
-    return {key = Model.identity(ft, name, cat, mediaKey), ft = ft, name = name, cat = cat,
+    local delta = Custom.itemDelta(item)
+    local tagKey = Model.tagIdentity(delta)
+    local key = Model.identity(ft, name, cat, mediaKey)
+    if tagKey ~= "" then key = key .. #tagKey .. ":" .. tagKey end
+    return {key = key, ft = ft, name = name, cat = cat,
+        tagDelta = tagKey ~= "" and delta or nil, tagKey = tagKey ~= "" and tagKey or nil,
         mediaId = mediaId, mediaIndex = mediaIndex, n = 1}
 end
 function Model.header(record)

@@ -339,6 +339,7 @@ end
 
 function ManifestWindow:prerender()
     ISCollapsableWindow.prerender(self)
+    if self.view.payload then self:receive(self.view.payload, self.connectionStatus) end
     -- poll the filter box (no reliable per-keystroke callback across builds)
     -- OSK-aware: while the controller's on-screen keyboard is editing our filter, read its LIVE
     -- buffer so the list filters per keystroke (the box itself only updates on Enter).

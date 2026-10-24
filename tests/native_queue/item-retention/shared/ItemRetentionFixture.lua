@@ -7,16 +7,30 @@ F.persistence='PZSTRetentionFixturePersistence'
 function F.prepare(player)
  assert(not getActivatedMods():contains('organizedCategories_core'),'External OC is still active')
  Spawn.types=F.types
- local vehicle,container=Spawn.spawn(player,true)
+ local vehicle,container=Spawn.spawn(player,true,6)
  vehicle:getModData().PZSTRetentionFixture=true
  local area=assert(vehicle:getAreaCenter(vehicle:getPartById('TruckBed'):getArea()))
  local square
  local access=assert(getCell():getGridSquare(math.floor(area:getX()),math.floor(area:getY()),0))
- for _,offset in ipairs({{-1,0},{1,0},{0,-1},{0,1}})do
-  local dx,dy=offset[1],offset[2]
-  local candidate=getCell():getGridSquare(math.floor(area:getX())+dx,math.floor(area:getY())+dy,0)
-  if not square and candidate and candidate:canStand() and candidate:isFree(true)
-   and candidate:getObjects():size()<=1 and not access:isBlockedTo(candidate) then square=candidate end
+ -- Cargo access can sit inside the truck's occupied footprint. Search a
+ -- bounded connected route out to a free tile, checking each native edge;
+ -- choosing only its four immediate neighbors fails for some valid spawns.
+ local queue,visited={{square=access,depth=0}},{}
+ local cursor=1
+ visited[access]=true
+ while not square and cursor<=#queue do
+  local point=queue[cursor];cursor=cursor+1
+  if point.depth<4 then
+   for _,offset in ipairs({{-1,0},{1,0},{0,-1},{0,1}})do
+    local candidate=getCell():getGridSquare(point.square:getX()+offset[1],point.square:getY()+offset[2],0)
+    if candidate and not visited[candidate]and candidate:canStand()and not candidate:isVehicleIntersecting()
+     and not point.square:isBlockedTo(candidate)then
+     visited[candidate]=true
+     queue[#queue+1]={square=candidate,depth=point.depth+1}
+     if not square and candidate:isFree(true)and candidate:getObjects():size()<=1 then square=candidate end
+    end
+   end
+  end
  end
  assert(square,'No free crate tile next to truck')
  local crate=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})

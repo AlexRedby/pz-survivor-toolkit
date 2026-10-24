@@ -55,6 +55,28 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.243
+
+- Fix Host item retention and custom tag assignment rejecting accessible vehicle items when replicated vehicle grid squares differ. Match the exact item, vehicle and compartment while retaining live server range, floor, container, nested-bag and SafeHouse admission.
+- Preserve the physical Shift-selection anchor when a dirty native/CleanUI redraw refreshes inventory rows with detail-column sorting disabled.
+
+### 0.1.242
+
+- Preserve the Shift-selection anchor across consecutive inventory refreshes before the next redraw, including Host item-state updates.
+- Install category/tag/retention grouping after Better Containers finishes replacing inventory methods, preserving exact stack splits in both CleanUI inventory modes.
+- Raise retained (Stick) physical items above ordinary and Better Containers type-pinned items in their inventory section. Separate mixed retained/unretained stacks, keep the selected column order within each group and preserve exact selection through Host updates and release.
+
+### 0.1.241
+
+- Add a shared world tag catalog with custom tags and editable names, colors and native icons. Catalog and assignment editors keep drafts until Save, support reset/cancel and preserve drafts on concurrent-edit conflicts.
+- Add world-wide item-type and exact-instance tag overrides with Automatic / Assign / Remove states. Keep dynamic classification and native categories intact; apply effective tags to inventory chips, filters, context profiles, warehouse views and Quartermaster rules.
+- Synchronize catalog and assignments through Host authority, reject stale/inaccessible edits atomically, and preserve deleted tag identities in saved rules so includes cannot match unrelated items.
+
+### 0.1.240
+
+- **Fixed:** Restore the retained-item marker omitted during the organizedCategories migration. Native/CleanUI inventory details mark mixed stack headers when any instance is protected and only the protected expanded children, including legacy Stick marks; drag previews and icon grids keep their original presentation.
+- **Fixed:** Read CRLF legacy category/settings files and preserve an existing vanilla-defaults classification preference, including filled fluids and explicit manual category overrides.
+
 ### 0.1.239
 
 - **Added:** Toolkit-owned item classification, including exact selected-pack assignments, fallback rules, fluids and recorded media, while preserving native loot categories and existing tag/storage category IDs. The separate organizedCategories mod is no longer selected.

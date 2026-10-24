@@ -8,8 +8,9 @@ function View.new(describe, tags)
 end
 
 function View:setPayload(payload)
-    if self.payload == payload then return false end
-    self.payload, self.sorts = payload, {}
+    local revision = self.tags.revision and self.tags.revision() or 0
+    if self.payload == payload and self.tagRevision == revision then return false end
+    self.payload, self.sorts, self.tagRevision = payload, {}, revision
     local totals, options = {}, {}
     for id, container in pairs(payload and payload.containers or {}) do
         for key, entry in pairs(container.entries or {}) do

@@ -37,7 +37,7 @@ function Picker:close()
     self:removeFromUIManager()
     if self.owner and self.owner.toolkitIconPicker == self then
         self.owner.toolkitIconPicker = nil
-        self.owner.dimmer:setVisible(false)
+        self.owner.dimmer:setVisible(self.previousDimmerVisible or false)
         self.owner.dimmer.onMouseDown = self.previousDimmerMouseDown
     end
     if self.grabbedJoypad then setJoypadFocus(self.playerNum, self.owner); self.grabbedJoypad = false end
@@ -47,7 +47,7 @@ function Picker:createChildren()
     ISCollapsableWindowJoypad.createChildren(self)
     self.search = ISTextEntryBox:new("", 12, 34, self.width - 24, 24)
     self.search:initialise(); self.search:instantiate(); self:addChild(self.search)
-    self.search:setTooltip(text("IconSearch"))
+    self.search:setTooltip(self.searchLabel or text("IconSearch"))
     self.list = ISScrollingListBox:new(12, 66, self.width - 24, self.height - 114)
     self.list:initialise(); self.list:instantiate(); self.list.itemheight = 30
     self.list.font = UIFont.Small
@@ -60,9 +60,9 @@ function Picker:createChildren()
         local b = ISButton:new(x, self.height - 36, bw, 26, label, self, callback)
         b:initialise(); b:instantiate(); self:addChild(b); return b
     end
-    self.defaultButton = button(12, text("Default"), Picker.clearIcon)
+    self.defaultButton = button(12, self.defaultLabel or text("Default"), Picker.clearIcon)
     self.cancelButton = button(20 + bw, getText("UI_Cancel"), Picker.close)
-    self.selectButton = button(28 + bw * 2, text("SelectIcon"), Picker.choose)
+    self.selectButton = button(28 + bw * 2, self.selectLabel or text("SelectIcon"), Picker.choose)
     self:reload()
 end
 
@@ -107,13 +107,22 @@ function Picker.open(owner, onPick)
         add(group)
         for _, child in ipairs(group.children or {}) do add(child) end
     end
-    local w, h = 440, math.min(530, getCore():getScreenHeight() - 40)
+    return Picker.openEntries(owner, onPick, entries)
+end
+
+-- Shared native list popup. Its entries and values need no BetterContainers code.
+function Picker.openEntries(owner, onPick, entries, labels)
+    if owner.toolkitIconPicker then owner.toolkitIconPicker:close() end
+    labels = labels or {}
+    local w, h = math.min(440, getCore():getScreenWidth() - 40), math.min(530, getCore():getScreenHeight() - 40)
     local picker = Picker:new((getCore():getScreenWidth() - w) / 2, (getCore():getScreenHeight() - h) / 2, w, h)
     picker.owner, picker.onPick, picker.entries = owner, onPick, entries
-    picker.playerNum, picker.title, picker.resizable = owner.playerNum or 0, text("SelectIcon"), false
+    picker.playerNum, picker.title, picker.resizable = owner.playerNum or 0, labels.title or text("SelectIcon"), false
+    picker.searchLabel, picker.defaultLabel, picker.selectLabel = labels.search, labels.default, labels.select
     picker.background, picker.backgroundColor = true, {r = 0.04, g = 0.04, b = 0.04, a = 1}
     picker:initialise(); picker:addToUIManager()
     owner.toolkitIconPicker = picker
+    picker.previousDimmerVisible = owner.dimmer.getIsVisible and owner.dimmer:getIsVisible() or false
     picker.previousDimmerMouseDown = owner.dimmer.onMouseDown
     owner.dimmer:setVisible(true)
     owner.dimmer.onMouseDown = function() picker.reassertTop = true; return true end

@@ -126,6 +126,29 @@ Categories.prepareItem(tape);assert(tape.category=='entertainmentVideo_experienc
 tape.media=nil;Categories.prepareItem(tape);assert(tape.category=='entertainmentVideo','changed media binding stayed refined')
 assert(tape.source.category=='Entertainment')
 
+-- An existing vanilla-defaults preference preserves shipped categories while
+-- explicit saved assignments still take precedence. Filled fluids stay native.
+local Legacy = require 'PZSurvivorToolkit/LegacyItemCategories'
+local saved = {['ModOptions.ini']={'tickbox|organizedCategories_core|useVanillaDefaults|true\r'},
+ ['organizedCategories_displayOverrides.txt']={'T=Base.Thread=MySavedThread'}}
+getFileReader=function(name)
+    local lines=saved[name];if not lines then return end
+    local index=0
+    return {readLine=function() index=index+1;return lines[index] end,close=function() end}
+end
+Legacy.reset()
+assert(Categories.forScript(script('Base.Axe','Weapon'))=='Weapon','saved vanilla-defaults mode lost')
+assert(Categories.forScript(lateBook)=='SkillBook','boot snapshot hid the chosen defaults mode')
+assert(Categories.forScript(script('Base.Thread','Material'))=='MySavedThread','native mode dropped manual type category')
+bottle.md.OC_DisplayCategory=nil
+Categories.prepareItem(bottle);assert(bottle.category=='Water','native mode autosorted a filled fluid')
+assert(Rules.fluidCategory(bottle)==nil,'direct fluid resolver ignored vanilla defaults')
+local blank=item(script('Example.Blank',nil));blank.category='oldOCcategory'
+blank.getCategory=function() return 'Normal' end
+Categories.prepareItem(blank);assert(blank.category=='Normal','blank native category kept a saved OC stamp')
+Categories.prepareItem(override);assert(override.category=='My.ExactSavedCategory','native mode dropped instance override')
+getFileReader=nil;Legacy.reset()
+
 -- The product hook prepares before native grouping and also installs on a new
 -- CleanUI class created by an inventory-mode toggle.
 local callbacks={}
@@ -144,7 +167,7 @@ ISInventoryPane=paneClass()
 local requireLua=require
 require=function(name) if name=='ISUI/ISInventoryPane' then return end return requireLua(name) end
 dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/ToolkitItemCategories.lua')
-callbacks.OnGameStart()
+callbacks.OnGameBoot();callbacks.OnGameStart()
 local liveThread=item(script('Base.Thread','Material'))
 local pane=setmetatable({inventory={getItems=function() return list({liveThread}) end}},{__index=ISInventoryPane})
 assert(pane:refreshContainer()=='native-result' and pane.called)

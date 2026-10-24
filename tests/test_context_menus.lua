@@ -1,5 +1,8 @@
 local client = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
 local loaded, files, writes, enabled = {}, {}, 0, true
+local tagData,tagReads={},0
+isClient=function() return false end
+ModData={getOrCreate=function() tagReads=tagReads+1;return tagData end}
 PZSurvivorToolkit = { Settings = { contextMenus = function() return enabled end } }
 local gameStart, worldFill
 Events = { OnGameExit = { Add = function() end },
@@ -65,6 +68,7 @@ require = function(name)
 end
 local nativeMethods = {prerender=ISContextMenu.prerender, clear=ISContextMenu.clear, addOption=ISContextMenu.addOption, addOptionOnTop=ISContextMenu.addOptionOnTop}
 local Organizer = require 'PZSurvivorToolkit/ContextMenus'
+assert(tagReads==0,'requiring context menus read world ModData before world startup')
 assert(not Organizer.isCapturing(), 'loading the organizer must not enable editor capture')
 Organizer.beginCapture()
 local function build()
@@ -709,6 +713,53 @@ assert(previewHasDrop(Organizer.getLayout('Base.Pot','root','Base.Pot')),'sample
 assert(#Organizer.getLayout(stateProfile,'root','Base.Pot')==0,'nonmatching mixed-state sample applied tag profile')
 Organizer.reset()
 print('PASS same-type mixed-state sample preserves all-match selection semantics')
+
+-- An already captured physical selection must follow exact-instance overrides,
+-- even when the type's first representative still matches a saved profile.
+do
+ Organizer.reset()
+ local custom=require 'PZSurvivorToolkit/TagCustomization'
+ local kitchen=assert(Organizer.createTagProfile('Live instances',{include={'cooking'}}))
+ Organizer.setOverride(dropKey,'hidden',kitchen)
+ local probeKey='label:Exact-instance preview probe'
+ Organizer.setOverride(probeKey,'hidden',kitchen)
+ local function physical()
+  local data={}
+  return {getFullType=function() return 'Base.LiveTag' end,getDisplayCategory=function() return 'Cooking' end,
+   hasModData=function() return next(data)~=nil end,getModData=function() return data end}
+ end
+ local first,second=physical(),physical()
+ menu,actions=taggedMenu({first,second})
+ menu:addOption('Exact-instance preview probe',nil,function() end)
+ menu:prerender()
+ assert(not previewHasDrop(Organizer.getLayout('Base.LiveTag','root','Base.LiveTag')))
+ assert(Organizer.previewMatches(kitchen,'Base.LiveTag'))
+ second:getModData()[custom.FIELD]={cooking='remove',tool='add'}
+ tagData.revision=tagData.revision+1
+ local current=Organizer.getLayout('Base.LiveTag','root','Base.LiveTag')
+ assert(previewHasDrop(current),'cached preview ignored exact assignment world revision')
+ assert(not Organizer.previewMatches(kitchen,'Base.LiveTag')
+  and #Organizer.getLayout(kitchen,'root','Base.LiveTag')==0,'mixed exact samples widened a profile match')
+ for _,entry in ipairs(Organizer.getEntries(kitchen)) do
+  assert(entry.key~=probeKey,'profile discovery used one matching representative of a mixed selection')
+ end
+ menu:prerender()
+ assert(contains(menu,actions) and #menu.toolkitContextTagScopes==0,'open native menu retained old exact tag scopes')
+ local either=assert(Organizer.createTagProfile('Either family',{mode='any',include={'cooking','tool'}}))
+ assert(Organizer.previewMatches(either,'Base.LiveTag'),'all-item any-rule match was narrowed to tag intersection')
+ second:getModData()[custom.FIELD]=nil;tagData.revision=tagData.revision+1
+ assert(Organizer.previewMatches(kitchen,'Base.LiveTag')
+  and not previewHasDrop(Organizer.getLayout('Base.LiveTag','root','Base.LiveTag')),'reset assignment did not refresh captured preview')
+ local wrong={getFullType=function() return 'Base.WrongRepresentative' end,getDisplayCategory=function() return 'Tool' end}
+ local stacked=wrapper(0,true,{{items={wrong,first,second}}})
+ assert(stacked.toolkitContextItemType=='Base.LiveTag' and #stacked.toolkitContextTagItems==2,
+  'native representative widened the physical tag selection')
+ stacked=wrapper(0,true,{{items={first,second},cleanUILargeStackOptimized=true}})
+ assert(#stacked.toolkitContextTagItems==2,'CleanUI compact stack skipped an actual item')
+ stacked:clear();assert(stacked.toolkitContextTagItems==nil,'pooled menu kept physical tag references')
+ Organizer.reset()
+end
+print('PASS captured exact-instance tag revisions, all-item profile matching, type preview refresh and physical stack identity')
 
 
 -- Native selectors stay root, while their portion/variant/quantity choices retain exact objects and order.

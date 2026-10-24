@@ -70,7 +70,7 @@ require=function(module)
     if loaded[module]then return loaded[module]end
     local path
     if module=='PZSurvivorToolkit/SourceProof'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
-    elseif module=='PZSurvivorToolkit/ItemRetention' or module=='PZSurvivorToolkit/InventoryTransferProtection'then
+    elseif module=='PZSurvivorToolkit/ItemAccess' or module=='PZSurvivorToolkit/ItemRetention' or module=='PZSurvivorToolkit/InventoryTransferProtection'then
         path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ItemRetentionUI' or module=='PZSurvivorToolkit/InventoryClasses'then
         path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'

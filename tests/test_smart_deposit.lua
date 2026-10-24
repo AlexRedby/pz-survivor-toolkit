@@ -124,7 +124,7 @@ local function setup(active, native)
             value = {get = function(x) return x.category end}
         elseif name == 'PZSurvivorToolkit/InventoryClasses' or name == 'PZSurvivorToolkit/SmartDeposit' then
             value = dofile(root .. 'client/' .. name .. '.lua')
-        elseif name == 'PZSurvivorToolkit/InventoryTransferProtection' or name == 'PZSurvivorToolkit/ItemRetention' then
+        elseif name == 'PZSurvivorToolkit/ItemAccess' or name == 'PZSurvivorToolkit/InventoryTransferProtection' or name == 'PZSurvivorToolkit/ItemRetention' then
             value = dofile(root .. 'shared/' .. name .. '.lua')
         elseif name == 'BetterContainers/Proximity/Proximity_SmartDeposit' then
             value = native and assert(loadstring(NativeBCSmartDepositSource))() or {_installed = false, install = function() error('upstream installer must be replaced') end}

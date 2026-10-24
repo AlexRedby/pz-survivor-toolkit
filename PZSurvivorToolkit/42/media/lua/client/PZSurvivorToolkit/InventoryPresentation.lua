@@ -6,7 +6,9 @@ local Classes = require "PZSurvivorToolkit/InventoryClasses"
 local Capacity = require "PZSurvivorToolkit/InventoryCapacity"
 local Details = require "PZSurvivorToolkit/InventoryDetails"
 local Sort = require "PZSurvivorToolkit/InventoryDetailSort"
+local Rows = require "PZSurvivorToolkit/InventoryRows"
 local Indicators = require "PZSurvivorToolkit/InventoryIndicators"
+local Retention = require "PZSurvivorToolkit/InventoryRetention"
 local Wishlist = require "PZSurvivorWishlist/Inventory"
 local PlantingTooltip = require "PZSurvivorToolkit/InventoryPlantingTooltip"
 local MediaTooltip = require "PZSurvivorToolkit/InventoryMediaTooltip"
@@ -73,7 +75,7 @@ local function render(pane, native, details, ...)
     end
     -- Wishlist decorates full rows, including mixed stacks and items without an
     -- icon. Keep its row projection separate from individual icon presenters.
-    if details then Wishlist.draw(pane) end
+    if details then Wishlist.draw(pane); Retention.draw(pane) end
     return result
 end
 
@@ -95,10 +97,14 @@ local function installPane(class)
     local nativeRefresh = class.refreshContainer
     class.refreshContainer = function(pane, ...)
         Wishlist.invalidate(pane)
+        Retention.invalidate(pane)
         local anchor = pane.items and pane.firstSelect and pane.items[pane.firstSelect]
         anchor = anchor or (contexts[pane] and contexts[pane].anchor)
         local result = nativeRefresh(pane, ...)
         Sort.refresh(pane, class, anchor)
+        -- Native dirty rendering clears the row cache before refresh. Its
+        -- physical anchor must survive even when detail sorting is disabled.
+        if pane.itemslist then Rows.restoreAnchor(pane, anchor) end
         return result
     end
 end

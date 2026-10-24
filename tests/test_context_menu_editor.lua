@@ -1,4 +1,7 @@
 local enabled, tagsEnabled = true, true
+local tagData={}
+isClient=function() return false end
+ModData={getOrCreate=function() return tagData end}
 PZSurvivorToolkit = {Settings={contextMenus=function() return enabled end,itemTags=function() return tagsEnabled end}}
 UIFont={Small=1}
 getText=function(key) return key end
@@ -309,3 +312,43 @@ end
 editor:close()
 assert(otherPopup.visible,'editor closed another window\'s shared combo popup')
 print('PASS editor input lifetime: all text fields, owned combos, failed saves and unrelated shared popups')
+
+-- Isolate the editor's live-tag notification boundary. The real captured-item
+-- rebuilding and mixed-selection matching are covered by test_context_menus.
+do
+ Organizer.reset()
+ Organizer.rememberItem('Base.Hammer','Hammer',{'tool'})
+ local live=assert(Organizer.createTagProfile('Live tools',{include={'tool'}}))
+ Organizer.record('Base.Hammer','live-tag-probe','Live tag probe','root')
+ Organizer.captureLayout('Base.Hammer',{root={{key='live-tag-probe',label='Live tag probe',kind='action'}}})
+ Organizer.setOverride('live-tag-probe','hidden',live)
+ local refreshed,seen=0,tagData.revision
+ Organizer.refreshTagSamples=function()
+  if seen==tagData.revision then return false end
+  seen=tagData.revision;refreshed=refreshed+1
+  Organizer.typeTags['Base.Hammer']={'literature'}
+  return true
+ end
+ Organizer.previewTagScopes=function(itemType)
+  return Organizer.matchingTagProfiles({Organizer.typeTags[itemType] or {}})
+ end
+ Organizer.previewMatches=function(id,itemType)
+  for _,value in ipairs(Organizer.previewTagScopes(itemType)) do if value==id then return true end end
+  return false
+ end
+ editor=Editor.show()
+ option(editor.scope,'Base.Hammer');editor:changeScope()
+ assert(#editor.orderList.items==0,'matching exact sample did not inherit its hidden action')
+ local revision,capture=Organizer.revision,Organizer.captureRevision
+ Organizer.lastItemType='Base.Book'
+ tagData.revision=tagData.revision+1
+ editor:prerender()
+ assert(refreshed==1 and Organizer.revision==revision and Organizer.captureRevision==capture,
+  'tag refresh required an unrelated preference or native capture change')
+ assert(editor.previewID=='Base.Hammer' and editor.scopeID=='Base.Hammer' and #editor.orderList.items==1,
+  'live tag revision failed to update already-open editor or changed manual preview navigation')
+ editor.scopeID=live;editor:selectScopePreview()
+ assert(editor.previewID==nil,'profile preview selection kept a sample after its exact tags stopped matching')
+ editor:close()
+end
+print('PASS already-open editor refreshes exact tag profiles on world revision without changing manual scope or preview')

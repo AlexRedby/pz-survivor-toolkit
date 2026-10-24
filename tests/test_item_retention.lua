@@ -75,8 +75,10 @@ local inv,crate,remote,upper=container(nil,true),container(near),container(far),
 player.inventory=inv
 object(near,crate); object(far,remote); object(up,upper)
 local mine,held,other,above=item(1,inv,{ocStuck=true,untouched=42}),item(2,crate),item(3,remote),item(4,upper)
+local Access=dofile(root..'shared/PZSurvivorToolkit/ItemAccess.lua')
+package.loaded['PZSurvivorToolkit/ItemAccess']=Access
 local R=dofile(root..'shared/PZSurvivorToolkit/ItemRetention.lua')
-local modules={['PZSurvivorToolkit/ItemRetention']=R}
+local modules={['PZSurvivorToolkit/ItemRetention']=R,['PZSurvivorToolkit/ItemAccess']=Access}
 require=function(name)
     if modules[name] then return modules[name] end
     local file=root..'client/'..name..'.lua'
@@ -117,19 +119,53 @@ local large={};for i=1,R.MAX_ITEMS+1 do large[i]=nearby end
 assert(set(large,true)==nil,'request size bounded before resolution')
 -- Vehicle identity, part access and current position are verified from server objects.
 local trunk=container(near)
-local vehicle={allowed=true}
+local vehicle={allowed=true,square=near}
 function vehicle:getId() return 12 end
-function vehicle:getCurrentSquare() return near end
-function vehicle:getPartByIndex(index) if index==0 then return trunk.part end end
-function vehicle:canAccessContainer(index,actor) return self.allowed and index==0 and actor==player end
+function vehicle:getCurrentSquare() return self.square end
+local otherTrunk=container(near)
+function vehicle:getPartByIndex(index) if index==0 then return trunk.part elseif index==1 then return otherTrunk.part end end
+function vehicle:canAccessContainer(index,actor) return self.allowed and (index==0 or index==1) and actor==player end
 trunk.part={getVehicle=function() return vehicle end,getIndex=function() return 0 end,getItemContainer=function() return trunk end}
+otherTrunk.part={getVehicle=function() return vehicle end,getIndex=function() return 1 end,getItemContainer=function() return otherTrunk end}
 getVehicleById=function(id) if id==12 then return vehicle end end
 local cargo=item(5,trunk)
 local cargoLocation=R.locate(cargo,player)
 assert(cargoLocation.vehicle==12 and cargoLocation.part==0 and set({cargoLocation},true)==1)
 vehicle.allowed=false;assert(set({cargoLocation},false)==0 and R.isRetained(cargo));vehicle.allowed=true
-assert(set({{id=5,x=10,y=10,z=0,vehicle=12,part=0}},false)==0,'forged/stale vehicle coordinates fail')
+-- Host clients can report the adjacent vehicle square while the exact item,
+-- vehicle and part still match. Admission uses the live server access gates.
+local drift=square(11,11,0)
+vehicle.square=drift
+assert(set({cargoLocation},false)==1 and not R.isRetained(cargo),
+    'one-tile replicated vehicle-square drift must not reject the exact accessible cargo item')
+R.apply(cargo,true)
+assert(set({{id=5,x=11,y=10,vehicle=12,part=0}},false)==nil,'vehicle locators still require valid coordinate shape')
+assert(set({{id=5,x=10,y=10,z=0,vehicle=13,part=0}},false)==0,'wrong exact vehicle fails')
+assert(set({{id=999,x=11,y=10,z=0,vehicle=12,part=0}},false)==0,'wrong exact cargo item fails')
 assert(set({{id=5,x=11,y=10,z=0,vehicle=12,part=1}},false)==0,'wrong exact part fails')
+-- Even a stale old-part collection entry cannot claim an item moved elsewhere.
+cargo.source=otherTrunk;otherTrunk.values={cargo}
+assert(set({cargoLocation},false)==0 and R.isRetained(cargo),'stale old-part membership cannot bypass the actual cargo part')
+cargo.source=trunk;otherTrunk.values={}
+vehicle.square=square(20,10,0)
+assert(set({cargoLocation},false)==0,'live distant vehicle fails despite the nearby client coordinates')
+vehicle.square=up
+assert(set({cargoLocation},false)==0,'live vehicle on another floor fails despite the client floor')
+vehicle.square=drift
+vehicle.allowed=false;assert(set({cargoLocation},false)==0);vehicle.allowed=true
+trunk.locked=true;assert(set({cargoLocation},false)==0);trunk.locked=nil
+drift.denied=true;assert(set({cargoLocation},false)==0,'live vehicle SafeHouse denial remains authoritative');drift.denied=nil
+local cargoBag=item(14,trunk);cargoBag.class='InventoryContainer';cargoBag.inventory=container(nil)
+function cargoBag:getInventory() return self.inventory end
+cargoBag.inventory.holder=cargoBag
+local cargoChild=item(15,cargoBag.inventory);cargoChild.outer=trunk
+local nestedCargoLocation=R.locate(cargoChild,player)
+cargoBag.inventory.locked=true
+assert(set({nestedCargoLocation},true)==0,'a nested vehicle bag retains its own access gate')
+cargoBag.inventory.locked=nil
+assert(set({nestedCargoLocation},true)==1 and R.isRetained(cargoChild))
+assert(R.isRetained(cargo),'rejected vehicle edits leave the original retained state intact')
+vehicle.square=near
 -- Nested roots keep both the container and inner bag access checks.
 local bag=item(6,crate);bag.class='InventoryContainer';bag.inventory=container(nil)
 function bag:getInventory() return self.inventory end

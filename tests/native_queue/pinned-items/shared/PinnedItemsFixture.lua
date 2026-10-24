@@ -17,10 +17,11 @@ function F.signature(container)
     return table.concat(values,'|')
 end
 
-local function clear(x,y)
-    for dx=-6,6 do for dy=-6,6 do
+local function clear(x,y,clearance)
+    local radius=math.max(6,clearance)
+    for dx=-radius,radius do for dy=-radius,radius do
         local square=getCell():getGridSquare(x+dx,y+dy,0)
-        if math.abs(dx)<=3 and math.abs(dy)<=3 and
+        if math.abs(dx)<=clearance and math.abs(dy)<=clearance and
             (not square or not square:isOutside() or not square:isFree(false)) then return false end
         if square then
             local objects=square:getMovingObjects()
@@ -32,12 +33,13 @@ local function clear(x,y)
     return true
 end
 
-function F.spawn(player, deferItems)
+function F.spawn(player, deferItems, clearance)
+    clearance=clearance or 3
     local px,py=math.floor(player:getX()),math.floor(player:getY())
     local spot
     for radius=4,24 do
         for dx=-radius,radius do for dy=-radius,radius do
-            if not spot and (math.abs(dx)==radius or math.abs(dy)==radius) and clear(px+dx,py+dy) then
+            if not spot and (math.abs(dx)==radius or math.abs(dy)==radius) and clear(px+dx,py+dy,clearance) then
                 spot=getCell():getGridSquare(px+dx,py+dy,0)
             end
         end end

@@ -22,7 +22,7 @@ require = function(name)
             end}
     end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
-    if name == 'PZSurvivorToolkit/ItemRetention' then
+    if name == 'PZSurvivorToolkit/ItemRetention' or name == 'PZSurvivorToolkit/ItemAccess' then
         return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
     end
     if name == 'PZSurvivorToolkit/InventoryTransferProtection' then
@@ -141,67 +141,38 @@ p.listbox.onRightMouseUp(p.listbox)
 assert(fixture.contextMenu() == nil, 'tag row opened an exact-category context menu')
 p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[fi])
 assert(p.listbox.semanticIcon and p.listbox.semanticIcon.id=='food','tag association icon missing')
-assert(p.listbox.drawnText == 'food (1/3)' and not p.listbox.ticks, 'partial selection not displayed')
-local dash = false
-for _, size in ipairs(p.listbox.draws) do if size[1] == 10 and size[2] == 2 then dash = true end end
-assert(dash, 'partial checkbox has no dash')
-click(p, 'food')
-assert(p.selectedCats.OC_Food and p.selectedCats.OC_FoodPerishable and p.selectedCats.OC_FoodElectrical)
-assert(not p.selectedCats.food, 'tag ID escaped into serialized category set')
-p.toolkitTagSwitch.onclick(p); p:prerender()
-assert(not p.toolkitTagView and find(p, 'OC_FoodPerishable') and find(p, 'MissingModCategory'))
-assert(p.listbox.vscroll.x == p.listbox.width - 16 and p.listbox.vscroll.height == p.listbox.height
-    and stencilWidth(p.listbox) > 300, 'exact-category refinement retained clipped scrollbar geometry')
-click(p, 'OC_FoodPerishable')
-assert(not p.selectedCats.OC_FoodPerishable and p.selectedCats.OC_Food, 'exact refinement lost')
-p.toolkitTagSwitch.onclick(p); p:prerender()
-food, fi = find(p, 'food')
-p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[fi])
-assert(p.listbox.drawnText == 'food (2/3)')
-p.onlyChecked, p.needRebuild = true, true; p:prerender()
-assert(find(p, 'food') and not find(p, 'perishable'), 'Only Checked omitted partial tags or kept unchecked tag')
-p.onlyChecked, p.onlyContents, p.needRebuild = false, true, true; p:prerender()
-assert(find(p, 'food') and find(p, 'perishable') and not find(p, 'electrical'), 'Only Contents did not map exact categories')
-p.onlyContents = false; p.filter:setText('electr'); p.needRebuild = true; p:prerender()
-assert(#p.listbox.items == 1 and find(p, 'electrical'))
-p.btnAll.onclick(p); p:prerender()
-assert(p.selectedCats.OC_Electrical and p.selectedCats.OC_FoodElectrical)
-p.filter:setText(''); p.needRebuild = true; p:prerender()
-local _, ei = find(p, 'electrical'); p.listbox.selected = ei
-p.listbox.onJoypadDown(p.listbox, Joypad.AButton); p:prerender()
-assert(not p.selectedCats.OC_Electrical and not p.selectedCats.OC_FoodElectrical, 'controller A did not toggle tag batch')
-p.listbox.onJoypadDown(p.listbox, Joypad.BButton, fixture.joypad)
-assert(fixture.joypad.focus == p, 'controller did not leave the tag list')
-p:setMode('items'); p:prerender()
-assert(not p.toolkitTagSwitch.visible and p.listbox.y == 136 and find(p, 'Beans'))
-assert(p.listbox.vscroll.height == 400 and stencilWidth(p.listbox) > 300, 'native Items layout clipped rows')
-click(p, 'Hammer'); assert(p.selectedItems.Hammer and p.selectedItems.Beans)
-p:setMode('presets'); p:prerender(); click(p, 'Pantry')
-assert(not p.selectedPresets.Pantry and find(p, 'Pantry'), 'preset mode intercepted')
-p:setMode('cats'); p:prerender()
--- View changes preserve exact keys; actual owned Save is checked below.
-storedCats, storedItems = p.selectedCats, p.selectedItems
-fixture.object.md.LSBox['0'], fixture.object.md.LSBoxItems['0'] = storedCats, storedItems
-assert(storedCats.OC_Food and storedCats.MissingModCategory and not storedCats.food and storedItems.Hammer)
-categoryTags.OC_FoodNew = {'food'}; availableCats[#availableCats + 1] = 'OC_FoodNew'
-open(); local reopened = LootSorter._picker
-assert(reopened ~= p and reopened.selectedCats.OC_Food and reopened.selectedCats.MissingModCategory)
-assert(not reopened.selectedCats.OC_FoodPerishable and reopened.toolkitTagView, 'reopen rebuilt broad tag selections')
-assert(not reopened.selectedCats.OC_FoodNew, 'saved tags automatically selected a later-added category')
-local _, unknownIndex = find(reopened, 'MissingModCategory')
-reopened.listbox.mouseoverselected = unknownIndex
-reopened.listbox.onRightMouseUp(reopened.listbox)
-assert(fixture.contextMenu().options[1].key == 'MissingModCategory', 'unknown category inspector lost')
-reopened.listbox.selected = unknownIndex
-reopened.listbox.onJoypadDown(reopened.listbox, Joypad.YButton)
-assert(fixture.contextMenu().options[1].key == 'MissingModCategory', 'controller lost the unknown-category inspector')
-edit(); local editor = LootSorter._presetEditor
-click(editor, 'perishable')
-assert(editor.selectedCats.OC_FoodPerishable and not editor.selectedCats.perishable)
-reopened.btnClear.onclick(reopened); reopened:prerender()
-assert(next(reopened.selectedCats) == nil and reopened.selection == reopened.selectedCats, 'native Uncheck all did not clear category batches')
-click(reopened, 'food')
-assert(reopened.selectedCats.OC_Food and reopened.selectedCats.OC_FoodNew, 'batch used a stale selectedCats table after Uncheck all')
+assert(p.listbox.drawnText == 'food (UI_PZST_QMTagRule) (1/3)' and not p.listbox.ticks,
+ 'semantic tag rule label or partial legacy-category state missing')
+local beforeCats=p.selectedCats
+click(p,'food')
+assert(openedRulePicker.selectedTag=='food' and p.selectedCats==beforeCats
+ and not p.selectedCats.OC_FoodPerishable,'semantic tag silently expanded to static categories')
+openedRulePicker.onApply({mode='all',include={'food'},exclude={}})
+assert(p.toolkitTagRule.include[1]=='food' and not p.selectedCats.food)
+-- Exact-category refinement and existing saved keys keep their literal meaning.
+p.toolkitTagSwitch.onclick(p);p:prerender()
+assert(not p.toolkitTagView and find(p,'OC_FoodPerishable'))
+click(p,'OC_FoodPerishable');assert(p.selectedCats.OC_FoodPerishable)
+click(p,'OC_FoodPerishable');assert(not p.selectedCats.OC_FoodPerishable and p.selectedCats.OC_Food)
+p:setMode('items');p:prerender();click(p,'Hammer')
+assert(p.selectedItems.Hammer and p.selectedItems.Beans)
+p:setMode('cats');p:prerender()
+storedCats,storedItems=p.selectedCats,p.selectedItems
+fixture.object.md.LSBox['0'],fixture.object.md.LSBoxItems['0']=storedCats,storedItems
+categoryTags.OC_FoodNew={'food'};availableCats[#availableCats+1]='OC_FoodNew'
+open();local reopened=LootSorter._picker
+assert(reopened.selectedCats.OC_Food and reopened.selectedCats.MissingModCategory
+ and not reopened.selectedCats.OC_FoodNew,'reopen widened saved exact category selections')
+local _,unknownIndex=find(reopened,'MissingModCategory')
+reopened.listbox.mouseoverselected=unknownIndex;reopened.listbox.onRightMouseUp(reopened.listbox)
+assert(fixture.contextMenu().options[1].key=='MissingModCategory')
+edit();local editor=LootSorter._presetEditor
+click(editor,'perishable');assert(openedRulePicker.selectedTag=='perishable')
+assert(not editor.selectedCats.perishable)
+reopened.btnClear.onclick(reopened);reopened:prerender()
+assert(next(reopened.selectedCats)==nil)
+click(reopened,'food');assert(openedRulePicker.owner==reopened and next(reopened.selectedCats)==nil,
+ 'tag selection after clear was expanded into static categories')
 enabled = false
 reopened:prerender()
 assert(not reopened.toolkitTagSwitch.visible and reopened.listbox.y == 136 and find(reopened, 'OC_Food'))
@@ -292,7 +263,8 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(find(itemPicker,'seed'),'Only Contents hid a partial category planting input')
     itemPicker.onlyContents,itemPicker.needRebuild=false,true;itemPicker:prerender()
     click(itemPicker,'snack')
-    assert(itemPicker.selectedCats.OC_Snack,'whole-category tag stopped selecting exact category IDs')
+    assert(openedRulePicker.selectedTag=='snack','whole-category semantic tag did not open a live rule')
+    unchanged(itemPicker.selectedCats,catsBefore,'semantic tag expanded into static categories')
     unchanged(itemPicker.selectedItems,itemsBefore,'whole-category batch changed manual items')
     itemPicker.btnClear.onclick(itemPicker);itemPicker:prerender()
     assert(next(itemPicker.selectedCats)==nil,'native Uncheck all failed to clear exact category picks')
@@ -367,12 +339,12 @@ local function checkSaveContract()
     p.toolkitTagRule = nil
     local _, foodIndex = find(p, 'food')
     p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[foodIndex])
-    assert(p.listbox.drawnText == 'food (1/2)' and p.listbox.semanticIcon.id == 'food',
+    assert(p.listbox.drawnText == 'food (UI_PZST_QMTagRule) (1/2)' and p.listbox.semanticIcon.id == 'food',
         'actual picker lost partial tag row rendering')
     click(p, 'food')
-    assert(p.selectedCats.OC_FoodPerishable and not p.selectedCats.food)
+    assert(openedRulePicker.selectedTag=='food' and not p.selectedCats.OC_FoodPerishable and not p.selectedCats.food)
     p.toolkitTagSwitch.onclick(p); p:prerender()
-    click(p, 'OC_FoodPerishable')
+    click(p, 'OC_FoodPerishable');click(p, 'OC_FoodPerishable')
     assert(p.selectedCats.OC_Food and not p.selectedCats.OC_FoodPerishable)
     p.btnModeItem.onclick(p); p:prerender()
     assert(p.mode == 'items' and not p.toolkitTagSwitch.visible and find(p, 'Hammer'))

@@ -19,6 +19,7 @@ end, label = function(id) return 'Label ' .. id end}
 require = function(module)
     if module == 'PZSurvivorToolkit/ItemCategories' then return Categories end
     if module == 'PZSurvivorToolkit/ItemTags' then return Tags end
+    if module == 'PZSurvivorToolkit/TagCustomization' then return {FIELD='PZSTItemTags'} end
     error(module)
 end
 local Presentation = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ManifestPresentation.lua')
@@ -36,3 +37,11 @@ assert(name == 'Local VHS title' and label == 'Label tag:experienceMedia')
 name = Presentation.describe({ft = 'Base.Nails', cat = 'Material', mediaIndex = 42, name = 'Named VHS'})
 assert(name == 'Named VHS', 'media title replaced a custom name')
 print('Manifest presentation: local names/owned classification, instance categories, tag proxy and recorded-media labels passed.')
+
+local storedDelta={food='remove',tool='add'}
+Tags.forItem=function(proxy)
+ assert(proxy:hasModData() and proxy:getModData().PZSTItemTags==storedDelta,
+ 'warehouse presentation lost exact instance assignments')
+ return {'tool'}
+end
+Presentation.describe({ft='Base.Nails',cat='instance',tagDelta=storedDelta})

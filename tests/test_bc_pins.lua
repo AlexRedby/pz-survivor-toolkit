@@ -113,7 +113,7 @@ local function setup(active)
             error('upstream marker installer was not suppressed')
         end,
     }
-    local classes, inventoryRows
+    local classes, inventoryRows, inventoryOrder
     env.require = function(name)
         w.loads[#w.loads + 1] = name
         if name == 'PZSurvivorToolkit' then return env.PZSurvivorToolkit end
@@ -127,6 +127,16 @@ local function setup(active)
                 setfenv(chunk, env); inventoryRows = chunk()
             end
             return inventoryRows
+        end
+        if name == 'PZSurvivorToolkit/ItemRetention' then
+            return {isRetained=function(value) return value.retained == true or value.legacyRetained == true end}
+        end
+        if name == 'PZSurvivorToolkit/InventoryOrder' then
+            if not inventoryOrder then
+                local chunk = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))
+                setfenv(chunk, env); inventoryOrder = chunk()
+            end
+            return inventoryOrder
         end
         if name == 'BetterContainers/Upgrades/PinnedItems' then return w.pins end
         error('unexpected require ' .. name)
@@ -343,3 +353,34 @@ pane:refreshContainer()
 assert(names(pane) == 'c,a' and w.laterRestoreCalls > 0,
     'A later mod replacement bypassed pin priority or lost its selection behavior')
 print('PASS BC pins installs after other mods replace selection and category methods')
+
+-- Retention is exact-instance priority and remains active when BC type pin
+-- display is disabled for the player's own inventory.
+for _, target in ipairs({w.clean, w.vanilla}) do
+    local a,b,c,d = group('a'),group('b'),group('c'),group('d')
+    c.items[1].retained, d.items[1].legacyRetained = true,true
+    w.favourites={['Base.b']=true}
+    pane=w.pane(target,{a,b,c,d},{lateSort=true})
+    pane:refreshContainer()
+    assert(names(pane)=='c,d,b,a','retention did not precede BC type pins with stable column order')
+    pane.inventoryPage.onCharacter=true;w.showPlayer=false
+    pane:refreshContainer()
+    assert(names(pane)=='c,d,a,b','BC player marker setting disabled retained priority')
+    c.items[1].retained, d.items[1].legacyRetained=false,false
+    pane:refreshContainer()
+    assert(names(pane)=='a,b,c,d','release did not restore native column order')
+end
+print('PASS retained and legacy Stick rows precede BC pins in both classes, independently of BC display options; release restores column order')
+
+-- Native packet bursts can refresh again before render rebuilds pane.items.
+-- Reordering cleared that cache, but the projected rows still identify the
+-- current visible Shift anchor and must survive another native refresh.
+w=setup(true);w.load();w.OnGameBoot()
+local a,b,c=group('a'),group('b'),group('c')
+pane=w.pane(w.clean,{a,b,c},{lateSort=true})
+pane:refreshContainer();pane.selected={[1]=a};pane.firstSelect=1
+w.favourites['Base.c']=true;pane:refreshContainer()
+assert(#pane.items==0 and pane.firstSelect==2,'fixture did not model a reordered unrendered cache')
+pane:refreshContainer()
+assert(pane.firstSelect==2,'back-to-back unrendered refresh lost the visible physical/group Shift anchor')
+print('PASS BC/retention priority keeps Shift anchor across consecutive refreshes before render rebuilds the row cache')

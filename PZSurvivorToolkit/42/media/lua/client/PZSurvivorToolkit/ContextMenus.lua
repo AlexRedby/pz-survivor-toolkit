@@ -11,7 +11,47 @@ PZSurvivorToolkit.ContextMenus = Organizer
 local busy = false
 local examples, previews = {}, {}
 local capturing = false
+local tagRevision
 Organizer.captureRevision = 0
+
+local function currentTagRevision() return Tags.revision and Tags.revision() or 0 end
+local function refreshMenuTags(menu)
+    if menu.toolkitContextTagItems then
+        local sets={}
+        for _,item in ipairs(menu.toolkitContextTagItems) do sets[#sets+1]=Tags.forItem(item) end
+        menu.toolkitContextTagSets=sets
+    end
+    menu.toolkitContextTagScopes=Tags.enabled() and Organizer.matchingTagProfiles(menu.toolkitContextTagSets or {}) or {}
+    menu.toolkitContextTagRevision=currentTagRevision()
+    return menu.toolkitContextTagSets
+end
+
+function Organizer.refreshTagSamples()
+    local revision=currentTagRevision()
+    if revision == tagRevision then return false end
+    tagRevision,previews=revision,{}
+    for itemType,source in pairs(examples) do
+        local sets=refreshMenuTags(source)
+        local first=source.toolkitContextTagItems and source.toolkitContextTagItems[1]
+        if first and sets and sets[1] then Organizer.rememberItem(itemType,Organizer.items[itemType] or itemType,sets[1]) end
+    end
+    -- Actual layouts and copied previews were evaluated against the previous world tags.
+    Organizer.clearLayouts()
+    return true
+end
+
+function Organizer.previewTagScopes(itemType)
+    Organizer.refreshTagSamples()
+    if not Tags.enabled() then return {} end
+    local source=examples[itemType]
+    local sets=source and source.toolkitContextTagSets or {Organizer.typeTags[itemType] or {}}
+    return Organizer.matchingTagProfiles(sets)
+end
+
+function Organizer.previewMatches(profileId,itemType)
+    for _,id in ipairs(Organizer.previewTagScopes(itemType)) do if id == profileId then return true end end
+    return false
+end
 
 function Organizer.isCapturing() return capturing end
 function Organizer.beginCapture()
@@ -53,6 +93,9 @@ local function copyMenu(source)
         menus[menu] = node
         node.toolkitContextKind = menu.toolkitContextKind
         node.toolkitContextTagSets = menu.toolkitContextTagSets
+        node.toolkitContextTagItems = menu.toolkitContextTagItems
+        node.toolkitContextTagScopes = menu.toolkitContextTagScopes
+        node.toolkitContextTagRevision = menu.toolkitContextTagRevision
         for _, option in ipairs(menu.options) do
             if not option.isDefaultOption then
                 local copied = {}; for key, value in pairs(option) do copied[key] = value end
@@ -407,8 +450,13 @@ end
 function Organizer.organize(root)
     if busy or not root or (root.parent and root.parent.options) or root.toolkitContextSkip then return end
     if not PZSurvivorToolkit.Settings.contextMenus() then restore(root); return end
-    if root.toolkitContextState then return end
+    if root.toolkitContextState then
+        if root.toolkitContextTagRevision == currentTagRevision() then return end
+        restore(root)
+    end
     Organizer.ensureLoaded()
+    Organizer.refreshTagSamples()
+    refreshMenuTags(root)
     local scope = root.toolkitContextItemType or "*"
     busy = true
     local tagScopes = Tags.enabled() and Organizer.matchingTagProfiles(root.toolkitContextTagSets or {}) or {}
@@ -445,11 +493,13 @@ end
 
 function Organizer.renderPreview(editScope, itemType)
     if not capturing then return nil end
+    Organizer.refreshTagSamples()
     local source = examples[itemType]
     if not source then return nil end
     local cached = previews[itemType]
     local tagsEnabled = Tags.enabled()
-    if cached and cached.scope == editScope and cached.revision == Organizer.revision and cached.tagsEnabled == tagsEnabled then return cached.layout end
+    if cached and cached.scope == editScope and cached.revision == Organizer.revision and cached.tagsEnabled == tagsEnabled
+        and cached.tagRevision == currentTagRevision() then return cached.layout end
     local matches = tagsEnabled and Organizer.matchingTagProfiles(source.toolkitContextTagSets or {Organizer.typeTags[itemType] or {}}) or {}
     if Organizer.getTagProfile(editScope) then
         local found = false; for _, id in ipairs(matches) do if id == editScope then found = true; break end end
@@ -464,8 +514,46 @@ function Organizer.renderPreview(editScope, itemType)
     end)
     busy = wasBusy
     if not ok then error(layout) end
-    previews[itemType] = {scope = editScope, revision = Organizer.revision, tagsEnabled = tagsEnabled, layout = layout}
+    previews[itemType] = {scope = editScope, revision = Organizer.revision, tagsEnabled = tagsEnabled,
+        tagRevision = currentTagRevision(), layout = layout}
     return layout
+end
+
+-- Profile's persisted type samples cannot describe differently customized copies
+-- of one item type. Captured examples retain the actual physical selection.
+local getLayout,getEntries=Organizer.getLayout,Organizer.getEntries
+function Organizer.getLayout(scope,parent,itemType)
+    Organizer.refreshTagSamples()
+    if itemType and examples[itemType] then
+        if scope and scope ~= "*" and not Organizer.getTagProfile(scope) and scope ~= itemType then return {} end
+        local layout=Organizer.renderPreview(scope or "*",itemType)
+        if layout then
+            local rows={}
+            for _,row in ipairs(layout[parent or "root"] or {}) do
+                rows[#rows+1]={key=row.key,label=row.label,kind=row.kind,category=row.category}
+            end
+            return rows
+        end
+    end
+    return getLayout(scope,parent,itemType)
+end
+
+function Organizer.getEntries(scope)
+    Organizer.refreshTagSamples()
+    local profile=Organizer.getTagProfile(scope)
+    if not profile then return getEntries(scope) end
+    local entries={}
+    for itemType in pairs(Organizer.typeTags) do
+        if Organizer.previewMatches(scope,itemType) then
+            for key,entry in pairs(Organizer.discovered[itemType] or {}) do entries[key]=entry end
+        end
+    end
+    local rows={}
+    for key,entry in pairs(entries) do
+        rows[#rows+1]={key=key,label=entry.label,category=Organizer.getOverride(key,scope) or entry.category or "root"}
+    end
+    table.sort(rows,function(a,b) return a.label < b.label or a.label == b.label and a.key < b.key end)
+    return rows
 end
 
 function Organizer.settingsChanged()
@@ -496,7 +584,9 @@ ISContextMenu.clear = function(self, ...)
         while root.parent and root.parent.options do root = root.parent end
         restore(root)
     end
-    self.toolkitContextState, self.toolkitContextGroupMenu, self.toolkitContextSkip, self.toolkitContextKind, self.toolkitContextItemType, self.toolkitContextTagScopes, self.toolkitContextTagSets = nil, nil, nil, nil, nil, nil, nil
+    self.toolkitContextState, self.toolkitContextGroupMenu, self.toolkitContextSkip, self.toolkitContextKind,
+        self.toolkitContextItemType, self.toolkitContextTagScopes, self.toolkitContextTagSets,
+        self.toolkitContextTagItems, self.toolkitContextTagRevision = nil, nil, nil, nil, nil, nil, nil, nil, nil
     return clear(self, ...)
 end
 local function beforeMutation(menu)
@@ -520,12 +610,19 @@ end
 local function markContext(menu, kind, items)
     if type(menu) == "table" and menu.options then
         restore(menu)
-        menu.toolkitContextKind, menu.toolkitContextItemType, menu.toolkitContextTagScopes, menu.toolkitContextTagSets = kind, nil, {}, {}
-        local itemType, mixed, tagSets = nil, false, {}
+        menu.toolkitContextKind, menu.toolkitContextItemType, menu.toolkitContextTagScopes,
+            menu.toolkitContextTagSets, menu.toolkitContextTagItems = kind, nil, {}, {}, {}
+        local itemType, mixed, tagSets,seen = nil, false, {},{}
         for _, selection in ipairs(items or {}) do
-            local selected = type(selection) == "table" and selection.items or {selection}
-            for _, item in ipairs(selected) do
-                if item and item.getFullType then
+            local selected = type(selection) == "table" and selection.type == "separator" and {}
+                or type(selection) == "table" and selection.items or {selection}
+            local first = type(selection) == "table" and selection.items and
+                (selection.cleanUILargeStackOptimized and 1 or selection.cleanUIFirstActualIndex or 2) or 1
+            for index=first,#selected do
+                local item=selected[index]
+                if item and item.getFullType and not seen[item] then
+                    seen[item]=true
+                    menu.toolkitContextTagItems[#menu.toolkitContextTagItems+1]=item
                     local fullType = item:getFullType()
                     if itemType and itemType ~= fullType then mixed = true end
                     itemType = fullType
@@ -539,6 +636,7 @@ local function markContext(menu, kind, items)
             end
         end
         menu.toolkitContextTagSets = tagSets
+        menu.toolkitContextTagRevision = currentTagRevision()
         if Tags.enabled() then menu.toolkitContextTagScopes = Organizer.matchingTagProfiles(tagSets) end
         if itemType and not mixed then
             menu.toolkitContextItemType = itemType
@@ -560,7 +658,8 @@ Events.OnGameStart.Add(function()
     end
 end)
 Events.OnPreFillWorldObjectContextMenu.Add(function(_, menu)
-    menu.toolkitContextKind, menu.toolkitContextItemType, menu.toolkitContextTagScopes, menu.toolkitContextTagSets = "world", nil, {}, {}
+    menu.toolkitContextKind, menu.toolkitContextItemType, menu.toolkitContextTagScopes,
+        menu.toolkitContextTagSets, menu.toolkitContextTagItems, menu.toolkitContextTagRevision = "world", nil, {}, {}, {}, currentTagRevision()
 end)
 
 return Organizer

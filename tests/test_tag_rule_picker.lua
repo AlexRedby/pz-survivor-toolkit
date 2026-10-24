@@ -1,3 +1,5 @@
+isClient=function()return false end
+ModData={getOrCreate=function()return {} end}
 local applied, enabled, firstSelected = nil, true, nil
 PZSurvivorToolkit = {Settings={itemTags=function() return enabled end}}
 getText=function(key) return key end

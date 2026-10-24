@@ -1,6 +1,8 @@
 local config=require 'QueueTestSelection'
 if config.suite~='item-retention'then return end
 local F=require 'ItemRetentionFixture'
+local R=require 'PZSurvivorToolkit/ItemRetention'
+local Access=require 'PZSurvivorToolkit/ItemAccess'
 local JSON=require 'QueueHealthEvents'
 local players,ready,arriving,observed,vehicleReady,sent={},{},{},{},{},{}
 local state,phase,since,diagnosed,pendingPacket
@@ -9,6 +11,24 @@ local function emit(event,data)print('[ITEM_RETENTION_TEST] '..event..' '..JSON.
 local function broadcast(command,args)for _,p in pairs(players)do sendServerCommand(p,F.module,command,args or {})end end
 local function advance(nextPhase)phase=nextPhase;since=getTimestampMs();emit('PHASE',{phase=phase});broadcast(nextPhase,{})end
 Events.OnClientCommand.Add(function(module,command,player,args)
+ if module==R.MODULE and command=='Set'then
+  local ok,err=pcall(function()
+   local locator=args.items and args.items[1]
+   local item,root,square,part
+   if type(locator)=='table'then item,root,square,part=Access.resolve(player,locator)end
+   emit('NATIVE_REQUEST',{role=player:getUsername(),request=args.request,retained=args.retained,
+    locator=locator or {},valid=Access.validLocator(locator),resolved=item~=nil,
+    current=item and Access.locate(item,player)or {},sameLocation=item and Access.sameLocation(item,player,locator)or false,
+    applied=R.isRetained(item),fixtureRoot=state and root==state.container or false,
+    x=player:getX(),y=player:getY(),z=player:getZ(),dead=player:isDead(),
+    containerAccess=root and player:canAccessContainer(root)or false,
+    vehicleAccess=part and part:getVehicle():canAccessContainer(part:getIndex(),player)or false,
+    safehouse=square and SafeHouse and SafeHouse.isSafehouseAllowLoot
+     and SafeHouse.isSafehouseAllowLoot(square,player)==true or false})
+  end)
+  if not ok then emit('REQUEST_DIAGNOSTIC_ERROR',{error=tostring(err)})end
+  return
+ end
  if module~=F.module then return end
  local ok,err=pcall(function()
   local role=player:getUsername();assert(role=='client1'or role=='client2','Unexpected fixture actor')

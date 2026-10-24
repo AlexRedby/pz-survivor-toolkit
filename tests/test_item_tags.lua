@@ -1,3 +1,6 @@
+isClient=function()return false end
+local customizationWorld={}
+ModData={getOrCreate=function()return customizationWorld end}
 local shared = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 package.path = shared .. '?.lua;' .. package.path
 local enabled = true
@@ -126,12 +129,12 @@ do
  end
  local exact=assert(Tags.normalizeRule({include={'furniture','category:FurnitureDoor'}}))
  values[1]='food'
- values.legacyCategory='Mod.Changed'
+ values.legacyCategory='Food'
  assert(matcher(exact),'caller mutation changed prepared membership')
  assert(not Tags.matchesRule(values,exact),'standalone matcher stopped reading live tags')
  local refreshed=Tags.ruleMatcher(values)
  assert(not refreshed(exact),'new matcher reused a stale membership snapshot')
- assert(refreshed(assert(Tags.normalizeRule({include={'food','category:Mod.Changed'}}))),
+ assert(refreshed(assert(Tags.normalizeRule({include={'food','category:Food'}}))),
   'new matcher ignored current tags or exact-category alias')
  assert(Tags.ruleMatcher('Mod.Unknown')(assert(Tags.normalizeRule({include={'category:Mod.Unknown'}}))),
   'prepared matcher lost unknown exact categories')
@@ -263,3 +266,50 @@ assert(#ruleScripts == 2 and ruleScripts[1] == thread and ruleScripts[2] == hidd
 assert(#LootSorter.getCategories() == 1 and LootSorter.getCategories()[1] == 'craftingTailoring_material',
  'visible category picker inherited rule-preview inclusion policy')
 print('ItemTags: '..count..' exact legacy projections, independent tags, aliases, unknown/ambiguous keys and live fluid changes passed.')
+
+local C=require 'PZSurvivorToolkit/TagCustomization'
+local customId='custom:12345678-1234-1234-1234-123456789abc'
+customizationWorld.definitions[customId]={name='My supplies'}
+customizationWorld.definitions.food={name='Edited food'}
+customizationWorld.types['base.fixture']={food='remove',[customId]='add'}
+local delta={}
+local exact={getFullType=function()return 'Base.Fixture' end,
+ getDisplayCategory=function()return 'foodPerishable_fruit' end,
+ hasModData=function()return true end,getModData=function()return {[C.FIELD]=delta}end}
+assert(Tags.label('food')=='Edited food' and Tags.defaultLabel('food')=='Еда')
+assert(Tags.matches(Tags.forItem(exact),{customId,'perishable','fruit'})
+ and not Tags.matches(Tags.forItem(exact),{'food'}),'type override replaced dynamic base tags')
+delta.food='add';delta[customId]='remove'
+assert(Tags.matches(Tags.forItem(exact),{'food'}) and not Tags.matches(Tags.forItem(exact),{customId}),
+ 'exact instance did not override type delta')
+delta.food=nil;delta[customId]=nil
+customizationWorld.definitions[customId]={deleted=true}
+local retired=assert(Tags.normalizeRule({include={customId}}))
+assert(not Tags.matchesRule(Tags.forItem(exact),retired),'deleted tag widened a saved rule')
+print('Tag consumer: sparse world/type/instance deltas, default label and retired rules passed.')
+
+-- Loaded fallback categories and instance-only automatic categories remain
+-- available for definition editing and explicit assignment removal.
+local function hasId(ids,wanted) for _,id in ipairs(ids) do if id==wanted then return true end end;return false end
+local oldManager=getScriptManager
+getScriptManager=nil
+Tags.allIds() -- Unavailable scripts must not permanently cache an empty set.
+local unknownScript=scriptItem('Mod.UnknownLoaded','Mod.LoadedUnknown')
+local manager={getAllItems=function() return javaList({unknownScript}) end}
+getScriptManager=function() return manager end
+assert(hasId(Tags.allIds(),'category:Mod.LoadedUnknown'),'loaded fallback tag missing from editable catalog')
+local exactUnknown=inventoryItem(unknownScript);exactUnknown.category='Mod.InstanceOnly'
+local exactDelta={}
+exactUnknown.hasModData=function() return true end
+exactUnknown.getModData=function() return {[C.FIELD]=exactDelta} end
+assert(hasId(Tags.allIds({exactUnknown}),'category:Mod.InstanceOnly'),'instance-only automatic tag missing')
+customizationWorld.definitions['category:Mod.InstanceOnly']={name='Instance label'}
+assert(Tags.label('category:Mod.InstanceOnly')=='Instance label','fallback definition cannot be customized')
+exactDelta['category:Mod.InstanceOnly']='remove'
+assert(not Tags.matches(Tags.forItem(exactUnknown),{'category:Mod.InstanceOnly'}),'fallback tag cannot be explicitly removed')
+customizationWorld.definitions[customId]={name='World one'}
+assert(hasId(Tags.allIds(),customId))
+customizationWorld=C.empty()
+assert(not hasId(Tags.allIds(),customId),'automatic script tag cache retained a prior world custom identity')
+getScriptManager=oldManager
+print('Tag catalog: loaded/instance fallback tags editable and removable, custom identities remain world-local')

@@ -456,6 +456,10 @@ end
 
 function Picker:prerender()
     self:resolvePresetSelection()
+    local tagRevision = Tags.revision and Tags.revision() or 0
+    if self.toolkitTagRevision ~= tagRevision then
+        self.toolkitTagRevision, self.needRebuild = tagRevision, true
+    end
     local enabled = Tags.enabled()
     if self.toolkitTagsEnabled ~= enabled then
         self.toolkitTagsEnabled, self.needRebuild = enabled, true
