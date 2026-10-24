@@ -55,6 +55,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.236
+
+- **Exercise:** Put worn and held storage on the ground before exercising instead of carrying its full unequipped weight. Recover the same nearby bags and restore their worn/hand slots afterward, preserving contents and favourite flags. Applies with queue controls enabled or disabled; missing/distant bags and newly occupied worn slots are left alone. Native placement/pickup limits, workout duration, XP and fatigue remain unchanged. Full-pack SP/Host gameplay verification is pending.
+
 ### 0.1.235
 
 - **Action queue / P4:** Use shared hotbar cleanup for proven battery flashlights that retain the same item when empty. Keep native activation, battery consumption and deactivation/synchronization on return; charge or light-emission changes no longer exclude required cleanup. Replacement outputs and custom callbacks remain protected.

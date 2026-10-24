@@ -2,6 +2,10 @@ if not NativeActionRoot then print('Fitness queue native contracts SKIP.'); retu
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 local fixtureRequire=require
 require=function(name)
+    if name=='PZSurvivorToolkit/FitnessEquipment' then
+        return PZSurvivorToolkit.FitnessEquipment
+            or assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()
+    end
     if name=='PZSurvivorToolkit/ActionQueueSettlement' then
         return PZSurvivorToolkit.ActionQueueSettlement
             or assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()
@@ -48,6 +52,7 @@ CharacterTrait={};Perks={}
 getPlayerHotbar=function()end
 getPlayerInventory=function()return {refreshBackpacks=function()end}end
 sendEquip=function()end;syncItemActivated=function()end;triggerEvent=function()end
+sendRemoveItemFromContainer=function()end
 setGameSpeed=function()end
 getTextManager=function()return {getFontHeight=function()return 14 end}end
 UIFont={Small='small'}
@@ -57,6 +62,7 @@ native('shared/TimedActions/ISUnequipAction.lua')
 native('shared/TimedActions/ISEquipWeaponAction.lua')
 native('shared/TimedActions/ISFitnessAction.lua')
 native('shared/TimedActions/ISWaitWhileGettingUp.lua')
+native('shared/TimedActions/ISDropWorldItemAction.lua')
 native('client/ISUI/ISFitnessUI.lua')
 native('shared/TimedActions/ISInventoryTransferUtil.lua')
 luautils={}
@@ -119,7 +125,22 @@ player.PlayAnim=function()end;player.setIsFarming=function()end
 player.updateHandEquips=function()end
 player.getEmitter=function()return {playSound=function()end,stopSound=function()end}end
 player.getCurrentState=function()return {}end
-player.getCurrentSquare=function()return {}end
+local worlds={}
+local here={x=10,y=10,z=0}
+function here:getX()return self.x end;function here:getY()return self.y end;function here:getZ()return self.z end
+function here:getWorldObjects()return list(worlds)end
+function here:isAdjacentTo(other)return self.z==other.z and math.abs(self.x-other.x)<=1 and math.abs(self.y-other.y)<=1 end
+function here:isBlockedTo()return false end
+function here:getTotalWeightOfItemsOnFloor()
+    local weight=0;for _,world in ipairs(worlds)do weight=weight+world:getItem():getUnequippedWeight()end;return weight
+end
+function here:AddWorldInventoryItem(item)
+    local world={getItem=function()return item end,getSquare=function()return self end,
+        setIgnoreRemoveSandbox=function()end,setExtendedPlacement=function()end,transmitCompleteItemToClients=function()end}
+    item.world=world;worlds[#worlds+1]=world;return item
+end
+local currentSquare=here
+player.getCurrentSquare=function()return currentSquare end
 IdleState={instance=function()return {}end};FitnessState={instance=function()return {}end}
 local nextID=0
 local function container(owner)
@@ -134,6 +155,7 @@ local function container(owner)
         end
         return false
     end
+    function value:containsID(id)return self:getItemById(id)~=nil end
     function value:getFirstTypeEvalRecurse(kind,predicate)
         for _,item in ipairs(self.items)do
             if (item:getType()==kind or item:getFullType()==kind) and (not predicate or predicate(item))then return item end
@@ -155,6 +177,13 @@ local function container(owner)
     return value
 end
 player.inventory=container()
+local floor=container();floor.getType=function()return 'floor'end
+floor.isInCharacterInventory=function()return false end
+ISInventoryPage.GetFloorContainer=function()return floor end
+getPlayerLoot=function()return {refreshBackpacks=function()
+    floor.items={}
+    for _,world in ipairs(worlds)do floor:AddItem(world:getItem())end
+end}end
 local function item(kind,source,location,twoHands)
     nextID=nextID+1
     local value={class=location and 'InventoryContainer' or 'InventoryItem',id=nextID,kind=kind,source=source or player.inventory,location=location,twoHands=twoHands,active=false}
@@ -168,7 +197,10 @@ local function item(kind,source,location,twoHands)
     function value:isForceDropHeavyItem()return false end;function value:canBeActivated()return false end
     function value:isActivated()return self.active end;function value:setActivated(active)self.active=active end
     function value:getCurrentUsesFloat()return 1 end;function value:isHumanCorpse()return false end
-    function value:isFavorite()return false end
+    function value:isFavorite()return self.favorite==true end
+    function value:getWorldItem()return self.world end
+    function value:setWorldZRotation()end
+    function value:getUnequippedWeight()return self.weight or 1 end
     function value:getIsCraftingConsumed()return false end;function value:getActualWeight()return 1 end
     function value:getEquipSound()end;function value:getUnequipSound()end;function value:setJobDelta()end
     function value:getClothingItem()end;function value:getScriptItem()return {isItemType=function()return false end}end
@@ -193,6 +225,7 @@ PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function()return receipt 
 local nativeFitness={complete=ISFitnessAction.complete,exeLooped=ISFitnessAction.exeLooped,animEvent=ISFitnessAction.animEvent,
     serverStart=ISFitnessAction.serverStart,serverStop=ISFitnessAction.serverStop}
 local fitnessQueue=f.project('ActionQueueFitness')
+local equipmentTick=assert(tickCallbacks[#tickCallbacks-1],'native fitness storage cleanup did not register its window-independent callback')
 local fitnessPrune=assert(tickCallbacks[#tickCallbacks],'fitness did not register explicit record pruning')
 local fitnessMenuReset=assert(menuCallbacks[#menuCallbacks],'fitness did not register menu cleanup')
 local function head()
@@ -224,7 +257,14 @@ local function runCurrent(q)
         end
         assert(action:complete())
     elseif action.Type=='ISInventoryTransferAction'then
+        if action.srcContainer==floor then
+            for index,world in ipairs(worlds)do if world:getItem()==action.item then table.remove(worlds,index);break end end
+            action.item.world=nil
+        end
         action.srcContainer:Remove(action.item);action.destContainer:AddItem(action.item)
+    elseif action.Type=='ISDropWorldItemAction'then
+        assert(action:isValid(),'native ground placement rejected fitness bag')
+        assert(action:complete())
     elseif action.Type=='ISFitnessAction'then action:start();return action
     else assert(action:complete()~=nil,'native equipment completion did not run')end
     removeCurrent(q);return action
@@ -255,6 +295,7 @@ local function reset()
     enabled,client,receipt=true,false,nil
     currentExercise=nil
     player.sitting=false
+    worlds={};floor.items={};currentSquare=here
 end
 
 reset()
@@ -308,6 +349,8 @@ print('PASS waiting fitness operation contracts and captured source guards')
 reset()
 local axe=item('Axe',nil,nil,true)
 local backpack=item('Bag_BigHikingBag',nil,'BACK')
+backpack.favorite=true
+local packed=item('WaterBottle',backpack.inner)
 local dumbbell=item('DumbBell',backpack.inner)
 player.primary,player.secondary=axe,axe;player.worn.BACK=backpack
 pending,q,window=request('bicepscurl',10)
@@ -323,6 +366,9 @@ assert(axeUnequips==1 and bagUnequips==1,'native fitness preparation duplicated 
 workout=reachExercise(q)
 assert(player.primary==dumbbell and player.secondary==nil and not player.worn.BACK,'weighted native preparation did not equip exact prop/remove bag')
 assert(dumbbell:getContainer()==player.inventory,'borrowed fitness prop was not transferred to root inventory')
+assert(backpack:getWorldItem() and not player.inventory:contains(backpack,true),
+    'exercise retained the unequipped bag in carried inventory instead of putting it on the ground')
+assert(backpack:isFavorite() and packed:getContainer()==backpack.inner,'putting down storage changed its favourite flag or contents')
 local token=workout.toolkitQueueOperation
 assert(fitnessQueue.ownsPickupCleanup(workout,dumbbell:getID()),'fitness did not claim exact borrowed-prop cleanup')
 assert(not fitnessQueue.ownsPickupCleanup(workout,axe:getID()),'fitness claimed unrelated pickup cleanup')
@@ -333,6 +379,8 @@ finish(q,workout)
 assert(player.primary==axe and player.secondary==axe,'original two-handed equipment was not restored exactly')
 assert(player.worn.BACK==backpack,'removed worn bag was not restored')
 assert(dumbbell:getContainer()==backpack.inner,'borrowed dumbbell was not returned to its original carried container')
+assert(not backpack:getWorldItem() and #worlds==0 and backpack:isFavorite() and packed:getContainer()==backpack.inner,
+    'pickup/restoration duplicated storage or lost its contents/favourite flag')
 assert(window.currentExercice==nil and next(window.itemsToReequip)==nil,'closed-window-independent cleanup leaked back into native UI')
 print('PASS native two-handed and worn-bag restoration with exact carried-container return')
 
@@ -345,6 +393,86 @@ finish(q,workout)
 assert(player.primary==nil and player.secondary==nil,'original empty hand slots were not restored')
 assert(player.worn.BACK==backpack and dumbbell:getContainer()==backpack.inner,'empty-hand cleanup lost bag/prop')
 print('PASS empty-hand restoration does not leave the exercise prop equipped')
+
+reset()
+local back=item('Bag_BigHikingBag',nil,'BACK')
+local pouch=item('Bag_FannyPackFront',nil,'FANNYPACK_FRONT')
+local carriedBag=item('Bag_DuffelBag',nil,'SECONDARYBAG')
+local spare=item('Bag_Satchel',nil,'SATCHEL')
+local shirt=item('Tshirt')
+player.worn.BACK,player.worn.FANNYPACK_FRONT,player.worn.SHIRT=back,pouch,shirt
+player.primary,player.secondary=carriedBag,carriedBag
+pending,q=request('squats',10);expand(pending,q)
+local dropCount=0
+for _,action in ipairs(q.queue)do if action.Type=='ISDropWorldItemAction'then dropCount=dropCount+1 end end
+assert(dropCount==3,'worn/held storage must be put down exactly once, excluding spare inventory bags and clothing')
+workout=reachExercise(q)
+assert(#worlds==3 and not player.worn.BACK and not player.worn.FANNYPACK_FRONT and player.worn.SHIRT==shirt,
+    'multiple storage slots were not grounded independently of ordinary clothing')
+assert(spare:getContainer()==player.inventory,'exercise dropped an unequipped spare bag')
+finish(q,workout)
+assert(player.worn.BACK==back and player.worn.FANNYPACK_FRONT==pouch and player.worn.SHIRT==shirt,
+    'storage restoration changed original worn slots or unrelated clothing')
+assert(player.primary==carriedBag and player.secondary==carriedBag and #worlds==0,
+    'two-handed bag was not recovered/re-equipped exactly once')
+print('PASS all worn/held storage slots, two-handed deduplication and unrelated clothing/spare bags')
+
+local function takeWorldItem(bag)
+    for index,world in ipairs(worlds)do if world:getItem()==bag then table.remove(worlds,index);break end end
+    bag.world=nil
+    if bag.source then bag.source:Remove(bag)end
+    local external=container();external:AddItem(bag)
+end
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');player.worn.BACK=backpack
+pending,q=request('squats',10);expand(pending,q);workout=reachExercise(q)
+takeWorldItem(backpack)
+local lookalike=item('Bag_BigHikingBag',nil,'BACK');player.inventory:Remove(lookalike);here:AddWorldInventoryItem(lookalike)
+finish(q,workout)
+assert(not player.worn.BACK and lookalike:getWorldItem() and backpack:getContainer()~=player.inventory,
+    'cleanup stole storage or substituted a same-type bag for the original ID')
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');player.worn.BACK=backpack
+pending,q=request('squats',10);expand(pending,q);workout=reachExercise(q)
+currentSquare=setmetatable({x=20,y=20,z=0},{__index=here})
+finish(q,workout)
+assert(backpack:getWorldItem() and not player.worn.BACK,'cleanup teleported distant storage back into inventory')
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');player.worn.BACK=backpack
+pending,q=request('squats',10);expand(pending,q);workout=reachExercise(q)
+local occupied=item('Bag_Satchel',nil,'BACK');player.worn.BACK=occupied
+finish(q,workout)
+assert(player.worn.BACK==occupied and backpack:getWorldItem(),'cleanup displaced a newly worn bag from an occupied slot')
+print('PASS missing, distant and occupied-slot storage is left alone without same-type substitution')
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');dumbbell=item('DumbBell',backpack.inner)
+player.worn.BACK=backpack
+pending,q=request('bicepscurl',10);expand(pending,q);workout=reachExercise(q)
+local replica=item('Bag_BigHikingBag',nil,'BACK');player.inventory:Remove(replica)
+replica.id=backpack.id;replica.favorite=backpack.favorite
+replica.inner=container(replica)
+local world=assert(backpack.world);world.getItem=function()return replica end
+replica.world=world;backpack.world=nil
+finish(q,workout)
+assert(player.worn.BACK==replica and dumbbell:getContainer()==replica.inner,
+    'Host-style fresh bag replica did not restore by ID or resolve the borrowed-prop destination anew')
+print('PASS fresh Host storage replica is resolved by ID before re-equipping and returning the prop')
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');player.worn.BACK=backpack
+pending,q=request('squats',10);expand(pending,q)
+while q.queue[1] and q.queue[1].Type~='ISDropWorldItemAction'do runCurrent(q)end
+local pendingDrop=assert(q.queue[1])
+backpack.weight=60
+assert(fitnessQueue.canSkip(pendingDrop),'new ground-capacity failure did not skip unsafe placement')
+for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+assert(currentExercise==nil and player.worn.BACK==backpack and not backpack:getWorldItem(),
+    'failed ground placement started an overloaded workout or lost equipment cleanup')
+print('PASS failed ground placement skips the workout and restores carried storage')
 
 reset()
 local torch=item('HandTorch')
@@ -480,8 +608,34 @@ for _=1,20 do if q.queue[1]==tail then break end;runCurrent(q)end
 assert(q.queue[1]==tail and currentExercise==nil,'preparation cancellation constructed workout or discarded independent tail')
 assert(player.primary==axe and player.secondary==axe and player.worn.BACK==backpack and dumbbell:getContainer()==backpack.inner,
     'canceled in-flight pickup did not restore hands/bag and return borrowed prop')
-ISTimedActionQueue.onCompleted=nativeCompleted
 print('PASS core active fitness/pickup cancellation retains cleanup and independent tail')
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');player.worn.BACK=backpack
+pending,q=request('squats',10);expand(pending,q)
+while q.queue[1] and q.queue[1].Type~='ISDropWorldItemAction'do runCurrent(q)end
+local dropping=assert(q.queue[1]);dropping.action=nativeAction();q.current=dropping
+tail=head();ISTimedActionQueue.add(tail)
+assert(core.cancelOperation(q,dropping),'core rejected cancellation during storage placement')
+assert(q.toolkitGroupCancel and not q.toolkitCancel,'native storage placement was interrupted instead of allowed to settle')
+assert(dropping:complete());q:onCompleted(dropping)
+assert(q.queue[1] and fitnessQueue.retainCleanup(q.queue[1]),'placement cancellation discarded required recovery')
+for _=1,20 do if q.queue[1]==tail then break end;runCurrent(q)end
+assert(q.queue[1]==tail and currentExercise==nil and player.worn.BACK==backpack and #worlds==0,
+    'cancelled in-flight ground placement lost storage, began exercising or discarded the independent tail')
+
+reset()
+backpack=item('Bag_BigHikingBag',nil,'BACK');player.worn.BACK=backpack
+pending,q=request('squats',10);expand(pending,q);workout=reachExercise(q)
+workout:forceStop();removeCurrent(q);runCurrent(q)
+local pickup=assert(q.queue[1]);assert(pickup.Type=='ISInventoryTransferAction','cleanup did not schedule storage pickup')
+assert(fitnessQueue.ownsPickupCleanup(pickup,backpack:getID()),'fitness did not own storage pickup cleanup')
+takeWorldItem(backpack)
+assert(fitnessQueue.canSkip(pickup),'bag taken after pickup scheduling did not skip the stale pickup')
+for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+assert(not player.worn.BACK and backpack:getContainer()~=player.inventory,'stale cleanup stole the bag back')
+print('PASS in-flight placement cancellation and storage taken between pickup planning and execution')
+ISTimedActionQueue.onCompleted=nativeCompleted
 
 reset();client=true
 pending,q=request('squats',10);expand(pending,q);workout=reachExercise(q)
@@ -503,6 +657,17 @@ fitnessPrune()
 assert(fitnessQueue.isManaged(workout) and fitnessQueue.isManaged(q.queue[2]),
     'queued receipt-waiting exercise or required cleanup lost its record')
 print('PASS Host fitness preservation requires authoritative started receipt')
+
+reset();client=true;receipt={state='started',token='storage-fixture-receipt'}
+backpack=item('Bag_BigHikingBag',nil,'BACK');backpack.favorite=true
+dumbbell=item('DumbBell',backpack.inner);player.worn.BACK=backpack
+pending,q=request('bicepscurl',10);expand(pending,q);workout=reachExercise(q)
+assert(backpack:getWorldItem() and dumbbell:getContainer()==player.inventory,
+    'client-branch preparation retained carried storage or failed to fetch the prop first')
+finish(q,workout)
+assert(player.worn.BACK==backpack and dumbbell:getContainer()==backpack.inner and backpack:isFavorite() and #worlds==0,
+    'client-branch storage cleanup lost native item IDs, contents or the favourite flag')
+print('PASS simulated client placement/pickup branches retain exact storage and borrowed-prop cleanup')
 
 reset()
 pending,q=request('squats',10)
@@ -616,6 +781,47 @@ assert(nativeWorkout.Type=='ISFitnessAction' and nativeWorkout.fitnessUI==window
 assert(window.currentExercice=='squats','disabled native UI restoration state was intercepted')
 enabled=true
 print('PASS disabled fitness uses the unchanged native UI producer')
+
+reset();enabled=false
+backpack=item('Bag_BigHikingBag',nil,'BACK');backpack.favorite=true
+packed=item('WaterBottle',backpack.inner);player.worn.BACK=backpack
+q=f.queue(head());window=panel('squats',10)
+assert(window:equipItems(),'native preparation with queue edits off rejected storage')
+local preparationCount=#q.queue
+assert(not window:equipItems() and #q.queue==preparationCount,'repeated native preparation queued duplicate storage placement')
+window.currentExercice='squats';fitness:setCurrentExercise('squats')
+removeCurrent(q)
+for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+assert(not player.worn.BACK and backpack:getWorldItem() and not player.inventory:contains(backpack,true),
+    'native queue-disabled preparation left storage in carried inventory')
+q=f.queue(head());fitness:setCurrentExercise(nil)
+equipmentTick() -- No window update: this also covers closing the fitness window.
+local restorationCount=#q.queue
+equipmentTick();window:update()
+assert(#q.queue==restorationCount,'native cleanup tick and window update scheduled duplicate pickups')
+removeCurrent(q)
+for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+assert(player.worn.BACK==backpack and backpack:isFavorite() and packed:getContainer()==backpack.inner and #worlds==0,
+    'native queue-disabled/window-closed cleanup did not preserve storage identity, contents and favourite flag')
+
+reset();enabled=false
+backpack=item('Bag_BigHikingBag',nil,'BACK');player.worn.BACK=backpack
+q=f.queue(head());window=panel('squats',10);assert(window:equipItems())
+window.currentExercice='squats';fitness:setCurrentExercise('squats');removeCurrent(q)
+for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+currentSquare=setmetatable({x=20,y=20,z=0},{__index=here})
+q=f.queue(head());fitness:setCurrentExercise(nil);equipmentTick();removeCurrent(q)
+for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+assert(backpack:getWorldItem() and not player.worn.BACK,'native queue-disabled cleanup teleported distant storage')
+
+reset();enabled=false
+backpack=item('Bag_BigHikingBag',nil,'BACK');backpack.weight=60;player.worn.BACK=backpack
+q=f.queue(head());window=panel('squats',10)
+window:onClick({internal='OK'})
+assert(#q.queue==1 and currentExercise==nil and player.worn.BACK==backpack,
+    'native preflight floor-capacity failure unequipped storage or constructed a workout')
+enabled=true
+print('PASS native queue-disabled ground storage, closed-window restoration, distance guards and placement preflight')
 
 -- A changed source present before capture must not acquire a new permission.
 native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')

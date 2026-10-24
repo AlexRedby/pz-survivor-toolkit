@@ -8,6 +8,7 @@
 - [Bulk actions](#bulk-actions)
 - [Context menus](#context-menus)
 - [Crafting plans](#crafting-plans)
+- [Exercise storage](#exercise-storage)
 - [Action queue](#action-queue)
 - [Survivor Wishlist](#survivor-wishlist)
 - [Highlights](#visibility-and-rendering)
@@ -51,6 +52,12 @@ The quantity is the number of final recipe executions. After changing it, click 
 The planner uses reachable stock, accounts for shared ingredients across the entire chain and reuses intermediate surplus. It respects known recipes, skills, surfaces and workstations. Original item IDs are bound explicitly; favourites and worn/held consumables are excluded. Untouched native auto-filled inputs leave material selection automatic. An explicit native picker choice fixes the material type and prefers the chosen instances first; later repetitions may use other items of that type or newly crafted intermediates. **Auto** in the plan overrides that preference for the current preview. Closing the preview discards its material overrides. Each step checks the actual items again, and tools/books borrowed from containers use native returns. A plan can be cancelled as one operation while waiting or during a supported native crafting step. Remaining dependent steps are removed together; already completed results remain in the inventory.
 
 Planning currently supports deterministic whole-item handcraft recipes. Liquids, partial uses, variable/random outputs, custom recipe callbacks and mixed-type manual inputs stay with ordinary crafting. Generated intermediates must arrive in the character's main inventory; the plan will not take newly appearing shared-container items instead. Search is bounded to 100 craft steps and 32 dependency levels. No materials are reserved on the server: another player's pickup, a broken tool or an ordinary interruption can stop the remaining queue. Project Cook's separate panel and building recipes have no planning control yet.
+
+## Exercise storage
+
+Starting a workout through the native Fitness window puts worn backpacks, pouches and other worn/held inventory containers on the ground. Ordinary clothing and spare bags already in the inventory are not dropped. Afterward, the same bags are picked up and re-equipped when they are still on the same or an adjacent unblocked square and their original worn slots are available. Contents and favourite flags are preserved; another player's bag or a same-type replacement is never substituted. Moving away or someone taking a bag leaves it behind. Native ground-capacity limits still apply; a workout is not started with storage whose placement failed.
+
+This applies with **Show action queue** enabled or disabled. Closing the Fitness window does not remove the native path's pending bag restoration. Workout duration, exercise effects, XP, fatigue and regularity remain native. Heavy forced-drop objects retain their existing handling. Other mods that replace the native Fitness equipment handlers are not covered. Focused checks use B42.21 Lua sources with simulated inventory/world state; full-pack SP/Host gameplay, concurrent pickups and network delivery remain unverified.
 
 ## Action queue
 

@@ -1,3 +1,7 @@
+# Exercise ground storage
+
+- [ ] Check the exercise ground-storage change in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags (including favourites), contents/IDs, dumbbells borrowed from a bag, natural completion and cancellation during placement/pickup, closed Fitness window with queue controls off, movement away and a second player's competing pickup. Require authoritative conservation and unchanged exercise effects; Lua source-backed doubles do not establish live network ordering or rendering.
+
 # Cart capture coverage
 
 - [ ] Close the ordinary menu-Host capture's client2 owner-state trailing-edge gap in the turn window with the available 43-mod subset. Require a real sample in `[epoch+7150, epoch+7500]` under the existing 350ms edge tolerance; retain the unchanged motion/render analyzer, AeroSpace/PID/resource/provenance gates and separate full-pack checks below.

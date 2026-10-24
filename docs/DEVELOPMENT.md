@@ -99,6 +99,8 @@ The generator verifies source identities, skin weights and exact kernel-fan deco
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests. Choose checks related to the change; the commands below are independent examples, not a mandatory full checklist.
 
+Exercise storage uses `FitnessEquipment` for ground placement and exact-ID recovery in both the native Fitness UI and `ActionQueueFitness`. Run `tools/run_tests.py --game "$PZ_GAME" --test test_action_queue_fitness` for native placement/completion, worn/held bags, favourite flags, borrowed props, missing/distant storage, fresh item replicas, cancellation and queue-disabled/window-closed restoration. These source-backed checks do not establish live Host transport or full-pack gameplay; retain the separate follow-up in [TODO](../TODO.md#exercise-ground-storage).
+
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install lupa

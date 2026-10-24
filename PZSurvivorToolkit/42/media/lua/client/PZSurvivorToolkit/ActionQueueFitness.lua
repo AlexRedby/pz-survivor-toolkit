@@ -10,6 +10,8 @@ Toolkit.ActionQueueFitness=Fitness
 local Ops,Definitions=Toolkit.ActionQueueOperations,Toolkit.ActionQueueDefinitions
 local Settlement=require 'PZSurvivorToolkit/ActionQueueSettlement'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
+local Equipment=require 'PZSurvivorToolkit/FitnessEquipment'
+Equipment.install(ISFitnessUI)
 local records={}
 local native,classes,exercises={},{},{}
 local class=ISFitnessAction
@@ -28,7 +30,7 @@ for name,callback in pairs(class) do
  end
 end
 local childSources={ISEquipWeaponAction=1814269902,ISUnequipAction=229487418,ISWearClothing=762204314,
- ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935}
+ ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935,ISDropWorldItemAction=2862163534}
 local function approvedChange(kind,name)
  local carts=Toolkit.ActionQueueCarts
  if kind=='ISInventoryTransferAction' and (name=='new' or name=='perform' or name=='transferItem') then
@@ -38,7 +40,7 @@ local function approvedChange(kind,name)
  end
  return false
 end
-for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction','ISWearClothing','ISInventoryTransferAction','ISWaitWhileGettingUp'}) do
+for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction','ISWearClothing','ISInventoryTransferAction','ISWaitWhileGettingUp','ISDropWorldItemAction'}) do
  local owner=_G[kind];local methods={}
  if childSources[kind] then
   trusted=trusted and Proof.matches('media/lua/'..(kind=='ISInventoryTransferAction' and 'client' or 'shared')..'/TimedActions/'..kind..'.lua',childSources[kind])
@@ -152,7 +154,8 @@ local function equipmentReady(saved)
  return true
 end
 local function startExercise(player,saved)
- if not enabled() or not unchanged() or saved.unavailable or not available(player) or not equipmentReady(saved) then return end
+ if not enabled() or not unchanged() or saved.unavailable or not available(player) or not equipmentReady(saved)
+  or not Equipment.stowed(player,saved.storage or {}) then return end
  local action=class:new(player,saved.exercise,saved.minutes,saved.data,saved.exercise)
  saved.action=action
  tag(action,saved,'exercise')
@@ -170,7 +173,7 @@ local function activation(player,saved)
   end
  end
 end
-local function cleanup(player,saved)
+local function restore(player,saved)
  if not saved.before or saved.restored or not unchanged() or player:isDead() then return end
  saved.restored=true
  local primary,secondary=root(player,saved.before.hands.primary),root(player,saved.before.hands.secondary)
@@ -187,11 +190,12 @@ local function cleanup(player,saved)
  if secondary and secondary~=primary then add(ISEquipWeaponAction:new(player,secondary,50,false,false),saved,'cleanup') end
  for _,ref in ipairs(saved.before.bags) do
   local item=root(player,ref)
-  if item and not player:getWornItems():contains(item) then add(ISWearClothing:new(player,item),saved,'cleanup') end
+  if item and Equipment.canWear(player,ref) and not player:getWornItems():contains(item) then add(ISWearClothing:new(player,item),saved,'cleanup') end
  end
  ISTimedActionQueue.add(command(player,activation,saved,'cleanup'))
  local item=root(player,saved.item)
- local destination=saved.source
+ local owner=saved.sourceOwner and find(player:getInventory(),saved.sourceOwner)
+ local destination=owner and owner:getInventory() or saved.source
  if item and destination and destination~=player:getInventory() and destination:isExistYet()
   and Toolkit.ActionQueuePolicy.isCarriedContainer(destination,player) then
   local transfer=ISInventoryTransferUtil.newInventoryTransferAction(player,item,player:getInventory(),destination)
@@ -201,15 +205,32 @@ local function cleanup(player,saved)
   end
  end
 end
+local function cleanup(player,saved)
+ if not saved.before or saved.cleanupQueued or not unchanged() or player:isDead() then return end
+ saved.cleanupQueued=true
+ Equipment.pickups(player,saved.storage or {},function(action,ref)
+  add(action,saved,'cleanup');records[action].storage=ref
+ end)
+ ISTimedActionQueue.add(command(player,restore,saved,'cleanup'))
+end
 local function prepare(player,saved)
  if not enabled() or not unchanged() or not available(player) then return end
  local item=saved.item and find(player:getInventory(),saved.item)
  if saved.item and not item then return end
  local primary,secondary=player:getPrimaryHandItem(),player:getSecondaryHandItem()
  if primary and primary:isForceDropHeavyItem() or secondary and secondary:isForceDropHeavyItem() then return end
+ saved.storage=Equipment.capture(player)
+ local drops=Equipment.drops(player,saved.storage)
+ if not drops then return end
  if player:isSitting() then add(ISWaitWhileGettingUp:new(player),saved,'preparation') end
  saved.before={hands={primary=identity(primary),secondary=identity(secondary)},bags={}}
- if item then saved.source=item:getContainer() end
+ if item then
+  saved.source=item:getContainer();saved.sourceOwner=identity(saved.source:getContainingItem())
+  -- Fetch the prop while its carrier is still worn, before removing its weight reduction.
+  if saved.source~=player:getInventory() then
+   add(ISInventoryTransferUtil.newInventoryTransferAction(player,item,saved.source,player:getInventory()),saved,'preparation')
+  end
+ end
  local seen={}
  local function unequip(value)
   if value and not seen[value] then seen[value]=true;add(ISUnequipAction:new(player,value,50),saved,'preparation') end
@@ -219,13 +240,12 @@ local function prepare(player,saved)
  for i=0,worn:size()-1 do
   local value=worn:get(i):getItem()
   if instanceof(value,'InventoryContainer') then
-   saved.before.bags[#saved.before.bags+1]=identity(value);unequip(value)
+   local ref=identity(value);ref.slot=worn:get(i):getLocation()
+   saved.before.bags[#saved.before.bags+1]=ref;unequip(value)
   end
  end
+ for i,drop in ipairs(drops) do add(drop,saved,'preparation');records[drop].storage=saved.storage[i] end
  if item then
-  if item:getContainer()~=player:getInventory() then
-   add(ISInventoryTransferUtil.newInventoryTransferAction(player,item,item:getContainer(),player:getInventory()),saved,'preparation')
-  end
   add(ISEquipWeaponAction:new(player,item,50,true,saved.data.prop=='twohands'),saved,'preparation')
  end
  ISTimedActionQueue.add(command(player,startExercise,saved,'preparation'))
@@ -295,12 +315,23 @@ classes.ISFitnessAction.methods.forceStop=class.forceStop
 function Fitness.retainCleanup(action) local record=validRecord(action);return record and record.stage=='cleanup' end
 function Fitness.ownsPickupCleanup(action,id)
  local record=validRecord(action)
- return record and record.saved.before and record.saved.item and record.saved.item.id==id
+ if not record or not record.saved.before then return false end
+ if record.saved.item and record.saved.item.id==id then return true end
+ for _,ref in ipairs(record.saved.storage or {}) do if ref.id==id then return true end end
+ return false
 end
 Settlement.register('fitness',{retain=Fitness.retainCleanup,ownsPickup=Fitness.ownsPickupCleanup})
 function Fitness.canSkip(action)
  local record=validRecord(action)
  if not record or record.started or (action.action and action:isStarted()) then return false end
+ if record.storage then
+  if action.Type=='ISDropWorldItemAction' then
+   if not Equipment.canDrop(action.character,record.storage,action.sq) then record.saved.unavailable=true;return true end
+  elseif action.Type=='ISInventoryTransferAction' then
+   return not Equipment.canWear(action.character,record.storage)
+    or Equipment.ground(action.character,record.storage)~=action.item
+  end
+ end
  if record.item and not find(action.character:getInventory(),record.item) then
   if record.stage~='cleanup' then record.saved.unavailable=true end
   return true
@@ -332,7 +363,7 @@ local function contract(action)
  end
  return result
 end
-Definitions.registerBehavior('toolkit.fitness',{types={'ISQueueActionsAction','ISFitnessAction','ISWaitWhileGettingUp','ISWearClothing'},matches=Fitness.isManaged,inspect=contract})
+Definitions.registerBehavior('toolkit.fitness',{types={'ISQueueActionsAction','ISFitnessAction','ISWaitWhileGettingUp','ISWearClothing','ISDropWorldItemAction'},matches=Fitness.isManaged,inspect=contract})
 local keys={squats='IGUI_Squats',pushups='IGUI_PushUps',situp='IGUI_SitUps',burpees='IGUI_Burpees',
  barbellcurl='IGUI_BarbellCurl',dumbbellpress='IGUI_DumbbellPress',bicepscurl='IGUI_BicepsCurl'}
 function Fitness.progress(action)
