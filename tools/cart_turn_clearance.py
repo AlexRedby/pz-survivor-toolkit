@@ -33,7 +33,12 @@ def segment_distance(p, end_p, q, end_q):
     return result
 
 
-def check_clearance(samples, trousers):
+def check_clearance(samples, trousers, *, gait='lateral'):
+    if gait not in ('lateral','staggered'):raise ValueError('Unknown gait clearance policy')
+    # A forward-staggered stance can have small lateral ankle spacing while its
+    # legs remain far apart in 3D. Keep positive left/right order, native mesh
+    # collision and segment-distance gates. Preserve the side-step width gate.
+    minimum_spacing=.0 if gait=='staggered' else .08
     if len(samples)<2:raise ValueError('Expected at least two native poses')
     from mathutils import Vector
     from mathutils.bvhtree import BVHTree
@@ -61,11 +66,14 @@ def check_clearance(samples, trousers):
         trees={s:BVHTree.FromPolygons(vertices,faces[s],all_triangles=True,epsilon=0.) for s in weights}
         hits=trees['L'].overlap(trees['R'])
         if hits:intersections.append(dict(frame=frame+1,time=row['time'],triangle_pairs=len(hits)))
+    ankle_order_passes=min_spacing>0 if gait=='staggered' else min_spacing>=minimum_spacing
     return dict(scope='Every supplied pose; exclusive native trouser surfaces, excluding crotch connectors.',
+                gait=gait,minimum_signed_ankle_spacing=minimum_spacing,
+                minimum_opposed_leg_segment_distance=.06,
                 samples=len(samples),exclusive_triangles={s:len(f) for s,f in faces.items()},
                 intersecting_frames=intersections,min_signed_ankle_spacing=min_spacing,
                 min_opposed_leg_segment_distance=min_segments,
-                passed=not intersections and min_spacing>=.08 and min_segments>=.06)
+                passed=not intersections and ankle_order_passes and min_segments>=.06)
 
 
 if __name__=='__main__':
