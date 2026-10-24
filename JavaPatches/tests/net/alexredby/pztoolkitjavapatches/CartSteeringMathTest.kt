@@ -836,9 +836,162 @@ object CartSteeringMathTest {
         }
     }
 
+    private fun shoppingStationaryChecks() {
+        for (fps in intArrayOf(30, 60, 144)) for (sign in intArrayOf(-1, 1)) for (load in
+            doubleArrayOf(0.0, 1.0)) {
+            val dt = 1.0 / fps
+            val initial = .3
+            val target = initial + sign * Math.PI / 2
+            var heading = initial
+            var legacyHeading = initial
+            var rate = 0.0
+            var legacyRate = 0.0
+            var x = 0.0
+            var y = 0.0
+            var maximumRate = 0.0
+            var maximumLegacyRate = 0.0
+            val step = CartSteeringMath.Step()
+            val legacy = CartSteeringMath.Step()
+            for (frame in 0 until fps * 3) {
+                val budget =
+                    when (frame) {
+                        fps / 3 -> 0.0
+                        fps / 3 + 1 -> .1 * dt
+                        else -> .9 * dt
+                    }
+                val planned = CartSteeringMath.stationaryRate(heading, target, dt, load, rate, true)
+                CartSteeringMath.shoppingStationaryStep(
+                    heading,
+                    target,
+                    budget,
+                    dt,
+                    load,
+                    L,
+                    rate,
+                    step,
+                )
+                check(
+                    Math.hypot(step.x(), step.y()) <= budget + 1e-12,
+                    "shopping pivot exceeds its native chord: $fps/$sign/$load/$frame",
+                )
+                close(step.travel(), 0.0, "shopping pivot has no rear-axle rolling travel")
+                check(
+                    sign * step.turn() >= 0 && sign * (target - heading - step.turn()) >= -1e-12,
+                    "shopping pivot reverses or overshoots its target",
+                )
+                if (frame == fps / 3) {
+                    check(step.turn() == 0.0, "zero native budget must keep shopping planted")
+                    check(Math.abs(planned) >= Math.abs(rate), "zero budget erased planned cadence")
+                }
+                if (frame == fps / 3 + 2) {
+                    val restarted = CartSteeringMath.Step()
+                    CartSteeringMath.shoppingStationaryStep(
+                        heading,
+                        target,
+                        budget,
+                        dt,
+                        load,
+                        L,
+                        0.0,
+                        restarted,
+                    )
+                    check(
+                        Math.abs(step.turn()) > Math.abs(restarted.turn()),
+                        "shopping pivot restarted acceleration after a short native budget",
+                    )
+                }
+                x += step.x()
+                y += step.y()
+                heading += step.turn()
+                rate = planned
+                maximumRate = Math.max(maximumRate, Math.abs(rate))
+                close(x + L * Math.cos(heading), L * Math.cos(initial), "shopping rear axle X")
+                close(y + L * Math.sin(heading), L * Math.sin(initial), "shopping rear axle Y")
+                CartSteeringMath.stationaryStep(
+                    legacyHeading,
+                    target,
+                    budget,
+                    dt,
+                    load,
+                    L,
+                    legacyRate,
+                    legacy,
+                )
+                legacyHeading += legacy.turn()
+                legacyRate = legacy.turn() / dt
+                maximumLegacyRate = Math.max(maximumLegacyRate, Math.abs(legacyRate))
+                if (frame == fps / 4 - 1)
+                    check(
+                        sign * (heading - legacyHeading) > .02,
+                        "shopping pivot must respond faster without changing wheelbarrow cadence",
+                    )
+            }
+            close(heading, target, "shopping pivot finishes with cargo at every FPS")
+            close(maximumRate, 2.2 - .4 * load, "shopping angular speed remains bounded")
+            close(maximumLegacyRate, 1.6 - .3 * load, "wheelbarrow angular speed remains unchanged")
+            CartSteeringMath.shoppingStationaryStep(heading, heading, 1.0, dt, load, L, rate, step)
+            check(step.turn() == 0.0, "shopping release consumes no residual root")
+            close(
+                CartSteeringMath.stationaryRate(heading, heading, dt, load, 1.0, true),
+                0.0,
+                "shopping release clears planned cadence",
+            )
+            for (bad in doubleArrayOf(0.0, -1.0)) {
+                CartSteeringMath.shoppingStationaryStep(
+                    initial,
+                    target,
+                    bad,
+                    dt,
+                    load,
+                    L,
+                    1.0,
+                    step,
+                )
+                check(
+                    step.x() == 0.0 && step.y() == 0.0 && step.turn() == 0.0,
+                    "nonpositive shopping root budget cannot move or yaw",
+                )
+                CartSteeringMath.shoppingStationaryStep(
+                    initial,
+                    target,
+                    1.0,
+                    bad,
+                    load,
+                    L,
+                    1.0,
+                    step,
+                )
+                check(
+                    step.x() == 0.0 && step.y() == 0.0 && step.turn() == 0.0,
+                    "nonpositive shopping interval cannot move or yaw",
+                )
+                close(
+                    CartSteeringMath.stationaryRate(initial, target, bad, load, 1.0, true),
+                    0.0,
+                    "nonpositive shopping interval has no planned cadence",
+                )
+                CartSteeringMath.shoppingStationaryStep(
+                    initial,
+                    target,
+                    1.0,
+                    dt,
+                    load,
+                    bad,
+                    1.0,
+                    step,
+                )
+                check(
+                    step.x() == 0.0 && step.y() == 0.0 && step.turn() == 0.0,
+                    "invalid shopping axle cannot move or yaw",
+                )
+            }
+        }
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         stationaryChecks()
+        shoppingStationaryChecks()
         reversalChecks()
         val idle = shoppingStep(0.0, Math.PI / 2, 0.0, 1.0 / 60, 0.0)
         check(idle.turn() == 0.0 && idle.x() == 0.0 && idle.y() == 0.0, "idle cannot spin")

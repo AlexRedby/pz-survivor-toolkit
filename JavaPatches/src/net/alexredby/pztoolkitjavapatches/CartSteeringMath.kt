@@ -416,6 +416,60 @@ object CartSteeringMath {
         axle: Double,
         previousRate: Double,
         result: Step?,
+    ): Step =
+        stationaryStep(heading, target, distance, seconds, load, axle, previousRate, result, false)
+
+    @JvmStatic
+    fun shoppingStationaryStep(
+        heading: Double,
+        target: Double,
+        distance: Double,
+        seconds: Double,
+        load: Double,
+        axle: Double,
+        previousRate: Double,
+        result: Step?,
+    ): Step =
+        stationaryStep(heading, target, distance, seconds, load, axle, previousRate, result, true)
+
+    /** Planned angular cadence survives short native budgets; it does not authorize movement. */
+    @JvmStatic
+    fun stationaryRate(
+        heading: Double,
+        target: Double,
+        seconds: Double,
+        load: Double,
+        previousRate: Double,
+        shopping: Boolean,
+    ): Double {
+        if (!(seconds > 0)) return 0.0
+        val dt = Math.min(.1, seconds)
+        val error = wrap(target - heading)
+        if (Math.abs(error) < 1e-12) return 0.0
+        val acceleration = if (shopping) 8.0 else 6.0
+        val stoppingRate =
+            Math.sqrt(2 * acceleration * Math.abs(error) + acceleration * acceleration * dt * dt) -
+                acceleration * dt
+        val boundedLoad = Math.max(0.0, Math.min(1.0, load))
+        val maximum = if (shopping) 2.2 - .4 * boundedLoad else 1.6 - .3 * boundedLoad
+        val desired = Math.copySign(Math.min(maximum, stoppingRate), error)
+        return previousRate +
+            Math.max(
+                -acceleration * dt,
+                Math.min(acceleration * dt, desired - previousRate),
+            )
+    }
+
+    private fun stationaryStep(
+        heading: Double,
+        target: Double,
+        distance: Double,
+        seconds: Double,
+        load: Double,
+        axle: Double,
+        previousRate: Double,
+        result: Step?,
+        shopping: Boolean,
     ): Step {
         if (!(distance > 0) || !(seconds > 0) || !(axle > 0))
             return (result ?: throw NullPointerException()).set(0.0, 0.0, 0.0, 0.0)
@@ -423,13 +477,7 @@ object CartSteeringMath {
         val error = wrap(target - heading)
         if (Math.abs(error) < 1e-12)
             return (result ?: throw NullPointerException()).set(0.0, 0.0, 0.0, 0.0)
-        val stoppingRate = Math.sqrt(12 * Math.abs(error) + 36 * dt * dt) - 6 * dt
-        val desired =
-            Math.copySign(
-                Math.min(1.6 - .3 * Math.max(0.0, Math.min(1.0, load)), stoppingRate),
-                error,
-            )
-        val rate = previousRate + Math.max(-6 * dt, Math.min(6 * dt, desired - previousRate))
+        val rate = stationaryRate(heading, target, seconds, load, previousRate, shopping)
         val limit = 2 * Math.asin(Math.min(1.0, distance / (2 * axle)))
         var turn = Math.max(-limit, Math.min(limit, rate * dt))
         if (turn * error >= 0 && Math.abs(turn) > Math.abs(error)) turn = error

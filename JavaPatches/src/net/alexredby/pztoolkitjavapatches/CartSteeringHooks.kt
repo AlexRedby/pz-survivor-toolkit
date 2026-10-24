@@ -469,6 +469,32 @@ internal object CartSteeringHooks {
             else -> 0.0
         }
 
+    private fun stationaryStep(player: IsoPlayer, state: State, distance: Double, dt: Double) {
+        val target = if (state.stationary) state.target else state.heading
+        if (CartShopping.item(state.cart))
+            CartSteeringMath.shoppingStationaryStep(
+                state.heading,
+                target,
+                distance,
+                dt,
+                state.load,
+                axle(player),
+                state.stationaryRate,
+                state.requested,
+            )
+        else
+            CartSteeringMath.stationaryStep(
+                state.heading,
+                target,
+                distance,
+                dt,
+                state.load,
+                axle(player),
+                state.stationaryRate,
+                state.requested,
+            )
+    }
+
     private fun rollingStep(
         player: IsoPlayer,
         heading: Double,
@@ -682,19 +708,20 @@ internal object CartSteeringHooks {
             else if (state.wantsMove) state.target
             else state.heading + (if (state.reversal.direction < 0) Math.PI else 0.0)
         if (state.stationaryRoot) {
-            CartSteeringMath.stationaryStep(
-                state.heading,
-                if (state.stationary) state.target else state.heading,
-                distance,
-                dt,
-                state.load,
-                axle(owner),
-                state.stationaryRate,
-                state.requested,
-            )
-            // Retain planned cadence across sub-ULP coordinates; only accepted movement changes
-            // heading.
-            state.stationaryRate = if (dt > 0) state.requested.turn() / dt else 0.0
+            stationaryStep(owner, state, distance, dt)
+            // A short extracted stride must not restart the shopping turn's acceleration.
+            // Heading still advances only by collision-accepted native root movement.
+            state.stationaryRate =
+                if (CartShopping.item(state.cart))
+                    CartSteeringMath.stationaryRate(
+                        state.heading,
+                        if (state.stationary) state.target else state.heading,
+                        dt,
+                        state.load,
+                        state.stationaryRate,
+                        true,
+                    )
+                else if (dt > 0) state.requested.turn() / dt else 0.0
         } else if (wooden(owner))
             CartSteeringMath.woodenStep(
                 state.heading,
@@ -1328,16 +1355,7 @@ internal object CartSteeringHooks {
         }
         if (state.stationaryRoot) {
             // Keep the full native stride; idle blending shortens it into rapid shuffling.
-            CartSteeringMath.stationaryStep(
-                state.heading,
-                if (state.stationary) state.target else state.heading,
-                1.0,
-                dt,
-                state.load,
-                axle(player),
-                state.stationaryRate,
-                state.requested,
-            )
+            stationaryStep(player, state, 1.0, dt)
             player.setVariable(
                 "ToolkitCartStepX",
                 if (state.moving && state.stationary)
@@ -1368,7 +1386,9 @@ internal object CartSteeringHooks {
         var stepX = player.getVariableFloat("ToolkitCartStepX", 0f)
         var stepY = player.getVariableFloat("ToolkitCartStepY", 0f)
         var target =
-            if (wooden(player)) CartLegPace.targetSpeed(player, stepX, stepY) else Float.NaN
+            if (wooden(player) || state.stationaryRoot && CartShopping.item(state.cart))
+                CartLegPace.targetSpeed(player, stepX, stepY)
+            else Float.NaN
         // Keep the requested native speed above independent of the visual picker direction.
         // Publish that same effective field to the native animator, cadence solve and Host peers.
         val gait =
