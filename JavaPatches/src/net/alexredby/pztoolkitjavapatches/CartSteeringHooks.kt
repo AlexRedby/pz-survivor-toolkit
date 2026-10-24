@@ -1561,14 +1561,17 @@ internal object CartSteeringHooks {
     /** Native animation updates can enter a protected state after the heading entry hook. */
     @JvmStatic
     fun finish(character: IsoGameCharacter?) {
-        if (character is IsoPlayer && states.containsKey(character) && !enabled(character))
-            reset(character)
+        if (character is IsoPlayer) {
+            if (states.containsKey(character) && !enabled(character)) reset(character)
+            CartShoppingTurn.update(character)
+        }
     }
 
     /** Death/menu cleanup discards pending state and releases only our own variables. */
     @JvmStatic
     fun reset(player: IsoPlayer?) {
         CartMotionSync.reset(player)
+        CartShoppingTurn.reset(player)
         CartLegPace.cancelBrake(player, true)
         states.remove(player)
         val owner = player ?: throw NullPointerException()

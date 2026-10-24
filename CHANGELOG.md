@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.244
+
+- **Changed:** Added the accepted upright shopping-cart walking-turn clips with shorter forward-diagonal steps and gradual weight transfer. Straight walking, stationary pivots and wheelbarrow animations retain their existing clips.
+
 ### 0.1.243
 
 - Fix Host item retention and custom tag assignment rejecting accessible vehicle items when replicated vehicle grid squares differ. Match the exact item, vehicle and compartment while retaining live server range, floor, container, nested-bag and SafeHouse admission.
@@ -1093,6 +1097,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.53
+
+- **Changed:** Blend the authored shopping-cart turn into the rendered body and clothing during forward walking turns, with smooth entry/release and slot-owned pose snapshots. Native movement, collisions and the existing multiplayer packet format remain unchanged. Full selected-pack SP/Host visual verification is pending.
 
 ### 0.1.52
 

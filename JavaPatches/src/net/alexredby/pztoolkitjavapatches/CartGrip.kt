@@ -1071,11 +1071,25 @@ internal object CartGrip {
         // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed
         // handles.
         val shopping = CartShopping.model(model)
+        val turn = if (shopping) CartShoppingTurn.view(slot, owner) else null
         if (shopping) pressure = 0f
+        var turnSource = false
         var poses =
-            if (CartWheelbarrow.forModel(model) != null || shopping)
-                livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
-            else poses(clip, actor, change)
+            if (CartWheelbarrow.forModel(model) != null || shopping) {
+                val live =
+                    livePoses(actor, bodySkin, body.matrixPalette, change, turn != null, pressure)
+                turnSource = turn != null && live != null
+                // Missing lower-body data must retain the original held-hand solve.
+                live
+                    ?: if (turn != null)
+                        livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
+                    else null
+            } else poses(clip, actor, change)
+        val turnApplied =
+            turnSource &&
+                turn != null &&
+                poses != null &&
+                CartShoppingTurn.apply(poses, actor, turn)
         if (
             poses == null ||
                 (CartWheelbarrow.forModel(model) != null || shopping) &&
@@ -1168,7 +1182,7 @@ internal object CartGrip {
                 calmRunningHead(poses, actor, runReference, runWeight)
             }
         }
-        skinSlot(slot, owner, clip, actor, poses)
+        skinSlot(slot, owner, clip, actor, poses, turnApplied)
         return true
     }
 

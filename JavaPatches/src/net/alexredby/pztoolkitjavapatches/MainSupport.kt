@@ -558,12 +558,14 @@ internal object MainSupport {
     fun bindCartSlot(slot: ModelSlotRenderData?, source: ModelManager.ModelSlot?) {
         if (Main.CART_OBSERVER_SUPPORTED) CartObserverRender.bind(slot, source)
         if (Main.CART_TRANSITION_SUPPORTED) CartImpactPose.bind(slot, source)
+        if (Main.CART_SUPPORTED) CartShoppingTurn.bind(slot, source)
     }
 
     @JvmStatic
     fun releaseCartSlot(slot: ModelSlotRenderData?) {
         if (Main.CART_OBSERVER_SUPPORTED) CartObserverRender.release(slot)
         CartImpactPose.release(slot)
+        CartShoppingTurn.release(slot)
     }
 
     @JvmStatic

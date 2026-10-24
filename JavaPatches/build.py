@@ -157,6 +157,7 @@ CHECKS = {'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STA
           'net.alexredby.pztoolkitjavapatches.CartFootprintTest': 'CART_FOOTPRINT_PASS',
           'net.alexredby.pztoolkitjavapatches.CartLegPaceTest': 'CART_LEG_PACE_PASS',
           'net.alexredby.pztoolkitjavapatches.CartGripTest': 'CART_GRIP_PASS',
+          'net.alexredby.pztoolkitjavapatches.CartShoppingTurnTest': 'CART_SHOPPING_TURN_PASS',
           'net.alexredby.pztoolkitjavapatches.CartShoppingGripTest': 'CART_SHOPPING_GRIP_PASS',
           'net.alexredby.pztoolkitjavapatches.CartMetalGripSurfaceChecks': 'CART_METAL_GRIP_SURFACE_PASS',
           'net.alexredby.pztoolkitjavapatches.CartWheelSpinTest': 'CART_WHEEL_SPIN_PASS',
@@ -317,7 +318,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.52',
+    'version': '0.1.53',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',
