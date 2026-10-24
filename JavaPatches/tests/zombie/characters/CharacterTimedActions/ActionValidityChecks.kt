@@ -28,6 +28,7 @@ object ActionValidityChecks {
     private lateinit var lifecycle: KahluaTable
     private val events = ArrayList<String>()
     private var allowed = true
+    private var waitAllowed = false
 
     class Player : IsoPlayer(null) {
         lateinit var actions: Stack<BaseAction>
@@ -68,6 +69,7 @@ object ActionValidityChecks {
         transactions.clear()
         events.clear()
         allowed = true
+        waitAllowed = false
         GameClient.client = true
         val player =
             (unsafe.allocateInstance(Player::class.java) as Player).apply {
@@ -110,6 +112,7 @@ object ActionValidityChecks {
             },
         )
         (native as BaseAction).started = true
+        native.waitForFinished = true
         native.started = true
         native.transactionId = ID
         field(LuaTimedActionNew::class.java, "playerId").set(native, owner(player))
@@ -132,6 +135,16 @@ object ActionValidityChecks {
                 1
             },
         )
+        lifecycle.rawset(
+            "allowNativeCompletionWait",
+            JavaFunction { frame, _ ->
+                events.add("wait-gate")
+                val native = frame.get(1) as LuaTimedActionNew
+                require(frame.get(0) === native.table, "wait gate lost exact Lua/native identity")
+                frame.push(waitAllowed)
+                1
+            },
+        )
         val toolkit = table()
         toolkit.rawset("ActionQueueLifecycle", lifecycle)
         LuaManager.env.rawset("PZSurvivorToolkit", toolkit)
@@ -143,6 +156,199 @@ object ActionValidityChecks {
         require(!native.valid(), "$label rescued an invalid action")
         require(!native.isForceComplete, "$label requested completion")
         require("perform-cleanup" !in events, "$label replayed perform")
+    }
+
+    private fun waiting(): LuaTimedActionNew =
+        action().also {
+            allowed = false
+            waitAllowed = true
+            require(it.valid(), "exact Done and wait capability lost invalid action")
+            require(!it.isForceComplete && !it.forceStop, "waiting executed a terminal transition")
+        }
+
+    private fun validResult(native: LuaTimedActionNew, value: Boolean) {
+        native.table.rawset(
+            "isValid",
+            JavaFunction { frame, _ ->
+                events.add("valid:" + value)
+                frame.push(value)
+                1
+            },
+        )
+    }
+
+    private fun waitChecks() {
+        val pending = waiting()
+        repeat(2) { pending.update() }
+        validResult(pending, true)
+        require(pending.valid(), "latched wait lost later valid native action")
+        pending.update()
+        require(
+            !pending.isForceComplete &&
+                !pending.forceStop &&
+                "update-after-consumption" !in events &&
+                "perform-cleanup" !in events &&
+                "server-effects-replayed" !in events &&
+                transactions.size == 1,
+            "native waiting ran Lua update, effects or transaction cleanup",
+        )
+        allowed = true
+        require(
+            pending.valid() && pending.isForceComplete,
+            "delayed completion did not select native perform",
+        )
+        pending.update()
+        pending.perform()
+        require(
+            events.count { it == "perform-cleanup" } == 1 &&
+                transactions.isEmpty() &&
+                "update-after-consumption" !in events &&
+                "server-effects-replayed" !in events,
+            "delayed completion replayed effects or bypassed original perform cleanup",
+        )
+
+        pending.forceComplete = false
+        validResult(pending, true)
+        allowed = false
+        events.clear()
+        require(
+            pending.valid() &&
+                events == listOf("valid:true") &&
+                !ActionCompletion.skipNativeUpdate(pending, Main.COMPLETION_SUPPORTED),
+            "successful waited perform blocked a native loop's later valid tick or update",
+        )
+        validResult(pending, false)
+        allowed = true
+        require(
+            !pending.valid(),
+            "performed wait reacquired completion without a genuine new start",
+        )
+
+        val failed = waiting()
+        lifecycle.rawset(
+            "begin",
+            JavaFunction { frame, _ ->
+                frame.push(false)
+                1
+            },
+        )
+        failed.table.rawset(
+            "perform",
+            JavaFunction { _, _ -> throw IllegalStateException("expected waited perform failure") },
+        )
+        allowed = true
+        require(
+            failed.valid() && failed.isForceComplete,
+            "failed callback fixture lost paid completion",
+        )
+        failed.perform()
+        failed.forceComplete = false
+        validResult(failed, true)
+        require(!failed.valid(), "protected queue-off perform failure revived a waited episode")
+        installGate()
+
+        val expired = waiting()
+        @Suppress("UNCHECKED_CAST")
+        val waits = field(ActionCompletion::class.java, "waits").get(null) as Map<Any, Any>
+        val episode = waits[expired] ?: throw AssertionError("missing native wait episode")
+        field(episode.javaClass, "deadlineNanos").setLong(episode, System.nanoTime() - 1L)
+        require(!expired.valid(), "expired wait retained validity")
+        allowed = true
+        validResult(expired, true)
+        require(
+            !expired.valid() && !expired.isForceComplete,
+            "late completion revived expired episode",
+        )
+        // This unsafe fixture cannot execute real start(): model only the shared new-start reset.
+        ActionCompletion.nativeStarted(expired, Main.COMPLETION_SUPPORTED)
+        validResult(expired, false)
+        require(
+            expired.valid() && expired.isForceComplete,
+            "genuine new-start boundary retained old timeout",
+        )
+
+        val changes: List<Pair<String, (LuaTimedActionNew) -> Unit>> =
+            listOf(
+                "explicit native stop" to { native: LuaTimedActionNew -> native.forceStop() },
+                "Lua reset/permission revoked" to { _: LuaTimedActionNew -> waitAllowed = false },
+                "native head removed" to
+                    { native: LuaTimedActionNew ->
+                        (native.chr as Player).actions.clear()
+                    },
+                "transaction object replaced" to
+                    { native: LuaTimedActionNew ->
+                        transactions.clear()
+                        remote(native.chr as Player, TransactionState.Done)
+                    },
+                "duplicate same-owner Done" to
+                    { native: LuaTimedActionNew ->
+                        remote(native.chr as Player, TransactionState.Done)
+                    },
+                "transaction rejected" to
+                    { _: LuaTimedActionNew ->
+                        Accessor.trySet(transactions.peek(), "state", TransactionState.Reject)
+                    },
+            )
+        for ((label, change) in changes) {
+            val native = waiting()
+            change(native)
+            require(!native.valid() && !native.isForceComplete, "$label retained waiting validity")
+            allowed = true
+            waitAllowed = true
+            validResult(native, true)
+            require(!native.valid() && !native.isForceComplete, "$label revived after Completed")
+            native.update()
+            require(
+                native.forceStop && "update-after-consumption" !in events,
+                "$label ran stale update",
+            )
+        }
+        val postLuaStop = waiting()
+        lifecycle.rawset(
+            "allowNativeCompletion",
+            JavaFunction { frame, _ ->
+                postLuaStop.forceStop()
+                frame.push(true)
+                1
+            },
+        )
+        require(
+            !postLuaStop.valid() && !postLuaStop.isForceComplete,
+            "completion gate overrode a new native stop",
+        )
+        installGate()
+        val postWaitStop = action()
+        allowed = false
+        lifecycle.rawset(
+            "allowNativeCompletionWait",
+            JavaFunction { frame, _ ->
+                postWaitStop.forceStop()
+                frame.push(true)
+                1
+            },
+        )
+        require(
+            !postWaitStop.valid() && !postWaitStop.isForceComplete,
+            "wait gate overrode a new native stop",
+        )
+        installGate()
+        val noWaitContract = action()
+        allowed = false
+        lifecycle.rawset("allowNativeCompletionWait", null)
+        require(!noWaitContract.valid(), "Done alone invented a waiting capability")
+        installGate()
+        for (state in listOf(TransactionState.Accept, TransactionState.Request)) {
+            val native = action()
+            allowed = false
+            waitAllowed = true
+            Accessor.trySet(transactions.peek(), "state", state)
+            require(!native.valid() && !native.isForceComplete, "$state acquired a Done-only wait")
+        }
+        val noNativeWait = action()
+        allowed = false
+        waitAllowed = true
+        noNativeWait.waitForFinished = false
+        require(!noNativeWait.valid(), "non-waiting native action acquired completion waiting")
     }
 
     @JvmStatic
@@ -186,6 +392,15 @@ object ActionValidityChecks {
             "original native perform cleanup did not run once or remove its transaction",
         )
         require(!completed.forceStop, "terminal Lua update was run after authoritative completion")
+        // A loop may keep this native object after perform; the engine clears this flag each tick.
+        completed.forceComplete = false
+        validResult(completed, true)
+        allowed = false
+        events.clear()
+        require(
+            completed.valid() && !completed.isForceComplete && events == listOf("valid:true"),
+            "immediate completion latched the native object across a later valid loop tick",
+        )
 
         rejected("pending transaction") {
             Accessor.trySet(transactions.peek(), "state", TransactionState.Accept)
@@ -234,10 +449,11 @@ object ActionValidityChecks {
             valid.valid() && !valid.isForceComplete && events == listOf("valid-true"),
             "already valid action acquired a forced completion",
         )
+        waitChecks()
         transactions.clear()
         GameClient.client = false
         println(
-            "ACTION_VALIDITY_CHECKS_PASS (original/woven native validity, exact remote Done, original perform cleanup, no update/effect replay, owner/transaction/custom-sync/cancel/hit/death/movement/SP/unsupported guards)",
+            "ACTION_VALIDITY_CHECKS_PASS (original/woven native validity, exact remote Done, original perform cleanup, no update/effect replay, owner/transaction/custom-sync/cancel/hit/death/movement/SP/unsupported guards, bounded Done-only receipt wait, woven update suppression, revocation/new-start reset)",
         )
     }
 }

@@ -130,25 +130,27 @@ local function deliver(state)
         kind='CompletionProbe',token=string.format('00000000-0000-0000-0000-%012x',serial),state=state})
 end
 local function permitted()return Lifecycle.allowNativeCompletion(action,native)end
-assert(not permitted(),'missing receipt became a completed native transaction')
+local function waiting()return Lifecycle.allowNativeCompletionWait(action,native)end
+assert(not permitted()and not waiting(),'missing receipt acquired native completion/wait')
 for _,terminal in ipairs({'canceled','rejected'})do
     ack.reset(queue);serial=serial+1;deliver('started');deliver(terminal)
-    assert(not permitted(),terminal..' receipt became completion')
+    assert(not permitted()and not waiting(),terminal..' receipt acquired completion/wait')
 end
 ack.reset(queue);serial=serial+1;deliver('started')
 assert(not permitted(),'a started transaction became completion')
-deliver('completed');assert(permitted(),'owned sealed completed transaction was refused')
+assert(waiting(),'sealed Started lost waiting permission')
+deliver('completed');assert(permitted()and waiting(),'owned sealed completed transaction was refused')
 assert(not Lifecycle.allowNativeCompletion(action,{}),'another native object acquired completion')
 for _,name in ipairs({'toolkitCancel','toolkitStopIntent','toolkitOutcomeWait','toolkitGroupCancel',
     'toolkitResume','toolkitOperationsInvalid'})do
-    queue[name]={};assert(not permitted(),name..' was overridden');queue[name]=nil
+    queue[name]={};assert(not permitted()and not waiting(),name..' was overridden');queue[name]=nil
 end
 action.toolkitQueueOperation.toolkitCancelled=true;assert(not permitted());action.toolkitQueueOperation.toolkitCancelled=nil
-for _,name in ipairs({'dead','asleep','cancel'})do actor[name]=true;assert(not permitted(),name..' was overridden');actor[name]=nil end
+for _,name in ipairs({'dead','asleep','cancel'})do actor[name]=true;assert(not permitted()and not waiting(),name..' was overridden');actor[name]=nil end
 actor.localPlayer=false;assert(not permitted());actor.localPlayer=nil
 for _,entry in ipairs({{'stopOnWalk','moving'},{'stopOnWalk','input'},{'stopOnRun','running'},
     {'stopOnRun','sprinting'},{'stopOnAim','aiming'}})do
-    action[entry[1]],actor[entry[2]]=true,true;assert(not permitted(),'native input cancellation was overridden')
+    action[entry[1]],actor[entry[2]]=true,true;assert(not permitted()and not waiting(),'native input cancellation was overridden')
     action[entry[1]]=false;assert(permitted(),'a non-stopping input blocked paid completion')
     action[entry[1]],actor[entry[2]]=nil,nil
 end
@@ -204,13 +206,15 @@ do
         if terminal then deliver('started');if terminal~='started'then deliver(terminal)end end
         return ack.capture(action)
     end
-    prepare('completed');assert(permitted(),'genuine disabled Started/Completed lost native completion after actual begin bookkeeping')
+    prepare('completed');assert(permitted()and waiting(),'genuine disabled Started/Completed lost native completion after actual begin bookkeeping')
     assert(not Lifecycle.allowNativeCompletion(nil,native) and not Lifecycle.allowNativeCompletion({character={}},native),
         'unowned malformed action reached disabled acknowledgement capture')
     for _,terminal in ipairs({'started','canceled','rejected','completed'})do
         local receipt=prepare(terminal)
         assert(ack.allowsDisabledNativeCompletion(action,receipt)==(terminal=='completed'))
         assert(permitted()==(terminal=='completed'),'disabled boundary lost exact terminal proof: '..terminal)
+        assert(waiting()==(terminal=='started'or terminal=='completed'),'disabled waiting lost exact receipt state: '..terminal)
+        assert(ack.allowsDisabledNativeCompletionWait(action,receipt)==waiting())
     end
     prepare('completed',function()action.toolkitQueueOperation.toolkitCancelled=false end)
     assert(permitted(),'actual native queue-off uncanceled token baseline was refused')
@@ -245,7 +249,10 @@ do
         function()action.toolkitNativeKind='OtherProbe'end,
         function()getSpecificPlayer=function()return {}end end,
     })do
-        prepare('completed');mutate();assert(not permitted(),'changed disabled baseline/ownership retained completion')
+        for _,state in ipairs({'started','completed'})do
+            prepare(state);mutate();assert(not permitted()and not waiting(),'changed disabled baseline/ownership retained completion/wait')
+            getSpecificPlayer=function(slot)if slot==0 then return actor end end
+        end
         getSpecificPlayer=function(slot)if slot==0 then return actor end end
     end
     for _,field in ipairs({'toolkitCancelled','toolkitOperationsInvalid'})do
@@ -258,10 +265,14 @@ do
     end
     for _,name in ipairs({'toolkitCancel','toolkitStopIntent','toolkitOutcomeWait','toolkitGroupCancel',
         'toolkitResume'})do
-        prepare('completed');queue[name]={};assert(not permitted(),'disabled completion overrode '..name)
+        for _,state in ipairs({'started','completed'})do
+            prepare(state);queue[name]={};assert(not permitted()and not waiting(),'disabled completion/wait overrode '..name)
+        end
     end
     for _,name in ipairs({'dead','asleep','cancel'})do
-        prepare('completed');actor[name]=true;assert(not permitted(),'disabled completion overrode '..name)
+        for _,state in ipairs({'started','completed'})do
+            prepare(state);actor[name]=true;assert(not permitted()and not waiting(),'disabled completion/wait overrode '..name)
+        end
     end
     prepare('completed');actor.localPlayer=false;assert(not permitted(),'remote actor acquired disabled completion')
     for _,entry in ipairs({{'stopOnWalk','moving'},{'stopOnWalk','input'},{'stopOnRun','running'},
@@ -271,7 +282,7 @@ do
         action[entry[1]]=false;assert(permitted(),'non-stopping input blocked disabled paid completion')
     end
     prepare('completed');client=false;assert(not permitted(),'SP acquired remote completion');client=true
-    prepare('completed');ack.reset(queue);assert(not permitted(),'reset revived a disabled receipt')
+    prepare('completed');ack.reset(queue);assert(not permitted()and not waiting(),'reset revived a disabled receipt')
     -- Observe each transition through the real bookkeeping helper. Turning off
     -- invalidates old enabled receipts; a fresh disabled start can earn its own.
     prepare('completed');enabled=true;api.updateOperationState(queue);assert(not permitted())
@@ -281,6 +292,13 @@ do
     assert(permitted(),'ordinary enabled baseline lost paid completion')
     enabled=false;api.updateOperationState(queue);assert(not permitted(),'enabled receipt survived disabled generation invalidation')
     prepare('completed');assert(permitted(),'fresh start after disabled boundary did not earn completion')
+    prepare('started');local pending=ack.capture(action)
+    local copy={};for k,v in pairs(pending)do copy[k]=v end
+    assert(not ack.allowsDisabledNativeCompletionWait(action,copy),'copied Started acquired disabled wait')
+    action.toolkitQueueOperation.toolkitCancelled=false;assert(not waiting(),'changed raw canceled baseline retained Started wait')
+    prepare('started');enabled=true;api.updateOperationState(queue);assert(not waiting(),'off/on retained Started wait')
+    enabled=false;api.updateOperationState(queue);assert(not waiting(),'off/on/off revived Started wait')
+    prepare('started');assert(waiting()and not permitted(),'fresh disabled Started did not acquire waiting alone')
     ISBaseTimedAction=previousBase
     enabled=true
 end

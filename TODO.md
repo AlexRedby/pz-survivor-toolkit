@@ -2,6 +2,8 @@
 
 - [ ] After installation is requested, check snow/wetness and Open Jackets/VVA/cart visuals, exterior-light insects and performance, Jeep parts/animations/lighting/repair/towing, and furniture movement with exact container contents and Quartermaster designations in isolated full-pack macOS B42.21 SP/Host saves. Check reload and the second player's view/state; author declarations and selection checks do not establish runtime compatibility.
 
+- [ ] Identify the selected model that emits `Could not find bone index for node name: "Body".` during startup and correct its bone binding if supported. These errors also occur with queue editing disabled; keep them visible in runtime audits.
+
 # New Music selection
 
 - [ ] After installation is requested, check new ABBA/Queen/Fleetwood Mac media loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
@@ -20,11 +22,7 @@
 
 # Exercise ground storage
 
-- [ ] Once the newly selected Open Jackets, Climb Ladders and New Music sources are available for isolated profiles, repeat the focused Fitness equipment SP/Host checks with the current 62-Mod-ID selection. The equipment restoration evidence in `.codex/investigations/fitness-native-equipment-20261025` uses the earlier 55-Mod-ID pack and does not establish coexistence with those additions.
-
-- [ ] Resolve the remaining queue-disabled Host Fitness get-up/control ordering failure: the native `addGetUpAndThen` appends the workout behind the already queued reader (`tailStart.workouts=0`). Preserve `.codex/investigations/fitness-native-equipment-20261025/host-after03-native` as a failed overall control, despite verified final equipment and a completed exact-ID prop return. Do not weaken the reader-order assertions or report the full paired control as passed.
-
-- [ ] Diagnose the queue-disabled Host placement race preserved in `.codex/investigations/fitness-native-equipment-20261025/host-before01-native`: server completes the bag drop, client resets its queue before native perform and before the late completed receipt; workout/get-up/tail never start. Require exact transaction/Done ordering and retain the original failure separately from equipment restoration.
+- [ ] Resolve the remaining queue-disabled Host Fitness get-up/control ordering failure: the native `addGetUpAndThen` appends the workout behind the already queued reader (`tailStart.workouts=0`). Preserve `.codex/investigations/native-completion-order-20261025/after-final/host-delay-native` as a failed overall control, despite verified final equipment and a completed exact-ID prop return. Do not weaken the reader-order assertions or report the full paired control as passed.
 
 - [ ] Diagnose the queue-disabled native Fitness constructor timer: a thirty-minute burpees request in the full-pack Host control produced only twenty-six authoritative workout minutes after preparation. Require the complete selected body duration without changing native effects; preserve the failed control separately from the verified Toolkit timer.
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.

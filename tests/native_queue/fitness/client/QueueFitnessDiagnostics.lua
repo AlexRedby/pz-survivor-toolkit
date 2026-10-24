@@ -78,6 +78,43 @@ function D.install(config,context)
   end,
   finish=function(action,phase,succeeded)safe('Lifecycle.finish.'..phase,action,{succeeded=succeeded==true})end
  }),'fitness diagnostic observer unavailable')
+ -- Opt-in packet-order fault: retain one genuine Completed receipt per drop,
+ -- then dispatch that same table unchanged. Server effects and native Done run normally.
+ local delay=config.options.fitness_receipt_delay_ms
+ local delayed,pendingReceipt,releasing={}
+ if delay~=nil then
+  assert(type(delay)=='number'and delay%1==0 and delay>=50 and delay<=1000 and config.kind=='mp',
+   'fitness receipt delay requires Host and 50..1000 integer milliseconds')
+  L.delayNativeReceipt=function(module,command,args)
+   if releasing or module~='PZSurvivorToolkitActions'or command~='State'or type(args)~='table'
+    or args.state~='completed'or args.kind~='ISDropWorldItemAction'then return false end
+   local player,queue=active();local action=queue and queue.current
+   if not player or not action or action.Type~=args.kind or action.toolkitNativeTransaction~=args.transaction
+    or args.player~=player:getOnlineID()or type(args.token)~='string'or delayed[args.token]or pendingReceipt then return false end
+   delayed[args.token]=true
+   pendingReceipt={module=module,command=command,args=args,action=action,deadline=getTimestampMs()+delay}
+   safe('Receipt.delayed',action,{transaction=args.transaction,delayMilliseconds=delay})
+   return true
+  end
+  Events.OnTick.Add(function()
+   if not pendingReceipt or getTimestampMs()<pendingReceipt.deadline then return end
+   local saved=pendingReceipt;pendingReceipt=nil;releasing=true
+   safe('Receipt.released',saved.action,{transaction=saved.args.transaction})
+   triggerEvent('OnServerCommand',saved.module,saved.command,saved.args)
+   releasing=false
+  end)
+ end
+ -- Installed only by the opt-in test JAR. Values observe native manager state;
+ -- this callback returns no permission and cannot replace the validity result.
+ L.observeNativeValidation=function(action,native,values)
+  pcall(function()
+   local player,queue=active()
+   if not player or not action or action.character~=player then return end
+   values.nativeArgumentRef=identity(native)
+   values.nativeArgumentMatches=action.action==native
+   emit('Native.validityDecision',action,values,queue)
+  end)
+ end
  local original=L.allowNativeCompletion
  L.allowNativeCompletion=function(...)
   local action,native=...
