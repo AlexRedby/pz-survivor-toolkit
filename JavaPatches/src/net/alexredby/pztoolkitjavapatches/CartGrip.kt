@@ -437,6 +437,7 @@ internal object CartGrip {
         policyWeight: Float,
         preserveFootMotion: Boolean,
         metal: Boolean,
+        shopping: Boolean = false,
     ): Boolean {
         if (!policyWeight.isFinite() || policyWeight < 0 || policyWeight > 1) return false
         val skeleton = actor ?: throw NullPointerException()
@@ -542,7 +543,17 @@ internal object CartGrip {
                 if (policyWeight < 1) Vector3f(bend).fma(-bend.dot(axis), axis) else null
             bend.set(goal).sub(shoulder).fma(-b, Vector3f(target.m00(), target.m01(), target.m02()))
             bend.fma(-bend.dot(axis), axis).normalize()
-            val relaxed = bodyDelta.transformDirection(Vector3f(0f, -1f, if (wood) 1f else .25f))
+            // A transverse shopping bar allows relaxed elbows outside the shoulder line.
+            // Keep the ten-degree outward hint local to shopping grips; shafts retain their pose.
+            val relaxed =
+                bodyDelta.transformDirection(
+                    Vector3f(
+                        if (shopping) (if (handName == "Bip01_L_Hand") 1f else -1f) * .17364818f
+                        else 0f,
+                        if (shopping) -.98480775f else -1f,
+                        if (wood) 1f else .25f,
+                    ),
+                )
             relaxed.fma(-relaxed.dot(axis), axis).normalize()
             // Keep the elbow down/back instead of lifting it just to minimize the wrist angle.
             val extra =
@@ -719,7 +730,9 @@ internal object CartGrip {
                 (point ?: throw NullPointerException()).set(
                     -150.07166f,
                     343.47412f,
-                    if (left) .809756f else -.809769f,
+                    // Center the wider grasp on the measured straight bar, including its
+                    // continuation beyond the thicker sleeve; both palms remain supported.
+                    if (left) .95877537f else -.98122463f,
                 )
             "WheelbarrowWood" ->
                 (point ?: throw NullPointerException()).set(
@@ -928,6 +941,7 @@ internal object CartGrip {
                         1f,
                         false,
                         "WheelbarrowMetal".equals(model),
+                        CartShopping.model(model),
                     )
             )
                 return false
@@ -1702,6 +1716,7 @@ internal object CartGrip {
                         reachWeight,
                         false,
                         "WheelbarrowMetal".equals(model),
+                        CartShopping.model(model),
                     )
                 )
                     return false

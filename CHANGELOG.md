@@ -1096,6 +1096,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.52
 
+- Widen the shopping-cart grasp along the supported handle and relax the elbows outward, preserving the natural carrying stance and wheelbarrow grips.
 - Fix severely folded shopping-cart arms without arching the back: retain native torso, pelvis and leg motion, and give the character room behind the handle within both arms' reachable range. Distribute palm rotation through the forearm; share the adjusted held position with pickup/setdown and the physical rear-axle pivot.
 - Correct shopping-cart turning to use the held model's fixed rear wheel axle, including item scale, during forward/reverse travel and stationary turns. Keep the front casters free to follow their own paths and match character steps to the corrected handle arc; wheelbarrow handling is unchanged.
 

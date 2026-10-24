@@ -423,7 +423,7 @@ object CartGripTest {
         val models = arrayOf("ShoppingCartModel", "WheelbarrowWood", "WheelbarrowMetal")
         val centers =
             arrayOf(
-                floatArrayOf(0.083346f, 0.58887534f, -0.18080575f, -0.086654f),
+                floatArrayOf(0.098988422f, 0.58887534f, -0.18080575f, -0.104651535f),
                 floatArrayOf(0.12570822f, 0.57380583f, -0.13731986f, -0.13781538f),
                 floatArrayOf(0.14916556f, 0.61160583f, -0.16874814f, -0.14684275f),
             )
@@ -1638,6 +1638,7 @@ object CartGripTest {
                     Float::class.javaPrimitiveType!!,
                     Boolean::class.javaPrimitiveType!!,
                     Boolean::class.javaPrimitiveType!!,
+                    Boolean::class.javaPrimitiveType!!,
                 )
         solve.setAccessible(true)
         for (left in booleanArrayOf(true, false)) {
@@ -1655,6 +1656,7 @@ object CartGripTest {
                         1f,
                         false,
                         true,
+                        false,
                     ) as Boolean)
             )
                 return false

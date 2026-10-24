@@ -50,6 +50,7 @@ object CartShoppingGripTest {
             "reverse-right",
             "run",
             "sprint",
+            "neutral-idle",
         )
 
     private fun check(value: Boolean, message: String) {
@@ -179,7 +180,9 @@ object CartShoppingGripTest {
             transforms.set(player.animation, native)
             val expected = CartShoppingStance.shift(poses, actor, female, Matrix4f(), held)
             val actual = CartShoppingStance.shift(player)
-            check(expected.isFinite() && expected < -.01f, "native binding has no stance: $label")
+            check(expected.isFinite(), "native binding has no reachable stance: $label")
+            if (!label.startsWith("neutral-idle-"))
+                check(expected < -.01f, "native binding has no gait stance: $label")
             check(
                 Math.abs(actual - expected) < 1e-6f,
                 "game/render stance mismatch: $label expected=$expected actual=$actual female=${player.isFemale()}",
@@ -212,6 +215,7 @@ object CartShoppingGripTest {
         var frames = 0
         val seen = HashSet<String>()
         val capturedRigs = HashSet<Boolean>()
+        val neutralRigs = HashSet<Boolean>()
         var clamped = 0
         var legacyFlex = 0.0
         var maxWrist = 0.0
@@ -229,6 +233,7 @@ object CartShoppingGripTest {
             capturedRigs.add(cells[2].toBoolean())
             val phase = phases.single { label.startsWith("$it-") }
             seen.add(phase)
+            if (phase == "neutral-idle") neutralRigs.add(cells[2].toBoolean())
             val captured =
                 Array(12) { i ->
                     Matrix4f().set(FloatArray(16) { j -> cells[3 + i * 16 + j].toFloat() })
@@ -323,9 +328,44 @@ object CartShoppingGripTest {
                     poses[i] == original[i],
                     "shopping grip changed native torso/head/leg: $label/${names[i]}",
                 )
+                val leftPalm = Vector3f()
+                val rightPalm = Vector3f()
+                check(
+                    CartGrip.handle("ShoppingCartModel", true, leftPalm) &&
+                        CartGrip.handle("ShoppingCartModel", false, rightPalm),
+                    "missing shopping palm stations",
+                )
+                cart.transformPosition(leftPalm)
+                cart.transformPosition(rightPalm)
+                val palmWidth = leftPalm.distance(rightPalm)
+                check(palmWidth >= .21f, "shopping grip became cramped: $label width=$palmWidth")
+                // Actual ShoppingCart_PZ.fbx straight supporting tube, beneath/beyond its sleeve.
+                // Native MaleBody/FemaleBody.x weighted palm vertices extend at most .029477
+                // along hand-local Y. Preserve support for that whole lateral palm envelope.
+                val tubeStart = cart.transformPosition(Vector3f(-150.2741f, 343.45966f, -1.475016f))
+                val tubeEnd = cart.transformPosition(Vector3f(-150.2741f, 343.45966f, 1.452568f))
+                val tubeAxis = Vector3f(tubeEnd).sub(tubeStart)
+                val tubeLength = tubeAxis.length()
+                tubeAxis.normalize()
+                if (phase == "neutral-idle") {
+                    val elbowWidth = at(poses, 5).x - at(poses, 8).x
+                    check(
+                        elbowWidth > palmWidth + .01f,
+                        "neutral shopping elbows stayed inside the palms: $label width=$elbowWidth",
+                    )
+                }
                 for (side in 0..1) {
                     val upper = if (side == 0) 4 else 7
                     val hand = upper + 2
+                    if (phase == "neutral-idle") {
+                        val outward =
+                            (at(poses, upper + 1).x - at(poses, upper).x) *
+                                (if (side == 0) 1f else -1f)
+                        check(
+                            outward > .005f,
+                            "neutral shopping elbow hugged the torso: $label side=$side outward=$outward",
+                        )
+                    }
                     for (i in upper until hand) check(
                         Math.abs(
                             at(poses, i).distance(at(poses, i + 1)) -
@@ -371,6 +411,17 @@ object CartShoppingGripTest {
                         palm.distance(station) < 3e-5f,
                         "shopping palm missed actual handle: $label",
                     )
+                    val alongTube = Vector3f(palm).sub(tubeStart).dot(tubeAxis)
+                    val palmMargin =
+                        Math.abs(
+                            poses[hand]
+                                .transformDirection(Vector3f(0f, .029477f, 0f))
+                                .dot(tubeAxis),
+                        )
+                    check(
+                        alongTube - palmMargin >= 0f && alongTube + palmMargin <= tubeLength,
+                        "shopping palm extends beyond supporting bar: $label side=$side",
+                    )
                     val measured = arm(poses, upper)
                     maxWrist = Math.max(maxWrist, measured.wrist)
                     maxRoll = Math.max(maxRoll, measured.roll)
@@ -392,7 +443,25 @@ object CartShoppingGripTest {
                                 delta,
                                 cartBefore,
                                 oldTarget,
-                            ) && CartGrip.reach(old, actor, names[hand], oldTarget, null, false),
+                            ),
+                            "legacy shopping target refused: $label",
+                        )
+                        val currentStation = Vector3f()
+                        check(
+                            CartGrip.handle("ShoppingCartModel", side == 0, currentStation),
+                            "legacy shopping station unavailable: $label",
+                        )
+                        // Freeze the original narrow grip as well as its old elbow/wrist policy.
+                        val originalRawZ = if (side == 0) .809756f else -.809769f
+                        val stationShift =
+                            cartBefore.transformDirection(
+                                Vector3f(0f, 0f, originalRawZ - currentStation.z),
+                            )
+                        oldTarget.setTranslation(
+                            oldTarget.getTranslation(Vector3f()).add(stationShift),
+                        )
+                        check(
+                            CartGrip.reach(old, actor, names[hand], oldTarget, null, false),
                             "legacy shopping fixture unexpectedly unreachable: $label",
                         )
                         legacyFlex = Math.max(legacyFlex, arm(old, upper).flex)
@@ -449,13 +518,17 @@ object CartShoppingGripTest {
             frames++
         }
         check(
-            frames == 20 && seen == phases && capturedRigs == setOf(false, true),
+            frames == 22 &&
+                seen == phases &&
+                capturedRigs == setOf(false, true) &&
+                neutralRigs == setOf(false, true),
             "missing captured shopping turn/fast-gait/rig coverage",
         )
         check(clamped > 0, "native fixtures no longer exercise the other arm's reach limit")
         check(legacyFlex >= 158, "native fixtures no longer reproduce the folded-arm defect")
         println(
-            "CART_SHOPPING_GRIP_PASS (20 native turn/fast-gait inputs, unchanged torso, arm lengths, " +
+            "CART_SHOPPING_GRIP_PASS (22 native turn/fast-gait/neutral inputs, wide supported palms, " +
+                "relaxed elbows, unchanged torso, arm lengths, " +
                 "reachable cart, native binding, transition continuity; max wrist=$maxWrist roll=$maxRoll " +
                 "flex=$maxFlex legacyFlex=$legacyFlex)",
         )
