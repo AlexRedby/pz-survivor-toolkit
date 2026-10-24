@@ -112,7 +112,7 @@ def main(args):
     soles = .001546
     feet0 = {s: neutral['Bip01_'+s+'_Foot'].copy() for s in ('L','R')}
     for foot in feet0.values(): foot.translation.z += soles
-    def pose(world, feet, left_weight=.5, pelvis_yaw=0., chest_yaw=0.):
+    def pose(world, feet, left_weight=.5, pelvis_yaw=0., chest_yaw=0., pelvis_lowering=None):
         poses = {n: m.copy() for n,m in neutral.items()}
         turn_bone(poses,'Bip01_Pelvis',pelvis_yaw)
         turn_bone(poses,'Bip01_Spine1',chest_yaw-pelvis_yaw)
@@ -127,7 +127,7 @@ def main(args):
         difference = Vector((target.x-desired.x,target.y-desired.y,0))
         if difference.length > .075: difference *= .075/difference.length
         local_shift = inv.to_3x3() @ difference
-        local_shift.z = -.022
+        local_shift.z = -.022 if pelvis_lowering is None else -pelvis_lowering
         # Support-relative weight transfer reduces the reach needed by the planted leg.
         translate(poses, 'Bip01_Pelvis', local_shift)
         extra = 0.
@@ -140,7 +140,12 @@ def main(args):
             reach = a+b-.008
             if horizontal >= reach: raise ValueError('Step exceeds horizontal leg reach')
             extra = min(extra, end.z+math.sqrt(reach*reach-horizontal*horizontal)-hip.z)
-        translate(poses, 'Bip01_Pelvis', Vector((0,0,extra)))
+        if pelvis_lowering is None:
+            translate(poses, 'Bip01_Pelvis', Vector((0,0,extra)))
+        elif extra < -1e-6:
+            # The plan must fit a standing-height pelvis. Never hide an
+            # unreachable contact by abruptly squatting on this frame.
+            raise ValueError(f'Contact plan needs {-extra:.6f} extra pelvis lowering')
         for s in feet: solve_leg(poses, s, local_feet[s],pelvis_yaw)
         return poses
     seed = pose(Matrix.Identity(4), feet0)
@@ -151,35 +156,49 @@ def main(args):
     rear = Vector((geometry['rear'][0], -geometry['rear'][2], 0))
     radius = rear.y
     (output/'cart-matrix.csv').write_text(','.join(map(str, geometry['cart'])))
-    settings = dict(schema='shopping-turn-study-v2', motion=args.motion, scope='Offline world-space draft; not an installed or runtime-ready gait.',
+    settings = dict(schema='shopping-turn-study-v3', motion=args.motion, scope='Offline world-space draft; not an installed or runtime-ready gait.',
                     degrees=args.degrees, direction=args.direction, opening_seconds=.40, closing_seconds=.32, degrees_per_pair=45,
                     pre_seconds=.28, post_seconds=.32, swing_height=.045, swing_window=[.10,.76],
                     rear=list(rear), radius=radius, source_clip='cart_pivot_idle.json', playback_rate=1)
     sign = 1 if args.direction == 'left' else -1
     body_mode=args.motion=='turn-body'
-    step_angle=30 if body_mode else settings['degrees_per_pair']
+    step_angle=22.5 if body_mode else settings['degrees_per_pair']
     count=round(args.degrees/step_angle)
     opening=settings['opening_seconds'];closing=settings['closing_seconds'];pair=opening+closing
-    pre=settings['pre_seconds'];step_seconds=.44
+    pre=settings['pre_seconds'];step_seconds=.40
     turn_duration=count*step_seconds if body_mode else count*pair
     moving_duration=turn_duration+(2*step_seconds if body_mode else 0)
     duration=pre+moving_duration+settings['post_seconds']
     total=round(duration*60)
-    turn_center=rear+Vector((-sign*.50,0,0)) if body_mode else rear
-    pelvis_peak=math.atan2(rear.y,.50) if body_mode else 0.
+    rolling_radius=.30
+    turn_center=rear+Vector((-sign*rolling_radius,0,0)) if body_mode else rear
+    pelvis_peak=math.atan2(rear.y,rolling_radius) if body_mode else 0.
     def body_at(time):
         if not body_mode:return 0.,0.
         strength=smooth((time-pre)/step_seconds)*smooth((pre+moving_duration-time)/(2*step_seconds))
         return -sign*pelvis_peak*strength,-sign*math.radians(10)*strength
     settings.update(pelvis_peak_degrees=math.degrees(pelvis_peak),chest_peak_degrees=10 if body_mode else 0,
                     turn_kind='rolling rear axle' if body_mode else 'stationary rear axle',
-                    rear_rolling_radius=.50 if body_mode else 0,turn_center=list(turn_center),
+                    rear_rolling_radius=rolling_radius if body_mode else 0,turn_center=list(turn_center),
                     turn_seconds=turn_duration,collecting_steps=2 if body_mode else 0)
+    if body_mode:
+        settings.update(degrees_per_step=step_angle,step_seconds=step_seconds,
+                        swing_height=.025,swing_window=[.05,.95],
+                        landing_lookahead_steps=1.55,pelvis_lowering_range=[.022,.050],
+                        root_ramp_seconds=.24,weight_transfer_window=[.15,1.0])
+
     def heading(time):
         u=max(0.,min(turn_duration,time-pre))
-        ramp=.12;speed=math.radians(args.degrees)/(turn_duration-ramp)
-        if u<ramp:distance=speed*u*u/(2*ramp)
-        elif u>turn_duration-ramp:distance=math.radians(args.degrees)-speed*(turn_duration-u)**2/(2*ramp)
+        ramp=.24 if body_mode else .12
+        speed=math.radians(args.degrees)/(turn_duration-ramp)
+        def ramp_distance(t):
+            if not body_mode:return speed*t*t/(2*ramp)
+            x=t/ramp
+            # Integral of the quintic speed ramp: continuous acceleration
+            # through startup, cruise and braking, without per-step stops.
+            return speed*ramp*(2.5*x**4-3*x**5+x**6)
+        if u<ramp:distance=ramp_distance(u)
+        elif u>turn_duration-ramp:distance=math.radians(args.degrees)-ramp_distance(turn_duration-u)
         else:distance=speed*(u-ramp/2)
         return sign*distance
     def world_at(time):
@@ -196,7 +215,10 @@ def main(args):
             local_turn=Matrix.Translation(center)@Matrix.Rotation(yaw,4,'Z')@Matrix.Translation(-center)
             foot=feet0[side].copy()
             foot.translation.x+=(.015 if side=='L' else -.015)*smooth((end-pre)/step_seconds)*smooth((pre+moving_duration-end)/(2*step_seconds))
-            target=world_at(end)@local_turn@foot
+            # Aim into the middle of the next stance, rather than leaving
+            # the supporting foot behind a root that continues to turn.
+            contact_center=begin+settings['landing_lookahead_steps']*step_seconds
+            target=world_at(contact_center)@local_turn@foot
             plan.append((side,previous[side].copy(),target,begin,step_seconds))
             previous[side]=target
     else:
@@ -216,7 +238,8 @@ def main(args):
             for i,(side,start,end,begin,step) in enumerate(plan):
                 phase=(time-begin)/step
                 if phase<0: break
-                u=(phase-.10)/.66; w=smooth(u)
+                start_swing,end_swing=settings['swing_window']
+                u=(phase-start_swing)/(end_swing-start_swing); w=smooth(u)
                 rotation=start.to_quaternion().slerp(end.to_quaternion(),w)
                 a=start.translation-turn_center; b=end.translation-turn_center
                 angle_a=math.atan2(a.y,a.x)
@@ -224,16 +247,26 @@ def main(args):
                 distance=math.hypot(a.x,a.y)*(1-w)+math.hypot(b.x,b.y)*w
                 angle=angle_a+angle_delta*w
                 location=Vector((turn_center.x+distance*math.cos(angle),turn_center.y+distance*math.sin(angle),start.translation.z*(1-w)+end.translation.z*w))
-                if 0<u<1: location.z+=settings['swing_height']*math.sin(math.pi*u)**2
+                if 0<u<1:
+                    lift=64*u**3*(1-u)**3 if body_mode else math.sin(math.pi*u)**2
+                    location.z+=settings['swing_height']*lift
                 feet[side]=Matrix.LocRotScale(location,rotation,Vector((1,1,1)))
                 supports[side]=not 0<u<1
-                transfer=smooth((phase-.76)/.24)
+                if body_mode:
+                    transfer_begin,transfer_end=settings['weight_transfer_window']
+                    transfer=smooth((phase-transfer_begin)/(transfer_end-transfer_begin))
+                else:transfer=smooth((phase-.76)/.24)
                 left_weight=transfer if side=='L' else 1-transfer
             if time>pre+moving_duration:
                 left_weight=left_weight+(.5-left_weight)*smooth((time-pre-moving_duration)/settings['post_seconds'])
             world=world_at(time)
             pelvis_yaw,chest_yaw=body_at(time)
-            local=pose(world,feet,left_weight,pelvis_yaw,chest_yaw)
+            lowering=None
+            if body_mode:
+                entry=smooth((time-pre)/step_seconds)
+                recovery=smooth((pre+moving_duration+settings['post_seconds']-time)/settings['post_seconds'])
+                lowering=.022+.028*entry*recovery
+            local=pose(world,feet,left_weight,pelvis_yaw,chest_yaw,lowering)
             for side in feet:
                 ids=['Bip01_'+side+'_'+n for n in ('Thigh','Calf','Foot')]
                 upper=local[ids[0]].translation-local[ids[1]].translation
@@ -366,12 +399,18 @@ def main(args):
         max_skin_error=max(max_skin_error,max((Vector(point)-vertex.co).length for point,vertex in zip(expected,evaluated.data.vertices)))
     assert max_skin_error<2e-5, max_skin_error
     scene.frame_set(1);bpy.ops.wm.save_as_mainfile(filepath=str(scene_path))
+    pelvis_z=[poses['Bip01_Pelvis'].translation.z for _,poses in raw]
+    vertical_speeds=[(b-a)/(raw[i+1][0]-raw[i][0]) for i,(a,b) in enumerate(zip(pelvis_z,pelvis_z[1:]))]
+    vertical_accelerations=[(b-a)/(raw[i+1][0]-raw[i][0]) for i,(a,b) in enumerate(zip(vertical_speeds,vertical_speeds[1:]))]
     report=dict(scope=settings['scope'],samples=len(samples),duration_seconds=raw[-1][0],
                 max_leg_length_error=max_leg_error,max_foot_target_error=max_foot_error,
                 max_planted_drift=None if walk_mode else max_planted_drift,max_pelvis_lowering=max_drop,min_knee_degrees=min_knee,
+                max_pelvis_vertical_speed=max(map(abs,vertical_speeds)),
+                max_pelvis_vertical_acceleration=max(map(abs,vertical_accelerations)),
+                motion_metric_scope='Sampled at 60 Hz; native model units and seconds, not asserted metres.',
                 max_clothing_skin_error=max_skin_error,leg_clearance=clearance,
                 max_rear_lateral_step=max_rear_lateral_step,rear_axle_travel=rear_travel,
-                cart_rear_orbit_radius=None if walk_mode else (.50 if body_mode else 0),grip_check=(output/'grip.log').read_text().strip(),
+                cart_rear_orbit_radius=None if walk_mode else (rolling_radius if body_mode else 0),grip_check=(output/'grip.log').read_text().strip(),
                 limitation='Authored nominal arc only. Not a native gameplay, transition, collision, or Host check.')
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print('SHOPPING_TURN_STUDY_READY',json.dumps(report),flush=True)
