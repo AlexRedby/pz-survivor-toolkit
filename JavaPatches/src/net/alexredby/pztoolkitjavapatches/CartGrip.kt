@@ -544,13 +544,14 @@ internal object CartGrip {
             bend.set(goal).sub(shoulder).fma(-b, Vector3f(target.m00(), target.m01(), target.m02()))
             bend.fma(-bend.dot(axis), axis).normalize()
             // A transverse shopping bar allows relaxed elbows outside the shoulder line.
-            // Keep the ten-degree outward hint local to shopping grips; shafts retain their pose.
+            // Keep the fifteen-degree outward hint local to shopping grips; shafts retain their
+            // pose.
             val relaxed =
                 bodyDelta.transformDirection(
                     Vector3f(
-                        if (shopping) (if (handName == "Bip01_L_Hand") 1f else -1f) * .17364818f
+                        if (shopping) (if (handName == "Bip01_L_Hand") 1f else -1f) * .25881905f
                         else 0f,
-                        if (shopping) -.98480775f else -1f,
+                        if (shopping) -.96592583f else -1f,
                         if (wood) 1f else .25f,
                     ),
                 )

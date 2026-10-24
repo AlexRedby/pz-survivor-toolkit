@@ -4,6 +4,7 @@ import org.joml.Matrix4f
 import org.joml.Vector3f
 import zombie.characters.IsoPlayer
 import zombie.core.math.PZMath
+import zombie.core.skinnedmodel.animation.AnimationPlayer
 import zombie.core.skinnedmodel.model.SkinningData
 
 /** Give the native carrying body room behind the bar instead of bending its spine backward. */
@@ -24,9 +25,16 @@ internal object CartShoppingStance {
         val delta = Matrix4f()
         val points = Array(3) { Vector3f() }
         val target = Matrix4f()
+        val bar = Vector3f()
     }
 
     private val native = ThreadLocal.withInitial(::NativePose)
+    // A cart rolls independently of the shoulder bob. Keep its bar in one actor-local place
+    // while the elbows absorb walking motion; only leave it when arm geometry requires it.
+    private val neutralBarZ = run {
+        val held = CartShopping.held(Matrix4f()) ?: error("Missing shopping-cart geometry")
+        held.transformPosition(Vector3f(-150.07166f, 343.47412f, 0f)).z - .06f
+    }
 
     /** Shared by the render palette and game-thread AnimationPlayer snapshots. */
     @JvmStatic
@@ -49,7 +57,9 @@ internal object CartShoppingStance {
         val scratch = native.get()
         var lower = Float.NEGATIVE_INFINITY
         var upper = Float.POSITIVE_INFINITY
-        var desired = 0f
+        val bar = scratch.bar.set(-150.07166f, 343.47412f, 0f)
+        cart.transformPosition(bar)
+        var desired = neutralBarZ - bar.z
         for (side in 0..1) {
             val points = scratch.points
             for (link in 0..2) {
@@ -64,8 +74,9 @@ internal object CartShoppingStance {
             val target = scratch.target
             if (!CartGrip.target("ShoppingCartModel", side == 0, female, delta, cart, target))
                 return Float.NaN
-            // B42 captures: reserve .005 model units of extension and prefer .15 units of
-            // forward reach. The other arm's reachable interval always takes precedence.
+            // Reserve .005 model units of extension. A faster/native bent posture can also
+            // need the bar farther forward to avoid folding the elbow beyond 116 degrees.
+            // Reachability takes precedence when the two arms cannot satisfy both limits.
             val reach = a + b - .005f
             val x = target.m30() - shoulder.x
             val y = target.m31() - shoulder.y
@@ -75,7 +86,8 @@ internal object CartShoppingStance {
             val offset = shoulder.z - target.m32()
             lower = maxOf(lower, offset - radius)
             upper = minOf(upper, offset + radius)
-            desired = minOf(desired, offset - .15f)
+            val folded = a * a + b * b + 2 * a * b * -.43837115f - x * x - y * y
+            if (folded > 0) desired = minOf(desired, offset - kotlin.math.sqrt(folded))
         }
         return if (lower <= upper) desired.coerceIn(lower, upper) else Float.NaN
     }
@@ -106,13 +118,10 @@ internal object CartShoppingStance {
         val actor = animation.getSkinningData()
         val state = native.get()
         if (actor.numBones() > state.poses.size) return 0f
-        for (name in bones) {
-            val bone = actor.getBone(name) ?: return 0f
-            if (bone.index !in 0 until animation.getModelTransformsCount()) return 0f
-            val captured = animation.getModelTransformAt(bone.index) ?: return 0f
-            val pose = state.poses[bone.index] ?: Matrix4f().also { state.poses[bone.index] = it }
-            PZMath.convertMatrix(captured, pose).transpose()
-        }
+        val turn = CartShoppingTurn.current(player)
+        if (turn != null && capture(state, actor, animation, true)) {
+            CartShoppingTurn.apply(state.poses, actor, turn)
+        } else if (!capture(state, actor, animation, false)) return 0f
         val item = player.getPrimaryHandItem() ?: return 0f
         if (
             !CartShopping.item(item) ||
@@ -121,5 +130,23 @@ internal object CartShoppingStance {
             return 0f
         val shift = shift(state.poses, actor, player.isFemale(), state.delta.identity(), state.cart)
         return if (shift.isFinite()) shift else 0f
+    }
+
+    private fun capture(
+        state: NativePose,
+        actor: SkinningData,
+        animation: AnimationPlayer,
+        full: Boolean,
+    ): Boolean {
+        val count = if (full) actor.numBones() else bones.size
+        for (i in 0 until count) {
+            val bone = if (full) actor.getBoneAt(i) else actor.getBone(bones[i])
+            if (bone == null || bone.index !in 0 until animation.getModelTransformsCount())
+                return false
+            val captured = animation.getModelTransformAt(bone.index) ?: return false
+            val pose = state.poses[bone.index] ?: Matrix4f().also { state.poses[bone.index] = it }
+            PZMath.convertMatrix(captured, pose).transpose()
+        }
+        return true
     }
 }

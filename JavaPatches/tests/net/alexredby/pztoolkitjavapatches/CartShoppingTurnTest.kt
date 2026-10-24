@@ -136,6 +136,101 @@ object CartShoppingTurnTest {
         check(CartShoppingTurn.view(slot, owner) == null, "released slot")
     }
 
+    /** A complete foot cycle must bend the arms rather than shuttle the cart with the shoulders. */
+    private fun stableBar(actor: SkinningData, clip: AnimationClip, baseline: Array<Matrix4f?>) {
+        for (female in listOf(false, true)) {
+            var first: Matrix4f? = null
+            var minFlex = 180.0
+            var maxFlex = 0.0
+            for (phase in 0..48) {
+                val poses = Array(baseline.size) { Matrix4f(baseline[it]) }
+                check(
+                    CartShoppingTurn.apply(
+                        poses,
+                        actor,
+                        clip,
+                        CartShoppingTurn.View(phase / 48f, 1f),
+                    ),
+                    "turn cycle sample",
+                )
+                val before = Array(poses.size) { Matrix4f(poses[it]) }
+                val cart = CartShopping.held(Matrix4f()) ?: error("held cart")
+                check(
+                    CartShoppingStance.apply(poses, actor, female, Matrix4f(), cart, 1f),
+                    "turn stance",
+                )
+                if (first == null) first = Matrix4f(cart)
+                check(cart.equals(first, 2e-6f), "step moved shopping cart: $female/$phase")
+                check(
+                    CartGrip.grip(poses, actor, "ShoppingCartModel", female, Matrix4f(), cart),
+                    "turn grip",
+                )
+                for (side in listOf("L", "R")) {
+                    val ids =
+                        listOf("UpperArm", "Forearm", "Hand").map {
+                            actor.getBone("Bip01_${side}_$it").index
+                        }
+                    val a = poses[ids[0]].getTranslation(Vector3f())
+                    val b = poses[ids[1]].getTranslation(Vector3f())
+                    val c = poses[ids[2]].getTranslation(Vector3f())
+                    val flex =
+                        Math.toDegrees(
+                            kotlin.math.acos(
+                                b.sub(a, Vector3f())
+                                    .normalize()
+                                    .dot(c.sub(b, Vector3f()).normalize())
+                                    .toDouble()
+                                    .coerceIn(-1.0, 1.0),
+                            ),
+                        )
+                    minFlex = minOf(minFlex, flex)
+                    maxFlex = maxOf(maxFlex, flex)
+                    check(flex <= 118, "turn arm folded: $female/$phase/$side $flex")
+                    val target = Matrix4f()
+                    check(
+                        CartGrip.target(
+                            "ShoppingCartModel",
+                            side == "L",
+                            female,
+                            Matrix4f(),
+                            cart,
+                            target,
+                        ),
+                        "turn target",
+                    )
+                    check(poses[ids[2]].equals(target, 3e-5f), "turn hand left the bar")
+                    for (link in 0..1) {
+                        val i = ids[link]
+                        val j = ids[link + 1]
+                        close(
+                            poses[i]
+                                .getTranslation(Vector3f())
+                                .distance(poses[j].getTranslation(Vector3f()))
+                                .toDouble(),
+                            before[i]
+                                .getTranslation(Vector3f())
+                                .distance(before[j].getTranslation(Vector3f()))
+                                .toDouble(),
+                            "turn arm length",
+                        )
+                    }
+                }
+                for (name in
+                    listOf(
+                        "Bip01_Pelvis",
+                        "Bip01_Spine",
+                        "Bip01_Spine1",
+                        "Bip01_L_Thigh",
+                        "Bip01_R_Thigh",
+                    )) {
+                    val i = actor.getBone(name).index
+                    check(poses[i] == before[i], "stable bar changed body: $name")
+                }
+            }
+            check(maxFlex - minFlex > 20, "turn elbows stopped absorbing body motion")
+        }
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         controller()
@@ -148,6 +243,7 @@ object CartShoppingTurnTest {
             val (targetActor, clip) = read(folder.resolve("Toolkit_ShoppingTurn_$side.x"))
             check(actor.boneIndices == targetActor.boneIndices, "bone mapping")
             val expected = reference(actor, clip)
+            stableBar(actor, clip, baseline)
             val zero = Array(baseline.size) { Matrix4f(baseline[it]) }
             check(
                 CartShoppingTurn.apply(zero, actor, clip, CartShoppingTurn.View(0f, 0f)),

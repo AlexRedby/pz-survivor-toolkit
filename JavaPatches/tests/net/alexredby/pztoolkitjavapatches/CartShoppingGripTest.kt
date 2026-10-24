@@ -216,7 +216,6 @@ object CartShoppingGripTest {
         val seen = HashSet<String>()
         val capturedRigs = HashSet<Boolean>()
         val neutralRigs = HashSet<Boolean>()
-        var clamped = 0
         var legacyFlex = 0.0
         var maxWrist = 0.0
         var maxRoll = 0.0
@@ -263,24 +262,6 @@ object CartShoppingGripTest {
                 val cart = Matrix4f(cartBefore)
                 val shift = CartShoppingStance.shift(original, actor, femaleTarget, delta, cart)
                 check(shift.isFinite() && shift <= 1e-6f, "invalid shopping stance: $label")
-                var preferred = 0f
-                for (side in 0..1) {
-                    val beforeTarget = Matrix4f()
-                    check(
-                        CartGrip.target(
-                            "ShoppingCartModel",
-                            side == 0,
-                            femaleTarget,
-                            delta,
-                            cart,
-                            beforeTarget,
-                        ),
-                        "shopping target refused before fitting: $label",
-                    )
-                    val upper = if (side == 0) 4 else 7
-                    preferred = minOf(preferred, original[upper].m32() - beforeTarget.m32() - .15f)
-                }
-                if (shift > preferred + 1e-5f) clamped++
                 check(
                     CartShoppingStance.apply(original, actor, femaleTarget, delta, cart, 1f),
                     "native shopping stance refused: $label",
@@ -524,7 +505,44 @@ object CartShoppingGripTest {
                 neutralRigs == setOf(false, true),
             "missing captured shopping turn/fast-gait/rig coverage",
         )
-        check(clamped > 0, "native fixtures no longer exercise the other arm's reach limit")
+        // A shorter left arm must retain reach even when the right arm would prefer more room.
+        val asymmetric = Array(names.size) { Matrix4f() }
+        val asymmetricCart = CartShopping.held(Matrix4f()) ?: error("asymmetric cart")
+        var leftLimit = 0f
+        for (side in 0..1) {
+            val target = Matrix4f()
+            check(
+                CartGrip.target(
+                    "ShoppingCartModel",
+                    side == 0,
+                    false,
+                    Matrix4f(),
+                    asymmetricCart,
+                    target,
+                ),
+                "asymmetric target",
+            )
+            val first = if (side == 0) 4 else 7
+            val length = if (side == 0) .1f else .25f
+            val z = if (side == 0) 0f else -.2f
+            for (link in 0..2) asymmetric[first + link].translation(
+                target.m30(),
+                target.m31() - length * link,
+                z,
+            )
+            if (side == 0) leftLimit = z - target.m32() - (2 * length - .005f)
+        }
+        val asymmetricBefore = copy(asymmetric)
+        val asymmetricShift =
+            CartShoppingStance.shift(asymmetric, actor, false, Matrix4f(), asymmetricCart)
+        check(
+            kotlin.math.abs(asymmetricShift - leftLimit) < 2e-6f,
+            "fold preference overruled other arm reach",
+        )
+        check(
+            asymmetric.indices.all { asymmetric[it] == asymmetricBefore[it] },
+            "reach clamp changed pose",
+        )
         check(legacyFlex >= 158, "native fixtures no longer reproduce the folded-arm defect")
         println(
             "CART_SHOPPING_GRIP_PASS (22 native turn/fast-gait/neutral inputs, wide supported palms, " +

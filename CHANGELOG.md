@@ -1098,6 +1098,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.54
+
+- **Fixed:** Keep the shopping-cart handle stable through walking and authored turn cycles instead of copying every shoulder sway into fore/aft cart motion. Elbows absorb the movement, with reach/folding guards for other native postures and the same cosmetic turn pose used by the steering-axle calculation.
+
 ### 0.1.53
 
 - **Changed:** Blend the authored shopping-cart turn into the rendered body and clothing during forward walking turns, with smooth entry/release and slot-owned pose snapshots. Native movement, collisions and the existing multiplayer packet format remain unchanged. Full selected-pack SP/Host visual verification is pending.

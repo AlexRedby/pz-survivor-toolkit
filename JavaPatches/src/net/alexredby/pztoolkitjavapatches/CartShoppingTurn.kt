@@ -208,6 +208,18 @@ internal object CartShoppingTurn {
         capture(slot, source, state.view)
     }
 
+    /** The game-thread stance solve samples the same cosmetic body as the renderer. */
+    @JvmStatic
+    @Synchronized
+    fun current(player: IsoPlayer): View? {
+        val state = states[player] ?: return null
+        return state.view.takeIf {
+            abs(it.turn) > .001f &&
+                player.getPrimaryHandItem() === state.item &&
+                player.getSecondaryHandItem() === state.item
+        }
+    }
+
     /** Snapshot ownership is checked once by the producer; workers never read live actor state. */
     @JvmStatic
     @Synchronized
