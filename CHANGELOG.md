@@ -24,6 +24,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.258
+
+- **Action queue:** Cancel a confirmed pending borrowed-item return separately to keep that item carried while its current action continues. Preserve later dependencies and capacity, exact item ownership and other required cleanup; later cancellation does not recreate the deliberately removed return.
+- **Action queue UI:** Show neutral crosses before a permission check, distinguish an unavailable hovered cancel, and retain the reason when a click is rejected. Group and child controls keep fresh validation at release.
+
 ### 0.1.257
 
 - **Exercise:** Use continuous game time for queued workout progress and completion, counting Host training from its confirmed server start. Remove the extra whole-minute pause after 100% while retaining the full selected duration and confirmed equipment recovery.
