@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <animNode>
     <m_Name>default</m_Name>
-    <m_AnimName>Bob_IdleDriving</m_AnimName>
+    <m_AnimName>Bob_ToolkitVehicleEnter</m_AnimName>
+    <m_AnimReverse>true</m_AnimReverse>
     <m_Looped>false</m_Looped>
-    <!-- The native chair clip is 1s at 1.6x; this seated clip is 1/6s.
-         Keep its 0.625s lifetime and avoid blending a standing pose inside. -->
+    <!-- Native chair movement settles into the driving pose; exit retraces it.
+         VehicleTransitionRender synchronizes only the rendered seat transfer. -->
     <m_BlendTime>0.00</m_BlendTime>
-    <m_SpeedScale>0.2666666667</m_SpeedScale>
+    <m_SpeedScale>1.60</m_SpeedScale>
     <m_Events>
         <m_EventName>SetVariable</m_EventName>
         <m_Time>End</m_Time>

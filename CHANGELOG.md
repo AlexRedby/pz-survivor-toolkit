@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.259
+
+- **Vehicles:** Restore a standing-to-seated entry and the reverse exit transition instead of instantly applying the driving pose outside the door. Match the final pose to the native driving seat and retain native action timing, cancellation and completion events. Requires Java Patches 0.1.54 for the synchronized visual transfer through the doorway.
+
 ### 0.1.258
 
 - **Action queue:** Cancel a confirmed pending borrowed-item return separately to keep that item carried while its current action continues. Preserve later dependencies and capacity, exact item ownership and other required cleanup; later cancellation and P4 idle restoration do not recreate the deliberately removed return.
@@ -1166,6 +1170,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.54
+
+- **Vehicles:** Synchronize the rendered passenger position with Toolkit's entry/exit animation, lowering the body before moving inside and moving outside before standing. Normalize the chair animation's raised origin during the transfer; logical seat ownership, collision, action completion and network messages stay native.
 
 ### 0.1.53
 

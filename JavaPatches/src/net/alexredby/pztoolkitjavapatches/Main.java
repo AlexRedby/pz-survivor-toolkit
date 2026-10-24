@@ -326,6 +326,15 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="init", strictMatch=true)
+    public static class VehicleTransitionSlot {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
+            @Patch.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
+            VehicleTransitionRender.capture(slot, source, VehicleTransitionRender.SUPPORTED);
+        }
+    }
+
     @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="postRender")
     public static class CartObserverRelease {
         @Patch.OnExit
