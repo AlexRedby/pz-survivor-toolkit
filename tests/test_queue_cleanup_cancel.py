@@ -504,14 +504,14 @@ class CleanupCancelChecks(unittest.TestCase):
         lua = LuaRuntime(unpack_returned_tuples=True)
         source = (Path(__file__).resolve().parent / 'native_queue/cleanup-cancel/client/ZZQueueCleanupCancel.lua').read_text()
         helper = source[source.index('local function panelCancel(action,whole)'):source.index('local function cancelAtBoundary()')]
-        make = lua.execute('return function(T,state,queue,byAction,itemID,now)' + helper + ';return panelCancel end')
+        make = lua.execute('return function(T,state,queue,byAction,itemID,now,raw)' + helper + ';return panelCancel end')
         fixture = lua.execute(r"""
             return function(whole,reason)
                 local token={};local native={};local body={toolkitQueueOperation=token,action=native,item={id=77}}
                 local returning={toolkitQueueOperation=token,item=body.item}
                 local q={current=body,queue={body,returning}}
                 function q:indexOf(action)for i,value in ipairs(self.queue)do if value==action then return i end end;return -1 end
-                local stats={presses=0,releases=0,removed=false}
+                local stats={presses=0,releases=0,removed=false,diagnostics={}}
                 local T={ActionQueuePanel={},ActionQueuePolicy={}}
                 function T.ActionQueuePolicy.previewCancel(actual,action,group)
                     assert(actual==q and group==whole and action==(whole and body or returning))
@@ -550,14 +550,15 @@ class CleanupCancelChecks(unittest.TestCase):
                 end
                 return{T=T,state={player={getPlayerNum=function()return 0 end}},queue=function()return q end,
                     byAction={[body]={sequence=2,actionRef='registered-body'},[returning]={sequence=3,actionRef='registered-return'}},itemID=function(action)return action.item.id end,
-                    now=function()return 100 end,target=whole and body or returning,stats=stats}
+                    now=function()return 100 end,raw=function(marker,value)stats.diagnostics[#stats.diagnostics+1]={marker=marker,value=value}end,
+                    target=whole and body or returning,stats=stats}
             end
         """)
         for whole in (False, True):
             for reason in (None, 'operation_dependent'):
                 with self.subTest(whole=whole, reason=reason):
                     f = fixture(whole, reason)
-                    cancel = make(f.T, f.state, f.queue, f.byAction, f.itemID, f.now)
+                    cancel = make(f.T, f.state, f.queue, f.byAction, f.itemID, f.now, f.raw)
                     if reason is None:
                         evidence = cancel(f.target, whole)
                         self.assertTrue(evidence.previewAllowed and evidence.pressed and evidence.released)
@@ -566,10 +567,35 @@ class CleanupCancelChecks(unittest.TestCase):
                         self.assertNotEqual(lua.eval('tostring')(f.target), evidence.actionRef,
                                             'current mutable Kahlua dumps must not replace registered exact-object identities')
                         self.assertEqual((1, 1, True), (f.stats.presses, f.stats.releases, f.stats.removed))
+                        self.assertEqual(0, len(f.stats.diagnostics), 'accepted preview must not emit failure diagnostics')
                     else:
                         with self.assertRaisesRegex(LuaError, 'real cancel preview denied operation_dependent'):
                             cancel(f.target, whole)
                         self.assertEqual((0, 0), (f.stats.presses, f.stats.releases), 'denied presentation must never dispatch a cancel gesture')
+                        self.assertEqual(1, len(f.stats.diagnostics))
+                        diagnostic = f.stats.diagnostics[1]
+                        self.assertEqual('CANCEL_DENIED', diagnostic.marker)
+                        self.assertEqual(reason, diagnostic.value.reason)
+                        self.assertEqual('registered-body' if whole else 'registered-return', diagnostic.value.actionRef)
+                        self.assertFalse(diagnostic.value.tidy.statusOK, 'unavailable diagnostics must preserve the original denial')
+                        # Populate the read-only collaborators and execute the
+                        # same real helper again, retaining the second ledger return.
+                        f = fixture(whole, reason)
+                        f.T.ActionQueuePolicy.inspect = lua.eval("function()return{cancelOperation=false,cancelWaiting=true,callbacksSafe=true,provider='native-test'}end")
+                        f.T.ActionQueuePolicy.matchesNative = lua.eval('function()return true end')
+                        f.T.ActionQueueSettlement = lua.eval("{canWaivePendingReturn=function(action,guard)assert(guard(action));return false,'item_identity'end,operationState=function()return{generation=4,borrowings={}}end}")
+                        f.T.ActionQueueTidyIntent = lua.eval("{status=function()return false,'helper_changed','transferIfNeeded'end,canKeepReturn=function()return false end}")
+                        cancel = make(f.T, f.state, f.queue, f.byAction, f.itemID, f.now, f.raw)
+                        with self.assertRaisesRegex(LuaError, 'real cancel preview denied operation_dependent'):
+                            cancel(f.target, whole)
+                        diagnostic = f.stats.diagnostics[1].value
+                        self.assertTrue(diagnostic.matchesNative)
+                        self.assertFalse(diagnostic.intrinsicWaiver)
+                        self.assertEqual('item_identity', diagnostic.intrinsicReason)
+                        self.assertEqual('native-test', diagnostic.contract.provider)
+                        self.assertEqual('helper_changed', diagnostic.tidy.reason)
+                        self.assertEqual('transferIfNeeded', diagnostic.tidy.details)
+                        self.assertEqual((0, 0), (f.stats.presses, f.stats.releases))
 
     def test_keep_return_requires_real_panel_and_no_late_native_return(self):
         changes = {

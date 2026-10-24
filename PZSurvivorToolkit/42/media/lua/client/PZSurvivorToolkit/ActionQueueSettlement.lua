@@ -924,12 +924,12 @@ local function returnWaiverCandidate(action, guard)
         or action.Type ~= "ISInventoryTransferAction" or not action.allowMissingItems
         or not policy or type(policy.matchesNative) ~= "function" or not policy.matchesNative(action)
         or type(guard) ~= "function" or not queued(queue, action)
-        or getSpecificPlayer(record.character:getPlayerNum()) ~= record.character then return end
+        or getSpecificPlayer(record.character:getPlayerNum()) ~= record.character then return nil, "operation" end
     local inventory = record.character:getInventory()
     local item = action.item
     if not item or action.srcContainer ~= inventory or action.destContainer == inventory
         or item:getContainer() ~= inventory or inventory:getItemById(item:getID()) ~= item
-        or item:getIsCraftingConsumed() then return end
+        or item:getIsCraftingConsumed() then return nil, "item_identity" end
     local found, foundScope
     for _, binding in ipairs(record.borrowings) do
         local candidate, scope = binding.candidate, binding.scope
@@ -941,19 +941,20 @@ local function returnWaiverCandidate(action, guard)
                     or candidate.phase ~= "active" or candidate.ambiguous or not candidate.step
                     or candidate.step.state ~= "earned" or candidate.returning or candidate.plannedReturn
                     or sharedBorrowing(scope, candidate) or candidate.source ~= action.destContainer
-                    or candidate.destination ~= inventory then return end
+                    or candidate.destination ~= inventory then return nil, "borrowing_state" end
                 found, foundScope = candidate, scope
             end
         end
     end
-    if not found then return end
+    if not found then return nil, "borrowing_missing" end
     local ok, valid = pcall(guard, action, {id = found.id, fullType = found.fullType})
-    if not ok or valid ~= true then return end
+    if not ok or valid ~= true then return nil, "native_guard" end
     return found, foundScope, record
 end
 
 function Settlement.canWaivePendingReturn(action, guard)
-    return returnWaiverCandidate(action, guard) ~= nil
+    local candidate, detail = returnWaiverCandidate(action, guard)
+    return candidate ~= nil, not candidate and detail or nil
 end
 
 function Settlement.pendingReturnWaiver(action, guard)

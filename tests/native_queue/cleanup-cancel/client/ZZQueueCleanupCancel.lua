@@ -209,6 +209,41 @@ local function panelCancel(action,whole)
  local row=assert(target(whole),'real cancel target missing');local x,y=list:cancelX()+12,list:topOfItem(row.index)+row.height/2
  assert(list:rowUnderMouse(x,y)==row,'real cancel hit test differs')
  local preview=T.ActionQueuePolicy.previewCancel(queue(),row.item,whole)
+ if preview.reason~=nil then
+  local selected=row.item;local q=queue()
+  local function read(callback)local ok,value=pcall(callback);return ok and value or false end
+  local function scalar(value)
+   local kind=type(value)
+   if kind=='string'or kind=='boolean'or kind=='number'and value==value and math.abs(value)<math.huge then return value end
+   return false
+  end
+  local inventory=read(function()return selected.character:getInventory()end)
+  local live=read(function()return inventory:getItemById(selected.item:getID())end)
+  local function item(value)
+   if not value then return false end
+   return{ref=tostring(value),id=read(function()return value:getID()end),fullType=read(function()return value:getFullType()end),
+    container=read(function()return tostring(value:getContainer())end),inRoot=read(function()return value:getContainer()==inventory end)}
+  end
+  local contract=read(function()return T.ActionQueuePolicy.inspect(selected)end)
+  local statusOK,status,reason,details=pcall(function()return T.ActionQueueTidyIntent.status(selected)end)
+  local intrinsicOK,intrinsic,intrinsicReason=pcall(function()return T.ActionQueueSettlement.canWaivePendingReturn(selected,function()return true end)end)
+  local group=selected.queueList and selected.queueList[1];local member=group and group.items and group.items[1]
+  raw('CANCEL_DENIED',{at=now(),reason=preview.reason,header=whole,actionRef=byAction[selected].actionRef,type=selected.Type,
+   contract={cancelOperation=contract and scalar(contract.cancelOperation)or false,cancelWaiting=contract and scalar(contract.cancelWaiting)or false,
+    callbacksSafe=contract and scalar(contract.callbacksSafe)or false,provider=contract and scalar(contract.provider)or false},
+   matchesNative=read(function()return T.ActionQueuePolicy.matchesNative(selected)==true end),
+   intrinsicWaiver=intrinsicOK and intrinsic==true,intrinsicReason=intrinsicOK and scalar(intrinsicReason)or tostring(intrinsic),
+   tidy={statusOK=statusOK,status=scalar(status),reason=scalar(reason),details=scalar(details),
+    canKeepReturn=read(function()return T.ActionQueueTidyIntent.canKeepReturn(selected)==true end)},
+   actionItem=item(selected.item),liveItem=item(live),liveEqualsAction=live~=false and live==selected.item,
+   returnDestinationMatchesPickup=prep~=nil and selected.destContainer==prep.srcContainer,
+   group1=item(member),group1EqualsAction=member~=nil and member==selected.item,groups=selected.queueList and #selected.queueList or false,
+   operationState=read(function()return T.ActionQueueSettlement.operationState(selected)end),
+   started=selected.started==true,hasNative=selected.action~=nil,nativeRef=selected.action and tostring(selected.action)or false,
+   current=selected==q.current,first=selected==q.queue[1],generation=q.toolkitOperationGeneration or 0,
+   currentType=q.current and q.current.Type or false,currentNative=q.current and q.current.action~=nil or false,
+   stopPending=q.toolkitCancel~=nil,groupStopPending=q.toolkitGroupCancel~=nil})
+ end
  assert(preview.reason==nil,'real cancel preview denied '..tostring(preview.reason))
  local beforeBody=queue().current;local beforeNative=beforeBody and beforeBody.action
  local evidence={source='ActionQueuePanel.List',input='programmatic-press-release',header=whole,target=byAction[row.item].sequence,
@@ -334,7 +369,7 @@ Events.OnTick.Add(function()
  end)
  if not ok then
   local diagnostic=state and snapshot()or false
-  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),client=diagnostic,resolve=resolveLast or false,prepared=ids or false,records=records or{}})
+  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),boundary=cancelEvidence or false,client=diagnostic,resolve=resolveLast or false,prepared=ids or false,records=records or{}})
   print('[QUEUE_TEST] FAIL cleanup-cancel '..tostring(problem));done=true
  end
 end)

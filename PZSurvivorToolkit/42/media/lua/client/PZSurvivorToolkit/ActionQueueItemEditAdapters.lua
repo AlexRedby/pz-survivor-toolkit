@@ -357,6 +357,21 @@ local function singleton(value)
     return true
 end
 Adapters.weightInspectionSafe=Weights.factoryFree
+-- Host item transactions preserve queue member IDs while authority replication
+-- can replace the carried Java instance. This proves binding only: callers still
+-- own all source, pending, effect and capacity checks. Never rewrite native lists.
+function Adapters.matchesTransferMember(action,member)
+    local item=action and action.item
+    if not instanceof(item,"InventoryItem") or not instanceof(member,"InventoryItem") then return false end
+    if member==item then return true end
+    if not isClient() or not action.character or type(action.character.getInventory)~="function"
+        or type(member.getContainer)~="function" or type(member.getID)~="function"
+        or type(member.getFullType)~="function" then return false end
+    local inventory=action.character:getInventory()
+    return inventory~=nil and action.srcContainer==inventory and member:getContainer()==nil
+        and member:getID()==item:getID() and member:getFullType()==item:getFullType()
+        and item:getContainer()==inventory and inventory:getItemById(item:getID())==item
+end
 function Adapters.transfer(action)
     if not pending(action,transfer) or not leaf(action.item,action.character) or action.srcContainer==action.destContainer
         then return end
@@ -377,7 +392,7 @@ function Adapters.transfer(action)
     end
     local groups=action.queueList
     if not singleton(groups) or type(groups[1])~="table" or getmetatable(groups[1])
-        or not singleton(groups[1].items) or groups[1].items[1]~=action.item
+        or not singleton(groups[1].items) or not Adapters.matchesTransferMember(action,groups[1].items[1])
         or groups[1].type~=action.item:getFullType() or not finite(groups[1].time) or groups[1].time~=action.maxTime
         or action.allowMissingItems~=nil and type(action.allowMissingItems)~="boolean" then return end
     for key in pairs(groups[1]) do if key~="items" and key~="time" and key~="type" then return end end

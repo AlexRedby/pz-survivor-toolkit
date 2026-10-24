@@ -68,7 +68,11 @@ local function keptReturn(player,value,action)
         or resolve(player,retained.item)~=action.item then return false end
     local groups=action.queueList
     if type(groups)~='table' or #groups~=1 or type(groups[1].items)~='table'
-        or #groups[1].items~=1 or groups[1].items[1]~=action.item then return false end
+        or #groups[1].items~=1 then return false end
+    local member=groups[1].items[1]
+    local adapters=PZSurvivorToolkit.ActionQueueItemEditAdapters
+    if member~=action.item and not (adapters and type(adapters.matchesTransferMember)=='function'
+        and adapters.matchesTransferMember(action,member)) then return false end
     local destination=retained.destination
     if retained.owner then
         local holder=player:getInventory():getItemById(retained.owner.id)

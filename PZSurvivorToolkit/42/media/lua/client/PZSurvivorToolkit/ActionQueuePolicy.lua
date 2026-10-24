@@ -1414,7 +1414,9 @@ pendingReturnGuard = function(action, reference)
     if type(groups[1]) ~= "table" or type(groups[1].items) ~= "table" then return false end
     count = 0
     for index, item in pairs(groups[1].items) do
-        if index ~= 1 or item ~= action.item then return false end
+        if index ~= 1 or item ~= action.item and not (ItemEditAdapters
+            and type(ItemEditAdapters.matchesTransferMember) == "function"
+            and ItemEditAdapters.matchesTransferMember(action, item)) then return false end
         count = count + 1
     end
     return count == 1
