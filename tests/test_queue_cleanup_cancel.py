@@ -499,6 +499,74 @@ class CleanupCancelChecks(unittest.TestCase):
             (root / 'server-launch.log').write_text('\n'.join(server[:-1]))
             self.assertTrue(a.verify(root, selection, {})['issues'])
 
+    def test_actual_panel_helper_uses_reason_only_preview_before_press_release(self):
+        from lupa.lua51 import LuaRuntime, LuaError
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        source = (Path(__file__).resolve().parent / 'native_queue/cleanup-cancel/client/ZZQueueCleanupCancel.lua').read_text()
+        helper = source[source.index('local function panelCancel(action,whole)'):source.index('local function cancelAtBoundary()')]
+        make = lua.execute('return function(T,state,queue,byAction,itemID,now)' + helper + ';return panelCancel end')
+        fixture = lua.execute(r"""
+            return function(whole,reason)
+                local token={};local native={};local body={toolkitQueueOperation=token,action=native,item={id=77}}
+                local returning={toolkitQueueOperation=token,item=body.item}
+                local q={current=body,queue={body,returning}}
+                function q:indexOf(action)for i,value in ipairs(self.queue)do if value==action then return i end end;return -1 end
+                local stats={presses=0,releases=0,removed=false}
+                local T={ActionQueuePanel={},ActionQueuePolicy={}}
+                function T.ActionQueuePolicy.previewCancel(actual,action,group)
+                    assert(actual==q and group==whole and action==(whole and body or returning))
+                    -- Match the actual presentation API: no `allowed` member.
+                    return{reason=reason,blocker=false,resource=false}
+                end
+                function T.ActionQueuePanel:new()
+                    local panel={expanded={}}
+                    local header={header=true,item=body,operation=token,index=1,height=32}
+                    local child={item=returning,operation=token,index=2,height=32}
+                    local list={items={header}};panel.list=list
+                    function panel:initialise()end;function panel:addToUIManager()end;function panel:update()end
+                    function panel:removeFromUIManager()stats.removed=true end
+                    function list:setYScroll()end;function list:isVScrollBarVisible()return false end
+                    function list:topOfItem(index)return(index-1)*32 end;function list:cancelX()return 380 end
+                    function list:rowUnderMouse(x,y)return self.items[math.floor(y/32)+1]end
+                    function list:onMouseDown(x,y)
+                        local row=self:rowUnderMouse(x,y)
+                        if x<22 then self.pressedToggle=row.operation
+                        else
+                            stats.presses=stats.presses+1
+                            if row.header then self.pressedOperation={item=row.item}else self.pressedCancel=row.item end
+                        end
+                        return true
+                    end
+                    function list:onMouseUp(x,y)
+                        if x<22 then panel.expanded[token]=true;self.items={header,child};self.pressedToggle=nil
+                        else
+                            stats.releases=stats.releases+1
+                            if not whole then table.remove(q.queue,2)end
+                            self.pressedOperation,self.pressedCancel=nil,nil
+                        end
+                        return true
+                    end
+                    return panel
+                end
+                return{T=T,state={player={getPlayerNum=function()return 0 end}},queue=function()return q end,
+                    byAction={[body]={sequence=2},[returning]={sequence=3}},itemID=function(action)return action.item.id end,
+                    now=function()return 100 end,target=whole and body or returning,stats=stats}
+            end
+        """)
+        for whole in (False, True):
+            for reason in (None, 'operation_dependent'):
+                with self.subTest(whole=whole, reason=reason):
+                    f = fixture(whole, reason)
+                    cancel = make(f.T, f.state, f.queue, f.byAction, f.itemID, f.now)
+                    if reason is None:
+                        evidence = cancel(f.target, whole)
+                        self.assertTrue(evidence.previewAllowed and evidence.pressed and evidence.released)
+                        self.assertEqual((1, 1, True), (f.stats.presses, f.stats.releases, f.stats.removed))
+                    else:
+                        with self.assertRaisesRegex(LuaError, 'real cancel preview denied operation_dependent'):
+                            cancel(f.target, whole)
+                        self.assertEqual((0, 0), (f.stats.presses, f.stats.releases), 'denied presentation must never dispatch a cancel gesture')
+
     def test_keep_return_requires_real_panel_and_no_late_native_return(self):
         changes = {
             'fake API cancellation': lambda r: r['boundary']['ui'].update(source='ActionQueue.cancel'),

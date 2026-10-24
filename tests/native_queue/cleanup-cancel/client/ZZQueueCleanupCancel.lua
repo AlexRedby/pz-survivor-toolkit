@@ -209,10 +209,10 @@ local function panelCancel(action,whole)
  local row=assert(target(whole),'real cancel target missing');local x,y=list:cancelX()+12,list:topOfItem(row.index)+row.height/2
  assert(list:rowUnderMouse(x,y)==row,'real cancel hit test differs')
  local preview=T.ActionQueuePolicy.previewCancel(queue(),row.item,whole)
- assert(preview.allowed,'real cancel preview denied '..tostring(preview.reason))
+ assert(preview.reason==nil,'real cancel preview denied '..tostring(preview.reason))
  local beforeBody=queue().current;local beforeNative=beforeBody and beforeBody.action
  local evidence={source='ActionQueuePanel.List',input='programmatic-press-release',header=whole,target=byAction[row.item].sequence,
-  actionRef=tostring(row.item),item=itemID(row.item),previewAllowed=preview.allowed,x=x,y=y,at=now()}
+  actionRef=tostring(row.item),item=itemID(row.item),previewAllowed=preview.reason==nil,x=x,y=y,at=now()}
  evidence.pressed=list:onMouseDown(x,y)==true
  evidence.pressCaptured=whole and list.pressedOperation and list.pressedOperation.item==row.item or not whole and list.pressedCancel==row.item
  assert(evidence.pressed and evidence.pressCaptured,'real cancel press did not capture its exact target')
