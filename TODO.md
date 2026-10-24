@@ -1,6 +1,7 @@
 # Retained-item transfer and indicator verification
 
-- [ ] Complete the updated `item-retention/trunk` scenario in isolated macOS B42.21 EN/RU native and CleanUI views, then check the full selected pack. Verify the final child-gutter lock placement, exact authoritative IDs/retained flags for two manually moved items and their return, automatic distribution exclusion and single-item transfer/release. Source-backed regressions pass, including the Kahlua regression with global `next` absent. The first live attempt exposed that unsupported call (now removed); later attempts could not find a clear truck spawn, so retention's bounded fixture search now extends to 48 tiles with its six-tile clearance preserved. The final prepared run `/tmp/pz-retained-multi-host-ui-05` could not launch because another exclusive native run held the desktop slot. Full-pack preparation also cannot resolve `PZToolkitJavaPatches`. These are outstanding live verification gates, not a successful Host result.
+- [ ] Prepare a fresh `item-retention/trunk` run from current main in isolated macOS B42.21 EN/RU native and CleanUI views when the desktop test slot is available. Verify the final child-gutter lock placement, exact authoritative IDs/retained flags for two manually moved items and their return, automatic distribution exclusion and single-item transfer/release. Require completed functional receipts and inspect the screenshots.
+- [ ] Resolve the full selected pack's `PZToolkitJavaPatches` input and repeat the scenario with that pack. Keep current source-backed checks distinct from the outstanding live Host gate.
 
 # Vehicle entry and exit roof clipping
 
