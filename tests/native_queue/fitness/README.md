@@ -133,6 +133,10 @@ new case requires an unchanged selected constructor window and client removal
 strictly after that native deadline, while preserving real authoritative workout
 effects and measuring its body duration separately. Existing cases retain their
 original duration assertions.
+The native get-up callback can advance to the already-queued reader before
+appending the workout. This is a recorded native ordering difference, not a
+separate fixture front reader. It consumes part of the unchanged constructor
+window; it cannot satisfy Toolkit's workout/restoration-before-reader contract.
 
 The focused `active-cancel-restore`, `pickup-cancel-restore` and
 `placement-cancel-restore` cases start with an
