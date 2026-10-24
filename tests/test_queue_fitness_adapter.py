@@ -548,6 +548,16 @@ class FitnessAdapterTests(unittest.TestCase):
         lua=LuaRuntime()
         lua.execute("""
             package.preload['TimedActions/ISQueueActionsAction']=function()return {}end
+            package.preload['PZSurvivorToolkit/ActionQueueOperations']=function()
+             operationsDependencyLoads=(operationsDependencyLoads or 0)+1
+             local operations={expandCommand=function()error('observer must not expand commands')end,
+              runWith=function()error('observer must not execute commands')end,
+              adoptCommandLifecycle=function(phase,previous,replacement)
+               assert(phase=='start'and type(previous)=='function'and ISQueueActionsAction.start==replacement)
+               return true
+              end}
+             PZSurvivorToolkit.ActionQueueOperations=operations;return operations
+            end
             ISQueueActionsAction={start=function()end};ISDropWorldItemAction={}
             queueEnabled=false;PZSurvivorToolkit={Settings={actionQueue=function()return queueEnabled end}}
             ISTimedActionQueue={queues={}};isClient=function()return false end;isServer=function()return false end
@@ -562,6 +572,7 @@ class FitnessAdapterTests(unittest.TestCase):
         """)
         lua.globals().T=lua.globals().PZSurvivorToolkit
         lua.execute((ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua').read_text())
+        lua.execute('assert(operationsDependencyLoads==1)')
         lua.execute(source[start:end])
         lua.execute("""
             local lifecycle=T.ActionQueueLifecycle
@@ -1247,6 +1258,16 @@ class FitnessAdapterTests(unittest.TestCase):
             package.preload['QueueFitnessObservation']=function()return observer end
             package.preload['QueueTestSelection']=function()return selection end
             package.preload['TimedActions/ISQueueActionsAction']=function()return {}end
+            package.preload['PZSurvivorToolkit/ActionQueueOperations']=function()
+             operationsDependencyLoads=(operationsDependencyLoads or 0)+1
+             local operations={expandCommand=function()error('observer must not expand commands')end,
+              runWith=function()error('observer must not execute commands')end,
+              adoptCommandLifecycle=function(phase,previous,replacement)
+               assert(phase=='start'and type(previous)=='function'and ISQueueActionsAction.start==replacement)
+               return true
+              end}
+             PZSurvivorToolkit.ActionQueueOperations=operations;return operations
+            end
             ISQueueActionsAction={start=function()end};ISInventoryTransferAction={}
             isClient=function()return true end;isServer=function()return false end;getTimestampMs=function()return 1000 end
             PZSurvivorToolkit={Settings={actionQueue=function()return false end}}
@@ -1307,6 +1328,7 @@ class FitnessAdapterTests(unittest.TestCase):
             F=fixture;O=observer;T=PZSurvivorToolkit;command={};case=function()return state.case end
         """)
         lua.execute((ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua').read_text())
+        lua.execute('assert(operationsDependencyLoads==1)')
         source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
         start=source.index('local function sampleDurationStop(action)')
         end=source.index("),'fitness native reader boundary observer unavailable')",start)+len("),'fitness native reader boundary observer unavailable')")
