@@ -31,6 +31,10 @@ if reverse then
 end
 local out = Vector3f.new()
 local lampOrigins = require "PZSurvivorToolkit/VehicleLampOrigins"
+local sides = {
+    {front="HeadlightLeft", rear="HeadlightRearLeft", frontKey="frontLeft", rearKey="rearLeft", sign=1},
+    {front="HeadlightRight", rear="HeadlightRearRight", frontKey="frontRight", rearKey="rearRight", sign=-1},
+}
 
 function L.configureReverse()
     if not reverse then return end
@@ -42,8 +46,8 @@ end
 -- Numeric centres of the actual lamp faces, extracted from the current FBX
 -- and shader's separate left/right lamp mask zones. Loaded() already scales
 -- the script extents and model offset; getWorldPos does not scale them again.
-function L.lampOrigin(vehicle, id)
-    local script = vehicle:getScript()
+function L.lampOrigin(vehicle, id, script)
+    script = script or vehicle:getScript()
     local model = script:getModel()
     local origins = model and lampOrigins[model:getFile()]
     local anchor = origins and origins[id]
@@ -62,7 +66,8 @@ end
 function L.shapeFront(vehicle)
     if not shape:getValue() then return end
     local high = NepHBO7.getModData(vehicle).highBeamsOn == true
-    for _, id in ipairs({"HeadlightLeft", "HeadlightRight"}) do
+    for _, side in ipairs(sides) do
+        local id = side.front
         local part = vehicle:getPartById(id)
         local light = part and part:getLight()
         local _, _, _, x, z = L.lampOrigin(vehicle, id)
@@ -134,14 +139,14 @@ local function lamp(vehicle, id)
     return item and item:getCondition() > 0 and light and light:getActive() and part or nil
 end
 
-local function put(state, key, vehicle, x, z, radius, r, g, b)
+local function put(state, registered, key, vehicle, x, z, radius, r, g, b)
     vehicle:getWorldPos(x, 0, z, out)
     local wx, wy, wz = math.floor(out:x()), math.floor(out:y()), math.floor(vehicle:getZ())
     local entry = state.lights[key]
     -- JNI registers position/radius once, so moving an existing Java object is
     -- insufficient. Remove OUR object and register a new source on tile changes.
     if entry and (entry.x ~= wx or entry.y ~= wy or entry.z ~= wz or entry.radius ~= radius
-            or not state.cell:getLamppostPositions():contains(entry.source)) then
+            or not registered:contains(entry.source)) then
         state.cell:removeLamppost(entry.source); state.lights[key] = nil; entry = nil
     end
     if not entry then
@@ -155,12 +160,34 @@ local function put(state, key, vehicle, x, z, radius, r, g, b)
     entry.keep = true
 end
 
-local function nearby(vehicle)
+-- Local-player positions are one synchronous update snapshot, never a cross-tick cache.
+local function playerPositions()
+    local positions = {}
     for i = 0, getNumActivePlayers() - 1 do
         local p = getSpecificPlayer(i)
-        if p and not p:isDead() and math.abs(p:getZ() - vehicle:getZ()) < 1 then
-            local dx, dy = p:getX() - vehicle:getX(), p:getY() - vehicle:getY()
+        if p and not p:isDead() then
+            positions[#positions + 1] = {x=p:getX(), y=p:getY(), z=p:getZ()}
+        end
+    end
+    return positions
+end
+
+local function nearby(vehicle, positions)
+    if #positions == 0 then return false end
+    local x, y, z = vehicle:getX(), vehicle:getY(), vehicle:getZ()
+    for _, p in ipairs(positions) do
+        if math.abs(p.z - z) < 1 then
+            local dx, dy = p.x - x, p.y - y
             if dx*dx + dy*dy < 2500 then return true end
+        end
+    end
+    return false
+end
+
+local function reversing(vehicle)
+    if reverse and ReverseDriveLights.Client then
+        for _, state in pairs(ReverseDriveLights.Client.players) do
+            if state.vehicle == vehicle then return true end
         end
     end
     return false
@@ -172,42 +199,43 @@ function L.update()
     local cell = getCell()
     if not cell or strength == 0 then L.clear(); return end
     local seen = {}
+    local positions, registered
     local vehicles = cell:getVehicles()
     local iterator = vehicles:iterator()
     while iterator:hasNext() do
         local vehicle = iterator:next()
-        if vehicle:getSquare() and not vehicle:isRemovedFromWorld() and nearby(vehicle)
-                and vehicle:getHeadlightsOn() and vehicle:getBatteryCharge() > 0 then
+        -- Most parked vehicles are unlit; avoid player/position and lamp reads for them.
+        local eligible = vehicle:getHeadlightsOn() and vehicle:getSquare()
+            and not vehicle:isRemovedFromWorld() and vehicle:getBatteryCharge() > 0
+        if eligible then positions = positions or playerPositions() end
+        if eligible and nearby(vehicle, positions) then
+            registered = registered or cell:getLamppostPositions()
             local state = L.states[vehicle]
             if state and state.cell ~= cell then remove(state); state = nil end
             state = state or {cell=cell, lights={}}
             L.states[vehicle] = state; seen[vehicle] = true
             for _, entry in pairs(state.lights) do entry.keep = false end
-            local extents = vehicle:getScript():getExtents()
+            local script = vehicle:getScript()
+            local extents = script:getExtents()
+            local reverseOn = reversing(vehicle)
             -- Loaded script dimensions already include the model scale.
             local halfWidth, halfLength = extents:x() * .4, extents:z() * .5
-            for _, side in ipairs({{"Left", 1}, {"Right", -1}}) do
-                local front = lamp(vehicle, "Headlight" .. side[1])
+            for _, side in ipairs(sides) do
+                local front = lamp(vehicle, side.front)
                 if front then
-                    local x, _, z = L.lampOrigin(vehicle, "Headlight" .. side[1])
-                    put(state, "front" .. side[1], vehicle, x or halfWidth*side[2], z or halfLength,
+                    local x, _, z = L.lampOrigin(vehicle, side.front, script)
+                    put(state, registered, side.frontKey, vehicle, x or halfWidth*side.sign, z or halfLength,
                         4, .16*strength, .152*strength, .128*strength)
                 end
-                local rear = lamp(vehicle, "HeadlightRear" .. side[1])
+                local rear = lamp(vehicle, side.rear)
                 if rear then
-                    local reversing = false
-                    if reverse and ReverseDriveLights.Client then
-                        for _, driverState in pairs(ReverseDriveLights.Client.players) do
-                            if driverState.vehicle == vehicle then reversing = true; break end
-                        end
-                    end
-                    local x, _, z = L.lampOrigin(vehicle, "HeadlightRear" .. side[1])
-                    x, z = x or halfWidth*side[2], z or -halfLength
-                    if reversing then
-                        put(state, "rear" .. side[1], vehicle, x, z,
+                    local x, _, z = L.lampOrigin(vehicle, side.rear, script)
+                    x, z = x or halfWidth*side.sign, z or -halfLength
+                    if reverseOn then
+                        put(state, registered, side.rearKey, vehicle, x, z,
                             3, .08*strength, .08*strength, .072*strength)
                     else
-                        put(state, "rear" .. side[1], vehicle, x, z,
+                        put(state, registered, side.rearKey, vehicle, x, z,
                             2, .035*strength, .005*strength, .003*strength)
                     end
                 end

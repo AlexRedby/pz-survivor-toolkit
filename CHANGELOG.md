@@ -24,6 +24,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.246
+
+- **Performance:** Skip ground discovery and the extra Wishlist search radius when no active goal has a concrete wanted item type. Authoritative list changes and new sessions update this idle gate without scanning membership on every tick.
+- **Performance:** Reuse successful ground-item visibility and highlight checks within one tick when discovery overlaps maintenance. Keep next-tick visibility/ownership reads, movement discovery and dense-pile budgets.
+- **Performance:** Reduce repeated native reads during vehicle-light updates: reject unlit cars before proximity work, read local-player positions once per update, and share each car's script and the live lamp-list reference. Keep the 100 ms cadence, source membership checks and lamp, power, movement and unload cleanup.
+
 ### 0.1.245
 
 - **Exercise:** Put worn and held storage on the ground before exercising instead of carrying its full unequipped weight. Recover the same nearby bags and restore their worn/hand slots afterward, preserving contents and favourite flags. Applies with queue controls enabled or disabled; missing/distant bags and newly occupied worn slots are left alone. Native placement/pickup limits, workout duration, XP and fatigue remain unchanged. Full-pack SP/Host gameplay verification is pending.

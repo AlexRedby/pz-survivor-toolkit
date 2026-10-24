@@ -33,9 +33,12 @@ local function snapshot(revision, extra, error, requestId)
     if extra then lists[#lists + 1] = extra end
     return { lists = lists, recipient = "alice", error = error, requestId = requestId }
 end
+assert(not C.hasWanted(0), "new client state has no wanted types")
 C.receive(0, snapshot(0))
+assert(not C.hasWanted(0), "empty authoritative snapshot has no wanted types")
 assert(C.selected(0).id == "alice")
 C.addItem(0, "Base.Hammer", 2)
+assert(not C.hasWanted(0), "unacknowledged edits cannot enable discovery")
 C.addItem(0, "Base.Nails", 4)
 assert(#sent == 1 and sent[1].revision == 0 and #C.state(0).queue == 1)
 C.receive(0, snapshot(1, nil, nil, sent[1].requestId))
@@ -46,13 +49,54 @@ assert(notices[#notices] == "UI_PZSW_Error_stale_revision", "closed windows stil
 local other = { id = "bob", owner = "bob", revision = 4, members = { alice = true },
     entries = { ["Base.Hammer"] = { amount = 5, done = false }, ["Base.Nails"] = { amount = 9, done = true } } }
 C.receive(0, snapshot(2, other))
-assert(C.isWanted(0, "Base.Hammer") and not C.isWanted(0, "Base.Nails"))
+assert(C.hasWanted(0) and C.isWanted(0, "Base.Hammer") and not C.isWanted(0, "Base.Nails"))
 C.select(0, "bob")
 C.addItem(0, "Base.Hammer", 1)
 C.addItem(0, "Base.Nails", 1)
 local pendingId = C.state(0).pending.requestId
 C.receive(0, snapshot(2, nil, "forbidden", pendingId))
 assert(C.selected(0).id == "alice" and #C.state(0).queue == 0 and not C.isWanted(0, "Base.Hammer"))
+assert(not C.hasWanted(0), "revoking the last shared goal clears membership")
+local completed = snapshot(3)
+completed.lists[1].entries["Base.Hammer"] = {done = true}
+C.receive(0, completed)
+assert(not C.hasWanted(0), "completed goals do not enable world discovery")
+local variants = snapshot(4)
+variants.lists[1].entries["vehicle:empty"] = {done = false, vehicleTypes = {}}
+C.receive(0, variants)
+assert(not C.hasWanted(0), "a goal without concrete types does not enable discovery")
+variants.lists[1].entries["vehicle:empty"].vehicleTypes = {"Base.Tire1", "Base.Tire2"}
+C.receive(0, variants)
+assert(C.hasWanted(0) and C.isWanted(0, "Base.Tire2"), "concrete vehicle variants enable discovery")
+Events.OnMainMenuEnter.fire()
+assert(not C.hasWanted(0), "main menu clears wanted membership")
+C.receive(0, variants)
+Events.OnGameStart.fire()
+assert(not C.hasWanted(0), "game start clears old-session wanted membership")
+do
+    local many = snapshot(5)
+    local types = {}
+    for index = 1, 400 do types[index] = "Mod.Part" .. index end
+    local group = {done = false, vehicleTypes = types}
+    many.lists[1].entries["vehicle:many"] = group
+    local function repeatedReads(expected)
+        local membership, originalPairs = C.state(0).wanted, pairs
+        pairs = function(value)
+            assert(value ~= membership, "hasWanted must not snapshot membership keys on each tick")
+            return originalPairs(value)
+        end
+        for _ = 1, 1000 do assert(C.hasWanted(0) == expected) end
+        pairs = originalPairs
+    end
+    C.receive(0, many)
+    assert(C.isWanted(0, "Mod.Part400"), "large authoritative variant group was populated")
+    repeatedReads(true)
+    group.done = true
+    C.receive(0, many)
+    assert(not C.isWanted(0, "Mod.Part400"))
+    repeatedReads(false)
+end
+C.receive(0, snapshot(2))
 local generation = C.state(0).generation
 Events.OnServerCommand.fire("PZSurvivorWishlist", "snapshot", { recipient = "someone-else", lists = {} })
 assert(C.state(0).generation == generation, "another local player snapshot cannot overwrite this cache")

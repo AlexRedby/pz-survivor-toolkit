@@ -12,7 +12,7 @@ local ITEM_BUDGET = 128
 local SQUARE_SLICE = 16
 local REFRESH_MS = 250
 local tracked, byObject = {}, {}
-local cursor = 1
+local cursor, refreshEpoch = 1, 0
 local scan, previous, nextScanAt = nil, nil, 0
 local lastError
 local clearing = false
@@ -126,6 +126,7 @@ local function refresh(record, context)
         return true
     end)
     if not ok then reportError(valid) end
+    if ok and valid then record.refreshEpoch = refreshEpoch end
     return ok and valid
 end
 
@@ -133,6 +134,9 @@ local function visit(object, context)
     if not object then return end
     local existing = byObject[object]
     if existing then
+        -- Maintenance already read this object in this exact tick. Visibility and
+        -- ownership are still rechecked on the next tick, even without movement.
+        if existing.refreshEpoch == refreshEpoch then return end
         if not refresh(existing, context) then forget(existing.index) end
         return
     end
@@ -238,7 +242,8 @@ local function tick()
     local cell = getCell()
     local normalEnabled = Toolkit.Settings.isEnabled()
     local wishlist = PZSurvivorWishlist
-    local wantedEnabled = wishlist and wishlist.Client and wishlist.Settings and wishlist.Settings.groundEnabled()
+    local wantedEnabled = player and wishlist and wishlist.Client and wishlist.Settings
+        and wishlist.Settings.groundEnabled() and wishlist.Client.hasWanted(player:getPlayerNum())
     if (not normalEnabled and not wantedEnabled) or not player or player:isDead() or not cell then
         if #tracked > 0 or scan or previous then Highlighter.clear() end
         return
@@ -267,6 +272,7 @@ local function tick()
     if moved then scan, nextScanAt = nil, 0 end
     previous = context
     if clearing then return end
+    refreshEpoch = refreshEpoch + 1
     prune(context)
     if not scan and (moved or getTimestampMs() >= nextScanAt) then beginScan(context) end
     if scan then scanTick(context) end
