@@ -24,16 +24,16 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.250
-
-- **Performance:** Avoid duplicate nearby-container discovery after a simultaneous turn and tile change. Defer unused details rows and counts while the loot window is fully hidden and idle; rebuild on reopening while preserving reachable containers, Better Containers aggregates and live transfer/crafting inputs. Build CleanUI container-weight tooltips when the window is shown instead of during hidden discovery.
-- **Performance:** Build filter-menu item snapshots only when needed and skip the extra empty-selection projection. Reuse capacity-bar weight readings for up to 200 ms, invalidating on container changes; transfer capacity checks remain immediate.
-
-### 0.1.249
+### 0.1.251
 
 - **Action queue / Host:** Preserve the independent queue tail when cancelling an in-flight preparation step whose effect the server has already completed. Finish that exact native step before required equipment recovery; explicit movement, stop and reset still cancel normally.
 - **Action queue / cleanup:** Scope the food-mask clothing contract to its own restoration actions so it cannot block bag restoration and borrowed-prop returns after exercising.
 - **Action queue / fitness:** Restore hands, worn bags and borrowed exercise props only after their native preparation effects are confirmed, including grounded storage and its exact native pickup. Wait for Host transactions and exact item replication on normal completion and cancellation; share guarded prop returns so repeated cleanup cannot duplicate a return. Preserve native workout duration, costs, stop behavior and queue-disabled controls.
+
+### 0.1.250
+
+- **Performance:** Avoid duplicate nearby-container discovery after a simultaneous turn and tile change. Defer unused details rows and counts while the loot window is fully hidden and idle; rebuild on reopening while preserving reachable containers, Better Containers aggregates and live transfer/crafting inputs. Build CleanUI container-weight tooltips when the window is shown instead of during hidden discovery.
+- **Performance:** Build filter-menu item snapshots only when needed and skip the extra empty-selection projection. Reuse capacity-bar weight readings for up to 200 ms, invalidating on container changes; transfer capacity checks remain immediate.
 
 ### 0.1.249
 
