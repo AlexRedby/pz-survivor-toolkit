@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.256
+
+- **Action queue:** Share deferred expansion across native, Toolkit and reviewed mod commands. Close the native child-insertion scope before propagating a producer error, so later independent requests cannot be inserted into the failed operation. Preserve already-enqueued children, native error handling, successful empty expansion and existing edit/cleanup contracts.
+
 ### 0.1.255
 
 - **Action queue / Host:** Let an exactly matched, server-completed native action finish its original client callback when the optional queue is disabled. Preserve explicit cancellation, movement, reset and stale-transaction guards; disabling queue controls no longer makes confirmed preparation clear unrelated queued work.
