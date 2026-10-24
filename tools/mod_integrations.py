@@ -34,6 +34,17 @@ CLEAN_PAGES = (
     Source('CleanUIVanillaInventoryPageSource', 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua'),
 )
 INTEGRATIONS = {
+    'VehicleRepairOverhaul': {
+        'owners': ['shared/PZSurvivorToolkit/VehicleGlass.lua',
+                   'shared/000ToolkitVROGlassCompatibility.lua', 'client/000ToolkitVROGlassRecipes.lua'],
+        'option': 'vro_source', 'root': '.',
+        'tests': {'test_vehicle_glass.lua': (
+            Source('VRORecipesSource', 'media/lua/client/VRO_Recipes.lua'),
+            Source('VROPartListsSource', 'media/lua/client/VRO_PartLists.lua'),
+            Source('VROFixingRegistrationSource', 'media/lua/shared/FixingRecipeHandler.lua'),
+            Source('VROScriptFixingsSource', 'media/scripts/vehicles/vehiclesfixing.txt'),
+        )},
+    },
     'CleanUI': {
         'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/PZSurvivorToolkit/InventoryFilter.lua',
                    'client/PZSurvivorToolkit/InventorySearch.lua',

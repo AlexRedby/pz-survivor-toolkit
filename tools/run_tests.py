@@ -178,6 +178,7 @@ def main() -> None:
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
     parser.add_argument("--fridge-source", type=Path, help="Nick's Turn Off Fridges active media/lua directory")
     parser.add_argument("--vva-source", type=Path, help="Vanilla Vehicles Animated effective content root containing media/")
+    parser.add_argument("--vro-source", type=Path, help="Vehicle Repair Overhaul effective content root containing media/")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--oc-stick-source", type=Path, help="organizedCategories_itemStick.lua for Quantity transfer protection checks")
     parser.add_argument("--oc-display-source", type=Path, help="organizedCategories_displayOverride.lua for inventory stack splitting checks")

@@ -30,6 +30,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 - **Inventory:** Replace the compressed Keep marker with a high-contrast lock drawn at up to 16 pixels. Put expanded-child markers in the empty icon gutter so they do not cover condition or fluid values. Use the same lock in the retention menu, with clearer EN/RU wording and a tooltip explaining mass-transfer protection and deliberate manual moves.
 
+### 0.1.248
+
+- **Changed:** Vehicle glass is replacement-only: remove Vehicle Repair Overhaul repairs for windshields, side/rear windows and military glass in both Lua and script-recipe modes. Keep glass removal/installation, other vehicle repairs and metal window armor/frame repairs.
+- **Fixed:** Hide empty Repair submenus for installed and loose vehicle parts when Vehicle Repair Overhaul offers no repairs, including fully broken parts with their repair option disabled. Keep unavailable choices that explain missing materials or skills, and preserve sandbox repair rules.
+
 ### 0.1.247
 
 - **Vehicle occupants:** Keep the character seated while entering or exiting a vehicle, preventing the native chair animation from raising their head and shoulders through visible roofs. Preserve the native animation completion events and 0.625-second duration; vehicle positioning, sounds, cancellation and Host action handling stay with the game.
