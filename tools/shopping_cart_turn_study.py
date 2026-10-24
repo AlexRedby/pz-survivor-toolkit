@@ -140,39 +140,41 @@ def main(args):
     radius = rear.y
     (output/'cart-matrix.csv').write_text(','.join(map(str, geometry['cart'])))
     settings = dict(schema='shopping-turn-study-v1', scope='Offline world-space draft; not an installed or runtime-ready gait.',
-                    degrees=args.degrees, direction=args.direction, step_seconds=.44, degrees_per_step=45,
+                    degrees=args.degrees, direction=args.direction, opening_seconds=.40, closing_seconds=.32, degrees_per_pair=45,
                     pre_seconds=.28, post_seconds=.32, swing_height=.045, swing_window=[.10,.76],
                     rear=list(rear), radius=radius, source_clip='cart_pivot_idle.json', playback_rate=1)
     (output/'study.json').write_text(json.dumps(settings, indent=2)+'\n')
     sign = 1 if args.direction == 'left' else -1
-    count = round(args.degrees/45); step = settings['step_seconds']; pre = settings['pre_seconds']
-    # One final collecting step places the foot that still trails at the final heading.
-    duration = pre + (count+1)*step + settings['post_seconds']
+    count = round(args.degrees/settings['degrees_per_pair'])
+    opening=settings['opening_seconds'];closing=settings['closing_seconds'];pair=opening+closing
+    pre=settings['pre_seconds'];turn_duration=count*pair
+    duration = pre+turn_duration+settings['post_seconds']
     total = round(duration*60)
     def heading(time):
-        u = max(0., min(count*step, time-pre))
-        # Equal total angle with a brief continuous acceleration/deceleration, not a stop per foot.
-        length = count*step; ramp = .12; speed = math.radians(args.degrees)/(length-ramp)
-        if u < ramp: distance = speed*u*u/(2*ramp)
-        elif u > length-ramp: distance = math.radians(args.degrees)-speed*(length-u)**2/(2*ramp)
-        else: distance = speed*(u-ramp/2)
+        u=max(0.,min(turn_duration,time-pre))
+        ramp=.12;speed=math.radians(args.degrees)/(turn_duration-ramp)
+        if u<ramp:distance=speed*u*u/(2*ramp)
+        elif u>turn_duration-ramp:distance=math.radians(args.degrees)-speed*(turn_duration-u)**2/(2*ramp)
+        else:distance=speed*(u-ramp/2)
         return sign*distance
     def world_at(time):
-        rot = Matrix.Rotation(heading(time), 4, 'Z')
-        return Matrix.Translation(rear) @ rot @ Matrix.Translation(-rear)
-    # +X foot leads when the cart nose turns left: the handles travel to the operator's right.
-    leading = 'L' if sign > 0 else 'R'
-    plan = []; previous = {s: m.copy() for s,m in feet0.items()}
-    for i in range(count+1):
-        side = leading if i%2 == 0 else ('R' if leading == 'L' else 'L')
-        target = world_at(pre+min(i+1,count)*step) @ feet0[side]
-        plan.append((side, previous[side].copy(), target, pre+i*step))
-        previous[side] = target
+        rot=Matrix.Rotation(heading(time),4,'Z')
+        return Matrix.Translation(rear)@rot@Matrix.Translation(-rear)
+    # Open the stance, then collect to the SAME heading. Alternating +45-degree
+    # targets swapped the feet: their neutral axle-angle separation is only 28 degrees.
+    leading='L' if sign>0 else 'R';following='R' if leading=='L' else 'L'
+    plan=[];previous={s:m.copy() for s,m in feet0.items()}
+    for i in range(count):
+        target_world=world_at(pre+(i+1)*pair)
+        for side,begin,step in [(leading,pre+i*pair,opening),(following,pre+i*pair+opening,closing)]:
+            target=target_world@feet0[side]
+            plan.append((side,previous[side].copy(),target,begin,step))
+            previous[side]=target
     raw=[]; traces=[]; max_leg_error=0.; min_knee=180.; max_drop=0.
     for frame in range(total+1):
         time=frame/60; feet={s:m.copy() for s,m in feet0.items()}; supports={s:True for s in feet}
         left_weight=.5+((0 if leading == 'L' else 1)-.5)*smooth(time/pre)
-        for i,(side,start,end,begin) in enumerate(plan):
+        for i,(side,start,end,begin,step) in enumerate(plan):
             phase=(time-begin)/step
             if phase<0: break
             u=(phase-.10)/.66; w=smooth(u)
@@ -188,8 +190,8 @@ def main(args):
             supports[side]=not 0<u<1
             transfer=smooth((phase-.76)/.24)
             left_weight=transfer if side=='L' else 1-transfer
-        if time>pre+(count+1)*step:
-            left_weight=left_weight+(.5-left_weight)*smooth((time-pre-(count+1)*step)/settings['post_seconds'])
+        if time>pre+turn_duration:
+            left_weight=left_weight+(.5-left_weight)*smooth((time-pre-turn_duration)/settings['post_seconds'])
         world=world_at(time)
         local=pose(world,feet,left_weight)
         for side in feet:
@@ -224,6 +226,12 @@ def main(args):
     assert max_leg_error<2e-5 and max_foot_error<2e-5 and max_planted_drift<1e-6, (max_leg_error,max_foot_error,max_planted_drift)
     (output/'world-poses.json').write_text(json.dumps(samples,separators=(',',':')))
     (output/'contacts.json').write_text(json.dumps(traces,separators=(',',':')))
+    from cart_turn_clearance import check_clearance
+    from cart_blender_preview import parse_body
+    trousers_source=parse_body((args.game/'media/models_X/Skinned/Clothes/Bob_Trousers.x').read_text(),mesh_name='Bob_Trousers')
+    clearance=check_clearance(samples,trousers_source)
+    (output/'clearance.json').write_text(json.dumps(clearance,indent=2)+'\n')
+    if not clearance['passed']:raise ValueError('Gross leg crossing; see clearance.json')
     scene_path=output/'study.blend';bridge.import_clip(template,samples,scene_path)
     rig=bpy.data.objects['CartClip'];body=build_preview(rig,args.game/'media/models_X/Skinned/MaleBody.x')
     # Hide covered study-body faces beneath the actual native trousers.
@@ -256,7 +264,7 @@ def main(args):
     bpy.ops.mesh.primitive_torus_add(major_radius=.028,minor_radius=.003,location=(rear.x,rear.y,.004))
     bpy.context.object.name='Rear axle pivot marker';bpy.context.object.data.materials.append(material('Pivot',(.94,.48,.08)))
     for side,color in [('L',(.95,.42,.12)),('R',(.12,.65,.93))]:
-        for i,(s,start,end,begin) in enumerate(plan):
+        for i,(s,start,end,begin,step) in enumerate(plan):
             if s!=side:continue
             p=end.translation
             bpy.ops.mesh.primitive_torus_add(major_radius=.022,minor_radius=.0014,location=(p.x,p.y,.002))
@@ -286,7 +294,7 @@ def main(args):
     report=dict(scope=settings['scope'],samples=len(samples),duration_seconds=duration,
                 max_leg_length_error=max_leg_error,max_foot_target_error=max_foot_error,
                 max_planted_drift=max_planted_drift,max_pelvis_lowering=max_drop,min_knee_degrees=min_knee,
-                max_clothing_skin_error=max_skin_error,
+                max_clothing_skin_error=max_skin_error,leg_clearance=clearance,
                 cart_rear_orbit_radius=radius,grip_check=(output/'grip.log').read_text().strip(),
                 limitation='Authored nominal arc only. Not a native gameplay, transition, collision, or Host check.')
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
