@@ -181,10 +181,20 @@ object CartShoppingTest {
                 1e-6f,
                 "rear rolling axle at scale $scale",
             )
+            for (stance in floatArrayOf(-.23f, -.10f, 0f)) {
+                val shifted = Matrix4f(pose).m32(pose.m32() + stance)
+                tires(shifted, "shifted held cart")
+                close(
+                    CartShopping.axle(scale, stance).toFloat(),
+                    -1.5f * at(shifted, rear).z,
+                    1e-6f,
+                    "stance must move the physical steering axle at scale $scale shift $stance",
+                )
+            }
         }
         close(CartShopping.axle(1f).toFloat(), .35949203f, 1e-6f, "native held rear axle")
         for (scale in floatArrayOf(0f, -1f, Float.NaN, Float.POSITIVE_INFINITY)) check(
-            CartShopping.axle(scale) == 0.0,
+            CartShopping.axle(scale) == 0.0 && CartShopping.axle(scale, -.2f) == 0.0,
             "invalid scale cannot create a steering pivot",
         )
     }

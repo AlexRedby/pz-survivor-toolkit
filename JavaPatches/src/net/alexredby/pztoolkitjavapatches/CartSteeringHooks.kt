@@ -461,7 +461,11 @@ internal object CartSteeringHooks {
                             clearanceLean(player).toFloat(),
                             CartLegPace.woodenGaitShift(player),
                         )
-            "SaucedCarts.ShoppingCart" -> CartShopping.axle(player.getPrimaryHandItem().worldScale)
+            "SaucedCarts.ShoppingCart" ->
+                CartShopping.axle(
+                    player.getPrimaryHandItem().worldScale,
+                    CartShoppingStance.shift(player),
+                )
             else -> 0.0
         }
 

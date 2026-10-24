@@ -119,7 +119,7 @@ internal object CartShopping {
             .mul(adjusted, adjusted)
         if (!support(adjusted, 1f)) return false
         transform.set(adjusted)
-        // The actor keeps the native torso/gait; only the arms solve the corrected bar.
+        // Keep the actor's native torso/gait. The stance solve can advance the cart for arm reach.
         delta.identity()
         return true
     }
@@ -169,6 +169,11 @@ internal object CartShopping {
     @JvmStatic
     fun axle(worldScale: Float): Double =
         if (worldScale.isFinite() && worldScale > 0) rearAxle[0] + rearAxle[1] * worldScale else 0.0
+
+    @JvmStatic
+    fun axle(worldScale: Float, stance: Float): Double =
+        if (!worldScale.isFinite() || worldScale <= 0) 0.0
+        else if (stance.isFinite()) axle(worldScale) - 1.5 * stance else axle(worldScale)
 
     @JvmStatic
     fun progress(value: Double, setdown: Boolean): CartTransitionMath.Progress? {

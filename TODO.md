@@ -1,7 +1,3 @@
-# Shopping cart torso posture
-
-- [ ] Reduce the excessive backward torso lean visible during fast shopping-cart turns after the arm-reach correction. Preserve fixed handle contact, native pelvis/legs and the existing rear-axle trajectory; verify the resulting torso/arm pose in moving, stationary-turn and reverse-turn recordings. Current macOS SP evidence is `.codex/investigations/shopping-arms-20261024-final/shopping-current.mp4`; arm reach and all 18 controls phases pass, but this visible torso defect remains.
-
 # Container editor visual states
 
 - [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.
