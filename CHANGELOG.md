@@ -1371,6 +1371,8 @@ Previously named **PZ Network Fix** through 0.1.1.
 
 ## Development tools
 
+- **macOS native tests:** Keep connected sleeping displays available through a sealed, fingerprint-checked private GLFW copy. Default automatic launch routes windows through AeroSpace or uses a transparent sleep-only fallback, then reveals them only after verified workspace recovery. Add explicit desktop-policy CLI flags, separate startup/discovery deadlines and a bounded wake-transition grace; diagnose sandbox GUI access without asking users to wake the display. Real GPU, SP and Host startup checks passed with the physical display asleep; vanilla runtime diagnostics remain visible in reports.
+
 - **Cart action invalidation diagnostics:** Add a selected native world-identity loss/cancellation/retry bank with exact source and action binding, preserved cart/cargo, all-role endpoints and historical terminal replay refusal. Add a composed native signed-byte reuse regression through the production acknowledgement and Lua receiver; keep natural allocator wrap and production migration separate.
 
 - **Initial inventory-entry diagnostics:** Add a separately selected real inventory Push Cart entry to the menu lifetime bank. Join sealed action receipts to canonical native completion, require all-role held endpoints before the first lifetime, and retain the later same-cart release/pickup fences. Repeated inventory return and production/visual qualification remain separate.
