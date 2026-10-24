@@ -1,6 +1,32 @@
 {
   "schema": 1,
   "suites": {
+    "vehicle-diagnostics": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "PZSurvivorToolkit"
+      ],
+      "cases": [
+        {
+          "id": "controls",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        }
+      ]
+    },
     "health": {
       "status": "ready",
       "scenario_actions": {

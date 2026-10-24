@@ -70,7 +70,9 @@ The server owner prepares one copy for everyone. Players receiving it do not nee
 
 ## Vehicle diagnostics
 
-If a vehicle jumps or stops matching other players, open **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics** and enable recording while the problem is happening. No JVM flag or restart is needed for that client. The window shows the actual state; recording stops after ten minutes or 5,000 sampled records and can be started again. The checkbox is not saved between launches. Ask other affected players to record too, and preserve their console/DebugLog files with `[VEHICLE_SYNC]` lines. The separate Host server still needs its own diagnostic startup flag; see the [vehicle trace guide](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs). Recording does not change vehicle behavior.
+If a vehicle jumps or stops matching other players, open **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics**. Enable recording on your client; the Host owner can also enable the separate server recording from the same window. Both switches work during play without Java flags or restarting. Server state is confirmed by a reply; ordinary guests cannot change it. Other affected players enable their own client recording.
+
+Recording continues until manually stopped or the process exits. Files rotate at 5 MiB with four backups (25 MiB per side), under the current profile's `Logs/PZToolkitVehicleTrace/client`, `server` or `sp` folder. The field below each switch shows its exact file path. Preserve the current `vehicle-sync.log` and its `.1` to `.4` backups from all affected sides; the oldest history is discarded during rotation. Samples are no longer duplicated to console/DebugLog. See the [vehicle trace guide](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs) for errors and collection details. Install matching updated Toolkit/Java mods on every side first; that JAR update follows the normal restart/approval procedure.
 
 ## Update the set
 

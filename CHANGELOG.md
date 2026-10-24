@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.254
+
+- Add a separate Host server recording switch beside local vehicle diagnostics. Authenticate the real Host connection, show confirmed server status and file paths, and handle delayed or missing replies without claiming success.
+
 ### 0.1.253
 
 - Add a vehicle-diagnostics window under Toolkit Mod Options with a live recording checkbox and status. Start and stop bounded client logs during play without JVM flags or a restart; the checkbox is not saved between launches.
@@ -1142,6 +1146,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.53
+
+- Replace vehicle-trace time/record cutoffs with continuous UTF-8 file recording, rotating at 5 MiB with four backups per side. Preserve sampled cadence, reuse sampling slots over long sessions, and expose recoverable file errors without duplicating samples to console logs.
 
 ### 0.1.52
 

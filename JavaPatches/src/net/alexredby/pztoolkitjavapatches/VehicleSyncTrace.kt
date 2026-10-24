@@ -4,6 +4,7 @@ import me.zed_0xff.zombie_buddy.Patch
 import se.krka.kahlua.integration.annotations.LuaMethod
 import zombie.characters.IsoPlayer
 import zombie.core.raknet.UdpConnection
+import zombie.network.GameServer
 import zombie.network.packets.vehicle.VehiclePhysicsPacket
 import zombie.vehicles.BaseVehicle
 
@@ -26,9 +27,22 @@ object VehicleSyncTrace {
 
     @JvmStatic
     @Synchronized
+    @LuaMethod(name = "toolkitVehicleTracePath", global = true)
+    fun path(): String = VehicleSyncTraceLogic.path()
+
+    @JvmStatic
+    @LuaMethod(name = "toolkitVehicleTraceCanControl", global = true)
+    fun canControl(player: IsoPlayer?): Boolean =
+        GameServer.server &&
+            player != null &&
+            GameServer.getConnectionFromPlayer(player)?.isCoopHost == true
+
+    @JvmStatic
+    @Synchronized
     fun due(event: String?, car: BaseVehicle?): Boolean = VehicleSyncTraceLogic.due(event, car)
 
     @JvmStatic
+    @Synchronized
     fun log(event: String?, car: BaseVehicle?, detail: String?) {
         VehicleSyncTraceLogic.log(event, car, detail)
     }

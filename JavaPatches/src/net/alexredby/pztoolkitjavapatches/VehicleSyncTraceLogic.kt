@@ -1,6 +1,8 @@
 package net.alexredby.pztoolkitjavapatches
 
-import java.util.HashMap
+import java.nio.file.Path
+import java.util.LinkedHashMap
+import zombie.ZomboidFileSystem
 import zombie.characters.IsoPlayer
 import zombie.core.raknet.UdpConnection
 import zombie.network.GameClient
@@ -18,25 +20,86 @@ internal object VehicleSyncTraceLogic {
                 "zombie/network/packets/vehicle/VehiclePhysicsPacket.class",
                 "c3103be5b9bacad57747f49b94bff441ff6b530315885ed30c93dc05c13da2c4",
             )
-    private val last = HashMap<String, Long>()
+    private val last = LinkedHashMap<String, Long>()
     private var requested = enabled
-    private var started = if (enabled) System.nanoTime() else 0L
-    private var records = 0
+    private var writer: VehicleTraceFile? = null
+    private var failed = false
+    private var outputPath: Path? = null
+    private var pathCacheDir: String? = null
+    private var pathSide: String? = null
 
-    /** All mutable session access uses VehicleSyncTrace's class monitor. */
+    private fun tracePath(): Path {
+        val cacheDir = ZomboidFileSystem.instance.getCacheDir()
+        val side = if (GameServer.server) "server" else if (GameClient.client) "client" else "sp"
+        val cached = outputPath
+        if (cached != null && cacheDir == pathCacheDir && side == pathSide) return cached
+        val target =
+            Path.of(cacheDir)
+                .resolve("Logs/PZToolkitVehicleTrace")
+                .resolve(side)
+                .resolve("vehicle-sync.log")
+                .toAbsolutePath()
+                .normalize()
+        outputPath = target
+        pathCacheDir = cacheDir
+        pathSide = side
+        return target
+    }
+
+    fun path(): String =
+        try {
+            tracePath().toString()
+        } catch (_: Exception) {
+            ""
+        }
+
+    private fun fail(error: Exception) {
+        try {
+            writer?.close()
+        } catch (_: Exception) {}
+        writer = null
+        if (!failed) System.err.println("[VEHICLE_SYNC] error=" + error)
+        failed = true
+    }
+
+    private fun ensureWriter() {
+        if (!requested || !supported || failed) return
+        try {
+            val target = tracePath()
+            if (writer?.path == target) return
+            writer?.close()
+            writer = null
+            writer = VehicleTraceFile(target)
+            writer!!.write(
+                "[VEHICLE_SYNC] t=" + System.currentTimeMillis() + " event=session state=active",
+            )
+            println("[VEHICLE_SYNC] state=active file=$target")
+        } catch (error: Exception) {
+            fail(error)
+        }
+    }
+
+    /** All mutable session and file access uses VehicleSyncTrace's class monitor. */
     fun set(enabled: Boolean): String {
-        if (enabled != requested) {
-            requested = enabled
-            last.clear()
-            records = 0
-            started = if (enabled) System.nanoTime() else 0L
-            if (supported)
-                println(
-                    "[VEHICLE_SYNC] t=" +
-                        System.currentTimeMillis() +
-                        " event=session state=" +
-                        status(),
+        if (!enabled) {
+            val wasRequested = requested
+            requested = false
+            try {
+                writer?.write(
+                    "[VEHICLE_SYNC] t=" + System.currentTimeMillis() + " event=session state=off",
                 )
+                writer?.close()
+            } catch (error: Exception) {
+                fail(error)
+            }
+            writer = null
+            failed = false
+            last.clear()
+            if (wasRequested && supported) println("[VEHICLE_SYNC] state=off file=" + path())
+        } else if (!requested || failed) {
+            requested = true
+            failed = false
+            last.clear()
         }
         return status()
     }
@@ -44,61 +107,70 @@ internal object VehicleSyncTraceLogic {
     fun status(supported: Boolean = this.supported): String {
         if (!supported) return "unsupported"
         if (!requested) return "off"
-        if (records >= 5000 || System.nanoTime() - started >= 600_000_000_000L) return "expired"
-        return "active"
+        ensureWriter()
+        return if (failed) "error" else "active"
     }
 
     @JvmStatic
-    fun due(event: String?, car: BaseVehicle?): Boolean {
+    fun due(event: String?, car: BaseVehicle?, now: Long = System.nanoTime()): Boolean {
         if (car == null || status() != "active") return false
         if (car.getDriver() == null && car.netPlayerId.toInt() == -1) return false
-        val now = System.nanoTime()
         val key = "$event:${car.getId()}"
         val previous = last[key]
         if (previous != null && now - previous < 1_000_000_000L) return false
-        if (previous == null && last.size >= 256) return false
+        if (previous == null && last.size >= 256) {
+            val oldest = last.entries.iterator()
+            if (now - oldest.next().value < 1_000_000_000L) return false
+            oldest.remove()
+        }
+        last.remove(key)
         last[key] = now
-        records++
         return true
     }
 
     @JvmStatic
     fun log(event: String?, car: BaseVehicle?, detail: String?) {
-        val vehicle = car ?: throw NullPointerException()
+        if (status() != "active") return
+        val vehicle = car ?: return
         val driver = vehicle.getDriver()
         val local = if (GameClient.client) IsoPlayer.getInstance() else null
-        println(
-            "[VEHICLE_SYNC] t=" +
-                System.currentTimeMillis() +
-                " side=" +
-                (if (GameServer.server) "server" else if (GameClient.client) "client" else "sp") +
-                " event=" +
-                event +
-                " vehicle=" +
-                vehicle.getId() +
-                " local=" +
-                (if (local == null) -1 else local.getOnlineID().toInt()) +
-                " driver=" +
-                (if (driver == null) -1 else driver.getOnlineID().toInt()) +
-                " owner=" +
-                vehicle.netPlayerId +
-                " auth=" +
-                vehicle.netPlayerAuthorization +
-                " pos=" +
-                vehicle.getX() +
-                "," +
-                vehicle.getY() +
-                "," +
-                vehicle.getZ() +
-                " towing=" +
-                (if (vehicle.getVehicleTowing() == null) -1
-                else vehicle.getVehicleTowing().getId().toInt()) +
-                " towedBy=" +
-                (if (vehicle.getVehicleTowedBy() == null) -1
-                else vehicle.getVehicleTowedBy().getId().toInt()) +
-                " " +
-                detail,
-        )
+        try {
+            writer!!.write(
+                "[VEHICLE_SYNC] t=" +
+                    System.currentTimeMillis() +
+                    " side=" +
+                    (if (GameServer.server) "server"
+                    else if (GameClient.client) "client" else "sp") +
+                    " event=" +
+                    event +
+                    " vehicle=" +
+                    vehicle.getId() +
+                    " local=" +
+                    (if (local == null) -1 else local.getOnlineID().toInt()) +
+                    " driver=" +
+                    (if (driver == null) -1 else driver.getOnlineID().toInt()) +
+                    " owner=" +
+                    vehicle.netPlayerId +
+                    " auth=" +
+                    vehicle.netPlayerAuthorization +
+                    " pos=" +
+                    vehicle.getX() +
+                    "," +
+                    vehicle.getY() +
+                    "," +
+                    vehicle.getZ() +
+                    " towing=" +
+                    (if (vehicle.getVehicleTowing() == null) -1
+                    else vehicle.getVehicleTowing().getId().toInt()) +
+                    " towedBy=" +
+                    (if (vehicle.getVehicleTowedBy() == null) -1
+                    else vehicle.getVehicleTowedBy().getId().toInt()) +
+                    " " +
+                    detail,
+            )
+        } catch (error: Exception) {
+            fail(error)
+        }
     }
 
     @JvmStatic

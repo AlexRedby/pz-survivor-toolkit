@@ -141,4 +141,4 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Vehicle diagnostics controls
 
-- [ ] Inspect the new diagnostics window in isolated macOS B42.21 EN/RU gameplay: open it through Toolkit Mod Options, toggle recording and confirm client DebugLog markers/samples while driving, expiry status and reopening after close. Lua controls and actual ZombieBuddy/Kahlua runtime sessions already pass focused regressions; native window layout and live Host collection remain unverified. The switch controls only the local process; collect the separate Host server log with its startup flag.
+- [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
