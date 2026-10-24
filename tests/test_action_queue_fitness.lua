@@ -185,6 +185,7 @@ local function container(owner)
     function value:isVehicleSeat()return false end
     function value:getCapacityWeight()return #self.items end
     function value:getMaxWeight()return 50 end
+    function value:hasRoomFor(_,item)return self:getCapacityWeight()+item:getWeight()<=self:getMaxWeight() end
     function value:setDrawDirty()end
     return value
 end
@@ -1099,7 +1100,7 @@ removeCurrent(q)
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 assert(not player.worn.BACK and backpack:getWorldItem() and not player.inventory:contains(backpack,true),
     'native queue-disabled preparation left storage in carried inventory')
-q=f.queue(head());fitness:setCurrentExercise(nil)
+q.queue[1]=head();q.current=q.queue[1];fitness:setCurrentExercise(nil)
 equipmentTick() -- No window update: this also covers closing the fitness window.
 local restorationCount=#q.queue
 equipmentTick();window:update()
@@ -1115,7 +1116,7 @@ q=f.queue(head());window=panel('squats',10);assert(window:equipItems())
 window.currentExercice='squats';fitness:setCurrentExercise('squats');removeCurrent(q)
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 currentSquare=setmetatable({x=20,y=20,z=0},{__index=here})
-q=f.queue(head());fitness:setCurrentExercise(nil);equipmentTick();removeCurrent(q)
+q.queue[1]=head();q.current=q.queue[1];fitness:setCurrentExercise(nil);equipmentTick();removeCurrent(q)
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 assert(backpack:getWorldItem() and not player.worn.BACK,'native queue-disabled cleanup teleported distant storage')
 
@@ -1127,6 +1128,107 @@ assert(#q.queue==1 and currentExercise==nil and player.worn.BACK==backpack,
     'native preflight floor-capacity failure unequipped storage or constructed a workout')
 enabled=true
 print('PASS native queue-disabled ground storage, closed-window restoration, distance guards and placement preflight')
+
+-- The source-pinned native producer must restore only the exact prop it really
+-- fetched, even when Host replaces the placed carrier's Java replica.
+for _,mode in ipairs({'sp','host-replica','host-prop-replica','host-wrong-member','held-bag','empty-hands','rejected','no-effect','missing-bag','same-type-bag','moved-prop','generation','cleanup-generation','changed-callback','full-bag','tampered-snapshot','replayed-command','foreign-actor','copied-snapshot','dead-before-return'})do
+ reset();enabled=false;client=mode~='sp'
+ local bag=item('Bag_Schoolbag',nil,'BACK');bag.favorite=true;player.worn.BACK=bag
+ local prop=item('DumbBell',bag.inner);prop.favorite=true
+ local other=item('DumbBell',bag.inner)
+ local originalSecondary=item('Screwdriver');player.secondary=originalSecondary;player.primary=item('Hammer')
+ if mode=='held-bag'then player.worn.BACK=nil;player.primary=bag end
+ if mode=='empty-hands'then player.primary,player.secondary=nil,nil end
+ local handPackets=0;local updateHands=player.updateHandEquips
+ player.updateHandEquips=function()handPackets=handPackets+1 end
+ q=f.queue(head());window=panel('bicepscurl',10)
+ assert(window:equipItems())
+ assert(handPackets==(client and mode~='empty-hands'and 1 or 0) and not player.secondary,'native immediate secondary clear was not synchronized exactly once')
+ player.updateHandEquips=updateHands
+ window.currentExercice='bicepscurl';fitness:setCurrentExercise('bicepscurl');removeCurrent(q)
+ local pickup=assert(q.queue[1]);assert(pickup.Type=='ISInventoryTransferAction' and pickup.item==prop)
+ if mode=='rejected' or mode=='no-effect' then
+  pickup.action=nativeAction();pickup.transactionId=100000;transactions[100000]=mode=='rejected'and'rejected'or'completed'
+  lifecycle.begin(pickup,'perform');lifecycle.finish(pickup,'perform',true)
+  if mode=='no-effect'then bag.inner:Remove(prop);player.inventory:AddItem(prop);removeCurrent(q)end
+ elseif mode=='generation'then q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1
+ elseif mode=='host-prop-replica'or mode=='host-wrong-member'then
+  -- Host updates action.item/root before perform, while its native group retains
+  -- the original detached Java member. No client-side transfer effect is replayed.
+  local original=prop;bag.inner:Remove(original)
+  prop=item('DumbBell');prop.id=original.id;prop.favorite=true;original.source=nil
+  pickup.item=prop;pickup.action=nativeAction();pickup.transactionId=100001;transactions[100001]='completed'
+  if mode=='host-wrong-member'then
+   local foreign=item('DumbBell');player.inventory:Remove(foreign);foreign.source=nil;foreign.id=prop.id
+   pickup.queueList[1].items[1]=foreign
+  end
+  lifecycle.begin(pickup,'perform')
+  table.remove(pickup.queueList,1);pickup.item=original;pickup.transactionId=0
+  lifecycle.finish(pickup,'perform',true);removeCurrent(q)
+  for _,action in ipairs(q.queue)do if action.item==original then action.item=prop end end
+ end
+ for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+ assert(prop:getContainer()==player.inventory and bag:getWorldItem(),'native preparation did not fetch exact prop/place its carrier')
+ if mode=='host-replica'then
+  local world=bag:getWorldItem();local fresh=item('Bag_Schoolbag',floor,'BACK');fresh.id=bag.id;fresh.favorite=bag.favorite
+  floor:Remove(bag);world.getItem=function()return fresh end;fresh.world=world;bag.world=nil
+  bag.inner:Remove(other);fresh.inner:AddItem(other);bag=fresh
+ elseif mode=='missing-bag' or mode=='same-type-bag'then
+  worlds={};floor:Remove(bag);bag.world=nil
+  if mode=='same-type-bag'then local spare=item('Bag_Schoolbag',nil,'BACK');player.worn.BACK=spare end
+ elseif mode=='moved-prop'then player.inventory:Remove(prop);other.source:AddItem(prop)
+ elseif mode=='changed-callback'then prop.changed=true
+ elseif mode=='full-bag'then bag.inner.hasRoomFor=function()return false end end
+ -- Native stop can legitimately advance generation; the already earned pickup
+ -- remains an obligation, without authorizing a second pickup or another prop.
+ q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1
+ fitness:setCurrentExercise(nil)
+ q.queue[1]=head();q.current=q.queue[1]
+ local nativeMatches=policy.matchesNative
+ if mode=='changed-callback'then policy.matchesNative=function()return true end end
+ equipmentTick();local count=#q.queue;equipmentTick();assert(#q.queue==count,'closed window cleanup was queued twice');removeCurrent(q)
+ if mode=='cleanup-generation'then q.toolkitOperationGeneration=q.toolkitOperationGeneration+1 end
+ local returnCount,commands=0,0
+ local alive=player.isDead
+ local specific=getSpecificPlayer
+ local foreign={isDead=function()return false end,getPlayerNum=function()return 9 end,getInventory=function()return container()end}
+ getSpecificPlayer=function(number)if number==9 then return foreign end;return specific(number)end
+ for _=1,30 do
+  local action=q.queue[1];if not action then break end
+  if action.Type=='ISQueueActionsAction'then
+   commands=commands+1
+   if mode=='tampered-snapshot'then
+    assert(commands>1 or type(action.args[1])=='table'and action.args[1].loan==nil and action.args[1].refs==nil,
+     'native cleanup exposed mutable provenance')
+    action.args[1].loan={earned=true};action.args[1].refs={}
+   end
+   if mode=='foreign-actor'then
+    local amount=#q.queue;action.addActionsFunction(foreign,action.args[1])
+    assert(#q.queue==amount,'foreign actor expanded another actor cleanup')
+   end
+   if mode=='copied-snapshot'then action.args[1]={loan={earned=true}}end
+   if mode=='replayed-command'then
+    action.addActionsFunction(player,action.args[1]);local amount=#q.queue
+    action.addActionsFunction(player,action.args[1]);assert(#q.queue==amount,'cleanup command replay queued duplicate work')
+   end
+   if mode=='dead-before-return'and commands==2 then player.isDead=function()return true end end
+  end
+  if action.Type=='ISInventoryTransferAction'and action.srcContainer==player.inventory and action.item==prop then returnCount=returnCount+1 end
+  runCurrent(q)
+ end
+ policy.matchesNative=nativeMatches;player.isDead=alive;getSpecificPlayer=specific
+ local restored=mode=='sp'or mode=='host-replica'or mode=='host-prop-replica'or mode=='held-bag'or mode=='empty-hands'or mode=='tampered-snapshot'or mode=='replayed-command'or mode=='foreign-actor'
+ assert(returnCount==(restored and 1 or 0),'unproved/repeated native prop return: '..mode)
+ if restored then
+  assert(prop:getContainer()==bag.inner and prop:isFavorite()and bag:isFavorite()and (mode=='held-bag'and player.primary==bag or mode~='held-bag'and player.worn.BACK==bag),
+   'native cleanup lost exact prop/carrier/favourites: '..mode)
+  assert(other:getContainer()==bag.inner,'native cleanup selected another same-type prop')
+ end
+ if mode=='missing-bag'or mode=='same-type-bag'then assert(prop:getContainer()==player.inventory,'missing carrier substituted another bag')end
+ if mode=='cleanup-generation'then assert(not player.worn.BACK,'stale cleanup changed newer equipment intent')end
+end
+enabled=true
+print('PASS native disabled Fitness observed pickup/Host hand sync, fresh carrier and failed/stale/missing-source guards')
 
 -- Execute the selected cart equipment/drop wrappers after Fitness captures native callbacks,
 -- exactly as the full mod pack's OnGameStart does. Source pins and the production

@@ -21,7 +21,12 @@
 
 # Exercise ground storage
 
-- [ ] Diagnose queue-disabled full-pack Host Fitness equipment restoration: the exact dumbbell remains in root instead of returning to its recovered source bag (both replicas agree; no item loss), and the server retains the original secondary-hand item at workout start. Require actual native return/equip transactions and exact final IDs. Preserve the native get-up callback ordering difference that runs the already-queued reader before appending the workout; do not relabel it a Toolkit ordering pass.
+- [ ] Once the newly selected Open Jackets, Climb Ladders and New Music sources are available for isolated profiles, repeat the focused Fitness equipment SP/Host checks with the current 62-Mod-ID selection. The equipment restoration evidence in `.codex/investigations/fitness-native-equipment-20261025` uses the earlier 55-Mod-ID pack and does not establish coexistence with those additions.
+
+- [ ] Resolve the remaining queue-disabled Host Fitness get-up/control ordering failure: the native `addGetUpAndThen` appends the workout behind the already queued reader (`tailStart.workouts=0`). Preserve `.codex/investigations/fitness-native-equipment-20261025/host-after03-native` as a failed overall control, despite verified final equipment and a completed exact-ID prop return. Do not weaken the reader-order assertions or report the full paired control as passed.
+
+- [ ] Diagnose the queue-disabled Host placement race preserved in `.codex/investigations/fitness-native-equipment-20261025/host-before01-native`: server completes the bag drop, client resets its queue before native perform and before the late completed receipt; workout/get-up/tail never start. Require exact transaction/Done ordering and retain the original failure separately from equipment restoration.
+
 - [ ] Diagnose the queue-disabled native Fitness constructor timer: a thirty-minute burpees request in the full-pack Host control produced only twenty-six authoritative workout minutes after preparation. Require the complete selected body duration without changing native effects; preserve the failed control separately from the verified Toolkit timer.
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 

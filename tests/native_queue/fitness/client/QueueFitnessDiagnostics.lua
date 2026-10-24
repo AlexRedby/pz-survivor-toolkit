@@ -35,6 +35,15 @@ function D.install(config,context)
    itemType=action.item and action.item:getFullType()or false,source=endpoint(action.srcContainer,player),destination=endpoint(action.destContainer,player),
    transaction=transaction or 0,genericTransaction=action.toolkitNativeTransaction or 0,genericKind=action.toolkitNativeKind or false,
    wireState=wire[action.toolkitNativeTransaction]or false}
+  if action.Type=='ISInventoryTransferAction'then
+   result.itemRef=identity(action.item);result.members={}
+   for _,group in ipairs(action.queueList or {})do
+    for _,item in ipairs(group.items or {})do
+     result.members[#result.members+1]={id=item:getID(),kind=item:getFullType(),ref=identity(item),
+      sameAsAction=item==action.item,container=endpoint(item:getContainer(),player)}
+    end
+   end
+  end
   if type(transaction)=='number'and transaction~=0 and type(isItemTransactionDone)=='function'and type(isItemTransactionRejected)=='function'then
    result.transactionDone=isItemTransactionDone(transaction)==true;result.transactionRejected=isItemTransactionRejected(transaction)==true
   end

@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.259
+
+- **Fixed:** Native Fitness preparation with queue editing disabled now synchronizes its cleared secondary hand in Host and returns a prop borrowed from a placed bag to that exact recovered bag. Restoration requires the observed native pickup and, in Host, its completed item transaction; missing storage or changed bindings cannot select a replacement prop or bag.
+
 ### 0.1.258
 
 - **Action queue:** Cancel a confirmed pending borrowed-item return separately to keep that item carried while its current action continues. Preserve later dependencies and capacity, exact item ownership and other required cleanup; later cancellation and P4 idle restoration do not recreate the deliberately removed return.
