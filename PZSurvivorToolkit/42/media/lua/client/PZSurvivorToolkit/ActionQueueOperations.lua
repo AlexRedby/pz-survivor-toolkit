@@ -158,16 +158,23 @@ local function waitForCompletion(action)
     return record and record.ready and not record.ready(action.character, record.snapshot) or false
 end
 
-local function startCommand(action)
+-- One insertion boundary for native, owned and source-reviewed commands.
+-- Producers retain their own token, validity and callback/cleanup contracts.
+local function expandCommand(action, callback, ...)
     action:beginAddingActions()
-    local results = pack(pcall(Operations.runWith, action.toolkitQueueOperation,
-        action.addActionsFunction, action.character, unpack(action.args)))
+    local results = pack(pcall(callback, ...))
     action:endAddingActions()
-    -- Restore the native insertion boundary even for an unexpected producer
-    -- error; propagate it rather than leaving all future enqueues nested here.
+    -- Native update() clears isAddingActions, but insertion uses _isAddingActions.
+    -- Close through the native method before propagating a producer error.
     if not results[1] then error(results[2], 0) end
-    -- An invalid future target skips its command without clearing unrelated native actions.
+    -- A successful empty expansion must not discard independent queued work.
     action:forceComplete()
+end
+Operations.expandCommand = expandCommand
+
+local function startCommand(action)
+    return expandCommand(action, Operations.runWith, action.toolkitQueueOperation,
+        action.addActionsFunction, action.character, unpack(action.args))
 end
 
 function Operations.command(character, callback, snapshot, options)

@@ -24,9 +24,15 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.256
+### 0.1.257
 
 - **Exercise:** Use continuous game time for queued workout progress and completion, counting Host training from its confirmed server start. Remove the extra whole-minute pause after 100% while retaining the full selected duration and confirmed equipment recovery.
+
+### 0.1.256
+
+- **Action queue:** Share the reconstruction and insertion of interrupted reading/building actions after their existing local-stop or server-cancellation checks. Preserve saved progress, operation ownership and authoritative result guards.
+- **Performance:** Avoid unused queue snapshots for generator commands and unsupported medical producers; reuse the ordered child list when capturing replacement-bandage actions.
+- **Action queue:** Share deferred expansion across native, Toolkit and reviewed mod commands. Close the native child-insertion scope before propagating a producer error, so later independent requests cannot be inserted into the failed operation. Preserve already-enqueued children, native error handling, successful empty expansion and existing edit/cleanup contracts.
 
 ### 0.1.255
 

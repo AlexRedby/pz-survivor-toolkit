@@ -343,6 +343,18 @@ ISTimedActionQueue.cancelQueue = function(queue)
     return cancelQueue(queue)
 end
 
+-- Call only after the interruption branch authorizes this exact action and anchor.
+local function insertResumed(queue, action, index, receipt)
+    -- Native constructors restore saved pages; world work prepares tools and validates again.
+    local resumed = action.Type == "ISReadABook" and ISReadABook:new(queue.character, action.item)
+        or Toolkit.ActionQueueWorld.resume(action, receipt)
+    if resumed then
+        resumed.toolkitQueueOperation = action.toolkitQueueOperation
+        if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
+        table.insert(queue.queue, index + 1, resumed)
+    end
+end
+
 local tick = ISTimedActionQueue.tick
 ISTimedActionQueue.tick = function(queue)
     -- Walking may continue native inventory actions. Keep their completed callback
@@ -404,13 +416,7 @@ ISTimedActionQueue.tick = function(queue)
             local index = resumeAfter and queue:indexOf(resumeAfter)
             if state == "canceled" and index and index > 1
                 and (action.Type ~= "ISReadABook" or stoppable(action)) then
-                local resumed = action.Type == "ISReadABook" and ISReadABook:new(queue.character, action.item)
-                    or Toolkit.ActionQueueWorld.resume(action, wait.acknowledgement)
-                if resumed then
-                    resumed.toolkitQueueOperation = action.toolkitQueueOperation
-                    if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
-                    table.insert(queue.queue, index + 1, resumed)
-                end
+                insertResumed(queue, action, index, wait.acknowledgement)
             end
             queue:onCompleted(action)
             return
@@ -421,14 +427,7 @@ ISTimedActionQueue.tick = function(queue)
             if stopped then
                 local index = resumeAfter and queue:indexOf(resumeAfter)
                 if index and index > 1 and stoppable(action) then
-                    -- Native constructors restore saved pages; world work prepares tools and validates again.
-                    local resumed = action.Type == "ISReadABook" and ISReadABook:new(queue.character, action.item)
-                        or Toolkit.ActionQueueWorld.resume(action)
-                    if resumed then
-                        resumed.toolkitQueueOperation = action.toolkitQueueOperation
-                        if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
-                        table.insert(queue.queue, index + 1, resumed)
-                    end
+                    insertResumed(queue, action, index)
                 end
                 queue:onCompleted(action)
                 return

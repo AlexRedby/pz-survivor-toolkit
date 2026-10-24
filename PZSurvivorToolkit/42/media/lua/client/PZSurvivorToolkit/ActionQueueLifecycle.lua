@@ -1,5 +1,6 @@
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 require "TimedActions/ISQueueActionsAction"
+require "PZSurvivorToolkit/ActionQueueOperations"
 local Toolkit = PZSurvivorToolkit
 local Lifecycle = {}
 Toolkit.ActionQueueLifecycle = Lifecycle
@@ -245,16 +246,11 @@ if getFilenameOfClosure then
     nativeCommand = ok and type(filename) == "string" and filename:match("([^/\\]+)$") == "ISQueueActionsAction.lua"
 end
 local operations = Toolkit.ActionQueueOperations
+local expandCommand = operations and operations.expandCommand
 ISQueueActionsAction.start = function(action)
     if not nativeCommand or not Toolkit.Settings.actionQueue() then return commandStart(action) end
-    action:beginAddingActions()
-    if operations then
-        operations.runWith(action.toolkitQueueOperation, action.addActionsFunction, action.character, unpack(action.args))
-    else
-        action.addActionsFunction(action.character, unpack(action.args))
-    end
-    action:endAddingActions()
-    action:forceComplete()
+    return expandCommand(action, operations.runWith, action.toolkitQueueOperation,
+        action.addActionsFunction, action.character, unpack(action.args))
 end
 if operations then operations.adoptCommandLifecycle("start", commandStart, ISQueueActionsAction.start) end
 
