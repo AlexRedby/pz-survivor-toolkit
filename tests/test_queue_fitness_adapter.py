@@ -1153,6 +1153,90 @@ class FitnessAdapterTests(unittest.TestCase):
                         else assert(#sent==1)end
                     """)
 
+    def test_prepared_refresh_uses_exact_live_replicas_without_reinitializing_or_forcing_state(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for initial fixture readiness checks')
+        lua=LuaRuntime()
+        lua.execute("""
+            package.preload['QueueFitnessObservation']=function()return {}end
+            now=0;bookWrites=0;clinicalWrites=0;opened=0;logs={};preparedInitialized=false
+            CharacterStat={ENDURANCE='endurance',FATIGUE='fatigue'}
+            local types={front='Base.BookCarpentry1',tail='Base.BookFirstAid1',bag='Base.Bag_Schoolbag',
+             hammer='Base.Torch',screwdriver='Base.Screwdriver',dumbbell='Base.DumbBell'}
+            ids={case='pickup-cancel-restore',items={front=10,tail=11,bag=12,hammer=13,screwdriver=14,dumbbell=15}}
+            function replicas()
+             local items={}
+             for name,id in pairs(ids.items)do
+              local value={id=id,kind=types[name],activated=name=='hammer',favorite=name=='bag'}
+              function value:getID()return self.id end;function value:getFullType()return self.kind end
+              function value:getContainer()return root end
+              function value:isActivated()return self.activated end;function value:isFavorite()return self.favorite end
+              function value:getCurrentUses()return 100 end;function value:getMaxUses()return 100 end
+              function value:canBeEquipped()return 'Back'end;function value:getNumberOfPages()return 200 end
+              function value:setAlreadyReadPages()bookWrites=bookWrites+1 end
+              items[id]=value
+             end
+             return items
+            end
+            live=replicas();root={getItemById=function(_,id)return live[id]end}
+            local stats={set=function()clinicalWrites=clinicalWrites+1 end}
+            player={getInventory=function()return root end,getPrimaryHandItem=function()return primary end,
+             getSecondaryHandItem=function()return secondary end,getWornItem=function()return worn end,
+             getStats=function()return stats end,setAlreadyReadPages=function()bookWrites=bookWrites+1 end,
+             getFitness=function()return {getCurrentExe=function()return nil end}end,
+             getCharacterActions=function()return {size=function()return 0 end}end}
+            getPlayer=function()return player end;getTimestampMs=function()return now end;since=0
+            q={queue={}};ISTimedActionQueue={queues={[player]=q},getTimedActionQueue=function()error('diagnostic must not allocate a queue')end}
+            case=function()return ids.case end;raw=function(marker,row)logs[#logs+1]={marker=marker,row=row}end
+        """)
+        lua.globals().F=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        start=source.index("  elseif phase=='prepared'then")+len("  elseif phase=='prepared'then")
+        end=source.index("   open();ui.selectedExe",start)
+        lua.execute('function preparedTick()'+source[start:end]+'\nopened=opened+1 end')
+        lua.execute("""
+            -- All IDs arrive before worn/held replication; initialize the books and stats once.
+            preparedTick();assert(opened==0 and bookWrites==4 and clinicalWrites==2 and #logs==1)
+            local stale=state;live=replicas();primary=live[13];secondary=live[14];worn=live[12]
+            assert(not F.prepareReady(stale),'old cached replicas should expose the test defect')
+            live[13].activated=false;now=1000;preparedTick()
+            assert(opened==0 and bookWrites==4 and clinicalWrites==2 and #logs==1,'not-ready tick repeated initialization')
+            now=5000;preparedTick();assert(#logs==2 and logs[2].marker=='PREPARE_WAIT')
+            local diagnostic=F.prepareDiagnostic(player,ids,stale,ids.case,5000)
+            assert(diagnostic.items.hammer.live.id==13 and diagnostic.items.hammer.cached.id==13
+             and not diagnostic.items.hammer.sameReplica and diagnostic.torch.primaryMatchesLive
+             and not diagnostic.torch.liveActivated and diagnostic.torch.cachedActivated
+             and diagnostic.torch.liveUses==100 and diagnostic.bag.liveFavorite and diagnostic.bag.wornMatchesLive)
+            live[13].activated=true;live[12].favorite=false;now=6000;preparedTick();assert(opened==0)
+            live[12].favorite=true;local prop=live[15];live[15]=nil;now=7000;preparedTick();assert(opened==0)
+            live[15]=prop;prop.id=999;now=8000;preparedTick();assert(opened==0,'wrong live ID accepted')
+            prop.id=15;now=9000;preparedTick();assert(opened==1 and state.items.hammer==live[13])
+            assert(bookWrites==4 and clinicalWrites==2,'replica refresh reset book pages or clinical state')
+            assert(F.prepareReady(state)and live[13].activated and live[12].favorite)
+        """)
+        fixture_source=(ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text()
+        start=fixture_source.index(' if isServer()then\n  -- InventoryContainer serialization')
+        end=fixture_source.index('\n return state',start)
+        lua.execute("""
+            isServer=function()return true end;syncCalls=0;seedEvents={}
+            sendAddItemToContainer=function()seedEvents[#seedEvents+1]='add'end
+            sendClothing=function()seedEvents[#seedEvents+1]='clothing'end
+            sendEquip=function(actor)assert(actor==player);seedEvents[#seedEvents+1]='equip'end
+            syncItemActivated=function(actor,item)
+             assert(actor==player and item==state.items.hammer and item:isActivated(),'activation sync changed exact actor/item')
+             assert(seedEvents[#seedEvents]=='equip','native activation sync must follow initial equipment replication')
+             seedEvents[#seedEvents+1]='activation';syncCalls=syncCalls+1
+            end
+        """)
+        lua.execute('function seedServer(id)'+fixture_source[start:end]+'\nend')
+        lua.execute("""
+            seedServer('pickup-cancel-restore');assert(syncCalls==1)
+            seedServer('closed-ui-restore');assert(syncCalls==1,'non-Torch fixture unexpectedly synced activation')
+            assert(bookWrites==4 and clinicalWrites==2 and F.prepareReady(state))
+        """)
+
     def test_menu_readiness_waits_for_cached_moodle_without_changing_stats_or_enabling_button(self):
         try:
             from lupa import LuaRuntime

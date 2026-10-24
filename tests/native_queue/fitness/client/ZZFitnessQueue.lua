@@ -13,7 +13,7 @@ local API,Ops=T.ActionQueue,T.ActionQueueOperations
 local state,authority,previous,ids,receipt,mutation,command,ui,front,tail,requests,seen,ack,progressSeen,menuGate
 local started,done,phase,index,failed,since,quiet,idle=false,false,'prepare',1,0,0,nil,0
 local peerCase,peerBook,peerComplete,actor,stopReached,returnSeen,recoverySeen,recoveryActions
-local ready,setupSince=false,0
+local ready,setupSince,preparedInitialized,prepareLogged=false,0,false,nil
 local peersReady,peersReceipt,isolationAuthority,isolationFinalAuthority=false,nil,nil,nil
 local function case()return config.cases[index]end
 local function minutes()return case()=='burpees-30'and 30 or 10 end
@@ -397,19 +397,24 @@ Events.OnTick.Add(function()
   if phase=='prepare'then
    if idle<10 or getPlayer():tooDarkToRead()then return end
    phase='prepared';request('Prepare')
-  elseif phase=='prepared'and ids then
-   if not state then
-    state=F.resolve(getPlayer(),ids);if not state then return end
-    -- Initial fixture state is applied once. Cached native Moodles catch up on
-    -- later ticks; never force-enable OK or repeatedly reset clinical values.
+  elseif phase=='prepared'then
+   local cached=state
+   state=ids and F.resolve(getPlayer(),ids)or nil
+   if state and not preparedInitialized then
+    -- Initialize once even when later packets replace the exact-ID item replicas.
     for name,pages in pairs({front=6,tail=1})do local book=state.items[name]
      book:setAlreadyReadPages(book:getNumberOfPages()-pages);getPlayer():setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-pages)
     end
     getPlayer():getStats():set(CharacterStat.ENDURANCE,1);getPlayer():getStats():set(CharacterStat.FATIGUE,0)
+    preparedInitialized=true
    end
-   if F.restorationCase(case())and (not state.items.hammer:isActivated()or not state.items.bag:isFavorite())then return end
-   if F.borrowedCase(case())and (getPlayer():getPrimaryHandItem()~=state.items.hammer
-    or getPlayer():getSecondaryHandItem()~=state.items.screwdriver or getPlayer():getWornItem(state.items.bag:canBeEquipped())~=state.items.bag)then return end
+   if not F.prepareReady(state)then
+    local now=getTimestampMs()
+    if not prepareLogged or now-prepareLogged>=5000 then
+     prepareLogged=now;raw('PREPARE_WAIT',F.prepareDiagnostic(getPlayer(),ids,cached,case(),now-since))
+    end
+    return
+   end
    open();ui.selectedExe=exerciseForCase(case())
    ui:selectedNewExercise();menuGate={since=getTimestampMs(),ticks=0};phase='menuReady'
   elseif phase=='menuReady'then
@@ -461,7 +466,7 @@ Events.OnTick.Add(function()
    index=index+1
    if not case()then finish();return end
    ids,receipt,mutation,state,command,front,tail,requests,seen,ack,progressSeen,menuGate=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-   phase='prepare';since=getTimestampMs();idle=0
+   phase='prepare';since=getTimestampMs();idle=0;preparedInitialized=false;prepareLogged=nil
   end
  end)
  if not ok then

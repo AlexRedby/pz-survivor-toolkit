@@ -152,17 +152,50 @@ function F.prepare(player,id,previous)
    if item:getContainer()==player:getInventory()then sendAddItemToContainer(item:getContainer(),item)end
   end
   sendClothing(player,state.items.bag:canBeEquipped(),player:getWornItem(state.items.bag:canBeEquipped()));sendEquip(player)
+  if F.restorationCase(id)then syncItemActivated(player,state.items.hammer)end
  end
  return state
 end
 function F.resolve(player,ids)
  local state={case=ids.case,player=player,ids=ids,items={}}
- for name,id in pairs(ids.items)do
-  local item=player:getInventory():getItemById(id);if not item then return end
+ for name in pairs(types)do
+  local id=ids.items[name];if type(id)~='number'then return end
+  local item=player:getInventory():getItemById(id);if not item or item:getID()~=id then return end
   if item:getFullType()~=(F.restorationCase(ids.case)and name=='hammer'and 'Base.Torch'or types[name])then error('fitness ID/type differs '..name)end
   state.items[name]=item
  end
  return state
+end
+function F.prepareReady(state)
+ if not state then return false end
+ local player,items=state.player,state.items
+ if F.restorationCase(state.case)and (not items.hammer:isActivated()or not items.bag:isFavorite())then return false end
+ return not F.borrowedCase(state.case)or (player:getPrimaryHandItem()==items.hammer
+  and player:getSecondaryHandItem()==items.screwdriver and player:getWornItem(items.bag:canBeEquipped())==items.bag)
+end
+function F.prepareDiagnostic(player,ids,cached,id,elapsed)
+ local function ref(item)return item and {id=item:getID(),kind=item:getFullType()}or false end
+ local result={case=id,elapsedMilliseconds=elapsed,idsReceived=ids~=nil,cachedResolved=cached~=nil,items={},
+  primary=ref(player:getPrimaryHandItem()),secondary=ref(player:getSecondaryHandItem()),
+  currentExercisePresent=player:getFitness():getCurrentExe()~=nil}
+ for name,kind in pairs(types)do
+  local expected=ids and ids.items and ids.items[name];local live=expected and player:getInventory():getItemById(expected)
+  local previous=cached and cached.items[name]
+  result.items[name]={expectedID=expected or false,expectedType=F.restorationCase(id)and name=='hammer'and 'Base.Torch'or kind,
+   live=ref(live),cached=ref(previous),sameReplica=live~=nil and live==previous}
+  if name=='hammer'then
+   result.torch={liveActivated=live and live:isActivated()or false,cachedActivated=previous and previous:isActivated()or false,
+    liveUses=live and F.restorationCase(id)and live:getCurrentUses()or false,liveMaxUses=live and F.restorationCase(id)and live:getMaxUses()or false,
+    primaryMatchesLive=live~=nil and player:getPrimaryHandItem()==live}
+  elseif name=='bag'then
+   local slot=live and live:canBeEquipped()
+   result.bag={liveFavorite=live and live:isFavorite()or false,cachedFavorite=previous and previous:isFavorite()or false,
+    slot=slot or false,worn=ref(slot and player:getWornItem(slot)),wornMatchesLive=live~=nil and player:getWornItem(slot)==live}
+  elseif name=='screwdriver'then result.secondaryMatchesLive=live~=nil and player:getSecondaryHandItem()==live end
+ end
+ local queue=ISTimedActionQueue.queues[player]
+ result.luaQueue=queue and #queue.queue or false;result.nativeActions=player:getCharacterActions():size()
+ return result
 end
 function F.mutate(state)
  if state.case=='missing-dumbbell'then
