@@ -70,6 +70,20 @@ function Queue.cancel(queue, action)
     local decision = Policy.evaluateCancel(queue, action)
     Policy.record("cancel", action, decision)
     if not decision.allowed then return false, decision.reason end
+    if decision.mode == "pending-return" then
+        if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
+        decision = Policy.evaluateCancel(queue, action)
+        if not decision.allowed then return false, decision.reason end
+        if decision.mode ~= "pending-return" or not Policy.commitReturnCancellation(action, decision.returnWaiver) then
+            return false, "unavailable"
+        end
+        -- The proven empty native callback cannot transfer/replay anything.
+        -- Keep the parent token and body live; retire just this exact return.
+        if Batch then Batch.discard(action) end
+        action:forceCancel()
+        queue:removeFromQueue(action)
+        return true
+    end
     if craft(action) then return Queue.cancelOperation(queue, action) end
     -- Policy validates deferred commands as complete operations. Execute that
     -- same edit, so required preparation cannot be detached from its body.

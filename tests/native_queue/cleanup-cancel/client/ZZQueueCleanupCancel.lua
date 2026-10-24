@@ -5,7 +5,7 @@ local T=PZSurvivorToolkit;local native=config.mode=='native'
 local phase,index,since='prepare',1,0
 local entered,ready,done=false,false,false
 local state,ids,baseline,checkpoint,final,records,byAction,cancelEvidence,tailSnapshot,quiet,tail,body,prep
-local bodyTerminal
+local bodyTerminal,idleEvidence
 local resolveLast,resolveSeen=nil,{}
 local authorityStart,baselineRequested
 local serial=0;local tokenSerial=0;local tokenIds={};local classes={};local completedStates={}
@@ -100,6 +100,7 @@ local function observe()
  for _,action in ipairs(queue().queue)do local row=register(action);if row then duration(action,row)end end
  local action=queue().current;local row=register(action)
  if row and action.action and action:isStarted()then
+  if row.started then assert(tostring(action.action)==row.nativeRef,'native action instance changed while running')end
   if not row.started then
    row.started=true;row.startedAt=now();row.nativeRef=tostring(action.action)
    if action==tail then
@@ -155,6 +156,7 @@ Events.OnServerCommand.Add(function(module,command,args)
 end)
 local function enqueue()
  records,byAction,cancelEvidence,tailSnapshot,completedStates={}, {},nil,nil,{}
+ state.keepReturn=case()=='p4-keep-return'and not native
  baseline=snapshot();assert(authorityStart and not F.baselineDifference(state,baseline),'exact local/authority baseline required');raw('BASELINE',baseline)
  assert(not state.player:isTimedActionInstant(),'native actions must keep their duration')
  local run=T.ActionQueueOperations.run
@@ -181,6 +183,45 @@ local function preparationPaid()
  if state.mask then return not state.player:isEquippedClothing(state.mask)end
  return row.transactionDone and not row.transactionRejected and state.borrowed:getContainer()==state.player:getInventory()
 end
+-- Exercise the real Panel projection, hit test and press/release handlers.
+-- Coordinates belong to an isolated real widget; no physical input is issued.
+local function panelCancel(action,whole)
+ local panel=T.ActionQueuePanel:new(80,80,420,600)
+ panel.queue,panel.playerNum=queue(),state.player:getPlayerNum();panel:initialise();panel:addToUIManager();panel:update()
+ local list=panel.list;list:setYScroll(0)
+ assert(not list:isVScrollBarVisible(),'fixture panel must fit its complete operation without a physical scrollbar hit')
+ local function target(header)
+  for _,row in ipairs(list.items)do
+   if row.operation==action.toolkitQueueOperation and (row.header==true)==header and(header or row.item==action)then return row end
+  end
+ end
+ local header=assert(target(true),'real operation header missing')
+ if not whole then
+  local y=list:topOfItem(header.index)+header.height/2
+  assert(list:rowUnderMouse(10,y)==header,'real expand hit test differs')
+  assert(list:onMouseDown(10,y)and list.pressedToggle==header.operation,'real expand press was not captured')
+  assert(list:onMouseUp(10,y)and panel.expanded[header.operation],'real expand release did not expose children')
+ end
+ local row=assert(target(whole),'real cancel target missing');local x,y=list:cancelX()+12,list:topOfItem(row.index)+row.height/2
+ assert(list:rowUnderMouse(x,y)==row,'real cancel hit test differs')
+ local preview=T.ActionQueuePolicy.previewCancel(queue(),row.item,whole)
+ assert(preview.allowed,'real cancel preview denied '..tostring(preview.reason))
+ local beforeBody=queue().current;local beforeNative=beforeBody and beforeBody.action
+ local evidence={source='ActionQueuePanel.List',input='programmatic-press-release',header=whole,target=byAction[row.item].sequence,
+  actionRef=tostring(row.item),item=itemID(row.item),previewAllowed=preview.allowed,x=x,y=y,at=now()}
+ evidence.pressed=list:onMouseDown(x,y)==true
+ evidence.pressCaptured=whole and list.pressedOperation and list.pressedOperation.item==row.item or not whole and list.pressedCancel==row.item
+ assert(evidence.pressed and evidence.pressCaptured,'real cancel press did not capture its exact target')
+ evidence.released=list:onMouseUp(x,y)==true;evidence.feedback=list.cancelFeedback and list.cancelFeedback.text or false
+ evidence.gestureCleared=not list.pressedOperation and not list.pressedCancel
+ evidence.bodyCurrent=queue().current==beforeBody and queue().current.action==beforeNative
+ evidence.returnAbsent=not whole and queue():indexOf(action)==-1 or false
+ evidence.bodyRef=beforeBody and tostring(beforeBody)or false;evidence.nativeRef=beforeNative and tostring(beforeNative)or false
+ assert(evidence.released and evidence.gestureCleared and not evidence.feedback,'real cancel release rejected')
+ if not whole then assert(evidence.bodyCurrent and evidence.returnAbsent,'return click stopped reading or retained the native return')end
+ panel:removeFromUIManager()
+ return evidence
+end
 local function cancelAtBoundary()
  if cancelEvidence or not prep or not body or not preparationPaid()then return end
  local current=queue().current;local currentRow=byAction[current]
@@ -204,17 +245,30 @@ local function cancelAtBoundary()
   cancelEvidence.operationState=operation
  end
  if not native then
-  local decision=T.ActionQueuePolicy.evaluateCancel(queue(),current,true)
-  cancelEvidence.allowed=decision.allowed;cancelEvidence.reason=decision.reason or false
-  assert(decision.allowed,'completed native preparation cancellation denied '..tostring(decision.reason))
-  assert(T.ActionQueue.cancelOperation(queue(),current),'public operation cancellation rejected')
+  if state.borrowed then
+   local whole=not state.keepReturn;local target=current
+   if not whole then
+    for _,action in ipairs(queue().queue)do
+     if classify(action)=='cleanup'and action.toolkitQueueOperation==body.toolkitQueueOperation then
+      assert(target==current,'ambiguous pending borrowed return');target=action
+     end
+    end
+    assert(target~=current,'pending borrowed return missing')
+   end
+   cancelEvidence.ui=panelCancel(target,whole);cancelEvidence.allowed=true;cancelEvidence.reason=false
+  else
+   local decision=T.ActionQueuePolicy.evaluateCancel(queue(),current,true)
+   cancelEvidence.allowed=decision.allowed;cancelEvidence.reason=decision.reason or false
+   assert(decision.allowed,'completed native preparation cancellation denied '..tostring(decision.reason))
+   assert(T.ActionQueue.cancelOperation(queue(),current),'public operation cancellation rejected')
+  end
   assert(queue():indexOf(tail)~=-1,'operation cancellation removed independent native tail')
  end
  raw('BOUNDARY',cancelEvidence);phase='checkpoint';request('Checkpoint')
 end
 local function finish()
  local actual=snapshot()
- assert(final.case==case()and F.sameItems(baseline.items,actual.items)and F.sameItems(ids.baseline.items,final.items),'cleanup inventory identity/container conservation failed')
+ assert(final.case==case()and F.sameFinalItems(state,baseline.items,actual.items)and F.sameFinalItems(state,ids.baseline.items,final.items),'cleanup inventory identity/container conservation failed')
  assert(F.restored(state,actual)and F.restored(state,final),'exact native cleanup was not restored on both roles')
  assert(actual.book==ids.pages and final.book==ids.pages,'independent native reader did not complete')
  assert(tailSnapshot and cancelEvidence,'native causal boundary/tail evidence missing')
@@ -223,16 +277,16 @@ local function finish()
   -- Active native Eat is finish-step: it may finish its sole paid portion before cleanup.
   assert(math.abs(actual.food.hunger-expected)<.0001 and math.abs(final.food.hunger-expected)<.0001,'native mask meal duplicated, omitted or changed its portion')
  else
-  local expected=native and ids.borrowedPages or cancelEvidence.before.borrowed.pages
-  assert(bodyTerminal and expected==(native and ids.borrowedPages or ids.borrowedInitial),'borrowed native page boundary evidence missing')
+  local expected=(native or state.keepReturn)and ids.borrowedPages or cancelEvidence.before.borrowed.pages
+  assert(bodyTerminal and expected==((native or state.keepReturn)and ids.borrowedPages or ids.borrowedInitial),'borrowed native page boundary evidence missing')
   for _,value in ipairs({actual.borrowed,final.borrowed,bodyTerminal.borrowed})do
    assert(value.pages==expected and value.characterPages==expected and value.total==ids.borrowedPages,'borrowed paid pages rolled back or replayed')
   end
  end
  emit({event='case',id=case(),status='passed',ids=ids,baseline=baseline,authorityBaseline=authorityStart,checkpoint=checkpoint,
-  boundary=cancelEvidence,records=records,bodyTerminal=bodyTerminal or false,tailSnapshot=tailSnapshot,client=actual,server=final,nativeMethodsUnchanged=true,
+  boundary=cancelEvidence,records=records,bodyTerminal=bodyTerminal or false,tailSnapshot=tailSnapshot,idleEvidence=idleEvidence,client=actual,server=final,nativeMethodsUnchanged=true,
   outcome={cleanupRestored=true,tailCompleted=true,authoritative=true,cancelled=not native,normalNativeControl=native,cleanupBeforeTail=F.ownedCleanupBeforeTail(state,tailSnapshot),originalEquipmentBeforeTail=F.restored(state,tailSnapshot)}})
- index=index+1;state=nil;ids=nil;checkpoint=nil;final=nil;tail=nil;body=nil;prep=nil;quiet=nil;bodyTerminal=nil;resolveLast=nil;resolveSeen={};authorityStart=nil;baselineRequested=nil;since=now();phase='prepare'
+ index=index+1;state=nil;ids=nil;checkpoint=nil;final=nil;tail=nil;body=nil;prep=nil;quiet=nil;bodyTerminal=nil;idleEvidence=nil;resolveLast=nil;resolveSeen={};authorityStart=nil;baselineRequested=nil;since=now();phase='prepare'
  if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
 end
 Events.OnGameStart.Add(function()entered=true;since=now()end)
@@ -264,10 +318,14 @@ Events.OnTick.Add(function()
    enqueue()
   elseif phase=='running'then cancelAtBoundary()
   elseif phase=='checkpoint'and checkpoint then phase='drain'
-  elseif phase=='drain'and empty()then
+  elseif phase=='drain'then
+   if not empty()then quiet=nil;return end
    local actual=snapshot()
    if not F.restored(state,actual)or actual.book~=ids.pages then quiet=nil;return end
-   quiet=quiet or now();if now()-quiet>=1500 then phase='verify';request('Verify')end
+   quiet=quiet or now();if now()-quiet>=1500 then
+    idleEvidence={case=case(),since=quiet,at=now(),empty=empty(),snapshot=actual};raw('P4_IDLE',idleEvidence)
+    phase='verify';request('Verify')
+   end
   elseif phase=='verify'and final then finish()end
  end)
  if not ok then

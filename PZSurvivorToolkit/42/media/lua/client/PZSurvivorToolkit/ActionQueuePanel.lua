@@ -26,6 +26,18 @@ local function cancelDecision(queue, action, whole)
     return {allowed = reason == nil, reason = reason}
 end
 
+local function cancelsOperation(row)
+    return row.header or Toolkit.ActionQueue.isCraftPlanAction(row.item)
+        or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)
+end
+
+local function cancelRejected(list, row, reason)
+    list.cancelFeedback = {item = row.item, operation = row.operation, header = row.header,
+        text = getText("UI_PZSurvivorToolkit_queue_" .. (reason or "unavailable")),
+        at = getTimestampMs and getTimestampMs()}
+    list.previewText = nil
+end
+
 -- Keep only short-lived display text, never a permission, resource or snapshot.
 -- The clock refreshes hints for external state changes without repeating their
 -- dependency analysis at render frequency. Press/release always evaluate live.
@@ -79,21 +91,26 @@ end
 
 function List:onMouseDown(x, y)
     self:clearGesture()
+    self.cancelFeedback = nil
     local row = self:rowUnderMouse(x, y)
     if not row then return end
     if row.header and x < 22 then
         self.pressedToggle = row.operation
     elseif x >= self:cancelX() then
-        if row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)) then
+        if cancelsOperation(row) then
             local reason, first, last = Toolkit.ActionQueue.cancelOperationReason(self.parent.queue, row.item)
             if not reason then
                 self.pressedOperation = {item = row.item, operation = row.operation, members = {}}
                 for i = first, last do
                     table.insert(self.pressedOperation.members, self.parent.queue.queue[i])
                 end
+            else
+                cancelRejected(self, row, reason)
             end
-        elseif not Toolkit.ActionQueue.cancelReason(self.parent.queue, row.item) then
-            self.pressedCancel = row.item
+        else
+            local reason = Toolkit.ActionQueue.cancelReason(self.parent.queue, row.item)
+            if not reason then self.pressedCancel = row.item
+            else cancelRejected(self, row, reason) end
         end
     else
         ISScrollingListBox.onMouseDown(self, x, y)
@@ -121,12 +138,14 @@ function List:onMouseUp(x, y)
     if row and row.header and self.pressedToggle == row.operation and x < 22 then
         self.parent.expanded[row.operation] = not self.parent.expanded[row.operation] or nil
         self.parent:update()
-    elseif row and (row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)))
+    elseif row and cancelsOperation(row)
         and self.pressedOperation and self.pressedOperation.item == row.item
         and self.pressedOperation.operation == row.operation and x >= self:cancelX() then
-        Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
+        local accepted, reason = Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
+        if not accepted then cancelRejected(self, row, reason) end
     elseif row and not row.header and self.pressedCancel == row.item and x >= self:cancelX() then
-        Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
+        local accepted, reason = Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
+        if not accepted then cancelRejected(self, row, reason) end
     elseif row and self.dragging then
         Toolkit.ActionQueue.move(self.parent.queue, self.dragAction, row.item,
             y > self:topOfItem(row.index) + row.height / 2)
@@ -298,12 +317,12 @@ function Panel.drawRow(list, y, row, alt)
     list:clearStencilRect()
     list:repaintStencilRect(textX, top, right - textX, clipHeight)
     local reason
-    local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item))
+    local operationCancel = cancelsOperation(row)
     local cancelResult = hover and not list.dragging and preview(list, "cancel", operationCancel and row.item or action, nil, nil, operationCancel)
     reason = cancelResult and cancelResult.reason
     list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
     list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
-        reason and 0.2 or 1, 1, 1, 1)
+        cancelResult and (reason and 0.2 or 1) or 0.55, 1, 1, 1)
     local hint = toggleHover and (list.parent.expanded[row.operation] and (batch and "collapse_batch_tip" or "collapse_tip")
         or (batch and "expand_batch_tip" or "expand_tip"))
         or (hover and (reason or (operationCancel and "cancel_operation_tip" or "cancel_tip")) or (moveReason or "drag_tip"))
@@ -313,6 +332,15 @@ function Panel.drawRow(list, y, row, alt)
     local hintResult = hovered and (hover and cancelResult or moveResult)
     local decisionDetails = hintResult and hintResult.details
     if decisionDetails then row.tooltip = row.tooltip .. " <LINE> " .. decisionDetails end
+    local feedback = list.cancelFeedback
+    local now = getTimestampMs and getTimestampMs()
+    if feedback and feedback.at and now and (now < feedback.at or now - feedback.at >= 2500) then
+        list.cancelFeedback = nil
+        feedback = nil
+    end
+    if feedback and feedback.item == row.item and feedback.operation == row.operation and feedback.header == row.header then
+        row.tooltip = row.tooltip .. " <LINE> " .. feedback.text
+    end
     local token = row.operation or action.toolkitQueueOperation
     if token and token.toolkitPriorityReason then
         row.tooltip = row.tooltip .. " <LINE> " .. Toolkit.ActionQueueLabels.priorityWaiting(token.toolkitPriorityReason)
@@ -420,6 +448,7 @@ end
 
 function Panel:clearSnapshots()
     self.list:clearGesture()
+    self.list.cancelFeedback = nil
     self.list:clear()
     self.expanded = {}
 end

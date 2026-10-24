@@ -10,7 +10,7 @@ from queue_checks.adapters import cleanup_cancel as a
 
 
 def evidence(case, mode='toolkit', kind='mp'):
-    enabled = mode == 'toolkit'; mask = case == a.CASES[0]
+    enabled = mode == 'toolkit'; mask = case == a.CASES[0]; keep = enabled and case == 'p4-keep-return'
     items = dict(book=1, mask=2, food=3) if mask else dict(book=1, bag=2, borrowed=3, torch=4, secondary=5)
     inventory = [dict(id=id, type='Base.' + name, container='bag:2' if name == 'borrowed' else 'root') for name, id in items.items()]
     base = dict(case=case, items=inventory, book=219, primary=False if mask else 4, secondary=False if mask else 5,
@@ -20,7 +20,12 @@ def evidence(case, mode='toolkit', kind='mp'):
     if not mask: ids.update(borrowedType='Base.BookFirstAid1', borrowedPages=220, borrowedInitial=219)
     final = copy.deepcopy(base); final['book'] = 220
     if mask: final['food']['hunger'] = -.3
-    else: final['borrowed'].update(pages=219 if enabled else 220, characterPages=219 if enabled else 220)
+    else:
+        final['borrowed'].update(pages=219 if enabled and not keep else 220, characterPages=219 if enabled and not keep else 220)
+        if keep:
+            final['borrowedContainer'] = 'root'
+            for entry in final['items']:
+                if entry['id'] == items['borrowed']: entry['container'] = 'root'
     types = ('ISUnequipAction', 'ISEatFoodAction', 'ISWearClothing') if mask else ('ISInventoryTransferAction', 'ISReadABook', 'ISInventoryTransferAction')
     records = []
     def add(role, type, n, at, performed=None, started=True):
@@ -32,7 +37,7 @@ def evidence(case, mode='toolkit', kind='mp'):
         if performed: record['performedAt'] = performed
         records.append(record); return record
     prepare = add('prepare', types[0], 1, 1, 10)
-    body = add('body', types[1], 2, 15, 25 if mask or not enabled else None, True)
+    body = add('body', types[1], 2, 15, 25 if mask or not enabled or keep else None, True)
     if not mask: body.update(readStartProgress=.99546, readMaxProgress=.99547)
     cleanup = add('cleanup', types[2], 3, 26, 35)
     tail = add('tail', 'ISReadABook', 4, 40, 80)
@@ -43,8 +48,10 @@ def evidence(case, mode='toolkit', kind='mp'):
                     'effectiveDuration', 'transactionDuration', 'durationAfter'):
             retired.pop(key, None)
         records[2] = retired
-        cleanup.update(sequence=5, token='owned-return', actionRef='action-5', nativeRef='java-5', transaction=5)
-        records.append(cleanup)
+        if not keep:
+            cleanup.update(sequence=5, token='owned-return', actionRef='action-5', nativeRef='java-5', transaction=5)
+            records.append(cleanup)
+        else: cleanup = retired
     receipts = []
     if kind == 'mp':
         for record in (prepare, cleanup):
@@ -60,10 +67,17 @@ def evidence(case, mode='toolkit', kind='mp'):
     if not mask:
         checkpoint['borrowedContainer'] = 'root'; boundary['before'] = copy.deepcopy(checkpoint)
         if enabled: boundary['operationState'] = dict(borrowings=[dict(id=3, fullType='Base.BookFirstAid1', state='active')])
+    if enabled and not mask:
+        target = cleanup if keep else body
+        boundary['ui'] = dict(source='ActionQueuePanel.List', input='programmatic-press-release', header=not keep,
+                              target=target['sequence'], actionRef=target['actionRef'], item=3, previewAllowed=True,
+                              pressed=True, pressCaptured=True, released=True, gestureCleared=True, feedback=False,
+                              x=380, y=80, at=20, bodyCurrent=keep, returnAbsent=keep,
+                              bodyRef=body['actionRef'], nativeRef=body['nativeRef'])
     tail_snapshot = copy.deepcopy(final)
     row = dict(event='case', suite='cleanup-cancel', actor='client1', kind=kind, mode=mode, status='passed', id=case, ids=ids,
                baseline=copy.deepcopy(base), authorityBaseline=copy.deepcopy(base), checkpoint=checkpoint, boundary=boundary,
-               records=records, bodyTerminal=copy.deepcopy(final) if not mask else False, tailSnapshot=tail_snapshot, client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True,
+               records=records, idleEvidence=dict(case=case, since=90, at=1590, empty=True, snapshot=copy.deepcopy(final)), bodyTerminal=copy.deepcopy(final) if not mask else False, tailSnapshot=tail_snapshot, client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True,
                outcome=dict(cleanupRestored=True, tailCompleted=True, authoritative=True, cancelled=enabled,
                             normalNativeControl=not enabled, cleanupBeforeTail=True, originalEquipmentBeforeTail=True))
     selection = dict(suite='cleanup-cancel', cases=a.CASES, kind=kind, mode=mode, languages=['EN'], clients=1, mods=a.MODS,
@@ -428,12 +442,12 @@ class CleanupCancelChecks(unittest.TestCase):
     def test_raw_authority_gate_does_not_trust_emitted_case_alone(self):
         rows = [evidence(case) for case in a.CASES]; selection = rows[0][1]
         setup = dict(event='setup', suite='cleanup-cancel', cases=a.CASES, queueEnabled=True, nativeDurations=True)
-        completed = dict(event='complete', suite='cleanup-cancel', cases=a.CASES, performed=2, skipped=0, failed=0)
+        completed = dict(event='complete', suite='cleanup-cancel', cases=a.CASES, performed=len(a.CASES), skipped=0, failed=0)
         def event(row): return '[QUEUE_CHECK] ' + json.dumps(row)
         def raw(name, value): return a.PREFIX + name + ' ' + json.dumps(value)
         client = [event(setup)]; server = []
         for row, _, receipts in rows:
-            client += [raw('BASELINE', row['baseline']), raw('BOUNDARY', row['boundary']), raw('TAIL_STARTED', row['tailSnapshot']),
+            client += [raw('P4_IDLE', row['idleEvidence']), raw('BASELINE', row['baseline']), raw('BOUNDARY', row['boundary']), raw('TAIL_STARTED', row['tailSnapshot']),
                        *[raw('NATIVE_STATE', r) for r in receipts], event(row)]
             if row['bodyTerminal']: client.append(raw('BODY_SETTLED', row['bodyTerminal']))
             server += [raw('PREPARED', row['ids']), raw('BASELINE_CONFIRMED', row['authorityBaseline']), raw('CHECKPOINT', row['checkpoint']), raw('VERIFY', row['server'])]
@@ -441,7 +455,7 @@ class CleanupCancelChecks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / 'client1-launch.log').write_text('\n'.join(client)); (root / 'server-launch.log').write_text('\n'.join(server))
             self.assertEqual([], a.verify(root, selection, {})['issues'])
-            for marker in ('BOUNDARY', 'TAIL_STARTED', 'BODY_SETTLED'):
+            for marker in ('BOUNDARY', 'TAIL_STARTED', 'BODY_SETTLED', 'P4_IDLE'):
                 damaged = [line for line in client if not line.startswith(a.PREFIX + marker + ' ')]
                 (root / 'client1-launch.log').write_text('\n'.join(damaged))
                 self.assertTrue(a.verify(root, selection, {})['issues'], marker)
@@ -458,6 +472,69 @@ class CleanupCancelChecks(unittest.TestCase):
             self.assertTrue(a.verify(root, selection, {})['issues'])
             (root / 'server-launch.log').write_text('\n'.join(server[:-1]))
             self.assertTrue(a.verify(root, selection, {})['issues'])
+
+    def test_keep_return_requires_real_panel_and_no_late_native_return(self):
+        changes = {
+            'fake API cancellation': lambda r: r['boundary']['ui'].update(source='ActionQueue.cancel'),
+            'no release': lambda r: r['boundary']['ui'].update(released=False),
+            'no captured press': lambda r: r['boundary']['ui'].update(pressCaptured=False),
+            'wrong UI action': lambda r: r['boundary']['ui'].update(actionRef='foreign'),
+            'whole group click': lambda r: r['boundary']['ui'].update(header=True),
+            'stopped active body': lambda r: r['boundary']['ui'].update(bodyCurrent=False),
+            'replaced active native reader': lambda r: r['boundary']['ui'].update(nativeRef='replacement'),
+            'return remained queued': lambda r: r['boundary']['ui'].update(returnAbsent=False),
+            'cancelled body callback': lambda r: r['records'][1].update(finishes=[]),
+            'body incomplete pages': lambda r: r['bodyTerminal']['borrowed'].update(pages=219),
+            'retired return ran': lambda r: r['records'][2].update(started=True, performedAt=30),
+            'revived return': lambda r: r['records'].append(copy.deepcopy(r['records'][2])),
+            'wrong exact book': lambda r: r['records'][1].update(item=999),
+            'duplicate exact book': lambda r: r['client']['items'].append(copy.deepcopy(r['client']['items'][2])),
+            'returned at body completion': lambda r: r['bodyTerminal'].update(borrowedContainer='bag'),
+            'returned after body': lambda r: r['tailSnapshot'].update(borrowedContainer='bag'),
+            'foreign return callback': lambda r: r['records'][2].update(type='ForeignTransfer'),
+            'returned after tail': lambda r: r['idleEvidence']['snapshot'].update(borrowedContainer='bag'),
+            'returned after idle': lambda r: r['server'].update(borrowedContainer='bag'),
+            'late identity container': lambda r: r['server']['items'][2].update(container='bag:2'),
+            'no P4 idle': lambda r: r['idleEvidence'].update(empty=False),
+            'short P4 idle': lambda r: r['idleEvidence'].update(at=1589),
+            'before tail complete': lambda r: r['idleEvidence'].update(since=79, at=1579),
+            'hands unrestored': lambda r: r['server'].update(primary=3),
+        }
+        for kind in ('sp', 'mp'):
+            for name, change in changes.items():
+                row, selection, receipts = evidence('p4-keep-return', kind=kind); change(row)
+                with self.subTest(kind=kind, name=name): self.assertTrue(self.check(row, selection, receipts))
+        row, selection, receipts = evidence('p4-keep-return', mode='native')
+        row['server']['borrowedContainer'] = 'root'
+        self.assertTrue(self.check(row, selection, receipts), 'native-off control must actually return its borrowed book')
+
+    def test_canonical_p4_only_subsets_do_not_repeat_mask(self):
+        _, selection, _ = evidence('p4-keep-return')
+        for cases in (['p4-after-pickup', 'p4-keep-return'], ['p4-after-pickup'], ['p4-keep-return']):
+            selection['cases'] = cases; a.validate(selection)
+        for cases in ([], ['p4-keep-return', 'p4-after-pickup'], ['p4-after-pickup'] * 2, ['unknown']):
+            selection['cases'] = cases
+            with self.subTest(cases=cases), self.assertRaises(ValueError): a.validate(selection)
+
+    def test_p4_subset_has_exact_raw_evidence_without_a_mask_rerun(self):
+        rows = [evidence(case) for case in a.CASES[1:]]; selection = rows[0][1]; selection['cases'] = a.CASES[1:]
+        event = lambda row: '[QUEUE_CHECK] ' + json.dumps(row)
+        raw = lambda name, value: a.PREFIX + name + ' ' + json.dumps(value)
+        client = [event(dict(event='setup', suite='cleanup-cancel', cases=selection['cases'], queueEnabled=True, nativeDurations=True))]
+        server = []
+        for row, _, receipts in rows:
+            client += [raw('BASELINE', row['baseline']), raw('BOUNDARY', row['boundary']), raw('TAIL_STARTED', row['tailSnapshot']),
+                       raw('BODY_SETTLED', row['bodyTerminal']), raw('P4_IDLE', row['idleEvidence']),
+                       *[raw('NATIVE_STATE', receipt) for receipt in receipts], event(row)]
+            server += [raw('PREPARED', row['ids']), raw('BASELINE_CONFIRMED', row['authorityBaseline']),
+                       raw('CHECKPOINT', row['checkpoint']), raw('VERIFY', row['server'])]
+        client += [event(dict(event='complete', suite='cleanup-cancel', cases=selection['cases'], performed=2, skipped=0, failed=0)),
+                   raw('COMPLETE', {'cases': selection['cases']})]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / 'client1-launch.log').write_text('\n'.join(client)); (root / 'server-launch.log').write_text('\n'.join(server))
+            result = a.verify(root, selection, {})
+            self.assertEqual([], result['issues'])
+            self.assertEqual(selection['cases'], [outcome['case'] for outcome in result['outcomes']])
 
     def test_selected_pack_and_native_control_are_explicit(self):
         _, selection, _ = evidence(a.CASES[0]); a.validate(selection)

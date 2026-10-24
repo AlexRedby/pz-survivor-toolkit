@@ -810,7 +810,9 @@ function Settlement.preparePickup(scope, action)
     -- No outbound proof separates two unresolved borrowing episodes. Never let
     -- a late old pickup acquire the new episode merely because its ID matches.
     for _, previous in ipairs(ledger.candidates) do
-        if previous.id == id and previous.phase ~= "completed" then previous.ambiguous, candidate.ambiguous = true, true end
+        if previous.id == id and previous.phase ~= "completed" and previous.phase ~= "waived" then
+            previous.ambiguous, candidate.ambiguous = true, true
+        end
     end
     local record = operation(scope.character, candidate.owner, true)
     if not record then return false end
@@ -904,6 +906,80 @@ pollPickups = function(scope)
 end
 
 function Settlement.poll(scope) pollPickups(scope) end
+
+-- Deliberately keeping a borrowed item cancels one pending native return, not
+-- the body that still uses it. A sealed, revalidated capability retires only the
+-- exact earned loan; its historical ID still fences enqueue-only return hints.
+local returnWaiverMarker = {}
+local function returnWaiverCandidate(action, guard)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local queue, token = record and record.queue, action and action.toolkitQueueOperation
+    local step = record and record.actions[action]
+    local policy = Toolkit.ActionQueuePolicy
+    if not record or not step or record.settlement or token.toolkitCancelled
+        or queue.toolkitCancel or queue.toolkitGroupCancel or not queue.current or queue.queue[1] ~= queue.current
+        or queue.current.character ~= record.character or action == queue.current or action == queue.queue[1]
+        or action.action or action.started or step.started or step.state ~= "pending" or step.required
+        or Settlement.isCleanup(action) or requiredCleanup(action) or step.returning
+        or action.Type ~= "ISInventoryTransferAction" or not action.allowMissingItems
+        or not policy or type(policy.matchesNative) ~= "function" or not policy.matchesNative(action)
+        or type(guard) ~= "function" or not queued(queue, action)
+        or getSpecificPlayer(record.character:getPlayerNum()) ~= record.character then return end
+    local inventory = record.character:getInventory()
+    local item = action.item
+    if not item or action.srcContainer ~= inventory or action.destContainer == inventory
+        or item:getContainer() ~= inventory or inventory:getItemById(item:getID()) ~= item
+        or item:getIsCraftingConsumed() then return end
+    local found, foundScope
+    for _, binding in ipairs(record.borrowings) do
+        local candidate, scope = binding.candidate, binding.scope
+        if sameMember(item, candidate) then
+            -- Even another unresolved episode for this ID prevents choosing by
+            -- iteration order. A completed old loan has no outstanding claim.
+            if candidate.phase ~= "completed" and candidate.phase ~= "waived" then
+                if found or candidate.owner ~= token or not borrowingLive(scope)
+                    or candidate.phase ~= "active" or candidate.ambiguous or not candidate.step
+                    or candidate.step.state ~= "earned" or candidate.returning or candidate.plannedReturn
+                    or sharedBorrowing(scope, candidate) or candidate.source ~= action.destContainer
+                    or candidate.destination ~= inventory then return end
+                found, foundScope = candidate, scope
+            end
+        end
+    end
+    if not found then return end
+    local ok, valid = pcall(guard, action, {id = found.id, fullType = found.fullType})
+    if not ok or valid ~= true then return end
+    return found, foundScope, record
+end
+
+function Settlement.canWaivePendingReturn(action, guard)
+    return returnWaiverCandidate(action, guard) ~= nil
+end
+
+function Settlement.pendingReturnWaiver(action, guard)
+    local candidate, scope, record = returnWaiverCandidate(action, guard)
+    if not candidate then return end
+    local handle = {}
+    local proof = {action = action, candidate = candidate, scope = scope, record = record, guard = guard,
+        item = action.item, source = action.srcContainer, destination = action.destContainer}
+    handle[returnWaiverMarker] = function(value) if value == handle then return proof end end
+    return handle
+end
+
+-- The caller commits immediately before its reviewed empty native forceCancel
+-- and removal. Re-querying after reset, start, identity changes or another stop
+-- cannot turn the old capability into a cleanup exemption.
+function Settlement.waivePendingReturn(handle, action, guard)
+    local seal = type(handle) == "table" and rawget(handle, returnWaiverMarker)
+    local proof = type(seal) == "function" and seal(handle)
+    if not proof or proof.used or proof.action ~= action or proof.guard ~= guard
+        or action.item ~= proof.item or action.srcContainer ~= proof.source
+        or action.destContainer ~= proof.destination then return false end
+    local candidate, scope, record = returnWaiverCandidate(action, guard)
+    if candidate ~= proof.candidate or scope ~= proof.scope or record ~= proof.record then return false end
+    proof.used, candidate.phase = true, "waived"
+    return true
+end
 
 -- Any reviewed native departure fences an unconfirmed borrowing episode,
 -- even when the departure itself has no P4 cleanup record.
