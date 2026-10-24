@@ -1096,6 +1096,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.52
 
+- Fix severely folded shopping-cart arms during movement and turns. Keep the carrying torso above its native pelvis with forward reach to the handle, distribute palm rotation through the forearm, and blend the same posture through pickup/setdown; preserve the cart trajectory and native legs.
 - Correct shopping-cart turning to use the held model's fixed rear wheel axle, including item scale, during forward/reverse travel and stationary turns. Keep the front casters free to follow their own paths and match character steps to the corrected handle arc; wheelbarrow handling is unchanged.
 
 ### 0.1.51

@@ -436,13 +436,30 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         with self.assertRaisesRegex(ValueError, 'cart_scenes'):
             carts.validate(self.selection)
 
-    def test_controls_stage_real_keys_without_geometry_probes(self):
+    def test_controls_stage_real_keys_with_grip_capture_without_geometry_probes(self):
         self.selection['cases'] = ['controls']; self.options.pop('mesh_fbx')
         with patch.object(carts.importlib, 'import_module', side_effect=ModuleNotFoundError('numpy')) as dependency:
             compiler = self.stage()
         dependency.assert_not_called()
-        self.assertEqual(compiler.call_count, 1)
-        self.assertEqual(self.runtime['fixture']['attach'], {'client1': []})
+        self.assertEqual(compiler.call_count, 2)
+        self.assertEqual({Path(source).name for source in compiler.call_args_list[1].args[3]},
+                         {'GripPoseProbe.java', 'AttachWoodenWheelProbe.java'})
+        attaches = self.runtime['fixture']['attach']['client1']
+        self.assertEqual(len(attaches), 1)
+        attachment = attaches[0]
+        self.assertEqual(Path(attachment['jar']), self.output / 'client1/classes/probes/GripPoseProbe.jar')
+        self.assertEqual(attachment['class'], 'AttachWoodenWheelProbe')
+        self.assertEqual(attachment['output'], str(self.output / 'client1'))
+        self.assertEqual(attachment['ready'], '[CART_ADAPTER] PROBE_ATTACH_READY')
+        self.assertTrue((self.output / 'client1/classes/AttachWoodenWheelProbe.class').is_file())
+        with zipfile.ZipFile(attachment['jar']) as jar:
+            self.assertIn(b'Agent-Class: GripPoseProbe', jar.read('META-INF/MANIFEST.MF'))
+            self.assertIn('GripPoseProbe.class', jar.namelist())
+            self.assertNotIn('ClearanceProbe.class', jar.namelist())
+            self.assertNotIn('WoodenWheelNativeProbe.class', jar.namelist())
+        startup = (self.output / 'client1/mods/ActionQueueTest/42/media/lua/client/QueueCartStartup.lua').read_text()
+        self.assertIn("getFileReader('queue-probes-ready.txt',false)", startup)
+        self.assertFalse((self.output / 'client1/Lua/queue-probes-ready.txt').exists())
         self.assertEqual(carts.scene_names('controls'), list(carts.VARIANTS))
         source = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-controls.lua').read_text()
         runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE'])

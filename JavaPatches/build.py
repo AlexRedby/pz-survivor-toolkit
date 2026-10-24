@@ -157,6 +157,7 @@ CHECKS = {'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STA
           'net.alexredby.pztoolkitjavapatches.CartFootprintTest': 'CART_FOOTPRINT_PASS',
           'net.alexredby.pztoolkitjavapatches.CartLegPaceTest': 'CART_LEG_PACE_PASS',
           'net.alexredby.pztoolkitjavapatches.CartGripTest': 'CART_GRIP_PASS',
+          'net.alexredby.pztoolkitjavapatches.CartShoppingGripTest': 'CART_SHOPPING_GRIP_PASS',
           'net.alexredby.pztoolkitjavapatches.CartMetalGripSurfaceChecks': 'CART_METAL_GRIP_SURFACE_PASS',
           'net.alexredby.pztoolkitjavapatches.CartWheelSpinTest': 'CART_WHEEL_SPIN_PASS',
           'net.alexredby.pztoolkitjavapatches.CartWheelWorldTest': 'CART_WHEEL_WORLD_PASS',

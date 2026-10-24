@@ -462,7 +462,7 @@ internal object CartGrip {
         )
             return false
         val clavicle = upper.parent
-        // Both wheelbarrows need bounded shoulder reach; their elbow bend policies remain separate.
+        // Held grips need bounded shoulder reach; each handle keeps its own elbow bend policy.
         if (
             (wood || bodyDelta != null) &&
                 distance > a + b - .01f &&
@@ -577,8 +577,7 @@ internal object CartGrip {
         aim(poses, skeleton, forearm, solved, wrist, goal)
         val adjustment = matrices.get().adjustment
         if (bodyDelta != null) {
-            // Pronation belongs in the forearm, rather than twisting the entire underhand turn at
-            // the wrist.
+            // Distribute palm rotation through the forearm instead of twisting only the wrist.
             val forearmAxis = goal.sub(solved, Vector3f()).normalize()
             val from = pose(poses, forearm.index).transformDirection(Vector3f(0f, 0f, 1f))
             val to = target.transformDirection(Vector3f(0f, 0f, 1f))
@@ -903,6 +902,62 @@ internal object CartGrip {
         )
     }
 
+    // Native Run leans the shoulders over the fixed bar, folding the elbows and wrists.
+    // Reserve forward arm reach by counter-leaning above the native pelvis; never move the cart,
+    // pelvis or walking leg chains to make the hands reach.
+    private fun shoppingPosture(
+        poses: Array<out Matrix4f?>?,
+        actor: SkinningData?,
+        female: Boolean,
+        delta: Matrix4f?,
+        cart: Matrix4f?,
+        weight: Float,
+    ): Boolean {
+        if (weight <= 0f) return true
+        val skeleton = actor ?: return false
+        val spine = skeleton.getBone("Bip01_Spine") ?: return false
+        val pivot = pose(poses, spine.index).getTranslation(Vector3f())
+        var pitch = 0f
+        for (side in arrayOf("L", "R")) {
+            val upper = skeleton.getBone("Bip01_${side}_UpperArm") ?: return false
+            val target = Matrix4f()
+            if (!target("ShoppingCartModel", side == "L", female, delta, cart, target)) return false
+            val shoulder = pose(poses, upper.index).getTranslation(Vector3f()).sub(pivot)
+            val radius = Math.hypot(shoulder.y.toDouble(), shoulder.z.toDouble()).toFloat()
+            if (!radius.isFinite() || radius < .00001f) return false
+            // B42 native gait captures need 0.15 model units ahead of both shoulders to keep
+            // the overhand wrist within 35 degrees, without changing the measured handle contact.
+            val forward = target.m32() + .15f - pivot.z
+            val angle =
+                Math.asin((forward / radius).coerceIn(-1f, 1f).toDouble()) -
+                    Math.atan2(shoulder.z.toDouble(), shoulder.y.toDouble())
+            pitch = maxOf(pitch, angle.toFloat())
+        }
+        if (!pitch.isFinite()) return false
+        if (pitch < .00001f) return true
+        val change =
+            Matrix4f()
+                .translation(pivot)
+                .rotateX(pitch.coerceAtMost(Math.toRadians(70.0).toFloat()) * weight)
+                .translate(-pivot.x, -pivot.y, -pivot.z)
+        val neck = skeleton.getBone("Bip01_Neck")
+        val headShift = neck?.let {
+            val origin = pose(poses, it.index).getTranslation(Vector3f())
+            change.transformPosition(origin, Vector3f()).sub(origin)
+        }
+        for (i in 0 until skeleton.numBones()) {
+            val bone = skeleton.getBoneAt(i)
+            if (i != spine.index && upperBody(bone)) {
+                val current = pose(poses, i)
+                if (neck != null && headShift != null && descendant(bone, neck)) {
+                    // Keep the native gaze as the carrying torso counter-leans beneath the neck.
+                    current.setTranslation(current.getTranslation(Vector3f()).add(headShift))
+                } else change.mul(current, current)
+            }
+        }
+        return true
+    }
+
     @JvmStatic
     fun grip(
         poses: Array<out Matrix4f?>?,
@@ -913,6 +968,8 @@ internal object CartGrip {
         cart: Matrix4f?,
         pressure: Float,
     ): Boolean {
+        if (CartShopping.model(model) && !shoppingPosture(poses, actor, female, delta, cart, 1f))
+            return false
         for (side in arrayOf("L", "R")) {
             val target = matrices.get().target
             if (
@@ -922,8 +979,9 @@ internal object CartGrip {
                         actor,
                         "Bip01_${side}_Hand",
                         target,
-                        if ((model ?: throw NullPointerException()).startsWith("Wheelbarrow")) delta
-                        else null,
+                        // Shopping grips also need a stable elbow plane and forearm pronation.
+                        // Otherwise the native walking swing is corrected entirely at the wrist.
+                        delta,
                         "WheelbarrowWood".equals(model),
                         1f,
                         false,
@@ -931,7 +989,13 @@ internal object CartGrip {
                     )
             )
                 return false
-            closeFingers(poses, actor, side, grasp(female, model), model.startsWith("Wheelbarrow"))
+            closeFingers(
+                poses,
+                actor,
+                side,
+                grasp(female, model),
+                model?.startsWith("Wheelbarrow") == true,
+            )
         }
         return true
     }
@@ -1644,7 +1708,19 @@ internal object CartGrip {
                 !"WheelbarrowMetal".equals(model)
         ) {
             if (!grip(poses, actor, model, female, delta, cart)) return false
-        } else
+        } else {
+            if (
+                CartShopping.model(model) &&
+                    !shoppingPosture(
+                        poses,
+                        actor,
+                        female,
+                        delta,
+                        cart,
+                        CartTransitionMath.smooth(reachWeight.toDouble()).toFloat(),
+                    )
+            )
+                return false
             for (side in arrayOf("L", "R")) {
                 val skeleton = actor ?: throw NullPointerException()
                 val hand = skeleton.getBone("Bip01_${side}_Hand")
@@ -1691,6 +1767,7 @@ internal object CartGrip {
                         pose(poses, i),
                     )
             }
+        }
         return true
     }
 

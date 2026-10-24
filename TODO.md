@@ -1,3 +1,7 @@
+# Shopping cart arm posture
+
+- [ ] Inspect the corrected shopping-cart torso and arms in isolated macOS moving, stationary-turn and reverse-turn recordings. The final native launch stopped before creating a window because no display was awake; the fresh `pz-shopping-arms-final-retry` profile is prepared. Keep this visual gate open until the recording confirms the pose.
+
 # Container editor visual states
 
 - [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.

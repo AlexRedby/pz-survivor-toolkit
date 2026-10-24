@@ -446,6 +446,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
     lifecycle = selection['suite'] == MP and selection['cases'] == ['lease_lifecycle']
     simple = lifecycle or selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'showcase', 'native-e')
+    controls = selection['suite'] == SP and selection['cases'] == ['controls']
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -461,6 +462,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     evidence = sp / 'evidence'
     variant_probes = selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart')
     sp_probes = ('GripPoseProbe', 'ClearanceProbe') if variant_probes else ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')
+    if controls:
+        sp_probes = ('GripPoseProbe',)
     if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') == 'shopping-cart' and selection['cases'] == ['wheel']:
         sp_probes += ('ShoppingWheelProbe',)
     probe_sources = ([mp / 'ClearanceProbe.kt'] if selection['suite'] == MP else
@@ -474,9 +477,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         composed = build / 'ClearanceProbe.java'
         composed.write_text(source_text.replace(anchor, 'private static final boolean FULL_TAIL_BONES = true;'))
         probe_sources = [composed if path == original else path for path in probe_sources]
-    if not manual and not simple:
+    probes = [] if manual or simple and not controls else ['ClearanceProbe'] if selection['suite'] == MP else list(sp_probes)
+    if probes:
         _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
-    probes = [] if manual or simple else ['ClearanceProbe'] if selection['suite'] == MP else list(sp_probes)
     for name in probes:
         _jar(build / (name + '.jar'), build / 'probe-classes', (mp if selection['suite'] == MP else evidence) / (name + '.mf'))
     fixture = runtime.setdefault('fixture', {})
@@ -546,9 +549,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             continue
         classes = Path(spec['classes'])
         if simple:
-            # An empty attachment list releases the existing startup gate without wooden probes.
+            # Simple cases retain the startup gate; controls attach their read-only grip probe.
             fixture['attach'][role] = []
-        if not manual and not simple:
+        if probes:
             shutil.copy2(build / 'probe-classes/AttachWoodenWheelProbe.class', classes / 'AttachWoodenWheelProbe.class')
         for name in probes:
             target = classes / 'probes' / (name + '.jar')
