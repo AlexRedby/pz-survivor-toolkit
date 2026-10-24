@@ -46,7 +46,12 @@ isClient=function()return client end;isServer=function()return false end
 PZSurvivorToolkit.Settings.actionQueue=function()return enabled end
 getTimestampMs=function()return now end
 getCore=function()return {getGameMode=function()return 'Sandbox' end}end
-getGameTime=function()return {getCalender=function()return {getTimeInMillis=function()return now end}end}end
+local quantizedCalendar=false
+local calendarOffset=0
+getGameTime=function()return {
+ getCalender=function()return {getTimeInMillis=function()return (quantizedCalendar and math.floor(now/60000)*60000 or now)+calendarOffset end}end,
+ getNightsSurvived=function()return math.floor(now/86400000)end,
+ getTimeOfDay=function()return (now/3600000+7)%24 end}end
 local tickCallbacks,menuCallbacks={},{}
 Events.OnTick.Add=function(callback)tickCallbacks[#tickCallbacks+1]=callback end
 Events.OnMainMenuEnter={Add=function(callback)menuCallbacks[#menuCallbacks+1]=callback end}
@@ -232,6 +237,9 @@ local policy=f.project('ActionQueuePolicy')
 ISInventoryPaneContextMenu.getContainers=function()return list({})end
 local receipt,preparationReceipts=nil,{}
 PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function(action)return preparationReceipts[action] or receipt end,
+    state=function(action,captured)
+        if captured==preparationReceipts[action] or captured==receipt then return captured.state end
+    end,
     observe=function(action,captured)
         if captured==preparationReceipts[action] or captured==receipt then return captured.state end
     end}
@@ -397,7 +405,7 @@ assert(workout.startMS==now and workout.endMS==now+600000,'workout duration coun
 assert(currentExercise=='squats' and workout.fitnessUI==nil,'native exercise must exist only after preparation and outlive UI')
 now=now+150000
 local progress=assert(fitnessQueue.progress(workout))
-assert(progress.elapsed==2.5 and progress.total==10 and progress.fraction==0.25,'fitness progress did not use elapsed game time')
+assert(math.abs(progress.elapsed-2.5)<.000001 and progress.total==10 and math.abs(progress.fraction-.25)<.000001,'fitness progress did not use elapsed game time')
 now=workout.endMS+60000
 assert(fitnessQueue.progress(workout).fraction==1,'elapsed progress overflowed planned duration')
 local effects=repeats
@@ -845,16 +853,19 @@ assert(not player.worn.BACK and backpack:getContainer()~=player.inventory,'stale
 print('PASS in-flight placement cancellation and storage taken between pickup planning and execution')
 ISTimedActionQueue.onCompleted=nativeCompleted
 
-reset();client=true
+reset();client=true;now=3600000
 pending,q=request('burpees',30);expand(pending,q);workout=reachExercise(q)
 local stopsBefore=nativeStops
 assert(not fitnessQueue.canPreserveStop(workout) and not q.toolkitCancel,'Host stop preserved queue without authoritative started receipt')
 local noReceiptContract=assert(policy.inspect(workout))
 assert(noReceiptContract.interrupt=='finish-step' and noReceiptContract.cancelOperation==false,
     'Host operation allowed managed interruption before server start was acknowledged')
-now=workout.endMS+1
+now=workout.endMS-1
 workout:update()
-assert(nativeStops==stopsBefore+1 and currentExercise==nil,'expired Host workout delayed native stop until started receipt')
+assert(nativeStops==stopsBefore and currentExercise~=nil,'Host workout stopped before its selected duration')
+now=workout.endMS
+workout:update()
+assert(nativeStops==stopsBefore+1 and currentExercise==nil,'Host workout waited an extra calendar minute at its exact deadline')
 assert(player.vars.ExerciseStarted==false and player.vars.ExerciseEnded==true,'expired workout did not use native animation ending')
 local waiting=assert(q.toolkitOutcomeWait)
 assert(q.toolkitCancel==workout and waiting.pendingStart and waiting.generic,'missing started receipt did not hold continuation')
@@ -878,6 +889,70 @@ assert(nativeStops==stopsBefore+1,'acknowledged Host stop bypassed native forceS
 assert(q.toolkitCancel==workout and q.toolkitOutcomeWait.acknowledgement==receipt
     and not q.toolkitOutcomeWait.pendingStart,'acknowledged Host fitness stop lost existing receipt gate')
 print('PASS Host fitness stops immediately, holds late receipts and shows server settlement separately')
+
+for _,network in ipairs({false,true})do
+ for _,boundary in ipairs({'exact','later','movement'})do
+  reset();client=network;now=3600000
+  pending,q=request('burpees',30);expand(pending,q);workout=reachExercise(q)
+  local beforeStops,beforeEffects=nativeStops,repeats
+  local movement=player.pressedMovement
+  if boundary=='movement'then player.pressedMovement=function()return true end end
+  now=workout.endMS+(boundary=='later'and 60000 or 0)
+  workout:update();player.pressedMovement=movement
+  assert(nativeStops==beforeStops+1 and currentExercise==nil,
+   'fitness deadline supplement duplicated or missed the native stop: '..boundary)
+  assert(repeats==beforeEffects,'fitness deadline supplement replayed exercise effects')
+ end
+end
+print('PASS exact calendar deadline, later native deadline and movement stop once in SP and Host')
+
+for _,network in ipairs({false,true})do
+ reset();client=network;now=3630000;quantizedCalendar=true
+ pending,q=request('burpees',30);expand(pending,q);workout=reachExercise(q)
+ local beforeStops=nativeStops;local preciseStart=fitnessQueue.progress(workout).startMS
+ now=workout.endMS;workout:update()
+ assert(nativeStops==beforeStops and currentExercise~=nil,'whole-minute calendar shortened the workout')
+ if not network then assert(fitnessQueue.progress(workout).fraction<1,'bar reached 100 percent before the full continuous duration')end
+ now=preciseStart+1800000-1;workout:update()
+ assert(nativeStops==beforeStops,'continuous workout stopped before selected duration')
+ now=preciseStart+1800000+.01;workout:update()
+ assert(nativeStops==beforeStops+1 and fitnessQueue.progress(workout).fraction==1,'continuous deadline waited another calendar minute')
+ quantizedCalendar=false
+end
+reset();client=true;now=3600000;quantizedCalendar=true
+pending,q=request('burpees',30);expand(pending,q);workout=reachExercise(q)
+assert(fitnessQueue.progress(workout).elapsed==0 and not fitnessQueue.progress(workout).confirmed)
+now=now+15000;receipt={state='started',token='confirmed-clock-origin'};workout:update()
+local confirmedStart=fitnessQueue.progress(workout).startMS
+assert(fitnessQueue.progress(workout).confirmed and fitnessQueue.progress(workout).elapsed==0)
+now=now+60000;workout:update()
+assert(fitnessQueue.progress(workout).startMS==confirmedStart,'repeated receipt observation extended workout')
+stopsBefore=nativeStops;now=confirmedStart+1800000-1;workout:update()
+assert(nativeStops==stopsBefore,'client start counted time before the confirmed server start')
+now=confirmedStart+1800000+.01;workout:update()
+assert(nativeStops==stopsBefore+1,'confirmed workout missed its continuous deadline')
+quantizedCalendar=false
+print('PASS continuous fractional-minute duration and once-only confirmed Host clock origin')
+
+reset();now=3600000
+pending,q=request('burpees',30);expand(pending,q);workout=reachExercise(q)
+stopsBefore=nativeStops;local savedDeadline=workout.endMS
+calendarOffset=2400000;now=now+60000;workout:update();calendarOffset=0
+assert(nativeStops==stopsBefore and workout.endMS==savedDeadline,'stale native calendar preempted continuous workout')
+now=fitnessQueue.progress(workout).endMS+.01;workout:update()
+local stopped=fitnessQueue.progress(workout)
+assert(stopped.stopMS>=stopped.endMS and stopped.stopTimestampMS==now,'actual native stop lacks full continuous duration')
+now=now+1000;workout:forceStop()
+assert(fitnessQueue.progress(workout).stopMS==stopped.stopMS,'repeated stop changed first stop witness')
+reset();now=3600000
+pending,q=request('burpees',30);expand(pending,q);workout=reachExercise(q)
+savedDeadline=workout.endMS
+local metabolic=player.setMetabolicTarget
+player.setMetabolicTarget=function()error('native update fixture failure')end
+local ok,failure=pcall(workout.update,workout);player.setMetabolicTarget=metabolic
+assert(not ok and tostring(failure):find('native update fixture failure',1,true) and workout.endMS==savedDeadline,
+ 'native update failure lost original error or leaked temporary deadline')
+print('PASS native checks retain their deadline and errors while continuous time owns completion')
 
 reset();client=true;receipt={state='started',token='storage-fixture-receipt'}
 backpack=item('Bag_BigHikingBag',nil,'BACK');backpack.favorite=true

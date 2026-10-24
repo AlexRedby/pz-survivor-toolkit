@@ -25,7 +25,7 @@
 
 # Fitness completion verification
 
-- [ ] Run `fitness --cases burpees-30 --kind mp` with the full selected pack in native/toolkit menu Host. Verify actual thirty-minute burpees, prompt native stop, authoritative settlement, restored equipment and the independent reader. Native-source regressions pass and the pack sources are available; the thirty-minute live duration gate remains unverified.
+- [ ] Finish the final `fitness --cases closed-ui-restore,burpees-30 --kind mp --mode toolkit` check with the full selected pack when the native launcher can create an owned GLFW window. The final macOS launch stopped with all online displays asleep, before gameplay. Require the full confirmed continuous duration, independently measured server duration within its observed native frame, prompt native removal, exact terminal acknowledgement, equipment restoration and independent-reader continuation. Preserve the failed native control's shortened constructor window and get-up ordering; its diagnosis remains in Exercise ground storage above. Keep the runner's default desktop policy.
 
 # Nick's Turn Off Fridges selection
 

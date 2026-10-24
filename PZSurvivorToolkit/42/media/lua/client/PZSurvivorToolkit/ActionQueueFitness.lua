@@ -91,6 +91,11 @@ for kind,data in pairs(FitnessExercises.exercisesType) do
 end
 local function enabled() return Toolkit.Settings.actionQueue() end
 local function now() return getGameTime():getCalender():getTimeInMillis() end
+local function workoutClock()
+ local time=getGameTime();local hour=time:getTimeOfDay()
+ -- Match native world age, retaining double precision even in old saves.
+ return (time:getNightsSurvived()*24+(hour>=7 and hour-7 or hour+17))*3600000
+end
 local function identity(item)
  if not item then return false end
  return {id=item:getID(),kind=item:getFullType(),active=item:canBeActivated() and item:isActivated() or false}
@@ -414,17 +419,56 @@ local function preserve(action,pendingStart)
 end
 function Fitness.canPreserveStop(action) return preserve(action) end
 class.start=function(action)
- if validRecord(action) then
+ local record=validRecord(action)
+ if record then
   action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
-  records[action].started=true
+  record.started=true;record.clockStartMS=workoutClock();record.confirmed=not isClient()
  end
  return native.start(action)
 end
 class.forceStop=function(action)
+ local record=validRecord(action)
+ if record then
+  record.stopRequested=true
+  if not record.stopClockMS then record.stopClockMS=workoutClock();record.stopTimestampMS=getTimestampMs() end
+ end
  -- Stop native repetitions immediately. A late started/terminal receipt gates
  -- continuation, never the outgoing native stop request.
  if preserve(action,true) then records[action].stopping=isClient() end
  return native.forceStop(action)
+end
+class.update=function(action)
+ local record=validRecord(action)
+ if record and record.started and not record.confirmed and not record.stopRequested
+  and workoutClock()-record.clockStartMS<record.saved.minutes*60000 then
+  local receipt=Toolkit.ActionQueueAcknowledgements.capture(action)
+  if receipt and Toolkit.ActionQueueAcknowledgements.state(action,receipt)=='started' then
+   -- Client Lua start precedes the server request. Count a full workout from
+   -- the exact confirmed start, once; late stop receipts must never restart it.
+   record.confirmed=true;record.clockStartMS=workoutClock()
+   action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
+  end
+ end
+ local result
+ if record and record.started then
+  -- Keep native input/endurance/metabolic checks, but let the continuous timer
+  -- below own duration. A stale calendar sample must not preempt it either.
+  local deadline=action.endMS;action.endMS=math.huge
+  local ok,value=pcall(native.update,action)
+  action.endMS=deadline
+  if not ok then error(value,0) end
+  result=value
+ else result=native.update(action) end
+ record=validRecord(action)
+ -- The bar and stop request use continuous game time, rather than rounding
+ -- either endpoint to the native calendar's whole-minute steps.
+ if record and record.started and not record.stopRequested
+  and workoutClock()-record.clockStartMS>=record.saved.minutes*60000 then
+  action.character:setVariable('ExerciseStarted',false)
+  action.character:setVariable('ExerciseEnded',true)
+  action:forceStop()
+ end
+ return result
 end
 
 local forceCancel=class.forceCancel
@@ -437,6 +481,7 @@ end
 classes.ISFitnessAction.methods.forceCancel=class.forceCancel
 classes.ISFitnessAction.methods.start=class.start
 classes.ISFitnessAction.methods.forceStop=class.forceStop
+classes.ISFitnessAction.methods.update=class.update
 function Fitness.canSkip(action)
  local record=validRecord(action)
  if not record or record.started or (action.action and action:isStarted()) then return false end
@@ -490,8 +535,11 @@ local keys={squats='IGUI_Squats',pushups='IGUI_PushUps',situp='IGUI_SitUps',burp
 function Fitness.progress(action)
  local record=validRecord(action)
  if not record or action.Type~='ISFitnessAction' or not record.started then return end
- local elapsed=math.max(0,math.min(record.saved.minutes,(now()-action.startMS)/60000))
- return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes,stopping=record.stopping==true}
+ local clock=workoutClock()
+ local elapsed=(record.confirmed or record.stopRequested) and math.max(0,math.min(record.saved.minutes,(clock-record.clockStartMS)/60000)) or 0
+ return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes,stopping=record.stopping==true,
+  startMS=record.clockStartMS,endMS=record.clockStartMS+record.saved.minutes*60000,sampleMS=clock,confirmed=record.confirmed,
+  stopMS=record.stopClockMS,stopTimestampMS=record.stopTimestampMS}
 end
 function Fitness.describe(action)
  local record=validRecord(action)

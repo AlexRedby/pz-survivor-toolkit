@@ -4,6 +4,15 @@ require 'TimedActions/ISFitnessAction'
 local O={records={},active=nil,violations={},epoch=0}
 local function clock()return getGameTime():getCalender():getTimeInMillis()end
 O.clock=clock
+local function durationClock()
+ local time=getGameTime();local hour=time:getTimeOfDay()
+ return (time:getNightsSurvived()*24+(hour>=7 and hour-7 or hour+17))*3600000
+end
+O.durationClock=durationClock
+local function durationFrame()
+ local time=getGameTime()
+ return time:getGameWorldSecondsSinceLastUpdate()*1000,time:getRealworldSecondsSinceLastUpdate()*1000
+end
 function O.clinical(player)
  local fit=player:getFitness();local xp=player:getXp();local regularity,stiffness,timers={},{},{}
  for _,kind in ipairs({'squats','pushups','bicepscurl','burpees'})do regularity[kind]=fit:getRegularity(kind)end
@@ -20,8 +29,10 @@ end
 local function start(action)
  if action.character~=O.player then return end
  if O.active then O.violations[#O.violations+1]='next-workout-before-server-stop'end
+ local frameGameMS,frameRealMS=durationFrame()
  local row={exercise=action.exeDataType,minutes=action.timeToExe,maxTime=action:getDuration(),reps=0,
-  startMS=clock(),before=O.clinical(action.character),minEndurance=O.clinical(action.character).endurance,
+  startMS=clock(),durationStartMS=durationClock(),before=O.clinical(action.character),minEndurance=O.clinical(action.character).endurance,
+  durationStartFrameGameMS=frameGameMS,durationStartFrameRealMS=frameRealMS,
   previousStopSettled=not O.active,startEquipment=O.inventory and O.inventory(action.character)or nil,
   startStorage=O.captureStorage and O.storage(action.character)or nil}
  if O.case=='empty-restore'then row.nativeClock={constructorStartMS=action.startMS,deadlineMS=action.endMS,
@@ -31,7 +42,8 @@ end
 local function stopped(action,method)
  local row=action.fitnessWitness
  if not row or row.stopMS then return end
- row.stopMS=clock();row.stopMethod=method;row.after=O.clinical(action.character)
+ row.stopMS=clock();row.durationStopMS=durationClock();row.stopMethod=method;row.after=O.clinical(action.character)
+ row.durationStopFrameGameMS,row.durationStopFrameRealMS=durationFrame()
  if row.nativeClock then row.nativeClock.constructorStartAtStopMS=action.startMS;row.nativeClock.deadlineAtStopMS=action.endMS end
  row.currentExerciseCleared=action.character:getFitness():getCurrentExe()==nil
  row.serverStopReturned=not isClient();if O.active==action then O.active=nil end
@@ -47,6 +59,9 @@ function O.sample(current)
  if not current or current.Type~='ISFitnessAction'or not current:isStarted()then return end
  if not current.fitnessWitness then
   start(current);if O.case~='empty-restore'then current.fitnessWitness.startMS=current.startMS end
+  local fitness=PZSurvivorToolkit and PZSurvivorToolkit.ActionQueueFitness
+  local progress=fitness and fitness.progress(current)
+  if progress then current.fitnessWitness.durationStartMS=progress.startMS end
  end
  local row=current.fitnessWitness
  if current.repnb>row.reps then

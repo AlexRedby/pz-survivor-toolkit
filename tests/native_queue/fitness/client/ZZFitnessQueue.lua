@@ -21,9 +21,51 @@ local function exerciseForCase(id)return id=='burpees-30'and 'burpees'or (id=='m
 local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or F.restorationCase(id)end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
+-- Retain the exact workout after it stops being the head. Native removal and
+-- queue continuation are independent gates and share this first deadline sample.
+local function sampleDurationStop(action)
+ if native or not command or not action or not seen[action]
+  or action.Type~='ISFitnessAction'then return end
+ local sample=stopReached[action]
+ if not sample then
+  local progress=T.ActionQueueFitness.progress(action)
+  if not progress or not progress.stopMS then return end
+  sample={workoutStartMS=progress.startMS,workoutEndMS=progress.endMS,
+   stopNativeClock=progress.stopMS,reachedNativeClock=progress.stopMS,reachedTimestampMilliseconds=progress.stopTimestampMS}
+  stopReached[action]=sample
+  command.durationStops=command.durationStops or {}
+  command.durationStops[#command.durationStops+1]={startMS=progress.startMS,endMS=progress.endMS,
+   stopMS=progress.stopMS,confirmed=progress.confirmed}
+ end
+ if case()=='burpees-30'and command.durationStopDelayMilliseconds==nil and not action.character:getCharacterActions():contains(action.action)then
+  command.durationStopDelayMilliseconds=getTimestampMs()-sample.reachedTimestampMilliseconds
+ end
+ return sample
+end
+local function observeDurationContinuation(nextAction)
+ for action in pairs(seen or {})do sampleDurationStop(action)end
+ if native or case()~='burpees-30'or not command or not state or command.durationContinuation
+  or not nextAction or nextAction.Type~='ISReadABook'or getmetatable(nextAction)~=ISReadABook
+  or nextAction.character~=state.player or not nextAction.item
+  or nextAction.item:getID()~=state.ids.items.tail or nextAction.item:getFullType()~='Base.BookFirstAid1'then return end
+ for action in pairs(seen)do
+  local sample=sampleDurationStop(action)
+  if sample then
+   local record=ack[action]
+   local terminal=isClient()and record and T.ActionQueueAcknowledgements.observe(action,record)or not isClient()and 'singleplayer'
+   command.durationContinuation={workoutStartMS=sample.workoutStartMS,workoutEndMS=sample.workoutEndMS,
+    reachedNativeClock=sample.reachedNativeClock,stopNativeClock=sample.stopNativeClock,reachedTimestampMilliseconds=sample.reachedTimestampMilliseconds,
+    continuationNativeClock=O.durationClock(),continuationTimestampMilliseconds=getTimestampMs(),
+    delayMilliseconds=getTimestampMs()-sample.reachedTimestampMilliseconds,tailId=nextAction.item:getID(),
+    callback='ISBaseTimedAction.begin',nativeAbsent=not action.character:getCharacterActions():contains(action.action),
+    terminalState=terminal or false,token=record and record.token or false}
+  end
+ end
+end
 -- The shared native begin boundary runs before native actions allocate/start,
 -- including queue-disabled mode. Observation changes no callback or queue work.
 assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{started=function(action)
+ observeDurationContinuation(action)
  if state and state.isolation and state.isolation.status=='started'then F.isolationStarted(state,action);return end
  if not command or not state or not F.borrowedCase(case())then return end
  if action.Type=='ISEquipWeaponAction'and getmetatable(action)==ISEquipWeaponAction and action.character==state.player
@@ -114,6 +156,8 @@ local function request(name)
  elseif name=='Next'then F.releaseEquipment(authority);previous=authority;authority=nil;phase='released'end
 end
 Events.OnServerCommand.Add(function(module,name,value)
+ -- Sample before the next queue tick can prune a settled workout's private record.
+ for action in pairs(seen or {})do sampleDurationStop(action)end
  if module~='FitnessQueueTest'then return end
  if name=='Failed'then
   if phase=='isolation-ready'or phase=='isolating'or phase=='isolation-verifying'then
@@ -206,7 +250,7 @@ local function dispatch()
  local id=case();requests,seen,ack,progressSeen,stopReached,returnSeen,recoverySeen,recoveryActions={},{},{},{},{},{},{},{}
  command={menuDispatched=true,nativeDurations=true,minutes=minutes(),frontMinutes=immediate(id)and 0 or 12,
   waitingNoExercise=true,waitingNoClinicalEffects=true,activeObserved=false,activeCancelled=false,pendingCancelled=false,
-  reordered=false,closedUI=false,startedOrder={},activeAcks={},terminalAcks={},progressSamples={},queueDrained=false}
+  reordered=false,closedUI=false,startedOrder={},activeAcks={},terminalAcks={},progressSamples={},durationStops={},queueDrained=false}
  if not immediate(id)then front=read(state.items.front)end
  local first=enqueue(exerciseForCase(id))
  if id=='sequential'then enqueue('pushups')end
@@ -285,24 +329,26 @@ local function observe()
   command.activeObserved=true
   if not seen[current]then
    seen[current]=true;command.startedOrder[#command.startedOrder+1]=current.exeDataType
-   if case()=='empty-restore'then command.nativeWorkoutClock={constructorStartMS=current.startMS,deadlineMS=current.endMS,
-    observedBodyStartMS=O.clock(),source='actual started ISFitnessAction'}end
    if case()=='pending-reorder'and not native then
     command.reorderedTailBeforeStart=getPlayer():getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
    end
    assert(current.timeToExe==minutes() and current.getDuration==ISFitnessAction.getDuration and current:getDuration()==5000000,'native fitness duration modified')
   end
+  local progress=not native and T.ActionQueueFitness.progress(current)
+  if case()=='empty-restore'and not command.nativeWorkoutClock and (native or progress and progress.confirmed)then
+   command.nativeWorkoutClock={constructorStartMS=current.startMS,deadlineMS=current.endMS,
+    observedBodyStartMS=O.clock(),source='actual started ISFitnessAction'}
+  end
   if not native and not progressSeen[current]then
-   local progress=T.ActionQueueFitness.progress(current)
    if progress and progress.fraction>0 then
-    local sampleMS=O.clock();local expected=math.max(0,math.min(minutes(),(sampleMS-current.startMS)/60000))
+    local sampleMS=O.durationClock();local expected=math.max(0,math.min(minutes(),(sampleMS-progress.startMS)/60000))
     assert(progress.total==minutes() and progress.elapsed>0 and progress.elapsed<=minutes() and progress.fraction<=1
      and math.abs(progress.elapsed-expected)<.000001 and math.abs(progress.fraction-progress.elapsed/minutes())<.000001,
      'fitness displayed progress differs from selected native time')
     local description=T.ActionQueueFitness.describe(current)
     assert(description and type(description.target)=='string'and description.target~='','fitness progress label missing')
     command.progressSamples[#command.progressSamples+1]={exercise=current.exeDataType,total=progress.total,
-     elapsed=progress.elapsed,fraction=progress.fraction,startMS=current.startMS,sampleMS=sampleMS,label=description.target}
+     elapsed=progress.elapsed,fraction=progress.fraction,startMS=progress.startMS,sampleMS=sampleMS,label=description.target}
     progressSeen[current]=true
    end
   end
@@ -331,15 +377,8 @@ local function observe()
    end
   end
  end
- if case()=='burpees-30'and not native then
-  for action in pairs(seen)do
-   if action.Type=='ISFitnessAction'and O.clock()>=action.endMS then
-    stopReached[action]=stopReached[action]or getTimestampMs()
-    if command.durationStopDelayMilliseconds==nil and not player:getCharacterActions():contains(action.action)then
-     command.durationStopDelayMilliseconds=getTimestampMs()-stopReached[action]
-    end
-   end
-  end
+ if not native then
+  for action in pairs(seen)do sampleDurationStop(action)end
  end
  for action,record in pairs(ack or {})do
   if record.state~='started'and not seen[record] then

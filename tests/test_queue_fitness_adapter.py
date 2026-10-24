@@ -77,13 +77,17 @@ class FitnessAdapterTests(unittest.TestCase):
                 start = i*700000
                 end = start + (100000 if case in ('active-cancel', 'active-cancel-restore') else minutes * 60000 + 1)
                 records.append(dict(exercise=exercise, minutes=minutes, maxTime=5000000, reps=10,
-                    startMS=start, stopMS=end, lastRepMS=start+1000, before=clinical(), after=clinical(10,.9,1,1),
+                    startMS=start, stopMS=end, durationStartMS=start, durationStopMS=end,
+                    durationStartFrameGameMS=1000,durationStartFrameRealMS=40,
+                    durationStopFrameGameMS=1000,durationStopFrameRealMS=40,
+                    lastRepMS=start+1000, before=clinical(), after=clinical(10,.9,1,1),
                     minEndurance=.8, lastRep=clinical(10,.8,1,1), currentExerciseCleared=True,
                     serverStopReturned=True, previousStopSettled=True))
             if case=='empty-restore':
                 records[0].update(startMS=120000,lastRepMS=121000,nativeClock=dict(constructorStartMS=0,deadlineMS=600000,
                     constructorStartAtStopMS=0,deadlineAtStopMS=600000,observedBodyStartMS=120000,
                     source='ISFitnessAction.serverStart' if mp else 'SP first started sample'))
+                records[0].update(durationStartMS=120000,durationStopMS=720000)
             if case in fitness.BORROWED_CASES:
                 for record in records:
                     start_inventory=copy.deepcopy(inventory)
@@ -113,7 +117,17 @@ class FitnessAdapterTests(unittest.TestCase):
                 if mode=='native':command['requestNativeClock']=dict(constructorStartMS=0,deadlineMS=600000)
             command['progressSamples']=[dict(exercise=exercise,total=minutes,elapsed=2,fraction=2/minutes,
                 startMS=i*700000,sampleMS=i*700000+120000,label=f'2.0 / {minutes} minutes') for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
-            if case=='burpees-30' and mode=='toolkit':command['durationStopDelayMilliseconds']=0
+            command['durationStops']=[dict(startMS=i*700000,endMS=i*700000+minutes*60000,
+                stopMS=i*700000+(100000 if case in ('active-cancel','active-cancel-restore') else minutes*60000),confirmed=True)
+                for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
+            if case=='burpees-30' and mode=='toolkit':
+                command['durationStopDelayMilliseconds']=0
+                command['durationStops'][0]['stopMS']=1800001
+                command['durationContinuation']=dict(workoutStartMS=0,workoutEndMS=1800000,
+                    reachedNativeClock=1800001,stopNativeClock=1800001,reachedTimestampMilliseconds=1000,
+                    continuationNativeClock=1800002,continuationTimestampMilliseconds=1100,delayMilliseconds=100,
+                    callback='ISBaseTimedAction.begin',tailId=ids['tail'],nativeAbsent=True,
+                    terminalState='canceled' if mp else 'singleplayer',token='token0' if mp else False)
             if case=='pending-reorder' and mode=='toolkit':command['reorderedTailBeforeStart']=True
             if case in fitness.BORROWED_CASES and mode=='toolkit':
                 command.update(borrowedTransferProgress=True,borrowedTool=ids['dumbbell'],borrowedSourceBag=ids['bag'])
@@ -270,11 +284,15 @@ class FitnessAdapterTests(unittest.TestCase):
                         command['requestNativeClock']['constructorStartMS']+=60000
                     elif change=='reset-body':clock['constructorStartAtRemovalMS']+=60000
                     elif change=='expired-start':clock['observedBodyStartMS']=clock['deadlineMS']
-                    elif change=='early-stop':clock['observedRemovalMS']=clock['deadlineMS']
+                    elif change=='early-stop':clock['observedRemovalMS']=clock['deadlineMS']-1
                     elif change=='missing-body-clock':record.pop('nativeClock')
                     elif change=='authority-reset':record['nativeClock']['deadlineAtStopMS']+=60000
                     else:record['startMS']=record['nativeClock']['constructorStartMS']
                     with self.subTest(mode=mode,kind=kind,change=change):self.assertTrue(self.verify(evidence)['issues'])
+                equality=self.evidence();command=equality[0][1]['command'];record=equality[0][1]['receipt']['records'][0]
+                clock=command['nativeWorkoutClock'];clock['observedRemovalMS']=clock['deadlineMS'];record['stopMS']=clock['deadlineMS']
+                with self.subTest(mode=mode,kind=kind,boundary='exact-deadline'):
+                    self.assertEqual(bool(self.verify(equality)['issues']),mode=='native')
         # Existing controls keep their strict authoritative body-duration guard.
         self.selection.update(kind='mp',mode='native',cases=['closed-ui-restore'],clients=2,languages=['EN','RU'],options={'mp_host':True})
         evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0];record['stopMS']=record['startMS']+480000
@@ -525,7 +543,7 @@ class FitnessAdapterTests(unittest.TestCase):
         except ImportError:
             self.skipTest('Lupa is required for queue-disabled placement observation')
         source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
-        start=source.index("assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail'")
+        start=source.index('local function sampleDurationStop(action)')
         end=source.index("),'fitness native reader boundary observer unavailable')",start)+len("),'fitness native reader boundary observer unavailable')")
         lua=LuaRuntime()
         lua.execute("""
@@ -624,6 +642,144 @@ class FitnessAdapterTests(unittest.TestCase):
                 evidence[0][1]['command']['durationStopDelayMilliseconds'] = delay
                 self.assertTrue(any('stop remained active' in issue for issue in self.verify(evidence)['issues']))
 
+    def test_burpees_continuation_requires_same_deadline_short_delay_and_exact_terminal(self):
+        for kind in ('sp', 'mp'):
+            self.selection.update(cases=['burpees-30'], kind=kind, clients=2 if kind=='mp' else 1,
+                languages=['EN','RU'] if kind=='mp' else ['EN'], options={'mp_host': True} if kind=='mp' else {})
+            self.assertEqual(self.verify()['issues'], [])
+            for change in ('missing', 'missing-time', 'negative', 'five-seconds', 'thirty-seconds', 'nonfinite',
+                           'wrong-difference', 'wrong-workout', 'wrong-end', 'early-anchor', 'early-continuation',
+                           'wrong-tail', 'native-present', 'synthetic-callback', 'wrong-terminal', 'wrong-token'):
+                evidence = self.evidence()
+                command = evidence[0][1]['command']
+                proof = command['durationContinuation']
+                if change=='missing': command.pop('durationContinuation')
+                elif change=='missing-time': proof.pop('continuationTimestampMilliseconds')
+                elif change=='negative': proof.update(delayMilliseconds=-1,continuationTimestampMilliseconds=999)
+                elif change in ('five-seconds','thirty-seconds'):
+                    delay = 5000 if change=='five-seconds' else 30000
+                    proof.update(delayMilliseconds=delay,continuationTimestampMilliseconds=1000+delay)
+                elif change=='nonfinite': proof['delayMilliseconds']=float('nan')
+                elif change=='wrong-difference': proof['delayMilliseconds']=1
+                elif change=='wrong-workout': proof['workoutStartMS']=1
+                elif change=='wrong-end': proof['workoutEndMS']=1800001
+                elif change=='early-anchor': proof['reachedNativeClock']=1799999
+                elif change=='early-continuation': proof['continuationNativeClock']=1800000
+                elif change=='wrong-tail': proof['tailId']+=1
+                elif change=='native-present': proof['nativeAbsent']=False
+                elif change=='synthetic-callback': proof['callback']='fixture-synthetic-start'
+                elif change=='wrong-terminal': proof['terminalState']='started'
+                else: proof['token']='foreign-token'
+                with self.subTest(kind=kind,change=change):
+                    self.assertTrue(any('continuation' in issue for issue in self.verify(evidence)['issues']))
+            # Same native-removal success must still fail when the queue waits 30s.
+            evidence=self.evidence();proof=evidence[0][1]['command']['durationContinuation']
+            proof.update(delayMilliseconds=4999,continuationTimestampMilliseconds=5999)
+            self.assertEqual(self.verify(evidence)['issues'], [])
+
+    def test_lua_burpees_timer_retains_workout_after_head_removal_and_observes_tail_begin(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for continuation boundary checks')
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        start=source.index('local function sampleDurationStop(action)')
+        end=source.index('-- The shared native begin boundary',start)
+        for network in (False,True):
+            lua=LuaRuntime()
+            lua.globals().network=network
+            lua.execute("""
+                native=false;case=function()return 'burpees-30'end;command={};now=1000;gameClock=1800001
+                getTimestampMs=function()return now end;O={clock=function()return gameClock end,durationClock=function()return gameClock end}
+                isClient=function()return network end;nativePresent=true;stopReached={};seen={};ack={}
+                player={getCharacterActions=function()return {contains=function()return nativePresent end}end}
+                workout={Type='ISFitnessAction',character=player,action={},startMS=0,endMS=1800000};seen[workout]=true
+                ISReadABook={};state={player=player,ids={items={tail=42}}}
+                reader=setmetatable({Type='ISReadABook',character=player,item={getID=function()return 42 end,
+                    getFullType=function()return 'Base.BookFirstAid1'end}},ISReadABook)
+                ack[workout]={token='exact-token',state='started'}
+                T={ActionQueueFitness={progress=function(action)return {startMS=action.startMS,endMS=action.endMS,sampleMS=gameClock,
+                  stopMS=gameClock>=action.endMS and 1800001 or nil,stopTimestampMS=1000,confirmed=true}end},
+                 ActionQueueAcknowledgements={observe=function(action,record)
+                    assert(action==workout and record==ack[workout]);return record.state end}}
+            """)
+            lua.execute(source[start:end]+'\nsampleStop=sampleDurationStop;observeTail=observeDurationContinuation')
+            lua.execute("""
+                sampleStop(workout);assert(not command.durationStopDelayMilliseconds)
+                -- The workout is absent/head changed, but keep its original stopwatch.
+                now=1020;nativePresent=false;sampleStop(workout)
+                assert(command.durationStopDelayMilliseconds==20)
+                local progress=T.ActionQueueFitness.progress
+                T.ActionQueueFitness.progress=function()return nil end -- private workout record was pruned
+                now=1200;ack[workout].state='canceled';observeTail(reader)
+                local proof=command.durationContinuation
+                assert(proof.delayMilliseconds==200 and proof.reachedTimestampMilliseconds==1000
+                    and proof.continuationTimestampMilliseconds==1200 and proof.workoutEndMS==1800000
+                    and proof.nativeAbsent and proof.callback=='ISBaseTimedAction.begin')
+                assert(proof.terminalState==(network and 'canceled'or 'singleplayer'))
+                now=10000;sampleStop(workout);observeTail(reader)
+                assert(command.durationContinuation==proof and proof.delayMilliseconds==200)
+                T.ActionQueueFitness.progress=progress
+                -- A wrong actor/tail/class or early reader earns no continuation proof.
+                command={};stopReached={};gameClock=1799999;observeTail(reader)
+                assert(not command.durationContinuation)
+                gameClock=1800001;local item=reader.item;reader.item={getID=function()return 43 end,
+                    getFullType=function()return 'Base.BookFirstAid1'end};observeTail(reader)
+                assert(not command.durationContinuation);reader.item=item
+                reader.character={};observeTail(reader);assert(not command.durationContinuation)
+                reader.character=player;setmetatable(reader,{});observeTail(reader);assert(not command.durationContinuation)
+            """)
+
+    def test_toolkit_requires_precise_full_body_with_only_observed_native_frame_uncertainty(self):
+        for kind in ('sp', 'mp'):
+            self.selection.update(cases=['burpees-30'],kind=kind,clients=2 if kind=='mp' else 1,
+                languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+            for change in ('missing-start','missing-stop','short','reversed','nonfinite'):
+                evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+                if change=='missing-start':record.pop('durationStartMS')
+                elif change=='missing-stop':record.pop('durationStopMS')
+                elif change=='short':record['durationStopMS']=record['durationStartMS']+1800000-1000.001
+                elif change=='reversed':record['durationStopMS']=record['durationStartMS']-1
+                else:record['durationStopMS']=float('nan')
+                with self.subTest(kind=kind,change=change):
+                    self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+            # Calendar telemetry can span 29 minutes while the precise body ran all 30.
+            evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+            record.update(stopMS=1740000,durationStopMS=1800000)
+            self.assertEqual(self.verify(evidence)['issues'],[])
+            for shortfall in (0.001,503.54,1000):
+                evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+                record['durationStopMS']=record['durationStartMS']+1800000-shortfall
+                with self.subTest(kind=kind,shortfall=shortfall):self.assertEqual(self.verify(evidence)['issues'],[])
+            for field in ('durationStartFrameGameMS','durationStartFrameRealMS','durationStopFrameGameMS','durationStopFrameRealMS'):
+                for value in (None,0,-1,float('nan'),float('inf'))+( (60000,100000) if 'Game' in field else ()):
+                    evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+                    if value is None:record.pop(field)
+                    else:record[field]=value
+                    with self.subTest(kind=kind,field=field,value=value):
+                        self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+            for change in ('missing','early','unconfirmed','different-start','changed-span','nonfinite'):
+                evidence=self.evidence();command=evidence[0][1]['command'];stop=command['durationStops'][0]
+                if change=='missing':command.pop('durationStops')
+                elif change=='early':stop['stopMS']=stop['endMS']-0.001
+                elif change=='unconfirmed':stop['confirmed']=False
+                elif change=='different-start':stop['startMS']+=1
+                elif change=='changed-span':stop['endMS']-=1
+                else:stop['stopMS']=float('nan')
+                with self.subTest(kind=kind,change=change):
+                    self.assertTrue(any('actual local stop' in issue for issue in self.verify(evidence)['issues']))
+            self.selection['cases']=['active-cancel']
+            evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+            record['durationStopMS']=record['durationStartMS']+600000
+            self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+            self.selection.update(mode='native',cases=['burpees-30'])
+            evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+            record.pop('durationStartMS');record.pop('durationStopMS')
+            self.assertEqual(self.verify(evidence)['issues'],[])
+            record['stopMS']=1740000
+            self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+            self.selection['mode']='toolkit'
+
     def test_original_regularity_receipts_remain_valid_for_existing_cases(self):
         self.selection['cases'] = ['empty']
         evidence = self.evidence()
@@ -675,7 +831,7 @@ class FitnessAdapterTests(unittest.TestCase):
     def test_rejects_fake_real_repetition_and_clinical_proofs(self):
         self.selection['cases']=['empty']
         for field,value in (('reps',0),('reps',True),('minEndurance',1),('lastRepMS',700000),
-                            ('lastRep',clinical()),('after',{}),('stopMS',100000),
+                            ('lastRep',clinical()),('after',{}),('durationStopMS',100000),
                             ('previousStopSettled',False),('serverStopReturned',False),('currentExerciseCleared',False)):
             evidence=copy.deepcopy(self.evidence())
             evidence[0][1]['receipt']['records'][0][field]=value
@@ -759,7 +915,10 @@ class FitnessAdapterTests(unittest.TestCase):
                 isServer=function()return server_mode end;isClient=function()return false end
                 local now=0
                 function advance()now=now+1000 end
-                getGameTime=function()return {getCalender=function()return {getTimeInMillis=function()return now end}end}end
+                getGameTime=function()return {getCalender=function()return {getTimeInMillis=function()return now end}end,
+                 getNightsSurvived=function()return 0 end,getTimeOfDay=function()return 7+now/3600000 end,
+                 getGameWorldSecondsSinceLastUpdate=function()return .8 end,
+                 getRealworldSecondsSinceLastUpdate=function()return .033 end}end
                 calls={start=0,loop=0,stop=0,xp=0}
                 fit={current=nil,getCurrentExe=function(self)return self.current end}
                 player={getFitness=function()return fit end}
@@ -792,6 +951,9 @@ class FitnessAdapterTests(unittest.TestCase):
                  assert(calls.start==1 and calls.loop==2 and calls.stop==1 and calls.xp==10)
                  assert(#receipt.records==1 and receipt.records[1].reps==2)
                  assert(receipt.records[1].before.fitnessXP==0 and receipt.records[1].after.fitnessXP==10)
+                 assert(receipt.records[1].durationStartMS==0 and math.abs(receipt.records[1].durationStopMS-3000)<.00001)
+                 assert(receipt.records[1].durationStartFrameGameMS==800 and receipt.records[1].durationStartFrameRealMS==33
+                  and receipt.records[1].durationStopFrameGameMS==800 and receipt.records[1].durationStopFrameRealMS==33)
                  assert(receipt.serverStopSettled and receipt.currentExerciseCleared)
                  observer.tailID=42;observer.inventory=function()return {exact='inventory'}end
                  observer.activation=function()return {exact='activation'}end
@@ -807,13 +969,18 @@ class FitnessAdapterTests(unittest.TestCase):
                   and observer.placements[1].callback=='ISDropWorldItemAction.complete')
                 else
                  assert(ISFitnessAction.exeLooped==originalLoop)
+                 PZSurvivorToolkit={ActionQueueFitness={progress=function()return {startMS=0}end}}
+                 advance()
                  observer.sample(action);action.repnb=2;calls.xp=10;advance();observer.sample(action)
                  fit.current=nil;advance();observer.sample(nil)
                  local receipt=observer.receipt(player)
                  assert(calls.start==0 and calls.loop==0 and calls.stop==0 and calls.xp==10)
                  assert(#receipt.records==1 and receipt.records[1].reps==2)
+                 assert(receipt.records[1].durationStartMS==0 and math.abs(receipt.records[1].durationStopMS-3000)<.00001,
+                  'SP duration lost the managed workout start before its first observation tick')
                  assert(receipt.serverStopSettled and receipt.currentExerciseCleared)
                 end
+                PZSurvivorToolkit=nil
                 observer.captureStorage=false;observer.reset(player,'empty-restore');action.fitnessWitness=nil;action.startMS=-60000;action.endMS=540000
                 if server_mode then ISFitnessAction.serverStart(action)else observer.sample(action)end
                 local natural=observer.records[1]
@@ -827,6 +994,30 @@ class FitnessAdapterTests(unittest.TestCase):
         lua=LuaRuntime()
         for path in (ROOT/'tests/native_queue/fitness').rglob('*.lua'):
             lua.compile(path.read_text())
+
+    def test_precise_observer_clock_advances_within_calendar_minute_and_preserves_long_world_precision(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for precise fitness clock checks')
+        lua=LuaRuntime()
+        lua.execute("""
+            package.preload['TimedActions/ISFitnessAction']=function()return {}end
+            nights=0;hour=7
+            getGameTime=function()return {getNightsSurvived=function()return nights end,
+                getTimeOfDay=function()return hour end,
+                getCalender=function()return {getTimeInMillis=function()return 0 end}end}end
+            isServer=function()return false end
+        """)
+        lua.globals().observer=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessObservation.lua').read_text())
+        lua.execute("""
+            assert(observer.durationClock()==0 and observer.clock()==0)
+            hour=7+1/120;assert(math.abs(observer.durationClock()-30000)<.00001 and observer.clock()==0)
+            nights=1000000;hour=7;local before=observer.durationClock()
+            hour=7.5;assert(observer.durationClock()-before==1800000,'long-world clock lost selected minute precision')
+            nights=0;hour=6.999;local previous=observer.durationClock()
+            nights=1;hour=7;assert(observer.durationClock()>previous and observer.durationClock()==86400000)
+        """)
 
     def test_native_hidden_get_up_action_extraction_is_exact_and_read_only(self):
         try:
@@ -1117,7 +1308,7 @@ class FitnessAdapterTests(unittest.TestCase):
         """)
         lua.execute((ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua').read_text())
         source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
-        start=source.index("assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail'")
+        start=source.index('local function sampleDurationStop(action)')
         end=source.index("),'fitness native reader boundary observer unavailable')",start)+len("),'fitness native reader boundary observer unavailable')")
         lua.execute(source[start:end])
         lua.execute("""

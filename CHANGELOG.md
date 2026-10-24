@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.256
+
+- **Exercise:** Use continuous game time for queued workout progress and completion, counting Host training from its confirmed server start. Remove the extra whole-minute pause after 100% while retaining the full selected duration and confirmed equipment recovery.
+
 ### 0.1.255
 
 - **Action queue / Host:** Let an exactly matched, server-completed native action finish its original client callback when the optional queue is disabled. Preserve explicit cancellation, movement, reset and stale-transaction guards; disabling queue controls no longer makes confirmed preparation clear unrelated queued work.
