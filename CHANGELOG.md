@@ -11,7 +11,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
-- **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Additional Jeep/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.
+- **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Downloaded B42 metadata confirms the main Jeep requires only `damnlib`; optional JP18 adds Jurassic Park spawns and requires the main Jeep. JP18/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.
 
 - **Added:** Three New Music packs with songs released before 1993: ABBA Gold (`NMBJABBA`, Workshop `3784065691`), Queen (`NMBJQ`, `3777937059`) and Fleetwood Mac (`NMBJFM`, `3751236222`), after `NewMusic` (62 Mod IDs / 57 Workshop items). Published album lists span 1975-1992 and the packs total approximately 633 MB. Existing sandbox settings are preserved; full-pack SP/Host playback remains unverified.
 
