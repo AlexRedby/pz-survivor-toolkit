@@ -1,3 +1,7 @@
+# Vehicle entry and exit roof clipping
+
+- [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP/Host checks cover stationary Base.CarNormal driver/passenger transitions, both cancellations, the local seated animation track and authoritative seat occupancy; screenshots include the native occlusion silhouette.
+
 # Exercise ground storage
 
 - [ ] Check the exercise ground-storage change in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags (including favourites), contents/IDs, dumbbells borrowed from a bag, natural completion and cancellation during placement/pickup, closed Fitness window with queue controls off, movement away and a second player's competing pickup. Require authoritative conservation and unchanged exercise effects; Lua source-backed doubles do not establish live network ordering or rendering.

@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.247
+
+- **Vehicle occupants:** Keep the character seated while entering or exiting a vehicle, preventing the native chair animation from raising their head and shoulders through visible roofs. Preserve the native animation completion events and 0.625-second duration; vehicle positioning, sounds, cancellation and Host action handling stay with the game.
+
 ### 0.1.246
 
 - **Performance:** Skip ground discovery and the extra Wishlist search radius when no active goal has a concrete wanted item type. Authoritative list changes and new sessions update this idle gate without scanning membership on every tick.
