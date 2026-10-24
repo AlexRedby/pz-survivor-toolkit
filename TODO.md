@@ -138,3 +138,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Run the corrected `inventory-presentation/scenes` native hidden-loot/reopen stages in CleanUI and vanilla when an awake macOS display is available. Require live raw stock, deferred hidden rows/count/tooltips, fresh reopen and a clean runtime audit; keep the runner's default desktop policy.
 - [ ] Check warehouse movement with the full selected mod set in disposable macOS SP/Host profiles, including another player's container edits, crafting inputs and quick transfers with loot hidden. Measure frame times separately before claiming that the user's stutters are resolved.
+
+# Vehicle diagnostics controls
+
+- [ ] Inspect the new diagnostics window in isolated macOS B42.21 EN/RU gameplay: open it through Toolkit Mod Options, toggle recording and confirm client DebugLog markers/samples while driving, expiry status and reopening after close. Lua controls and actual ZombieBuddy/Kahlua runtime sessions already pass focused regressions; native window layout and live Host collection remain unverified. The switch controls only the local process; collect the separate Host server log with its startup flag.

@@ -19,17 +19,40 @@ internal object VehicleSyncTraceLogic {
                 "c3103be5b9bacad57747f49b94bff441ff6b530315885ed30c93dc05c13da2c4",
             )
     private val last = HashMap<String, Long>()
-    private var started = 0L
+    private var requested = enabled
+    private var started = if (enabled) System.nanoTime() else 0L
     private var records = 0
 
-    /** Called only under VehicleSyncTrace's original Java class monitor. */
+    /** All mutable session access uses VehicleSyncTrace's class monitor. */
+    fun set(enabled: Boolean): String {
+        if (enabled != requested) {
+            requested = enabled
+            last.clear()
+            records = 0
+            started = if (enabled) System.nanoTime() else 0L
+            if (supported)
+                println(
+                    "[VEHICLE_SYNC] t=" +
+                        System.currentTimeMillis() +
+                        " event=session state=" +
+                        status(),
+                )
+        }
+        return status()
+    }
+
+    fun status(supported: Boolean = this.supported): String {
+        if (!supported) return "unsupported"
+        if (!requested) return "off"
+        if (records >= 5000 || System.nanoTime() - started >= 600_000_000_000L) return "expired"
+        return "active"
+    }
+
     @JvmStatic
     fun due(event: String?, car: BaseVehicle?): Boolean {
-        if (!enabled || !supported || car == null || records >= 5000) return false
+        if (car == null || status() != "active") return false
         if (car.getDriver() == null && car.netPlayerId.toInt() == -1) return false
         val now = System.nanoTime()
-        if (started == 0L) started = now
-        if (now - started > 600_000_000_000L) return false
         val key = "$event:${car.getId()}"
         val previous = last[key]
         if (previous != null && now - previous < 1_000_000_000L) return false

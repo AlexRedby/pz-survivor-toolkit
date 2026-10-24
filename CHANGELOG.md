@@ -24,6 +24,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.253
+
+- Add a vehicle-diagnostics window under Toolkit Mod Options with a live recording checkbox and status. Start and stop bounded client logs during play without JVM flags or a restart; the checkbox is not saved between launches.
+
 ### 0.1.252
 
 - **Inventory:** Keep Shift selection anchored to the same physical item when retained-item groups refresh in CleanUI, including repeated refreshes before the next render.
@@ -1138,6 +1142,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.52
+
+- Allow bounded vehicle-sync recording to be started and stopped at runtime. Keep the optional startup JVM flag, sampling limits and unchanged vehicle/network behavior; a completed recording can be explicitly restarted.
 
 ### 0.1.51
 

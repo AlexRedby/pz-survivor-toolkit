@@ -1,6 +1,7 @@
 package net.alexredby.pztoolkitjavapatches
 
 import me.zed_0xff.zombie_buddy.Patch
+import se.krka.kahlua.integration.annotations.LuaMethod
 import zombie.characters.IsoPlayer
 import zombie.core.raknet.UdpConnection
 import zombie.network.packets.vehicle.VehiclePhysicsPacket
@@ -8,9 +9,20 @@ import zombie.vehicles.BaseVehicle
 
 /** Preserve the sampling class monitor, patch identities and suppression. */
 object VehicleSyncTrace {
+    /** Startup opt-in; use status() for the live session state. */
     @JvmField val ENABLED = VehicleSyncTraceLogic.enabled
 
     @JvmField val SUPPORTED = VehicleSyncTraceLogic.supported
+
+    @JvmStatic
+    @Synchronized
+    @LuaMethod(name = "toolkitVehicleTraceSet", global = true)
+    fun set(enabled: Boolean): String = VehicleSyncTraceLogic.set(enabled)
+
+    @JvmStatic
+    @Synchronized
+    @LuaMethod(name = "toolkitVehicleTraceStatus", global = true)
+    fun status(): String = VehicleSyncTraceLogic.status()
 
     @JvmStatic
     @Synchronized

@@ -80,7 +80,9 @@ Version 0.1.10 repairs an occupied vehicle whose physics owner disagrees with it
 
 Install the same updated Java mod on the server and clients, save the changed JAR approval and restart them. The repair needs ZombieBuddy **in the Host child/server process**; check `vehicleOwnership=true` and the server's actual `zombie.vehicles.BaseVehicle` transformation.
 
-**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. `-Dpz.vehicle.trace=true` only enables logs; it is not a server INI, sandbox or Mod Options setting. Add it to the Java options of the server and every client for one diagnostic run.
+**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. To record a problem during play, open **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics** and select **Record vehicle synchronization logs**. Recording starts immediately without restarting or editing Java options. The window shows whether recording is active, off, expired or unavailable; closing it keeps recording. Uncheck to stop; select it again after a limit to start a fresh recording. This checkbox is not saved between game launches.
+
+The window controls only that player's process. Ask each affected player to enable it. The Host child/server is a separate process: use `-Dpz.vehicle.trace=true` there for one diagnostic run, as shown below. The startup flag also remains available for clients without Toolkit's UI. It only enables logs and is not a server INI or sandbox setting.
 
 **macOS Host:** from the prepared folder, a process-local setting reaches the host player and child server:
 
@@ -104,7 +106,7 @@ try {
 
 After collecting one run, remove the flag from persistent JVM/JSON/Steam options and restart. The process-local Host environment settings above do not persist between terminal sessions.
 
-`[VEHICLE_SYNC]` lines contain the side, vehicle/local-player/driver/owner IDs, authority, position, towing links, sent/received physics samples and server acceptance. `repair` records the previous authority and the new owner. Tracing is off by default; enabled runs stop after ten minutes from the first occupied/owned vehicle or 5,000 lines, sample each event/vehicle at most once per second, and retain at most 256 sampling keys. Preserve the host/server and both client logs together. The trace does not change packets or vehicle state.
+`[VEHICLE_SYNC]` lines contain the side, vehicle/local-player/driver/owner IDs, authority, position, towing links, sent/received physics samples and server acceptance. `repair` records the previous authority and the new owner. Runtime toggles also write `event=session state=active/off` markers, separately from the sampled-record budget. Tracing is off by default; enabled runs stop after ten minutes from enabling or 5,000 lines, sample each event/vehicle at most once per second, and retain at most 256 sampling keys. Preserve the host/server and both client logs together. The trace does not change packets or vehicle state.
 
 The native regression command checks the original handoff failure, reconciliation guards, idempotency, towing ownership and disabled/enabled trace bounds, alongside the existing Java patch regressions. The vehicle-recovery candidate was validated before integration with the fluid-name guard, using an isolated macOS B42.21 Host test with two connected clients and a child `GameServer -coop`, with microphone capture disabled. It reproduces the authority loss through a controlled collision/entry/release ordering. With the repair, the guest then drives 25.5 tiles with accepted server physics and matching poses on all three processes. Separate live checks cover towing/untowing and driver/passenger seat handoffs. The affected user save, spontaneous incidence and real WAN loss remain separate verification limits.
 
