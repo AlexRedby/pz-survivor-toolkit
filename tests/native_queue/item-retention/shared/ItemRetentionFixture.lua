@@ -7,7 +7,9 @@ F.persistence='PZSTRetentionFixturePersistence'
 function F.prepare(player)
  assert(not getActivatedMods():contains('organizedCategories_core'),'External OC is still active')
  Spawn.types=F.types
- local vehicle,container=Spawn.spawn(player,true,6)
+ -- A six-tile clearance may require reaching the open road beyond the
+ -- initial house block. Keep the clearance check and bound the wider search.
+ local vehicle,container=Spawn.spawn(player,true,6,48)
  vehicle:getModData().PZSTRetentionFixture=true
  local area=assert(vehicle:getAreaCenter(vehicle:getPartById('TruckBed'):getArea()))
  local square

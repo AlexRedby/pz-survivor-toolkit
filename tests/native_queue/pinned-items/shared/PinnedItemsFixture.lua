@@ -33,11 +33,11 @@ local function clear(x,y,clearance)
     return true
 end
 
-function F.spawn(player, deferItems, clearance)
+function F.spawn(player, deferItems, clearance, searchRadius)
     clearance=clearance or 3
     local px,py=math.floor(player:getX()),math.floor(player:getY())
     local spot
-    for radius=4,24 do
+    for radius=4,searchRadius or 24 do
         for dx=-radius,radius do for dy=-radius,radius do
             if not spot and (math.abs(dx)==radius or math.abs(dy)==radius) and clear(px+dx,py+dy,clearance) then
                 spot=getCell():getGridSquare(px+dx,py+dy,0)

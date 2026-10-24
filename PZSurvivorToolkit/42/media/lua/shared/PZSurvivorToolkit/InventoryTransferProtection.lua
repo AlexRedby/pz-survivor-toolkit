@@ -26,9 +26,9 @@ function Protection.items(rows)
 end
 
 local function members(rows)
-    local set = {}
-    for _, item in ipairs(Protection.items(rows)) do set[item] = true end
-    return set
+    local set, found = {}, false
+    for _, item in ipairs(Protection.items(rows)) do set[item], found = true, true end
+    return set, found
 end
 local function contained(set, rows)
     local found = false
@@ -49,8 +49,8 @@ end
 local selections, order, scope = {}, {}, nil
 function Protection.rememberSelection(rows, playerNum)
     if type(rows) ~= "table" then return end
-    local set = members(rows)
-    if not next(set) then return end
+    local set, found = members(rows)
+    if not found then return end
     if not selections[rows] then
         if #order >= 64 then selections[table.remove(order, 1)] = nil end
         order[#order + 1] = rows

@@ -1,3 +1,6 @@
+-- Match the game sandbox: native Kahlua has no global next().
+local savedNext = next
+next = nil
 local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 local nativeRequire = require
 local retention = {isRetained=function(item) return item.retained == true end}
@@ -106,3 +109,5 @@ P.withSelection(changed, 0, function()
 end)
 assert(not P.selectionAllowsStuck({other}, 0), 'mutated scope also cleans up')
 print('Transfer intent: exact UI selection identity, grouped rows, player ownership, bounded scopes and error cleanup passed.')
+
+next = savedNext

@@ -24,7 +24,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.248
+### 0.1.249
 
 - **Inventory:** Allow deliberate transfers of several retained items through drag-and-drop, context menus, quantity commands and Smart Deposit. Keep protection during Take/Transfer All, automatic Move to Floor and loot distribution; manual moves keep their retained flags.
 
