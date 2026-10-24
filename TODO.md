@@ -25,7 +25,7 @@
 
 # Fitness completion verification
 
-- [ ] Integrate current main, reconcile the Toolkit version against main, then finish `fitness --cases closed-ui-restore,burpees-30 --kind mp --mode toolkit` with the full selected pack and the runner's default desktop policy. Require the full confirmed continuous duration, independently measured server duration within its observed native frame, prompt native removal, exact terminal acknowledgement, equipment restoration and independent-reader continuation. Preserve the failed native control's shortened constructor window and get-up ordering; its diagnosis remains in Exercise ground storage above.
+- [ ] Repeat `fitness --cases closed-ui-restore,burpees-30 --kind mp --mode toolkit` with the full selected pack after fixing the peer observer's boolean/table confusion, and require clean runtime logs on both clients. Retain the passed full confirmed continuous duration, independent server duration, prompt native removal, exact terminal acknowledgement, equipment restoration and independent-reader gates. Preserve the failed native control's shortened constructor window and get-up ordering; its diagnosis remains in Exercise ground storage above. Keep the runner's default desktop policy.
 - [ ] After successful verification, preserve the run evidence outside the task worktree, push the integrated result to main, verify the remote commit and remove only this task's merged branch/worktree before archiving the chat.
 
 # Nick's Turn Off Fridges selection

@@ -688,6 +688,42 @@ class FitnessAdapterTests(unittest.TestCase):
             proof.update(delayMilliseconds=4999,continuationTimestampMilliseconds=5999)
             self.assertEqual(self.verify(evidence)['issues'], [])
 
+    def test_lua_peer_reader_boolean_seen_is_safe_for_server_commands_and_lifecycle_observation(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for fitness peer reader observation')
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        helpers_start=source.index('local function sampleDurationStop(action)')
+        observer_end=source.index("),'fitness native reader boundary observer unavailable')",helpers_start)
+        observer_end+=len("),'fitness native reader boundary observer unavailable')")
+        server_start=source.index('Events.OnServerCommand.Add(function(module,name,value)')
+        server_end=source.index('Events.OnGameStart.Add(',server_start)
+        lua=LuaRuntime()
+        lua.execute("""
+            native=false;seen=true;state=nil;command=nil
+            case=function()return 'burpees-30'end
+            F={borrowedCase=function()return false end}
+            T={ActionQueueLifecycle={registerObserver=function(id,observer)
+                assert(id=='fitness-independent-tail');lifecycleObserver=observer;return true end},
+                ActionQueueFitness={progress=function()error('peer must not sample a primary workout')end}}
+            Events={OnServerCommand={Add=function(callback)serverCommand=callback end}}
+        """)
+        lua.execute(source[helpers_start:observer_end]+'\n'+source[server_start:server_end])
+        lua.execute("""
+            local peerReader={Type='ISReadABook'}
+            for _,hasCommand in ipairs({false,true})do
+                command=hasCommand and {}or nil
+                lifecycleObserver.started(peerReader)
+                -- Custom action receipts reach every client, including the independent peer.
+                for index=1,10 do serverCommand('PZSurvivorToolkitActions','State',{})end
+                serverCommand('FitnessQueueTest','Peer',{case='burpees-30',book=42})
+                serverCommand('FitnessQueueTest','PeerComplete',{})
+                assert(seen==true and state==nil and peerCase=='burpees-30'and peerBook==42 and peerComplete)
+                assert(not command or next(command)==nil,'peer observation created a primary workout witness')
+            end
+        """)
+
     def test_lua_burpees_timer_retains_workout_after_head_removal_and_observes_tail_begin(self):
         try:
             from lupa import LuaRuntime

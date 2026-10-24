@@ -43,7 +43,9 @@ local function sampleDurationStop(action)
  return sample
 end
 local function observeDurationContinuation(nextAction)
- for action in pairs(seen or {})do sampleDurationStop(action)end
+ if command and type(seen)=='table'then
+  for action in pairs(seen)do sampleDurationStop(action)end
+ end
  if native or case()~='burpees-30'or not command or not state or command.durationContinuation
   or not nextAction or nextAction.Type~='ISReadABook'or getmetatable(nextAction)~=ISReadABook
   or nextAction.character~=state.player or not nextAction.item
@@ -157,7 +159,10 @@ local function request(name)
 end
 Events.OnServerCommand.Add(function(module,name,value)
  -- Sample before the next queue tick can prune a settled workout's private record.
- for action in pairs(seen or {})do sampleDurationStop(action)end
+ -- The peer's independent reader uses a boolean seen flag, not workout records.
+ if command and type(seen)=='table'then
+  for action in pairs(seen)do sampleDurationStop(action)end
+ end
  if module~='FitnessQueueTest'then return end
  if name=='Failed'then
   if phase=='isolation-ready'or phase=='isolating'or phase=='isolation-verifying'then
