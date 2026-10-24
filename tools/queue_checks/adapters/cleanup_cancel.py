@@ -202,7 +202,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                         errors.append('Host transfer changed native transaction duration')
                 else:
                     before, after = record.get('durationBefore'), record.get('durationAfter')
-                    if (not _number(before) or not _number(after) or min(before, after) <= 1 or abs(before - after) > max(.001, record['duration'] * .00001)
+                    if (not _number(before) or not _number(after) or min(before, after) <= 1
                             or not min(before, after) - .001 <= effective <= max(before, after) + .001):
                         errors.append('Native duration allocation escaped its bracket')
         if case == CASES[0]:

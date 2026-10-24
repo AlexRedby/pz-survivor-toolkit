@@ -90,9 +90,13 @@ local function duration(action,row)
  elseif not action.action then row.durationBefore=action:adjustMaxTime(row.duration)
  elseif not row.effectiveDuration then
   local after=action:adjustMaxTime(row.duration);local before=row.durationBefore
-  assert(before>1 and after>1 and math.abs(before-after)<=math.max(.001,row.duration*.00001),'native duration bracket changed')
-  assert(action.maxTime>=math.min(before,after)-.001 and action.maxTime<=math.max(before,after)+.001,'native duration allocation differs')
+  -- Native create samples live mood/temperature once. Its thermal modifier may
+  -- change between our adjacent samples; verify the actual allocation against
+  -- that real bracket rather than impose a non-native drift limit.
   row.durationAfter=after;row.effectiveDuration=action.maxTime
+  assert(type(before)=='number'and type(after)=='number'and before>1 and after>1
+   and before<math.huge and after<math.huge,'native duration bracket invalid')
+  assert(action.maxTime>=math.min(before,after)-.001 and action.maxTime<=math.max(before,after)+.001,'native duration allocation differs')
  else assert(math.abs(action.maxTime-row.effectiveDuration)<.001,'allocated native duration changed')end
 end
 local function observe()

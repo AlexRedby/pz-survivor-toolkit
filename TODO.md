@@ -1,9 +1,7 @@
-# Enabled queue cancellation no-op
+# Enabled queue cancellation verification
 
-- [ ] Reproduce the white cancel cross for grouped container-book reading, its return transfer and whole operation through the real panel/Queue API; compare preview, press/release and execution decisions. Preserve required earned cleanup and independent work.
-- [ ] Allow explicit cancellation of a proven pending borrowed-item return while retaining the carried item and ongoing body, as confirmed by the user. Revoke only that exact automatic return obligation, including later cleanup regeneration; preserve mandatory safety/resource guards and unrelated returns.
-- [ ] Fix the shared decision/execution mismatch for all affected contracts, with meaningful regressions for accepted and denied cancellation, stale rows/gestures, active/pending groups and cleanup ownership. Do not bypass resource or native completion guards.
-- [ ] Verify affected SP/Host full-pack behavior where offline checks cannot establish native outcomes; audit source/logs, integrate current main, bump shipped Toolkit version and deliver the fix.
+- [ ] Verify grouped container-book reading through the real panel/Queue API in matching full-pack SP/Host controls and Toolkit runs: whole-group cancellation, a pending return cancelled while reading continues and the exact book stays carried, no regenerated return after later cancellation, retained mandatory cleanup and independent work. Preserve historical failed reports; rerun with the source-backed native-duration bracket check.
+- [ ] Audit native source snapshots and logs, recheck current main and the delivered Toolkit version, then push the verified cancellation fixes to main. Offline policy, settlement, UI and fixture regressions already cover the change; native Toolkit outcomes remain required before delivery.
 
 # Retained-item full-pack compatibility
 

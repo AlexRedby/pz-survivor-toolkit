@@ -111,7 +111,7 @@ class CleanupCancelChecks(unittest.TestCase):
             'duplicate cleanup': lambda r: r['records'].append(copy.deepcopy(r['records'][2])),
             'instant action': lambda r: r['records'][0].update(duration=1),
             'effective instant action': lambda r: r['records'][0].update(effectiveDuration=1),
-            'wrong native bracket': lambda r: r['records'][0].update(durationBefore=50),
+            'wrong native bracket': lambda r: r['records'][0].update(durationBefore=50, durationAfter=50),
             'changed lifecycle': lambda r: r.update(nativeMethodsUnchanged=False),
             'failed native effect': lambda r: r['records'][0]['finishes'][0].update(succeeded=False),
             'wrong exact prep item': lambda r: r['records'][0].update(item=999),
@@ -397,10 +397,36 @@ class CleanupCancelChecks(unittest.TestCase):
         tail = row['records'][3]
         tail.update(duration=79200, durationBefore=79200.07553100586, durationAfter=79200, effectiveDuration=79200)
         self.assertEqual([], self.check(row, selection, receipts))
-        tail['durationAfter'] = 79000
+        # The live thermal modifier can move more than the old artificial
+        # epsilon; the unchanged native allocation must remain inside its bracket.
+        tail.update(durationBefore=79205.41934967041, durationAfter=79207, effectiveDuration=79206)
+        self.assertEqual([], self.check(row, selection, receipts))
+        tail.update(durationAfter=79208, effectiveDuration=79200)
         self.assertTrue(self.check(row, selection, receipts))
-        tail.update(durationAfter=79200, effectiveDuration=79199)
+        tail.update(durationBefore=79200, durationAfter=79200, effectiveDuration=79199)
         self.assertTrue(self.check(row, selection, receipts))
+        for field, value in [('durationBefore', float('inf')), ('durationAfter', float('nan'))]:
+            damaged = copy.deepcopy(row); damaged['records'][3][field] = value
+            self.assertTrue(self.check(damaged, selection, receipts))
+
+    def test_actual_fixture_duration_accepts_live_drift_and_retains_failed_allocation(self):
+        from lupa.lua51 import LuaRuntime, LuaError
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        source = (Path(__file__).resolve().parent / 'native_queue/cleanup-cancel/client/ZZQueueCleanupCancel.lua').read_text()
+        duration = source[source.index('local function duration(action,row)'):source.index('local function observe()')]
+        lua.globals().isClient = lambda: False
+        observe = lua.execute(duration + ';return duration')
+        row = lua.table_from(dict(type='ISReadABook', duration=79200, durationBefore=79205.41934967041))
+        action = lua.eval('function()return{action={},maxTime=79206,adjustMaxTime=function()return 79207 end}end')()
+        observe(action, row)
+        self.assertEqual(79206, row.effectiveDuration)
+        self.assertEqual(79207, row.durationAfter)
+        for effective in (79200, 1, 79208):
+            row = lua.table_from(dict(type='ISReadABook', duration=79200, durationBefore=79205.41934967041))
+            action.maxTime = effective
+            with self.subTest(effective=effective), self.assertRaises(LuaError): observe(action, row)
+            self.assertEqual(effective, row.effectiveDuration, 'failed native allocation must remain in emitted diagnostics')
+            self.assertEqual(79207, row.durationAfter, 'failed after sample must remain in emitted diagnostics')
 
     def test_p4_requires_confirmed_pickup_active_read_and_paid_page_boundary(self):
         changes = {
