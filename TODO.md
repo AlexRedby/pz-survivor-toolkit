@@ -1,7 +1,3 @@
-# Automatic macOS native-test launch
-
-- [ ] Verify a cold default-auto SP/Host launch while the physical display is naturally asleep, then wake recovery: real framebuffer/scene progress, no visible fallback window before workspace placement, preserved focus/workspace and owned-process cleanup. Do not change the user's display state to run this gate. Child-only simulated sleep, native GPU readback, awake SP/Host startup and automated policy/visibility checks have passed; they do not establish this physical sleep/wake coverage.
-
 # Retained-item full-pack compatibility
 
 - [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.

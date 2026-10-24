@@ -159,7 +159,8 @@ public final class ToolkitWindowBootstrap {
             String token = ProcessHandle.current().pid() + ":" + window;
             System.out.println("[QUEUE_TEST] WINDOW_ROUTING_READY pid=" + ProcessHandle.current().pid() + " glfw=" + window);
             System.out.flush();
-            long deadline = System.nanoTime() + 60_000_000_000L;
+            // Normal discovery30s plus one wake-transition grace and owned routing.
+            long deadline = System.nanoTime() + 90_000_000_000L;
             String acknowledgement = "";
             while (true) {
                 if (Files.exists(gate, LinkOption.NOFOLLOW_LINKS)

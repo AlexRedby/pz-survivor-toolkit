@@ -99,7 +99,7 @@ class DesktopTests(unittest.TestCase):
         self.assertFalse(any(argv[0] in ('workspace', 'focus', 'summon-workspace') or '--focus-follows-window' in argv for argv in self.commands))
         manager.check(self.process)
 
-    def test_every_mode_tries_available_aerospace_first_without_display_probe(self):
+    def test_every_mode_routes_available_aerospace_window_with_only_initial_sleep_observation(self):
         for mode in ('auto', 'current', 'aerospace'):
             with self.subTest(mode=mode):
                 self.clear_gate()
@@ -110,8 +110,10 @@ class DesktopTests(unittest.TestCase):
                 self.assertEqual(manager.evidence['client_modes'], {'123': 'aerospace'})
                 self.assertEqual(manager.evidence['requested_mode'], mode)
                 self.assertEqual(manager.evidence['display_probes'], {})
+                self.assertEqual(manager.evidence['discovery_probes']['123']['state'], 'awake')
+                self.assertEqual(manager.evidence['wake_graces'], {})
                 self.assertTrue(self.moved)
-        self.probe.assert_not_called()
+        self.assertEqual(self.probe.call_count, 3)
 
     def test_visible_target_and_user_focus_are_allowed_at_startup(self):
         self.visible = 'PZ-TEST\n'
@@ -139,7 +141,7 @@ class DesktopTests(unittest.TestCase):
                                 manager.route(self.process, self.root, self.log)
                             self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
                     self.assertEqual(manager.evidence['display_probes']['123']['state'], state)
-        self.assertEqual(self.probe.call_count, 6)
+        self.assertEqual(self.probe.call_count, 12)
         self.assertFalse(any(argv[0] in ('layout', 'move-node-to-workspace') for argv in self.commands))
 
     def test_discovery_timeout_never_falls_back_after_an_owned_window_was_seen(self):
@@ -155,7 +157,7 @@ class DesktopTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'within 30 seconds'):
                         manager.route(self.process, self.root, self.log)
                 self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
-        self.probe.assert_not_called()
+        self.assertEqual(self.probe.call_count, 2)
 
     def test_slow_start_gets_full_discovery_budget_after_owned_glfw_ready(self):
         self.rows = ''
@@ -166,7 +168,7 @@ class DesktopTests(unittest.TestCase):
              patch.object(desktop.time, 'monotonic', side_effect=[0, 80, 119, 150]):
             manager.route(self.process, self.root, self.log)
         self.assert_current(manager, 'auto', 'display-asleep-owned-window-discovery-timeout')
-        self.assertEqual(self.probe.call_count, 1)
+        self.assertEqual(self.probe.call_count, 2)
         self.assertEqual(len([command for command in self.commands if command[0] == 'list-windows']), 4)
 
     def test_slow_start_still_allows_aerospace_discovery_after_startup_deadline(self):
@@ -179,7 +181,7 @@ class DesktopTests(unittest.TestCase):
             manager.route(self.process, self.root, self.log)
         self.assertEqual(manager.evidence['client_modes'], {'123': 'aerospace'})
         self.assertEqual((self.root / 'Lua/test-window-routed.txt').read_text(), '123:456\n')
-        self.probe.assert_not_called()
+        self.probe.assert_called_once_with()
 
     def test_first_ready_after_startup_deadline_is_not_acknowledged(self):
         manager = self.manager('auto')
@@ -188,6 +190,159 @@ class DesktopTests(unittest.TestCase):
                 manager.route(self.process, self.root, self.log)
         self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
         self.probe.assert_not_called()
+
+    def display_states(self, *states):
+        self.probe.side_effect = [
+            {'state': state, 'displays': [{'id': 1, 'asleep': state == 'asleep'}]}
+            for state in states]
+
+    def test_one_wake_grace_allows_primary_routing_in_every_mode(self):
+        for mode in ('auto', 'current', 'aerospace'):
+            with self.subTest(mode=mode):
+                self.clear_gate()
+                self.display_states('asleep', 'awake')
+                manager = self.manager(mode)
+                with patch.object(manager, 'owned', side_effect=[{}, {}, {'789': 'C'}, {'789': 'C'},
+                                                                 {'789': 'C'}, {'789': 'PZ-TEST'}]), \
+                     patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30, 34]):
+                    manager.route(self.process, self.root, self.log)
+                self.assertEqual(manager.evidence['client_modes'], {'123': 'aerospace'})
+                self.assertEqual(manager.evidence['discovery_probes']['123']['state'], 'asleep')
+                self.assertEqual(manager.evidence['display_probes']['123']['state'], 'awake')
+                self.assertEqual(manager.evidence['wake_graces']['123']['seconds'], 15)
+                self.assertEqual(manager.evidence['glfw_handles'], {})
+                self.assertEqual((self.root / 'Lua/test-window-routed.txt').read_text(), '123:456\n')
+                self.assertFalse((self.root / 'Lua/test-window-visible.txt').exists())
+
+    def test_awake_or_unknown_without_observed_sleep_never_extends_discovery(self):
+        self.rows = ''
+        for initial in ('awake', 'unknown'):
+            for deadline in ('awake', 'unknown'):
+                with self.subTest(initial=initial, deadline=deadline):
+                    self.display_states(initial, deadline)
+                    manager = self.manager('auto')
+                    with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30]):
+                        with self.assertRaisesRegex(RuntimeError, 'within 30 seconds'):
+                            manager.route(self.process, self.root, self.log)
+                    self.assertEqual(manager.evidence['wake_graces'], {})
+                    self.assertEqual(manager.evidence['client_modes'], {})
+                    self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
+
+    def test_wake_grace_expires_once_without_awake_or_unknown_fallback(self):
+        self.rows = ''
+        for mode in ('auto', 'current', 'aerospace'):
+            for final in ('awake', 'unknown'):
+                with self.subTest(mode=mode, final=final):
+                    self.display_states('asleep', 'awake', final)
+                    manager = self.manager(mode)
+                    with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30, 45]):
+                        with self.assertRaisesRegex(RuntimeError, 'within 45 seconds'):
+                            manager.route(self.process, self.root, self.log)
+                    self.assertEqual(manager.evidence['wake_graces']['123']['seconds'], 15)
+                    self.assertEqual(manager.evidence['display_probes']['123']['state'], final)
+                    self.assertEqual(manager.evidence['client_modes'], {})
+                    self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
+
+    def test_fresh_sleep_at_grace_expiry_allows_current_only_when_policy_permits(self):
+        self.rows = ''
+        for mode in ('auto', 'current', 'aerospace'):
+            with self.subTest(mode=mode):
+                self.clear_gate()
+                self.display_states('asleep', 'awake', 'asleep')
+                manager = self.manager(mode)
+                with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30, 45]):
+                    if mode == 'aerospace':
+                        with self.assertRaisesRegex(RuntimeError, 'within 45 seconds'):
+                            manager.route(self.process, self.root, self.log)
+                        self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
+                        self.assertEqual(manager.evidence['client_modes'], {})
+                    else:
+                        manager.route(self.process, self.root, self.log)
+                        self.assert_current(manager, mode, 'display-asleep-owned-window-discovery-timeout')
+                self.assertEqual(manager.evidence['wake_graces']['123']['seconds'], 15)
+
+    def test_initial_awake_or_unknown_never_vetoes_a_fresh_sleep_fallback(self):
+        self.rows = ''
+        for initial in ('awake', 'unknown'):
+            with self.subTest(initial=initial):
+                self.clear_gate()
+                self.display_states(initial, 'asleep')
+                manager = self.manager('auto')
+                with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30]):
+                    manager.route(self.process, self.root, self.log)
+                self.assert_current(manager, 'auto', 'display-asleep-owned-window-discovery-timeout')
+                self.assertEqual(manager.evidence['discovery_probes']['123']['state'], initial)
+                self.assertEqual(manager.evidence['wake_graces'], {})
+
+    def test_a_disappearing_owner_after_wake_grace_is_still_fatal(self):
+        self.display_states('asleep', 'awake')
+        manager = self.manager('auto')
+        with patch.object(manager, 'owned', side_effect=[{}, {}, {'789': 'C'}, {}]), \
+             patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30, 31]):
+            with self.assertRaisesRegex(RuntimeError, 'disappeared before routing'):
+                manager.route(self.process, self.root, self.log)
+        self.assertEqual(manager.evidence['client_modes'], {})
+        self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
+
+    def test_wake_grace_never_masks_cli_or_foreign_identity_failures(self):
+        for fault in ('cli', 'foreign'):
+            with self.subTest(fault=fault):
+                self.rows = ''
+                self.fail_command = None
+                self.display_states('asleep', 'awake')
+                manager = self.manager('auto')
+                original_owned = manager.owned
+                calls = 0
+                def fail_after_grace(process):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 3:
+                        if fault == 'cli':
+                            self.fail_command = 'list-windows'
+                        else:
+                            self.rows = '789|999|C\n'
+                    return original_owned(process)
+                with patch.object(manager, 'owned', side_effect=fail_after_grace), \
+                     patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30]):
+                    with self.assertRaisesRegex(RuntimeError, 'AeroSpace isolation failed|owned client PID'):
+                        manager.route(self.process, self.root, self.log)
+                self.assertEqual(manager.evidence['client_modes'], {})
+                self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
+
+    def test_wake_grace_does_not_extend_the_owned_process_lifetime(self):
+        self.rows = ''
+        self.display_states('asleep', 'awake')
+        manager = self.manager('auto')
+        probes = self.probe.side_effect
+        def exit_at_awake_probe():
+            probe = next(probes)
+            if probe['state'] == 'awake':
+                self.process.poll = lambda: -11
+            return probe
+        self.probe.side_effect = exit_at_awake_probe
+        with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30]):
+            with self.assertRaisesRegex(RuntimeError, 'exited'):
+                manager.route(self.process, self.root, self.log)
+        self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
+
+    def test_wake_graces_and_observations_belong_to_each_owned_client(self):
+        self.rows = ''
+        manager = self.manager('auto')
+        self.display_states('asleep', 'awake', 'awake')
+        with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30, 45]):
+            with self.assertRaisesRegex(RuntimeError, 'within 45 seconds'):
+                manager.route(self.process, self.root, self.log)
+        second, cache, log = self.second_client()
+        self.display_states('awake', 'awake')
+        with patch.object(manager, 'owned', return_value={}), \
+             patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 30]):
+            with self.assertRaisesRegex(RuntimeError, 'within 30 seconds'):
+                manager.route(second, cache, log)
+        self.assertEqual(set(manager.evidence['wake_graces']), {'123'})
+        self.assertEqual(manager.evidence['discovery_probes']['123']['state'], 'asleep')
+        self.assertEqual(manager.evidence['discovery_probes']['124']['state'], 'awake')
+        self.assertEqual(manager.evidence['client_modes'], {})
+        self.assertFalse((cache / 'Lua/test-window-routed.txt').exists())
 
     def test_missing_aerospace_refuses_every_mode_before_launch_even_asleep(self):
         self.display = 'asleep'
@@ -234,7 +389,7 @@ class DesktopTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'AeroSpace isolation failed'):
                         self.manager(mode).route(self.process, self.root, self.log)
                     self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
-        self.probe.assert_not_called()
+        self.assertEqual(self.probe.call_count, 6)
 
     def test_owned_window_disappearing_or_unplaced_before_ack_remains_fatal(self):
         self.display = 'asleep'
@@ -252,7 +407,7 @@ class DesktopTests(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError, 'disappeared|did not isolate'):
                             manager.route(self.process, self.root, self.log)
                     self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
-        self.probe.assert_not_called()
+        self.assertEqual(self.probe.call_count, 12)
 
     def test_foreign_identity_during_placement_remains_a_hard_failure(self):
         for mode in ('auto', 'current', 'aerospace'):
@@ -294,14 +449,14 @@ class DesktopTests(unittest.TestCase):
         self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
         self.assertEqual(manager.evidence['client_modes'], {})
 
-    def test_strict_aerospace_does_not_probe_sleep_for_discovery_timeout(self):
+    def test_strict_aerospace_still_refuses_sleep_fallback_after_initial_and_deadline_probes(self):
         self.display = 'asleep'
         self.rows = ''
         manager = self.manager('aerospace')
         with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 31]):
             with self.assertRaisesRegex(RuntimeError, 'within 30 seconds'):
                 manager.route(self.process, self.root, self.log)
-        self.probe.assert_not_called()
+        self.assertEqual(self.probe.call_count, 2)
         self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
 
     def test_strict_aerospace_never_falls_back_on_discovery_or_routing_failure(self):
@@ -395,7 +550,7 @@ class DesktopTests(unittest.TestCase):
         changes = [argv for argv in self.commands[count:] if argv[0] != 'list-windows']
         self.assertEqual(changes, [['layout', '--window-id', '789', 'floating'],
                                    ['move-node-to-workspace', '--window-id', '789', 'PZ-TEST']])
-        self.probe.assert_called_once_with()
+        self.assertEqual(self.probe.call_count, 2)
         manager.check(self.process)
         self.rows = '790|123|PZ-TEST\n'
         with self.assertRaisesRegex(RuntimeError, 'escaped.*pid=123'):
@@ -407,7 +562,7 @@ class DesktopTests(unittest.TestCase):
         manager.check(self.process)
         self.assertEqual(manager.evidence['client_modes'], {'123': 'current'})
         self.assertFalse(any(command[0] == 'layout' for command in self.commands))
-        self.probe.assert_called_once_with()
+        self.assertEqual(self.probe.call_count, 2)
 
     def test_wake_cli_and_mutation_errors_are_fatal_without_marking_recovery(self):
         for command in ('list-windows', 'layout', 'move-node-to-workspace'):
@@ -493,13 +648,18 @@ class DesktopTests(unittest.TestCase):
 
     def test_process_exiting_during_sleep_probe_never_releases_gate(self):
         self.rows = ''
+        calls = 0
         def exit_during_probe():
-            self.process.poll = lambda: -11
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                self.process.poll = lambda: -11
             return {'state': 'asleep', 'displays': [{'id': 1, 'asleep': True}]}
         self.probe.side_effect = exit_during_probe
         with patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 31]):
             with self.assertRaisesRegex(RuntimeError, 'exited'):
                 desktop.prepare({}).route(self.process, self.root, self.log)
+        self.assertEqual(calls, 2)
         self.assertFalse((self.root / 'Lua/test-window-routed.txt').exists())
 
     def test_unknown_desktop_mode_is_not_an_implicit_fallback(self):
@@ -624,12 +784,14 @@ class DesktopTests(unittest.TestCase):
                 manager.check(second)
         self.assertEqual(manager.evidence['client_modes'], {'123': 'current', '124': 'aerospace'})
         self.assertEqual((cache / 'Lua/test-window-routed.txt').read_text(), '124:457\n')
-        self.probe.assert_called_once_with()
+        self.assertEqual(self.probe.call_count, 3)
 
     def test_second_client_rechecks_sleep_instead_of_reusing_first_client_probe(self):
         self.rows = ''
         self.probe.side_effect = [
             {'state': 'asleep', 'displays': [{'id': 1, 'asleep': True}]},
+            {'state': 'asleep', 'displays': [{'id': 1, 'asleep': True}]},
+            {'state': 'awake', 'displays': [{'id': 1, 'asleep': False}]},
             {'state': 'awake', 'displays': [{'id': 1, 'asleep': False}]},
         ]
         manager = self.manager('auto')
@@ -640,7 +802,7 @@ class DesktopTests(unittest.TestCase):
              patch.object(desktop.time, 'monotonic', side_effect=[0, 0, 31]):
             with self.assertRaisesRegex(RuntimeError, 'sleeping displays'):
                 manager.route(second, cache, log)
-        self.assertEqual(self.probe.call_count, 2)
+        self.assertEqual(self.probe.call_count, 4)
         self.assertEqual(manager.evidence['display_probes']['123']['state'], 'asleep')
         self.assertEqual(manager.evidence['display_probes']['124']['state'], 'awake')
         self.assertEqual(manager.evidence['client_modes'], {'123': 'current'})
@@ -656,7 +818,7 @@ class DesktopTests(unittest.TestCase):
             manager.route(second, cache, log)
         self.assertEqual(manager.evidence['client_modes'], {'123': 'aerospace', '124': 'current'})
         self.assertEqual((cache / 'Lua/test-window-routed.txt').read_text(), '124:457:current\n')
-        self.probe.assert_called_once_with()
+        self.assertEqual(self.probe.call_count, 3)
 
     def test_wake_recovery_updates_each_client_without_losing_other_current_or_routed_checks(self):
         manager = self.fallback()
@@ -687,7 +849,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual((cache / 'Lua/test-window-routed.txt').read_text(), '124:457:current\n')
         self.assertEqual((cache / 'Lua/test-window-visible.txt').read_text(), '124:457\n')
         self.assertEqual(set(manager.evidence['display_probes']), {'123', '124'})
-        self.assertEqual(self.probe.call_count, 2)
+        self.assertEqual(self.probe.call_count, 4)
 
 
 class GuiAccessTests(unittest.TestCase):

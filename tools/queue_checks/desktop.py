@@ -64,7 +64,8 @@ class Desktop:
         self.recovery_gates = {}
         self.evidence = {'mode': self.mode, 'requested_mode': self.requested_mode,
                          'workspace': None, 'windows': {}, 'glfw_handles': {},
-                         'client_modes': {}, 'fallback_reason': None, 'display_probes': {}}
+                         'client_modes': {}, 'fallback_reason': None, 'display_probes': {},
+                         'discovery_probes': {}, 'wake_graces': {}}
         self.workspace = options.get('test_workspace', 'PZ-TEST')
         if not isinstance(self.workspace, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', self.workspace):
             raise ValueError('test_workspace must be a workspace name using letters, digits, - or _')
@@ -112,6 +113,8 @@ class Desktop:
         startup_deadline = time.monotonic() + 120
         discovery_deadline = None
         saw_owned = False
+        saw_asleep = False
+        wake_grace_used = False
         fallback = False
         while True:
             if process.poll() is not None:
@@ -132,19 +135,30 @@ class Desktop:
                         raise RuntimeError('Owned client did not report a valid WINDOW_ROUTING_READY GLFW handle '
                                            'within 120 seconds; no window acknowledged')
                     discovery_deadline = now + 30
+                    probe = display_state()
+                    self.evidence['discovery_probes'][pid] = probe
+                    saw_asleep = probe['state'] == 'asleep'
                 if rows:
                     break
             if discovery_deadline is None and now >= startup_deadline:
                 raise RuntimeError('Owned client did not report a valid WINDOW_ROUTING_READY GLFW handle '
                                    'within 120 seconds; no window acknowledged')
             if discovery_deadline is not None and now >= discovery_deadline:
-                if self.requested_mode != 'aerospace' and ready and not saw_owned:
+                if ready and not saw_owned:
                     probe = display_state()
                     self.evidence['display_probes'][str(process.pid)] = probe
-                    if probe['state'] == 'asleep':
+                    saw_asleep = saw_asleep or probe['state'] == 'asleep'
+                    if self.requested_mode != 'aerospace' and probe['state'] == 'asleep':
                         fallback = True
                         break
-                raise RuntimeError('Owned client window was not detected by AeroSpace within 30 seconds; '
+                    if probe['state'] == 'awake' and saw_asleep and not wake_grace_used:
+                        wake_grace_used = True
+                        discovery_deadline = now + 15
+                        self.evidence['wake_graces'][pid] = {
+                            'seconds': 15, 'reason': 'display-woke-before-window-discovery', 'probe': probe}
+                        continue
+                timeout = 45 if wake_grace_used else 30
+                raise RuntimeError(f'Owned client window was not detected by AeroSpace within {timeout} seconds; '
                                    'current desktop fallback requires sleeping displays and an owned GLFW handle')
             time.sleep(0.1)
         if fallback:
