@@ -1,7 +1,3 @@
-# Retained-item merged-main verification
-
-- [ ] Check the merged inventory refresh/filter/capacity changes with the retained-item regressions and a fresh isolated Host scenario before pushing Toolkit 0.1.252.
-
 # Retained-item full-pack compatibility
 
 - [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.
