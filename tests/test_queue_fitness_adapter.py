@@ -1082,6 +1082,7 @@ class FitnessAdapterTests(unittest.TestCase):
                  setValue=function()optionCalls=optionCalls+1 end}end}end}}
                 local config={kind=test_kind,mode='toolkit',cases={'empty'}}
                 package.preload['QueueTestSelection']=function()return config end
+                package.preload['QueueFitnessDiagnostics']=function()return {install=function()return nil end}end
                 package.preload['QueueHealthEvents']=function()return {
                  emit=function(row)rows[#rows+1]=row end,encode=function()return '{}'end}end
                 for _,name in ipairs({'PZSurvivorToolkit/ActionQueuePanel','ISUI/ISFitnessUI',
@@ -1152,6 +1153,97 @@ class FitnessAdapterTests(unittest.TestCase):
                         if test_role=='client1'then assert(#sent==2 and sent[2].name=='Prepare')
                         else assert(#sent==1)end
                     """)
+
+    def test_optional_native_diagnostics_preserve_callbacks_arguments_results_errors_and_queue_effects(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for read-only native diagnostics checks')
+        lua=LuaRuntime()
+        lua.globals().JSON=lua.execute((ROOT/'tests/native_queue/health/shared/QueueHealthEvents.lua').read_text())
+        lua.execute("""
+            package.preload['QueueHealthEvents']=function()return JSON end
+            function pack(...)return {n=select('#',...),...}end
+            now=0;rows={};handlers={};registered=0;gateCalls=0;resetCalls=0;cancelCalls=0;captureCalls=0;emitError=false;caseID='pickup-cancel-restore'
+            getTimestampMs=function()return now end
+            Events={OnServerCommand={Add=function(fn)handlers[#handlers+1]=fn end}}
+            root={};player={getInventory=function()return root end,getOnlineID=function()return 7 end}
+            queue={character=player,queue={},toolkitOperationGeneration=2};ISTimedActionQueue={queues={[player]=queue}}
+            sentinel={};argument={};native={};failure={}
+            originalGate=function(...)
+             gateCalls=gateCalls+1;gateArguments=pack(...);if shouldError then error(failure)end
+             return true,nil,sentinel
+            end
+            originalReset=function(...)
+             resetCalls=resetCalls+1;resetArguments=pack(...);if resetError then error(failure)end
+             queue.queue={};queue.current=nil;return false,nil,sentinel
+            end
+            originalCancel=function(...)
+             cancelCalls=cancelCalls+1;cancelArguments=pack(...);queue.queue={};queue.current=nil;return nil,sentinel
+            end
+            ISTimedActionQueue.resetQueue=originalReset;ISTimedActionQueue.cancelQueue=originalCancel
+            L={allowNativeCompletion=originalGate,registerObserver=function(id,value)registered=registered+1;observer=value;return true end}
+            PZSurvivorToolkit={ActionQueueLifecycle=L,ActionQueueAcknowledgements={
+             capture=function()captureCalls=captureCalls+1;error('diagnostics must not grant receipt observation')end,
+             state=function()captureCalls=captureCalls+1;error('diagnostics must not recapture receipt')end}}
+            context={case=function()return caseID end,player=function()return player end,active=function()return true end,
+             emit=function(marker,row)if emitError then error('log failure')end rows[#rows+1]={marker=marker,row=row}end}
+            ISBaseTimedAction={stop=function()return 'native stop'end,isValid=function()return true end}
+            originalStop,originalValid=ISBaseTimedAction.stop,ISBaseTimedAction.isValid
+        """)
+        lua.globals().D=lua.execute((ROOT/'tests/native_queue/fitness/client/QueueFitnessDiagnostics.lua').read_text())
+        lua.execute("""
+            assert(D.install({},context)==nil and D.install({options={fitness_diagnostics=false}},context)==nil)
+            assert(registered==0 and #handlers==0 and L.allowNativeCompletion==originalGate
+             and ISTimedActionQueue.resetQueue==originalReset and ISTimedActionQueue.cancelQueue==originalCancel)
+            diagnostics=D.install({options={fitness_diagnostics=true}},context)
+            assert(registered==1 and #handlers==1)
+            item={getID=function()return 12 end,getFullType=function()return 'Base.Bag_Schoolbag'end}
+            action={Type='ISDropWorldItemAction',character=player,item=item,toolkitNativeTransaction=3,toolkitNativeKind='ISDropWorldItemAction'}
+            queue.queue={action};queue.current=action
+            observer.started(action)
+            assert(rows[#rows].row.action.nativeRef==false,'start must retain the pre-allocation boundary')
+            action.action=native
+            local gateResult=pack(L.allowNativeCompletion(action,native,argument,nil))
+            assert(gateCalls==1 and gateArguments.n==4 and gateArguments[1]==action and gateArguments[2]==native and gateArguments[3]==argument)
+            assert(gateResult.n==3 and gateResult[1]==true and gateResult[2]==nil and gateResult[3]==sentinel)
+            local decision=rows[#rows].row
+            assert(decision.boundary=='Lifecycle.allowNativeCompletion'and decision.detail.returned
+             and decision.detail.nativeArgumentMatches and decision.detail.queueOwnsAction and not decision.detail.nativeDoneRead)
+            assert(not decision.detail.genericAck.sealed and decision.detail.genericAck.candidate==false and captureCalls==0)
+            handlers[1]('PZSurvivorToolkitActions','State',{player=99,transaction=3,state='completed'});local before=#rows
+            handlers[1]('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=3,kind='ISDropWorldItemAction',token='real-wire-token',state='started'})
+            handlers[1]('PZSurvivorToolkitActions','State',{protocol=1,player=7,transaction=3,kind='ISDropWorldItemAction',token='real-wire-token',state='completed'})
+            assert(#rows==before+2 and rows[#rows].row.boundary=='WIRE_STATE'and not rows[#rows].row.detail.sealed)
+            L.allowNativeCompletion(action,native)
+            assert(rows[#rows].row.detail.genericAck.candidate.state=='completed'and captureCalls==0)
+            local count=#rows;L.allowNativeCompletion(action,native);assert(#rows==count,'same action/state trace repeated')
+            isItemTransactionDone=function(id)return id==11 end;isItemTransactionRejected=function()return false end
+            action.transactionId=11;diagnostics.poll();local poll=rows[#rows].row
+            assert(poll.action.transaction==11 and poll.action.transactionDone and not poll.action.transactionRejected)
+            assert(observer.begin(action,'perform')and queue.current==action and #queue.queue==1)
+            observer.finish(action,'perform',true)
+            assert(rows[#rows].row.boundary=='Lifecycle.finish.perform'and rows[#rows].row.detail.succeeded)
+            before=#rows;local resetResult=pack(ISTimedActionQueue.resetQueue(queue,argument,nil))
+            assert(resetCalls==1 and resetArguments.n==3 and resetArguments[1]==queue and resetArguments[2]==argument)
+            assert(resetResult.n==3 and resetResult[1]==false and resetResult[2]==nil and resetResult[3]==sentinel)
+            assert(#queue.queue==0 and queue.current==nil and rows[before+1].row.boundary=='ISTimedActionQueue.resetQueue.before'
+             and rows[before+1].row.queue.ordered[1].itemId==12,'pre-clear receipt lost original ordered queue')
+            queue.current=action;queue.queue={action};emitError=true
+            local cancelResult=pack(ISTimedActionQueue.cancelQueue(queue,argument,nil))
+            assert(cancelCalls==1 and cancelArguments.n==3 and cancelArguments[2]==argument and cancelResult.n==2
+             and cancelResult[1]==nil and cancelResult[2]==sentinel and #queue.queue==0,'diagnostic failure changed native effects')
+            shouldError=true;local ok,problem=pcall(L.allowNativeCompletion,action,native,argument)
+            assert(not ok and problem==failure,'native error object was replaced or swallowed')
+            resetError=true;ok,problem=pcall(ISTimedActionQueue.resetQueue,queue,argument)
+            assert(not ok and problem==failure and resetCalls==2)
+            assert(ISBaseTimedAction.stop==originalStop and ISBaseTimedAction.isValid==originalValid and captureCalls==0)
+            emitError=false;shouldError=false;resetError=false;caseID='placement-cancel-restore'
+            queue.current=action;queue.queue={action};diagnostics.poll();assert(rows[#rows].row.case==caseID)
+            local beforeLimit=#rows
+            for i=1,600 do action.transactionId=i;diagnostics.poll()end
+            assert(#rows-beforeLimit<=512 and rows[#rows].marker=='NATIVE_TRACE_LIMIT','trace failed to bound a case')
+        """)
 
     def test_prepared_refresh_uses_exact_live_replicas_without_reinitializing_or_forcing_state(self):
         try:

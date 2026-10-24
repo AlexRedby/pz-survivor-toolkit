@@ -63,6 +63,8 @@ local function emit(row)
  row.suite,row.kind,row.mode,row.actor='fitness',config.kind,config.mode,actor;JSON.emit(row)
 end
 local function raw(marker,row)print('[FITNESS_TEST] '..marker..' '..JSON.encode(row))end
+local diagnostics=require('QueueFitnessDiagnostics').install(config,{case=case,player=getPlayer,emit=raw,
+ active=function()return actor=='client1'and state~=nil end})
 local function cancel(action,message)
  local accepted,reason=API.cancelOperation(queue(),action)
  if not accepted then
@@ -393,6 +395,7 @@ Events.OnTick.Add(function()
   if actor=='client2'then peerTick();return end
   assert(getTimestampMs()-since<210000,'native fitness deadline '..phase..' '..tostring(case()))
   assert(T.Settings.actionQueue()==not native,'fitness queue mode changed')
+  if diagnostics then diagnostics.poll()end
   idle=empty()and idle+1 or 0
   if phase=='prepare'then
    if idle<10 or getPlayer():tooDarkToRead()then return end
