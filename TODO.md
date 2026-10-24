@@ -99,8 +99,6 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Near-term adapters
 
-- [ ] Medical missing-supply removal: investigate the source-backed `test_action_queue_health.lua` failure "Java removal without stop skips only the never-started medical operation", also reproduced on unchanged main `5964aaf7`. Establish why an unavailable, never-started HealthPanelAction loses its independent reading tail at the native removal boundary. Gate any fix on exact supplies/effects, required cleanup and preserved native stop/reset behavior.
-
 The medical packet mismatch below is an unresolved runtime observation; its cause has not been attributed to queue scheduling.
 
 Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
