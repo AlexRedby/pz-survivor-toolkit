@@ -21,7 +21,9 @@
     "actions.lua",
     "wall.lua",
     "wall-input.lua",
-    "analyze-wall.py"
+    "analyze-wall.py",
+    "injury.lua",
+    "analyze-injury.py"
   ],
   "selection_template": {
     "schema_version": 1,

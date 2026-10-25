@@ -68,10 +68,12 @@ def _walk_source(game):
 def walk_components(injury, speed):
     """Native defaultWalk triangles; out-of-hull Pick inflates coordinates by 1.1."""
     x, y = abs(injury), speed
-    if not 0 <= y <= 1 or x > 1.001:
+    # Host can retain its native negative injury-adjusted RunSpeed briefly
+    # after returning to Walk. Pick projects that point onto the same hull.
+    if not finite(y) or y > 1 or x > 1.001:
         raise ValueError('Unsupported native injury walk coordinates')
     if x > y:
-        light, heavy = 0, min(1, 1.1 * (x + y) / 2)
+        light, heavy = 0, max(0, min(1, 1.1 * (x + y) / 2))
     else:
         light, heavy = max(0, 2 * min(x, y - x)), max(0, 2 * x - y)
     suffix = 'R' if injury > 0 else 'L'

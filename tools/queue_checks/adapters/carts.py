@@ -186,10 +186,19 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_injury'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
+    if options.get('cart_injury'):
+        if options.get('mp_host') is not True or options.get('cart_fast_motion') is not True:
+            raise ValueError('cart_injury requires native MP Host and cart_fast_motion')
+        if any(options.get(key) for key in ('cart_wall_exit', 'cart_actions', 'cart_hotkey_setdown')):
+            raise ValueError('cart_injury requires an isolated motion bank without wall/actions/hotkey')
+        if options.get('cart_injury_side') not in ('left', 'right') or options.get('cart_injury_severity') not in ('mild', 'heavy'):
+            raise ValueError('cart_injury requires exact left/right side and mild/heavy severity')
+    elif any(key in options for key in ('cart_injury_side', 'cart_injury_severity')):
+        raise ValueError('Injury side/severity require cart_injury')
     if 'cart_wall_exit' in options:
         if suite != MP or options.get('mp_host') is not True or options['cart_wall_exit'] not in ('left', 'right', 'front'):
             raise ValueError('cart_wall_exit requires left/right/front in a native MP Host selection')
@@ -335,9 +344,15 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if selection['suite'] == MP:
             if role != 'server':
                 _write(lua / 'client/QueueCartMPStartup.lua', (project / 'tests/native_queue/startup/client/ZZStartup.lua').read_text())
-            for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
+            for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('injury.lua', 'client/CartMPInjury.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
                                    ('placement.lua', 'shared/CartMPPlacement.lua'), ('wall.lua', 'shared/CartMPWall.lua'),
                                    ('wall-input.lua', 'client/CartMPWallInput.lua'), ('json.lua', 'shared/CartMPJSON.lua')]:
+                # PZ auto-loads client Lua files even when ZZCartMP never requires them.
+                # Bank-specific guards must only enter the selected disposable profile.
+                if origin == 'actions.lua' and not selection.get('options', {}).get('cart_actions'):
+                    continue
+                if origin == 'injury.lua' and not selection.get('options', {}).get('cart_injury'):
+                    continue
                 _write(lua / target, (mp / origin).read_text())
         elif role != 'server':
             _write(lua / 'client/QueueCartStartup.lua', (project / 'tests/native_queue/support/QueueCartStartup.lua').read_text())
@@ -1139,6 +1154,8 @@ def verify(root, selection, catalog):
                              'functionalPass': True, 'partialCoverage': debug, 'approachVerified': True}}]}
         if selection['suite'] == MP:
             report = _load(intake / 'analyze.py').analyze(root)
+            if selection.get('options', {}).get('cart_injury') and not report.get('injury', {}).get('injuryVerified'):
+                raise ValueError('Native Host cart injury verification failed: ' + str(report.get('injury')))
             evidence['comparison'] = report
             _write(analysis / 'mp-comparison.json', json.dumps(report, indent=2, allow_nan=False))
         else:

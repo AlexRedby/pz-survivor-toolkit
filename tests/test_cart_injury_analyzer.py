@@ -225,6 +225,16 @@ class CartInjuryAnalyzerTests(unittest.TestCase):
         row['clips'] = injury.tracks('Bob_WalkLightLimpL=.8@.1;Bob_WalkHeavyLimpL=.8@.1;')
         self.assertFalse(injury._walk_mix(row))
 
+    def test_host_walk_after_run_accepts_native_negative_speed_projection(self):
+        # Recorded Host heavy injury: WalkSpeed remains native RunSpeed=-.1376667
+        # during the return to Walk; Pick gives Heavy=.4742833, Slow=.5257167.
+        expected = injury.walk_components(1, -.1376667)
+        self.assertAlmostEqual(expected['Bob_WalkHeavyLimpR'], .474283315)
+        row = dict(injury=1, walkSpeed=-.1376667,
+                   clips=injury.tracks('Bob_WalkHeavyLimpR=.95@.47428334;Bob_WalkSlow=.95@.52571666;'))
+        self.assertTrue(injury._walk_mix(row))
+        self.assertEqual(injury.walk_components(.1, -.5)['Bob_WalkHeavyLimpR'], 0)
+
     def test_native_source_topology_is_read_and_reference_drift_rejected(self):
         node = injury.ET.parse(ROOT / 'PZSurvivorToolkit/42/media/AnimSets/player/movement/toolkit_cart_walk.xml').getroot()
         node.find('m_Name').text = 'defaultWalk'

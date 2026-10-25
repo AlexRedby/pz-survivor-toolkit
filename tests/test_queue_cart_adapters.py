@@ -602,10 +602,21 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.assertEqual(target.read_bytes(), startup.read_bytes())
             client = (target.parent / 'ZZCartMP.lua').read_text()
             self.assertNotIn('ConnectToServer.instance:connect', client)
-            self.assertEqual((target.parent / 'CartMPActions.lua').read_bytes(), (ROOT / 'tests/native_queue/contributions/wooden_cart_multiplayer/actions.lua').read_bytes())
+            self.assertFalse((target.parent / 'CartMPActions.lua').exists())
+            self.assertFalse((target.parent / 'CartMPInjury.lua').exists())
         self.assertNotIn('server', self.runtime['fixture']['attach'])
         for role in ('client1', 'client2', 'server'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TEST_PAD'], 'false')
+
+    def test_mp_action_module_is_staged_only_for_its_selected_bank(self):
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        self.options['cart_actions'] = True
+        self.role('client2'); self.role('server')
+        self.stage()
+        for role in ('client1', 'client2', 'server'):
+            folder = self.output / role / 'mods/ActionQueueTest/42/media/lua/client'
+            self.assertEqual((folder / 'CartMPActions.lua').read_bytes(), (ROOT / 'tests/native_queue/contributions/wooden_cart_multiplayer/actions.lua').read_bytes())
+            self.assertFalse((folder / 'CartMPInjury.lua').exists())
 
     def test_mp_wall_exit_requires_host_wooden_isolated_bank(self):
         self.options.update(cart_wall_exit='left', mp_host=True)
@@ -925,6 +936,32 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
                 carts.validate(self.selection)
             self.options.pop(flag)
             self.selection.update(suite=carts.SP, cases=['reverse'], kind='sp', languages=['RU'])
+
+    def test_mp_injury_requires_native_host_and_exact_isolated_bank(self):
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        self.options.update(cart_injury=True, cart_fast_motion=True, mp_host=True,
+                            cart_injury_side='left', cart_injury_severity='heavy')
+        carts.validate(self.selection)
+        for key, value in [('mp_host', False), ('cart_fast_motion', False), ('cart_injury_side', 'LEFT'),
+                           ('cart_injury_severity', 'severe'), ('cart_actions', True), ('cart_wall_exit', 'left'),
+                           ('cart_hotkey_setdown', True), ('cart_injury', 1)]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                carts.validate(dict(self.selection, options=dict(self.options, **{key: value})))
+        for side in ('left', 'right'):
+            for severity in ('mild', 'heavy'):
+                carts.validate(dict(self.selection, options=dict(self.options, cart_injury_side=side, cart_injury_severity=severity)))
+        with self.assertRaisesRegex(ValueError, 'require cart_injury'):
+            carts.validate(dict(self.selection, options=dict(self.options, cart_injury=False)))
+        self.options['cart_variant'] = 'shopping-cart'
+        self.role('client2'); self.role('server')
+        self.stage()
+        for role in ('client1', 'client2', 'server'):
+            target = self.output / role / 'mods/ActionQueueTest/42/media/lua/client/CartMPInjury.lua'
+            self.assertEqual(target.read_bytes(), (ROOT / 'tests/native_queue/contributions/wooden_cart_multiplayer/injury.lua').read_bytes())
+            self.assertFalse((target.parent / 'CartMPActions.lua').exists())
+        staged = (self.output / 'client2/mods/ActionQueueTest/42/media/lua/shared/QueueTestSelection.lua').read_text()
+        self.assertIn('cart_injury', staged)
+        self.assertIn('heavy', staged)
 
     def test_injury_bank_stages_real_bodydamage_for_each_variant_with_existing_probe_gate(self):
         for variant in carts.VARIANTS:

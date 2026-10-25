@@ -187,6 +187,9 @@ public final class ClearanceProbe {
                     .append(",\"heldModel\":").append(jsonString(held))
                     .append(",\"overridePrimary\":").append(jsonString(player.overridePrimaryHandModel))
                     .append(",\"overrideSecondary\":").append(jsonString(player.overrideSecondaryHandModel))
+                    .append(",\"walkInjury\":").append(player.getVariableFloat("WalkInjury",-1))
+                    .append(",\"walkSpeed\":").append(player.getVariableFloat("WalkSpeed",-1))
+                    .append(",\"tracks\":").append(jsonString(animationTracks(player)))
                     .append(",\"cart\":");
                 matrix(row,new Matrix4f(cart.xfrm).transpose());row.append(",\"bones\":{");
                 boolean comma=false;
@@ -202,6 +205,13 @@ public final class ClearanceProbe {
                 row.append("}}\n");output.write(row.toString());output.flush();last=System.nanoTime();return;
             }
         }
+    }
+    private static String animationTracks(zombie.characters.IsoPlayer player) {
+        var out=new StringBuilder();
+        if(player.getAnimationPlayer()!=null && player.getAnimationPlayer().getMultiTrack()!=null)
+            for(var track:player.getAnimationPlayer().getMultiTrack().getTracks())
+                out.append(track.getName()).append('=').append(track.getSpeedDelta()).append('@').append(track.getBlendWeight()).append(';');
+        return out.toString();
     }
     /** Read the already drawn wooden VBO without changing it or leaving another GL binding active. */
     public static synchronized void mesh(ModelSlotRenderData slot,ModelInstanceRenderData data,boolean rendered) {

@@ -418,16 +418,16 @@ local host=true
 isServer=function() return true end
 isClient=function() return false end
 cartMPPadHost=function() return host end
-local writes,floors=0,0
+local writes,floors,probe=0,0,16
 local empty={size=function() return 0 end}
 local occupied={size=function() return 1 end}
 local upper={}
 local chunk={}
 local cell={}
-function cell:getChunkForGridSquare(x,y,z) return not (mode=='unloaded' and x==16 and y==16) and chunk or nil end
+function cell:getChunkForGridSquare(x,y,z) return not (mode=='unloaded' and x==probe and y==probe) and chunk or nil end
 function cell:getGridSquare(x,y,z)
- if z==0 then return square end
- if x==16 and y==16 and mode~='empty' then return {
+ if z==0 then return not (mode=='unloaded-ground' and x==probe and y==probe) and square or nil end
+ if x==probe and y==probe and mode~='empty' then return {
   getFloor=function() return mode=='floor' and {} or nil end,
   getObjects=function() return mode=='occupied' and occupied or empty end,
   getSpecialObjects=function() return mode=='special' and occupied or empty end,
@@ -455,12 +455,24 @@ end
 mode='empty';host=true;local elevated=assert(dofile(PLACEMENT))(player)
 assert(elevated.minX==-15 and elevated.minY==-15 and elevated.x==4.5 and elevated.y==.5 and elevated.size==31 and elevated.margin==2 and elevated.bankVersion==3 and elevated.elevated==true and elevated.z==7 and floors==961,'Native elevated floor creation/cache count')
 assert(elevated.x>=elevated.minX+elevated.margin and elevated.x+2<=elevated.minX+elevated.size-elevated.margin and elevated.y>=elevated.minY+elevated.margin and elevated.y+3<=elevated.minY+elevated.size-elevated.margin,'Extended owner/observer start outside interior')
+package.loaded.QueueTestSelection.options.cart_injury=true
+upper={};writes=0;floors=0;probe=32
+for _,value in ipairs({'guard','unloaded','unloaded-ground','floor','occupied','special','item','corpse','actor','upper-room','upper-vehicle'}) do
+ mode=value;host=value~='guard';writes=0
+ local ok,result=pcall(assert(dofile(PLACEMENT)),player)
+ if value=='unloaded' or value=='unloaded-ground' then
+  assert(ok and result==nil and writes==0,'Injury pad must retry missing ground/chunks before mutation: '..value)
+ else assert(not ok and writes==0,'Invalid injury pad halo edited before whole preflight: '..value..' '..tostring(result)) end
+end
+mode='empty';host=true;local injured=assert(dofile(PLACEMENT))(player)
+assert(injured.minX==-31 and injured.minY==-31 and injured.size==63 and injured.bankVersion==5
+ and injured.z==7 and injured.elevated==true and injured.margin==2 and floors==3969,'Native63x63 injury floor creation/cache count')
 package.loaded.QueueTestSelection={disposable=false}
 local ok,err=pcall(dofile,PLACEMENT)
 assert(not ok and tostring(err):find('disposable',1,true),'Missing disposable guard')
 """.replace('PLACEMENT', placement)
     subprocess.run([lua, '-e', code], check=True)
-    return 'PASS (default13x13; elevated31x31 native creation/cache and whole preflight refusal with zero edits)'
+    return 'PASS (default13x13; fast31x31 and injury63x63 native creation/cache, missing injury chunk/ground retries and whole preflight refusal with zero edits)'
 
 
 def check_capture_environment(lua):
@@ -481,7 +493,7 @@ def check_capture_environment(lua):
     assert 'worldExistedAtStartup' in bridge and 'zombie.network.CoopSlave.instance==null' in bridge
     assert 'cartMPBrace(p,setup.cartId,setup.wallX,setup.y)' in client
     assert "assert(type(brace)=='string','Native brace diagnostics missing for exact fixture owner/cart')" in client
-    assert client.index('if count~=961 then return end')<client.index('position(p,setup.x,setup.y,setup.z)')
+    assert client.index('if count~=setup.size*setup.size then return end')<client.index('position(p,setup.x,setup.y,setup.z)')
     assert "padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion" in client
     code="""
 local started,command,startCount
@@ -765,7 +777,7 @@ def main():
     print('Variants:', check_variants())
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
-        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua'):
+        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua', 'injury.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')

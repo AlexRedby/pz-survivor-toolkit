@@ -1,6 +1,6 @@
 # Injured cart locomotion
 
-- [ ] Verify injured Host owner/observer motion and presentation, including fast turns and injury/healing while already moving; preserve native injury variables and exact cart/cargo identity.
+- [ ] Finish injured Host owner/observer verification for a mild right-leg injury with the shopping cart when native window routing is stable. Check fast turns and injury/healing while already moving; preserve native injury variables and exact cart/cargo identity.
 - [ ] Repeat the injury checks with the complete selected mod set once its missing Workshop mods are available.
 
 # Shopping cart animation port
@@ -14,7 +14,6 @@
 # Metal wheelbarrow animation port
 
 - [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
-- [ ] Refine the remaining overlap between the stock mitten skin and metal shafts without changing the accepted arm/cart motion. Evaluate the full hand triangles: the finite-shaft palm/thumb/finger anchors pass, but coarse bridge faces still intersect the shaft.
 - [ ] Complete an isolated Host owner/observer run for the metal wheelbarrow with the installed mod set and at least 2048 MiB Java heap per process. Check motion, pickup/setdown, cancellation/retry, exact cart/cargo identity and both clients' presentation; review short recordings. A startup failure is not functional coverage.
 
 # Selected QoL additions
@@ -66,7 +65,6 @@
 
 - [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
 - [ ] Remove rendered fore-aft cart jumps during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.
-- [ ] Remove contact between wide jeans and the handles in the original straight pose, near it, at the start of the reverse arc and during heavy left/right leg limps, preserving native hip/leg motion and the preferred cart, hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.
 - [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.
 
 # Root fix for the action queue

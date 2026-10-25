@@ -70,6 +70,20 @@
         } catch(ReflectiveOperationException unavailable) {return false;}
     }
 
+    @LuaMethod(name="cartMPInjurySync", global=true)
+    public static float injurySync(IsoPlayer p,int cartId) {
+        var item=p==null?null:p.getPrimaryHandItem();
+        if(!padHost() || p==null || !"client1".equals(p.getUsername()) || p.isDead() || p.isGodMod()
+            || !p.isExistInTheWorld() || zombie.network.GameServer.getConnectionFromPlayer(p)==null
+            || item==null || item.getID()!=cartId || p.getSecondaryHandItem()!=item
+            || item.getContainer()!=p.getInventory() || !net.alexredby.pztoolkitjavapatches.CartSteeringHooks.supportedCart(p))
+            throw new IllegalStateException("Connected exact native Host injury owner/cart required");
+        // Native B42 derives injury/rates on the server and sends PlayerInjuries plus
+        // full PlayerDamage to the owner. Ordinary movement packets relay it to observers.
+        p.getNetworkCharacterAI().syncDamage();
+        return p.getVariableFloat("WalkInjury",0);
+    }
+
     @LuaMethod(name="cartMPState", global=true)
     public static String mpState(IsoPlayer p) {
         var a=p.getPrimaryHandItem(); var b=p.getSecondaryHandItem();
@@ -79,6 +93,8 @@
         int inventoryCount=0;
         if(a!=null)for(var item:p.getInventory().getItems())if(item.getID()==a.getID())inventoryCount++;
         var world=a==null?null:a.getWorldItem();
+        var leftFoot=p.getBodyDamage().getBodyPart(zombie.characters.BodyDamage.BodyPartType.Foot_L);
+        var rightFoot=p.getBodyDamage().getBodyPart(zombie.characters.BodyDamage.BodyPartType.Foot_R);
         var out=new StringBuilder("{\"wall\":").append(System.currentTimeMillis())
             .append(",\"id\":").append(p.getOnlineID()).append(",\"user\":\"").append(p.getUsername())
             .append("\",\"local\":").append(p.isLocalPlayer()).append(",\"enabled\":")
@@ -103,6 +119,9 @@
             .append(",\"collapsedFence\":").append(p.getCurrentSquare()!=null && zombie.iso.BentFences.getInstance().getCollapsedFence(p.getCurrentSquare())!=null)
             .append(",\"walkSpeed\":").append(p.getVariableFloat("WalkSpeed",-1))
             .append(",\"walkInjury\":").append(p.getVariableFloat("WalkInjury",-1))
+            .append(",\"injuryProbeVersion\":1,\"god\":").append(p.isGodMod()).append(",\"dead\":").append(p.isDead())
+            .append(",\"leftScratch\":").append(leftFoot.getScratchTime()).append(",\"rightScratch\":").append(rightFoot.getScratchTime())
+            .append(",\"leftFracture\":").append(leftFoot.getFractureTime()).append(",\"rightFracture\":").append(rightFoot.getFractureTime())
             .append(",\"endurance\":").append(p.getStats().get(zombie.characters.CharacterStat.ENDURANCE))
             .append(",\"enduranceMoodle\":").append(p.getMoodles().getMoodleLevel(zombie.scripting.objects.MoodleType.ENDURANCE))
             .append(",\"primary\":").append(a==null?-1:a.getID())

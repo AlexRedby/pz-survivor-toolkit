@@ -16,6 +16,37 @@ assert(not actions or (variant=='wooden-wheelbarrow' or variant=='metal-wheelbar
 local actionPhases={'drop-complete','pickup-complete','drop-cancel','drop-repeat','pickup-cancel','pickup-repeat'}
 local actionGround={true,false,false,true,true,false}
 local cartSession,actionIndex,pendingAction,actionStarted,actionsDone=nil,1,nil,false,false
+local injuryIndex,injuryCleaned=1,false
+local injuryPhases={{'injury-healthy',26000},{'injury-apply',28000},{'injury-heal',41000}}
+local function injuryMutation(p,args,cleanup)
+ assert(config.options.cart_injury==true and config.options.mp_host==true and config.options.cart_fast_motion==true
+  and p==players.client1 and p:getUsername()=='client1' and epoch and cartSession,'Native injury authority not armed')
+ local item=p:getPrimaryHandItem()
+ assert(item and item:getID()==cartSession.id and item==p:getSecondaryHandItem() and item:getContainer()==p:getInventory()
+  and item:getFullType()==cartType,'Native injury exact owner/cart changed')
+ local now=getTimestampMs();local phase=injuryPhases[injuryIndex]
+ if cleanup then
+  assert(injuryIndex>1 and not injuryCleaned,'Unexpected/duplicate injury cleanup');injuryCleaned=true
+ else
+  assert(phase and not injuryCleaned and type(args)=='table' and args.phase==phase[1] and args.id==cartSession.id
+   and args.side==config.options.cart_injury_side and args.severity==config.options.cart_injury_severity
+   and now-epoch>=phase[2] and now-epoch<=phase[2]+1000,'Unexpected/late native injury mutation')
+ end
+ p:setGodMod(false)
+ if not cleanup and phase[1]=='injury-apply' then
+  local part=p:getBodyDamage():getBodyPart(args.side=='left' and BodyPartType.Foot_L or BodyPartType.Foot_R)
+  if args.severity=='mild' then part:setScratched(true,false);part:setScratchTime(8);part:setBleeding(false);part:setBleedingTime(0)
+  else part:setFractureTime(35) end
+  part:SetInfected(false);part:setInfectedWound(false)
+ else p:getBodyDamage():RestoreToFullHealth() end
+ local injury=cartMPInjurySync(p,cartSession.id)
+ local left=p:getBodyDamage():getBodyPart(BodyPartType.Foot_L);local right=p:getBodyDamage():getBodyPart(BodyPartType.Foot_R)
+ local row={phase=cleanup and 'cleanup' or phase[1],id=cartSession.id,wall=now,side=config.options.cart_injury_side,
+  severity=config.options.cart_injury_severity,source='NetworkPlayerAI.syncDamage',walkInjury=injury,
+  leftScratch=left:getScratchTime(),rightScratch=right:getScratchTime(),leftFracture=left:getFractureTime(),rightFracture=right:getFractureTime()}
+ print('[CART_MP_INJURY] SERVER_MUTATION '..J.encode(row))
+ if not cleanup then injuryIndex=injuryIndex+1;sendServerCommand(p,'CartMP','InjuryAck',row) end
+end
 local function broadcast(command,args) for _,p in pairs(players) do sendServerCommand(p,'CartMP',command,args) end end
 local function samePose(actual,expected)
  if type(actual)~='table' or type(expected)~='table' then return false end
@@ -96,7 +127,7 @@ Events.OnClientCommand.Add(function(module,command,p,args)
      if not originSince then originSince=getTimestampMs() end
      origin=require('CartMPPlacement')(p)
      if not origin then
-      assert(wallSide and getTimestampMs()-originSince<30000,'Native wall pad chunk readiness deadline')
+      assert((wallSide or config.options and config.options.cart_injury) and getTimestampMs()-originSince<30000,'Native elevated pad chunk readiness deadline')
       return
      end
      print('[CART_MP] CART_PAD '..J.encode(origin))
@@ -138,6 +169,8 @@ Events.OnClientCommand.Add(function(module,command,p,args)
     for _,v in pairs(players) do sendServerCommand(v,module,'Start',{epoch=epoch}) end
     print('[CART_MP] START epoch='..epoch)
    end
+  elseif command=='InjuryMutation' or command=='InjuryCleanup' then
+   injuryMutation(p,args,command=='InjuryCleanup')
   elseif wallSide and command=='WallDone' then
    assert(epoch and getTimestampMs()-epoch>=(wallSide=='front' and 18000 or 29000) and armed[user] and not wallDone[user],'Unexpected wall completion')
    wallDone[user]=true
@@ -186,7 +219,7 @@ end)
 Events.OnTick.Add(function()
  local now=getTimestampMs()
  if pendingAction then local ok,e=pcall(pollAction,now);if not ok then pendingAction=nil;print('[QUEUE_TEST] FAIL CART_MP server '..tostring(e));broadcast('ActionFailed',{error=tostring(e)}) end end
- if (epoch and now-epoch>(wallSide and 30000 or config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or now-last<(epoch and 100 or 500) then return end;last=now
+ if (epoch and now-epoch>(config.options and config.options.cart_injury and 46000 or wallSide and 30000 or config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or now-last<(epoch and 100 or 500) then return end;last=now
  for user,p in pairs(players) do
   if epoch and now>=epoch-2000 and (wallSide or config.options and config.options.cart_fast_motion) and user=='client1'
    and not (p:getX()>=origin.minX+origin.margin and p:getX()<=origin.minX+origin.size-origin.margin
