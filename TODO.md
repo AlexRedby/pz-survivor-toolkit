@@ -1,3 +1,8 @@
+# Injured cart locomotion
+
+- [ ] Verify injured Host owner/observer motion and presentation, including fast turns and injury/healing while already moving; preserve native injury variables and exact cart/cargo identity.
+- [ ] Repeat the injury checks with the complete selected mod set once its missing Workshop mods are available.
+
 # Shopping cart animation port
 
 - [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
@@ -61,7 +66,7 @@
 
 - [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
 - [ ] Remove rendered fore-aft cart jumps during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.
-- [ ] Remove rare contact between wide jeans and the handles in the original straight pose, near it and at the start of the reverse arc, preserving the preferred hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.
+- [ ] Remove contact between wide jeans and the handles in the original straight pose, near it, at the start of the reverse arc and during heavy left/right leg limps, preserving native hip/leg motion and the preferred cart, hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.
 - [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.
 
 # Root fix for the action queue

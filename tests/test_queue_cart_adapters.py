@@ -926,9 +926,32 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.options.pop(flag)
             self.selection.update(suite=carts.SP, cases=['reverse'], kind='sp', languages=['RU'])
 
+    def test_injury_bank_stages_real_bodydamage_for_each_variant_with_existing_probe_gate(self):
+        for variant in carts.VARIANTS:
+            with self.subTest(variant=variant):
+                self.output = self.root / ('injury-' + variant)
+                self.output.mkdir()
+                self.role('client1')
+                self.selection['cases'] = ['injury']
+                self.options.update(cart_variant=variant, cart_scenes=['female-full-right-heavy'])
+                if variant == 'shopping-cart':
+                    self.options['cart_mesh_fbx'] = {'ShoppingCartModel': self.options['mesh_fbx']}
+                compiler = self.stage()
+                self.assertEqual(compiler.call_count, 2)
+                source = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+                self.assertIn('part:setScratchTime(8)', source)
+                self.assertIn('part:setFractureTime(35)', source)
+                self.assertIn('p:setGodMod(false)', source)
+                self.assertIn('female-full-right-heavy', source)
+                self.assertIn(carts.VARIANTS[variant], source)
+                attaches = self.runtime['fixture']['attach']['client1']
+                self.assertEqual(len(attaches), 3 if variant == 'wooden-wheelbarrow' else 2)
+                self.assertTrue(all(r['ready'] == '[CART_ADAPTER] PROBE_ATTACH_READY' for r in attaches))
+                self.assertEqual(carts.selected_scenes(self.selection), ['female-full-right-heavy'])
+
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
+                         ['sprint', 'reverse', 'injury', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('approach', 7), ('interruption-fast', 14), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case

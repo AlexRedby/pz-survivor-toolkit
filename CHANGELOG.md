@@ -17,6 +17,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.194
+
+- Keep cart steering, grip correction and wheel grounding available while limping with matching Java Patches. Blend the existing native injury gait into forward movement; retain directional reverse/turn steps at an injury-adjusted cadence. Older or unsupported Java patches keep the original injury fallback.
+
 ### 0.1.193
 
 - Resolve Quartermaster's explicit item-name destination candidates once per requested display name and plan. Preserve priority/distance order, per-item carrier/destination admission, capacity overflow and category/tag fallback without enumerating unrelated preset entries.
@@ -890,6 +894,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.41
+
+- Add a scoped native injury blend for cart locomotion, preserving the game's left/right injury severity and run/sprint eligibility, outgoing animation fades and movement budgets. Injured stops avoid the healthy heavy-item stop clip. Injured wheelbarrow gaits use model-specific bounded upper-torso correction only when needed to reach both handles, preserving the native hips and legs.
 
 ### 0.1.40
 

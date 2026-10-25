@@ -122,6 +122,10 @@ public final class Main {
         && supports("zombie/core/skinnedmodel/advancedanimation/AnimatedModel$AnimatedModelInstanceRenderData.class",
             "c96e48b6d138db930abe557459b2ff81e025a47cba6c3b199700473362e2f04d");
 
+    public static final boolean CART_INJURY_SUPPORTED = CART_SUPPORTED
+        && supports("zombie/core/skinnedmodel/advancedanimation/AnimLayer.class",
+            "dd53bf0235a8ef65edb71049bbadea742dcfbfaa0c8a1da7781a26b3282feb01");
+
     public static final boolean CART_SYNC_SUPPORTED = CART_SUPPORTED
         && supports("zombie/network/packets/character/PlayerPacket.class","5284e8225bf513241787276471f20b526b8373a5f22c714f1370b6f013cfe5de")
         && supports("zombie/network/packets/VariableSyncPacket.class","4fc2d32a491eb3f9e96aa0069dcd0f322e5d29e04e75c837cd4ec59cda42ef09")
@@ -187,7 +191,7 @@ public final class Main {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", cart=" + CART_SUPPORTED + ", cartSync=" + CART_SYNC_SUPPORTED + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + TilePropertyNames.SUPPORTED + ", fluids=" + FluidContainerNames.SUPPORTED
+            + ", cart=" + CART_SUPPORTED + ", cartInjury=" + CART_INJURY_SUPPORTED + ", cartSync=" + CART_SYNC_SUPPORTED + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + TilePropertyNames.SUPPORTED + ", fluids=" + FluidContainerNames.SUPPORTED
             + ", fences=" + fences + ", piano=" + PianoIcon.SUPPORTED + ", basementRooms=" + BasementRoomLookup.SUPPORTED
             + ", basementHall=" + BasementHallKey.SUPPORTED + ", mannequin=" + MannequinZoneData.SUPPORTED
             + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
@@ -421,6 +425,15 @@ public final class Main {
                 var impact=CartImpactMotion.movement(player,step.x,step.y);
                 x=impact.x; y=impact.y;
             }
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.advancedanimation.AnimLayer", methodName="applyBlendField", warmUp=true, strictMatch=true)
+    public static class CartInjuryBlend {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.advancedanimation.AnimLayer layer,
+            @Patch.Argument(0) zombie.core.skinnedmodel.advancedanimation.LiveAnimNode node) {
+            if(Main.CART_INJURY_SUPPORTED) CartInjury.apply(layer,node);
         }
     }
 

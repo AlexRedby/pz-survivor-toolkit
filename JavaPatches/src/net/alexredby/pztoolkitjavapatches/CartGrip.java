@@ -447,6 +447,89 @@ public final class CartGrip {
         return true;
     }
 
+    /** The ordinary arm solver's exact positional gate, without changing a bone or attempting IK. */
+    private static boolean injuredArmReachable(Matrix4f[] poses, SkinningData actor, String name,
+        Matrix4f target, Matrix4f change) {
+        var hand=actor.getBone(name);
+        if(hand==null || hand.parent==null || hand.parent.parent==null) return false;
+        var forearm=hand.parent;var upper=forearm.parent;var clavicle=upper.parent;
+        var shoulder=poses[upper.index].getTranslation(new Vector3f());
+        var elbow=poses[forearm.index].getTranslation(new Vector3f());
+        var wrist=poses[hand.index].getTranslation(new Vector3f());
+        var pivot=clavicle==null?null:poses[clavicle.index].getTranslation(new Vector3f());
+        if(change!=null) {
+            change.transformPosition(shoulder);change.transformPosition(elbow);change.transformPosition(wrist);
+            if(pivot!=null) change.transformPosition(pivot);
+        }
+        var goal=target.getTranslation(new Vector3f());
+        float a=shoulder.distance(elbow),b=elbow.distance(wrist),distance=shoulder.distance(goal);
+        if(!Float.isFinite(distance) || !Float.isFinite(a+b) || a<.00001f || b<.00001f
+            || distance<.00001f || distance<=Math.abs(a-b)) return false;
+        if(distance>a+b-.01f && clavicle!=null
+            && ("Bip01_L_Clavicle".equals(clavicle.name) || "Bip01_R_Clavicle".equals(clavicle.name))) {
+            var from=shoulder.sub(pivot,new Vector3f());var to=goal.sub(pivot,new Vector3f());
+            float c=from.length(),d=to.length(),reserve=a+b-distance;
+            if(c<.00001f || d<.00001f || !Float.isFinite(c+d)) return false;
+            float correction=reserve<=0?.005f-reserve:(.01f-reserve)*(.01f-reserve)/.02f;
+            float desired=distance-correction;
+            if(desired<=Math.abs(c-d)) return false;
+            float angle=(float)Math.acos(Math.max(-1,Math.min(1,from.dot(to)/(c*d))));
+            float remaining=(float)Math.acos(Math.max(-1,Math.min(1,(c*c+d*d-desired*desired)/(2*c*d))));
+            float turn=Math.min(angle-remaining,(float)Math.toRadians(35));
+            if(!Float.isFinite(turn)) return false;
+            if(turn>.000001f) {
+                var axis=from.cross(to,new Vector3f());
+                if(axis.lengthSquared()<.00000001f) return false;
+                distance=new Quaternionf().rotationAxis(turn,axis.normalize()).transform(from).add(pivot).distance(goal);
+            }
+        }
+        return distance<a+b;
+    }
+
+    private static boolean injuredArmsReachable(Matrix4f[] poses, SkinningData actor,
+        Matrix4f left, Matrix4f right, Matrix4f change) {
+        return injuredArmReachable(poses,actor,"Bip01_L_Hand",left,change)
+            && injuredArmReachable(poses,actor,"Bip01_R_Hand",right,change);
+    }
+
+    private static Matrix4f injuryChestChange(Vector3f pivot,float yaw,float lean,float amount) {
+        return new Matrix4f().translation(pivot).rotateX(-lean*amount).rotateY(yaw*amount)
+            .translate(-pivot.x,-pivot.y,-pivot.z);
+    }
+
+    /** Injured locomotion may yaw the chest beyond both fixed handles; keep the native hip and legs live. */
+    static float injuryTorso(Matrix4f[] poses,SkinningData actor,boolean female,Matrix4f delta,Matrix4f cart,
+        float pressure,float injuryWeight,Matrix4f idleChest,String model) {
+        if(!Float.isFinite(injuryWeight) || injuryWeight<=0 || injuryWeight>1 || actor==null || poses==null
+            || CartWheelbarrow.forModel(model)==null) return 0;
+        var chest=actor.getBone("Bip01_Spine1");
+        if(chest==null || poses[chest.index]==null || idleChest==null || !idleChest.isFinite()) return 0;
+        var left=new Matrix4f();var right=new Matrix4f();
+        if(!target(model,true,female,delta,cart,left,pressure)
+            || !target(model,false,female,delta,cart,right,pressure)
+            || injuredArmsReachable(poses,actor,left,right,null)) return 0;
+        var live=poses[chest.index];var pivot=live.getTranslation(new Vector3f());
+        float nativeYaw=(float)Math.atan2(live.m12(),live.m10());
+        float referenceYaw=(float)Math.atan2(idleChest.m12(),idleChest.m10());
+        float yaw=(float)Math.atan2(Math.sin(nativeYaw-referenceYaw),Math.cos(nativeYaw-referenceYaw))*injuryWeight;
+        float lean=(float)Math.toRadians("WheelbarrowMetal".equals(model)?28:12)*injuryWeight;
+        // Captured B42.21 poses need at most 11.01 degrees for wood and 26.07 for the farther metal handles.
+        var change=injuryChestChange(pivot,yaw,lean,1);
+        if(!injuredArmsReachable(poses,actor,left,right,change)) return 0;
+        float low=0,high=1;
+        for(int i=0;i<16;i++) {
+            float amount=(low+high)*.5f;
+            change=injuryChestChange(pivot,yaw,lean,amount);
+            if(injuredArmsReachable(poses,actor,left,right,change)) high=amount;else low=amount;
+        }
+        // Stay just inside the feasible interval despite matrix/IK floating-point rounding.
+        float amount=Math.min(1,high+.001f);
+        change=injuryChestChange(pivot,yaw,lean,amount);
+        for(int i=0;i<actor.numBones();i++) if(descendant(actor.getBoneAt(i),chest)) change.mul(poses[i],poses[i]);
+        live.setTranslation(pivot);
+        return amount;
+    }
+
     static int skin(FloatBuffer palette, org.lwjgl.util.vector.Matrix4f[] shaderPalette,
         SkinningData target, SkinningData actor, Matrix4f[] poses) {
         return skin(palette,shaderPalette,target,actor,poses,false);
@@ -494,6 +577,16 @@ public final class CartGrip {
         if(shopping) pressure=0;
         var poses=CartWheelbarrow.forModel(model)!=null || shopping
             ?livePoses(actor,bodySkin,body.matrixPalette,delta,false,pressure):poses(clip,actor,delta);
+        if(poses!=null && CartWheelbarrow.forModel(model)!=null) {
+            float injury=CartInjury.poseWeight(slot.character);
+            if(injury>0) {
+                var reference=new Matrix4f();
+                if(CartGrounding.referencePose(clip,actor,"Bip01_Spine1",reference)) {
+                    delta.mul(reference,reference);
+                    injuryTorso(poses,actor,slot.character.isFemale(),delta,cart,pressure,injury,reference,model);
+                }
+            }
+        }
         if(poses==null || (CartWheelbarrow.forModel(model)!=null || shopping)
             && (!referenceThumb(poses,actor,clip,"L") || !referenceThumb(poses,actor,clip,"R"))
             || !grip(poses,actor,model,slot.character.isFemale(),delta,cart,pressure)) return false;

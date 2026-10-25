@@ -88,8 +88,26 @@ public final class CartLegPace {
         String mode = sprint ? "Sprint" : run ? "Run" : "Walk";
         float blend = player.getVariableFloat("WalkSpeed", 0);
         if (sprint) blend = Math.max(0, (blend - .5f) * 2);
-        return targetSpeed(node, clip(sprint ? "Bob_Run" : walk), clip(sprint || run ? "Bob_" + mode : walk),
-            run || sprint ? blend : 1, run || sprint ? 1 : (float) amount, sprint ? .96f : 1.04f);
+        float base = sprint ? .96f : 1.04f;
+        float ordinary = targetSpeed(node, clip(sprint ? "Bob_Run" : walk), clip(sprint || run ? "Bob_" + mode : walk),
+            run || sprint ? blend : 1, run || sprint ? 1 : (float) amount, base);
+        var injury = CartInjury.blend(player, node);
+        if (injury == null) return ordinary;
+        Velocity nativeVelocity = injuryVelocity(node, injury, CartLegPace::clip);
+        if (nativeVelocity == null) return ordinary;
+        float radius = run || sprint ? 1 : CartInjury.walkMagnitude(player,
+            Math.max(0, Math.min(1, player.getVariableFloat("WalkSpeed", .8f))));
+        float effort = radius > 1e-6f ? (float) amount / radius : 0;
+        float healthyRadius = run || sprint ? 1 : Math.max(0, Math.min(1, player.getVariableFloat("WalkSpeed", .8f)));
+        float healthy = run || sprint ? ordinary * (float) amount : radius > 1e-6f ? ordinary * healthyRadius / radius : 0;
+        float nativeSpeed = base * (float) Math.hypot(nativeVelocity.x, nativeVelocity.y);
+        // Keep the slower authored reverse stride; injury cannot make backing up faster.
+        if (!run && !sprint && stepY < 0) {
+            var backward = velocity(clip(walk), node.getDeferredBoneName(), node.getDeferredBoneAxis());
+            if (backward != null) nativeSpeed = Math.min(nativeSpeed,
+                base * healthyRadius * (float) Math.hypot(backward.x, backward.y));
+        }
+        return healthy * (1 - injury.amount()) + nativeSpeed * effort * injury.amount();
     }
 
     static String walkingReference(String cartType, boolean fast, float stepY) {
@@ -114,7 +132,7 @@ public final class CartLegPace {
         if (player == null) return;
         if (!Float.isFinite(speed) || speed < 0) { apply(player, scale(player, stepX, stepY)); return; }
         AnimNode incoming = pivotNode(player);
-        float current = blendedSpeed(incoming, stepX, stepY, CartLegPace::clip);
+        float current = blendedSpeed(incoming, stepX, stepY, CartLegPace::clip, CartInjury.blend(player, incoming));
         float pace = speed == 0 ? 0 : current > 1e-6 ? Math.min(2.5f, speed / current)
             : scale(player, stepX, stepY);
         player.setVariable("ToolkitCartLegPace", pace);
@@ -176,7 +194,7 @@ public final class CartLegPace {
         return pivotName(cart == null ? null : cart.getFullType(), player.isRunning(), player.isSprinting());
     }
 
-    private static AnimNode pivotNode(IsoPlayer player) {
+    static AnimNode pivotNode(IsoPlayer player) {
         if (player == null) return null;
         var animator = player.getAdvancedAnimator();
         if (animator == null || animator.animSet == null) return null;
@@ -324,6 +342,12 @@ public final class CartLegPace {
         if (player == null) return base;
         AnimNode node = pivotNode(player);
         if (node == null) return base;
+        var injury = CartInjury.blend(player, node);
+        if (injury != null) {
+            float desired = targetSpeed(player, stepX, stepY);
+            float current = blendedSpeed(node, stepX, stepY, CartLegPace::clip, injury);
+            return Float.isFinite(desired) && current > 1e-6f ? Math.min(2.5f, desired / current) : base;
+        }
         String mode = sprint ? "Sprint" : run ? "Run" : "Walk";
         if (sprint || run) {
             float speed = player.getVariableFloat("WalkSpeed", 0);
@@ -378,6 +402,11 @@ public final class CartLegPace {
 
     private static float blendedSpeed(AnimNode node, float stepX, float stepY,
                                       Function<String, AnimationClip> clips) {
+        return blendedSpeed(node, stepX, stepY, clips, null);
+    }
+
+    static float blendedSpeed(AnimNode node, float stepX, float stepY,
+                              Function<String, AnimationClip> clips, CartInjury.Blend injury) {
         if (node == null || !Float.isFinite(stepX) || !Float.isFinite(stepY) || Math.hypot(stepX, stepY) < 1e-6
             || node.blend2dPicker == null || node.blendTris == null || node.blendTris.isEmpty()) return Float.NaN;
         node.blend2dPicker.Pick(stepX, stepY, picks);
@@ -395,9 +424,32 @@ public final class CartLegPace {
             if (clip == null) return Float.NaN;
             Velocity velocity = velocity(clip, node.getDeferredBoneName(), node.getDeferredBoneAxis());
             if (velocity == null) return Float.NaN;
-            x += weight * velocity.x; y += weight * velocity.y;
+            if (injury != null && injury.forward().equals(blend.animName)) {
+                Velocity nativeVelocity = injuryVelocity(node, injury, clips);
+                if (nativeVelocity == null) return Float.NaN;
+                x += weight * (velocity.x * (1 - injury.amount()) + nativeVelocity.x * injury.amount());
+                y += weight * (velocity.y * (1 - injury.amount()) + nativeVelocity.y * injury.amount());
+            } else { x += weight * velocity.x; y += weight * velocity.y; }
         }
         return (float) Math.hypot(x, y);
+    }
+
+    static boolean validClip(AnimNode node, String name) {
+        return velocity(clip(name), node.getDeferredBoneName(), node.getDeferredBoneAxis()) != null;
+    }
+
+    private static Velocity injuryVelocity(AnimNode node, CartInjury.Blend injury,
+                                           Function<String, AnimationClip> clips) {
+        double x = 0, y = 0;
+        var entries = new zombie.core.skinnedmodel.advancedanimation.Anim2DBlend[]{injury.first(), injury.second(), injury.third()};
+        var weights = new float[]{injury.a(), injury.b(), injury.c()};
+        for (int i = 0; i < entries.length; i++) {
+            if (entries[i] == null || weights[i] == 0) continue;
+            var velocity = velocity(clips.apply(entries[i].animName), node.getDeferredBoneName(), node.getDeferredBoneAxis());
+            if (velocity == null) return null;
+            x += weights[i] * velocity.x; y += weights[i] * velocity.y;
+        }
+        return new Velocity(node.getDeferredBoneName(), node.getDeferredBoneAxis(), x, y);
     }
 
     private static Velocity velocity(AnimationClip clip, String bone, BoneAxis axis) {

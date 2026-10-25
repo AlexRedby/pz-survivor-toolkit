@@ -19,6 +19,7 @@ MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit',
 SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
+            'injury': ('scenario-injury.lua', 16),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stop-timing': ('scenario-stop.lua', 4),
             'pivot': ('scenario-pivot.lua', 8), 'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
@@ -60,8 +61,8 @@ VARIANTS = {'shopping-cart': 'SaucedCarts.ShoppingCart',
             'wooden-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowWood',
             'metal-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowMetal'}
 METAL_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast',
-                  'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary'}
-SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel'}
+                  'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary', 'injury'}
+SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel', 'injury'}
 SHOPPING_MODELS = {'ShoppingCartModel', 'ShoppingCartPartialModel', 'ShoppingCartFullModel',
                    'ShoppingCartFlashlightModel', 'ShoppingCartFlashlightPartialModel', 'ShoppingCartFlashlightFullModel'}
 ACTION_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'repeat', 'hotkey'}
@@ -82,6 +83,9 @@ CONTROL_POSES = {'forward-0': 0, 'forward-angle': 2.1, 'left-held': 0, 'right-he
 
 
 def scene_names(case):
+    if case == 'injury':
+        return [f'{sex}-{load}-{side}-{severity}' for sex in ('male', 'female')
+                for load in ('empty', 'full') for side in ('left', 'right') for severity in ('mild', 'heavy')]
     if case in ('motion-matrix', 'obstacle-matrix'):
         specs = ('arcs', 'slalom-up', 'slalom-down') if case == 'motion-matrix' else ('frontal', 'slide-left', 'slide-right', 'corner', 'door-closed', 'door-open')
         return [f'{sex}-{load}-{gait}-{spec}' for sex in ('male', 'female') for load in ('empty', 'full')
@@ -152,7 +156,8 @@ def definitions():
                               for case in (SP_CASES if suite == SP else ['owner_observer_motion'])]}
             for suite in (SP, MP)}
     result[SP]['game_inputs'] = ['media/models_X/Skinned/MaleBody.x', 'media/models_X/Skinned/FemaleBody.x',
-        'media/models_X/Skinned/Clothes/Bob_Trousers.x', 'media/models_X/Skinned/Clothes/Kate_Trousers.x']
+        'media/models_X/Skinned/Clothes/Bob_Trousers.x', 'media/models_X/Skinned/Clothes/Kate_Trousers.x',
+        'media/AnimSets/player/movement/defaultWalk.xml']
     for case in result[SP]['cases']:
         case['scenes'] = scene_names(case['id'])
     return result
@@ -689,6 +694,9 @@ def _model_capture_coverage(cache, text, selection):
     windows = _load(evidence_root / 'scene_windows.py')
     bank = selection['cases'][0]
     wheel_draws = None
+    injury_ends = {r['case']: r['elapsed'] for r in
+                   (json.loads(line.split('[CART_INJURY] END ', 1)[1])
+                    for line in log.splitlines() if '[CART_INJURY] END ' in line)} if bank == 'injury' else {}
     if shopping and bank == 'wheel':
         try:
             wheel_draws = [json.loads(line) for line in (cache / 'shopping-wheel-draws.jsonl').read_text().splitlines()]
@@ -698,8 +706,9 @@ def _model_capture_coverage(cache, text, selection):
         return isinstance(value, list) and len(value) == 16 and all(type(v) in (int, float) and math.isfinite(v) for v in value)
     result = []
     for name, start, duration in clips:
-        seconds = windows.record_seconds(bank, name); start = int(start)
-        if abs(float(duration) - seconds) > .2:
+        seconds = injury_ends[name] / 1000 if bank == 'injury' else windows.record_seconds(bank, name)
+        start = int(start)
+        if abs(float(duration) - seconds) > (.5 if bank == 'injury' else .2):
             raise ValueError('Incomplete cart recording window: ' + name)
         row = dict(scene=name, recordSeconds=seconds)
         for kind, records in probes.items():
@@ -1051,6 +1060,25 @@ def verify(root, selection, catalog):
             if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
+        if selection['suite'] == SP and selection['cases'] == ['injury']:
+            variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
+            report = _load(intake / 'analyze-injury.py').analyze(
+                texts['client1'], selected_scenes(selection), variant, root / 'client1')
+            _write(analysis / 'injury.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(injury=report, analysis=str(analysis))
+            if not report['injuryVerified']:
+                raise ValueError('Native injury motion failed: ' + str(report['failures']))
+            if variant == 'wooden-wheelbarrow':
+                _mesh_proof(root / 'client1')
+            else:
+                evidence['modelCapture'] = _model_capture_coverage(root / 'client1', texts['client1'], selection)
+            evidence['evidenceComplete'] = True
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'injury', 'status': 'captured',
+                 'reason': 'Native injury, limp tracks, cart steering, ownership, stops and healing verified; rendered geometry and videos require review',
+                 'outcome': {'animationEquivalencePass': False, 'geometryVerified': False,
+                             'evidenceComplete': True, 'injuryVerified': True,
+                             'partialCoverage': debug, 'selectedScenes': selected_scenes(selection)}}]}
         if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):
             report = _model_capture_coverage(root / 'client1', texts['client1'], selection)
             name = 'shopping-model-capture.json' if selection['options']['cart_variant'] == 'shopping-cart' else 'metal-model-capture.json'

@@ -38,6 +38,9 @@ public final class CartLegPaceTest {
             return null;
         }
         Player() {super(null,null,0,0,0);}
+        @Override public float getVariableFloat(String name, float fallback) {
+            return name.equals("WalkInjury") ? 0 : super.getVariableFloat(name, fallback);
+        }
         @Override public boolean hasAnimationPlayer() {return loaded;}
         @Override public boolean isRunning() {return run;}
         @Override public boolean isSprinting() {return sprint;}

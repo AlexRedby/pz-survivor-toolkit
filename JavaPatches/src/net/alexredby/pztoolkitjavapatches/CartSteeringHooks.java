@@ -159,7 +159,8 @@ public final class CartSteeringHooks {
                 state.braking=false;
                 player.setVariable("ToolkitCartWoodBrake",false);
                 player.setVariable("ToolkitCartBrakeSprint",false);
-            } else if(wasMoving && (state.fastMoving || state.sprintMomentum)
+            } else if(CartInjury.amount(player.getVariableFloat("WalkInjury",0))==0
+                && wasMoving && (state.fastMoving || state.sprintMomentum)
                 && state.reversal.direction>0 && !state.reversal.active && state.actualDistance>1e-6
                 && Double.isFinite(state.nativeSpeed) && state.nativeSpeed>0) {
                 state.braking=true;state.brakeSeen=false;state.brakeWait=0;
@@ -515,6 +516,12 @@ public final class CartSteeringHooks {
             return;
         }
         state=state(player);
+        if(CartInjury.amount(player.getVariableFloat("WalkInjury",0))>0 && state.braking) {
+            CartLegPace.cancelBrake(player,true);
+            state.braking=false;state.brakeLimit=0;state.sprintMomentum=false;
+            player.setVariable("ToolkitCartWoodBrake",false);
+            player.setVariable("ToolkitCartBrakeSprint",false);
+        }
         state.visualSpeed=-1;
         if(state.path) { player.setVariable("ToolkitCartBrace",false);pathHeading(player,state);publish(player,state);return; }
         player.setVariable("ToolkitCartPivot",true);
@@ -523,7 +530,7 @@ public final class CartSteeringHooks {
         // Native clears the gait flags before UpdateInputState; retain the last finalized gait for release.
         state.fastMoving=player.isRunning() || player.isSprinting();
         state.sprintMoving=player.isSprinting();
-        boolean sprintRequested=state.sprintRequested;
+        boolean sprintRequested=state.sprintRequested && (CartInjury.amount(player.getVariableFloat("WalkInjury",0))==0 || player.isSprinting());
         state.sprintRequested=false;
         state.load=load(player);
         double actualX = 0, actualY = 0;
@@ -654,12 +661,13 @@ public final class CartSteeringHooks {
             double cos = Math.cos(state.heading), sin = Math.sin(state.heading);
             // Run/Sprint WalkSpeed blends two moving gaits; it is not an idle weight.
             double pace=player.isRunning() || player.isSprinting() ? 1
-                : Math.max(0,Math.min(1,player.getVariableFloat("WalkSpeed",0.8f)));
+                : CartInjury.walkMagnitude(player,Math.max(0,Math.min(1,player.getVariableFloat("WalkSpeed",0.8f))));
             player.setVariable("ToolkitCartStepX", (float) (pace * (-actualX * sin + actualY * cos) / length));
             player.setVariable("ToolkitCartStepY", (float) (pace * (actualX * cos + actualY * sin) / length));
         }
         float stepX=player.getVariableFloat("ToolkitCartStepX",0),stepY=player.getVariableFloat("ToolkitCartStepY",0);
-        float target=wooden(player)?CartLegPace.targetSpeed(player,stepX,stepY):Float.NaN;
+        float target=wooden(player) || CartInjury.blend(player,CartLegPace.pivotNode(player))!=null
+            ?CartLegPace.targetSpeed(player,stepX,stepY):Float.NaN;
         // Drop inward input through native cadence once, preserving full strides and the movement budget.
         float wallScale=Double.isFinite(state.wallHeading) && state.wantsMove && !state.reversal.active
             && !state.stationaryRoot && CartFootprint.pressingWall(state.target,state.wallHeading,state.wallNormalX,state.wallNormalY)
@@ -667,7 +675,7 @@ public final class CartSteeringHooks {
         target*=wallScale;
         if(state.stationaryRoot) {
             // Cargo slows the full stride's cadence instead of reducing its spatial amplitude.
-            target*=Math.max(0,Math.min(1,player.getVariableFloat("WalkSpeed",.8f)));
+            target*=CartInjury.walkMagnitude(player,Math.max(0,Math.min(1,player.getVariableFloat("WalkSpeed",.8f))));
             state.sprintMomentum=false;
             if(Float.isFinite(target)) {
                 // Feed next frame's native cadence, rather than moving planted feet with a synthetic budget.

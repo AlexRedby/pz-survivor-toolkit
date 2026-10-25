@@ -72,6 +72,7 @@ public final class CartSteeringHooksTest {
         @Override public float getSlowFactor() { return slowFactor; }
         float stepX, stepY, legPace;
         float actualX, actualY, inputX, inputY;
+        float injury;
         ItemContainer inventory;
         InventoryItem primary, secondary;
         AdvancedAnimator animator;
@@ -83,7 +84,7 @@ public final class CartSteeringHooksTest {
         @Override public boolean isAllowRun() { return true; }
         @Override public boolean isAllowSprint() { return true; }
         @Override public float getVariableFloat(String name,float fallback) {
-            return switch(name) {case "WalkSpeed"->walkSpeed;case "ToolkitCartStepX"->stepX;case "ToolkitCartStepY"->stepY;case "ToolkitCartLegPace"->legPace;default->fallback;};
+            return switch(name) {case "WalkInjury"->injury;case "WalkSpeed"->walkSpeed;case "ToolkitCartStepX"->stepX;case "ToolkitCartStepY"->stepY;case "ToolkitCartLegPace"->legPace;default->fallback;};
         }
         @Override public void clearVariable(String name) {
             if(name.equals("ToolkitCartLegPace")) legPace=0;
@@ -1106,6 +1107,7 @@ public final class CartSteeringHooksTest {
         check(nativeSideSpeed>0,"native reference must contain measured lateral root motion");
         player.animator=new AdvancedAnimator();player.animator.animSet=new AnimationSet();
         var movement=new AnimState();movement.nodes.add(node);player.animator.animSet.states.put("movement",movement);
+        movement.nodes.add(AnimNode.Parse("media/AnimSets/player/movement/defaultWalk.xml"));
         var mesh=(ModelMesh)unsafe.allocateInstance(ModelMesh.class);
         mesh.skinningData=new SkinningData(clips,List.of(),List.of(),List.of(),List.of(),new HashMap<>());
         var model=ModelManager.class.getDeclaredField("animModel");model.setAccessible(true);
@@ -1113,8 +1115,8 @@ public final class CartSteeringHooksTest {
         var input=new IsoPlayer.InputState();var time=GameTime.getInstance();float oldFps=time.fpsMultiplier;
         try {
             model.set(ModelManager.instance,mesh);
-            for(float walkSpeed:new float[]{.56f,.3575f}) for(int fps:new int[]{30,60,144}) for(int sign:new int[]{-1,1}) {
-                player.walkSpeed=walkSpeed;
+            for(float injury:new float[]{0,.00001f}) for(float walkSpeed:new float[]{.56f,.3575f}) for(int fps:new int[]{30,60,144}) for(int sign:new int[]{-1,1}) {
+                player.walkSpeed=walkSpeed;player.injury=injury;
                 time.fpsMultiplier=60f/fps;double dt=time.getRealworldSecondsSinceLastUpdate();
                 CartSteeringHooks.reset(player);player.moving=false;player.inputX=player.inputY=0;
                 player.actualX=10825.5f;player.actualY=10142.5f;CartSteeringHooks.heading(player);
@@ -1153,6 +1155,7 @@ public final class CartSteeringHooksTest {
                 player.inputX=player.inputY=0;CartSteeringHooks.input(player,input);player.moving=false;
                 CartSteeringHooks.heading(player);
             }
+            player.injury=0;
             nativeDirectionChanges(player,states,input,node,clips);
         } finally {
             CartSteeringHooks.reset(player);time.fpsMultiplier=oldFps;model.set(ModelManager.instance,oldModel);
