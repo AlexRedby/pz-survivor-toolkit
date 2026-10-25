@@ -1,7 +1,3 @@
-# Alarm main delivery
-
-- [ ] Commit the verified result and push HEAD to main without force; verify the remote revision.
-
 # Legacy Host launchers
 
 - [ ] Retain the optional `start-host.ps1` / `start-host.command` files, packaging and launcher checks only until automatic Host loading has native macOS/Linux qualification as well as Windows. Remove those scripts and their packaging/test consumers once a normal client-only-loader launch on each platform starts a patched Host child with saved approvals and an inherited-loader control proves no duplicate agent. They remain fallback entrypoints for existing installations, not the normal user workflow.
