@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.266
+
+- Return accelerated time to normal when a nearby audible alarm starts. Uses MP Fast Forward's existing safety veto in multiplayer and native speed controls in single-player; adds no notifications or windows. Requires the matching Java Patches alarm bridge.
+
 ### 0.1.265
 
 - **Fixed:** Native Fitness keeps its full selected duration after preparation, including with queue editing disabled. Natural completion retains the independent tail, waits for the original native stop/server receipt, and restores the exact borrowed gear before the next action. Explicit cancellation, movement, exhaustion and changed ownership still interrupt through the native path.
@@ -1202,6 +1206,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.59
+
+- Let enabled clocks and wristwatches catch a scheduled time crossed between updates, using their normal sound, wake-up and world-sound paths. Preserve daily repeats, explicit silencing, disabling and schedule edits; unchanged network setting packets no longer silence or restart a live ring. Initial load does not replay old alarms. Supports the B42.21 client and server; native sound-start events let Toolkit reset acceleration without adding UI.
 
 ### 0.1.58
 

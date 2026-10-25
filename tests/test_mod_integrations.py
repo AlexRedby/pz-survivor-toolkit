@@ -313,18 +313,25 @@ class ModIntegrations(unittest.TestCase):
     def test_speed_profile_binds_exact_sources_without_other_checks(self):
         self.select('MPFastForward', 'MPFastForward/42')
         mpff = self.root / 'MPFastForward/42/media/lua'
-        for name in ('shared/MPFastForward_Config.lua', 'server/MPFastForward_Server.lua'):
+        for name in ('shared/MPFastForward_Config.lua', 'server/MPFastForward_Server.lua',
+                     'client/MPFastForward_Client.lua', 'client/ui/MPFF_Panel.lua'):
             self.write(mpff / name, name)
         self.lock_sources()
         for named in (False, True):
             with self.subTest(named=named):
                 args, requested = (self.configure(requested=['test_mpff_compat.lua']) if named
                                    else self.configure(['MPFastForward']))
-                self.assertEqual({'test_mpff_compat.lua'}, requested)
+                self.assertEqual({'test_mpff_compat.lua'} if named else {'test_mpff_compat.lua', 'test_alarm_clock.lua'}, requested)
                 self.assertEqual({'NativeMPFFConfigSource': 'shared/MPFastForward_Config.lua',
                                   'NativeMPFFServerSource': 'server/MPFastForward_Server.lua'},
                                  self.bound(args, 'test_mpff_compat.lua'))
                 self.assertIsNone(args.native_action_root)
+        args, requested = self.configure(requested=['test_alarm_clock.lua'])
+        self.assertEqual({'test_alarm_clock.lua'}, requested)
+        self.assertEqual({'NativeMPFFConfigSource': 'shared/MPFastForward_Config.lua',
+                          'NativeMPFFClientSource': 'client/MPFastForward_Client.lua',
+                          'NativeMPFFPanelSource': 'client/ui/MPFF_Panel.lua'},
+                         self.bound(args, 'test_alarm_clock.lua'))
 
     def test_moodle_framework_selects_active_source_without_unrelated_checks(self):
         self.select('MoodleFramework', 'MoodleFramework/42.13')
