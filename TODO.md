@@ -1,3 +1,8 @@
+# Vehicle transition main delivery
+
+- [ ] Merge current origin/main and resolve integration differences without losing concurrent fixes.
+- [ ] Use Toolkit and Java Patches versions newer than main, reconcile changelog entries, then validate affected integration and push main.
+
 # Retained-item full-pack compatibility
 
 - [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.
