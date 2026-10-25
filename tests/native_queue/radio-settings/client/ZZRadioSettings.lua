@@ -5,6 +5,7 @@ require 'RadioCom/ISUIRadio/ISSpeakerButton'
 require 'RadioCom/ISUIRadio/ISVolumeBar'
 require 'RadioCom/RadioWindowModules/RWMSubEditPreset'
 require 'RadioCom/RadioWindowModules/RWMVolume'
+require 'RadioCom/RadioWindowModules/RWMGridPower'
 require 'RadioCom/RadioWindowModules/RWMChannel'
 require 'RadioCom/RadioWindowModules/RWMMicrophone'
 local F=require 'QueueRadioSettings'
@@ -103,7 +104,7 @@ local function createPanels()
   local device=state[key]
   assert(device:getDeviceData():getIsTwoWay()and not device:getDeviceData():isNoTransmit(),
    'fixture requires a native two-way radio')
-  panels[key]={volume=panel(RWMVolume,device),channel=panel(RWMChannel,device),mic=panel(RWMMicrophone,device)}
+  panels[key]={volume=panel(RWMVolume,device),power=panel(RWMGridPower,device),channel=panel(RWMChannel,device),mic=panel(RWMMicrophone,device)}
  end
 end
 local function queueNames()
@@ -144,6 +145,7 @@ local function enqueue(name,mode,target,value)
     assert(not state[target]:getDeviceData():getMicIsMuted(),'native microphone producer requires initial unmuted state')
     widgets.mic:onMuteButton()
    elseif mode=='MuteVolume'then widgets.volume:onSpeakerButton(true)
+   elseif mode=='ToggleOnOff'then widgets.power:toggleOnOff()
    else error('unsupported radio producer '..mode)end
   end
   if native then invoke()else Ops.run(invoke)end
@@ -199,8 +201,10 @@ local function pending()
  local before=F.snapshot(state)
  enqueue('firstVolume','SetVolume','a',.25)
  if case()=='barrier'then
-  enqueue('legacyMute','MuteVolume','a',true)
   enqueue('channel','SetChannel','a',95000)
+  enqueue('powerOff','ToggleOnOff','a',nil)
+  enqueue('powerOn','ToggleOnOff','a',nil)
+  enqueue('legacyMute','MuteVolume','a',true)
  else
   enqueue('channel','SetChannel','a',95000)
   enqueue('lastVolume','SetVolume','a',.75)
@@ -208,7 +212,7 @@ local function pending()
  end
  enqueue('tail','SetChannel','b',96000)
  initialQueue=queueNames()
- local expected=case()=='barrier'and {'anchor','firstVolume','legacyMute','channel','tail'}
+ local expected=case()=='barrier'and {'anchor','firstVolume','channel','powerOff','powerOn','legacyMute','tail'}
   or {'anchor','firstVolume','channel','lastVolume','mic','tail'}
  assert(sameOrder(initialQueue,expected),'native producer order differs')
  for _,command in ipairs(commands)do if command.name~='anchor'then
@@ -230,8 +234,8 @@ local function pending()
    end
    expected={'anchor','firstVolume','channel','tail'}
   elseif case()=='barrier'then
-   local allowed,reason=API.move(queue(),actions.channel,actions.firstVolume)
-   assert(not allowed and reason,'opaque native barrier incorrectly allowed movement')
+   local allowed,reason=API.move(queue(),actions.channel,actions.powerOff,true)
+   assert(not allowed and reason,'native channel-after-power-off dependency incorrectly allowed movement')
    edit.denied=true;edit.reason=reason
   else error('unknown radio settings case '..tostring(case()))end
  end

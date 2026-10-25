@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import shutil
 
-from . import adapters, report
+from . import adapters, report, coop
 
 
 SERVER_SETTINGS = ('Map', 'PVP', 'DoLuaChecksum', 'SleepAllowed', 'SleepNeeded')
@@ -39,6 +39,9 @@ def _selection(value):
 def _manifest(value):
     if not isinstance(value, dict) or type(value.get('schema_version')) is not int or value['schema_version'] != 1:
         raise ValueError('Invalid world template manifest')
+    hosted = value.get('mp_host', False)
+    if type(hosted) is not bool or hosted and value.get('kind') != 'mp':
+        raise ValueError('Invalid world template Host mode')
     roles = value.get('roles')
     if roles not in (['client1'], ['server', 'client1'], ['server', 'client1', 'client2']):
         raise ValueError('Invalid world template roles')
@@ -70,7 +73,7 @@ def _manifest(value):
             raise ValueError('World template path escapes owned Saves/db: ' + name)
         if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
             raise ValueError('Invalid world template file hash: ' + name)
-    _require_world(state, value['kind'], value['server_name'])
+    _require_world(state, value['kind'], value['server_name'], hosted)
 
 
 def _state(run, roles):
@@ -87,12 +90,15 @@ def _state(run, roles):
     return state
 
 
-def _require_world(state, kind, server_name):
+def _require_world(state, kind, server_name, hosted=False):
     if kind == 'mp':
         _server_path(server_name, '.ini')
-    prefix = 'server/Saves/Multiplayer/' + server_name + '/' if kind == 'mp' else 'client1/Saves/'
+    owner = 'client1' if hosted else 'server'
+    prefix = owner + '/Saves/Multiplayer/' + server_name + '/' if kind == 'mp' else 'client1/Saves/'
     if not any(name.startswith(prefix) for name in state):
         raise ValueError('No saved authoritative world exists: ' + prefix)
+    if hosted and 'client1/db/' + server_name + '.db' not in state:
+        raise ValueError('No saved Host authentication database exists for the original users')
 
 
 def _server_path(server_name, suffix):
@@ -141,6 +147,7 @@ def export(run, output):
     runtime = report.read_json(run / 'runtime.json')
     execution = report.read_json(run / 'execution.json')
     roles = _selection(selection)
+    hosted = coop.enabled(selection)
     if not isinstance(runtime, dict) or not isinstance(runtime.get('game'), str) or not Path(runtime['game']).is_absolute() or not isinstance(runtime.get('server_name'), str) or not runtime['server_name'] or not isinstance(runtime.get('roles'), dict) or set(runtime['roles']) != set(roles):
         raise ValueError('Invalid world source runtime')
     for role, config in runtime['roles'].items():
@@ -148,6 +155,17 @@ def export(run, output):
             raise ValueError('World source must use disposable owned caches')
     if not isinstance(execution, dict) or execution.get('status') != 'completed' or not isinstance(execution.get('processes'), dict) or set(execution['processes']) != set(roles):
         raise ValueError('Export requires a completed disposable run with all owned roles stopped')
+    if hosted:
+        server = execution['processes']['server']
+        cleanup = execution.get('host_cleanup')
+        if (not isinstance(server, dict) or not isinstance(execution['processes']['client1'], dict)
+                or not isinstance(cleanup, dict) or runtime.get('host_cache') != str(run / 'client1')
+                or server.get('parent_role') != 'client1' or server.get('cache') != str(run / 'client1')
+                or server.get('pid') == execution['processes']['client1'].get('pid')
+                or server.get('exit_code') != 0
+                or execution.get('host_save') != {'pid': server.get('pid'), 'exit_code': 0}
+                or cleanup.get('remaining_pids') != []):
+            raise ValueError('Host world export requires its owned cache, successful save/quit and child cleanup')
     for process in execution['processes'].values():
         if not isinstance(process, dict) or type(process.get('exit_code')) is not int or type(process.get('pid')) is not int or process['pid'] <= 0:
             raise ValueError('World source has an unstopped process')
@@ -161,7 +179,7 @@ def export(run, output):
     if changed:
         raise ValueError('World source snapshot changed: ' + '\n'.join(changed))
     state = _state(run, roles)
-    _require_world(state, selection['kind'], runtime['server_name'])
+    _require_world(state, selection['kind'], runtime['server_name'], hosted)
     game_file = Path(runtime['game']) / 'projectzomboid.jar'
     game_hash = sha256(game_file)
     source_manifest = report.read_json(run / 'source-manifest.json')
@@ -191,7 +209,7 @@ def export(run, output):
     if _state(run, roles) != state or report.verify_manifest(run, 'snapshot-hashes.json') or sha256(Path(runtime['game']) / 'projectzomboid.jar') != game_hash:
         raise ValueError('World changed during export')
     value = {'schema_version': 1, 'source_run': str(run), 'source_suite': selection['suite'],
-             'source_cases': selection['cases'], 'kind': selection['kind'], 'roles': roles,
+             'source_cases': selection['cases'], 'kind': selection['kind'], 'roles': roles, 'mp_host': hosted,
              'mods': selection['mods'], 'ports': selection['ports'], 'server_name': runtime['server_name'],
              'game_sha256': game_hash, 'sandbox_sha256': sandbox_hash, 'server_settings': server_settings, 'files': state}
     report.write_json(output / 'world.json', value)
@@ -207,6 +225,8 @@ def validate(template, selection, game):
     value = report.read_json(template / 'world.json')
     _manifest(value)
     roles = _selection(selection)
+    if value.get('mp_host', False) != coop.enabled(selection):
+        raise ValueError('World template Host mode differs from this run')
     if value['kind'] != selection['kind'] or value['roles'] != roles:
         raise ValueError('World template kind/client count differs from this run')
     if value['kind'] == 'sp' and value['source_suite'] != selection['suite']:
@@ -242,4 +262,4 @@ def restore(template, value, output, runtime):
         raise ValueError('World template changed while copying')
     report.write_json(output / 'world-template.json', dict(value, template=str(template)))
     runtime['world_template'] = {'template': str(template), 'source_suite': value['source_suite'],
-                                 'source_cases': value['source_cases'], 'files': len(value['files'])}
+                                 'source_cases': value['source_cases'], 'files': len(value['files']), 'mp_host': value.get('mp_host', False)}

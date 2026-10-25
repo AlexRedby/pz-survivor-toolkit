@@ -416,9 +416,9 @@ end
 local function captureExpanded(action, saved, selected, before)
     local queue = ISTimedActionQueue.queues[action.character]
     if not queue then return end
-    local replacement
+    local replacement, added
     if saved.kind == "HReplaceBandage" then
-        local added = {}
+        added = {}
         for _, child in ipairs(queue.queue) do if not before[child] then added[#added + 1] = child end end
         local remove, apply = added[1], added[#added]
         if (#added ~= 2 and #added ~= 3) or not childMatches("HRemoveBandage", remove)
@@ -430,7 +430,7 @@ local function captureExpanded(action, saved, selected, before)
             or transfer.destContainer ~= saved.character:getInventory()) then return end
         replacement = {item = selected[1], transfer = transfer}
     end
-    for _, child in ipairs(queue.queue) do
+    for _, child in ipairs(added or queue.queue) do
         if not before[child] and child.toolkitQueueOperation == action.toolkitQueueOperation
             and child.character == saved.character and Toolkit.ActionQueueOperations.isTransfer(child)
             and Toolkit.ActionQueuePolicy.inspect(child) then
@@ -595,8 +595,11 @@ local function installInventoryProducer()
         end
     end
     for _, name in ipairs({"haveToBeTransfered", "walkToContainer"}) do
-        if not nativeClosure(utils[name], "luautils.lua") then return end
-        saved.utilsMethods[name] = utils[name]
+        local callback = utils[name]
+        local approach = Toolkit.ActionQueueApproach
+        local original = approach and approach.nativeHelper(utils, name, callback) or callback
+        if not nativeClosure(original, "luautils.lua") then return end
+        saved.utilsMethods[name] = callback
     end
     for _, name in ipairs({"newInventoryTransferAction", "isPlayerCharacter", "isCharacterGrabbingCorpseItem", "isPlayerGrabbingCorpseItem"}) do
         if not nativeClosure(transfer[name], "ISInventoryTransferUtil.lua") then return end
@@ -622,6 +625,16 @@ local function installInventoryProducer()
             local added = {}
             for _, action in ipairs(queue.queue) do if not before[action] then added[#added + 1] = action end end
             local child = added[#added]
+            if #added == 3 then
+                local preparation, approach = added[1], Toolkit.ActionQueueApproach
+                if not approach or not approach.isContainer(preparation, source, character)
+                    or preparation.toolkitQueueOperation ~= child.toolkitQueueOperation then
+                    return unpack(result, 1, result.n)
+                end
+                -- Retain preparation in the queue; only the body shape below is
+                -- the verified transfer + bandage contract.
+                table.remove(added, 1)
+            end
             if (#added ~= 1 and #added ~= 2) or not childMatches("HApplyBandage", child)
                 or child.character ~= character or child.otherPlayer ~= character or child.bodyPart ~= bodyPart
                 or child.item ~= item or child.doIt ~= true then return unpack(result, 1, result.n) end
@@ -728,10 +741,14 @@ function Health.install()
     HealthPanelAction.perform = function(action, ...)
         if Health.canSkip(action) then return ISBaseTimedAction.perform(action) end
         return Toolkit.ActionQueueOperations.perform(action, function(current, ...)
-            local saved, before = records[current], {}
-            local queue = ISTimedActionQueue.queues[current.character]
-            if queue then for _, member in ipairs(queue.queue) do before[member] = true end end
+            local saved = records[current]
             local selected = saved and Health.inspect(current) and selectedItems(current)
+            local before
+            if selected then
+                before = {}
+                local queue = ISTimedActionQueue.queues[current.character]
+                if queue then for _, member in ipairs(queue.queue) do before[member] = true end end
+            end
             local result = pack(perform(current, ...))
             if selected and Health.inspect(current) then captureExpanded(current, saved, selected, before) end
             return unpack(result, 1, result.n)

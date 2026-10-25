@@ -1,10 +1,26 @@
 local config=require 'QueueTestSelection'
+if config.options and config.options.cart_inventory_equip==true then require 'CartMPInventoryEquipClient';return end
 assert(config.disposable==true,'Cart MP requires fresh owned disposable profiles')
 assert(type(config.ffmpeg)=='string' and config.ffmpeg:match('^/'),'Absolute config.ffmpeg required')
 assert(type(config.videoRoot)=='table','Per-role config.videoRoot required')
 require 'SaucedCarts/Core'
 require 'SaucedCarts/CartVisuals'
 local J=require 'CartMPJSON'
+local admissionProbe=config.options and config.options.cart_action_admission==true and require 'CartActionAdmissionProbe'
+local leaseProbe=config.options and config.options.cart_lease_control==true and require 'CartLeaseProbe'
+local lifetimeProbe=config.options and config.options.cart_lease_lifetimes==true and require 'CartLeaseLifetimes'
+local inventoryMode=config.options and config.options.cart_lease_inventory==true
+local invalidationProbe=config.options and config.options.cart_action_invalidation==true and require 'CartActionInvalidation'
+local inventoryState=inventoryMode and require 'CartLeaseInventoryState'
+local inventoryDriver,inventoryAction,inventorySince,inventoryHeld
+local function setupCommand(command,args)
+ if inventoryMode or invalidationProbe then sendClientCommand(getPlayer(),'CartMP',command,args)
+ else sendClientCommand('CartMP',command,args) end
+end
+local function inventoryRow(event,row)
+ row.actor='client1';row.event=event;row.phase=0;row.owner=getPlayer():getOnlineID();row.wall=getTimestampMs()
+ print('[CART_LEASE_INVENTORY] '..J.encode(row))
+end
 local wallSide=config.options and config.options.cart_wall_exit
 local wallBank=wallSide and require 'CartMPWall'
 local wallInput=wallSide and require 'CartMPWallInput'
@@ -13,7 +29,6 @@ local wallPositioned,wallCleanupSeen,lastTraffic=false,false,0
 local variants={['shopping-cart']='SaucedCarts.ShoppingCart',['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
 local variant=config.options and config.options.cart_variant or 'wooden-wheelbarrow'
 local cartType=assert(variants[variant],'Unknown MP cart_variant')
-assert(not (config.options and config.options.cart_actions) or (variant=='wooden-wheelbarrow' or variant=='metal-wheelbarrow'),'cart_actions requires a calibrated wheelbarrow')
 local actions=config.options and config.options.cart_actions and require 'CartMPActions' or nil
 local injury=config.options and config.options.cart_injury and require 'CartMPInjury' or nil
 local expectedPadVersion=wallSide and 4 or injury and 5 or 3
@@ -49,6 +64,7 @@ local function position(p,x,y,z)
  p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow()
 end
 local prepared,armed,stopped,finishedAt,actionsFinished,padSince,padReady=false,false,false,nil,false,nil,false
+local lastActionSample=0
 local extended=wallSide or config.options and config.options.cart_fast_motion
 local duration=wallSide=='front' and 18000 or wallSide and 29000 or extended and 26000 or 15000
 if injury then duration=injury.duration end
@@ -59,6 +75,13 @@ if extended and not wallSide then
 end
 if wallSide then steps=wallInput.steps(wallSide) end
 if injury then for _,step in ipairs(injury.steps) do steps[#steps+1]=step end end
+local function sampleActionPresentation(owner,now,elapsed)
+ -- Short observer cancels can cross .05 progress between100ms motion samples.
+ -- Read existing presentation status separately throughout the bounded action bank.
+ if actions and not actionsFinished and elapsed>=duration and now-lastActionSample>=25 then
+  lastActionSample=now;actions.sample(owner,user)
+ end
+end
 local function wallSample(p,now,elapsed)
  local item=assert(p:getPrimaryHandItem(),'Wall cart missing');local inventory=p:getInventory():getItems();local count=0
  for i=0,inventory:size()-1 do if inventory:get(i):getID()==item:getID() then count=count+1 end end
@@ -89,8 +112,9 @@ Events.OnTick.Add(function()
  if not started or done then return end
  local ok,e=pcall(function()
   local now=getTimestampMs();local p=getPlayer()
+  if admissionProbe then admissionProbe.sample() end
   if now-readyAt>240000 and not epoch then error('MP setup deadline') end
-  if not setup then if now-lastReady>1000 then lastReady=now;sendClientCommand('CartMP','Ready',{}) end;return end
+  if not setup then if now-lastReady>1000 then lastReady=now;setupCommand('Ready',{}) end;return end
   if not prepared then
    assert(setup.variant==variant and setup.cartType==cartType,'Server cart variant differs from selection')
    if wallSide then
@@ -122,7 +146,13 @@ Events.OnTick.Add(function()
    if user=='client1' then
     local cart=p:getInventory():getItemById(setup.cartId);if not cart then return end
     assert(cart:getFullType()==cartType,'Exact fixture cart type differs')
-    p:setPrimaryHandItem(cart);p:setSecondaryHandItem(cart);SaucedCarts.applyCartPose(p);p:updateHandEquips();SaucedCarts.updateCartVisual(cart,p,true)
+    if inventoryMode then
+     inventoryState.emit(user,'unheld',p,cart,assert(cartLeaseCurrent()))
+     inventoryDriver=assert(require 'CartLeaseMenuActions','Inventory entry driver missing')
+     inventorySince=now;inventoryAction=inventoryDriver.inventory(p,cart,0,inventoryRow)
+    else
+     p:setPrimaryHandItem(cart);p:setSecondaryHandItem(cart);SaucedCarts.applyCartPose(p);p:updateHandEquips();SaucedCarts.updateCartVisual(cart,p,true)
+    end
     cartLabPoseHeading(wallSide and setup.initialHeading or math.pi*.75)
    else cartLabPoseHeading(wallSide and setup.initialHeading or math.pi*.75) end
    local expectedZoom=user=='client2' and 1 or .25
@@ -131,16 +161,26 @@ Events.OnTick.Add(function()
   end
   local online=getOnlinePlayers();local owner
   for i=0,online:size()-1 do local v=online:get(i);if v:getUsername()=='client1' then owner=v end end
-  if user=='client1' and not epoch and now-lastEquip>1000 then lastEquip=now;p:updateHandEquips() end
+  if inventoryMode and user=='client1' and not inventoryHeld then
+   assert(inventoryAction and now-inventorySince<15000,'Initial inventory entry deadline')
+   if not inventoryDriver.poll(inventoryAction) then return end
+   local cart=assert(p:getInventory():getItemById(setup.cartId),'Initial inventory cart lost')
+   inventoryState.emit(user,'held',p,cart,assert(cartLeaseCurrent()));inventoryHeld=true
+  end
+  if not inventoryMode and user=='client1' and not epoch and now-lastEquip>1000 then lastEquip=now;p:updateHandEquips() end
   if not epoch and now-lastSample>500 then lastSample=now;for i=0,online:size()-1 do print('[CART_MP_STATE] '..cartMPState(online:get(i))) end end
   local skillReady=user~='client1' or p:getPerkLevel(Perks.Sprinting)==10
   if user=='client1' and not skillReady then
    if not skillSince then skillSince=now end
    assert(now-skillSince<10000,'Authoritative Sprinting snapshot deadline')
-   if now-lastReady>1000 then lastReady=now;sendClientCommand('CartMP','Ready',{}) end
+   if now-lastReady>1000 then lastReady=now;setupCommand('Ready',{}) end
   else skillSince=nil end
   if skillReady and (not armed or not epoch and now-lastArm>1000) and owner and owner:getPrimaryHandItem() and owner:getPrimaryHandItem():getFullType()==cartType and owner:getSecondaryHandItem()==owner:getPrimaryHandItem() then
-   sendClientCommand('CartMP','Armed',{sprintLevel=p:getPerkLevel(Perks.Sprinting),padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion});armed=true;lastArm=now
+   if inventoryMode and not inventoryHeld then
+    if not owner:getCharacterActions():isEmpty() or owner:hasPath() then return end
+    inventoryState.emit(user,'held',owner,owner:getPrimaryHandItem(),assert(cartLeaseCurrent()));inventoryHeld=true
+   end
+   setupCommand('Armed',{sprintLevel=p:getPerkLevel(Perks.Sprinting),padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion});armed=true;lastArm=now
    print('[CART_MP] ARMED '..user..' sprintLevel='..p:getPerkLevel(Perks.Sprinting))
   end
   if user=='client2' and owner then
@@ -159,6 +199,12 @@ Events.OnTick.Add(function()
   end
   if not epoch then return end
   local elapsed=now-epoch
+  if leaseProbe then leaseProbe.sample(owner,elapsed) end
+  if config.options and config.options.cart_time_alignment==true and elapsed>=0 and elapsed<=duration then
+   assert(owner,'Native timing owner missing')
+   local timingCart=assert(owner:getPrimaryHandItem(),'Native timing cart missing')
+   cartMPTimingSample(owner,timingCart:getID(),elapsed)
+  end
   if wallSide and not wallPositioned and elapsed>=-8000 then
    assert(elapsed<0,'Wall pose setup missed pre-epoch window')
    position(p,setup.x,setup.y,setup.z);cartLabPoseHeading(setup.initialHeading)
@@ -200,13 +246,16 @@ Events.OnTick.Add(function()
    if drive~=heldDrive then heldDrive=drive;cartLabDrive(drive) end
   end
   if wallSide and now-lastTraffic>=1000 then lastTraffic=now;print('[CART_MP_TRAFFIC] '..cartMPTraffic()) end
-  if now-lastSample>=100 then
+  -- Preserve real native ticks during the bounded motion bank. A 100ms throttle
+  -- can discard the last available state before a slow frame at a window edge.
+  -- After motion, retain the slower state cadence and independent action probe.
+  if elapsed<=duration or now-lastSample>=100 then
    lastSample=now
    for i=0,online:size()-1 do print('[CART_MP_STATE] '..cartMPState(online:get(i))) end
    if wallSide and user=='client1' then wallSample(p,now,elapsed) end
    if injury and user=='client1' then injury.sample(p,setup,now,elapsed) end
-   if actions and elapsed>=duration then actions.sample(owner,user) end
   end
+  sampleActionPresentation(owner,now,elapsed)
   if elapsed>=duration then
    cartLabDrive(0);cartLabGait(0)
    if injury and user=='client1' then injury.finish(p) end
@@ -214,8 +263,11 @@ Events.OnTick.Add(function()
     assert(elapsed<duration+35000,'MP action bank deadline')
     if user=='client1' then actions.tick(p,setup,now) end
     if not actions.done(owner,now,user) then return end
+    if admissionProbe and not admissionProbe.done() then return end
     actionsFinished=true
    end
+   if invalidationProbe and not invalidationProbe.finish(owner,now) then return end
+   if lifetimeProbe and not lifetimeProbe.finish(owner,now) then return end
    if not finishedAt then finishedAt=now end
    if not stopped then assert(toolkitVideoStop(),'video stop failed');stopped=true;getCore():TakeFullScreenshot('cart-mp-end.png') end
    if wallSide then

@@ -8,11 +8,40 @@ import sys
 import time
 
 from .report import events, execution_issues, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds, coop, desktop
+from . import adapters, admission, pack, worlds, coop, desktop, glfw
 from .native import font_preload
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
+INHERITED_ENV_EXCLUSIONS = ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'PZ_CART_INVENTORY_EQUIP', 'PZ_CART_TIMELINE', 'PZ_CART_TIME_ALIGNMENT', 'PZ_CART_LEASE_CONTROL', 'PZ_CART_LEASE_LIFETIME', 'PZ_CART_ACTION_ADMISSION', 'PZ_CART_OBSERVER_ASSOCIATION', 'PZ_CART_ACTION_INVALIDATION')
+
+
+def _fixture_environment(selection, role, cache, extra_env):
+    """Admit adapter-owned values independently of the staged runtime dictionary."""
+    # These three historical baseline inputs also work with synthetic health
+    # fixtures. Keep that compatibility separate from suite-specific admission.
+    paths = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE'}
+    adapter = adapters.get(selection.get('suite'))
+    resolver = getattr(adapter, 'environment', None)
+    expected = resolver(selection, role, cache) if resolver else {}
+    if set(extra_env) - (paths | {'PZ_CART_TEST_PAD'} | expected.keys()):
+        raise ValueError('Invalid fixture-owned client environment')
+    for name, value in extra_env.items():
+        valid = isinstance(value, str)
+        if name in paths:
+            valid = valid and Path(value).is_absolute()
+        elif name == 'PZ_CART_TEST_PAD':
+            valid = valid and value in ('true', 'false')
+        else:
+            allowed = expected[name]
+            # Adapter-owned cache values are Paths; diagnostic flags are exact
+            # strings. Admission never derives permission from extra_env itself.
+            valid = valid and value == str(allowed) and (not isinstance(allowed, Path) or Path(value).is_absolute())
+        if not valid or name in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS'):
+            raise ValueError('Invalid fixture-owned client environment')
+    environment = {key: value for key, value in os.environ.items() if key not in INHERITED_ENV_EXCLUSIONS}
+    environment.update(extra_env)
+    return environment
 
 
 def stop(process, owned_host_group=False):
@@ -108,12 +137,16 @@ def run(root, resource_wait=300):
     if adapter:
         adapter.validate(selection)
     _verify_live_inputs(root, selection, runtime)
+    gui_access = desktop.require_gui_access()
+    glfw_args = glfw.arguments(root, runtime.get('glfw'))
     with admission.acquire(root, selection, runtime, resource_wait, legacy_lock=LOCK) as resources:
         changed = verify_manifest(root, 'source-manifest.json', True) + verify_manifest(root, 'snapshot-hashes.json')
         if changed:
             raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
         input_guards = _verify_live_inputs(root, selection, runtime)
         window_manager = desktop.prepare(selection)
+        window_manager.evidence['gui_access'] = gui_access
+        window_manager.evidence['glfw'] = runtime['glfw']
         processes, streams, displayed = {}, [], set()
         execution = {"status": "running", "platform": "darwin", "processes": {}, "peer_disconnected": False, 'attachments': [],
                      'resources': resources, 'input_guards': input_guards, 'desktop': window_manager.evidence}
@@ -146,7 +179,7 @@ def run(root, resource_wait=300):
                 arguments = ["-cp", "projectzomboid.jar", "zombie.network.GameServer", "-servername", runtime["server_name"], "-adminpassword", "smoke-local-only"]
             else:
                 arguments = ["-XstartOnFirstThread", "-cp", str(config["classes"]) + os.pathsep + "projectzomboid.jar", "ToolkitSmokeLauncher"]
-            window_args = window_manager.arguments(cache, config["classes"]) if role != "server" else []
+            window_args = (glfw_args + window_manager.arguments(cache, config["classes"])) if role != "server" else []
             command = base + window_args + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if hosted and role == 'client1':
                 command = base + window_args + ['-Dtoolkit.test.hostCache=' + str(cache)] + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
@@ -154,23 +187,9 @@ def run(root, resource_wait=300):
                 command = ["launchctl", "asuser", str(os.getuid())] + command
             stream = (root / (role + "-launch.log")).open("w")
             streams.append(stream)
-            environment = {key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")}
+            environment = _fixture_environment(selection, role, cache, config.get('env', {}))
             if hosted and role == 'client1' and loader:
                 environment['JDK_JAVA_OPTIONS'] = coop.loader_options(loader[0])
-            extra_env = config.get('env', {})
-            allowed_env = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE', 'PZ_CART_TEST_PAD'}
-            if selection['suite'] == 'basement-hall' and selection['kind'] == 'sp' and role == 'client1':
-                allowed_env.add('PZ_BASEMENT_HALL_CACHE')
-            if selection['suite'] == 'vehicle-lights' and role == 'client1':
-                allowed_env.add('PZ_LIGHTS_TEST_CACHE')
-            if (set(extra_env) - allowed_env
-                    or any(not isinstance(value, str) or not Path(value).is_absolute()
-                           for name, value in extra_env.items() if name != 'PZ_CART_TEST_PAD')
-                    or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')
-                    or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)
-                    or 'PZ_LIGHTS_TEST_CACHE' in extra_env and extra_env['PZ_LIGHTS_TEST_CACHE'] != str(cache)):
-                raise ValueError('Invalid fixture-owned client environment')
-            environment.update(extra_env)
             process = subprocess.Popen(command, cwd=game, env=environment, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True, start_new_session=True)
             processes[role] = process
             execution["processes"][role] = {"pid": process.pid}
@@ -188,7 +207,7 @@ def run(root, resource_wait=300):
                 subprocess.run([runtime['java'], '--enable-native-access=ALL-UNNAMED', '-cp', spec['classpath'],
                                 spec.get('class', 'AttachWoodenWheelProbe'), str(process.pid), spec['jar'], argument],
                                check=True, stdout=log, stderr=subprocess.STDOUT, timeout=20,
-                               env={key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})
+                               env={key: value for key, value in os.environ.items() if key not in INHERITED_ENV_EXCLUSIONS})
 
         cleaning = False
         def interrupted(signum, frame):
@@ -205,7 +224,7 @@ def run(root, resource_wait=300):
             for sig in (signal.SIGINT, signal.SIGTERM):
                 previous[sig] = signal.getsignal(sig)
                 signal.signal(sig, interrupted)
-            guard = subprocess.Popen(["/usr/bin/caffeinate", "-diu", "-w", str(os.getpid())])
+            guard = subprocess.Popen(["/usr/bin/caffeinate", "-i", "-w", str(os.getpid())])
             if selection["kind"] == "mp":
                 launch('client1' if hosted else 'server')
                 deadline = time.monotonic() + (180 if hosted else 120)
@@ -287,6 +306,13 @@ def run(root, resource_wait=300):
                             except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                                 execution.update(status='failed', error='Probe close failed: ' + str(error))
                 for role, process in reversed(list(processes.items())):
+                    if hosted and role == 'client1' and 'server' in execution['processes']:
+                        try:
+                            saved = coop.save_host(process, execution['processes']['server']['pid'], lambda: text('client1'))
+                            execution['host_save'] = saved
+                            execution['processes']['server']['exit_code'] = saved['exit_code']
+                        except (OSError, RuntimeError) as error:
+                            execution.setdefault('cleanup_errors', []).append('Host save: ' + str(error))
                     if role == 'server' and process.poll() is None:
                         try:
                             process.stdin.write('save\nquit\n'); process.stdin.flush()

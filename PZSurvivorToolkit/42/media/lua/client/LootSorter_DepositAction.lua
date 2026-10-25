@@ -8,11 +8,9 @@
 -- (Seen in the wild: the nearest partly-full box couldn't take one item and the ENTIRE rest of the
 -- sort -- empty boxes included -- was silently dropped.)
 --
--- THE FIX: never return false from isValid() (returning false is exactly what triggers the wipe).
--- We stay "valid" and decide at start() whether the box can really take the item: if not, we mark
--- this one deposit as a no-op and let the queue march on to the next box. transferItem() does NOT
--- re-check capacity, so we must gate BEFORE it runs -- otherwise a forced transfer would overfill
--- the box past its capacity.
+-- Scheduling validity must not cancel the entire haul when one box rejects a deposit. Admission
+-- still belongs at the effect boundary: every actual SP transfer is checked, including items merged
+-- after start(). Host uses native transactions; only an explicit rejection can be skipped locally.
 require "TimedActions/ISInventoryTransferAction"
 
 LootSorter = LootSorter or {}
@@ -106,10 +104,57 @@ function LootSorter.DepositAction:start()
     ISInventoryTransferAction.start(self)
 end
 
+function LootSorter.DepositAction:transferItem(item)
+    self.item = item
+    self._lsSkippedItem = nil
+    if self:lsCanDeposit() then
+        ISInventoryTransferAction.transferItem(self, item)
+    else
+        self._lsSkippedItem = item
+    end
+end
+
+function LootSorter.DepositAction:playTransferCompleteSound(item)
+    -- Native perform also plays this outside transferItem, even when our admission gate skipped it.
+    if item ~= self._lsSkippedItem then
+        ISInventoryTransferAction.playTransferCompleteSound(self, item)
+    end
+end
+
+function LootSorter.DepositAction:update()
+    if self._lsSkip then return end
+    if isClient() and self.started then
+        local id = self.transactionId
+        -- Native predicates both return true for an absent transaction (allMatch on an empty list).
+        -- That can follow a timeout after partial server effects. Do not acknowledge it as success.
+        if not id or id == 0 then self:forceStop(); return end
+        local done = isItemTransactionDone(id)
+        local rejected = isItemTransactionRejected(id)
+        if rejected then
+            if done or not self.queueList[1] then self:forceStop(); return end
+            self._lsRejected = { id = id, batch = self.queueList[1] }
+            self:forceComplete()
+            return
+        end
+    end
+    ISInventoryTransferAction.update(self)
+end
+
 function LootSorter.DepositAction:perform()
     if self._lsSkip then
         ISBaseTimedAction.perform(self)                 -- advance the queue; move nothing
         return
+    end
+    if self._lsRejected then
+        local rejected = self._lsRejected
+        self._lsRejected = nil
+        if self.transactionId ~= rejected.id or self.queueList[1] ~= rejected.batch then
+            self:forceStop()
+            return
+        end
+        -- Explicit Request rejection precedes all server effects. Let native perform retire that
+        -- transaction and start the next batch, without replaying its payload or success sounds.
+        self.queueList[1] = { items = {} }
     end
     ISInventoryTransferAction.perform(self)
 end
@@ -117,6 +162,7 @@ end
 -- DIAGNOSTIC: a log to catch this deposit exiting prematurely -- if it's force-stopped mid-sort, that
 -- wipes the rest of the haul. Names the item/from/to. Gated: the describeContainer calls aren't free.
 function LootSorter.DepositAction:stop()
+    self._lsRejected = nil
     if LootSorter.isDebug() then
         local nm = "?"; pcall(function() nm = self.item and self.item:getName() end)
         local fromWhat = LootSorter.safeCall(function() return LootSorter.describeContainer(self.srcContainer) end, "?")

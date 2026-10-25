@@ -1,32 +1,26 @@
--- Inventory categories are distinct from the ScriptItem categories used by loot rolls.
--- Read the selected provider's public API without loading it or copying its policies.
+-- Toolkit owns inventory classifications. ScriptItem categories stay untouched:
+-- the native loot system reads them independently of inventory tags and routing.
+local Rules = require "PZSurvivorToolkit/ItemCategoryRules"
 local Categories = {}
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 PZSurvivorToolkit.ItemCategories = Categories
 
 function Categories.forScript(script)
-    if not script then return nil end
-    local provider = OrganizedCategories
-    if provider and type(provider.getScriptInventoryDisplayCategory) == "function" then
-        local category = provider.getScriptInventoryDisplayCategory(script)
-        if category and category ~= "" then return category end
-    end
-    return script:getDisplayCategory()
+    return Rules.forScript(script)
 end
 
--- Preparation intentionally delegates instance writes to the provider. Its fluid,
--- instance override and recorded-media rules cannot be replaced by a type lookup.
--- Repeating this pass is supported by the provider's inventory refresh path.
+function Categories.refineMediaCategory(item, category)
+    return Rules.refineMediaCategory(item, category)
+end
+
 function Categories.prepareItem(item)
     if not item then return end
-    local provider = OrganizedCategories
-    if not provider then return end
-    if type(provider.autoSortLiquid) == "function" and item.isFluidContainer and item:isFluidContainer() then
-        provider.autoSortLiquid(item)
+    local category = Rules.forItem(item)
+    if category and category ~= "" and item.setDisplayCategory
+        and item:getDisplayCategory() ~= category then
+        item:setDisplayCategory(category)
     end
-    if type(provider.applyItemDisplayOverride) == "function" then
-        provider.applyItemDisplayOverride(item)
-    end
+    return category
 end
 
 function Categories.prepareContainer(container)

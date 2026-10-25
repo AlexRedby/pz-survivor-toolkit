@@ -123,17 +123,20 @@ class CartAnimationNodes(unittest.TestCase):
             self.assertEqual(node.findtext("m_deferredBoneAxis"), "Y")
             self.assertEqual(node.findtext("m_maxTorsoTwist"), "0")
             self.assertGreater(int(node.findtext("m_ConditionPriority")), 101)
-            forward = {"Walk": "Bob_Walk", "Run": "Bob_Run", "Sprint": "Bob_Sprint"}[mode]
-            self.assertEqual(node.findtext("m_AnimName"), "Bob_Idle")
+            # Unequal ordinary root fades exceed one total weight; native priority
+            # clipping then changes ownership abruptly when the raw weights cross.
+            self.assertEqual(float(node.findtext("m_BlendTime")), .2)
+            forward = "Toolkit_CartPivot_" + mode
+            self.assertEqual(node.findtext("m_AnimName"), "Toolkit_CartPivot_Idle")
             # NoAim idle moves diagonally; its diagonal clips can cancel the strafe roots.
             self.assertEqual({blend.attrib["referenceID"]: (blend.findtext("m_AnimName"),
                               float(blend.findtext("m_XPos")), float(blend.findtext("m_YPos")))
                               for blend in node.findall("m_2DBlends")[:5]}, {
-                "1": ("Bob_Idle", 0, 0),
+                "1": ("Toolkit_CartPivot_Idle", 0, 0),
                 "2": (forward, 0, 1),
-                "3": ("Bob_WalkBwdNoAim1Hand", 0, -1),
-                "4": ("Bob_StrafeNoAim_Right", 1, 0),
-                "5": ("Bob_StrafeNoAim_Left", -1, 0),
+                "3": ("Toolkit_CartPivot_Backward", 0, -1),
+                "4": ("Toolkit_CartPivot_StrafeRight", 1, 0),
+                "5": ("Toolkit_CartPivot_StrafeLeft", -1, 0),
             })
             self.assertEqual([tuple(triangle.findtext("node" + str(index)) for index in (1, 2, 3))
                               for triangle in node.findall("m_2DBlendTri")],
@@ -144,7 +147,7 @@ class CartAnimationNodes(unittest.TestCase):
                 self.assertEqual(stop.findtext("m_Target"), "ToolkitCartIdle")
                 sprint_stop = mode == "Sprint" or mode == "Walk" and index == 1
                 self.assertEqual(stop.findtext("m_AnimName"),
-                                 "Bob_SprintToStop2h_Heavy" if sprint_stop else "Bob_RunToStop2H_Heavy")
+                                 "Toolkit_CartPivot_StopSprint" if sprint_stop else "Toolkit_CartPivot_StopRun")
                 expected = {("ToolkitCartWoodBrake", "BOOL", "true"), ("isMoving", "BOOL", "false")}
                 if mode == "Walk":
                     expected.add(("ToolkitCartBrakeSprint", "BOOL", str(sprint_stop).lower()))
@@ -163,15 +166,15 @@ class CartAnimationNodes(unittest.TestCase):
         self.assertIn(("ToolkitCartWoodPivot", "BOOL", "false"), conditions(native))
         self.assertIn(("ToolkitCartWoodPivot", "BOOL", "true"), conditions(wood))
         self.assertEqual([b.findtext("m_AnimName") for b in wood.findall("m_2DBlends")[:5]],
-                         ["Bob_Idle", "Bob_Walk", "Bob_WalkBwdNoAim1Hand",
-                          "Toolkit_WoodCartPivot_Right", "Toolkit_WoodCartPivot_Left"])
+                         ["Toolkit_CartPivot_Idle", "Toolkit_CartPivot_Walk", "Toolkit_CartPivot_Backward",
+                          "Toolkit_CartPivot_WoodRight", "Toolkit_CartPivot_WoodLeft"])
         wood.find("m_Name").text = native.findtext("m_Name")
         for condition in wood.findall("m_Conditions"):
             if condition.findtext("m_Name") == "ToolkitCartWoodPivot":
                 condition.find("m_Value").text = "false"
         for blend in wood.findall("m_2DBlends"):
             name = blend.find("m_AnimName")
-            name.text = name.text.replace("Toolkit_WoodCartPivot_", "Bob_StrafeNoAim_")
+            name.text = name.text.replace("Toolkit_CartPivot_Wood", "Toolkit_CartPivot_Strafe")
         self.assertEqual(ET.tostring(wood), ET.tostring(native),
                          "forward/backward speed, footsteps, root extraction and transitions must stay native")
         for mode in ("Run", "Sprint"):
@@ -180,12 +183,12 @@ class CartAnimationNodes(unittest.TestCase):
 
     def test_injured_directional_fields_keep_native_clips_outside_direction_triangles(self):
         walk = ["Bob_WalkSlow", "Bob_WalkLightLimpR", "Bob_WalkLightLimpL",
-                "Bob_WalkHeavyLimpR", "Bob_WalkHeavyLimpL"]
+                "Bob_WalkHeavyLimpR", "Bob_WalkHeavyLimpL", "Bob_Walk"]
         for name, extra in {
             "ToolkitCartPivotWalk": walk, "ToolkitWoodCartPivotWalk": walk,
             "ToolkitCartPivotRun": ["Bob_Walk", "Bob_WalkLightLimpR", "Bob_WalkLightLimpL",
-                                    "Bob_RunLightLimpR", "Bob_RunLightLimpL", "Bob_WalkHeavyLimpR", "Bob_WalkHeavyLimpL"],
-            "ToolkitCartPivotSprint": ["Bob_Run"],
+                                    "Bob_RunLightLimpR", "Bob_RunLightLimpL", "Bob_WalkHeavyLimpR", "Bob_WalkHeavyLimpL", "Bob_Run"],
+            "ToolkitCartPivotSprint": ["Bob_Run", "Bob_Sprint"],
         }.items():
             node = self.nodes[name][1]
             self.assertFalse(any(c[0] == "WalkInjury" for c in conditions(node)))

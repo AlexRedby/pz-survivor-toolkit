@@ -1,5 +1,7 @@
 local Postprocess={}
 local Bulk=require 'QueueEquipmentBulk'
+local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local function isBelt(id) return id=='belt-knife' or id=='belt-hammer' end
 local function same(item,expected)
  return item==nil and expected==nil or item~=nil and expected~=nil
@@ -69,7 +71,9 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then
+ if Clothing.overlap(state)then primary,secondary=Clothing.expectedHands(state,tidy)end
+ if Hotbar.isCase(state.id)then primary,secondary=Hotbar.expectedHands(state,tidy);Hotbar.verify(state,tidy)end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then
   if not tidy then primary,secondary=state.pickup,nil
   elseif state.id=='tidy-empty-hands' then primary,secondary=nil,nil
   else assert(state.hammer:isActivated(),'P4 did not restore torch activation') end
@@ -91,6 +95,7 @@ function Postprocess.verify(state,mode,tidy)
   expectedAttached[location]=item
  end
  if (state.id=='hotbar-chain' or isBelt(state.id)) then expectedAttached[state.hotbarLocation]=state.hotbarReplacement end
+ if Hotbar.isCase(state.id)and tidy then expectedAttached[state.hotbarLocation]=state.pickup end
  local actualAttached={};local attachments=player:getAttachedItems()
  for i=0,attachments:size()-1 do local entry=attachments:get(i);actualAttached[tostring(entry:getLocation())]=entry:getItem() end
  if tidy and (state.id=='hotbar-chain' or isBelt(state.id)) then
@@ -110,18 +115,24 @@ function Postprocess.verify(state,mode,tidy)
  end
  local actualWorn={};local values=player:getWornItems()
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);actualWorn[values:getLocation(item)]=item end
- sameSlots(actualWorn,state.expectedWorn,'worn item')
+ local expectedWorn=state.expectedWorn
+ if Clothing.isCase(state.id)then
+  expectedWorn=Clothing.expectedWorn(state,state.expectedWorn,Clothing.finalWorn(state,tidy))
+ end
+ sameSlots(actualWorn,expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,hotbarInitial=true,hotbarReplacement=true,belt=true}
+  clothingB=true,clothingItem=true,clothingTemporary=true,clothingGel=true,hotbarInitial=true,hotbarReplacement=true,hotbarTool=true,belt=true,holster=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)
   elseif name=='bat' then
    if state.id=='waiting-cancel' and mode=='toolkit' or tidy and state.id=='hands-chain' then expected=state.source end
+  elseif name=='groupOne' or name=='groupTwo' or name=='groupHeavyOne' or name=='groupHeavyTwo' then expected=tidy and state.source or root
   elseif name=='content' or name:match('^plank%d+$') then expected=state.source
   elseif name=='clothingA' then expected=tidy and state.source or root
-  elseif name=='pickup' and state.id=='bag-capacity' then expected=root
+  elseif name=='pickup'and Hotbar.isCase(state.id)then expected=root
+  elseif name=='pickup' and (state.id=='bag-capacity' or (state.id=='tidy-group' or state.id=='tidy-multigroup')) then expected=root
   elseif name=='pickup' and (state.id=='floor-pickup' or state.id=='tidy-floor') then expected=root
   elseif name=='pickup' and (state.id=='tidy-hands' or state.id=='tidy-empty-hands') then expected=tidy and state.source or root
   else assert(rootNames[name],'unknown postprocessing seed '..name) end
@@ -131,6 +142,18 @@ function Postprocess.verify(state,mode,tidy)
   end
  end
  assert(floorRestored==(state.id=='tidy-floor' and tidy),'P4 returned deliberately picked up floor item or lost borrowed floor return')
- return {postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
+ local result={postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
+ if Hotbar.isCase(state.id)then result.hotbar=Hotbar.verify(state,tidy)end
+ if Clothing.isCase(state.id)then state.clothingAppearanceTidy=tidy;result.clothing=Clothing.verify(state,Clothing.finalWorn(state,tidy))end
+ if (state.id=='tidy-group' or state.id=='tidy-multigroup') then
+  local ids={}
+  for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do ids[#ids+1]=item:getID() end
+  table.sort(ids)
+  result.groupItems={}
+  for _,id in ipairs(ids) do
+   result.groupItems[#result.groupItems+1]={id=id,fullType=actual[id]:getFullType(),container=tidy and 'worn-bag' or 'root'}
+  end
+ end
+ return result
 end
 return Postprocess

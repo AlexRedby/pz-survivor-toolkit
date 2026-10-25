@@ -12,7 +12,9 @@ CANCEL_CASES = ['context-cancel-active', 'vanilla-cancel-active', 'neat-cancel-a
 POOL_CASES = ['vanilla-missing-batch-pool', 'neat-missing-batch-pool', 'cook-missing-batch-pool']
 FAILURE_CASES = CANCEL_CASES + POOL_CASES
 EVOLVED_CASE = 'cook-evolved-return'
-CASES = SUCCESS_CASES + FAILURE_CASES + [EVOLVED_CASE]
+WATER_CASES = ['cook-water-soup', 'cook-water-stew', 'cook-water-soup-world', 'cook-water-stew-beans', 'cook-water-stew-floor-plus']
+EVOLVED_CASES = WATER_CASES + [EVOLVED_CASE]
+CASES = SUCCESS_CASES + FAILURE_CASES + EVOLVED_CASES
 COUNTS = {case: 1 if case.startswith('context') else 2 for case in CASES}
 OWNERS = {case: ('context' if case.startswith('context') else 'ISWidgetHandCraftControl' if case.startswith('vanilla-')
                  else 'NC_CraftActionPanel' if case.startswith('neat-') else 'PJCK_CraftActionPanel') for case in CASES}
@@ -28,11 +30,12 @@ FAILURE_OBSERVATIONS = {'interrupted', 'interruptionProgress', 'outcomeTrace', '
 EVOLVED_RECEIPT_KEYS = {'bags', 'base', 'ingredient', 'spice', 'dishes', 'outputIds', 'outputs', 'bookId', 'tailRead'}
 EVOLVED_OBSERVATIONS = {'requested', 'actions', 'actionInputIds', 'progressIds', 'nativeDurations', 'cookingLevel',
                         'sourceMethodsUnchanged', 'callbackClass', 'sourceDeferred', 'sourceVerified', 'tokensGrouped',
-                        'tailIndependent', 'tailProgress', 'returnsBeforeRead', 'selectedDishId'}
+                        'tailIndependent', 'tailProgress', 'returnsBeforeRead', 'selectedDishId',
+                        'fluidCapacity', 'waterAmount', 'recipeUse', 'dispatchMethod', 'inputObservations', 'slotGeometry', 'basePickupNative', 'originalBaseSource', 'ingredientTransfers', 'originalIngredientSource', 'baseTransferTrace', 'originalBaseWorld', 'plusButtonNative', 'cookButtonNative', 'preCookRequests', 'floorObservations', 'plusCook'}
 
 
 def _receipt_keys(case):
-    if case == EVOLVED_CASE:
+    if case in EVOLVED_CASES:
         return EVOLVED_RECEIPT_KEYS
     return (RECEIPT_KEYS | (FAILURE_RECEIPT_KEYS if case in FAILURE_CASES else set())
             | (POOL_RECEIPT_KEYS if case in POOL_CASES else set()))
@@ -55,6 +58,9 @@ def _food_meta(value, kind, hunger):
 
 
 def _evolved_prepared(prep):
+    if prep.get('case') in WATER_CASES:
+        from .craft_ui_water import prepared
+        return prepared(prep)
     base = prep.get('base')
     if (set(prep) != {'case', 'bags', 'book', 'base', 'ingredient', 'spice', 'baselineDishIds', 'cookingLevel'}
             or prep.get('case') != EVOLVED_CASE or type(prep.get('cookingLevel')) is not int
@@ -70,6 +76,9 @@ def _evolved_prepared(prep):
 
 
 def _evolved_case(selection, row, prep, receipt):
+    if prep.get('case') in WATER_CASES:
+        from .craft_ui_water import verify
+        return verify(selection, row, prep, receipt), None
     issues, enabled = [], selection['mode'] == 'toolkit'
     if not _evolved_prepared(prep):
         return ['Craft UI evolved preparation identity/portion differs'], None
@@ -159,7 +168,8 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'craft-ui').rglob('*.lua')),
+    return [Path(__file__).with_name('craft.py'),Path(__file__).with_name('craft_ui_water.py'),
+            *sorted((root / 'craft-ui').rglob('*.lua')),
             *sorted((root / 'craft/scripts').rglob('*.txt')),
             root / 'health/shared/QueueHealthEvents.lua', *sorted((root / 'startup').rglob('*.lua'))]
 
@@ -187,7 +197,7 @@ def _authority(text):
 
 
 def _prepared_valid(prep, case):
-    if case == EVOLVED_CASE:
+    if case in EVOLVED_CASES:
         return _evolved_prepared(prep)
     failure = case in FAILURE_CASES
     extra = {'materialMeta', 'sparePlanks', 'playerId'} if failure else set()
@@ -218,7 +228,7 @@ def _prepared_valid(prep, case):
 
 
 def _case(selection, case, row, prep, receipt, removal=None):
-    if case == EVOLVED_CASE:
+    if case in EVOLVED_CASES:
         return _evolved_case(selection, row, prep, receipt)
     enabled, count = selection['mode'] == 'toolkit', COUNTS[case]
     issues = []
@@ -419,7 +429,7 @@ def verify(root, selection, catalog):
         if reason and not enabled:
             failures[case] = reason
         if _prepared_valid(prep, case):
-            if case == EVOLVED_CASE:
+            if case in EVOLVED_CASES:
                 retained = prep['baselineDishIds']
                 owned = prep['bags'] + [prep['book'], prep['base']['id'], prep['ingredient']['id'], prep['spice']['id']]
             else:
@@ -428,15 +438,17 @@ def verify(root, selection, catalog):
             if cleanup_ids.intersection(retained):
                 issues.append('Craft UI previous owned cleanup identity remains in preparation: ' + case)
             identities += owned
-            cleanup_ids.update(owned)
+            if case not in EVOLVED_CASES:
+                cleanup_ids.update(owned)
         if case in POOL_CASES and _metadata(removal.get('introducedSpare')):
             probe_id = removal['introducedSpare']['id']
             identities.append(probe_id)
             cleanup_ids.add(probe_id)
         if craft._ids(row.get('outputIds')):
             output_ids += row['outputIds']
-            cleanup_ids.update(row['outputIds'])
-        outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in _receipt_keys(case) | (EVOLVED_OBSERVATIONS if case == EVOLVED_CASE else set()) | (FAILURE_OBSERVATIONS if case in FAILURE_CASES else set()) | (POOL_OBSERVATIONS if case in POOL_CASES else set()) | {
+            if case not in EVOLVED_CASES:
+                cleanup_ids.update(row['outputIds'])
+        outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in _receipt_keys(case) | (EVOLVED_OBSERVATIONS if case in EVOLVED_CASES else set()) | (FAILURE_OBSERVATIONS if case in FAILURE_CASES else set()) | (POOL_OBSERVATIONS if case in POOL_CASES else set()) | {
             'requested', 'actions', 'progressIds', 'callbackClass', 'callbacksUnchanged', 'callbackSafe',
             'nativeDuration', 'localDeferrals', 'sharedPerformCount', 'sharedCompleteCount', 'ownerIdle',
             'remaining', 'pickupIds', 'returnIds', 'returnsBeforeRead', 'manualSelect', 'manualInputTypes', 'automaticToolIds'}}))
@@ -460,5 +472,5 @@ def verify(root, selection, catalog):
         'Native context and batch callbacks are exercised through fixture-driven UI APIs; physical mouse input is not covered.',
         'Shared-pool loss records retained-cache output effects separately from physical removal; removed items are not reported as normally consumed.',
         'Neat and Project Cook handcraft owners use tools in their source bags; these cases do not claim late tool returns.',
-        'Evolved return uses real Salad/Tomato/Pepper actions and source UI with a prepared nearly depleted spice; it does not cover every evolved recipe or retry failure in game.',
+        'Water cases use real water-filled Pots, Tomato or dry beans and native slot callbacks, including plus/Cook after a native floor pickup. The return case uses real Salad/Tomato/Pepper actions. These cases do not cover every evolved recipe, food-state transition or concurrent-player race.',
         'Fresh one-client SP/Host, native durations and exact authority receipts; no WAN or concurrent-client coverage.']}}

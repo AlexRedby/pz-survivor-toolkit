@@ -7,7 +7,9 @@ local Vehicles = {}
 W.Vehicles = Vehicles
 
 function Vehicles.entry(part)
-    local types = part and part:getItemType()
+    -- Item types also exist for fixed parts such as the native glovebox.
+    if not part or not part:getTable("install") then return nil end
+    local types = part:getItemType()
     if not types or types:size() == 0 or types:size() > 32 then return nil end
     local variants, seen = {}, {}
     for i = 0, types:size() - 1 do

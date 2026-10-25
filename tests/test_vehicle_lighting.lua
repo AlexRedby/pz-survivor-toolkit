@@ -89,6 +89,64 @@ opts.VehicleReverseLight.value=1;L.configureReverse();assert(ReverseDriveLights.
 opts.VehicleReverseLight.value=3;L.configureReverse();assert(ReverseDriveLights.REVERSE_DISTANCE==36 and ReverseDriveLights.REVERSE_INTENSITY==1,'original compatibility preset')
 print('PASS vehicle lighting: movement, power, bulbs, removal, options and reverse-state cleanup')
 
+-- Workload: unlit parking lots must not reread every local player's pose per car.
+-- Lit cars share only this synchronous update's player/script/list reads; native
+-- source membership stays checked, including native removal between updates.
+do
+ local originalVehicles, originalPositions = cell.getVehicles, cell.getLamppostPositions
+ local originalCount, originalPlayer = getNumActivePlayers, getSpecificPlayer
+ local vehicles, playerReads, scriptReads, listReads = {}, 0, 0, 0
+ local players = {{x=0,y=0,z=0}, {x=200,y=0,z=1}}
+ for _,player in ipairs(players) do
+  function player:isDead() return self.dead == true end
+  function player:getX() playerReads=playerReads+1;return self.x end
+  function player:getY() playerReads=playerReads+1;return self.y end
+  function player:getZ() playerReads=playerReads+1;return self.z end
+ end
+ getNumActivePlayers=function() return #players end
+ getSpecificPlayer=function(i) return players[i+1] end
+ cell.getVehicles=function() return {iterator=function()
+  local index=0
+  return {hasNext=function() return index<#vehicles end,next=function() index=index+1;return vehicles[index] end}
+ end} end
+ cell.getLamppostPositions=function(self) listReads=listReads+1;return originalPositions(self) end
+ for i=1,512 do vehicles[i]=setmetatable({on=false,x=i,y=0}, {__index=Vehicle}) end
+ L.update()
+ assert(count==0 and playerReads==0 and listReads==0,'unlit lot must skip player and registered-light reads')
+ local function car(x,z)
+  return setmetatable({on=true,x=x,y=0,z=z,
+   getZ=function(self) return self.z end,
+   getScript=function(self) scriptReads=scriptReads+1;return Vehicle.getScript(self) end}, {__index=Vehicle})
+ end
+ local first,second,upper,distant=car(0,0),car(2,0),car(200,1),car(200,0)
+ vehicles[#vehicles+1]=first;vehicles[#vehicles+1]=second
+ vehicles[#vehicles+1]=upper;vehicles[#vehicles+1]=distant
+ local foreign=IsoLightSource.new(0,0,0,1,1,1,10)
+ cell:addLamppost(foreign)
+ L.update()
+ assert(count==13 and not L.states[distant],'split local players and floor/distance filtering')
+ assert(playerReads==6 and scriptReads==3 and listReads==1,'share pose/script/list reads within one lighting update')
+ local saved=L.states[first].lights.frontLeft.source
+ playerReads,scriptReads,listReads=0,0,0
+ L.update()
+ assert(playerReads==6 and scriptReads==3 and listReads==1 and L.states[first].lights.frontLeft.source==saved,
+  'stationary workload must reuse native sources without repeated snapshot reads')
+ players[2].x=600;L.update()
+ assert(not L.states[upper] and count==9,'next update reads fresh second-player movement')
+ players[1].z=2;L.update()
+ assert(count==1 and lights[foreign],'floor changes remove only owned sources on the next update')
+ players[1].z=0;L.update();assert(count==9,'returning players rediscover lights')
+ players[1].dead=true;L.update();assert(count==1,'dead players do not keep lights alive')
+ players[1].dead=false;L.update();assert(count==9)
+ opts.VehicleLightSpill.value=1;playerReads,listReads=0,0;L.update()
+ assert(count==1 and lights[foreign] and playerReads==0 and listReads==0,'disabled spill skips native discovery and preserves foreign lights')
+ opts.VehicleLightSpill.value=3;L.update();assert(count==9)
+ L.clear();assert(count==1 and lights[foreign]);cell:removeLamppost(foreign)
+ cell.getVehicles,cell.getLamppostPositions=originalVehicles,originalPositions
+ getNumActivePlayers,getSpecificPlayer=originalCount,originalPlayer
+ print('PASS vehicle lighting workload: 512 unlit cars skip pose reads; three lit cars share six coordinate reads and one native list read, with fresh movement/floor/death and foreign-light ownership')
+end
+
 -- The spill feature has no mandatory dependency on Reverse Drive Lights.
 L.clear()
 getActivatedMods=function() return {contains=function() return false end} end

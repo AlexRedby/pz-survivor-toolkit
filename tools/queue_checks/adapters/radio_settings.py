@@ -24,7 +24,7 @@ def definitions():
     }
     return {'radio-settings': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
         'scenario_actions': {'world-radio-settings': {'mods': MODS, 'checks': checks,
-            'scope': 'Native RWM callbacks on two adjacent mains-powered world radios. Reorder repeated volume and independent microphone/channel setters, cancel pending volume/microphone setters, and retain a same-target MuteVolume barrier. Native controls execute the original order. Host authority covers volume/channel; world-device microphone mute is a native client-local field.'}},
+            'scope': 'Native RWM callbacks on two adjacent mains-powered world radios. Reorder repeated volume and independent microphone/channel setters, cancel pending volume/microphone setters, and retain the native channel-before-power-off dependency (followed by power restoration and mute). Native controls execute the original order. Host authority covers volume/channel; world-device microphone mute is a native client-local field.'}},
         'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
                       modes=['native', 'toolkit'], languages=['EN']) for case in CASES]}}
 
@@ -114,7 +114,8 @@ def check_case(row, case, selection, prepared, verified):
         return issues + ['Invalid exact radio identities']
     specs = [('anchor', 'SetVolume', 'b', .25), ('firstVolume', 'SetVolume', 'a', .25)]
     if case == 'barrier':
-        specs += [('legacyMute', 'MuteVolume', 'a', True), ('channel', 'SetChannel', 'a', 95000)]
+        specs += [('channel', 'SetChannel', 'a', 95000), ('powerOff', 'ToggleOnOff', 'a', None),
+                      ('powerOn', 'ToggleOnOff', 'a', None), ('legacyMute', 'MuteVolume', 'a', True)]
     else:
         specs += [('channel', 'SetChannel', 'a', 95000), ('lastVolume', 'SetVolume', 'a', .75),
                   ('mic', 'MuteMicrophone', 'a', True)]

@@ -170,6 +170,21 @@ class CartInjuryAnalyzerTests(unittest.TestCase):
         self.assertFalse(report['injuryVerified'])
         self.assertTrue(any('backward' in row[2] for row in report['failures']))
 
+    def test_reverse_accepts_current_authored_and_historical_native_directional_clips(self):
+        for variant in injury.TYPES:
+            for clip in ('Toolkit_CartPivot_Backward', 'Bob_WalkBwdNoAim1Hand'):
+                with self.subTest(variant=variant, clip=clip):
+                    log = mutate_samples(capture(self.names, variant),
+                                         lambda r: r.update(tracks=clip + '=.8@1;') if r['phase'] == 'reverse' else None)
+                    report = injury.analyze(log, self.names, variant)
+                    self.assertTrue(report['injuryVerified'], report['failures'])
+        for track in ('Toolkit_CartPivot_Backward=0@1;', 'Toolkit_CartPivot_Backward=.8@0;'):
+            with self.subTest(track=track):
+                log = mutate_samples(self.log, lambda r: r.update(tracks=track) if r['phase'] == 'reverse' else None)
+                report = injury.analyze(log, self.names)
+                self.assertFalse(report['injuryVerified'])
+                self.assertTrue(any('backward clip' in row[2] for row in report['failures']))
+
     def test_reverse_retains_its_native_directional_clip(self):
         log = mutate_samples(self.log, lambda r: r.update(tracks='Bob_WalkLightLimpL=.8@1;') if r['phase'] == 'reverse' else None)
         report = injury.analyze(log, self.names)

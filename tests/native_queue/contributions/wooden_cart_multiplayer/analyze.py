@@ -123,7 +123,56 @@ def palm(row, side):
     return math.dist(actual, wanted)
 
 
-def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelbarrow'):
+def action_draws(profile, role):
+    """Actual DrawSolid callbacks, kept separate from the prepared pose snapshots."""
+    source = Path(profile) / role / 'render-camera.jsonl'
+    require(source.is_file(), role + ': missing actual action body/cart draw proof')
+    result = {}
+    for line in source.read_text().splitlines():
+        row = parse(line)
+        require(isinstance(row, dict) and row.get('renderProbeVersion') == 1
+                and type(row.get('captureId')) is int and row['captureId'] > 0
+                and row.get('part') in ('body', 'cart'), role + ': malformed action draw proof')
+        key = (row['captureId'], row['part'])
+        require(key not in result, role + ': duplicate action draw proof')
+        result[key] = row
+    return result
+
+
+def drawn_action_frames(frames, draws, role, cartid, variant):
+    result = []
+    for frame in frames:
+        require(frame.get('renderProbeVersion') == 1 and type(frame.get('captureId')) is int
+                and type(frame.get('slotToken')) is int and number(frame.get('nativeWallTimeMillis')),
+                role + ': missing original action render identity')
+        pair = [draws.get((frame['captureId'], part)) for part in ('body', 'cart')]
+        if all(row is None for row in pair):
+            continue  # Prepared off-screen poses do not establish an actual draw.
+        require(all(row is not None for row in pair), role + ': incomplete actual action body/cart draw')
+        for row in pair:
+            # Inventory can advance between preparation and the render thread's
+            # draw. Bind identity to the exact frozen slot; retain live hands as
+            # separately validated diagnostics, never as prepared-model evidence.
+            require(row.get('id') == frame['id'] and row.get('preparedPrimary') == frame['primary']
+                    and row.get('preparedSecondary') == frame['secondary']
+                    and all(type(row.get(k)) is int for k in ('preparedPrimary', 'preparedSecondary', 'primary', 'secondary'))
+                    and row.get('slotToken') == frame['slotToken'] and row.get('captureWallTimeMillis') == frame['wallTimeMillis']
+                    and all(number(row.get(k)) for k in ('cameraWallTimeMillis', 'wallTimeMillis', 'cameraX', 'cameraY', 'cameraZ', 'cameraAngle'))
+                    and frame['nativeWallTimeMillis'] <= frame['wallTimeMillis'] <= row['cameraWallTimeMillis'] <= row['wallTimeMillis'] <= frame['wallTimeMillis']+1000
+                    and row.get('cameraWorldIso') is True and row.get('cameraInVehicle') is False,
+                    role + ': stale/foreign actual action draw')
+            if row['part'] == 'cart':
+                require(row.get('model') == frame['model'] == FILLED_MODELS[variant], role + ': action draw fill/model mismatch')
+        require(frame.get('cartItemId') == cartid and frame.get('cartItemSource') == ('transition' if frame['primary'] == -1 else 'hands')
+                and frame.get('cartItemModel') in HELD_MODELS[variant] and frame.get('modelProbeVersion') == 1
+                and (frame.get('heldModel') is None if frame['primary'] == -1 else frame.get('heldModel') in HELD_MODELS[variant])
+                and all(frame.get(key) in (None, '') or frame.get(key) in HELD_MODELS[variant] for key in ('overridePrimary', 'overrideSecondary')),
+                role + ': action rendered model lacks exact native cart identity/fill')
+        result.append(frame)
+    return result
+
+
+def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelbarrow', profile=None):
     def rows(role, kind):
         marker = '[CART_MP_ACTION] ' + kind + ' '
         values = [parse(line.split(marker, 1)[1]) for line in logs[role].splitlines() if marker in line]
@@ -171,6 +220,7 @@ def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelb
                 and number(check.get('holdMs')) and 100 <= check['holdMs'] < 3000, label + ': independent server endpoint missing')
     result = {}
     for role in ('client1', 'client2'):
+        draws = action_draws(profile, role) if variant != 'wooden-wheelbarrow' else None
         windows = ordered(rows(role, 'WINDOW'), role + '/window')
         acknowledgements = ordered(rows(role, 'SERVER_ACK'), role + '/ack')
         finished = rows(role, 'SERVER_DONE')
@@ -194,15 +244,20 @@ def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelb
             selected = [r for r in samples if r['index'] == index+1 and r['wall'] <= acknowledgements[index]['wall']]
             require(selected and all(windows[index]['wall'] <= r['wall'] for r in selected), role + '/' + name + ': missing phase samples')
             active = [r for r in selected if r['active'] and r['progress'] > .05]
+            presented = [r for r in active if r['rendered'] and r['ik']]
             require(len(active) >= 2 and active[-1]['wall']-active[0]['wall'] >= 50
                     and max(r['progress'] for r in active)-min(r['progress'] for r in active) > .05
                     and all(b['progress'] >= a['progress']-.02 for a, b in zip(active, active[1:]))
-                    and any(r['rendered'] and r['ik'] for r in active), role + '/' + name + ': native active/progress/render/IK coverage missing')
+                    and len(presented) >= 2 and presented[-1]['wall']-presented[0]['wall'] >= 50
+                    and max(r['progress'] for r in presented)-min(r['progress'] for r in presented) > .05,
+                    role + '/' + name + ': native active/progress/render/IK coverage missing')
             require(all(r['pickup'] is name.startswith('pickup') for r in selected if r['active'] or r['recovering']), role + '/' + name + ': presentation direction differs')
             require(index not in (2, 4) or any(r['recovering'] and r['progress'] > 0 for r in selected), role + '/' + name + ': cancellation recovery sample missing')
             frames = [r for r in poses[role] if begins[index]['wall'] <= r['wallTimeMillis'] <= owner[index]['wall']
                       and r['primary'] == r['secondary'] == (-1 if name.startswith('pickup') else cartid)]
-            frames = coverage(frames, 'wallTimeMillis', 0, (active[0]['wall'], active[-1]['wall']), role + '/' + name + '/action render')
+            if draws is not None:
+                frames = drawn_action_frames(frames, draws, role, cartid, variant)
+            frames = coverage(frames, 'wallTimeMillis', 0, (presented[0]['wall'], presented[-1]['wall']), role + '/' + name + '/action render')
             require(all(r['local'] is (role == 'client1') for r in frames), role + '/' + name + ': raw action render identity mismatch')
             phase = {'phase': name, 'activeSamples': len(active), 'renderFrames': len(frames),
                      'recoverySamples': sum(r['recovering'] for r in selected)}
@@ -210,9 +265,9 @@ def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelb
                 phase.update(wheelFloorRange=[min(wheel(r) for r in frames), max(wheel(r) for r in frames)],
                              palmHandleErrorMax={side: max(palm(r, side) for r in frames) for side in 'LR'})
             else:
-                require(all(r.get('model') in MODELS[variant] for r in frames), role + '/' + name + ': action rendered another cart model')
-                phase.update(models=sorted({r['model'] for r in frames}), rawTransformCoverage=True,
-                             scope='Metal cart action matrices and lifecycle; geometry and animation equivalence require separate review')
+                require(all(r.get('model') == FILLED_MODELS[variant] for r in frames), role + '/' + name + ': action rendered another cart fill/model')
+                phase.update(models=sorted({r['model'] for r in frames}), rawTransformCoverage=True, nativeDrawCoverage=True,
+                             scope='Exact cart action matrices, actual body/cart draws and lifecycle; geometry and animation equivalence require separate review')
             phases.append(phase)
         quiet = [r for r in samples if r['index'] == 6 and r['wall'] >= finished[0]['wall']]
         require(len(quiet) >= 2 and quiet[-1]['wall']-quiet[0]['wall'] >= 100
@@ -342,7 +397,6 @@ def analyze(profile):
             'cart_hotkey_key requires hotkey setdown and an integer keyboard code in 1..255')
     variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
     require(isinstance(variant, str) and variant in VARIANTS, 'cart_variant must be an exact supported MP variant')
-    require(not actions or variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'), 'cart_actions requires a calibrated wheelbarrow')
     item = VARIANTS[variant]
     expected_phases = [('idle', 0), ('walk', 2000), ('turn', 5000), ('stop', 8000), ('reverse', 10000), ('stop-back', 12000)]
     if extended:
@@ -494,7 +548,7 @@ def analyze(profile):
                 'Fast gait did not settle to a native stop')
         result['fastMotion'] = moving
     if actions:
-        result['actions'] = action_coverage(logs, poses, cartid, epoch, 26000 if extended else 15000, variant)
+        result['actions'] = action_coverage(logs, poses, cartid, epoch, 26000 if extended else 15000, variant, profile)
         if hotkey:
             result['actions']['hotkeySetdown'] = hotkey_coverage(logs, cartid, hotkey_key)
         require(spec is None or result['actions']['cargoID'] == spec['cargoID']

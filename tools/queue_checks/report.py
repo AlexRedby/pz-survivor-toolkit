@@ -484,24 +484,38 @@ def execution_issues(root, selection, execution):
 
 
 def window_size_evidence(root, selection):
-    """New snapshots require one observed startup viewport per GUI client."""
+    """Require the declared number of native starts, each at the prepared viewport."""
     expected = selection.get('window_size')
     evidence = {'expected': expected, 'observed': {}, 'issues': []}
     if expected is None:  # Legacy snapshots did not declare a viewport contract.
         return evidence
-    for role in adapters.roles(selection):
-        if role == 'server':
-            continue
+    roles = adapters.roles(selection, False)
+    adapter = adapters.get(selection.get('suite'))
+    declare = getattr(adapter, 'window_start_counts', None)
+    counts = declare(selection) if declare else {}
+    if (not isinstance(counts, dict) or any(role not in roles or type(count) is not int or count < 1
+                                           for role, count in counts.items())):
+        evidence['issues'].append('Invalid adapter window_start_counts declaration')
+        return evidence
+    if counts:
+        evidence['startup_observations'] = {}
+    for role in roles:
         path = Path(root) / (role + '-launch.log')
         text = path.read_text(errors='replace') if path.is_file() else ''
         sizes = re.findall(r'\[QUEUE_TEST\] WINDOW_SIZE width=(\d+) height=(\d+)(?:\s|$)', text)
-        if len(sizes) != 1:
-            evidence['issues'].append(role + ': window_size requires exactly one startup observation')
+        actuals = [list(map(int, size)) for size in sizes]
+        if counts:
+            evidence['startup_observations'][role] = actuals
+        required = counts.get(role, 1)
+        if len(actuals) != required:
+            label = 'one startup observation' if required == 1 else str(required) + ' startup observations'
+            evidence['issues'].append(role + ': window_size requires exactly ' + label)
             continue
-        actual = list(map(int, sizes[0]))
-        evidence['observed'][role] = actual
-        if actual != expected:
-            evidence['issues'].append(role + ': window_size differs from prepared viewport: ' + str(actual))
+        evidence['observed'][role] = actuals[0]
+        for index, actual in enumerate(actuals):
+            if actual != expected:
+                position = ' at startup ' + str(index + 1) if required > 1 else ''
+                evidence['issues'].append(role + ': window_size differs from prepared viewport' + position + ': ' + str(actual))
     return evidence
 
 

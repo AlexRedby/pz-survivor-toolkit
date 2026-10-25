@@ -4,6 +4,7 @@ require 'TimedActions/ISWearClothing'
 local Fixture=require 'QuartermasterDistributionFixture'
 require 'PZSurvivorToolkit/Settings'
 local Tags=require 'PZSurvivorToolkit/ItemTags'
+local Retention=require 'PZSurvivorToolkit/ItemRetentionUI'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
 local JSON=require 'QueueHealthEvents'
 local started,done,since,phase=false,false,0,'prepare'
@@ -81,7 +82,7 @@ local function tick()
  local player=getPlayer();local root=player:getInventory()
  if phase=='prepare'then
   if updates<30 then return end
-  -- Use the documented organizedCategories provider, not BetterContainers' alternative categories.
+  -- Keep Toolkit's inventory classification active alongside Better Containers.
   local options=PZAPI.ModOptions:getOptions('BetterContainers')
   if options then
    options:getOption('showAdvancedDisplayCategories'):setValue(false);options:apply()
@@ -107,16 +108,16 @@ local function tick()
   assert(Tags.matches(Tags.forScriptItem(script),{'tailoring','material'}),'Thread catalog tags disagree with inventory category')
   assert(script:getDisplayCategory()==lootCategory,'catalog tags changed native loot category')
   items[2]:setFavorite(true);ids={}
-  assert(OrganizedCategories.isItemStickingEnabled(),'Stick protection must be enabled')
-  OrganizedCategories.toggleItemsStuck(0,{items[5]})
-  assert(OrganizedCategories.isItemStuck(items[5]),'native Stick command did not protect the extra Thread')
+  assert(Retention.isEnabled(),'Toolkit retained-item protection must be enabled')
+  Retention.setRetained(0,{items[5]},true)
+  assert(Retention.isRetained(items[5]),'Toolkit retention command did not protect the extra Thread')
   for _,item in ipairs(items)do ids[#ids+1]=item:getID()end
   ids[#ids+1]=bag:getID();print('[QM_BACKPACK] PREPARED '..JSON.encode({ids=ids}))
   ISTimedActionQueue.add(ISWearClothing:new(player,bag,50));phase='configure'
  elseif phase=='configure'then
   if #queue().queue>0 or player:hasTimedActions()then return end
   assert(player:getClothingItem_Back()==bag,'native wear did not equip backpack')
-  -- organizedCategories applies inventory display categories when the bag is opened.
+  -- Toolkit applies instance inventory categories when the bag is opened.
   showBag()
   assert(items[1]:getDisplayCategory()=='craftingTailoring_material','Thread has unexpected category '..tostring(items[1]:getDisplayCategory()))
   assert(Tags.matches(Tags.forItem(items[1]),{'tailoring'})and not Tags.matches(Tags.forItem(items[3]),{'tailoring'}),'invalid tailoring fixture items')
@@ -169,7 +170,7 @@ local function tick()
    assert(item:getContainer()==(i==1 and box:getContainer()or i==4 and root or bag:getInventory()),'wrong final item container')
   end
   assert(items[2]:isFavorite()and bag:getContainer()==root and player:getClothingItem_Back()==bag,'favorite/equipment state lost')
-  assert(OrganizedCategories.isItemStuck(items[5]),'distribution cleared Stick protection')
+  assert(Retention.isRetained(items[5]),'distribution cleared retained-item protection')
   for id,count in pairs(original)do assert(carried[id]==count,'pre-existing inventory changed')end
   assert(transferred and sourceBag and dispatched,'missing native distribution progress')
   assert(rejectedBox:getContainer():getItems():size()==0,'native-rejected destination received items')

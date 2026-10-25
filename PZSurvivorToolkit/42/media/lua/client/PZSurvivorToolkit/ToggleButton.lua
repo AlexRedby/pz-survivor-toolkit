@@ -54,6 +54,9 @@ local function tools(_, button)
     if wishlist and wishlist.UI then
         menu:addOption(getText("UI_PZSW_Open"), num, wishlist.UI.toggle)
     end
+    if LootSorter and LootSorter.toggleManifest then
+        menu:addOption(getText("UI_PZST_Manifest_Open"), num, LootSorter.toggleManifest)
+    end
     if Toolkit.ContextMenus and Toolkit.Settings.contextMenus() then
         menu:addOption(getText("UI_PZSurvivorToolkit_context_editor"), nil, Toolkit.ContextMenus.openEditor)
     end

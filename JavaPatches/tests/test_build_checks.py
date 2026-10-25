@@ -1,10 +1,10 @@
 """Check selection and timeout handling without the game; use a JDK for helper resolution."""
 import contextlib
 import io
+import importlib.util
+import runpy
 import os
 from pathlib import Path
-import re
-import runpy
 import shutil
 import subprocess
 import sys
@@ -13,7 +13,43 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-BUILD = Path(__file__).resolve().parents[1] / 'build.py'
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from JavaPatches import build
+
+
+class BuildEntryPoint(unittest.TestCase):
+    def test_import_exposes_build_data_without_parsing_cli_or_starting_work(self):
+        spec = importlib.util.spec_from_file_location('imported_build', build.__file__)
+        module = importlib.util.module_from_spec(spec)
+        with patch.object(sys, 'argv', ['build.py', '--not-a-build-option']), \
+                patch('subprocess.run') as run, patch('subprocess.check_output') as output, \
+                patch.object(Path, 'mkdir') as mkdir, patch('tempfile.mkdtemp') as temporary:
+            spec.loader.exec_module(module)
+        run.assert_not_called()
+        output.assert_not_called()
+        mkdir.assert_not_called()
+        temporary.assert_not_called()
+        self.assertEqual(module.CHECKS, build.CHECKS)
+        self.assertEqual(module.MOD_INFO, build.MOD_INFO)
+        self.assertTrue(callable(module.main))
+
+    def test_script_entry_point_keeps_help_available_without_dependencies(self):
+        with patch.object(sys, 'argv', [build.__file__, '--help']), \
+                patch('subprocess.run') as run, contextlib.redirect_stdout(io.StringIO()) as output, \
+                self.assertRaises(SystemExit) as result:
+            runpy.run_path(build.__file__, run_name='__main__')
+        self.assertEqual(result.exception.code, 0)
+        self.assertIn('--test-timeout', output.getvalue())
+        self.assertIn('MediaChecks', output.getvalue())
+        run.assert_not_called()
+
+    def test_registered_checks_have_unique_cli_names_and_existing_source_files(self):
+        self.assertEqual(len(build.TEST_NAMES), len(build.CHECKS))
+        for name in build.CHECKS:
+            with self.subTest(name=name):
+                self.assertEqual(build.TEST_NAMES[name.rsplit('.', 1)[-1]], name)
+                source = build.ROOT / 'tests' / name.replace('.', '/')
+                self.assertEqual(sum(source.with_suffix(suffix).is_file() for suffix in ('.java', '.kt')), 1)
 
 
 class BuildChecks(unittest.TestCase):
@@ -21,14 +57,12 @@ class BuildChecks(unittest.TestCase):
         cache = tempfile.TemporaryDirectory()
         self.addCleanup(cache.cleanup)
         self.root = Path(cache.name).resolve()
-        self.script = self.root / 'build.py'
-        shutil.copyfile(BUILD, self.script)
         self.game = self.root / 'game'
         self.game.mkdir()
         for name in ('projectzomboid.jar', 'ZombieBuddy.jar'):
             (self.game / name).touch()
-        self.markers = '\n'.join(re.findall(r"'([A-Z_]+_PASS)'", BUILD.read_text()))
-        self.markers += '\nPASS cart transition world/actor roundtrips\n[ZB] Transformed: zombie.core.skinnedmodel.ModelManager (retransformed)'
+        self.markers = '\n'.join(build.CHECKS.values())
+        self.markers += '\n[ZB] Transformed: zombie.core.skinnedmodel.ModelManager (retransformed)'
         self.sentinel = self.root / 'build/PZToolkitJavaPatches/previous.txt'
         self.sentinel.parent.mkdir(parents=True)
         self.sentinel.write_text('previous Java mod')
@@ -55,11 +89,11 @@ class BuildChecks(unittest.TestCase):
 
         self.error = io.StringIO()
         self.output = io.StringIO()
-        with patch.object(sys, 'argv', [str(self.script), '--game', str(self.game), '--jdk', str(self.root / 'jdk'), *args]), \
+        with patch.object(build, 'ROOT', self.root), \
              patch('subprocess.run', side_effect=run) as mocked, \
              contextlib.redirect_stdout(self.output), contextlib.redirect_stderr(self.error):
             self.run = mocked
-            return runpy.run_path(str(self.script), run_name='__main__')
+            return build.main(['--game', str(self.game), '--jdk', str(self.root / 'jdk'), *args])
 
     def java_calls(self):
         return [call for call in self.run.call_args_list if Path(call.args[0][0]).name == 'java']
@@ -110,12 +144,22 @@ class BuildChecks(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), 'MEDIA_CHECKS_PASS')
 
     def test_default_and_group_selection_remain_compatible(self):
-        for flags, count, video in [((), 0, False), (('--check',), 43, False), (('--check-video',), 1, True), (('--check', '--check-video'), 44, True)]:
+        ordinary = [name for name in build.CHECKS if not name.endswith('.VideoChecks')]
+        video = 'net.alexredby.pztoolkitjavapatches.VideoChecks'
+        for flags, selected in [((), []), (('--check',), ordinary), (('--check-video',), [video]),
+                                (('--check', '--check-video'), list(build.CHECKS))]:
             with self.subTest(flags=flags):
                 self.run_build(*flags)
-                calls = self.java_calls()
-                self.assertEqual(len(calls), count)
-                self.assertEqual(any(call.args[0][-1].endswith('.VideoChecks') for call in calls), video)
+                expected = [name for name in selected
+                            for _ in range(2 if name.endswith('.VehicleTraceChecks') else 1)]
+                self.assertEqual([call.args[0][-1] for call in self.java_calls()], expected)
+                compilations = [call.args[0] for call in self.run.call_args_list if '-sourcepath' in call.args[0]]
+                if selected:
+                    sources = [str(self.root / 'tests' / (name.replace('.', '/') + '.java')) for name in selected]
+                    self.assertEqual(len(compilations), 1)
+                    self.assertEqual([arg for arg in compilations[0] if arg.endswith('.java')], sources)
+                else:
+                    self.assertEqual(compilations, [])
 
     def test_cart_selection_retains_markers_and_isolates_cold_bootstrap(self):
         self.run_build('--test', 'CartTransitionMathTest', '--test', 'CartBootstrapCheck')

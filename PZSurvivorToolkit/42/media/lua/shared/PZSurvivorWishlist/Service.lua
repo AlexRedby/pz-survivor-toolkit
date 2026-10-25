@@ -107,7 +107,7 @@ local function loadContext()
     if a.store and (not b.store or a.generation >= b.generation) then chosen, slot = a, "a"
     elseif b.store then chosen, slot = b, "b"
     elseif not a.missing or not b.missing then return {error = "storage_invalid"} end
-    context = {prefix = prefix, store = chosen and chosen.store or {}, generation = chosen and chosen.generation or 0, slot = slot}
+    context = {identity = {}, prefix = prefix, store = chosen and chosen.store or {}, generation = chosen and chosen.generation or 0, slot = slot}
     saveKey = world
     return context
 end
@@ -158,6 +158,31 @@ local function candidate(ctx, listId)
     return result
 end
 local lastStorageError
+local function stamp(ctx, actor, versions, error)
+    -- A new loaded context must publish even if its list revisions match the old save.
+    -- Failed loads are retried and use the save name only to suppress identical errors.
+    return {context = ctx.identity or getCurrentSaveName(), recipient = actor, lists = versions, error = error}
+end
+local function payloadStamp(ctx, payload)
+    local versions = {}
+    for _, list in ipairs(payload.lists) do
+        versions[list.id] = {revision = list.revision, faction = list.faction}
+    end
+    return stamp(ctx, payload.recipient, versions, payload.error)
+end
+local function sameStamp(a, b)
+    if not b or a.context ~= b.context or a.recipient ~= b.recipient or a.error ~= b.error then return false end
+    for id, version in pairs(a.lists) do
+        local old = b.lists[id]
+        if not old or version.revision ~= old.revision or version.faction ~= old.faction then return false end
+    end
+    for id in pairs(b.lists) do if not a.lists[id] then return false end end
+    return true
+end
+local function publication(payload, version, previous)
+    if sameStamp(version, previous) then return nil, version end
+    return payload, version
+end
 local function failure(ctx, actor, error, args)
     if error:find("storage_", 1, true) == 1 and lastStorageError ~= error then
         lastStorageError = error
@@ -167,22 +192,30 @@ local function failure(ctx, actor, error, args)
     payload.error, payload.recipient = error, actor
     if type(args) == "table" and type(args.requestId) == "string" and #args.requestId > 0
         and #args.requestId <= 64 and not args.requestId:find("%c") then payload.requestId = args.requestId end
-    return payload, false
+    return payload, false, payloadStamp(ctx, payload)
 end
-function Service.snapshot(player)
+function Service.snapshot(player, previous)
     if isClient() then return {lists = {}, error = "forbidden"} end
     local actor, ctx = Service.username(player), loadContext()
-    if ctx.error then return failure(ctx, actor, ctx.error) end
+    local function failed(error)
+        local payload, _, version = failure(ctx, actor, error)
+        return publication(payload, version, previous)
+    end
+    if ctx.error then return failed(ctx.error) end
     if not ctx.store.lists or not ctx.store.lists[actor] then
         local nextStore = candidate(ctx)
         local payload = Model.snapshot(nextStore, actor, environment)
-        if payload.error then return failure(ctx, actor, payload.error) end
+        if payload.error then return failed(payload.error) end
         local error = write(ctx, nextStore)
-        if error then return failure(ctx, actor, error) end
+        if error then return failed(error) end
     end
+    local versions, error = Model.snapshotVersions(ctx.store, actor, environment)
+    if error then return failed(error) end
+    local version = stamp(ctx, actor, versions)
+    if sameStamp(version, previous) then return nil, version end
     local payload = Model.snapshot(ctx.store, actor, environment)
     payload.recipient = actor
-    return payload
+    return payload, version
 end
 function Service.request(player, args)
     if isClient() then return {lists = {}, error = "forbidden"}, false end
@@ -195,7 +228,7 @@ function Service.request(player, args)
         if error then return failure(ctx, actor, error, args) end
     end
     payload.recipient = actor
-    return payload, changed
+    return payload, changed, payloadStamp(ctx, payload)
 end
 local function clearCache() saveKey, context, lastStorageError = nil, nil, nil end
 Events.OnMainMenuEnter.Add(clearCache)

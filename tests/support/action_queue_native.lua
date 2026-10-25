@@ -19,6 +19,9 @@ local function itemInspector()
     return capacityAdapters
 end
 require = function(module)
+    if module == 'PZSurvivorToolkit/ActionQueueSettlement' then
+        return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
+    end
     if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
     if module == 'PZSurvivorToolkit/ActionQueueWeights' then
@@ -48,10 +51,10 @@ native=function(path)
     if NativeReadText then source=NativeReadText(NativeActionRoot..'/'..path)
     else local f=assert(io.open(NativeActionRoot..'/'..path));source=f:read('*a');f:close() end
     -- Stock Kahlua accepts this native suffix; Lua 5.1 used by the fixture does not.
-    assert(loadstring((source:gsub('(%d+%.%d+)f','%1')), '@'..path))()
+    assert(loadstring((source:gsub('(%d+%.%d+)f','%1')), '@'..NativeActionRoot..'/'..path))()
 end
 project=function(name)
-    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+    if name == 'ActionQueue' then project('ActionQueueSettlement'); project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
     local savedRequire=require
     if name=='ActionQueuePolicy' then
         require=function(module)

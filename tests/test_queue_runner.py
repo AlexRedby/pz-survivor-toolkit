@@ -7,7 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from queue_checks import runner, admission, coop
@@ -35,6 +35,11 @@ class NativeRunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        for context in (
+                patch.object(runner.desktop, 'require_gui_access', return_value={'state': 'awake', 'displays': [{'id': 1, 'asleep': False}]}),
+                patch.object(runner.glfw, 'arguments', return_value=['-Dorg.lwjgl.glfw.libname=/owned/native/libglfw.dylib'])):
+            context.start()
+            self.addCleanup(context.stop)
         disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
         disk.start()
         self.addCleanup(disk.stop)
@@ -42,7 +47,7 @@ class NativeRunnerTests(unittest.TestCase):
         (self.root / "client1").mkdir()
         (self.root / "client1/options.ini").write_text("voiceEnable=false\n")
         self.selection = {"suite": "health", "kind": "sp", "mods": [], "cases": ["nativeStop"], "timeout_seconds": 10}
-        self.runtime = {"game": str(self.root), "java": "/fake/java", "roles": {"client1": {"cache": str(self.root / "client1"), "classes": str(self.root / "classes")}}}
+        self.runtime = {"game": str(self.root), "java": "/fake/java", "glfw": {'compatibility': 'test input'}, "roles": {"client1": {"cache": str(self.root / "client1"), "classes": str(self.root / "classes")}}}
         (self.root / "selection.json").write_text(json.dumps(self.selection))
         (self.root / "runtime.json").write_text(json.dumps(self.runtime))
         self.seal_settings()
@@ -54,6 +59,7 @@ class NativeRunnerTests(unittest.TestCase):
         self.signal_changes = []
         self.complete = True
         self.sample_error = None
+        self.host_save = lambda process, pid, read_text: {'pid': pid, 'exit_code': 0}
         self.manifest_errors = []
         self.snapshot = {'total_memory': 128 * 1024**3, 'available_memory': 100 * 1024**3,
                          'cpu_count': 64, 'processes': []}
@@ -100,6 +106,7 @@ class NativeRunnerTests(unittest.TestCase):
                  processes=[{'pid': int(line.split()[0]), 'rss': 0, 'cpu': 0, 'game': True, 'command': line}
                             for line in collisions.splitlines() if line] or self.snapshot['processes'])), \
              patch.object(runner.desktop, "prepare", return_value=self.desktop), \
+             patch.object(coop, 'save_host', side_effect=self.host_save), \
              patch.object(runner.subprocess, "Popen", side_effect=self.popen), \
              patch.object(runner.os, "killpg", side_effect=kill_group) as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
              patch.object(runner.time, "sleep", side_effect=sleep):
@@ -110,8 +117,41 @@ class NativeRunnerTests(unittest.TestCase):
         result, kills = self.invoke()
         self.assertEqual(result["status"], "completed")
         self.assertIn("-novoip", self.commands[1])
+        self.assertIn('-Dorg.lwjgl.glfw.libname=/owned/native/libglfw.dylib', self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
+
+    def test_unavailable_gui_access_does_not_start_caffeinate_or_java(self):
+        with patch.object(runner.desktop, 'require_gui_access', side_effect=RuntimeError('GUI access unavailable; outside the sandbox')):
+            with self.assertRaisesRegex(RuntimeError, 'outside the sandbox'):
+                self.invoke()
+        self.assertEqual(self.commands, [])
+
+    def test_unsealed_glfw_input_does_not_start_caffeinate_or_java(self):
+        with patch.object(runner.glfw, 'arguments', side_effect=ValueError('prepare a fresh run')):
+            with self.assertRaisesRegex(ValueError, 'fresh run'):
+                self.invoke()
+        self.assertEqual(self.commands, [])
+
+    def test_idle_guard_preserves_display_sleep_and_cleans_up_owned_process(self):
+        popen = self.popen
+        def launch(command, **kwargs):
+            process = popen(command, **kwargs)
+            if command[0] == '/usr/bin/caffeinate':
+                process.terminate = Mock(wraps=process.terminate)
+                process.wait = Mock(wraps=process.wait)
+                process.kill = Mock(wraps=process.kill)
+            return process
+        self.popen = launch
+        result, kills = self.invoke()
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(self.commands[0], ['/usr/bin/caffeinate', '-i', '-w', str(runner.os.getpid())])
+        guard = self.processes[0]
+        guard.terminate.assert_called_once_with()
+        guard.wait.assert_called_once_with(timeout=5)
+        guard.kill.assert_not_called()
+        self.assertEqual(guard.returncode, -15)
+        self.assertEqual([call.args[0] for call in kills], [101])
 
     def test_crash_after_completion_marker_is_failed_after_cleanup(self):
         original_popen = self.popen
@@ -179,6 +219,19 @@ class NativeRunnerTests(unittest.TestCase):
         result, _ = self.invoke()
         self.assertIn('Invalid fixture-owned client environment', result['error'])
         self.assertFalse(result['processes'])
+
+    def test_inherited_inventory_probe_flag_is_stripped_from_actual_sp_launch(self):
+        environments = []
+        popen = self.popen
+        def capture(command, **kwargs):
+            if 'env' in kwargs: environments.append(kwargs['env'])
+            return popen(command, **kwargs)
+        self.popen = capture
+        with patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'true'}):
+            result, _ = self.invoke()
+        self.assertEqual('completed', result['status'])
+        self.assertTrue(environments)
+        self.assertTrue(all('PZ_CART_INVENTORY_EQUIP' not in env for env in environments))
 
     def test_basement_hall_cache_environment_requires_exact_suite_and_owned_role_cache(self):
         self.selection.update(mode='toolkit', languages=['EN'],
@@ -276,7 +329,8 @@ class NativeRunnerTests(unittest.TestCase):
                 environments.append(kwargs['env'])
             return popen(command, **kwargs)
         self.popen = launch
-        result, kills = self.invoke()
+        with patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'true'}):
+            result, kills = self.invoke()
         self.assertEqual('completed', result['status'])
         self.assertEqual(2, len(self.commands))  # display guard + one real Host owner
         command = self.commands[-1]
@@ -286,9 +340,20 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith('-javaagent:') for arg in command))
         self.assertEqual(1, environments[0]['JDK_JAVA_OPTIONS'].count('-javaagent:'))
         self.assertIn(str(self.root / 'client1/zombie-buddy'), environments[0]['JDK_JAVA_OPTIONS'])
-        self.assertEqual({'pid': 555, 'parent_role': 'client1', 'cache': str((self.root / 'client1').resolve())}, result['processes']['server'])
+        self.assertNotIn('PZ_CART_INVENTORY_EQUIP', environments[0])
+        self.assertEqual({'pid': 555, 'parent_role': 'client1', 'cache': str((self.root / 'client1').resolve()), 'exit_code': 0}, result['processes']['server'])
         self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
         self.assertEqual('[QUEUE_TEST] SERVER_READY\n', (self.root / 'server-launch.log').read_text())
+
+    def test_host_save_failure_is_failed_even_after_completed_fixture_and_still_cleans_group(self):
+        self.prepare_host()
+        def fail(*args): raise RuntimeError('child did not acknowledge native save')
+        self.host_save = fail
+        result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertIn('child did not acknowledge', result['error'])
+        self.assertNotIn('host_save', result)
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
 
     def test_host_rejects_unproven_or_duplicated_child_and_still_stops_only_its_group(self):
         self.prepare_host('[QUEUE_TEST] HOST_CHILD pid=999 parent=666\n')
@@ -709,6 +774,290 @@ class NativeRunnerTests(unittest.TestCase):
             (self.root / "client1-launch.log").write_text('[QUEUE_CHECK] {"event":"case","id":"nativeStop"}\n[QUEUE_CHECK] {"event":"complete","failed":0}\n')
         result, _ = self.invoke(sleep=finish)
         self.assertEqual(result["status"], "completed")
+
+
+class InventoryEquipEnvironmentTests(unittest.TestCase):
+    def selection(self):
+        return dict(suite='wooden_cart_multiplayer', kind='mp', cases=['owner_observer_motion'],
+                    options=dict(mp_host=True, cart_inventory_equip=True, cart_variant='wooden-wheelbarrow'))
+
+    def test_explicit_exact_true_reaches_both_selected_host_clients(self):
+        for role in ('client1', 'client2'):
+            with self.subTest(role=role), patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'inherited-unsafe'}):
+                env = runner._fixture_environment(self.selection(), role, Path('/owned/cache'),
+                    {'PZ_CART_INVENTORY_EQUIP': 'true', 'PZ_CART_RUNTIME_FILE': '/owned/runtime.lua'})
+                self.assertEqual(env['PZ_CART_INVENTORY_EQUIP'], 'true')
+                self.assertEqual(env['PZ_CART_RUNTIME_FILE'], '/owned/runtime.lua')
+
+    def test_probe_flag_accepts_only_string_true(self):
+        for value in ('false', 'TRUE', '1', '', '/absolute/path', True, False, 1, None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(self.selection(), 'client1', Path('/owned/cache'), {'PZ_CART_INVENTORY_EQUIP': value})
+
+    def test_probe_flag_rejects_other_suite_kind_case_role_host_or_selection(self):
+        changes = [('suite', 'wooden_cart_motion'), ('kind', 'sp'), ('cases', ['motion']),
+                   ('mp_host', False), ('mp_host', 'true'), ('cart_inventory_equip', False),
+                   ('cart_inventory_equip', 'true'), ('cart_variant', 'shopping-cart')]
+        for name, value in changes:
+            selected = self.selection()
+            (selected['options'] if name in selected['options'] else selected)[name] = value
+            with self.subTest(name=name, value=value), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(selected, 'client1', Path('/owned/cache'), {'PZ_CART_INVENTORY_EQUIP': 'true'})
+        for role in ('server', 'client3'):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(self.selection(), role, Path('/owned/cache'), {'PZ_CART_INVENTORY_EQUIP': 'true'})
+
+    def test_inherited_probe_flag_never_enables_default_mp_or_unstaged_selected_probe(self):
+        for selected in (self.selection(), dict(suite='wooden_cart_multiplayer', kind='mp', cases=['owner_observer_motion'], options={'mp_host': True})):
+            for role in ('server', 'client1', 'client2'):
+                with self.subTest(selected=selected, role=role), patch.dict(runner.os.environ, {'PZ_CART_INVENTORY_EQUIP': 'true'}):
+                    env = runner._fixture_environment(selected, role, Path('/owned/cache'), {})
+                    self.assertNotIn('PZ_CART_INVENTORY_EQUIP', env)
+
+    def test_probe_flag_does_not_weaken_unknown_and_absolute_path_guards(self):
+        for extra in ({'UNKNOWN_PROBE_ENV': '/owned/path'}, {'JAVA_TOOL_OPTIONS': '/owned/path'},
+                      {'PZ_CART_RUNTIME_FILE': 'relative.lua'}, {'PZ_CART_COMMAND_FILE': True}):
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'fixture-owned'):
+                runner._fixture_environment(self.selection(), 'client1', Path('/owned/cache'), dict(extra, PZ_CART_INVENTORY_EQUIP='true'))
+
+
+class InventoryLifetimeEnvironmentTests(unittest.TestCase):
+    def selection(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict.fromkeys(('mp_host','cart_lease_inventory','cart_lease_menu','cart_lease_lifetimes',
+                                           'cart_lease_control','cart_timeline','cart_fast_motion'),True))
+
+    def test_only_exact_initial_inventory_chain_admits_client_probe(self):
+        for role in ('client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selection(),role,Path('/owned/cache'),
+                {'PZ_CART_INVENTORY_EQUIP':'true'})['PZ_CART_INVENTORY_EQUIP'],'true')
+        for role in ('server','client3'):
+            with self.subTest(role=role),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+        for flag in self.selection()['options']:
+            for value in (False,'true',1,None):
+                selected=self.selection();selected['options'][flag]=value
+                with self.subTest(flag=flag,value=value),self.assertRaises(ValueError):
+                    runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+        for flag,value in [('cart_inventory_equip',True),('cart_actions',True),('cart_time_alignment',True),
+                           ('cart_wall_exit','front'),('cart_variant','shopping-cart')]:
+            selected=self.selection();selected['options'][flag]=value
+            with self.subTest(flag=flag),self.assertRaises(ValueError):
+                runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_INVENTORY_EQUIP':'true'})
+
+    def test_inherited_inventory_probe_is_stripped_even_for_selected_entry(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_INVENTORY_EQUIP':'true'}):
+            for role in ('server','client1','client2'):
+                self.assertNotIn('PZ_CART_INVENTORY_EQUIP',runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{}))
+
+
+class ActionInvalidationEnvironmentTests(unittest.TestCase):
+    def selection(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict(cart_action_invalidation=True,mp_host=True,cart_timeline=True,cart_fast_motion=True))
+
+    def test_new_fixture_flag_requires_exact_sealed_selection_and_owned_role(self):
+        flags=dict(PZ_CART_ACTION_INVALIDATION='true',PZ_CART_ACTION_ADMISSION='true',PZ_CART_LEASE_CONTROL='true')
+        for role in ('server','client1','client2'):
+            env=runner._fixture_environment(self.selection(),role,Path('/owned/cache'),flags)
+            self.assertEqual(env['PZ_CART_ACTION_INVALIDATION'],'true')
+        for key in self.selection()['options']:
+            for value in (False,1,'true',None):
+                selection=self.selection();selection['options'][key]=value
+                with self.subTest(key=key,value=value),self.assertRaises(ValueError):
+                    runner._fixture_environment(selection,'client1',Path('/owned/cache'),flags)
+        for key,value in [('cart_actions',True),('cart_action_admission',True),('cart_lease_control',True),
+                          ('cart_lease_lifetimes',True),('cart_lease_inventory',True),('cart_inventory_equip',True),
+                          ('cart_time_alignment',True),('cart_wall_exit','front'),('cart_variant','shopping-cart')]:
+            selection=self.selection();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),flags)
+        with self.assertRaises(ValueError):runner._fixture_environment(self.selection(),'client3',Path('/owned/cache'),flags)
+        for value in ('false',True,1,None):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selection(),'client1',Path('/owned/cache'),dict(flags,PZ_CART_ACTION_INVALIDATION=value))
+
+    def test_inherited_mutating_fixture_flag_is_stripped_from_all_roles(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_ACTION_INVALIDATION':'true'}):
+            for role in ('server','client1','client2'):
+                self.assertNotIn('PZ_CART_ACTION_INVALIDATION',runner._fixture_environment(self.selection(),role,Path('/owned/cache'),{}))
+
+
+class CartTimelineEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],options=dict(cart_timeline=True))
+
+    def test_selected_trace_reaches_exact_roles_for_host_or_ordinary_mp(self):
+        for host in (False,True):
+            selection=self.selected();selection['options']['mp_host']=host
+            for role in ('server','client1','client2'):
+                env=runner._fixture_environment(selection,role,Path('/owned/cache'),{'PZ_CART_TIMELINE':'true'})
+                self.assertEqual(env['PZ_CART_TIMELINE'],'true')
+
+    def test_unselected_inherited_flag_is_removed(self):
+        for selected in (self.selected(),dict(suite='health',kind='sp',options={})):
+            with patch.dict(runner.os.environ,{'PZ_CART_TIMELINE':'true'}):
+                self.assertNotIn('PZ_CART_TIMELINE',runner._fixture_environment(selected,'client1',Path('/owned/cache'),{}))
+
+    def test_exact_true_flag_and_selected_context_are_required(self):
+        for value in ('false','TRUE','1','',True,False,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaisesRegex(ValueError,'fixture-owned'):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_TIMELINE':value})
+        for field,value in (('suite','wooden_cart_motion'),('kind','sp'),('cases',['other']),('cart_timeline',False),('cart_timeline','true')):
+            selection=self.selected();(selection['options'] if field=='cart_timeline' else selection)[field]=value
+            with self.subTest(field=field,value=value),self.assertRaisesRegex(ValueError,'fixture-owned'):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{'PZ_CART_TIMELINE':'true'})
+        with self.assertRaisesRegex(ValueError,'fixture-owned'):
+            runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),{'PZ_CART_TIMELINE':'true'})
+
+
+class CartTimingEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict(cart_timeline=True,cart_time_alignment=True,mp_host=True))
+
+    def test_only_explicit_owned_host_clients_may_request_clock_samples(self):
+        for role in ('client1','client2'):
+            env=runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':'true'})
+            self.assertEqual(env['PZ_CART_TIME_ALIGNMENT'],'true')
+        for role in ('server','client3'):
+            with self.assertRaises(ValueError):runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':'true'})
+        for key,value in [('cart_timeline',False),('cart_time_alignment',False),('mp_host',False),('cart_inventory_equip',True),('cart_actions',True),('cart_wall_exit','front')]:
+            selected=self.selected();selected['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selected,'client1',Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':'true'})
+
+    def test_inherited_experiment_flags_never_enable_extra_requests(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_TIME_ALIGNMENT':'true'}):
+            self.assertNotIn('PZ_CART_TIME_ALIGNMENT',runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','TRUE','1',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_TIME_ALIGNMENT':value})
+
+
+class CartLeaseEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],
+                    options=dict(cart_timeline=True,cart_lease_control=True,cart_fast_motion=True,mp_host=True))
+
+    def test_control_scope_requires_explicit_owned_host_selection(self):
+        for role in ('server','client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selected(),role,Path('/owned/cache'),
+                {'PZ_CART_LEASE_CONTROL':'true'})['PZ_CART_LEASE_CONTROL'],'true')
+        for key,value in [('cart_timeline',False),('cart_lease_control',False),('cart_fast_motion',False),('mp_host',False),
+                          ('cart_inventory_equip',True),('cart_actions',True),('cart_wall_exit','front')]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':'true'})
+        with self.assertRaises(ValueError):
+            runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':'true'})
+
+    def test_control_scope_is_never_inherited_or_enabled_by_nontrue_values(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_LEASE_CONTROL':'true'}):
+            self.assertNotIn('PZ_CART_LEASE_CONTROL',runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','TRUE','1',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_LEASE_CONTROL':value})
+
+
+class CartLifecycleEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['lease_lifecycle'],options=dict(mp_host=True))
+
+    def test_explicit_case_owns_only_control_and_equipment_flags(self):
+        flags={'PZ_CART_LEASE_CONTROL':'true','PZ_CART_LEASE_LIFETIME':'true'}
+        for role in ('server','client1','client2'):
+            env=runner._fixture_environment(self.selected(),role,Path('/owned/cache'),flags)
+            for name in flags:self.assertEqual(env[name],'true')
+        changes=[('suite','startup'),('kind','sp'),('cases',['owner_observer_motion'])]
+        for key,value in changes:
+            selection=self.selected();selection[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):runner._fixture_environment(selection,'client2',Path('/owned/cache'),flags)
+        for key,value in [('mp_host',False),('mp_host','true'),('cart_timeline',True),('cart_actions',True),
+                          ('cart_inventory_equip',True),('cart_lease_control',True),('cart_variant','shopping-cart'),('cart_wall_exit','front')]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):runner._fixture_environment(selection,'client2',Path('/owned/cache'),flags)
+        with self.assertRaises(ValueError):runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),flags)
+        for name in flags:
+            for value in ('false',True,None,'1'):
+                with self.subTest(name=name,value=value),self.assertRaises(ValueError):runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{name:value})
+        for name in ('PZ_CART_TIMELINE','PZ_CART_ACTION_ADMISSION'):
+            with self.assertRaises(ValueError):runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),dict(flags,**{name:'true'}))
+        with patch.dict(runner.os.environ,flags):
+            env=runner._fixture_environment(self.selected(),'client2',Path('/owned/cache'),{})
+            self.assertTrue(all(name not in env for name in flags))
+
+
+class CartEquipmentLifetimeEnvironmentTests(CartLeaseEnvironmentTests):
+    def selected(self):
+        selection=super().selected();selection['options']['cart_lease_lifetimes']=True;return selection
+
+    def test_equipment_scope_requires_isolated_explicit_selection(self):
+        name='PZ_CART_LEASE_LIFETIME'
+        for role in ('server','client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{name:'true'})[name],'true')
+        for key,value in [('cart_lease_lifetimes',False),('cart_lease_lifetimes','true'),('cart_lease_control',False),
+                          ('cart_timeline',False),('cart_fast_motion',False),('mp_host',False),('cart_actions',True),
+                          ('cart_inventory_equip',True),('cart_time_alignment',True),('cart_hotkey_setdown',True)]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{name:'true'})
+        with patch.dict(runner.os.environ,{name:'true'}):
+            self.assertNotIn(name,runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','1',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{name:value})
+
+
+class CartActionAdmissionEnvironmentTests(unittest.TestCase):
+    def selected(self):
+        return dict(suite='wooden_cart_multiplayer',kind='mp',cases=['owner_observer_motion'],options=dict(
+            cart_timeline=True,cart_fast_motion=True,cart_actions=True,cart_action_admission=True,mp_host=True))
+
+    def test_action_observation_requires_explicit_isolated_host_bank(self):
+        for role in ('server','client1','client2'):
+            env=runner._fixture_environment(self.selected(),role,Path('/owned/cache'),
+                {'PZ_CART_LEASE_CONTROL':'true','PZ_CART_ACTION_ADMISSION':'true'})
+            self.assertEqual(env['PZ_CART_ACTION_ADMISSION'],'true')
+        for key,value in [('cart_timeline',False),('cart_fast_motion',False),('cart_actions',False),('cart_action_admission',False),
+                          ('mp_host',False),('cart_lease_control',True),('cart_time_alignment',True),
+                          ('cart_inventory_equip',True),('cart_wall_exit','front')]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{'PZ_CART_ACTION_ADMISSION':'true'})
+
+    def test_action_observation_cannot_be_inherited_or_enabled_by_invalid_value(self):
+        with patch.dict(runner.os.environ,{'PZ_CART_ACTION_ADMISSION':'true','PZ_CART_LEASE_CONTROL':'true'}):
+            env=runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{})
+            self.assertNotIn('PZ_CART_ACTION_ADMISSION',env);self.assertNotIn('PZ_CART_LEASE_CONTROL',env)
+        for value in ('false','1','TRUE',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{'PZ_CART_ACTION_ADMISSION':value})
+
+
+class CartObserverEnvironmentTests(CartActionAdmissionEnvironmentTests):
+    def selected(self):
+        selection=super().selected()
+        selection['options']['cart_observer_association']=True
+        return selection
+
+    def test_observer_marker_requires_explicit_owned_action_bank(self):
+        name='PZ_CART_OBSERVER_ASSOCIATION'
+        for role in ('server','client1','client2'):
+            self.assertEqual(runner._fixture_environment(self.selected(),role,Path('/owned/cache'),{name:'true'})[name],'true')
+        for key,value in [('cart_observer_association',False),('cart_observer_association','true'),
+                          ('cart_action_admission',False),('cart_actions',False),('cart_fast_motion',False),
+                          ('cart_timeline',False),('mp_host',False),('cart_time_alignment',True),('cart_lease_control',True)]:
+            selection=self.selected();selection['options'][key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(selection,'client1',Path('/owned/cache'),{name:'true'})
+        with self.assertRaises(ValueError):
+            runner._fixture_environment(self.selected(),'client3',Path('/owned/cache'),{name:'true'})
+        with patch.dict(runner.os.environ,{name:'true'}):
+            self.assertNotIn(name,runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{}))
+        for value in ('false','TRUE',True,1,None,'/owned/cache'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                runner._fixture_environment(self.selected(),'client1',Path('/owned/cache'),{name:value})
 
 
 if __name__ == "__main__":

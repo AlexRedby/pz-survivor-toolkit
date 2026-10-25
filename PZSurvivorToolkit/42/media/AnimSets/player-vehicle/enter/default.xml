@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animNode>
+    <m_Name>default</m_Name>
+    <m_AnimName>Bob_ToolkitVehicleEnter</m_AnimName>
+    <m_Looped>false</m_Looped>
+    <!-- The near foot steps to the threshold before the body lowers into the seat.
+         VehicleTransitionRender synchronizes only the rendered seat transfer. -->
+    <m_BlendTime>0.00</m_BlendTime>
+    <m_SpeedScale>1.60</m_SpeedScale>
+    <m_Events>
+        <m_EventName>SetVariable</m_EventName>
+        <m_Time>End</m_Time>
+        <m_ParameterValue>EnterAnimationFinished=true</m_ParameterValue>
+    </m_Events>
+</animNode>

@@ -24,6 +24,8 @@ local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
+local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
+local rackResources = Firearms and Firearms.rack
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -38,6 +40,13 @@ local nativeDropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOf
 local transferItemGuard
 local inspect
 local ordinaryTransfer
+local pendingReturnReason, pendingReturnGuard
+local function pendingReturnTarget(queue, action)
+    return action.Type == "ISInventoryTransferAction" and action.allowMissingItems == true
+        and action.srcContainer == queue.character:getInventory()
+        and action.destContainer ~= action.srcContainer and action ~= queue.current
+        and not action.action and queue:indexOf(action) > 1
+end
 local sharedEditResource
 local targetCheckers = {}
 local targetModules = {world = "ActionQueueWorld", generators = "ActionQueueGenerators"}
@@ -112,6 +121,7 @@ function Policy.cancelReason(queue, action, context)
     if appliance(action) then return Policy.cancelOperationReason(queue, action, context) end
     local contract = inspect and inspect(action, context)
     if contract and contract.cancelOperation == false then return "dependent" end
+    if pendingReturnTarget(queue, action) then return pendingReturnReason(queue, action, context) end
     if action.Type == "ISQueueActionsAction" then
         if not deferredWorld(action) and not (contract and contract.deferred) then return "dependent" end
         return Policy.cancelOperationReason(queue, action, context)
@@ -188,6 +198,35 @@ local function dynamicConflict(a, b, context)
     return false
 end
 
+-- Audited property setters are independent of VHS inventory/playback effects.
+-- Playback retains its asynchronous native state; this only removes a disjoint
+-- target edge, never power/media ordering, item or capacity dependencies.
+local mediaSetterModes = {SetVolume = true, SetChannel = true, MuteMicrophone = true,
+    MuteVolume = true, UnMuteVolume = true}
+local function mediaSetterIndependent(a, b, context)
+    local setter, media = a, b
+    if not mediaSetterModes[setter.mode] then setter, media = b, a end
+    if not mediaSetterModes[setter.mode] or not EditAdapters then return false end
+    local edit = EditAdapters.radio(setter)
+    if not edit or not instanceof(setter.device, "IsoTelevision") then return false end
+    if not inspect then return false end
+    local contract, source = inspect(media, context)
+    local cassette = source == "native.device-media-insert" or source == "native.device-media-eject"
+    local playback = source == "native.ISRadioAction" and media.mode == "TogglePlayMedia"
+        and media.device == setter.device and EditAdapters.radioCallbacksTrusted(media) and media.maxTime == 30
+    if not contract or not (cassette and media.Type == "ISDeviceMediaAction" or playback)
+        or media.character ~= setter.character
+        or media.action or media.started or media._isAddingActions
+        or (type(media.toolkitQueueOperation) == "table" and media.toolkitQueueOperation.toolkitStarted)
+        or media.deviceData ~= setter.deviceData or setter.deviceData:getParent() ~= setter.device then return false end
+    local targetCount = 0
+    for target in pairs(contract.targets or {}) do
+        if target ~= setter.device then return false end
+        targetCount = targetCount + 1
+    end
+    return targetCount == 1
+end
+
 local function sharedWorldTarget(a, b, context)
     local generators = Toolkit.ActionQueueGenerators
     if generators and generators.sharesTarget then
@@ -198,7 +237,9 @@ local function sharedWorldTarget(a, b, context)
     if left and right then
         if sharedEditResource and sharedEditResource(left, right) then return true end
         for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
-        for target in pairs(left.targets or {}) do if right.targets and right.targets[target] then return target end end
+        for target in pairs(left.targets or {}) do
+            if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+        end
         if left.hands and left.hands == right.hands then return left.hands end
         if (left.equipment and left.equipment == right.hands) or (right.equipment and right.equipment == left.hands) then return left.equipment or right.equipment end
     end
@@ -357,9 +398,14 @@ local function ordinaryTransferContainer(container, character)
         or ItemEditAdapters and type(ItemEditAdapters.worldContainer) == "function"
             and ItemEditAdapters.worldContainer(container, character) ~= nil
 end
-ordinaryTransfer = function(action)
+local function transferHelpersMatch()
     if not transferMethodsAdopted then return true end
     for _, guard in ipairs(transferHelperGuards) do if not guard() then return false end end
+    return true
+end
+ordinaryTransfer = function(action)
+    if not transferHelpersMatch() then return false end
+    if not transferMethodsAdopted then return true end
     return ordinaryTransferContainer(action.srcContainer, action.character)
         and ordinaryTransferContainer(action.destContainer, action.character)
 end
@@ -389,10 +435,17 @@ local function callbacksSafe(action)
             and action.onCompleteFunc == action.toolkitQueueSafeOnComplete and action.toolkitTransferGuard
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, action.toolkitTransferGuard.original)))
 end
-local function nativeMatches(action, snapshot)
+local function nativeMatches(action, snapshot, observingCleanup)
     if getmetatable(action) ~= snapshot.class or action.Type ~= snapshot.class.Type or not callbacksSafe(action) then return false end
     if snapshot.startHelperGuard and not snapshot.startHelperGuard() then return false end
-    if snapshot.class == ISInventoryTransferAction and not ordinaryTransfer(action) then return false end
+    if snapshot.class == ISInventoryTransferAction then
+        if not transferHelpersMatch() then return false end
+        if not ordinaryTransfer(action) and not observingCleanup then
+            local settlement = Toolkit.ActionQueueSettlement
+            if not settlement or type(settlement.isCleanupPickup) ~= "function"
+                or not settlement.isCleanupPickup(action) then return false end
+        end
+    end
     for _, name in ipairs(lifecycle) do
         if action[name] ~= snapshot.methods[name] and not (name == "stop" and action.Type == "ISInventoryTransferAction"
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, snapshot.methods.stop)) then return false end
@@ -413,6 +466,15 @@ function Policy.matchesNative(action)
     local snapshot = snapshots[getmetatable(action)]
     return snapshot ~= nil and nativeMatches(action, snapshot)
 end
+-- Binding verification only: this does not grant queue edit permission. Shared
+-- settlement must separately prove the exact earned drop/current cleanup owner.
+function Policy.matchesCleanupPickupBinding(action)
+    local snapshot = snapshots[getmetatable(action)]
+    return snapshot ~= nil and snapshot.class == ISInventoryTransferAction
+        and action.srcContainer and action.srcContainer:getType() == "floor"
+        and action.destContainer == action.character:getInventory()
+        and nativeMatches(action, snapshot, true)
+end
 local function resources(action)
     local result = {items = {}, itemTypes = {}, targets = {}, cancelWaiting = true, interrupt = "finish-step"}
     for _, field in ipairs({"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}) do
@@ -424,7 +486,7 @@ local function resources(action)
     end
     return result
 end
-local function registerNative(name, inspector, helpers)
+local function registerNative(name, inspector, helpers, applies)
     local class = _G[name]
     if not class or snapshots[class] then return end
     local snapshot = {class = class, methods = {}, helpers = {}}
@@ -436,7 +498,8 @@ local function registerNative(name, inspector, helpers)
     snapshots[class] = snapshot
     Definitions.registerBehavior("native." .. name, {
         types = {name},
-        matches = function(action) return nativeMatches(action, snapshot) end,
+        -- Family-owned native cleanup must not claim unrelated uses of the same class.
+        matches = function(action) return nativeMatches(action, snapshot) and (not applies or applies(action)) end,
         inspect = inspector,
     })
 end
@@ -458,13 +521,17 @@ end
 function Policy.adoptTransferHooks(previous, replacement, guard)
     local snapshot = snapshots[ISInventoryTransferAction]
     local preparation = nativePreparation[ISInventoryTransferAction]
-    if not snapshot or type(guard) ~= "function" or not guard() then return false end
+    if not snapshot then return false,"missing_contract" end
+    if type(guard) ~= "function" then return false,"missing_guard" end
+    local available,reason=guard()
+    if not available then return false,reason or "guard_changed" end
     for _, name in ipairs({"new", "perform"}) do
-        if snapshot.methods[name] ~= previous[name] or ISInventoryTransferAction[name] ~= replacement[name]
-            or type(previous[name]) ~= "function" or type(replacement[name]) ~= "function" then return false end
+        if snapshot.methods[name] ~= previous[name] then return false,"previous_"..name end
+        if ISInventoryTransferAction[name] ~= replacement[name] then return false,"current_"..name end
+        if type(previous[name]) ~= "function" or type(replacement[name]) ~= "function" then return false,"invalid_"..name end
     end
-    if snapshot.helpers.transferItem ~= (previous.transferItem or false)
-        or ISInventoryTransferAction.transferItem ~= replacement.transferItem then return false end
+    if snapshot.helpers.transferItem ~= (previous.transferItem or false) then return false,"previous_transferItem" end
+    if ISInventoryTransferAction.transferItem ~= replacement.transferItem then return false,"current_transferItem" end
     for _, name in ipairs({"new", "perform"}) do snapshot.methods[name] = replacement[name] end
     snapshot.helpers.transferItem = replacement.transferItem or false
     if preparation then preparation.perform = replacement.perform end
@@ -621,17 +688,27 @@ local function fluidResources(action)
     for i = 1, action.Type == "ISFluidTransferAction" and 2 or 1 do
         local wrapper = wrappers[i]
         -- Read fields of the native wrapper: getters on an unknown mod wrapper can have side effects.
-        if not ISFluidContainer or getmetatable(wrapper) ~= ISFluidContainer then return end
-        if not instanceof(wrapper.fluidContainer, "FluidContainer") then return end
-        if wrapper.isFluidResource then
-            if not instanceof(wrapper.fluidResource, "ResourceFluid") then return end
-        elseif wrapper.fluidResource then return end
-        local owner = wrapper.isFluidResource and wrapper.fluidResource:getGameEntity() or wrapper.fluidContainer:getOwner()
+        if not ISFluidContainer or type(wrapper)~="table" or getmetatable(wrapper) ~= ISFluidContainer then return end
+        local fluid,resource=rawget(wrapper,"fluidContainer"),rawget(wrapper,"fluidResource")
+        if not instanceof(fluid, "FluidContainer") then return end
+        if rawget(wrapper,"isFluidResource") then
+            if not instanceof(resource, "ResourceFluid") then return end
+        elseif resource then return end
+        local owner = rawget(wrapper,"isFluidResource") and resource:getGameEntity() or fluid:getOwner()
         if not owner then return end
         if instanceof(owner, "InventoryItem") then
             result.items[itemKey(owner)], result.itemTypes[owner:getFullType()] = true, true
         else result.targets[owner] = true end
-        if wrapper.fluidResource then result.targets[wrapper.fluidResource] = true end
+        if resource then result.targets[resource] = true end
+    end
+    if action.Type=="ISFluidEmptyAction" and ItemEditAdapters and type(ItemEditAdapters.emptyFluid)=="function" then
+        result.edit=ItemEditAdapters.emptyFluid(action)
+        if result.edit then
+            -- The captured emptying peak is bounded by current full weight;
+            -- completion's released fluid is never a capacity credit.
+            result.capacityNonIncreasing=true
+            Policy.addContainerResources(result,action.container.fluidContainer:getOwner():getContainer())
+        end
     end
     return result
 end
@@ -735,16 +812,24 @@ function Policy.installContracts()
         end
     end, {"updateEat", "setOverrideHandModels"})
     registerNative("ISEatFoodAction", function(action)
-        local edit=ItemEditAdapters and ItemEditAdapters.food(action)
+        local edit,fullOutput
+        if ItemEditAdapters then edit,fullOutput=ItemEditAdapters.food(action) end
         if edit then
             local result=resources(action)
             result.edit=edit
             local extraFoodWeight=action.item:haveExtraItems()
-            result.capacityNonIncreasing=not extraFoodWeight
+            result.capacityNonIncreasing=not fullOutput and not extraFoodWeight
                 and not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
             -- Replacement food decreases in weight only while it survives every
             -- portion. A transfer edit can otherwise bypass the food component.
-            result.capacityRequiresEdit=not result.capacityNonIncreasing
+            -- Native full replacement adds its output before removing food;
+            -- Host may temporarily retain both. Do not use the surviving-food
+            -- conditional bypass for any transfer prefix containing this step.
+            result.capacityRequiresEdit=not fullOutput and not result.capacityNonIncreasing
+            if fullOutput then
+                result.outputTypes={[fullOutput]=true}
+                result.capacityReplacement=true
+            end
             result.targets[action.character]=true
             for _,resource in ipairs(edit.resources) do
                 if resource.domain=="item" then
@@ -772,6 +857,9 @@ function Policy.installContracts()
         result.interrupt, result.unknownOutputs = "audited-stop", true
         if action.moveProps.object then result.targets[action.moveProps.object] = true end
         return result
+    end)
+    registerNative("ISRackFirearm", function(action)
+        if Firearms and Toolkit.ActionQueueFirearms == Firearms and Firearms.rack == rackResources then return rackResources(action) end
     end)
     registerNative("ISInventoryTransferAction", transferResources)
     registerNative("ISRadioAction", radioResources)
@@ -841,6 +929,18 @@ end, inspect = function(action)
     local result = resources(action); result.unknownOutputs, result.bulk = true, true; return result
 end})
 
+Definitions.registerBehavior("toolkit.approach", {types = {"ISQueueActionsAction"}, matches = function(action)
+    local approach=Toolkit.ActionQueueApproach
+    return approach and approach.isAction(action)
+end, inspect = function(action)
+    local result=resources(action)
+    result.deferred,result.preparation,result.preparationFinish=true,true,true
+    result.cancelWaiting=true
+    result.positions={[action.character]=true}
+    result.capacityNonIncreasing=true
+    return result
+end})
+
 Definitions.registerBehavior("toolkit.food", {types = {"ISQueueActionsAction"}, matches = function(action)
     local Food = Toolkit.BulkFood
     return Food and (Food.isCommand(action) or (Food.isOpeningWait and Food.isOpeningWait(action)))
@@ -857,9 +957,15 @@ inspect = function(action, context)
         if context then context.contracts[action] = {} end
         return
     end
-    if not context then return Definitions.inspect(action) end
     local result = {Definitions.inspect(action)}
-    context.contracts[action] = result
+    local settlement = Toolkit.ActionQueueSettlement
+    if result[1] and settlement and settlement.requiredStep(action) then
+        local contract = {}
+        for key, value in pairs(result[1]) do contract[key] = value end
+        contract.cancelOperation, contract.cancelWaiting = false, false
+        result[1] = contract
+    end
+    if context then context.contracts[action] = result end
     return unpack(result, 1, 3)
 end
 Policy.inspect = inspect
@@ -1222,7 +1328,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 if not instanceof(item, "InventoryItem") or instanceof(item, "InventoryContainer") then return false end
                 if not check.readDemotion and (not sourceCarried or not destinationCarried)
                     and (not ItemEditAdapters or not ItemEditAdapters.worldTransferItem
-                        or not ItemEditAdapters.worldTransferItem(item,not destinationCarried)) then return false end
+                        or not ItemEditAdapters.worldTransferItem(item,not destinationCarried,character,source,destination)) then return false end
                 local id, kind = item:getID(), item:getType()
                 if seen[id] then return true end
                 seen[id] = true
@@ -1256,9 +1362,11 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
             for _, batch in ipairs(action.queueList or {}) do
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
-        elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
+        elseif not capacityNeutral[action.Type] and source~="toolkit.approach" and not boundedWaterDrink(action, character, source)
+            and not (source=="native.ISFluidEmptyAction" and contract.edit and contract.capacityNonIncreasing==true)
             and not (source == "native.ISEatFoodAction" and contract.edit
-                and (contract.capacityNonIncreasing == true or conditionalCapacity[action]))
+                and (contract.capacityNonIncreasing == true or conditionalCapacity[action]
+                    or removed[action] and contract.capacityReplacement==true))
             and not (check.readDemotion and source == "native.ISRadioAction"
                 and instanceof(action.device, "IsoTelevision"))
             and not (check.readDemotion and source == "native.device-media-insert" and contract.capacityNonIncreasing == true) then
@@ -1284,6 +1392,60 @@ local function editCapacityConflict(queue, edit, first, last, to, context)
                 {first = first, last = last, to = to}, context)
         end
     end
+end
+
+-- Dropping an automatic return is a deliberate "keep carried" intent, not
+-- cancellation of the body that still needs the borrowed item. Only the exact
+-- earned loan may waive its return; later dependencies/capacity still apply.
+pendingReturnGuard = function(action, reference)
+    if not nativePendingCancelHasNoEffects() or action.forceCancel ~= nativeForceCancel
+        or not callbacksSafe(action) or action.item:getID() ~= reference.id
+        or action.item:getFullType() ~= reference.fullType then return false end
+    local intent = Toolkit.ActionQueueTidyIntent
+    if intent and type(intent.canKeepReturn) == "function" then
+        if not intent.canKeepReturn(action) then return false end
+    elseif P4TidyUpMeister then return false end
+    local groups = action.queueList
+    if groups == nil then return true end
+    if type(groups) ~= "table" or getmetatable(groups) then return false end
+    local count = 0
+    for index in pairs(groups) do if index ~= 1 then return false end; count = count + 1 end
+    if count == 0 then return true end
+    if type(groups[1]) ~= "table" or type(groups[1].items) ~= "table" then return false end
+    count = 0
+    for index, item in pairs(groups[1].items) do
+        if index ~= 1 or item ~= action.item and not (ItemEditAdapters
+            and type(ItemEditAdapters.matchesTransferMember) == "function"
+            and ItemEditAdapters.matchesTransferMember(action, item)) then return false end
+        count = count + 1
+    end
+    return count == 1
+end
+pendingReturnReason = function(queue, action, context)
+    local settlement = Toolkit.ActionQueueSettlement
+    if not settlement or not settlement.canWaivePendingReturn
+        or not settlement.canWaivePendingReturn(action, pendingReturnGuard) then return "dependent" end
+    local index = queue:indexOf(action)
+    local capacity = {first = index, last = index}
+    for otherIndex, other in ipairs(queue.queue) do
+        if other ~= action then
+            if not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
+            if otherIndex > index then
+                local shared = sharedItem(action, other, context)
+                if shared then return "operation_shared_item", nil, nil, other, shared end
+                local conflict = sharedWorldTarget(action, other, context)
+                    or dynamicConflict(action, other, context) or dynamicConflict(other, action, context)
+                if conflict then return "operation_dependent", nil, nil, other, conflict end
+            end
+            local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context)
+            if blocker then return "container_capacity", nil, nil, other, blocker end
+        end
+    end
+end
+function Policy.commitReturnCancellation(action, capability)
+    local settlement = Toolkit.ActionQueueSettlement
+    return settlement and settlement.waivePendingReturn
+        and settlement.waivePendingReturn(capability, action, pendingReturnGuard) or false
 end
 
 function Policy.cancelOperationReason(queue, action, context)
@@ -1524,6 +1686,7 @@ Policy.resumableWorld, Policy.preparationCanFinish = resumableWorld, preparation
 Policy.operationItems = operationItems
 
 function Policy.replaceStop(previous, replacement)
+    if Firearms then Firearms.adoptBase("stop", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("stop", previous, replacement) end
     if ItemEditAdapters then ItemEditAdapters.adoptBase("stop", previous, replacement) end
     for _, snapshot in pairs(snapshots) do
@@ -1537,6 +1700,7 @@ function Policy.replaceStop(previous, replacement)
 end
 
 function Policy.adoptBegin(previous, replacement)
+    if Firearms then Firearms.adoptBase("begin", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("begin", previous, replacement) end
     if ItemEditAdapters then ItemEditAdapters.adoptBase("begin", previous, replacement) end
 end
@@ -1617,9 +1781,15 @@ function Policy.evaluateCancel(queue, action, whole)
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
     else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
     reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    local returnWaiver
+    if not reason and not whole and pendingReturnTarget(queue, action) then
+        returnWaiver = Toolkit.ActionQueueSettlement.pendingReturnWaiver(action, pendingReturnGuard)
+        if not returnWaiver then reason = "unavailable" end
+    end
     if not reason and not Policy.editUnchanged(queue, snapshot) then reason = "unavailable" end
     return {allowed = reason == nil, reason = reason, first = first, last = last,
-        mode = queue and action == queue.current and "active" or "pending", blocker = blocker, resource = resource, snapshot = snapshot}
+        mode = returnWaiver and "pending-return" or queue and action == queue.current and "active" or "pending",
+        returnWaiver = returnWaiver, blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
 local function priorityDecision(queue, action, preempt, decide)

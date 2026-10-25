@@ -6,6 +6,9 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
+# Current cart directional clip and the native clip used by historical captures.
+BACKWARD_CLIPS = {'Toolkit_CartPivot_Backward', 'Bob_WalkBwdNoAim1Hand'}
+
 PHASES = (
     ('forward', 0, 1, 0), ('left', 1800, 5, 0), ('right', 3000, 8, 0),
     ('reverse', 4200, 4, 0), ('run-request', 5600, 1, 1),
@@ -238,7 +241,7 @@ def analyze(text, names=None, variant='wooden-wheelbarrow', profile=None, game=N
                     failures.append([name, phase, 'native injury components do not match WalkInjury/WalkSpeed field'])
                 if any(r['run'] or r['sprint'] for r in selected):
                     failures.append([name, phase, 'fast gait active without request'])
-            if phase == 'reverse' and not any(c['name'] == 'Bob_WalkBwdNoAim1Hand' and c['weight'] > .15 and abs(c['speed']) > .001
+            if phase == 'reverse' and not any(c['name'] in BACKWARD_CLIPS and c['weight'] > .15 and abs(c['speed']) > .001
                                               for r in selected for c in r['clips']):
                 failures.append([name, phase, 'native backward clip missing or paused'])
             if phase in ('run-request', 'sprint-request'):

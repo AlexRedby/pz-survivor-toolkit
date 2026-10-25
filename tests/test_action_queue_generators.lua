@@ -1,6 +1,7 @@
 if not NativeActionRoot then print('Generator native contracts SKIP.'); return end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
 local craftContainers
+local supportRequire = require
 require = function(name)
     if name == "PZSurvivorToolkit/ActionQueueMembership" then
         return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
@@ -11,9 +12,13 @@ require = function(name)
         craftContainers = craftContainers or f.project('QuartermasterCraftContainers')
         return craftContainers
     end
+    if name == 'PZSurvivorToolkit/ActionQueueTidyIntent' then
+        return PZSurvivorToolkit.ActionQueueTidyIntent or f.project('ActionQueueTidyIntent')
+    end
     if name == 'PZSurvivorToolkit/ActionQueueGeneratorOverlay' then
         return PZSurvivorToolkit.ActionQueueGeneratorOverlay or f.project('ActionQueueGeneratorOverlay')
     end
+    return supportRequire(name)
 end
 local function readText(path, raw)
     if raw and NativeReadRawText then return NativeReadRawText(path) end
@@ -115,7 +120,14 @@ ISBaseTimedAction.begin = function(action)
         isForceComplete = function() return false end, forceComplete = function(self) self.completed = true end,
         forceStop = function() end, getJobDelta = function() return 0 end}
 end
-f.project('ActionQueueOperations'); f.project('ActionQueueDefinitions')
+f.project('ActionQueueOperations')
+local originalAdjacent,originalContainer=luautils.walkAdj,luautils.walkToContainer
+local sharedApproach=f.project('ActionQueueApproach');assert(sharedApproach.install())
+assert(luautils.walkAdj~=originalAdjacent and luautils.walkToContainer~=originalContainer
+    and sharedApproach.nativeHelper(luautils,'walkAdj',luautils.walkAdj)==originalAdjacent
+    and sharedApproach.nativeHelper(luautils,'walkToContainer',luautils.walkToContainer)==originalContainer,
+    'actual shared dispatcher must precede Generator source trust capture')
+f.project('ActionQueueDefinitions')
 local policy = f.project('ActionQueuePolicy')
 local originalProject=f.project
 f.project=function(name)
@@ -178,6 +190,19 @@ for _, method in ipairs({'onInfoGenerator', 'onPlugGenerator', 'onActivateGenera
     local q, action = queued(method, g, true)
     assert(policy.inspect(action), method .. ' native command must be trusted')
     assert(not policy.cancelOperationReason(q, action), method .. ' independent waiting command can cancel')
+end
+-- A repair whose scrap disappeared is an empty native expansion, independent of a long unrelated tail.
+do
+    local current, command = queued('onFixGenerator', g)
+    current.queue, current.current = {command}, command
+    for i = 1, 2048 do current.queue[#current.queue + 1] = head() end
+    assert(policy.inspect(command), 'empty repair regression needs an audited command')
+    local visits = assert(loadfile(ProjectRoot .. '/tests/support/queue_registry_visits.lua'))()
+    command:beginAddingActions()
+    local scanned = visits(current.queue, function() command.addActionsFunction(p, command.args[1]) end)
+    command:endAddingActions()
+    assert(scanned == 0 and #current.queue == 2049 and current.current == command,
+        'empty generator repair must leave the unrelated tail intact without inspecting its membership: '..scanned..' visits, '..#current.queue..' queued')
 end
 local badQueue, malformed = queued('onPlugGenerator', g, 'yes')
 assert(not policy.inspect(malformed), 'invalid native mode cannot receive a command contract')

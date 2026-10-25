@@ -14,7 +14,15 @@ function Settings.groundEnabled() return ground:getValue() end
 function Settings.craftingEnabled() return crafting:getValue() end
 function Settings.key() return key:getValue() end
 function Settings.color() return colour:getValue() end
+-- Keep notification after the native controls commit, without resetting the shared
+-- ground scanner for row, crafting or shortcut changes.
+local groundChanged = false
+local function markGroundChanged() groundChanged = true end
+ground.onChangeApply = markGroundChanged
+colour.onChangeApply = markGroundChanged
 function options:apply()
-    if PZSurvivorWishlist.Highlighter then PZSurvivorWishlist.Highlighter.settingsChanged() end
+    local changed = groundChanged
+    groundChanged = false
+    if changed and PZSurvivorWishlist.Highlighter then PZSurvivorWishlist.Highlighter.settingsChanged() end
 end
 return Settings

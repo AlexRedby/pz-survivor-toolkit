@@ -1,4 +1,6 @@
 package.preload.QueueEquipmentBulk=function() return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentBulk.lua'))() end
+package.preload.QueueEquipmentClothing=function() return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentClothing.lua'))() end
+package.preload.QueueEquipmentHotbar=function() return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentHotbar.lua'))() end
 local Postprocess=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentPostprocess.lua'))()
 local function list(items)
  return {size=function() return #items end,get=function(_,i) return items[i+1] end,
@@ -182,3 +184,152 @@ for _,mode in ipairs({'toolkit','native'}) do
  empty.player.secondary=empty.screwdriver
  rejected(empty,mode,true,'postprocessing changed final hands')
 end
+
+-- The server final postprocess independently checks alarm state after P4 has
+-- restored/removed the exact root watch, rather than trusting client evidence.
+do
+ local Clothing=require 'QueueEquipmentClothing'
+ local oldInstanceof=instanceof
+ instanceof=function(value,kind)
+  return value.watch and (kind=='AlarmClockClothing'or kind=='Clothing')or oldInstanceof(value,kind)
+ end
+ isClient=function()return false end
+ getCell=function()return {getProcessItems=function()return {contains=function()return true end}end,
+  getProcessItemsRemove=function()return {contains=function()return false end}end}end
+ for _,case in ipairs({'tidy-watch-digital-restore','tidy-watch-digital-remove','tidy-watch-classic-restore','tidy-watch-classic-remove',
+  'tidy-watch-overlap-primary','tidy-watch-overlap-secondary','tidy-watch-overlap-both',
+  'tidy-watch-held-primary','tidy-watch-held-secondary','tidy-watch-held-both'})do
+  for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native')
+   local spec=Clothing.spec(sample)
+   local watch=item(spec.fullType,sample.root);watch.watch=true;watch.hour=21;watch.minute=40;watch.alarm=spec.alarmSet;watch.ringing=false
+   watch.getHour=function(self)return self.hour end;watch.getMinute=function(self)return self.minute end
+   watch.isAlarmSet=function(self)return self.alarm end;watch.isRinging=function(self)return self.ringing end
+   watch.getCategory=function()return 'AlarmClock'end
+   sample.clothingItem=watch;sample.clothingLocation=spec.location;sample.clothingHair='CrewCut'
+   sample.clothingWatch={alarmHour=21,alarmMinute=40,alarmSet=spec.alarmSet,ringing=false}
+   sample.items.clothingItem=watch;sample.baseline[watch.id]=watch
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   sample.player.getWornItem=function(self,location)return self.worn[location]end
+   sample.player.getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end}end
+   for _,item in ipairs({sample.hammer,sample.screwdriver})do item.isActivated=function()return false end end
+   sample.player.primary,sample.player.secondary=Clothing.expectedHands(sample,tidy)
+   local worn=Clothing.finalWorn(sample,tidy)
+   getCell=function()return {getProcessItems=function()return {contains=function()return spec.alarmSet and worn end}end,
+    getProcessItemsRemove=function()return {contains=function()return false end}end}end
+   sample.player.worn[spec.location]=worn and watch or nil
+   local value=Postprocess.verify(sample,'native',tidy).clothing
+   assert(value.watch.alarmHour==21 and value.watch.alarmSet==spec.alarmSet and value.watchProcessing.active==(spec.alarmSet and worn))
+   for key,bad in pairs({hour=22,minute=30,alarm=not spec.alarmSet,ringing=true})do
+    local before=watch[key];watch[key]=bad
+    rejected(sample,'native',tidy,'native watch alarm changed')
+    watch[key]=before
+   end
+  end
+ end
+ instanceof=oldInstanceof
+end
+print('Equipment watch postprocessing: authority rejects changed time, enabled state and ringing after exact native cleanup.')
+
+-- Final authority independently proves both original and temporary roots and
+-- exact same-slot/exclusive output, after the live fixture's native receipts.
+do
+ local Clothing=require 'QueueEquipmentClothing'
+ for _,case in ipairs({'tidy-clothing-replace','tidy-headwear-hat-exclusive','tidy-headwear-full-hat-exclusive'})do
+  for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native');local spec=Clothing.spec(sample)
+   local baseline=item(spec.fullType,sample.root);local temp=item(spec.temporaryType,sample.root)
+   baseline.getBodyLocation=function()return spec.location end;temp.getBodyLocation=function()return spec.temporaryLocation end
+   sample.clothingItem,sample.clothingTemporary,sample.clothingLocation,sample.clothingHair=baseline,temp,spec.location,'CrewCut'
+   sample.items.clothingItem=baseline;sample.items.clothingTemporary=temp
+   sample.baseline[baseline.id]=baseline;sample.baseline[temp.id]=temp;sample.expectedWorn[spec.location]=baseline
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   sample.player.getWornItem=function(self,location)return self.worn[location]end
+   sample.player.getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end}end
+   sample.player.worn=Clothing.expectedWorn(sample,sample.player.worn,tidy)
+   local value=Postprocess.verify(sample,'native',tidy).clothing
+   assert(value.id==baseline.id and value.worn==tidy and value.temporary.id==temp.id and value.temporary.worn==not tidy)
+   local kind=temp.kind;temp.kind='Base.Other';assert(not pcall(Postprocess.verify,sample,'native',tidy));temp.kind=kind
+   sample.player.worn[spec.location]=tidy and temp or baseline
+   assert(not pcall(Postprocess.verify,sample,'native',tidy),'wrong same/exclusive final worn identity must fail')
+  end
+ end
+end
+print('Equipment displacement postprocessing: both exact root identities and same/exclusive final slots passed.')
+
+-- Server postprocess validates its own native Mohawk output and gel conservation;
+-- client and SP use the same snapshot helper with their role-specific model.
+do
+ local Clothing=require 'QueueEquipmentClothing'
+ for _,case in ipairs({'tidy-headwear-mohawk-hat-restore','tidy-headwear-mohawk-hat-remove','tidy-headwear-mohawk-full-hat-restore','tidy-headwear-mohawk-full-hat-remove'})do
+  for _,role in ipairs({'sp','client','server'})do for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native');local spec=Clothing.spec(sample)
+   local garment=item(spec.fullType,sample.root);local gel=item('Base.Hairgel',sample.root)
+   garment.getBodyLocation=function()return spec.location end
+   gel.getMaxUses=function()return 20 end;gel.getUseDelta=function()return 0.05 end;gel.getCurrentUses=function()return gel.uses end;gel.uses=20
+   sample.clothingItem,sample.clothingGel,sample.clothingLocation,sample.clothingHair=garment,gel,spec.location,'MohawkFan'
+   sample.items.clothingItem=garment;sample.items.clothingGel=gel
+   sample.baseline[garment.id]=garment;sample.baseline[gel.id]=gel
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   sample.player.getWornItem=function(self,location)return self.worn[location]end
+   local color={getRedFloat=function()return 0.2 end,getGreenFloat=function()return 0.3 end,getBlueFloat=function()return 0.4 end}
+   local visual={hair='MohawkFan',getHairModel=function(self)return self.hair end,getNonAttachedHair=function()end,getHairColor=function()return color end}
+   sample.player.getHumanVisual=function()return visual end
+   sample.clothingAppearanceBaseline=Clothing.appearance(sample);gel.uses=19
+   sample.clothingAppearanceCheckpoint=Clothing.appearance(sample)
+   visual.hair=tidy and role~='client'and (role=='sp'or not spec.remove)and 'MohawkFlat'or 'MohawkFan'
+   sample.player.worn=Clothing.expectedWorn(sample,sample.player.worn,Clothing.finalWorn(sample,tidy))
+   isClient=function()return role=='client'end;isServer=function()return role=='server'end
+   local result=Postprocess.verify(sample,'native',tidy).clothing
+   assert(result.appearance.hairModel==visual.hair and result.appearance.gel.id==gel.id and result.appearance.gel.uses==19)
+   gel.uses=20;assert(not pcall(Postprocess.verify,sample,'native',tidy),'missing native styling use accepted');gel.uses=19
+   local expected=visual.hair;visual.hair=expected=='MohawkFan'and 'MohawkFlat'or 'MohawkFan'
+   assert(not pcall(Postprocess.verify,sample,'native',tidy),'wrong per-role native appearance accepted');visual.hair=expected
+  end end
+ end
+ isClient=function()return false end;isServer=function()return false end
+end
+print('Equipment Mohawk postprocessing: exact per-role hair, color/attachment and one native gel use passed; growth timer unavailable.')
+
+-- Shared postprocess keeps the exact ordinary tool, Belt2 provider and prior
+-- secondary on authority, including no-P4 temporary held outcomes.
+do
+ local Hotbar=require 'QueueEquipmentHotbar'
+ getClassSimpleName=function(item)return item.javaClass end
+ for _,case in ipairs({'tidy-hotbar-normal-left','tidy-hotbar-normal-right'})do
+  for _,tidy in ipairs({false,true})do
+   local sample=fixture(case,'native');local player=sample.player
+   local target=item('Base.ScissorsBluntMedical',sample.root);local belt=item('Base.Belt2',sample.root)
+   target.javaClass='ComboItem'
+   sample.screwdriver.kind='Base.Screwdriver'
+   sample.pickup,sample.belt=target,belt;sample.items.pickup=target;sample.items.belt=belt
+   sample.baseline[target.id]=target;sample.baseline[belt.id]=belt
+   sample.hotbarIndex=case:find('left',1,true)and 11 or 13
+   sample.hotbarType=case:find('left',1,true)and 'SmallBeltLeft'or 'SmallBeltRight'
+   sample.hotbarLocation=case:find('left',1,true)and 'Belt Left Screwdriver'or 'Belt Right Screwdriver'
+   target.slot,target.slotType,target.model=sample.hotbarIndex,sample.hotbarType,sample.hotbarLocation
+   target.canBeActivated=function()return false end;target.getScriptItem=function()return {getItemType=function()return 'base:normal'end}end
+   target.getCondition=function(self)return self.condition or 10 end;target.getSharpness=function()return 1 end
+   belt.getBodyLocation=function()return 'base:belt'end
+   sample.root.getItemById=function(self,id)for _,value in ipairs(self.items)do if value.id==id then return value end end end
+   player.getWornItem=function(self,location)return self.worn[location]end
+   local color={getRedFloat=function()return 0.2 end,getGreenFloat=function()return 0.3 end,getBlueFloat=function()return 0.4 end}
+   player.getHumanVisual=function()return {getHairModel=function()return 'CrewCut'end,getNonAttachedHair=function()end,getHairColor=function()return color end}end
+   local prior=case=='tidy-hotbar-normal-right'
+   sample.hotbarOrdinaryBaseline={condition=10,sharpness=1,hairStyle='CrewCut',nonAttachedHair=false,hairColor={r=0.2,g=0.3,b=0.4},
+    secondary=prior and {id=sample.screwdriver.id,fullType='Base.Screwdriver',container='root'}or false}
+   player.primary,player.secondary=Hotbar.expectedHands(sample,tidy)
+   player.worn['base:belt']=belt;sample.expectedWorn['base:belt']=belt
+   if tidy then player.attached[sample.hotbarLocation]=target end
+   isClient=function()return false end;isServer=function()return true end
+   isForceDropHeavyItem=function()return false end
+   local result=Postprocess.verify(sample,'native',tidy).hotbar
+   assert(result.id==target.id and result.attached==tidy and result.providerItem==belt.id and result.ordinaryBaseline==sample.hotbarOrdinaryBaseline)
+   target.javaClass='InventoryItem';assert(not pcall(Postprocess.verify,sample,'native',tidy),'generic base class accepted instead of native ComboItem');target.javaClass='ComboItem'
+   target.condition=9;assert(not pcall(Postprocess.verify,sample,'native',tidy),'changed normal tool condition accepted');target.condition=nil
+   player.secondary=sample.hammer;assert(not pcall(Postprocess.verify,sample,'native',tidy),'changed native secondary accepted')
+  end
+ end
+ isClient=function()return false end;isServer=function()return false end
+end
+print('Equipment ordinary hotbar postprocess: exact tool/provider/root/hands and unchanged condition/sharpness/appearance passed.')

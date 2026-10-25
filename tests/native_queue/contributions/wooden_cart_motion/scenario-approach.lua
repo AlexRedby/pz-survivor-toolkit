@@ -9,16 +9,43 @@ local area,p=assert(CartTestArea),assert(getPlayer())
 assert(area.ready and area.setObstacles and CartLabSelectScenes and cartLabDrive and cartLabGait and cartLabPoseHeading,'CartLab/obstacles required')
 assert(not p:isTimedActionInstant(),'Native durations required')
 assert(type(config.videoRoot)=='string' and config.videoRoot:sub(1,1)=='/' and type(config.ffmpeg)=='string' and config.ffmpeg:sub(1,1)=='/','Absolute video paths required')
+assert(config.entryContactRepro==nil or type(config.entryContactRepro)=='boolean','entryContactRepro must be boolean')
+local entryContactRepro=config.entryContactRepro==true
+local entryFemale=config.entryFemale==true
+local entryLoad=config.entryLoad or 'full'
+assert(type(config.entryFemale)=='nil' or type(config.entryFemale)=='boolean','entryFemale must be boolean')
+assert(entryLoad=='empty' or entryLoad=='full','entryLoad must be empty/full')
 if WoodPrototypeTick then Events.OnTick.Remove(WoodPrototypeTick) end
 local cases={{name='container-equip'},{name='wrong-side'},{name='wall-detour'},
  {name='precise-blocked'},{name='approach-cancel'},{name='approach-target-loss'},{name='approach-tail-success'}}
 cases=CartLabSelectScenes(cases)
+if entryContactRepro then
+ for _,case in ipairs(cases) do
+  assert(case.name=='container-equip' or case.name=='wrong-side','entryContactRepro supports container-equip and wrong-side only')
+ end
+end
 local index,since,sampled,mode=0,0,0,'prepare'
 local item,bag,cargoID,cargoWeight,approach,tail,stance,queuedAt,terminalAt,changed
 local wallX,wallY=math.floor(area.x),math.floor(area.y)
 local cartX,cartY=area.x,area.y
 local vehicleLayout,collisionX
 local tailX,tailY,startX,startY,removed=nil,nil,0,0,false
+local entryPants,entryPantsModel,preWalkStartedAt,preWalkReleasedAt,preWalkX,preWalkY,preWalkSeen
+-- This opt-in fixture changes presentation/load only, never the public action producer.
+if entryContactRepro then
+ p:setFemale(entryFemale);p:getDescriptor():setFemale(entryFemale);p:clearWornItems()
+ p:getHumanVisual():setHairModel('CrewCut');p:getHumanVisual():setBeardModel('')
+ for _,name in ipairs({'Base.Tshirt_DefaultTEXTURE_TINT','Base.Trousers_JeanBaggy','Base.Shoes_TrainerTINT'}) do
+  local clothing=assert(p:getInventory():AddItem(name),name);p:setWornItem(clothing:getBodyLocation(),clothing)
+  if name=='Base.Trousers_JeanBaggy' then entryPants=clothing end
+ end
+ local visual=assert(entryPants:getVisual(),'Baggy jeans visual missing')
+ assert(visual:getItemType()=='Base.Trousers_JeanBaggy','Wrong baggy-jeans visual')
+ local definition=assert(visual:getClothingItem(),'Baggy jeans clothing definition missing')
+ entryPantsModel=assert(definition:getModel(entryFemale),'Baggy jeans model missing')
+ assert(entryPantsModel:lower():gsub('\\','/'):gsub('%.x$','')=='skinned/clothes/'..(entryFemale and 'kate' or 'bob')..'_trousers','Baggy jeans no longer use calibrated native trousers')
+ p:resetModel()
+end
 local function queue() return ISTimedActionQueue.getTimedActionQueue(p).queue end
 local function empty() return #queue()==0 and p:getCharacterActions():isEmpty() and not p:hasPath() end
 local function encode(row)
@@ -57,7 +84,9 @@ end
 -- Native ground placement end.
 local function snapshot(now)
  local contents=item:getInventory():getItems()
- assert(contents:size()==1 and contents:get(0):getID()==cargoID and contents:get(0):getFullType()=='Base.Log'
+ local emptyCargo=entryContactRepro and entryLoad=='empty'
+ assert(emptyCargo and contents:isEmpty() and cargoID==-1 and cargoWeight==0 or not emptyCargo
+  and contents:size()==1 and contents:get(0):getID()==cargoID and contents:get(0):getFullType()=='Base.Log'
   and math.abs(contents:get(0):getActualWeight()-cargoWeight)<.001,'Exact cargo changed')
  local inv,worlds=0,0
  local items=p:getInventory():getItems();for i=0,items:size()-1 do if items:get(i):getID()==item:getID() then assert(items:get(i)==item);inv=inv+1 end end
@@ -69,7 +98,7 @@ local function snapshot(now)
  assert(inv+worlds+nested+(removed and 1 or 0)==1,'Cart ownership duplicated/lost')
  local a,b=p:getPrimaryHandItem(),p:getSecondaryHandItem();local status=toolkitWoodCartStatus(p)
  local current=queue()[1]
- local row={case=cases[index].name,start=since,wall=now,elapsed=now-since,id=item:getID(),cargoID=cargoID,cargoWeight=cargoWeight,
+ local row={case=cases[index].name,start=since,wall=now,elapsed=now-since,id=item:getID(),cargoID=cargoID,cargoWeight=cargoWeight,cargoCount=contents:size(),
   inventoryCount=inv,worldCount=worlds,containerCount=nested,removed=removed,primaryID=a and a:getID() or -1,secondaryID=b and b:getID() or -1,
   x=p:getX(),y=p:getY(),z=p:getZ(),startX=startX,startY=startY,goalX=stance and stance.x or startX,goalY=stance and stance.y or startY,
   nativeTargetX=p:getPathFindBehavior2():getTargetX(),nativeTargetY=p:getPathFindBehavior2():getTargetY(),
@@ -80,10 +109,24 @@ local function snapshot(now)
   tailResult=tail and tail.result==BehaviorResult.Succeeded and 'Succeeded' or '',
   active=status.active==true,recovering=status.recovering==true,rendered=status.rendered==true,
   ToolkitWoodCartAction=p:getVariableBoolean('ToolkitWoodCartAction'),route=bag and 'inventory-menu' or 'world-menu'}
+ if entryContactRepro then
+  assert(p:isFemale()==entryFemale and p:getWornItem(entryPants:getBodyLocation())==entryPants,'Entry-contact actor/outfit changed')
+  assert(entryLoad=='empty' and item:getInventory():getCapacityWeight()==0 or entryLoad=='full' and math.abs(item:getInventory():getCapacityWeight()-item:getInventory():getEffectiveCapacity(p))<.01,'Entry-contact cargo differs from selected load')
+  row.entryContactRepro=true;row.female=entryFemale;row.entryLoad=entryLoad;row.pantsType=entryPants:getFullType();row.pantsID=entryPants:getID();row.pantsModel=entryPantsModel
+  row.cargoCapacity=item:getInventory():getEffectiveCapacity(p)
+  row.preWalkStartedAt=preWalkStartedAt or -1;row.preWalkReleasedAt=preWalkReleasedAt or -1;row.preWalkSeen=preWalkSeen==true
+  row.preWalkDistance=preWalkX and math.sqrt((p:getX()-preWalkX)^2+(p:getY()-preWalkY)^2) or 0
+  row.preWalkDrive=preWalkStartedAt and not preWalkReleasedAt and 1 or 0
+ end
  return row
 end
 local function emit(event,now)
  local row=snapshot(now);row.event=event;print('[CART_APPROACH_EVENT] '..encode(row));return row
+end
+local function entryReceipt(event,now)
+ local row=snapshot(now);row.event=event
+ row.preWalkPlannedStartMs=350;row.preWalkPlannedDurationMs=350;row.heldTailMinimumMs=1000
+ print('[CART_ENTRY_CONTACT] '..encode(row))
 end
 local function push()
  local function find(context)
@@ -116,9 +159,16 @@ local function prepare()
  assert(empty(),'Previous approach left native work');area.clearObstacles(p);area.check(p)
  cartLabDrive(0);cartLabGait(0);p:getStats():reset(CharacterStat.ENDURANCE)
  local held=p:getPrimaryHandItem();if held then p:removeFromHands(held);SaucedCarts.clearCartPose(p);p:getInventory():Remove(held) end
- item=assert(instanceItem('SaucedWheelbarrow.WheelbarrowWood'));local child=assert(item:getInventory():AddItem('Base.Log'))
- child:setActualWeight(1);child:setCustomWeight(true);cargoID,cargoWeight=child:getID(),child:getActualWeight()
+ item=assert(instanceItem('SaucedWheelbarrow.WheelbarrowWood'))
+ if entryContactRepro then SaucedCarts.applyMultipliers(item) end
+ cargoID,cargoWeight=-1,0
+ if not entryContactRepro or entryLoad=='full' then
+  local child=assert(item:getInventory():AddItem('Base.Log'))
+  child:setActualWeight(entryContactRepro and item:getInventory():getEffectiveCapacity(p) or 1)
+  child:setCustomWeight(true);cargoID,cargoWeight=child:getID(),child:getActualWeight()
+ end
  bag=nil;approach=nil;tail=nil;terminalAt=nil;queuedAt=nil;changed=false;removed=false;sampled=0;stance=nil;tailX=nil;tailY=nil
+ preWalkStartedAt=nil;preWalkReleasedAt=nil;preWalkX=nil;preWalkY=nil;preWalkSeen=false
  local name=cases[index].name
  relocate(wallX+2.5,wallY+.5)
  if name=='container-equip' then
@@ -161,7 +211,9 @@ local function tick()
   if now<since then return end
   assert(toolkitVideoStart(config.videoRoot..'/'..name..'-0',config.ffmpeg),'Video start rejected')
   since=getTimestampMs();mode='record';print('[WOOD_BANK] CASE '..name..' attempt=0 wall='..since)
-  emit('prepared',since);return
+  emit('prepared',since)
+  if entryContactRepro then entryReceipt('outfitAndSelectedCargo',since) end
+  return
  end
  local video=toolkitVideoStatus();assert(video.state~='failed','Approach video failed: '..tostring(video.error))
  assert(now-since<23000,'Approach/video deadline')
@@ -175,13 +227,31 @@ local function tick()
  area.checkPosition(p,bag or item:getWorldItem() and item or nil)
  local row=snapshot(now)
  if now-sampled>=25 then sampled=now;print('[CART_APPROACH_SAMPLE] '..encode(row)) end
+ if entryContactRepro and bag and not queuedAt then
+  if not preWalkStartedAt and now-since>=350 then
+   assert(empty(),'Entry pre-Walk requires idle native queue')
+   preWalkStartedAt=now;preWalkX=p:getX();preWalkY=p:getY()
+   cartLabGait(0);cartLabDrive(1);entryReceipt('preWalkStarted',now)
+   return
+  elseif preWalkStartedAt and not preWalkReleasedAt then
+   preWalkSeen=preWalkSeen or p:getVariableBoolean('isMoving') and not p:isRunning() and not p:isSprinting()
+   if now-preWalkStartedAt>=350 then
+    cartLabDrive(0);cartLabGait(0);preWalkReleasedAt=now
+    entryReceipt('preWalkReleased',now)
+    assert(preWalkSeen and row.preWalkDistance>=.05 and row.preWalkDistance<1.5,'Entry native pre-Walk did not execute within the reachable bag corridor')
+   end
+   return
+  end
+ end
  if not queuedAt and now-since>=700 then
+  if entryContactRepro and bag then assert(preWalkReleasedAt and now>preWalkReleasedAt,'Public equip must follow native Walk release') end
   push();queuedAt=now
   if name=='approach-cancel' or name=='approach-target-loss' or name=='approach-tail-success' then
    tailX,tailY=startX,startY+1
    tail=ISWalkToTimedActionF:new(p,Vector3f.new(tailX,tailY,area.z));ISTimedActionQueue.add(tail)
   end
   emit('queued',now)
+  if entryContactRepro then entryReceipt('publicMenuQueued',now) end
  elseif queuedAt and not terminalAt then
   assert(now-queuedAt<14000,'Native approach did not terminate')
   if not changed and (name=='approach-cancel' or name=='approach-target-loss') and approach:isStarted() and p:hasPath() and now-queuedAt>=250 then
@@ -204,11 +274,14 @@ local function tick()
    if tail and name~='approach-cancel' then assert(tail.result==BehaviorResult.Succeeded,'Independent tail did not complete') end
    if name=='approach-cancel' then assert(not tail:isStarted() and not tail.result,'Native full-queue cancellation consumed tail') end
    terminalAt=getTimestampMs();emit('terminal',terminalAt)
+   if entryContactRepro then entryReceipt('heldTailStarted',terminalAt) end
   end
  elseif terminalAt and now-terminalAt>=1000 then
   local state=snapshot(now)
   assert(empty() and not state.active and not state.recovering and not state.rendered and not state.ToolkitWoodCartAction,'Approach leaked presentation/queue')
-  emit('settled',now);assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
+  emit('settled',now)
+  if entryContactRepro then entryReceipt('heldTailComplete',now) end
+  assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
  end
 end
 WoodPrototypeTick=function()

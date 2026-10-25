@@ -13,9 +13,13 @@ local function key(object)
  return square:getX()..','..square:getY()..','..square:getZ()
 end
 local function snapshot(object)
- local stores = ModData.getOrCreate('LootSorter_Manifest').boxes or {}
- local record = stores[key(object)]
- return record and record[itemName] and record[itemName].n or 0
+ local total = 0
+ for _, record in pairs(Toolkit.ManifestAuthority.getStore().containers) do
+  if record.key == key(object) then
+   for _, entry in pairs(record.entries) do if entry.ft == 'Base.Nails' then total = total + entry.n end end
+  end
+ end
+ return total
 end
 local function uiCount()
  local count = 0
@@ -40,7 +44,7 @@ local function setup()
  local player = getPlayer()
  assert(Toolkit.Settings.actionQueue() == (config.mode == 'toolkit'), 'wrong queue mode')
  player:setGodMod(true); player:setGhostMode(true)
- assert(LootSorter._manifestXferHooked and LootSorter.toggleManifest, 'SP Manifest hook missing')
+ assert(Toolkit.ManifestAuthority and LootSorter.toggleManifest, 'shared Manifest service missing')
  local origin = require('QueueEnergyPlacement')(player)
  boxes = {}
  for _, offset in ipairs({{1,0},{0,1}}) do
@@ -76,12 +80,13 @@ local function prepare()
   filler:setCustomWeight(true)
   dest:AddItem(filler)
  elseif names[step] == 'rejected' then dest:setCapacity(0) end
- LootSorter.manifestReconcile()
  if not LootSorter._manifestWin then LootSorter.toggleManifest() end
  window = assert(LootSorter._manifestWin)
  window.filterText = string.lower(itemName); window:rebuild()
- assert(snapshot(boxes[1]) == 2 and snapshot(boxes[2]) == 0 and uiCount() == 2, 'initial Manifest differs from containers')
- assert(not LootSorter._manifestDirty[key(boxes[1])] and not LootSorter._manifestDirty[key(boxes[2])], 'previous dirty state leaked')
+ phase, since = 'prime', getTimestampMs()
+end
+local function startTransfer()
+ local source, dest = boxes[1]:getContainer(), boxes[2]:getContainer()
  observed, read = false, false
  expected = names[step] == 'success' and 2 or names[step] == 'rejected' and 0 or 1
  if names[step] == 'withdraw' then dest = getPlayer():getInventory() end
@@ -110,8 +115,8 @@ local function finishTransfer()
  assert(moved == expected, 'wrong native transfer amount')
  assert(dest:getCapacityWeight() <= dest:getEffectiveCapacity(getPlayer())+0.0001, 'native partial batch overfilled destination')
  assert(snapshot(boxes[1]) == 2-moved and snapshot(boxes[2]) == (withdrawing and 0 or moved) and uiCount() == (withdrawing and 1 or 2), 'drained Manifest/UI snapshot differs from actual item IDs')
- assert(read == (expected > 0) and observed == (expected > 0), 'native rejection/dirty/tail outcome changed')
- print('[QM_TRANSFER] PHASE '..names[step]..' moved='..moved..' remaining='..(2-moved)..' tailRead='..tostring(read)..' dirty='..tostring(observed))
+ assert(read == (expected > 0) and observed == (expected > 0), 'native rejection/queue/tail outcome changed')
+ print('[QM_TRANSFER] PHASE '..names[step]..' moved='..moved..' remaining='..(2-moved)..' tailRead='..tostring(read)..' queueObserved='..tostring(observed))
  step = step + 1
  if names[step] then phase = 'prepare'
  else
@@ -154,16 +159,18 @@ Events.OnTick.Add(function()
   assert(getTimestampMs()-since < 120000, 'native transfer phase deadline '..phase)
   if not boxes then setup() end
   if phase == 'prepare' then prepare()
+  elseif phase == 'prime' then
+   if snapshot(boxes[1]) == 2 and snapshot(boxes[2]) == 0 and uiCount() == 2 then startTransfer() end
   elseif phase == 'transferring' then
    local q = queue()
    if q.current == tail and tail:isStarted() and tail:getJobDelta() > 0 then
     read = true
-    assert(LootSorter._manifestDirty[key(boxes[1])] and (names[step] == 'withdraw' or LootSorter._manifestDirty[key(boxes[2])]), 'native perform failed to dirty designated squares')
-    assert(snapshot(boxes[1]) == 2 and snapshot(boxes[2]) == 0, 'Manifest flushed before native queue drained')
     observed = true
    end
+   local wanted = names[step] == 'withdraw' and 1 or 2
    if #q.queue == 0 and not getPlayer():hasTimedActions()
-    and not LootSorter._manifestDirty[key(boxes[1])] and not LootSorter._manifestDirty[key(boxes[2])] then finishTransfer() end
+    and snapshot(boxes[1]) == 2-expected and snapshot(boxes[2]) == (names[step] == 'withdraw' and 0 or expected)
+    and uiCount() == wanted then finishTransfer() end
   elseif phase == 'custom' then customBoundaries()
   elseif phase == 'cleanup' and #queue().queue == 0 and not getPlayer():hasTimedActions() then
    for _, object in ipairs(boxes) do
@@ -177,7 +184,8 @@ Events.OnTick.Add(function()
     assert(not LootSorter.getRegistry()[coordinate], 'owned designation survived cleanup')
     object:getSquare():RemoveTileObject(object)
    end
-   LootSorter.manifestReconcile()
+     phase = 'cleanupSnapshot'
+  elseif phase == 'cleanupSnapshot' and snapshot(boxes[1]) == 0 and snapshot(boxes[2]) == 0 then
    done = true
    print('[QM_TRANSFER] COMPLETE case=manifest')
   end

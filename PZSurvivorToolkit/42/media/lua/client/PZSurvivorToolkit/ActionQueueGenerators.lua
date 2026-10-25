@@ -183,10 +183,13 @@ local function execute(character, target)
         if #live == 0 then return end
         return target.callback(target.args[1], object, live, nil, target.args[5])
     end
-    local queue, before = ISTimedActionQueue.getTimedActionQueue(character), {}
-    for _, member in ipairs(queue.queue) do before[member] = true end
-    local result = target.callback(unpack(target.args, 1, target.args.n))
+    local queue, before
     if target.trusted and target.kind == "ISTakeGenerator" then
+        queue, before = ISTimedActionQueue.getTimedActionQueue(character), {}
+        for _, member in ipairs(queue.queue) do before[member] = true end
+    end
+    local result = target.callback(unpack(target.args, 1, target.args.n))
+    if before and target.trusted and target.kind == "ISTakeGenerator" then
         for _, member in ipairs(queue.queue) do
             if not before[member] and member.Type == "ISUnequipAction" then
                 equipmentRecords[member] = {character = character, item = member.item, token = member.toolkitQueueOperation}
@@ -317,7 +320,9 @@ function Generators.install()
         {ISInventoryPaneContextMenu, "transferIfNeeded", "ISInventoryPaneContextMenu.lua"}}) do
         local callback = entry[1] and entry[1][entry[2]]
         local equipment = entry[1] == ISWorldObjectContextMenu and (entry[2] == "equip" or entry[2] == "transferIfNeeded")
-        local valid = nativeClosure(callback, entry[3])
+        local approach = Toolkit.ActionQueueApproach
+        local original = approach and approach.nativeHelper(entry[1], entry[2], callback) or callback
+        local valid = nativeClosure(original, entry[3])
         trusted, basicTrusted = trusted and valid, basicTrusted and (equipment or valid)
         helpers[#helpers + 1] = {owner = entry[1] or {}, name = entry[2], callback = callback, equipment = equipment}
     end

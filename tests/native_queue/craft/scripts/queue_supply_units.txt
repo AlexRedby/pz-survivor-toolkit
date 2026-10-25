@@ -1,0 +1,18 @@
+module Base
+{
+    craftRecipe QueueSupplyUnits
+    {
+        time = 20,
+        timedAction = CraftWeapon1H,
+        Tags = InHandCraft,
+        category = Repair,
+        inputs
+        {
+            item 2 [Base.DuctTape],
+        }
+        outputs
+        {
+            item 1 Base.WoodenStick2,
+        }
+    }
+}

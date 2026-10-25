@@ -33,6 +33,12 @@ def validate(selection):
             raise ValueError('Vehicle lights needs an absolute executable ' + key)
 
 
+def environment(selection, role, cache):
+    if selection.get('suite') == 'vehicle-lights' and role == 'client1':
+        return {'PZ_LIGHTS_TEST_CACHE': Path(cache)}
+    return {}
+
+
 def sources(project, selection):
     base = Path(project) / 'tests/native_queue'
     return [*sorted((base / 'vehicle-lights').rglob('*.lua')), base / 'vehicle-lights/Main.java',
@@ -44,7 +50,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     from ..native import _lua
     validate(selection)
     classes = Path(output) / 'vehicle-lights-classes'; classes.mkdir()
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '17', '-cp',
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
         os.pathsep.join(str(Path(game) / jar) for jar in ('projectzomboid.jar', 'ZombieBuddy.jar')),
         '-d', str(classes), str(Path(project) / 'tests/native_queue/vehicle-lights/Main.java')],
         check=True, capture_output=True, text=True, timeout=60)
@@ -73,7 +79,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             'versionMin=42.21\nrequire=\\ZombieBuddy\njavaPkgName=net.alexredby.vehiclelightsfixture\n'
             'javaJarFile=media/java/VehicleLightsFixture.jar\n')
         if role == 'client1':
-            settings.setdefault('env', {})['PZ_LIGHTS_TEST_CACHE'] = str(cache)
+            settings.setdefault('env', {}).update(
+                {name: str(value) for name, value in environment(selection, role, cache).items()})
     if selection['kind'] == 'mp':
         ini = Path(output) / 'server/Server/queue-smoke.ini'
         ini.write_text(ini.read_text().replace('SpawnPoint=10835,10144,0', 'SpawnPoint=10640,10144,0'))

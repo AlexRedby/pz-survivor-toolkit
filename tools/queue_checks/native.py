@@ -9,8 +9,11 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from . import adapters, worlds, pack, admission, report, coop
-from .mod_selection import MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots, mod_layers, mod_info
+from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw
+from .mod_selection import (
+    MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
+    mod_layers, mod_info, selected_mod_version,
+)
 
 
 def jdk_binary(jdk, name):
@@ -103,7 +106,9 @@ def _locations(project, workshop, identifiers, overrides=None):
         if not mod_layers(root):
             raise ValueError("No compatible 42.21 mod layer: " + identifier)
         info = mod_info(root)
-        if info is None or _metadata(info).get("id") != identifier:
+        if info is None:
+            raise ValueError("Missing B42 version/common mod.info: " + identifier)
+        if _metadata(info).get("id") != identifier:
             raise ValueError("Selected version has a different Mod ID: " + identifier)
         result[identifier] = root
     return result
@@ -270,7 +275,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
     roles = adapters.roles(selection)
-    # copytree materializes logical file sizes, including sparse files; allow allocation/metadata overhead.
+    # Budget for ordinary-copy fallback and later private writes to clones;
+    # allow allocation/metadata overhead, including sparse-file materialization.
     def copy_size(paths):
         return sum(((path.stat().st_size + 4095) // 4096 + 1) * 4096 for path in paths)
 
@@ -281,6 +287,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(launch_java), "server_name": "queue-smoke", "window_size": selection["window_size"], "roles": {}}
     output.mkdir(parents=True)
+    if sys.platform == 'darwin':
+        runtime['glfw'] = glfw.prepare(game, output / 'native', launch_java)
     if selection.get('ports_auto'):
         selection = dict(selection, ports=admission.allocate_ports(output, selection) if selection['kind'] == 'mp' else [17343, 17344])
     for index, role in enumerate(roles):
@@ -290,15 +298,17 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             (cache / directory).mkdir(parents=True)
         for identifier, source in locations.items():
             target = cache / "mods" / identifier
-            shutil.copytree(source, target)
+            shutil.copytree(source, target, copy_function=snapshot_copy.copy_file)
             expected = next(row["files"] for row in manifest if row["id"] == identifier)
             if hashes(target) != expected:
                 raise RuntimeError("Mod changed while copying snapshot: " + identifier)
             versions = [p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]
             layers = [target, target / 'common', *versions]
-            if not versions and (target / 'common/mod.info').is_file():
-                # B42 still scans its default 42.0 layer when all mod content is common.
-                layers.append(target / '42.0')
+            selected = selected_mod_version(target)
+            if selected not in layers:
+                # B42 still scans its default 42.0 layer when no branch matches,
+                # including common content alongside future-only versions.
+                layers.append(selected)
             for layer in layers:
                 if layer != target or (layer / "media").is_dir():
                     for sub in ("AnimSets", "actiongroups"):
@@ -337,7 +347,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             font_preload(cache, selection, game if os.name == 'nt' else None)
             for name in ("ToolkitWindowBootstrap.java", "ToolkitSmokeLauncher.java"):
                 shutil.copy2(support / name, cache / "classes")
-            subprocess.run([str(jdk_binary(jdk, 'javac')), "-cp", str(game / "projectzomboid.jar"),
+            subprocess.run([str(jdk_binary(jdk, 'javac')), "--release", "25", "-cp", str(game / "projectzomboid.jar"),
                             str(cache / "classes/ToolkitWindowBootstrap.java"), str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
                            env={key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")})
             if not (cache / "classes/ToolkitSmokeLauncher.class").is_file():
@@ -447,6 +457,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         if sha256(Path(path)) != digest:
             raise RuntimeError("Source changed while preparing snapshot: " + path)
     frozen = {path.name: sha256(path) for path in sorted(output.iterdir()) if path.is_file()}
+    if sys.platform == 'darwin':
+        frozen.update({'native/' + relative: digest for relative, digest in hashes(output / 'native').items()})
     for role in roles:
         for directory in ("mods", "classes", "Lua"):
             frozen.update({role + "/" + directory + "/" + relative: digest

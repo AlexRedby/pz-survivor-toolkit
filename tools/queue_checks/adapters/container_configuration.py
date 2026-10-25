@@ -1,14 +1,15 @@
 """Unified Quartermaster container editing through native UI callbacks and Host authority."""
-import json
 import math
 from pathlib import Path
 import re
 import shutil
 import struct
 
+from .. import receipts
+
 SUITE = 'container-configuration'
 MARKER = '[CONTAINER_CONFIG] '
-MODS = ['PZSurvivorToolkit', 'EURY_CONTAINERS', 'CleanUI']
+MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS']
 PNG = b'\x89PNG\r\n\x1a\n'
 
 
@@ -57,23 +58,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def _records(text, event):
-    rows = []
-    for line in text.splitlines():
-        offset = line.find(MARKER + event + ' ')
-        if offset >= 0:
-            def unique(pairs):
-                result = {}
-                for key, value in pairs:
-                    if key in result:
-                        raise ValueError('Duplicate receipt JSON key ' + key)
-                    result[key] = value
-                return result
-            row = json.loads(line[offset + len(MARKER + event + ' '):], object_pairs_hook=unique,
-                             parse_constant=lambda value: (_ for _ in ()).throw(ValueError('Nonfinite JSON ' + value)))
-            if type(row) is not dict:
-                raise ValueError('Receipt must be an object: ' + event)
-            rows.append(row)
-    return rows
+    return receipts.records(text, MARKER, event)
 
 
 def complete(selection, role, text):
@@ -132,9 +117,12 @@ def verify(root, selection, catalog):
         category = prepared['category']
         if selection['kind'] == 'mp' and len(re.findall(re.escape('[STARTUP_TEST] SERVER_READY') + r'(?:\s|$)', authority)) != 1:
             raise ValueError('Missing/duplicate Host server readiness')
-        sequences = {'client1': ['SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
+        sequences = {'client1': ['SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT',
+                                'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
         if selection['kind'] == 'sp':
-            sequences['client1'] = ['PREPARED', 'SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
+            sequences['client1'] = ['PREPARED', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'SHOT',
+                                    'SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL',
+                                    'AUTHORITY', 'COMPLETE']
         else:
             sequences['client2'] = ['SHOT', 'OBSERVER', 'COMPLETE']
             sequences['server'] = ['PREPARED', 'AUTHORITY']
@@ -160,8 +148,15 @@ def verify(root, selection, catalog):
             if not _exact(receipts['client2'], expected):
                 raise ValueError('Observer global BC appearance or routing differs')
         for role, text in logs.items():
-            names = ['icon', 'edit'] if role == 'client1' else ['observer']
-            if _records(text, 'SHOT') != [{'name': name, 'role': role} for name in names]:
+            names = (['empty', 'search', 'no-results', 'checked', 'items', 'presets', 'rule', 'color',
+                      'icon', 'edit', 'minimum'] if role == 'client1' else ['observer'])
+            dimensions = {'empty': (480, 700), 'search': (480, 700), 'no-results': (480, 700),
+                          'checked': (480, 700), 'items': (480, 700), 'presets': (480, 700),
+                          'rule': (480, 700), 'color': (480, 700), 'icon': (480, 700),
+                          'edit': (480, 700), 'minimum': (420, 600), 'observer': (480, 700)}
+            expected_shots = [{'name': name, 'role': role, 'width': dimensions[name][0],
+                               'height': dimensions[name][1]} for name in names]
+            if _records(text, 'SHOT') != expected_shots:
                 raise ValueError(role + ' screenshots missing, duplicated or reordered')
             screenshots += [_shot(root, role, name) for name in names]
             if not complete(selection, role, text):

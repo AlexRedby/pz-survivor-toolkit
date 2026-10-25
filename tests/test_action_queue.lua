@@ -4,6 +4,12 @@ local function hasEntry(value)
 end
 -- Native Lua queue/base/book callbacks; Java lifecycle is exercised by the MP smoke.
 require = function(name)
+    if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
+        return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
+    end
+    if name == 'PZSurvivorToolkit/SourceProof' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
+    end
     if name == 'PZSurvivorToolkit/InventoryClasses' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
@@ -673,7 +679,8 @@ function widget:getMouseY() return self.mouseY or 0 end
 function widget:drawRect(...) self.drawnRects=self.drawnRects or {};self.drawnRects[#self.drawnRects+1]={...} end
 function widget:drawText(text) self.drawnTexts=self.drawnTexts or {};self.drawnTexts[#self.drawnTexts+1]=text end
 function widget:drawTextRight(text,x) self:drawText(text);self.rightText={text=text,x=x} end
-function widget:drawTextureScaledAspect(texture)
+function widget:drawTextureScaledAspect(texture,...)
+    self.textureCalls=self.textureCalls or {};self.textureCalls[#self.textureCalls+1]={texture,...}
     assert(not self.clearedClip, 'text clipping must restore the parent stencil before drawing controls')
     assert(texture);self.lastTexture=texture;self.drawnTextures=self.drawnTextures or {};self.drawnTextures[#self.drawnTextures+1]=texture
 end
@@ -874,6 +881,40 @@ assert(#q.queue==1 and q.queue[1]==unrelated, 'one header cross cancels the lazy
 unrelated.toolkitQueueOperation.toolkitBatch={total=1,completed=0,unit='craft'}
 panel:update();assert(#list.items==1 and not list.items[1].header)
 print('Queue batch view: dynamic logical counters, unknown totals, singleton continuation headers, expansion and cancellation passed.')
+-- Native completion can precede the next projection update and UI refresh.
+do
+    p=player();a,b=book(p),book(p)
+    operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
+    refresh();panel=ui[#ui];panel:update();list=panel.list
+    frame(p);panel:update();toggle(1)
+    local header,child=list.items[1],list.items[2]
+    local operation=header.operation
+    assert(header.header and panel.currentIndex==1 and panel.expanded[operation])
+    -- During the native idle gap the queue may still have its projected members.
+    q.current=nil
+    list.doDrawItem(list,0,header,false)
+    assert(header.tooltip and not header.tooltip:find('%]',1,true)
+        and list.rightText.text=='UI_PZSurvivorToolkit_queue_steps(2)',
+        'an idle header must describe remaining work without a nil current action')
+    list:onMouseDown(10,16)
+    assert(list.pressedToggle==operation)
+    q.queue={}
+    list.drawnTextures={}
+    list.doDrawItem(list,0,header,false)
+    list.doDrawItem(list,list:topOfItem(2),child,false)
+    assert(#list.drawnTextures==0 and not header.tooltip and not child.tooltip,
+        'completed rows must stop rendering controls before the next projection update')
+    list:onMouseUp(10,16)
+    assert(panel.expanded[operation] and not list.pressedToggle,
+        'a stale completed header must not toggle a phantom operation')
+    list:onMouseDown(list:cancelX()+12,16)
+    assert(not list.pressedCancel and not list.pressedOperation)
+    list:onMouseDown(30,list:topOfItem(2)+16)
+    assert(not list.dragAction and not list:rowUnderMouse(30,16),
+        'stale completed rows must not remain mouse targets')
+    panel:update()
+    assert(#list.items==0 and not next(panel.expanded), 'the next projection releases completed rows')
+end
 -- Active headers show the actual current native step and its progress; completed/cancelled steps leave only a remaining count.
 p=player();a,b,c=book(p),book(p),book(p)
 operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)
@@ -884,6 +925,16 @@ assert(list.items[1].header and list.items[1].tooltip:find('[42%]',1,true)
     and list.items[1].tooltip:find('queue_remaining(3)',1,true) and list.lastTexture=='close-icon')
 assert(table.concat(list.drawnTexts,'\n'):find('ContextMenu_Read',1,true))
 assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_steps(3)')
+do
+    local previousFitness=PZSurvivorToolkit.ActionQueueFitness
+    PZSurvivorToolkit.ActionQueueFitness={progress=function(action)
+        if action==a then return {fraction=1,stopping=true} end
+    end}
+    list.doDrawItem(list,0,list.items[1],false)
+    assert(list.items[1].tooltip:find('[...]',1,true) and not list.items[1].tooltip:find('[100%]',1,true),
+        'server settlement still renders a running 100 percent workout')
+    PZSurvivorToolkit.ActionQueueFitness=previousFitness
+end
 local title=list.items[1].task
 list.items[1].task=string.rep('Long recipe ',50);list.clips={}
 list.doDrawItem(list,0,list.items[1],false)
@@ -960,8 +1011,18 @@ ISTimedActionQueue.add(d);refresh();panel=ui[#ui];panel:update();list=panel.list
 list.mouseoverselected,list.mouseX,list.mouseY=2,list:cancelX()+12,list:topOfItem(2)+16
 list.doDrawItem(list,list:topOfItem(2),list.items[2],false)
 assert(list.items[2].tooltip:find('queue_cancel_operation_tip',1,true), 'header tooltip describes the whole operation')
+assert(list.textureCalls[#list.textureCalls][1]==list.cancelTexture and list.textureCalls[#list.textureCalls][6]==1,
+    'white cross must describe a hovered live permitted cancellation')
+list.mouseX=-10
+list.doDrawItem(list,list:topOfItem(2),list.items[2],false)
+assert(list.textureCalls[#list.textureCalls][6]==.55,'an unevaluated cross must not claim active permission')
 toggle(2);assert(#list.items==6 and api.cancelReason(q,pickup)=='dependent')
+list.mouseX,list.mouseY=list:cancelX()+12,list:topOfItem(3)+16
+list.doDrawItem(list,list:topOfItem(3),list.items[3],false)
+assert(list.textureCalls[#list.textureCalls][6]==.2,'a denied hovered child cross must be visibly disabled')
 click(3);assert(#q.queue==5, 'protected pickup child cross cannot cancel preparation alone')
+assert(list.cancelFeedback and list.cancelFeedback.text=='UI_PZSurvivorToolkit_queue_dependent',
+    'a denied child click must keep its localized rejection instead of silently succeeding')
 click(2);assert(#q.queue==2 and q.queue[1]==a and q.queue[2]==d and #list.items==2)
 assert(not hasEntry(panel.expanded), 'removed operation must release its expansion token')
 -- Group changes and callback changes after mouse-down must be checked again on mouse-up.
@@ -1075,7 +1136,13 @@ do
     counts={};viewList:onMouseUp(x,y)
     assert(#viewQueue.queue==remaining and counts.evaluateCancel==1,
         'mouse-up uses authoritative evaluation again after a previously permitted press')
+    assert(viewList.cancelFeedback and viewList.cancelFeedback.text=='UI_PZSurvivorToolkit_queue_operation_dependent',
+        'a formerly allowed but rejected release must retain the actual localized reason')
     targetAction.onCancelFunc=nil
+    draw(view)
+    assert(target.tooltip:find(viewList.cancelFeedback.text,1,true),'release rejection must remain visible on the same row')
+    previewClock=previewClock+2500;draw(view)
+    assert(not viewList.cancelFeedback,'rejection text must expire without retaining authority or action history')
     counts={};viewList.mouseX=30;draw(view)
     assert(counts.previewMove==1 and not counts.previewCancel and not counts.evaluateMove,
         'hovering the body previews movement without cancel or authoritative evaluation')
@@ -1648,6 +1715,10 @@ frame(p)
 local returned=q.current
 assert(returned.Type=='ISInventoryTransferAction' and returned~=restore and returned.item==a.item)
 assert(returned.allowMissingItems and #q.queue==2 and q.queue[2]==d and not q.toolkitGroupCancel)
+assert(api.cancelReason(q,returned)=='dependent' and api.cancelOperationReason(q,returned)=='operation_dependent',
+    'a second UI cancellation cannot revoke earned mandatory cleanup')
+assert(not api.cancel(q,returned) and not api.cancelOperation(q,returned) and q.current==returned and q.queue[2]==d)
+
 assert(not b.action and not p.actions[a.action], 'group stop must precede native cleanup; remaining work never starts')
 returned.action.done=true;frame(p)
 assert(a.item.container==bag and q.current==d, 'borrowed item returns once, then the unrelated operation starts')
@@ -1819,6 +1890,55 @@ end
 PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
 print('Generic native outcomes: local stop/removal waits for receipt; only canceled resumes, completed/rejected preserve independent tail without replay.')
 
+-- An expired workout can send native stop before its server started message arrives.
+-- Keep the stopped Lua action current so only the ordinary sealed receipt may advance it.
+do
+    local originalAcknowledgements=PZSurvivorToolkit.ActionQueueAcknowledgements
+    for _,scenario in ipairs({'late-start','late-terminal','timeout','native','transaction','kind','generation'}) do
+        p=player();a,b,c=leaf(p,'stopped-workout'),leaf(p,'restore-equipment'),leaf(p,'independent-tail')
+        q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c);frame(p)
+        a.toolkitNativeTransaction,a.toolkitNativeKind=42,'ISFitnessAction'
+        local receipt
+        PZSurvivorToolkit.ActionQueueAcknowledgements={
+            capture=function(action) if action==a then return receipt end end,
+            state=function(action,record) if action==a and record and record==receipt then return record.state end end,
+            reset=function()end,
+        }
+        q.toolkitCancel=a
+        q.toolkitOutcomeWait={generic=true,deadline=acknowledgementClock+30000,pendingStart={
+            native=a.action,transaction=42,kind='ISFitnessAction',generation=q.toolkitOperationGeneration or 0}}
+        local wait=q.toolkitOutcomeWait
+        local before=#completions
+        a:forceStop();frame(p)
+        assert(q.current==a and #q.queue==3 and q.toolkitCancelStopped and not p.actions[a.action]
+            and #completions==before,'native removal advanced cleanup before late authoritative receipt')
+        if scenario=='late-start' or scenario=='late-terminal' then
+            receipt={state=scenario=='late-start' and 'started' or 'canceled'}
+            q:tick()
+            assert(wait.acknowledgement==receipt and not wait.pendingStart,'late receipt was not captured by current stopped action')
+            if scenario=='late-start' then
+                assert(q.current==a and #completions==before,'started receipt advanced stopped workout before terminal')
+                receipt.state='canceled';q:tick()
+            end
+            assert(q.current==b and not q.toolkitOutcomeWait and #completions==before,'late terminal lost cleanup or replayed workout')
+            frame(p);b.action.done=true;frame(p)
+            assert(q.current==c and completions[#completions]=='restore-equipment','required cleanup did not precede independent tail')
+        else
+            if scenario=='timeout' then acknowledgementClock=wait.deadline
+            elseif scenario=='native' then a.action=LuaTimedActionNew.new(a)
+            elseif scenario=='transaction' then a.toolkitNativeTransaction=43
+            elseif scenario=='kind' then a.toolkitNativeKind='other'
+            elseif scenario=='generation' then q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1 end
+            q:tick()
+            assert(#q.queue==0 and not q.toolkitOutcomeWait and #completions==before,
+                'uncertain or stale late receipt wait advanced work instead of resetting safely: '..scenario)
+        end
+    end
+    PZSurvivorToolkit.ActionQueueAcknowledgements=originalAcknowledgements
+end
+print('Late started receipts: native stop is immediate; cleanup/tail wait for terminal and stale identity/timeouts fail closed.')
+
+
 -- A replicated BBQ effect can invalidate native isValid() before local completion/Done arrives.
 do
     load('shared/TimedActions/ISBBQLightFromPetrol.lua')
@@ -1938,3 +2058,124 @@ do
     isClient,ZomboidGlobals,IsoObjectChange=previousClient,oldGlobals,oldChange
 end
 print('Native BBQ stop race: correlated completed/canceled/rejected outcomes, native removal, exact returns, independent reading and conservative abort guards passed.')
+
+-- Recovery remains reachable after a whole clear, without stale press/release IDs.
+do
+    local saved={id=101,count=2,skipped=1};local restored,forgotten
+    local previousRecovery=PZSurvivorToolkit.ActionQueueRecovery
+    PZSurvivorToolkit.ActionQueueRecovery={
+        info=function()return saved end,
+        preview=function()return saved and {id=saved.id,count=saved.count,available=true}end,
+        restore=function(_,id)restored=id;return true end,
+        forget=function(_,id)forgotten=id;saved=nil;return true end,
+    }
+    ISButton=widget:derive('ISButton')
+    function ISButton:new(x,y,w,h,title,target,callback)
+        local button=widget.new(self,x,y,w,h);button.title,button.target,button.onclick=title,target,callback;return button
+    end
+    function ISButton:onMouseDown()return true end
+    function ISButton:setTitle(title)self.title=title end
+    function widget:setY(value)self.y=value end
+    p=player();q=ISTimedActionQueue.getTimedActionQueue(p)
+    refresh();local view=ui[#ui];view:update()
+    assert(view.visible and #view.list.items==0 and view.restoreButton.visible and view.restoreButton.enabled,
+        'cancelled history keeps an empty queue window and its restore control visible')
+    assert(view.list.height==view.height-view.list.y-42 and view.restoreButton.tooltip:find('recovery_skipped',1,true))
+    view.restoreButton:onMouseDown(1,1)
+    saved={id=102,count=1,skipped=0};view.recoveryAt=nil;view:update()
+    view:restoreCancelled(view.restoreButton)
+    assert(restored==101,'a press must retain its original history ID; backend rejects a replacement')
+    view.restoreButton:onMouseDown(1,1);view:restoreCancelled(view.restoreButton);assert(restored==102)
+    view.forgetButton:onMouseDown(1,1);view:forgetCancelled(view.forgetButton);assert(forgotten==102)
+    refresh();assert(not view.visible and not view.restoreButton.visible)
+    PZSurvivorToolkit.ActionQueueRecovery=previousRecovery
+    print('Queue recovery UI: empty-window access, skipped-task hint, footer layout, one-click restore/forget and stale history press passed.')
+end
+
+-- A child return cross keeps the earned borrowed item and leaves its body
+-- running. Exercise the real Policy/Queue/Panel/Settlement path together.
+do
+    -- Earlier legacy fallback checks deliberately had no game-input API. The
+    -- optional return requires the actual empty-forceCancel source proof.
+    getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    getGameFilesInput=function(path)
+        local full=NativeActionRoot..'/'..path:gsub('^media/lua/','')
+        local text
+        if NativeReadText then text=NativeReadText(full) else
+            local file=assert(io.open(full));text=file:read('*a');file:close()
+        end
+        text=text:gsub('\r','');local position=1
+        return {close=function()end,readLine=function()
+            if position>#text then return end
+            local finish=text:find('\n',position,true)or #text+1
+            local line=text:sub(position,finish-1);position=finish+1;return line
+        end}
+    end
+    local function keptReturn(dependent)
+        local actor=player();local reading,ending=book(actor),book(actor)
+        actor.getOnlineID=function()return 17 end
+        actor.inventory.isExistYet=function()return true end
+        local source=sourceContainer();borrowed(reading.item,source)
+        source.getItemById=function(self,id)
+            if id==reading.item:getID() and reading.item:getContainer()==self then return reading.item end
+        end
+        local fetched=transfer(actor,reading.item,source,actor.inventory)
+        local returned=transfer(actor,reading.item,actor.inventory,source);returned.allowMissingItems=true
+        fetched.queueList={{items={reading.item}}};returned.queueList={{items={reading.item}}}
+        local owner
+        operations.run(function()
+            owner=ISTimedActionQueue.add(fetched);ISTimedActionQueue.add(reading);ISTimedActionQueue.add(returned)
+        end)
+        ISTimedActionQueue.add(ending)
+        if dependent then ISTimedActionQueue.add(transfer(actor,reading.item,source,actor.inventory)) end
+        local settlement=PZSurvivorToolkit.ActionQueueSettlement
+        local scope=settlement.deferred(actor,reading.toolkitQueueOperation)
+        assert(settlement.remember(scope,fetched,{knownInputs=true,items={[reading.item:getID()]=true}}))
+        assert(settlement.preparePickup(scope,fetched))
+        frame(actor)
+        assert(settlement.beginPickup(scope,fetched,function(value)return value==fetched end))
+        fetched.action.done=true;frame(actor);fetched.queueList={}
+        assert(settlement.finishPickup(scope,fetched,true))
+        frame(actor);assert(owner.current==reading and reading.action:isStarted())
+        refresh();panel=ui[#ui];panel:update();list=panel.list;toggle(1)
+        local target
+        for i,row in ipairs(list.items) do if not row.header and row.item==returned then target=i end end
+        local refusal=api.cancelReason(owner,returned)
+        if dependent then
+            assert(refusal=='operation_shared_item' and not api.cancel(owner,returned)
+                and owner.current==reading and not reading.action.stopping and owner:indexOf(returned)~=-1
+                and settlement.operationState(reading).borrowings[1].state=='active',
+                'a later source-dependent pickup must prevent waiving its required book location')
+            return
+        end
+        local oldIntent=PZSurvivorToolkit.ActionQueueTidyIntent
+        PZSurvivorToolkit.ActionQueueTidyIntent={canKeepReturn=function()return false end}
+        assert(api.cancelReason(owner,returned)=='dependent' and not api.cancel(owner,returned)
+            and owner:indexOf(returned)~=-1 and settlement.operationState(reading).borrowings[1].state=='active',
+            'an unavailable restoration integration must deny before changing the earned return')
+        PZSurvivorToolkit.ActionQueueTidyIntent=oldIntent
+        assert(target and not refusal,'earned pending return cross must be available: '..tostring(refusal)
+            ..' native='..tostring(PZSurvivorToolkit.ActionQueuePolicy.matchesNative(returned))
+            ..' ledger='..tostring(settlement.canWaivePendingReturn(returned,function()return true end)))
+        local native=reading.action
+        click(target)
+        assert(owner.current==reading and reading.action==native and not native.stopping
+            and #owner.queue==2 and owner.queue[2]==ending and owner:indexOf(returned)==-1
+            and not reading.toolkitQueueOperation.toolkitCancelled and reading.item:getContainer()==actor.inventory,
+            'return cross cancelled the parent or moved/lost its item')
+        local state=settlement.operationState(reading)
+        assert(state.borrowings[1].state=='waived','explicit keep intent was not sealed to the earned borrowing')
+        return actor,owner,reading,ending,source
+    end
+    keptReturn(true)
+    for _,later in ipairs({'finish','cancel-body','cancel-group'}) do
+        local actor,owner,reading,ending,source=keptReturn()
+        if later=='finish' then reading.action.done=true
+        elseif later=='cancel-body' then assert(api.cancel(owner,reading))
+        else assert(api.cancelOperation(owner,reading)) end
+        frame(actor);frame(actor)
+        assert(owner.current==ending and #owner.queue==1 and reading.item:getContainer()==actor.inventory,
+            later..': body completion/cancellation resurrected the deliberately cancelled return')
+    end
+end
+print('Borrowed return child cancellation: real UI/Policy/Queue/earned ledger, continuing body and no later return recreation passed.')

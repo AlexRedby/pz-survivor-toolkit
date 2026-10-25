@@ -1,4 +1,5 @@
 local Visuals = {}
+local Custom = require "PZSurvivorToolkit/TagCustomization"
 local green = {r = 0.48, g = 0.80, b = 0.40}
 local yellow = {r = 0.95, g = 0.80, b = 0.30}
 local blue = {r = 0.40, g = 0.68, b = 0.95}
@@ -73,7 +74,7 @@ local icons = {
 
 local textures, styles = {}, {}
 
-function Visuals.get(id, contextTags)
+function Visuals.defaults(id, contextTags)
     local family = families[id]
     if not family then
         for _, tag in ipairs(contextTags or {}) do
@@ -99,10 +100,39 @@ function Visuals.get(id, contextTags)
         if icon and textures[icon] == nil then
             textures[icon] = (getTexture and getTexture(icon)) or false
         end
-        styles[color][key] = {r = color.r, g = color.g, b = color.b,
+        styles[color][key] = {r = color.r, g = color.g, b = color.b, icon = icon,
             texture = icon and textures[icon] or nil}
     end
     return styles[color][key]
+end
+
+local customStyles, revision = {}, -1
+function Visuals.get(id, contextTags)
+    local base = Visuals.defaults(id, contextTags)
+    local current = Custom.cacheRevision()
+    if current ~= revision then customStyles, revision = {}, current end
+    local definition = id and Custom.definition(id)
+    if definition and definition.deleted then return base end
+    local inherited, familyId
+    if not families[id] then
+        for _, tag in ipairs(contextTags or {}) do
+            if families[tag] then
+                familyId = tag
+                local family = Custom.definition(tag)
+                inherited = family and family.color
+                break
+            end
+        end
+    end
+    if not definition and not inherited then return base end
+    definition = definition or {}
+    local key = tostring(id) .. "|" .. tostring(base) .. "|" .. tostring(familyId)
+    if not customStyles[key] then
+        local color, icon = definition.color or inherited or base, definition.icon or base.icon
+        if icon and textures[icon] == nil then textures[icon] = (getTexture and getTexture(icon)) or false end
+        customStyles[key] = {r=color.r, g=color.g, b=color.b, icon=icon, texture=icon and textures[icon] or nil}
+    end
+    return customStyles[key]
 end
 
 return Visuals

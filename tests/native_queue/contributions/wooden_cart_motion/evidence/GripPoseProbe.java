@@ -13,7 +13,7 @@ import zombie.core.skinnedmodel.model.SkinningData;
 public final class GripPoseProbe {
     private static final String[] BONES={"Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle","Bip01_R_Clavicle",
         "Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand"};
-    private static BufferedWriter output,reachFailures;
+    private static BufferedWriter output,reachFailures,injuryPoses;
     private static long start,sequence;
     private static boolean installed,errorLogged;
 
@@ -99,6 +99,44 @@ public final class GripPoseProbe {
         try {reachFailures.write(snapshot);reachFailures.newLine();reachFailures.flush();}
         catch(Throwable error){fail(error);}
     }
+    public static synchronized String injuryBefore(Matrix4f[] poses,SkinningData actor,boolean female,
+        Matrix4f delta,Matrix4f cart,float pressure,float weight,Matrix4f idleChest,String model) {
+        if(injuryPoses==null || weight<=0)return null;
+        try {
+            var row=new StringBuilder(6144).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+                .append(",\"model\":\"").append(model).append("\",\"female\":").append(female)
+                .append(",\"pressure\":").append(pressure).append(",\"injuryWeight\":").append(weight)
+                .append(",\"delta\":");matrix(row,delta);row.append(",\"cart\":");matrix(row,cart);
+            row.append(",\"idleChest\":");matrix(row,idleChest);row.append(",\"bones\":{");
+            String[] names={"Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle","Bip01_L_UpperArm",
+                "Bip01_L_Forearm","Bip01_L_Hand","Bip01_R_Clavicle","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand",
+                "Bip01_L_Thigh","Bip01_L_Calf","Bip01_L_Foot","Bip01_R_Thigh","Bip01_R_Calf","Bip01_R_Foot"};
+            for(int i=0;i<names.length;i++) {
+                if(i>0)row.append(',');String name=names[i];row.append('"').append(name).append("\":");
+                var bone=actor==null?null:actor.getBone(name);
+                matrix(row,bone==null || poses==null || bone.index<0 || bone.index>=poses.length?null:poses[bone.index]);
+            }
+            return row.append('}').toString();
+        } catch(Throwable error){fail(error);return null;}
+    }
+    public static synchronized void injuryAfter(String snapshot,float amount) {
+        if(snapshot==null || injuryPoses==null)return;
+        try {injuryPoses.write(snapshot);injuryPoses.write(",\"amount\":");injuryPoses.write(Float.toString(amount));injuryPoses.write("}\n");injuryPoses.flush();}
+        catch(Throwable error){fail(error);}
+    }
+    public static class InjuryAdvice {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static String enter(@Advice.Argument(0) Matrix4f[] poses,@Advice.Argument(1) SkinningData actor,
+            @Advice.Argument(2) boolean female,@Advice.Argument(3) Matrix4f delta,@Advice.Argument(4) Matrix4f cart,
+            @Advice.Argument(5) float pressure,@Advice.Argument(6) float weight,@Advice.Argument(7) Matrix4f idleChest,
+            @Advice.Argument(8) String model) {
+            return GripPoseProbe.injuryBefore(poses,actor,female,delta,cart,pressure,weight,idleChest,model);
+        }
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.Enter String snapshot,@Advice.Return float amount) {
+            GripPoseProbe.injuryAfter(snapshot,amount);
+        }
+    }
     public static class ReachAdvice {
         @Advice.OnMethodEnter(suppress=Throwable.class)
         public static String enter(@Advice.Argument(0) Matrix4f[] poses,@Advice.Argument(1) SkinningData actor,
@@ -113,6 +151,7 @@ public final class GripPoseProbe {
     public static synchronized void agentmain(String args,Instrumentation instrumentation) throws Exception {
         if(output!=null){output.close();output=null;}
         if(reachFailures!=null){reachFailures.close();reachFailures=null;}
+        if(injuryPoses!=null){injuryPoses.close();injuryPoses=null;}
         if("stop".equals(args)){System.out.println("[GRIP_POSE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
         Path directory=Path.of(args);
@@ -120,6 +159,7 @@ public final class GripPoseProbe {
         Path file=directory.resolve("wood-grip-poses.jsonl");
         output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);start=System.nanoTime();sequence=0;errorLogged=false;
         reachFailures=Files.newBufferedWriter(directory.resolve("wood-reach-failures.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
+        injuryPoses=Files.newBufferedWriter(directory.resolve("injury-torso-poses.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
         if(!installed){
             new AgentBuilder.Default().disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
@@ -128,7 +168,8 @@ public final class GripPoseProbe {
                 .transform((builder,description,loader,module,protection)->builder.visit(
                     Advice.to(GripAdvice.class).on(named("grip").and(takesArguments(7))))
                     .visit(Advice.to(TransitionGripAdvice.class).on(named("transitionGrip").and(takesArguments(9))))
-                    .visit(Advice.to(ReachAdvice.class).on(named("reach").and(takesArguments(7)))))
+                    .visit(Advice.to(ReachAdvice.class).on(named("reach").and(takesArguments(10))))
+                    .visit(Advice.to(InjuryAdvice.class).on(named("injuryTorso").and(takesArguments(9)))))
                 .installOn(instrumentation);installed=true;
         }
         System.out.println("[GRIP_POSE_PROBE] capturing calibrated wheelbarrow grip calls, including failures: "+file);

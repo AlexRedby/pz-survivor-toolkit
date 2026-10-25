@@ -27,7 +27,21 @@ function Fixture.sparePresent(player,meta)
  local root=player:getInventory();local item=root:getItemById(meta.id)
  return unchanged(item,meta)and item:getContainer()==root and count(root,meta.id)==1
 end
+local function sameReceipt(a,b)
+ if type(a)~=type(b)then return false end
+ if type(a)~='table'then return a==b end
+ for k,v in pairs(a)do if not sameReceipt(v,b[k])then return false end end
+ for k in pairs(b)do if a[k]==nil then return false end end
+ return true
+end
 function Fixture.prepare(player,case,previous)
+ if previous and Evolved.isCase(previous.case)then
+  assert(previous.player==player and previous.verified==true,'previous evolved case was not verified')
+  local frozen=assert(previous.frozenReceipt,'previous evolved receipt missing')
+  assert(sameReceipt(Evolved.verify(previous),frozen),'previous evolved exact resources changed')
+  -- Keep frozen evolved results in this disposable world; subsequent cases use new IDs.
+  previous=nil
+ end
  if previous then
   assert(previous.player==player and previous.verified==true and type(previous.cleanupRootItems)=='table'
    and type(previous.cleanupBags)=='table'and #previous.cleanupBags==2,'UI previous cleanup state is not verified')

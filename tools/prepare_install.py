@@ -26,12 +26,11 @@ LOAD_ORDER = (
     ("PZSurvivorToolkit", "EURY_CONTAINERS"),
     ("PZSurvivorToolkit", "MPFastForward"),
     ("RealisticDash", "Navigator"),
-    ("PZSurvivorToolkit", "organizedCategories_core"),
 )
 
 
 def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None,
-            check: bool = False) -> Path:
+            check: bool = False, kotlin_home: Path | None = None) -> Path:
     root = root.resolve()
     dist = root / "dist"
     output = dist / "SurvivorQoL"
@@ -56,7 +55,7 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
         raise ValueError("WorkshopItems must contain only numeric Workshop IDs; local mods have none")
 
     command = [sys.executable, str(root / "JavaPatches/build.py")]
-    for option, value in (("--game", game), ("--jdk", jdk)):
+    for option, value in (("--game", game), ("--jdk", jdk), ("--kotlin-home", kotlin_home)):
         if value is not None:
             command.extend((option, str(value.resolve())))
     if check:
@@ -124,10 +123,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, help="game Java folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--jdk", type=Path, help="JDK 25+ folder; defaults are provided by JavaPatches/build.py")
-    parser.add_argument("--check", action="store_true", help="also run the Java native regression checks")
+    parser.add_argument("--kotlin-home", type=Path, help="Kotlin 2.4.21 compiler distribution; also accepts KOTLIN_HOME or kotlinc on PATH")
+    parser.add_argument("--check", action="store_true", help="also run the native JVM regression checks")
     args = parser.parse_args()
     try:
-        output = prepare(game=args.game, jdk=args.jdk, check=args.check)
+        output = prepare(game=args.game, jdk=args.jdk, check=args.check, kotlin_home=args.kotlin_home)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
@@ -135,7 +135,7 @@ def main() -> int:
     print("Copy the contents of mods/ into Zomboid/mods on the server and every client.")
     print("For a new server profile, copy Server/SurvivorQoL-selected.ini into Zomboid/Server.")
     print("For an existing profile, copy only Mods= and WorkshopItems= into its INI; keep its other settings.")
-    print("Clients use this same prepared copy and do not need Python or a JDK.")
+    print("Clients use this same prepared copy and do not need Python, a JDK or a Kotlin compiler.")
     print("Complete ZombieBuddy loader setup and JAR approvals on each machine; see the prepared MOD_INSTALL.md.")
     return 0
 

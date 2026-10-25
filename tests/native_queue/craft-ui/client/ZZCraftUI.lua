@@ -20,7 +20,7 @@ local previousCleanupIds,previousBagIds={},{}
 local secondAllocated,secondStarted=false,false
 local outcomeTrace={};local tailProgress=false
 local function case()return config.cases[step]end
-local function evolved()return case()=='cook-evolved-return'end
+local function evolved()return require('QueueCookEvolvedFixture').isCase(case())end
 local function automatic()return case():sub(-5)=='-auto'end
 local function context()return case():match('^context')~=nil end
 local function pool()return case():find('missing-batch-pool',1,true)~=nil end
@@ -137,7 +137,11 @@ local function captureMaterialIds()
  return result
 end
 local function enqueue(player)
- if evolved()then evolvedRun=Evolved.start(player,state,ids,enabled);return true end
+ if evolved()then
+  evolvedRun=evolvedRun or Evolved.start(player,state,ids,enabled)
+  if not evolvedRun.dispatched then Evolved.continueStart(evolvedRun)end
+  return evolvedRun.dispatched==true
+ end
  local recipe=assert(getScriptManager():getCraftRecipe('QueueBorrowedTools'))
  if context()then
   callbackClass='context'
@@ -232,11 +236,35 @@ local function intervene()
   end
  end
 end
+local function advance(retain)
+ previousCleanupIds=retain and {} or {authority.bookId}
+ if not retain then for _,id in ipairs(authority.outputIds)do previousCleanupIds[#previousCleanupIds+1]=id end end
+ previousBagIds=ids.bags
+ local bags={}
+ for _,id in ipairs(previousBagIds)do
+  if not retain then previousCleanupIds[#previousCleanupIds+1]=id end;bags[#bags+1]=assert(state.root:getItemById(id))
+ end
+ ISInventoryPaneContextMenu.onUnEquip(bags,getPlayer():getPlayerNum())
+ for _,id in ipairs(not retain and authority.materialIds or {})do previousCleanupIds[#previousCleanupIds+1]=id end
+ if authority.introducedSpare then previousCleanupIds[#previousCleanupIds+1]=authority.introducedSpare.id end
+ for _,resource in ipairs(not retain and authority.resources or {})do
+  previousCleanupIds[#previousCleanupIds+1]=resource.id
+ end
+ previousAuthority=authorityState
+ step=step+1;phase='unequip';since=getTimestampMs()
+ ids,state,authorityState,authority,window,owner,logic,tail,actions=nil,nil,nil,nil,nil,nil,nil,nil,nil
+ progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
+ returnsBeforeRead,localDeferrals,idle=nil,0,0
+ interrupted,interruptionProgress=nil,nil
+ removal,poolPhaseProof,manualMaterialIds,manualMaterialIdsAfterRemoval=nil,nil,nil,nil
+ secondAllocated,secondStarted=false,false
+ outcomeTrace={};tailProgress=false;evolvedRun=nil
+end
 local function finish()
  if evolved()then
   local value,reason=Evolved.finish(evolvedRun,authority)
   if reason then failed=failed+1 end;emit(value)
-  assert(step==#config.cases,'evolved return must be the final grouped case')
+  if step<#config.cases then advance(true);return end
   emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
   print('[CRAFT_UI_TEST] COMPLETE');done=true;return
  end
@@ -290,28 +318,7 @@ local function finish()
   emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
   print('[CRAFT_UI_TEST] COMPLETE');done=true;return
  end
- previousCleanupIds={authority.bookId}
- for _,id in ipairs(authority.outputIds)do previousCleanupIds[#previousCleanupIds+1]=id end
- previousBagIds=ids.bags
- local bags={}
- for _,id in ipairs(previousBagIds)do
-  previousCleanupIds[#previousCleanupIds+1]=id;bags[#bags+1]=assert(state.root:getItemById(id))
- end
- ISInventoryPaneContextMenu.onUnEquip(bags,getPlayer():getPlayerNum())
- for _,id in ipairs(authority.materialIds)do previousCleanupIds[#previousCleanupIds+1]=id end
- if authority.introducedSpare then previousCleanupIds[#previousCleanupIds+1]=authority.introducedSpare.id end
- for _,resource in ipairs(authority.resources)do
-  previousCleanupIds[#previousCleanupIds+1]=resource.id
- end
- previousAuthority=authorityState
- step=step+1;phase='unequip';since=getTimestampMs()
- ids,state,authorityState,authority,window,owner,logic,tail,actions=nil,nil,nil,nil,nil,nil,nil,nil,nil
- progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
- returnsBeforeRead,localDeferrals,idle=nil,0,0
- interrupted,interruptionProgress=nil,nil
- removal,poolPhaseProof,manualMaterialIds,manualMaterialIdsAfterRemoval=nil,nil,nil,nil
- secondAllocated,secondStarted=false,false
- outcomeTrace={};tailProgress=false
+ advance(false)
 end
 Events.OnPlayerUpdate.Add(function(player)
  if started and player==getPlayer()then idle=#queue().queue==0 and not player:hasTimedActions()and idle+1 or 0 end

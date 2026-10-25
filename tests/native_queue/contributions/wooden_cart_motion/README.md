@@ -2,9 +2,9 @@
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
-Source fixtures are connected through `tools/queue_checks/adapters/carts.py`. The common runner stages fresh profiles, owns probe attachment and records captures separately from functional passes. The manifest retains historical intake metadata. `self_check.py` checks the manifest, files, Lua parsing and optional Java compilation. It never starts Project Zomboid.
+This guide covers single-player wooden cart motion captures and offline geometry analysis. The `carts` adapter stages the fixtures, owns the native run and reports capture evidence separately from functional results. `self_check.py` validates the manifest, files, Lua parsing and optional Kotlin/JVM compilation without starting Project Zomboid.
 
-The Java fixture supplies native keyboard input (`drive`, `gait`) and reads the current cart bank, root-speed ramp and animation tracks. `bootstrap.lua` equips carts, creates its HUD and prepares the disposable floor. `scenario-clips.lua` records 16 cases: two sexes, empty/full cargo, and comparison/direct Sprint/gait transitions plus a Run-stop control. The full 12-second records include turns, stops and returns to walking. It samples every 100 ms.
+The Kotlin fixture supplies native keyboard input (`drive`, `gait`) and reads the current cart bank, root-speed ramp and animation tracks. `bootstrap.lua` equips carts, creates its HUD and prepares the disposable floor. `scenario-clips.lua` records 16 cases: two sexes, empty/full cargo, and comparison/direct Sprint/gait transitions plus a Run-stop control. The full 12-second records include turns, stops and returns to walking. It samples every 100 ms.
 
 ## Common runner
 
@@ -115,7 +115,7 @@ The coordinates are the original B42.21 calibration, not portable world discover
 
 Create a **fresh, owned, disposable profile** with the manifest options/sandbox settings. Do not reuse a player save, delete an existing save automatically, or copy an old investigation profile. The fixture changes test inventory, clothing, Sprinting skill and floor tiles. It validates the complete footprint before creating floors and never clears unexpected objects.
 
-Compile `Main.java` against local B42.21 `projectzomboid.jar` and `ZombieBuddy.jar` with JDK 25+ and `--release 17`. Package it as a test-only `CartLab` mod exposing `net.alexredby.cartlab`; approve the exact JAR hash in the isolated ZombieBuddy config. The manifest records the original JVM/game arguments as adapter templates, not an executable launch command. Supply the platform runtime/native libraries and exactly one ZombieBuddy agent with `policy=deny-new`. The macOS first-thread flag is platform-specific.
+Compile `Main.kt` and the writable keyboard advice in `MainAdvice.java` through `tools/cart_jvm.py` against local B42.21 `projectzomboid.jar`, `ZombieBuddy.jar` and the candidate patch JAR. Use the pinned Kotlin 2.4.21 distribution (`KOTLIN_HOME`, or `--kotlin-home` for `self_check.py`) and JDK 25 with JVM target 25. The shared compiler bundles Kotlin under the private `net.alexredby.pztoolkitruntime.kotlin` namespace; runtime checks use that bundled runtime alongside the game's Kotlin. The preexisting Java checks retain direct JVM advice and native ABI coverage. Package it as a test-only `CartLab` mod exposing `net.alexredby.cartlab`; approve the exact JAR hash in the isolated ZombieBuddy config. The manifest records the original JVM/game arguments as adapter templates, not an executable launch command. Supply the platform runtime/native libraries and exactly one ZombieBuddy agent with `policy=deny-new`. The macOS first-thread flag is platform-specific.
 
 The live fixture requires Toolkit >=0.1.58 and JavaPatches >=0.1.15 **with the current candidate B42.21 cart-motion changes integrated**. Version numbers alone are insufficient: `cartLabRamp` reflects `State.pace`, `sprintMomentum`, `load`, `heading` and calls `CartLegPace.targetSpeed`. These APIs must be present in the selected candidate bytes; the rebased cart branch integrates them, while older main snapshots may not. A missing reflected member must remain an exception that stops the record, never an empty diagnostic or PASS.
 
@@ -131,7 +131,7 @@ python3 tests/native_queue/contributions/wooden_cart_motion/self_check.py \
   --game-java-dir "$PZ_GAME_JAVA_DIR" --jdk "$JAVA_HOME" --patch-jar "$PZ_PATCH_JAR"
 ```
 
-Lua syntax requires `luajit` or `lua` on PATH, or `--lua`. Java compilation requires both explicit dependency paths; omitted checks are reported as skipped. Compilation output goes to a temporary directory. There are no runtime binaries, saves, screenshots, videos, copied mods or game assets in this contribution.
+Lua syntax requires `luajit` or `lua` on PATH, or `--lua`. Kotlin/JVM compilation requires the explicit game, JDK and candidate patch paths plus Kotlin 2.4.21; omitted checks are reported as skipped. Compilation output goes to a temporary directory. There are no runtime binaries, saves, screenshots, videos, copied mods or game assets in this contribution.
 
 Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs one unique `COMPLETE` marker per selected case (16/20/20/24/20/32/20/20 for sprint/reverse/reversal/stop/stationary/maneuvers/collision/footprint), valid per-case windows and a matching `ALL_COMPLETE cases=N`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common adapter runs these probes and analyzers; missing instrumentation means **not verified**, not PASS.
 

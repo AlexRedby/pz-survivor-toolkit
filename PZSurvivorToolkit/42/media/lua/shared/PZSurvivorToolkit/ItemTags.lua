@@ -1,6 +1,7 @@
 local schema = require "PZSurvivorToolkit/ItemTagSchema"
 local planting = require "PZSurvivorToolkit/PlantingTags"
 local categories = require "PZSurvivorToolkit/ItemCategories"
+local Custom = require "PZSurvivorToolkit/TagCustomization"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
@@ -50,17 +51,60 @@ local function itemTags(category, fullType, script)
     return tags
 end
 
-function Tags.forScriptItem(script)
+function Tags.automaticForScriptItem(script)
     if not script then return {} end
     return itemTags(categories.forScript(script), script:getFullName(), script)
 end
 
-function Tags.forItem(item)
+function Tags.automaticForItem(item)
     if not item then return {} end
     -- Import the current instance category every time: fluids and other mods can change it.
     local category = item:getDisplayCategory() or (item.getCategory and item:getCategory())
     return itemTags(category, item.getFullType and item:getFullType(), item.getScriptItem and item:getScriptItem())
 end
+
+function Tags.forScriptItem(script)
+    if not script then return {} end
+    return Custom.project(Tags.automaticForScriptItem(script), script:getFullName())
+end
+
+function Tags.forItem(item)
+    if not item then return {} end
+    return Custom.project(Tags.automaticForItem(item), item.getFullType and item:getFullType(), item)
+end
+
+-- Cache only automatic script tags. World custom definitions are merged live.
+local automaticIds, automaticManager, automaticCount
+local function loadedAutomaticIds()
+    if not getScriptManager then return {} end
+    local manager = getScriptManager()
+    if not manager or not manager.getAllItems then return {} end
+    local scripts = manager:getAllItems()
+    if not scripts or not scripts.size or not scripts.get then return {} end
+    local count = scripts:size()
+    if automaticIds and automaticManager == manager and automaticCount == count then return automaticIds end
+    local ids = {}
+    for index = 0, count - 1 do
+        local script = scripts:get(index)
+        for _, id in ipairs(Tags.automaticForScriptItem(script)) do ids[id] = true end
+    end
+    automaticIds, automaticManager, automaticCount = ids, manager, count
+    return ids
+end
+
+function Tags.allIds(items)
+    local ids, seen = {}, {}
+    local function add(id) if not seen[id] then ids[#ids + 1], seen[id] = id, true end end
+    for _, id in ipairs(Custom.allIds()) do add(id) end
+    for id in pairs(loadedAutomaticIds()) do add(id) end
+    for _, item in ipairs(items or {}) do
+        for _, id in ipairs(Tags.automaticForItem(item)) do add(id) end
+    end
+    table.sort(ids)
+    return ids
+end
+function Tags.revision() return Custom.cacheRevision() end
+Tags.signature = signature
 
 function Tags.category(tags, originalKey)
     originalKey = originalKey or tags.legacyCategory
@@ -74,6 +118,18 @@ function Tags.category(tags, originalKey)
 end
 
 function Tags.label(id)
+    local definition = Custom.definition(id)
+    if definition and definition.name then
+        local label = definition.name
+        if definition.deleted then
+            label = label .. " (" .. ((getTextOrNull and getTextOrNull("UI_PZST_TagEdit_Deleted")) or "Deleted") .. ")"
+        end
+        return label
+    end
+    return Tags.defaultLabel(id)
+end
+
+function Tags.defaultLabel(id)
     if id:sub(1, 9) == "category:" then
         local category = id:sub(10)
         return (getTextOrNull and getTextOrNull("IGUI_ItemCat_" .. category)) or category
@@ -86,7 +142,7 @@ local function tagSet(categoryOrTags)
     local present = {}
     for _, id in ipairs(tags or {}) do present[id] = true end
     -- Saved exact-category filters survive a category gaining semantic tags later.
-    if tags and type(tags.legacyCategory) == "string" then present["category:" .. tags.legacyCategory] = true end
+    if tags and schema.categories[tags.legacyCategory] then present["category:" .. tags.legacyCategory] = true end
     return present
 end
 
@@ -121,7 +177,7 @@ function Tags.normalizeRule(value)
             count = count + 1
             if count > 64 or type(index) ~= "number" or index % 1 ~= 0 or index < 1 or index > 64
                 or type(id) ~= "string" or #id > 160 or id:find("[%z\1-\31]")
-                or (not schema.labels[id] and not id:match("^category:.+")) then
+                or not Custom.isValidId(id) then
                 return nil, "invalid tag"
             end
             if field == "exclude" and included[id] then return nil, "conflicting tags" end
@@ -141,12 +197,26 @@ function Tags.ruleActive(rule)
         and (#rule.include > 0 or #rule.exclude > 0)
 end
 
-function Tags.matchesRule(categoryOrTags, rule)
-    if type(rule) ~= "table" or (rule.mode ~= "all" and rule.mode ~= "any")
-        or type(rule.include) ~= "table" or type(rule.exclude) ~= "table" then return false end
-    local present = tagSet(categoryOrTags)
+local function validRule(rule)
+    return type(rule) == "table" and (rule.mode == "all" or rule.mode == "any")
+        and type(rule.include) == "table" and type(rule.exclude) == "table"
+end
+
+local function matchesRule(present, rule)
     for _, id in ipairs(rule.exclude) do if present[id] then return false end end
     return #rule.include == 0 or matchesSelection(present, rule.include, rule.mode)
+end
+
+function Tags.matchesRule(categoryOrTags, rule)
+    if not validRule(rule) then return false end
+    return matchesRule(tagSet(categoryOrTags), rule)
+end
+
+-- A private snapshot for callers comparing one classification against many rules.
+-- Keep it within the current operation; ordinary matchesRule reads remain live.
+function Tags.ruleMatcher(categoryOrTags)
+    local present = tagSet(categoryOrTags)
+    return function(rule) return validRule(rule) and matchesRule(present, rule) end
 end
 
 return Tags

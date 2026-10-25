@@ -17,6 +17,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import carts
+from queue_checks import runner
 
 
 class CartAdapterTests(unittest.TestCase):
@@ -53,23 +54,52 @@ class CartAdapterTests(unittest.TestCase):
         return cache
 
     @staticmethod
-    def compiler(command, **kwargs):
-        classes = Path(command[command.index('-d') + 1])
-        for source in [Path(value) for value in command if value.endswith('.java')]:
+    def compiler(jdk, classpath, classes, sources):
+        classes.mkdir(parents=True)
+        for source in map(Path, sources):
             target = classes / ('net/alexredby/cartlab/Main.class' if source.stem == 'Main' else source.stem + '.class')
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b'compiled test class')
-        return SimpleNamespace(returncode=0, stdout='', stderr='')
 
     def stage(self):
-        with patch.object(carts.subprocess, 'run', side_effect=self.compiler) as compiler:
+        with patch.object(carts, '_compile', side_effect=self.compiler) as compiler:
             carts.stage(ROOT, self.output, self.root / 'game', self.root / 'jdk', self.selection, self.locations, self.runtime)
+        for role, spec in self.runtime['roles'].items():
+            staged = spec.get('env', {})
+            admitted = runner._fixture_environment(self.selection, role, Path(spec['cache']), staged)
+            self.assertEqual({name: admitted[name] for name in staged}, staged)
+        self._last_compiler_calls=compiler.call_args_list
         return compiler
+
+    def test_entry_contact_repro_is_scoped_to_supported_public_menu_scenes(self):
+        self.selection['cases'] = ['approach']
+        self.options.update(cart_entry_contact_repro=True, cart_scenes=['container-equip', 'wrong-side'])
+        carts.validate(self.selection)
+        for change in ({'cart_entry_contact_repro': 'true'}, {'cart_scenes': ['wall-detour']}, {'cart_scenes': []}):
+            original = dict(self.options)
+            self.options.update(change)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'cart_entry_contact_repro'):
+                carts.validate(self.selection)
+            self.options.clear(); self.options.update(original)
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        with self.assertRaisesRegex(ValueError, 'cart_entry_contact_repro'):
+            carts.validate(self.selection)
+
+    def test_entry_sex_and_load_options_require_the_scoped_reproducer(self):
+        self.selection['cases']=['approach'];self.options.update(cart_entry_contact_repro=True,cart_scenes=['container-equip'])
+        for female in (False,True):
+            for load in ('empty','full'):
+                self.options.update(cart_entry_female=female,cart_entry_load=load)
+                carts.validate(self.selection)
+        for change in ({'cart_entry_female':'yes'},{'cart_entry_load':'partial'},{'cart_entry_contact_repro':False}):
+            original=dict(self.options);self.options.update(change)
+            with self.subTest(change=change),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
 
     def test_sp_stage_builds_three_sealed_agents_and_waits_for_owned_probe_gate(self):
         compiler = self.stage()
         self.assertEqual(compiler.call_count, 2)
-        self.assertTrue(all('--release' in call.args[0] and '17' in call.args[0] for call in compiler.call_args_list))
+        self.assertTrue(all(source.suffix in ('.kt', '.java') for call in compiler.call_args_list for source in map(Path, call.args[3])))
         spec = self.runtime['roles']['client1']
         runtime = Path(spec['env']['PZ_CART_RUNTIME_FILE'])
         text = runtime.read_text()
@@ -373,19 +403,63 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         with patch.object(carts, '_videos', return_value=[]):
             self.assertTrue(carts.verify(self.output,self.selection,{})['issues'])
 
+    def test_showcase_stages_native_capture_and_requires_ordered_gait_and_ownership(self):
+        self.selection['cases'] = ['showcase']
+        self.options.pop('mesh_fbx')
+        self.stage()
+        self.assertEqual(self.runtime['fixture']['attach'], {'client1': []})
+        source = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-showcase.lua').read_text(), source)
+        rows = []
+        for name in carts.scene_names('showcase'):
+            kind = carts.VARIANTS[name]
+            for phase in carts.SHOWCASE_PHASES:
+                ground = phase == 'putdown'
+                rows.append(dict(case=name, kind=kind, phase=phase, id=42, cargoIDs='99:Base.Log:1', cargoWeight=1,
+                    primaryID=-1 if ground else 42, secondaryID=-1 if ground else 42,
+                    inventoryCount=int(not ground), worldCount=int(ground), luaActions=0, nativeActions=0,
+                    hasPath=False, elapsed=1500, distance=1, gaitSeen=True))
+        def log(records):
+            return '\n'.join('[CART_SHOWCASE] PHASE ' + json.dumps(row) for row in records)
+        self.assertTrue(carts._showcase_coverage(log(rows), carts.scene_names('showcase'))['requestedPhasesCaptured'])
+        for index, key, value in ((1, 'gaitSeen', False), (2, 'distance', 0), (3, 'id', 43),
+                                  (8, 'worldCount', 0), (8, 'secondaryID', 42)):
+            bad = [dict(row) for row in rows]; bad[index][key] = value
+            with self.assertRaises(ValueError):
+                carts._showcase_coverage(log(bad), carts.scene_names('showcase'))
+        with self.assertRaises(ValueError):
+            carts._showcase_coverage(log(rows[:-1]), carts.scene_names('showcase'))
+
     def test_manual_sp_rejects_automatic_scene_selection(self):
         self.selection['cases'] = ['manual']
         self.options['cart_scenes'] = ['male-full-corner']
         with self.assertRaisesRegex(ValueError, 'cart_scenes'):
             carts.validate(self.selection)
 
-    def test_controls_stage_real_keys_without_geometry_probes(self):
+    def test_controls_stage_real_keys_with_grip_capture_without_geometry_probes(self):
         self.selection['cases'] = ['controls']; self.options.pop('mesh_fbx')
         with patch.object(carts.importlib, 'import_module', side_effect=ModuleNotFoundError('numpy')) as dependency:
             compiler = self.stage()
         dependency.assert_not_called()
-        self.assertEqual(compiler.call_count, 1)
-        self.assertEqual(self.runtime['fixture']['attach'], {'client1': []})
+        self.assertEqual(compiler.call_count, 2)
+        self.assertEqual({Path(source).name for source in compiler.call_args_list[1].args[3]},
+                         {'GripPoseProbe.java', 'AttachWoodenWheelProbe.java'})
+        attaches = self.runtime['fixture']['attach']['client1']
+        self.assertEqual(len(attaches), 1)
+        attachment = attaches[0]
+        self.assertEqual(Path(attachment['jar']), self.output / 'client1/classes/probes/GripPoseProbe.jar')
+        self.assertEqual(attachment['class'], 'AttachWoodenWheelProbe')
+        self.assertEqual(attachment['output'], str(self.output / 'client1'))
+        self.assertEqual(attachment['ready'], '[CART_ADAPTER] PROBE_ATTACH_READY')
+        self.assertTrue((self.output / 'client1/classes/AttachWoodenWheelProbe.class').is_file())
+        with zipfile.ZipFile(attachment['jar']) as jar:
+            self.assertIn(b'Agent-Class: GripPoseProbe', jar.read('META-INF/MANIFEST.MF'))
+            self.assertIn('GripPoseProbe.class', jar.namelist())
+            self.assertNotIn('ClearanceProbe.class', jar.namelist())
+            self.assertNotIn('WoodenWheelNativeProbe.class', jar.namelist())
+        startup = (self.output / 'client1/mods/ActionQueueTest/42/media/lua/client/QueueCartStartup.lua').read_text()
+        self.assertIn("getFileReader('queue-probes-ready.txt',false)", startup)
+        self.assertFalse((self.output / 'client1/Lua/queue-probes-ready.txt').exists())
         self.assertEqual(carts.scene_names('controls'), list(carts.VARIANTS))
         source = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-controls.lua').read_text()
         runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE'])
@@ -394,9 +468,9 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.assertIn('heading=cartLabHeading()', source)
         self.assertIn('acceptedHeading=cartLabSteeringHeading()', source)
         self.assertIn('frame=cartLabFrame()', source)
-        bridge = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/Main.java').read_text()
-        self.assertIn('@LuaMethod(name="cartLabFrame", global=true)', bridge)
-        self.assertIn('return zombie.iso.IsoWorld.instance.getFrameNo();', bridge)
+        bridge = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/Main.kt').read_text()
+        self.assertIn('@LuaMethod(name="cartLabFrame",global=true)', ''.join(bridge.split()))
+        self.assertIn('fun frame() = zombie.iso.IsoWorld.instance.getFrameNo()', bridge)
         self.assertNotIn('setVariable(', source)
         for phase, drive, gait, duration in carts.CONTROL_PHASES:
             self.assertIn("name='" + phase + "',drive=" + str(drive) + ',gait=' + str(gait) + ',duration=' + str(duration), source)
@@ -583,13 +657,78 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.assertFalse(row['outcome']['animationEquivalencePass'])
             self.assertFalse(row['outcome']['evidenceComplete'])
 
-    def test_mp_stage_composes_original_methods_and_identical_selection(self):
+    def test_lifecycle_is_separate_host_case_without_render_or_other_banks(self):
+        self.selection.update(suite=carts.MP,cases=['lease_lifecycle'],kind='mp',languages=['EN','RU'])
+        self.options['mp_host']=True
+        self.role('client2');self.role('server')
+        compiler=self.stage()
+        self.assertEqual(compiler.call_count,1)
+        for role in ('server','client1','client2'):
+            env=self.runtime['roles'][role]['env']
+            self.assertEqual(env['PZ_CART_LEASE_CONTROL'],'true')
+            self.assertEqual(env['PZ_CART_LEASE_LIFETIME'],'true')
+            self.assertNotIn('PZ_CART_TIMELINE',env)
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertTrue((lua/'shared/CartLeaseLifecycle.lua').is_file())
+            self.assertTrue((lua/'shared/CartLeaseProtocol.lua').is_file())
+            self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+            self.assertFalse((lua/'shared/CartLeaseLifetimes.lua').exists())
+            entry=lua/('server/ZZCartMP_Server.lua' if role=='server' else 'client/ZZCartMP.lua')
+            self.assertEqual(entry.read_text(),"require 'CartLeaseLifecycle'\n")
+        self.assertEqual(self.runtime['fixture']['attach'],{'client1':[],'client2':[]})
+        self.assertTrue(carts.complete(self.selection,'client2','[CART_LIFECYCLE] COMPLETE actor=client2\n{"event":"complete"}'))
+        self.assertFalse(carts.complete(self.selection,'client2','[CART_MP] COMPLETE actor=client2\n{"event":"complete"}'))
+        for key,value in [('mp_host',False),('mp_host','true'),('cart_timeline',True),('cart_fast_motion',True),
+                          ('cart_actions',True),('cart_inventory_equip',True),('cart_lease_control',True),
+                          ('cart_lease_lifetimes',True),('cart_variant','metal-wheelbarrow'),('cart_wall_exit','front')]:
+            prior=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(prior)
+
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT required for startup callbacks')
+    def test_lifecycle_checkpoint_blocks_only_owned_guest_duplicate_reconnect(self):
+        source=ROOT/'tests/native_queue/startup/client/ZZStartup.lua'
+        script=r'''
+local source=SOURCE
+for _,case in ipairs({'lease_lifecycle','owner_observer_motion'}) do
+ for _,user in ipairs({'client1','client2'}) do
+  for _,checkpoint in ipairs({'pending','connecting','verified','absent'}) do
+   local callbacks,connects,hosts={},0,0
+   package.loaded.QueueTestSelection=nil
+   package.preload.QueueTestSelection=function()return {kind='mp',cases={case},options={mp_host=true},resources={heap_mib=2048}}end
+   Events={};for _,name in ipairs({'OnCoopServerMessage','OnMainMenuEnter','OnPreUIDraw','OnConnectFailed','OnGameStart','OnTick'}) do
+    Events[name]={Add=function(fn)callbacks[name]=fn end}
+   end
+   isClient=function()return false end
+   getFileReader=function(name,create)
+    assert(create==false)
+    local value=name=='smoke-user.txt' and user or checkpoint~='absent' and checkpoint or nil
+    if not value then return nil end
+    return {readLine=function()return value end,close=function()end}
+   end
+   getSteamModeActive=function()return false end
+   CoopConnection={};CoopServer={launch=function()hosts=hosts+1 end}
+   ConnectToServer={instance={connect=function()connects=connects+1 end}};MainScreen={instance={}}
+   assert(loadfile(source))();callbacks.OnMainMenuEnter()
+   if user=='client1' then assert(hosts==1 and connects==0)
+   elseif case=='lease_lifecycle' and (checkpoint=='pending' or checkpoint=='connecting') then assert(connects==0 and hosts==0)
+   else assert(connects==1 and hosts==0) end
+  end
+ end
+end
+print('STARTUP_REJOIN_GUARD_PASS')
+'''.replace('SOURCE',json.dumps(str(source)))
+        result=subprocess.run([shutil.which('luajit'),'-'],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('STARTUP_REJOIN_GUARD_PASS',result.stdout)
+
+    def test_mp_stage_compiles_shared_kotlin_modules_and_identical_selection(self):
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
         self.role('client2'); server = self.role('server')
         self.stage()
-        source = (self.output / 'cart-build/Main.java').read_text()
-        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_multiplayer/MPMain.methods').read_text(), source)
-        self.assertEqual(source.count('    public static void main(String[] args)'), 1)
+        source = (self.output / 'cart-build/Main.kt').read_text()
+        self.assertEqual(source.count('Multiplayer.startup()'), 1)
+        self.assertEqual(source.count('fun main(args: Array<String>)'), 1)
         relative = 'mods/ActionQueueTest/42/media/lua/shared/QueueTestSelection.lua'
         self.assertEqual((server / relative).read_bytes(), (self.output / 'client1' / relative).read_bytes())
         for role in ('client1', 'client2'):
@@ -607,6 +746,275 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.assertNotIn('server', self.runtime['fixture']['attach'])
         for role in ('client1', 'client2', 'server'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TEST_PAD'], 'false')
+            self.assertNotIn('PZ_CART_TIMELINE', self.runtime['roles'][role]['env'])
+            lua = self.output / role / 'mods/ActionQueueTest/42/media/lua'
+            self.assertFalse(any(lua.rglob('*InventoryEquip*.lua')))
+
+    def test_mp_timeline_requires_explicit_boolean_and_enables_all_owned_roles(self):
+        self.options['cart_timeline']=True
+        with self.assertRaisesRegex(ValueError,'MP boolean'): carts.validate(self.selection)
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options['cart_timeline']='true'
+        with self.assertRaisesRegex(ValueError,'MP boolean'): carts.validate(self.selection)
+        self.options['cart_timeline']=True
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TIMELINE'],'true')
+        self.assertIn(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/analyze-timeline.py',
+                      carts.sources(ROOT,self.selection))
+
+    def test_lease_control_is_explicit_held_host_probe_with_owned_sources(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_control=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_control'):carts.validate(self.selection)
+        self.options.update(cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_LEASE_CONTROL'],'true')
+            self.assertNotIn('PZ_CART_LEASE_LIFETIME',self.runtime['roles'][role]['env'])
+            self.assertFalse((self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseLifetimes.lua').exists())
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua/shared'
+            for origin,target in [('lease-protocol.lua','CartLeaseProtocol.lua'),('lease-probe.lua','CartLeaseProbe.lua')]:
+                self.assertEqual((lua/target).read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer'/origin).read_bytes())
+        for key,value in [('cart_lease_control','true'),('mp_host',False),('cart_timeline',False),('cart_fast_motion',False),
+                          ('cart_actions',True),('cart_inventory_equip',True),('cart_wall_exit','front')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_equipment_lifetimes_are_separately_selected_and_source_sealed(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_lifetimes=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_lifetimes'):carts.validate(self.selection)
+        self.options.update(cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('server','client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_LEASE_LIFETIME'],'true')
+            path=self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseLifetimes.lua'
+            self.assertEqual(path.read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-lifetimes.lua').read_bytes())
+        source=(self.output/'cart-build/Main.kt').read_text()
+        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/EquipmentLifetime.kt'
+        self.assertIn(path, [p for call in self._last_compiler_calls for p in call.args[3]]);self.assertIn(path,carts.sources(ROOT,self.selection))
+        for key,value in [('cart_lease_lifetimes','true'),('cart_lease_control',False),('cart_time_alignment',True),('cart_hotkey_setdown',True)]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_menu_lifetime_bank_is_explicit_and_stages_owner_driver_only_on_clients(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_menu=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_menu'):carts.validate(self.selection)
+        self.options.update(cart_lease_lifetimes=True,cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        failure='LOG : Lua > [CART_LEASE_LIFETIME] ERROR attempted index: enqueue of non-table: null java.lang.RuntimeException'
+        self.assertTrue(any(marker in failure for marker in self.runtime['fixture']['failure_markers']))
+        for role in ('client1','client2'):
+            path=self.output/role/'mods/ActionQueueTest/42/media/lua/client/CartLeaseMenuActions.lua'
+            self.assertEqual(path.read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-menu-actions.lua').read_bytes())
+        self.assertFalse((self.output/'server/mods/ActionQueueTest/42/media/lua/client/CartLeaseMenuActions.lua').exists())
+        for key,value in [('cart_lease_menu','true'),('cart_lease_lifetimes',False),('cart_variant','metal-wheelbarrow')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_initial_inventory_entry_requires_menu_chain_and_stages_only_selected_endpoints(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_inventory=True)
+        with self.assertRaisesRegex(ValueError,'cart_lease_inventory'):carts.validate(self.selection)
+        self.options.update(cart_lease_menu=True,cart_lease_lifetimes=True,cart_lease_control=True,
+                            cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertEqual((lua/'shared/CartLeaseInventoryState.lua').read_bytes(),
+                (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/lease-inventory-state.lua').read_bytes())
+            self.assertFalse((lua/'client/CartMPInventoryEquipClient.lua').exists())
+            self.assertEqual(self.runtime['roles'][role]['env'].get('PZ_CART_INVENTORY_EQUIP'),
+                             None if role=='server' else 'true')
+        for key,value in [('cart_lease_inventory','true'),('cart_lease_menu',False),('cart_lease_control',False),
+                          ('cart_inventory_equip',True),('cart_actions',True),('cart_variant','shopping-cart')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_incomplete_initial_inventory_report_is_rejected_after_lifetime_analysis(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_lease_inventory=True,cart_lease_menu=True,cart_lease_lifetimes=True,
+                            cart_lease_control=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        for role in ('client1','client2'):
+            (self.output/(role+'-launch.log')).write_text('selected capture')
+        calls=[]
+        def load(path):
+            def analyze(*args):
+                calls.append((path.name,args))
+                return dict(evidenceComplete=path.name!='analyze-inventory-entry.py')
+            return SimpleNamespace(analyze=analyze)
+        with patch.object(carts,'complete',return_value=True),patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',side_effect=load):
+            result=carts.verify(self.output,self.selection,{})
+        self.assertIn('Incomplete initial inventory entry evidence',result['issues'])
+        entry=next(args for name,args in calls if name=='analyze-inventory-entry.py')
+        self.assertEqual(entry[1],{'evidenceComplete':True})
+        self.assertNotIn('inventoryEntry',result.get('evidence',{}))
+
+    def test_inventory_entry_endpoint_and_probe_are_absent_from_default_motion(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            self.assertFalse((self.output/role/'mods/ActionQueueTest/42/media/lua/shared/CartLeaseInventoryState.lua').exists())
+            self.assertNotIn('PZ_CART_INVENTORY_EQUIP',self.runtime['roles'][role]['env'])
+
+    def test_action_invalidation_is_isolated_and_seals_native_fixture_inputs(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_action_invalidation=True,mp_host=True,cart_timeline=True,cart_fast_motion=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            env=self.runtime['roles'][role]['env']
+            for name in ('PZ_CART_LEASE_CONTROL','PZ_CART_ACTION_ADMISSION','PZ_CART_ACTION_INVALIDATION'):
+                self.assertEqual(env[name],'true')
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertEqual((lua/'shared/CartActionInvalidation.lua').read_bytes(),
+                (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/action-invalidation.lua').read_bytes())
+            self.assertEqual((lua/'client/CartLeaseMenuActions.lua').exists(),role!='server')
+            self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+            self.assertFalse((lua/'shared/CartLeaseLifetimes.lua').exists())
+            self.assertFalse((lua/'client/CartActionAdmissionProbe.lua').exists())
+        for key,value in [('cart_action_invalidation','true'),('mp_host',False),('cart_timeline',False),
+                          ('cart_fast_motion',False),('cart_actions',True),('cart_action_admission',True),
+                          ('cart_lease_control',True),('cart_lease_menu',True),('cart_variant','shopping-cart')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_action_admission_stages_probe_only_for_explicit_native_action_bank(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_action_admission=True)
+        with self.assertRaisesRegex(ValueError,'cart_action_admission'):carts.validate(self.selection)
+        self.options.update(cart_timeline=True,cart_fast_motion=True,cart_actions=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('server','client1','client2'):
+            env=self.runtime['roles'][role]['env']
+            self.assertEqual(env['PZ_CART_ACTION_ADMISSION'],'true');self.assertEqual(env['PZ_CART_LEASE_CONTROL'],'true')
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            for layer in ('client','server'):
+                self.assertEqual((lua/layer/'CartActionAdmissionProbe.lua').read_bytes(),
+                    (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/action-admission.lua').read_bytes())
+            self.assertFalse((lua/'shared/CartLeaseProbe.lua').exists())
+            self.assertNotIn('PZ_CART_OBSERVER_ASSOCIATION',env)
+        for key,value in [('cart_action_admission','true'),('cart_actions',False),('cart_fast_motion',False),
+                          ('cart_time_alignment',True),('cart_lease_control',True),('cart_inventory_equip',True)]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_observer_marker_is_explicit_and_requires_exact_admission_bank(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_observer_association=True)
+        with self.assertRaisesRegex(ValueError,'cart_observer_association'):carts.validate(self.selection)
+        self.options.update(cart_action_admission=True,cart_actions=True,cart_timeline=True,cart_fast_motion=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('server','client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_OBSERVER_ASSOCIATION'],'true')
+        source=(self.output/'cart-build/Main.kt').read_text()
+        path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/ObserverAssociation.kt'
+        self.assertIn(path, [p for call in self._last_compiler_calls for p in call.args[3]]);self.assertIn(path,carts.sources(ROOT,self.selection))
+        params=path.with_name('ObserverParams.kt')
+        self.assertIn(params, [p for call in self._last_compiler_calls for p in call.args[3]]);self.assertIn(params,carts.sources(ROOT,self.selection))
+        self.assertIn(path.with_name('ObserverParamsBootstrap.kt'),carts.sources(ROOT,self.selection))
+        for key,value in [('cart_observer_association','true'),('cart_action_admission',False),('cart_actions',False),
+                          ('cart_timeline',False),('cart_fast_motion',False),('mp_host',False)]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_partial_observer_draw_report_is_preserved_and_rejected(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_observer_association=True,cart_action_admission=True,cart_timeline=True)
+        for role in ('client1','client2'):
+            (self.output/(role+'-launch.log')).write_text('selected capture')
+        partial=dict(evidenceComplete=False,proxyCoverageComplete=True,sampledDrawCoverageComplete=False,
+                     activeFrozenPhaseCount=2,failures=['four phases have no active paired draws'])
+        def load(path):
+            report=partial if path.name=='analyze-observer.py' else dict(evidenceComplete=True)
+            return SimpleNamespace(analyze=lambda root:report)
+        with patch.object(carts,'complete',return_value=True),patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',side_effect=load):
+            report=carts.verify(self.output,self.selection,{})
+        self.assertIn('Incomplete native observer association evidence',report['issues'])
+        self.assertEqual(report['evidence']['observerAssociation'],partial)
+        self.assertTrue(all(row['status']=='failed' and not row['outcome']['evidenceComplete'] for row in report['outcomes']))
+        saved=list((self.output/'analysis').rglob('mp-observer-association.json'))
+        self.assertEqual(len(saved),1);self.assertEqual(json.loads(saved[0].read_text()),partial)
+
+    def test_native_time_sampling_requires_separate_host_optin_and_stages_clients_only(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(cart_time_alignment=True)
+        with self.assertRaisesRegex(ValueError,'cart_time_alignment'):carts.validate(self.selection)
+        self.options.update(cart_timeline=True,mp_host=True)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TIME_ALIGNMENT'],'true')
+        self.assertNotIn('PZ_CART_TIME_ALIGNMENT',self.runtime['roles']['server']['env'])
+        source=(self.output/'cart-build/Main.kt').read_text()
+        for name in ('NativeTime.kt','ClockTime.kt'):
+            path=ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer'/name
+            self.assertIn(path, [p for call in self._last_compiler_calls for p in call.args[3]])
+            self.assertIn(path,carts.sources(ROOT,self.selection))
+        for key,value in [('cart_time_alignment','true'),('mp_host',False),('cart_inventory_equip',True),('cart_actions',True),('cart_wall_exit','front')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+
+    def test_mp_inventory_equip_explicit_false_does_not_stage_autoloading_modules(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(mp_host=True,cart_inventory_equip=False)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2','server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertFalse(any(lua.rglob('*InventoryEquip*.lua')))
+            self.assertTrue((lua/'client/ZZCartMP.lua').is_file())
+            self.assertTrue((lua/'server/ZZCartMP_Server.lua').is_file())
+
+    def test_mp_inventory_equip_requires_an_isolated_host_bank_and_stages_it(self):
+        self.options.update(cart_inventory_equip=True, mp_host=True)
+        with self.assertRaisesRegex(ValueError, 'MP boolean'): carts.validate(self.selection)
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        for variant in ('female-empty','female-full','male-empty','male-full'):
+            self.options['cart_inventory_equip_variant']=variant;carts.validate(self.selection)
+        for key,value in [('mp_host',False),('cart_inventory_equip','true'),('cart_variant','metal-wheelbarrow'),
+                          ('cart_actions',True),('cart_fast_motion',True),('cart_wall_exit','left'),
+                          ('cart_hotkey_key',18),('cart_inventory_equip_variant','unknown')]:
+            original=dict(self.options);self.options[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):carts.validate(self.selection)
+            self.options.clear();self.options.update(original)
+        self.role('client2');self.role('server');self.stage()
+        for role in ('client1','client2'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_INVENTORY_EQUIP'],'true')
+        self.assertNotIn('PZ_CART_INVENTORY_EQUIP',self.runtime['roles']['server']['env'])
+        for role in ('client1','client2','server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            for source,target in [('inventory-equip-client.lua','client/CartMPInventoryEquipClient.lua'),
+                                  ('inventory-equip-server.lua','server/CartMPInventoryEquipServer.lua'),
+                                  ('inventory-equip-protocol.lua','shared/CartMPInventoryEquipProtocol.lua')]:
+                self.assertEqual((lua/target).read_bytes(),(ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer'/source).read_bytes())
+
+    def test_mp_inventory_equip_uses_dedicated_receipts_and_rejects_missing_evidence(self):
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        self.options.update(mp_host=True,cart_inventory_equip=True,cart_inventory_equip_variant='female-empty')
+        self.role('client2')
+        for role in ('client1','client2'):
+            (self.output/role/'console.txt').write_text('[CART_MP] VIDEO_FINAL {}\n{"event":"complete"}\n')
+        seen=[]
+        def analyze(root,selection):
+            seen.append((root,selection));return dict(evidenceComplete=True,scope='selected native Host')
+        with patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',return_value=SimpleNamespace(analyze=analyze)) as loader:
+            result=carts.verify(self.output,self.selection,{})
+        self.assertEqual(loader.call_args.args[0].name,'analyze-inventory-equip.py')
+        self.assertEqual(len(seen),1)
+        self.assertEqual([row['status'] for row in result['outcomes']],['captured','captured'])
+        with patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_load',return_value=SimpleNamespace(analyze=lambda *args:dict(evidenceComplete=False))):
+            result=carts.verify(self.output,self.selection,{})
+        self.assertTrue(all(row['status']=='failed' for row in result['outcomes']))
+        self.assertFalse(result['outcomes'][0]['outcome']['evidenceComplete'])
 
     def test_mp_action_module_is_staged_only_for_its_selected_bank(self):
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
@@ -642,9 +1050,9 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.assertEqual((lua/'shared/CartMPWall.lua').read_bytes(),
                 (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/wall.lua').read_bytes())
         self.assertTrue(any(path.name=='analyze-wall.py' for path in carts.sources(ROOT,self.selection)))
-        self.assertIn(ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java', carts.sources(ROOT,self.selection))
+        self.assertIn(ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.kt', carts.sources(ROOT,self.selection))
 
-    def test_cart_variant_requires_exact_enum_and_calibrated_wheelbarrow_for_actions(self):
+    def test_cart_variant_requires_exact_enum_and_allows_three_action_families(self):
         self.options['cart_variant'] = 'wooden-wheelbarrow'
         carts.validate(self.selection)
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
@@ -656,9 +1064,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.options.update(cart_variant=variant, cart_actions=False, cart_fast_motion=True)
             carts.validate(self.selection)
             self.options['cart_actions'] = True
-            if variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'): carts.validate(self.selection)
-            else:
-                with self.assertRaisesRegex(ValueError, 'requires a calibrated wheelbarrow'): carts.validate(self.selection)
+            carts.validate(self.selection)
         self.options.pop('cart_variant'); self.options['cart_actions'] = True
         carts.validate(self.selection)
 
@@ -670,7 +1076,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
                 self.selection['cases'] = [case]
                 self.options['cart_scenes'] = carts.scene_names(case)[:1]
                 compiler = self.stage()
-                sources = [value for call in compiler.call_args_list for value in call.args[0] if value.endswith('.java')]
+                sources = [str(value) for call in compiler.call_args_list for value in call.args[3] if value.suffix == '.java']
                 self.assertFalse(any(value.endswith('WoodenWheelNativeProbe.java') for value in sources))
                 self.assertTrue(any(value.endswith('GripPoseProbe.java') for value in sources))
                 self.assertTrue(any(value.endswith('ClearanceProbe.java') for value in sources))
@@ -694,7 +1100,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
                 self.output = self.root / ('shopping-' + case); self.output.mkdir(); self.role('client1')
                 self.selection['cases'] = [case]; self.options['cart_scenes'] = carts.scene_names(case)[:1]
                 compiler = self.stage()
-                sources = [value for call in compiler.call_args_list for value in call.args[0] if value.endswith('.java')]
+                sources = [str(value) for call in compiler.call_args_list for value in call.args[3] if value.suffix == '.java']
                 self.assertFalse(any(value.endswith('WoodenWheelNativeProbe.java') for value in sources))
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3 if case == 'wheel' else 2)
                 self.assertEqual(any(value.endswith('ShoppingWheelProbe.java') for value in sources), case == 'wheel')
@@ -988,7 +1394,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'injury', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
+                         ['sprint', 'reverse', 'injury', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'showcase', 'native-e'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('approach', 7), ('interruption-fast', 14), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
@@ -1429,6 +1835,94 @@ end
             self.assertIn('["scenes"]={'+','.join(json.dumps(name) for name in names)+'}',text)
             self.assertNotIn('\"male-empty-',text.splitlines()[0])
             self.assertNotIn('\"male-full-',text.splitlines()[0])
+
+    def test_direct_fast_walk_requires_boolean_in_sp_sprint(self):
+        self.selection['cases'] = ['sprint']
+        for value in (False, True):
+            self.options['cart_direct_fast_walk'] = value
+            carts.validate(self.selection)
+        for value in ('true', 1, None):
+            self.options['cart_direct_fast_walk'] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'cart_direct_fast_walk'):
+                carts.validate(self.selection)
+        for value in (False, True):
+            self.options['cart_direct_fast_walk'] = value
+            self.selection['cases'] = ['reverse']
+            with self.assertRaisesRegex(ValueError, 'SP sprint'):
+                carts.validate(self.selection)
+            self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+            with self.assertRaisesRegex(ValueError, 'SP sprint'):
+                carts.validate(self.selection)
+            self.selection.update(suite=carts.SP, cases=['sprint'], kind='sp', languages=['RU'])
+
+    def test_direct_fast_walk_stages_default_false_and_preserves_scene_ids(self):
+        self.selection['cases'] = ['sprint']
+        names = carts.scene_names('sprint')
+        self.assertEqual(len(names), 16)
+        gait_names = ['male-empty-gait-left', 'male-full-gait-right',
+                      'female-empty-gait-left', 'female-full-gait-right']
+        self.assertEqual([name for name in names if '-gait-' in name], gait_names)
+        for index, value in enumerate((None, False, True)):
+            with self.subTest(value=value):
+                self.output = self.root / ('direct-fast-walk-' + str(index))
+                self.output.mkdir()
+                self.role('client1')
+                self.runtime.pop('fixture', None)
+                if value is None:
+                    self.options.pop('cart_direct_fast_walk', None)
+                else:
+                    self.options['cart_direct_fast_walk'] = value
+                self.options['cart_scenes'] = gait_names
+                self.stage()
+                text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+                self.assertIn('["directFastWalk"]=' + str(value is True).lower(), text.splitlines()[0])
+                self.assertEqual(carts.selected_scenes(self.selection), gait_names)
+                self.assertEqual(carts.scene_names('sprint'), names)
+                paths = carts.sources(ROOT, self.selection)
+                self.assertIn(Path(carts.__file__), paths)
+                self.assertIn(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-clips.lua', paths)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required for actual sprint bank plan')
+    def test_direct_fast_walk_changes_only_two_gait_steps_in_actual_lua_plan(self):
+        source = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-clips.lua').read_text()
+        plan = source[source.index('local cases={}'):source.index('cases=CartLabSelectScenes(cases)')]
+        script = r'''
+local chunk=ACTUAL_PLAN..'\nreturn cases'
+local function plan(config)
+ local loader=assert(loadstring(chunk))
+ setfenv(loader,{config=config,ipairs=ipairs,assert=assert})
+ return loader()
+end
+local default,disabled,enabled=plan({}),plan({directFastWalk=false}),plan({directFastWalk=true})
+assert(#default==16 and #disabled==16 and #enabled==16)
+local changed=0
+for i,original in ipairs(default) do
+ local off,on=disabled[i],enabled[i]
+ assert(original.name==off.name and original.name==on.name,'scene ID changed')
+ assert(#original.steps==#off.steps and #original.steps==#on.steps)
+ local seen={}
+ for j,step in ipairs(original.steps) do
+  for field=1,3 do
+   assert(off.steps[j][field]==step[field],'explicit false changed default plan')
+   local expected=step[field]
+   if original.spec=='gait' and field==2 and step[1]==6300 then expected=0;changed=changed+1 end
+   if original.spec=='gait' and field==2 and step[1]==8500 then expected=1;changed=changed+1 end
+   assert(on.steps[j][field]==expected,'unexpected schedule change: '..original.name)
+  end
+  if on.steps[j][2]~=nil then seen[on.steps[j][2]]=true end
+ end
+ if original.spec=='gait' then
+  assert(seen[0] and seen[1] and seen[2],'gait coverage lost')
+  assert(on.steps[2][2]==1 and on.steps[3][2]==2 and on.steps[5][2]==0 and on.steps[6][2]==1)
+  assert(on.steps[#on.steps][3]==0,'final stop lost')
+ end
+end
+assert(changed==8,'expected two changed steps in each of four gait scenes')
+print('PASS actual sprint plan default/false/direct with unchanged scene IDs')
+'''.replace('ACTUAL_PLAN', json.dumps(plan))
+        result = subprocess.run([shutil.which('luajit'), '-'], input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS actual sprint plan', result.stdout)
 
     def test_authored_clip_pilot_is_explicit_sp_boolean(self):
         for bad in ('true', 1, None):

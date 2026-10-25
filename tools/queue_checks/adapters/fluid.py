@@ -8,13 +8,20 @@ import shutil
 from . import craft
 
 EDIT_CASE = 'fluid-bag-edit-pickup-return-favorite'
+EMPTY_MOVE_CASE = 'fluid-empty-move-independent'
+EMPTY_CANCEL_CASE = 'fluid-empty-cancel-waiting'
+EMPTY_DEPENDENCY_CASE = 'fluid-empty-drink-dependency'
+EMPTY_CASES = (EMPTY_MOVE_CASE, EMPTY_CANCEL_CASE, EMPTY_DEPENDENCY_CASE)
+DIRECT_EMPTY_CASE = 'fluid-empty-direct-independent-tail'
+DIRECT_ALL_CASE = 'fluid-root-all-independent-tail'
+DIRECT_CASES = (DIRECT_EMPTY_CASE, DIRECT_ALL_CASE)
 CASES = ['fluid-bag', 'fluid-root', 'fluid-bag-favorite', 'fluid-root-favorite',
          'fluid-bag-all-favorite', 'fluid-bag-quarter-favorite', 'fluid-bag-smart-favorite',
          'fluid-bag-sip-favorite', 'fluid-bag-second-favorite', 'fluid-bag-pair-queued-favorite',
          'fluid-bag-pair-serial-favorite', 'fluid-bag-smart-low-favorite',
          'fluid-bag-full-favorite', 'fluid-root-full-favorite',
          'fluid-bag-same-serial-favorite', 'fluid-root-same-queued-favorite',
-         'fluid-root-cancel-waiting-favorite', 'fluid-bag-cancel-waiting-favorite', EDIT_CASE]
+         'fluid-root-cancel-waiting-favorite', 'fluid-bag-cancel-waiting-favorite', EDIT_CASE, *EMPTY_CASES, *DIRECT_CASES]
 MODS = craft.MODS + ['Drink_Smart']
 RECEIPT_KEYS = {'bagId', 'bagType', 'thirst', 'bottles', 'foodLevel'}
 BAG_TYPE = 'Base.Bag_ALICEpack_Army'
@@ -23,7 +30,7 @@ BAG_TYPE = 'Base.Bag_ALICEpack_Army'
 def definitions():
     groups = {
         'drink-portions': ('Native portions from root or a worn military backpack; favorite bottles, queued halves and serial quarters with native SP/Host semantics and waiting cancellation.',
-                           [case for case in CASES if '-smart-' not in case and '-sip-' not in case and case != EDIT_CASE]),
+                           [case for case in CASES if '-smart-' not in case and '-sip-' not in case and case != EDIT_CASE and case not in EMPTY_CASES and case not in DIRECT_CASES]),
         'drink-smart': ('Drink Smart from a worn military backpack with favorite bottles at normal and low thirst.',
                         [case for case in CASES if '-smart-' in case]),
         'drink-sip': ('Drink Smart sip from a worn military backpack with favorite bottles.',
@@ -49,6 +56,20 @@ def definitions():
             'move-dependent': {EDIT_CASE: {'dependentPickupProtected': True, 'effectsVerified': True}},
             'server-authority': {EDIT_CASE: {'serverAuthorityVerified': True, 'effectsVerified': True}},
         }}
+    actions['empty-water'] = {
+        'scope': 'Direct raw native emptying starts with a truly empty queue, then queues an independent native menu Half drink only once emptying is running. Raw native ISFluidEmptyAction on exact carried root Base.WaterBottle clean-water containers, queued behind a real native half-drink from separate bottle A. Move independent pending empty C before B, cancel waiting B while C finishes, or reject moving Empty B ahead of its required native half-drink. Disabled controls retain original order. Exact client/server IDs, counts, root sources, native weights, water amounts, captured amount, progress and unmodified constructor durations are checked. The dependency records B after drinking before emptying; discarded water does not reduce thirst. No empty-menu or physical input, active cancellation, world endpoints or transfer-capacity coverage.',
+        'mods': MODS, 'checks': {
+            'success-empty': {DIRECT_EMPTY_CASE: {'directFluidTailVerified': True, 'effectsVerified': True}},
+            'success-queued': {case: {'pendingEmptyVerified': True, 'effectsVerified': True} for case in EMPTY_CASES},
+            'move-independent': {EMPTY_MOVE_CASE: {'independentMoveVerified': True, 'effectsVerified': True}},
+            'cancel-waiting': {EMPTY_CANCEL_CASE: {'waitingCancelVerified': True, 'effectsVerified': True}},
+            'move-dependent': {EMPTY_DEPENDENCY_CASE: {'dependentEmptyProtected': True, 'effectsVerified': True}},
+            'server-authority': {case: {'serverAuthorityVerified': True, 'effectsVerified': True} for case in (*EMPTY_CASES, DIRECT_EMPTY_CASE)}}}
+    actions['drink-all-tail'] = {
+        'scope': 'One exact root Base.WaterBottle Drink All requested through the native inventory menu with a truly empty queue. After that drink is running, a native menu Half request for an independent root bottle forms the retained tail. Exact client/Host authority IDs, counts, water volumes, native weights, thirst, constructor durations, start order and completion order are checked in both modes. This concrete full-drink plus half-drink tail does not establish every drink variant, queue edits, physical input or world endpoints.',
+        'mods': MODS, 'checks': {
+            'success-empty': {DIRECT_ALL_CASE: {'directFluidTailVerified': True, 'effectsVerified': True}},
+            'server-authority': {DIRECT_ALL_CASE: {'serverAuthorityVerified': True, 'effectsVerified': True}}}}
     return {'fluid': {'status': 'ready', 'clients': 1, 'default_mods': MODS, 'scenario_actions': actions,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                                  'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']}
@@ -67,7 +88,8 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'fluid').rglob('*.lua')), *sorted((root / 'craft/scripts').rglob('*.txt')),
+    return [Path(__file__).with_name('craft.py'),
+            *sorted((root / 'fluid').rglob('*.lua')), *sorted((root / 'craft/scripts').rglob('*.txt')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueScenarioChecks.lua',
             *sorted((root / 'startup').rglob('*.lua'))]
 
@@ -111,7 +133,185 @@ def _commands(case):
     return menu, portion, targets
 
 
+EMPTY_BOTTLE_KEYS = {'id', 'amount', 'favorite', 'source', 'count', 'weight', 'fullType', 'capacity',
+                     'transferRate', 'cleanWater', 'emptyWeight'}
+EMPTY_COMMAND_KEYS = {'kind', 'id', 'source', 'dispatchAmount', 'dispatchWeight', 'nativeDuration',
+                      'progress', 'cancelled', 'rawDispatched'}
+EMPTY_EDIT_KEYS = {'emptyStart', 'anchorRunning', 'contractsVerified', 'reordered', 'waitingCancel', 'moveRejected',
+                   'denialReason', 'untouchedBefore', 'nativeDurationsUnchanged', 'order',
+                   'drinkBCompleted', 'drinkBRemaining', 'drinkBBoundaryFailed'}
+
+
+def _empty_case(case, row, prep, receipt, kind, mode):
+    enabled = mode == 'toolkit'
+    cancelled = enabled and case == EMPTY_CANCEL_CASE
+    dependency = case == EMPTY_DEPENDENCY_CASE
+    reordered = enabled and case == EMPTY_MOVE_CASE
+    bottles = prep.get('bottles')
+    if (set(prep) != RECEIPT_KEYS | {'case', 'foodTimer'}
+            or not craft._matches(prep, dict(case=case, bagType=BAG_TYPE, foodTimer=0, foodLevel=0))
+            or not _close(prep.get('thirst'), .8, .00001)
+            or type(bottles) is not list or len(bottles) != 3
+            or any(type(bottle) is not dict or set(bottle) != EMPTY_BOTTLE_KEYS | {'thirstChange'}
+                   or not craft._matches(bottle, dict(fullType='Base.WaterBottle', source='root', count=1,
+                                                       favorite=False, cleanWater=True))
+                   or any(not _close(bottle.get(key), value, .00001) for key, value in
+                          dict(amount=1, capacity=1, emptyWeight=.1, weight=1.1, thirstChange=-.5).items())
+                   or not _number(bottle.get('transferRate')) or bottle['transferRate'] < 0 for bottle in bottles)
+            or not craft._ids([prep.get('bagId')] + [bottle.get('id') for bottle in bottles], 4)):
+        return ['Empty-fluid preparation identity/state differs: ' + case]
+    final = receipt.get('bottles')
+    if (set(receipt) != RECEIPT_KEYS | {'case'}
+            or not craft._matches(receipt, dict(case=case, bagId=prep['bagId'], bagType=BAG_TYPE, foodLevel=0))
+            or type(final) is not list or len(final) != 3
+            or not craft._matches(row, {key: receipt[key] for key in RECEIPT_KEYS})
+            or type(row.get('client')) is not dict or set(row['client']) != set(receipt)):
+        return ['Empty-fluid authority/client schema differs: ' + case]
+    for index, (bottle, original) in enumerate(zip(final, bottles)):
+        if (type(bottle) is not dict or set(bottle) != EMPTY_BOTTLE_KEYS
+                or not craft._matches(bottle, {key: original[key] for key in EMPTY_BOTTLE_KEYS - {'amount', 'weight'}})
+                or not _number(bottle.get('amount')) or not 0 <= bottle['amount'] <= original['amount']
+                or not _close(bottle.get('weight'), original['emptyWeight'] + bottle['amount'], .00001)):
+            return ['Empty-fluid exact bottle identity/load differs: ' + case]
+        expected_amount = None if index == 0 else 1 if index == 1 and cancelled or index == 2 and dependency else 0
+        if expected_amount is not None and not _close(bottle['amount'], expected_amount, .000001):
+            return ['Empty-fluid final empty/retained amount differs: ' + case]
+    if not .49 <= final[0]['amount'] <= .5001:
+        return ['Empty-fluid native anchor amount differs: ' + case]
+    client = row['client']
+    if not craft._matches(client, {key: receipt[key] for key in set(receipt) - {'thirst'}}) or not _close(client.get('thirst'), receipt.get('thirst'), .01):
+        return ['Empty-fluid client authority disagreement: ' + case]
+    evidence = row.get('editEvidence')
+    expected_order = [1, 3, 2] if reordered else [1, 3] if cancelled else [1, 2, 3]
+    if (type(evidence) is not dict or set(evidence) != EMPTY_EDIT_KEYS
+            or not craft._matches(evidence, dict(emptyStart=True, anchorRunning=True, contractsVerified=enabled,
+                reordered=reordered, waitingCancel=cancelled, moveRejected=enabled and dependency,
+                denialReason='edit_resource_amount' if enabled and dependency else 'not-requested',
+                untouchedBefore=True, nativeDurationsUnchanged=True, order=expected_order,
+                drinkBCompleted=dependency, drinkBBoundaryFailed=False))
+            or not _number(evidence.get('drinkBRemaining'))
+            or (not .49 <= evidence['drinkBRemaining'] <= .5001 if dependency else evidence['drinkBRemaining'] != -1)):
+        return ['Empty-fluid pending edit/native order evidence differs: ' + case]
+    expected_thirst = prep['thirst'] + (1 - final[0]['amount']) * bottles[0]['thirstChange']
+    if dependency:
+        expected_thirst += (1 - evidence['drinkBRemaining']) * bottles[1]['thirstChange']
+    if not _close(receipt.get('thirst'), expected_thirst, .01):
+        return ['Empty-fluid discard changed thirst or native drink effect differs: ' + case]
+    if not craft._matches(row, dict(status='passed', reason=None, waitingCancelVerified=cancelled,
+                                    independentMoveVerified=reordered)):
+        return ['Empty-fluid case status/control differs: ' + case]
+    commands = row.get('commands')
+    targets = [(0, 'drink'), (1, 'drink'), (1, 'empty')] if dependency else [(0, 'drink'), (1, 'empty'), (2, 'empty')]
+    if type(commands) is not list or len(commands) != 3:
+        return ['Empty-fluid native command count differs: ' + case]
+    for position, (command, (target, action)) in enumerate(zip(commands, targets)):
+        cancel = cancelled and position == 1
+        extra_keys = {'portion'} if action == 'drink' else {'capturedAmount', 'transferRate', 'timePerLiter', 'minTime'}
+        if (type(command) is not dict or set(command) != EMPTY_COMMAND_KEYS | extra_keys
+                or not craft._matches(command, dict(kind=action, id=bottles[target]['id'], source='root',
+                                                     progress=not cancel, cancelled=cancel, rawDispatched=True))
+                or not _close(command.get('dispatchAmount'), 1, .00001)
+                or not _close(command.get('dispatchWeight'), bottles[target]['weight'], .00001)):
+            return ['Empty-fluid native target/dispatch/progress differs: ' + case]
+        if action == 'drink':
+            if not craft._matches(command, dict(nativeDuration=460)) or not _close(command.get('portion'), .5, .000001):
+                return ['Empty-fluid native anchor/dependent drink duration differs: ' + case]
+        else:
+            if (not _close(command.get('capturedAmount'), command['dispatchAmount'], .000001)
+                    or not _close(command.get('transferRate'), bottles[target]['transferRate'], .000001)
+                    or any(not _number(command.get(key)) or command[key] <= 0 for key in ('timePerLiter', 'minTime', 'nativeDuration'))):
+                return ['Empty-fluid captured amount/native timing differs: ' + case]
+            duration = command['capturedAmount'] * command['timePerLiter']
+            if command['transferRate'] > 0:
+                duration /= command['transferRate']
+            if not _close(command['nativeDuration'], max(command['minTime'], duration), .000001):
+                return ['Empty-fluid native empty duration changed: ' + case]
+    return []
+
+
+DIRECT_COMMAND_KEYS = EMPTY_COMMAND_KEYS | {'queueEmptyBefore', 'firstRunningBefore', 'menu', 'menuDispatched', 'completed', 'backpackWorn', 'completionGuardAvailable'}
+
+
+def _direct_case(case, row, prep, receipt, kind, mode):
+    bottles = prep.get('bottles')
+    full = case == DIRECT_ALL_CASE
+    if (set(prep) != RECEIPT_KEYS | {'case', 'foodTimer'}
+            or not craft._matches(prep, dict(case=case, bagType=BAG_TYPE, foodTimer=0, foodLevel=0))
+            or not _close(prep.get('thirst'), .8, .00001)
+            or type(bottles) is not list or len(bottles) != 2
+            or any(type(bottle) is not dict or set(bottle) != EMPTY_BOTTLE_KEYS | {'thirstChange'}
+                   or not craft._matches(bottle, dict(fullType='Base.WaterBottle', source='root', count=1, favorite=False, cleanWater=True))
+                   or any(not _close(bottle.get(key), value, .00001) for key, value in
+                          dict(amount=1, capacity=1, emptyWeight=.1, weight=1.1, thirstChange=-.5).items())
+                   or not _number(bottle.get('transferRate')) or bottle['transferRate'] < 0 for bottle in bottles)
+            or not craft._ids([prep.get('bagId')] + [bottle.get('id') for bottle in bottles], 3)):
+        return ['Direct fluid preparation identity/state differs: ' + case]
+    final = receipt.get('bottles')
+    if (set(receipt) != RECEIPT_KEYS | {'case'}
+            or not craft._matches(receipt, dict(case=case, bagId=prep['bagId'], bagType=BAG_TYPE, foodLevel=0))
+            or type(final) is not list or len(final) != 2
+            or not craft._matches(row, {key: receipt[key] for key in RECEIPT_KEYS})
+            or type(row.get('client')) is not dict or set(row['client']) != set(receipt)):
+        return ['Direct fluid authority/client schema differs: ' + case]
+    for bottle, original in zip(final, bottles):
+        if (type(bottle) is not dict or set(bottle) != EMPTY_BOTTLE_KEYS
+                or not craft._matches(bottle, {key: original[key] for key in EMPTY_BOTTLE_KEYS - {'amount', 'weight'}})
+                or not _number(bottle.get('amount')) or not 0 <= bottle['amount'] <= original['amount']
+                or not _close(bottle.get('weight'), original['emptyWeight'] + bottle['amount'], .00001)):
+            return ['Direct fluid exact bottle identity/load differs: ' + case]
+    if final[0]['amount'] != 0 or not .49 <= final[1]['amount'] <= .5001:
+        return ['Direct fluid depletion/tail amount differs: ' + case]
+    client = row['client']
+    if not craft._matches(client, {key: receipt[key] for key in set(receipt) - {'thirst'}}) or not _close(client.get('thirst'), receipt.get('thirst'), .01):
+        return ['Direct fluid client authority disagreement: ' + case]
+    expected_thirst = prep['thirst'] + (1 - final[1]['amount']) * bottles[1]['thirstChange']
+    if full:
+        expected_thirst += bottles[0]['thirstChange']
+    if not _close(receipt.get('thirst'), expected_thirst, .01):
+        return ['Direct fluid native hydration/discard differs: ' + case]
+    evidence = row.get('editEvidence')
+    expected_evidence = dict(emptyStart=True, firstRunning=True, tailQueued=True, nativeDurationsUnchanged=True,
+                             order=[1, 2], completionOrder=[1, 2])
+    durations = ('effectiveDurationBeforeTail', 'effectiveDurationAfterTail')
+    if (type(evidence) is not dict or set(evidence) != set(expected_evidence) | set(durations)
+            or not craft._matches(evidence, expected_evidence)
+            or any(not _number(evidence.get(field)) or evidence[field] <= 0 for field in durations)
+            or not _close(evidence[durations[0]], evidence[durations[1]], .000001)
+            or not craft._matches(row, dict(status='passed', reason=None, waitingCancelVerified=False, independentMoveVerified=False))):
+        return ['Direct fluid empty-queue/running-tail/completion evidence differs: ' + case]
+    commands = row.get('commands')
+    if type(commands) is not list or len(commands) != 2:
+        return ['Direct fluid command count differs: ' + case]
+    for index, command in enumerate(commands):
+        empty = index == 0 and not full
+        extra_keys = {'capturedAmount', 'transferRate', 'timePerLiter', 'minTime'} if empty else {'portion'}
+        if (type(command) is not dict or set(command) != DIRECT_COMMAND_KEYS | extra_keys
+                or not craft._matches(command, dict(kind='empty' if empty else 'drink', id=bottles[index]['id'], source='root',
+                    progress=True, completed=True, cancelled=False, backpackWorn=True, completionGuardAvailable=True, rawDispatched=empty, menuDispatched=not empty,
+                    menu='none' if empty else 'all' if index == 0 else 'half', queueEmptyBefore=index == 0, firstRunningBefore=index == 1))
+                or not _close(command.get('dispatchAmount'), 1, .00001)
+                or not _close(command.get('dispatchWeight'), bottles[index]['weight'], .00001)):
+            return ['Direct fluid exact producer/start/progress evidence differs: ' + case]
+        if empty:
+            if (not _close(command.get('capturedAmount'), 1, .000001)
+                    or not _close(command.get('transferRate'), bottles[index]['transferRate'], .000001)
+                    or any(not _number(command.get(key)) or command[key] <= 0 for key in ('timePerLiter', 'minTime', 'nativeDuration'))):
+                return ['Direct empty captured native timing differs: ' + case]
+            duration = command['capturedAmount'] * command['timePerLiter']
+            if command['transferRate'] > 0:
+                duration /= command['transferRate']
+            if not _close(command['nativeDuration'], max(command['minTime'], duration), .000001):
+                return ['Direct empty duration changed: ' + case]
+        elif not craft._matches(command, dict(nativeDuration=460)) or not _close(command.get('portion'), 1 if index == 0 else .5, .000001):
+            return ['Direct native menu portion/duration differs: ' + case]
+    return []
+
+
 def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
+    if case in DIRECT_CASES:
+        return _direct_case(case, row, prep, receipt, kind, mode)
+    if case in EMPTY_CASES:
+        return _empty_case(case, row, prep, receipt, kind, mode)
     issues = []
     bag, favorite = case.startswith('fluid-bag'), case.endswith('-favorite')
     editing = case == EDIT_CASE
@@ -256,14 +456,17 @@ def verify(root, selection, catalog):
         prepared_bottles = prep.get('bottles')
         identities += [prep.get('bagId')] + ([bottle.get('id') if type(bottle) is dict else None
                                              for bottle in prepared_bottles] if type(prepared_bottles) is list else [None, None])
-        outcome = {key: row.get(key) for key in RECEIPT_KEYS | {'commands', 'editEvidence'}}
+        outcome = {key: row.get(key) for key in RECEIPT_KEYS | {'commands', 'editEvidence'} | ({'client'} if case in (*EMPTY_CASES, *DIRECT_CASES) else set())}
         outcome.update(emptyStartVerified=not case_issues, effectsVerified=not case_issues, wornBagVerified=not case_issues,
                        independentRequestsQueued=not case_issues and case == 'fluid-bag-pair-queued-favorite',
                        sameBottleRequestsVerified=not case_issues and '-same-' in case,
-                       waitingCancelVerified=not case_issues and '-cancel-' in case and selection['mode']=='toolkit',
-                       independentMoveVerified=not case_issues and case=='fluid-root-cancel-waiting-favorite' and selection['mode']=='toolkit',
+                       waitingCancelVerified=not case_issues and ('-cancel-' in case or case == EMPTY_CANCEL_CASE) and selection['mode']=='toolkit',
+                       independentMoveVerified=not case_issues and case in ('fluid-root-cancel-waiting-favorite', EMPTY_MOVE_CASE) and selection['mode']=='toolkit',
                        serverAuthorityVerified=not case_issues and selection['kind'] == 'mp',
                        pendingTransferEditVerified=not case_issues and case==EDIT_CASE and selection['mode']=='toolkit',
+                       directFluidTailVerified=not case_issues and case in DIRECT_CASES,
+                       pendingEmptyVerified=not case_issues and case in EMPTY_CASES,
+                       dependentEmptyProtected=not case_issues and case==EMPTY_DEPENDENCY_CASE and selection['mode']=='toolkit',
                        dependentPickupProtected=not case_issues and case==EDIT_CASE and selection['mode']=='toolkit')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
     if not craft._ids(identities):
@@ -276,4 +479,6 @@ def verify(root, selection, catalog):
         'Fixture invokes real drink menu callbacks; physical mouse input is not covered.',
         'Requested portions allow at most 10mL native progress overshoot; raw remaining volumes are retained.',
         'The pending transfer case uses a native manual grab and standalone drink/return behind a running menu drink; Toolkit and disabled controls intentionally end in different containers.',
+        'Direct empty and Drink All cases request an independent native menu Half only after initial native progress; pending empty cases retain their separate running drink anchor.',
+        'Raw emptying uses exact root clean-water bottles and native fluid wrappers/durations; no empty-menu, physical input, active cancellation, world endpoint or capacity claims.',
         'Fresh one-client SP/Host with exact bottle receipts; no concurrent-client or WAN coverage.']}}

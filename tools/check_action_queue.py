@@ -12,7 +12,22 @@ ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
 
 
-def selection(args, catalog, options=None):
+def load_catalog(suites=None):
+    """Resolve only the requested declarations; full reports retain the complete catalog."""
+    catalog = report.read_json(CATALOG)
+    if suites is not None:
+        known = dict.fromkeys([*catalog['suites'], *adapters.MODULES])
+        unknown = set(suites) - known.keys()
+        if unknown:
+            raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
+                             + '; available: ' + ', '.join(known))
+    catalog['suites'].update(adapters.definitions(suites))
+    if suites is not None:
+        catalog['suites'] = {suite: catalog['suites'][suite] for suite in suites}
+    return catalog
+
+
+def selection(args, catalog, options=None, desktop_mode=None):
     suite = catalog["suites"][args.suite]
     if suite["status"] != "ready":
         raise ValueError("Suite has not been migrated: " + args.suite)
@@ -46,6 +61,8 @@ def selection(args, catalog, options=None):
     options = (report.read_json(args.config) if args.config else {}) if options is None else options
     if not isinstance(options, dict):
         raise ValueError('--config must contain a JSON object of suite options')
+    if desktop_mode is not None:
+        options['desktop_mode'] = desktop_mode
     if getattr(args, 'cart_scene', None):
         if args.suite != 'wooden_cart_motion':
             raise ValueError('--cart-scene requires the wooden_cart_motion suite')
@@ -139,7 +156,7 @@ def selected_jobs(plan, only=None, sets=(), skip=None):
     return selected
 
 
-def batch_selection(plan, job, catalog, config, runs):
+def batch_selection(plan, job, catalog, config, runs, desktop_mode=None):
     if 'cases' in job:
         raise ValueError("Batch jobs use 'case' with comma-separated IDs; 'cases' would be ignored")
     plan_options, job_options = plan.get('options', {}), job.get('options', {})
@@ -164,7 +181,7 @@ def batch_selection(plan, job, catalog, config, runs):
         kind=job.get('kind'), language=job.get('language'), mods=mods if isinstance(mods, str) else ','.join(mods) if mods else None,
         config=config, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
         resources=dict(plan.get('resources', {}), **job.get('resources', {})))
-    return selection(namespace, catalog, options)
+    return selection(namespace, catalog, options, desktop_mode=desktop_mode)
 
 
 def batch(args, catalog):
@@ -176,7 +193,8 @@ def batch(args, catalog):
     if getattr(args, 'dry_run', False):
         runs, rows = {}, []
         for job in jobs:
-            selected = batch_selection(plan, job, catalog, args.plan, runs)
+            selected = batch_selection(plan, job, catalog, args.plan, runs,
+                                        getattr(args, 'desktop_mode', None))
             output = (args.output / job['id']).resolve()
             rows.append({'id': job['id'], 'run': str(output), 'selection': selected,
                          'control': str(runs[job['control_job']]) if job.get('control_job') else None,
@@ -197,7 +215,8 @@ def batch(args, catalog):
                 if job.get(key) and job[key] not in completed:
                     raise ValueError('Dependency has no completed report: ' + job[key])
             control = completed[job['control_job']] if job.get('control_job') else None
-            selected = batch_selection(plan, job, catalog, args.plan, completed)
+            selected = batch_selection(plan, job, catalog, args.plan, completed,
+                                       getattr(args, 'desktop_mode', None))
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
@@ -250,10 +269,12 @@ def main(argv=None):
         command.add_argument('--native-mib', type=int, default=1024, help='Estimated native/graphics/encoder memory per process, beyond heap')
         command.add_argument('--cpu-per-instance', type=float, default=1.0, help='Estimated logical CPU budget per game process')
         command.add_argument('--exclusive', action='store_true', help='Reserve the desktop exclusively for physical input or timing measurements')
+        command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
+                             help='macOS: auto (default) routes to PZ-TEST, with current-desktop fallback only for a sleeping physical display; aerospace requires routing; current is a legacy guarded auto alias. Run GUI tests outside the sandbox')
         if name == "run":
             command.add_argument("--resource-wait", type=float, default=300, help="Seconds to wait for admission; 0 refuses immediately")
             command.add_argument("--control", type=Path, help="Completed matching native control run directory")
-    command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot")
+    command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot using its immutable desktop policy; prepare again to change it")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
     command.add_argument("--resource-wait", type=float, default=300)
@@ -274,6 +295,8 @@ def main(argv=None):
     command.add_argument('--set', dest='sets', action='append', default=[], help='Run a named set from the plan; repeatable')
     command.add_argument('--skip-jobs', help='Disable comma-separated jobs; required dependencies cannot be disabled')
     command.add_argument('--dry-run', action='store_true', help='Print resolved job selections as JSON without preparing profiles or launching games')
+    command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
+                         help='Override desktop launch strategy for every selected job; otherwise use each plan option or the safe auto default')
     command = commands.add_parser('lock-pack', help='Resolve and hash the actual SurvivorQoL-selected.ini pack without launching the game')
     command.add_argument('output', type=Path)
     command.add_argument('--game', type=Path, required=True)
@@ -307,8 +330,6 @@ def main(argv=None):
                 for limit in value['limits']:
                     print('Note: ' + limit)
             return 0
-        catalog = report.read_json(CATALOG)
-        catalog['suites'].update(adapters.definitions())
         if args.command == 'lock-pack':
             overrides = {}
             for argument in args.mod_source:
@@ -323,13 +344,15 @@ def main(argv=None):
             value = worlds.export(args.run, args.output)
             print('Saved world template: ' + str(args.output.resolve()) + ' (' + str(len(value['files'])) + ' files)')
             return 0
+        if args.command == 'prepare':
+            catalog = load_catalog([args.suite])
+        elif args.command == 'matrix' and args.suite:
+            catalog = load_catalog(args.suite)
+        else:
+            catalog = load_catalog()
         if args.command == 'batch':
             return batch(args, catalog)
         if args.command == "matrix":
-            unknown = set(args.suite) - catalog['suites'].keys()
-            if unknown:
-                raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
-                                 + '; available: ' + ', '.join(catalog['suites']))
             value = report.matrix(catalog, [report.read_json(path) for path in args.reports])
             for field in ('rows', 'scenarios'):
                 value[field] = [row for row in value[field]
@@ -346,7 +369,8 @@ def main(argv=None):
             return 0
         if args.command in ("prepare", "run"):
             args.resources = {key: getattr(args, key) for key in admission.DEFAULTS}
-            native.prepare(ROOT, args.output, args.game, args.jdk, selection(args, catalog), args.workshop)
+            native.prepare(ROOT, args.output, args.game, args.jdk,
+                           selection(args, catalog, desktop_mode=args.desktop_mode), args.workshop)
             print("Prepared: " + str(args.output.resolve()), flush=True)
             if args.command == "prepare":
                 return 0

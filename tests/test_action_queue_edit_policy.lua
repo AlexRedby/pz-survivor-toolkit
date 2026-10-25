@@ -184,4 +184,94 @@ do
     assert(not Queue.move(queue,second,first) and queue.queue[2]==first,
         'an external capacity requirement cannot be bypassed by a successful state projection')
 end
+
+-- Actual native controls/media: property-only crossings do not erase VHS
+-- inventory effects or permit playback/power to cross a media operation.
+do
+    f.native('shared/TimedActions/ISDeviceBatteryAction.lua')
+    f.native('shared/TimedActions/ISDeviceMediaAction.lua')
+    local media=f.project('ActionQueueMedia');assert(media.install())
+    local root=f.player.inventory;root.class='ItemContainer'
+    local tv={class='IsoTelevision'}
+    local square={class='IsoGridSquare'}
+    local data={class='DeviceData',on=true,volume=0.5,channel=200,mic=false,media=false}
+    tv.getObjectIndex=function()return 0 end;tv.getSquare=function()return square end
+    tv.getDeviceData=function()return data end;square.getDeviceData=tv.getDeviceData
+    data.getParent=function()return tv end;data.getMediaType=function()return 1 end
+    data.isIsoDevice=function()return true end;data.isVehicleDevice=function()return false end
+    data.getIsTurnedOn=function()return data.on end;data.getPower=function()return 1 end
+    data.getDeviceVolume=function()return data.volume end;data.getChannel=function()return data.channel end
+    data.getMicIsMuted=function()return data.mic end;data.getMinChannelRange=function()return 100 end
+    data.getMaxChannelRange=function()return 1000 end;data.getIsBatteryPowered=function()return false end
+    data.canBePoweredHere=function()return true end;data.hasMedia=function()return data.media end
+    local tape=f.item('Base.VHS_Retail')
+    tape.isRecordedMedia=function()return true end;tape.getMediaType=function()return 1 end
+    local function control(mode,value)return f.action(ISRadioAction,ISRadioAction:new(mode,f.player,tv,value))end
+    local function cassette(remove)return ISDeviceMediaAction:new(f.player,remove,not remove and tape or nil,square)end
+    for _,remove in ipairs({false,true})do
+        data.media=remove
+        for mode,value in pairs({SetVolume=0.25,SetChannel=300,MuteMicrophone=true,MuteVolume=true,UnMuteVolume=0.4})do
+            data.volume=mode=='UnMuteVolume'and 0 or 0.5
+            local setting,step=control(mode,value),cassette(remove)
+            local q=f.queue(head,step,setting)
+            assert(policy.evaluateMove(q,setting,step).allowed,'property before media: '..mode)
+            q=f.queue(head,setting,step)
+            assert(policy.evaluateMove(q,step,setting).allowed,'media before property: '..mode)
+            assert(policy.evaluateCancel(q,setting,true).allowed,'unrelated pending setter cancellation')
+            step.action={}
+            assert(not policy.evaluateMove(q,setting,step,true).allowed,'active media cannot inherit pair independence')
+            step.action=nil
+            step.complete=function()error('foreign media must not execute')end
+            assert(not policy.evaluateMove(q,setting,step,true).allowed,'foreign media callbacks revoke the pair proof')
+        end
+        for _,mode in ipairs({'ToggleOnOff','TogglePlayMedia'})do
+            local step,setting=cassette(remove),control(mode)
+            local q=f.queue(head,step,setting)
+            assert(not policy.evaluateMove(q,setting,step).allowed,'media retains '..mode..' dependency')
+        end
+    end
+    -- Native Start/Stop only affects media state/counters. Property setters do
+    -- not predict that asynchronous toggle, but may cross it in either direction.
+    for mode,value in pairs({SetVolume=0.25,SetChannel=300,MuteMicrophone=true,MuteVolume=true,UnMuteVolume=0.4})do
+        data.volume=mode=='UnMuteVolume'and 0 or 0.5
+        local setting,play=control(mode,value),control('TogglePlayMedia')
+        local q=f.queue(head,play,setting)
+        assert(policy.evaluateMove(q,setting,play).allowed,'property before playback: '..mode)
+        q=f.queue(head,setting,play)
+        assert(policy.evaluateMove(q,play,setting).allowed,'playback before property: '..mode)
+        assert(policy.evaluateCancel(q,setting,true).allowed,'playback cannot block independent property cancellation')
+        play.action={}
+        assert(not policy.evaluateMove(q,setting,play,true).allowed,'active playback stays protected')
+        play.action=nil
+        play.performTogglePlayMedia=function()error('foreign playback must not run')end
+        assert(not policy.evaluateMove(q,setting,play,true).allowed,'foreign playback revokes pair independence')
+    end
+    -- Ejection may cross an independent active reader in either UI direction.
+    -- Reading's insertion-only receipt must not shadow the ordinary eject barrier.
+    do
+        data.media=true
+        local step=cassette(true)
+        head.action={isStarted=function()return true end,finished=function()return false end,
+            isForceComplete=function()return false end}
+        local q=f.queue(head,step)
+        local promoted=policy.evaluateMove(q,step,head)
+        assert(promoted.allowed and promoted.preempt,'eject can precede an independent active reader')
+        local demoted=policy.evaluateMove(q,head,step,true)
+        assert(demoted.allowed and demoted.demote,'active reader can move below pending eject')
+        local reading=f.project('ActionQueueReading')
+        reading.capture(q,2,2)
+        assert(step.toolkitReadingMove==nil,'eject keeps its ordinary native completion receipt')
+        head.action,head.toolkitReadingMove=nil,nil
+    end
+    local power,volume=control('ToggleOnOff'),control('SetVolume',0.25)
+    data.on=false
+    local q=f.queue(head,power,volume)
+    assert(policy.evaluateMove(q,volume,power).reason=='edit_required_state')
+    assert(policy.evaluateCancel(q,power,true).reason=='edit_required_state')
+    q=f.queue(head,volume,power)
+    assert(policy.evaluateMove(q,power,volume).allowed,'native TV power-on can move before its setter')
+    data.on=true
+    assert(policy.evaluateMove(q,power,volume).reason=='edit_required_state','same move now turns off before setter')
+end
+
 print('Queue edit policy: changed outcomes, downstream prerequisites, removal, fallback, native execution and stale edits passed.')

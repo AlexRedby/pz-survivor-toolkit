@@ -111,6 +111,50 @@ class ScenarioTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 cli.batch_selection(plan, invalid, self.catalog, Path('/tmp/plan.json'), {})
 
+    def test_batch_desktop_mode_override_wins_without_changing_plan_options_by_default(self):
+        job = dict(id='equipment', suite='equipment', case='hands-chain', kind='sp')
+        plan = {'options': {'desktop_mode': 'aerospace'}}
+        configured = cli.batch_selection(plan, job, self.catalog, Path('/tmp/plan.json'), {})
+        overridden = cli.batch_selection(plan, job, self.catalog, Path('/tmp/plan.json'), {}, 'current')
+        self.assertEqual(configured['options']['desktop_mode'], 'aerospace')
+        self.assertEqual(overridden['options']['desktop_mode'], 'current')
+        no_plan_mode = cli.batch_selection({}, job, self.catalog, Path('/tmp/plan.json'), {})
+        self.assertNotIn('desktop_mode', no_plan_mode['options'])
+
+    def test_prepare_cli_override_wins_and_absent_flag_preserves_json_policy(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('sys.stdout', io.StringIO()), \
+                patch.object(cli.native, 'prepare') as prepare:
+            config = Path(tmp) / 'options.json'
+            config.write_text(json.dumps({'desktop_mode': 'aerospace'}))
+            common = ['prepare', str(Path(tmp) / 'out'), '--suite', 'equipment', '--kind', 'sp',
+                      '--cases', 'hands-chain', '--game', str(Path(tmp) / 'game'),
+                      '--jdk', str(Path(tmp) / 'jdk'), '--config', str(config)]
+            self.assertEqual(cli.main(common), 0)
+            self.assertEqual(prepare.call_args.args[4]['options']['desktop_mode'], 'aerospace')
+            prepare.reset_mock()
+            self.assertEqual(cli.main(common + ['--desktop-mode', 'current']), 0)
+            self.assertEqual(prepare.call_args.args[4]['options']['desktop_mode'], 'current')
+
+    def test_batch_cli_override_is_included_in_every_dry_run_selection(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('sys.stdout', io.StringIO()) as output:
+            plan = Path(tmp) / 'plan.json'
+            plan.write_text(json.dumps({
+                'game': '/game', 'jdk': '/jdk',
+                'options': {'desktop_mode': 'aerospace'},
+                'jobs': [{'id': 'one', 'suite': 'equipment', 'case': 'hands-chain', 'kind': 'sp'},
+                         {'id': 'two', 'suite': 'equipment', 'case': 'hands-chain', 'kind': 'sp'}],
+            }))
+            self.assertEqual(cli.main(['batch', str(plan), str(Path(tmp) / 'out'), '--dry-run',
+                                       '--desktop-mode', 'current']), 0)
+            rows = json.loads(output.getvalue())['jobs']
+            self.assertEqual([row['selection']['options']['desktop_mode'] for row in rows],
+                             ['current', 'current'])
+
+    def test_resume_does_not_accept_a_desktop_policy_mutation(self):
+        with patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit) as raised:
+            cli.main(['resume', '/tmp/prepared', '--desktop-mode', 'current'])
+        self.assertEqual(raised.exception.code, 2)
+
     def test_shared_helper_is_staged_and_in_source_fingerprints(self):
         helper = ROOT / 'tests/native_queue/support/QueueScenarioChecks.lua'
         selection = dict(suite='equipment', cases=['hands-chain'], kind='sp', mode='toolkit',

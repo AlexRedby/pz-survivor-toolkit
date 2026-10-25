@@ -273,6 +273,18 @@ test("tools hub remains with highlight hidden and opens optional tools and setti
     w.player=nil; side.toolkitToolsButton:click(); equal(w.menu, last)
 end)
 
+test("warehouse entry passes the owning player to the shared window", function()
+    local w = setup()
+    local previous = LootSorter
+    LootSorter = {toggleManifest = function(num) w.warehousePlayer = num end}
+    w:loadToolkit()
+    w.data.equipped.toolkitToolsButton:click()
+    equal(w.menu.options[1].name, "UI_PZST_Manifest_Open")
+    w.menu.options[1].callback(w.menu.options[1].target)
+    equal(w.warehousePlayer, 2)
+    LootSorter = previous
+end)
+
 test("Wishlist hotkey works without registering a separate sidebar callback", function()
     local w=setup(); w:loadWishlist()
     local side=w.data.equipped

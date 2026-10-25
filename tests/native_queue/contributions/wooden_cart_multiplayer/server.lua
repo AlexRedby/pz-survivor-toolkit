@@ -1,18 +1,26 @@
 local config=require 'QueueTestSelection'
+if config.options and config.options.cart_inventory_equip==true then require 'CartMPInventoryEquipServer';return end
 assert(config.disposable==true,'Cart MP requires fresh owned disposable profiles')
 local J=require 'CartMPJSON'
+local admissionProbe=config.options and config.options.cart_action_admission==true and require 'CartActionAdmissionProbe'
+local leaseProbe=config.options and config.options.cart_lease_control==true and require 'CartLeaseProbe'
+local lifetimeProbe=config.options and config.options.cart_lease_lifetimes==true and require 'CartLeaseLifetimes'
+local inventoryMode=config.options and config.options.cart_lease_inventory==true
+local invalidationProbe=config.options and config.options.cart_action_invalidation==true and require 'CartActionInvalidation'
+local inventoryWait={}
+local inventoryState=inventoryMode and require 'CartLeaseInventoryState'
 local wallSide=config.options and config.options.cart_wall_exit
 local wallBank=wallSide and require 'CartMPWall'
 local wallDone,wallCleaned,originSince={},false,nil
 local players,ready,armed={}, {}, {}
 local epoch,last,origin,lastTraffic= nil,0,nil,0
 local actions=config.options and config.options.cart_actions
+local motionDuration=config.options and config.options.cart_injury and 45000 or wallSide=='front' and 18000 or wallSide and 29000 or config.options and config.options.cart_fast_motion and 26000 or 15000
 local hotkey=config.options and config.options.cart_hotkey_setdown==true
 assert(not hotkey or actions,'cart_hotkey_setdown requires cart_actions')
 local variants={['shopping-cart']='SaucedCarts.ShoppingCart',['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
 local variant=config.options and config.options.cart_variant or 'wooden-wheelbarrow'
 local cartType=assert(variants[variant],'Unknown MP cart_variant')
-assert(not actions or (variant=='wooden-wheelbarrow' or variant=='metal-wheelbarrow'),'cart_actions requires a calibrated wheelbarrow')
 local actionPhases={'drop-complete','pickup-complete','drop-cancel','drop-repeat','pickup-cancel','pickup-repeat'}
 local actionGround={true,false,false,true,true,false}
 local cartSession,actionIndex,pendingAction,actionStarted,actionsDone=nil,1,nil,false,false
@@ -123,6 +131,16 @@ Events.OnClientCommand.Add(function(module,command,p,args)
   if command=='Ready' then
    if not players[user] then
     if not p:getCurrentSquare() then return end
+    local inventorySource
+    if inventoryMode and user=='client1' then
+     inventorySource=assert(cartLeaseSource(p),'Initial inventory owner transport missing')
+     inventoryWait[user]=inventoryWait[user] or getTimestampMs()
+     if not inventoryState.loaded(p) then
+      assert(getTimestampMs()-inventoryWait[user]<30000,'Initial inventory server area readiness deadline')
+      return
+     end
+     inventoryWait[user]=nil
+    end
     if not origin then
      if not originSince then originSince=getTimestampMs() end
      origin=require('CartMPPlacement')(p)
@@ -143,6 +161,7 @@ Events.OnClientCommand.Add(function(module,command,p,args)
      local cargo=cart:getInventory():AddItem('Base.Log');cargo:setActualWeight(cart:getInventory():getEffectiveCapacity(p));cargo:setCustomWeight(true)
      cartSession={id=cart:getID(),cargoID=cargo:getID(),cargoWeight=cargo:getActualWeight(),x=state.x,y=state.y,z=state.z}
      print('[CART_MP] CART_SPEC '..J.encode({variant=variant,cartType=cartType,id=cart:getID(),cargoCount=1,cargoID=cargo:getID(),cargoWeight=cargo:getActualWeight(),cargoType=cargo:getFullType(),capacity=cart:getInventory():getEffectiveCapacity(p)}))
+     if inventoryMode then inventoryState.emit('server','unheld',p,cart,inventorySource) end
      sendAddItemToContainer(p:getInventory(),cart)
     end
     if not origin.elevated then p:teleportTo(math.floor(state.x),math.floor(state.y),state.z) end
@@ -165,6 +184,11 @@ Events.OnClientCommand.Add(function(module,command,p,args)
    end
    armed[user]=true
    if armed.client1 and armed.client2 and not epoch then
+    if inventoryMode then
+     local target=assert(cartLeaseTarget(players.client1:getOnlineID()),'Initial inventory owner registration missing')
+     assert(target==players.client1,'Initial inventory owner replaced')
+     inventoryState.emit('server','held',target,assert(target:getInventory():getItemById(cartSession.id)),assert(cartLeaseOwnerConnection(target),'Initial inventory owner source missing'))
+    end
     epoch=getTimestampMs()+25000
     for _,v in pairs(players) do sendServerCommand(v,module,'Start',{epoch=epoch}) end
     print('[CART_MP] START epoch='..epoch)
@@ -219,7 +243,10 @@ end)
 Events.OnTick.Add(function()
  local now=getTimestampMs()
  if pendingAction then local ok,e=pcall(pollAction,now);if not ok then pendingAction=nil;print('[QUEUE_TEST] FAIL CART_MP server '..tostring(e));broadcast('ActionFailed',{error=tostring(e)}) end end
- if (epoch and now-epoch>(config.options and config.options.cart_injury and 46000 or wallSide and 30000 or config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or now-last<(epoch and 100 or 500) then return end;last=now
+ -- Native server ticks can be just under 100ms; throttling them again loses
+ -- alternate observations. Match the clients' real-tick motion sampling.
+ local inMotion=epoch and now>=epoch and now-epoch<=motionDuration
+ if (epoch and now-epoch>(config.options and config.options.cart_injury and 46000 or wallSide and 30000 or config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or not inMotion and now-last<(epoch and 100 or 500) then return end;last=now
  for user,p in pairs(players) do
   if epoch and now>=epoch-2000 and (wallSide or config.options and config.options.cart_fast_motion) and user=='client1'
    and not (p:getX()>=origin.minX+origin.margin and p:getX()<=origin.minX+origin.size-origin.margin

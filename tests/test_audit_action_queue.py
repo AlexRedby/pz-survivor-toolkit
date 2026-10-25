@@ -14,12 +14,13 @@ class ActionQueueAuditTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
 
-    def test_common_only_mod_uses_declared_id_and_ignores_legacy_root_lua(self):
+    def test_common_mod_with_future_branch_uses_active_id_and_ignores_legacy_root_lua(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             mod = root / 'differently-named-folder'
             self.write(root / 'selected.ini', 'Mods=Selected\n')
             self.write(mod / 'common/mod.info', 'id=Selected\n')
+            self.write(mod / '42.22/mod.info', 'id=Future\n')
             self.write(mod / 'mod.info', 'id=Legacy\n')
             for layer, action in ((mod, 'LegacyAction'), (mod / 'common', 'CurrentAction')):
                 self.write(layer / 'media/lua/action.lua', action + ' = ISBaseTimedAction:derive("' + action + '")')
@@ -34,7 +35,7 @@ class ActionQueueAuditTests(unittest.TestCase):
             ({'one/42': 'Selected', 'two/42': 'Selected'}, 'missing-or-ambiguous'),
             ({'one/common': 'Selected', 'one/42': 'Other'}, 'different-mod-id'),
             ({'one/42.13': 'Selected', 'one/42.21': None}, 'different-mod-id'),
-            ({'one/common': 'Selected', 'one/43': 'Selected'}, 'missing-compatible-version'),
+            ({'one/43': 'Selected'}, 'missing-compatible-version'),
         ]
         for layers, status in cases:
             with self.subTest(layers=layers), tempfile.TemporaryDirectory() as directory:
