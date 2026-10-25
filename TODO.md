@@ -1,3 +1,9 @@
+# Startup fixes main integration
+
+- [ ] Merge current origin/main, preserve its cart/Fitness changes and assign Java Patches a version newer than main.
+- [ ] Verify both startup fixes and affected shared hooks in the merged build; confirm the full-pack two-client Host inventory scenario on the final artifact.
+- [ ] Record final evidence and a clean local result; deliver to main or install only according to the clarified request.
+
 # Winter, base and Jeep additions
 
 - [ ] After installation is requested, check snow/wetness and Open Jackets/VVA/cart visuals, exterior-light insects and performance, Jeep parts/animations/lighting/repair/towing, and furniture movement with exact container contents and Quartermaster designations in isolated full-pack macOS B42.21 SP/Host saves. Check reload and the second player's view/state; author declarations and selection checks do not establish runtime compatibility.
