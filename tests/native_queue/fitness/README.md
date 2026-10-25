@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,late-exhaustion,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,late-exhaustion,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore,multi-storage,multi-storage-closed`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -67,6 +67,25 @@ constructor request and confirmed active timer are observed separately: preparat
 must not consume the selected body interval. The exact bag, prop and hand items must
 be restored before the independent reader, with queue editing enabled or disabled.
 
+The `multi-storage` and `multi-storage-closed` cases use the same ten-minute biceps
+curl with two worn favourite bags (schoolbag and front fanny pack), a favourite
+satchel in the primary hand, a screwdriver in the secondary hand and the favourite
+dumbbell borrowed from that satchel. Each bag contains its own exact-ID pencil.
+The closed case clicks the original CLOSE immediately after OK. Both modes require
+three real linked world bags at workout start, unchanged contents and flags, then
+all original hands/worn slots and the dumbbell inside its original held satchel
+before the independent reader on both client and authority.
+
+One native inventory-transfer begin may cover several merged bags. The fixture
+uses the existing read-only TidyIntent observer after the original `checkQueueList`,
+preserving the callback pointer and actual begin count. Each member keeps its first
+source snapshot; a later merge can happen after an earlier bag is already recovered.
+Actual drop completions and authoritative final identities establish paid effects.
+The server placement witness uses native constructor arguments and a linked world
+item; it does not require the client-only `isPlaceItem` flag, which is absent from
+the native constructor wire schema. Moving away and a competing player's pickup
+remain separate unverified cases.
+
 Other workouts retain the menu's native minimum of ten game minutes and the original
 `ISFitnessAction:getDuration()`. Queued cases use six remaining book pages at the
 native two minutes per page: the workout waits longer than its selected duration.
@@ -105,7 +124,10 @@ settlement and exact inventory/hand/worn identities. Toolkit Host additionally
 requires distinct native started and terminal acknowledgement tokens. Every Toolkit
 workout also supplies a real positive `ActionQueueFitness.progress` sample and its
 nonempty display label; elapsed minutes, selected ten-minute total and fraction
-must agree with the native workout clock. The server
+must agree with the earned active-frame clock. Synchronized world-clock changes
+never earn duration; start/confirmation frames and repeated reads add no time.
+Independent raw SP/server endpoints remain separate from runtime timer diagnostics,
+and mixed-storage Host cases also record native monotonic server timestamps. The server
 must remain idle for two real seconds before issuing its final receipt.
 
 Native control deviations, missing tails, incomplete restoration, premature timers
@@ -117,7 +139,7 @@ adapter's offline checks.
 Run the focused falsification and observer checks without launching the game:
 
 ```sh
-.venv/bin/python -m unittest discover -s tests -p test_queue_fitness_adapter.py
+PZ_GAME="$PZ_GAME" .venv/bin/python -m unittest discover -s tests -p 'test_*fitness*.py'
 ```
 
 Known native constructor failures in `missing-dumbbell` and `exhaustion` can

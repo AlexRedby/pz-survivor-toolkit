@@ -110,6 +110,22 @@ local function workoutClock()
  -- Match native world age, retaining double precision even in old saves.
  return (time:getNightsSurvived()*24+(hour>=7 and hour-7 or hour+17))*3600000
 end
+-- SyncClock replaces timeOfDay on clients. Earn duration from the native
+-- frame delta instead: IsoWorld increments frameNo before character updates.
+-- A start/confirmation anchors the current frame; it never earns that frame.
+local function startClock(record)
+ record.elapsedMS=0;record.clockStartMS=workoutClock()
+ record.clockWorld=getWorld();record.clockFrame=record.clockWorld:getFrameNo()
+end
+local function advanceClock(record)
+ if record.stopRequested then return end
+ local world=getWorld();local frame=world:getFrameNo()
+ if world~=record.clockWorld then record.clockWorld=world;record.clockFrame=frame;return end
+ if frame==record.clockFrame then return end
+ record.clockFrame=frame
+ local delta=getGameTime():getGameWorldSecondsSinceLastUpdate()*1000
+ if delta>=0 and delta<math.huge then record.elapsedMS=record.elapsedMS+delta end
+end
 local function identity(item)
  if not item then return false end
  return {id=item:getID(),kind=item:getFullType(),active=item:canBeActivated() and item:isActivated() or false}
@@ -480,7 +496,7 @@ class.start=function(action)
  local record=validRecord(action) or validNative(action)
  if record then
   action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
-  record.started=true;record.clockStartMS=workoutClock();record.confirmed=not isClient()
+  record.started=true;startClock(record);record.confirmed=not isClient()
  end
  return native.start(action)
 end
@@ -502,7 +518,9 @@ class.forceStop=function(action)
  end
  if record then
   record.stopRequested=true
-  if not record.stopClockMS then record.stopClockMS=workoutClock();record.stopTimestampMS=getTimestampMs() end
+  if record.started and not record.stopClockMS then
+   record.stopClockMS=record.clockStartMS+record.elapsedMS;record.stopTimestampMS=getTimestampMs()
+  end
  end
  -- Stop native repetitions immediately. A late started/terminal receipt gates
  -- continuation, never the outgoing native stop request.
@@ -511,13 +529,14 @@ class.forceStop=function(action)
 end
 class.update=function(action)
  local record=validRecord(action) or validNative(action)
+ if record and record.started then advanceClock(record) end
  if record and record.started and not record.confirmed and not record.stopRequested
-  and workoutClock()-record.clockStartMS<record.saved.minutes*60000 then
+  and record.elapsedMS<record.saved.minutes*60000 then
   local receipt=Toolkit.ActionQueueAcknowledgements.capture(action)
   if receipt and Toolkit.ActionQueueAcknowledgements.state(action,receipt)=='started' then
    -- Client Lua start precedes the server request. Count a full workout from
    -- the exact confirmed start, once; late stop receipts must never restart it.
-   record.confirmed=true;record.clockStartMS=workoutClock()
+   record.confirmed=true;startClock(record)
    action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
   end
  end
@@ -532,10 +551,10 @@ class.update=function(action)
   result=value
  else result=native.update(action) end
  record=validRecord(action) or validNative(action)
- -- The bar and stop request use continuous game time, rather than rounding
- -- either endpoint to the native calendar's whole-minute steps.
+ -- Only actual active frame deltas can reach the selected duration. Reads
+ -- and synchronized world-clock corrections never advance this accumulator.
  if record and record.started and not record.stopRequested
-  and workoutClock()-record.clockStartMS>=record.saved.minutes*60000 then
+  and record.elapsedMS>=record.saved.minutes*60000 then
   action.character:setVariable('ExerciseStarted',false)
   action.character:setVariable('ExerciseEnded',true)
   local previous=naturalStopScope
@@ -612,11 +631,12 @@ local keys={squats='IGUI_Squats',pushups='IGUI_PushUps',situp='IGUI_SitUps',burp
  barbellcurl='IGUI_BarbellCurl',dumbbellpress='IGUI_DumbbellPress',bicepscurl='IGUI_BicepsCurl'}
 local function timing(action,record)
  if not record or action.Type~='ISFitnessAction' or not record.started then return end
- local clock=workoutClock()
+ local clock=record.clockStartMS+record.elapsedMS
  local elapsed=(record.confirmed or record.stopRequested) and math.max(0,math.min(record.saved.minutes,(clock-record.clockStartMS)/60000)) or 0
  return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes,stopping=record.stopping==true,
   startMS=record.clockStartMS,endMS=record.clockStartMS+record.saved.minutes*60000,sampleMS=clock,confirmed=record.confirmed,
-  stopMS=record.stopClockMS,stopTimestampMS=record.stopTimestampMS}
+  stopMS=record.stopClockMS,stopTimestampMS=record.stopTimestampMS,source='active-native-frames',
+  activeMS=record.elapsedMS,worldSampleMS=workoutClock()}
 end
 -- Timing observation does not imply managed ownership or edit permissions.
 function Fitness.timing(action) return timing(action,validRecord(action) or validNative(action)) end

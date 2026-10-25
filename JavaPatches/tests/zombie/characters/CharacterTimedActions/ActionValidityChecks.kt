@@ -177,6 +177,150 @@ object ActionValidityChecks {
         )
     }
 
+    private fun accepting(): LuaTimedActionNew =
+        action().also {
+            allowed = false
+            waitAllowed = true // The Lua gate models the exact sealed Started receipt.
+            Accessor.trySet(transactions.peek(), "state", TransactionState.Accept)
+            require(it.valid(), "paid replication while Accept lost its bounded native wait")
+            require(!it.isForceComplete && !it.forceStop, "Accept performed a terminal transition")
+        }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun episode(native: LuaTimedActionNew): Any =
+        (field(ActionCompletion::class.java, "waits").get(null) as Map<Any, Any>)[native]
+            ?: throw AssertionError("missing native wait episode")
+
+    private fun acceptedReplicationChecks() {
+        // Reproduce the real order: target already consumed, native still Accept,
+        // then Done, then the following sealed Completed receipt 71 ms later.
+        val pending = accepting()
+        val transaction = transactions.peek()
+        val wait = episode(pending)
+        val deadline = field(wait.javaClass, "deadlineNanos").getLong(wait)
+        repeat(2) { pending.update() }
+        require(pending.valid(), "Accept wait lost its exact started transaction")
+        require(
+            !pending.isForceComplete &&
+                !pending.forceStop &&
+                "gate" !in events &&
+                "update-after-consumption" !in events &&
+                "perform-cleanup" !in events &&
+                "server-effects-replayed" !in events &&
+                transactions.size == 1,
+            "Accept wait executed completion, stale update, effects or cleanup",
+        )
+        Accessor.trySet(transaction, "state", TransactionState.Done)
+        require(
+            pending.valid() && !pending.isForceComplete,
+            "Done without Completed ended the wait",
+        )
+        Thread.sleep(71)
+        pending.update()
+        require(
+            pending.valid() &&
+                !pending.isForceComplete &&
+                field(wait.javaClass, "deadlineNanos").getLong(wait) == deadline,
+            "delayed terminal receipt extended the absolute native wait deadline",
+        )
+        allowed = true
+        require(
+            pending.valid() && pending.isForceComplete,
+            "Done plus Completed failed native completion",
+        )
+        pending.update()
+        pending.perform()
+        require(
+            events.count { it == "perform-cleanup" } == 1 &&
+                transactions.isEmpty() &&
+                "update-after-consumption" !in events &&
+                "server-effects-replayed" !in events,
+            "accepted replication replayed effects or skipped the one original native perform",
+        )
+        pending.forceComplete = false
+        require(
+            !pending.valid() && !pending.isForceComplete,
+            "performed Accept episode replayed completion",
+        )
+
+        val receiptFirst = accepting()
+        allowed = true
+        require(
+            receiptFirst.valid() && !receiptFirst.isForceComplete,
+            "Completed alone promoted Accept",
+        )
+        receiptFirst.update()
+        require(
+            "perform-cleanup" !in events && "update-after-consumption" !in events,
+            "Accept with Completed receipt ran native callbacks",
+        )
+        Accessor.trySet(transactions.peek(), "state", TransactionState.Done)
+        require(
+            receiptFirst.valid() && receiptFirst.isForceComplete,
+            "later Done failed the same receipt-first episode",
+        )
+
+        for ((label, change) in
+            listOf<Pair<String, (LuaTimedActionNew) -> Unit>>(
+                "rejected" to
+                    {
+                        Accessor.trySet(transactions.peek(), "state", TransactionState.Reject)
+                    },
+                "request rollback" to
+                    {
+                        Accessor.trySet(transactions.peek(), "state", TransactionState.Request)
+                    },
+                "duplicate Accept" to { remote(it.chr as Player, TransactionState.Accept) },
+                "reused byte/different transaction" to
+                    {
+                        transactions.clear()
+                        remote(it.chr as Player, TransactionState.Accept)
+                    },
+                "custom sync" to { it.useCustomRemoteTimedActionSync = true },
+                "input/reset/generation revoked" to { waitAllowed = false },
+                "native stop" to { it.forceStop() },
+                "native head gone" to { (it.chr as Player).actions.clear() },
+                "dead actor" to { (it.chr as Player).dead = true },
+            )) {
+            val native = accepting()
+            change(native)
+            require(!native.valid() && !native.isForceComplete, "$label retained an Accept wait")
+            allowed = true
+            waitAllowed = true
+            Accessor.trySet(transactions.peek(), "state", TransactionState.Done)
+            validResult(native, true)
+            require(
+                !native.valid() && !native.isForceComplete,
+                "$label revived after later Done/Completed",
+            )
+        }
+        val expired = accepting()
+        val expiredWait = episode(expired)
+        field(expiredWait.javaClass, "deadlineNanos").setLong(expiredWait, System.nanoTime() - 1L)
+        require(!expired.valid(), "expired Accept retained validity")
+        allowed = true
+        Accessor.trySet(transactions.peek(), "state", TransactionState.Done)
+        require(
+            !expired.valid() && !expired.isForceComplete,
+            "late Done/Completed revived expired Accept",
+        )
+
+        val rollback = accepting()
+        Accessor.trySet(transactions.peek(), "state", TransactionState.Done)
+        require(
+            rollback.valid() && !rollback.isForceComplete,
+            "Accept to Done failed before receipt",
+        )
+        Accessor.trySet(transactions.peek(), "state", TransactionState.Accept)
+        require(!rollback.valid(), "observed Done regressed to Accept")
+        allowed = true
+        Accessor.trySet(transactions.peek(), "state", TransactionState.Done)
+        require(
+            !rollback.valid() && !rollback.isForceComplete,
+            "Done rollback lost terminal revocation",
+        )
+    }
+
     private fun waitChecks() {
         val pending = waiting()
         repeat(2) { pending.update() }
@@ -337,12 +481,15 @@ object ActionValidityChecks {
         lifecycle.rawset("allowNativeCompletionWait", null)
         require(!noWaitContract.valid(), "Done alone invented a waiting capability")
         installGate()
-        for (state in listOf(TransactionState.Accept, TransactionState.Request)) {
+        for (state in listOf(TransactionState.Request)) {
             val native = action()
             allowed = false
             waitAllowed = true
             Accessor.trySet(transactions.peek(), "state", state)
-            require(!native.valid() && !native.isForceComplete, "$state acquired a Done-only wait")
+            require(
+                !native.valid() && !native.isForceComplete,
+                "$state acquired an accepted native wait",
+            )
         }
         val noNativeWait = action()
         allowed = false
@@ -449,11 +596,12 @@ object ActionValidityChecks {
             valid.valid() && !valid.isForceComplete && events == listOf("valid-true"),
             "already valid action acquired a forced completion",
         )
+        acceptedReplicationChecks()
         waitChecks()
         transactions.clear()
         GameClient.client = false
         println(
-            "ACTION_VALIDITY_CHECKS_PASS (original/woven native validity, exact remote Done, original perform cleanup, no update/effect replay, owner/transaction/custom-sync/cancel/hit/death/movement/SP/unsupported guards, bounded Done-only receipt wait, woven update suppression, revocation/new-start reset)",
+            "ACTION_VALIDITY_CHECKS_PASS (original/woven native validity, exact remote Done, original perform cleanup, no update/effect replay, owner/transaction/custom-sync/cancel/hit/death/movement/SP/unsupported guards, bounded Accept/Done receipt wait, monotonic native state, woven update suppression, revocation/new-start reset)",
         )
     }
 }

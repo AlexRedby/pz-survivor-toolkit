@@ -19,7 +19,7 @@ object ActionCompletion {
     private val current = ThreadLocal<Scope>()
 
     // Values must not retain the native weak key through actors, Lua tables or receipts.
-    private class NativeWait(transaction: NetTimedAction, val id: Byte) {
+    private class NativeWait(transaction: NetTimedAction, val id: Byte, var doneObserved: Boolean) {
         val transaction = WeakReference(transaction)
         var deadlineNanos = System.nanoTime() + 30_000_000_000L
         var revoked = false
@@ -28,9 +28,9 @@ object ActionCompletion {
 
     private val waits = WeakHashMap<LuaTimedActionNew, NativeWait>()
 
-    private class NativeState(val transaction: NetTimedAction, val id: Byte)
+    private class NativeState(val transaction: NetTimedAction, val id: Byte, val done: Boolean)
 
-    /** A byte can be reused: require one exact owned standard transaction, already Done. */
+    /** A byte can be reused: require one exact owned standard Accept/Done transaction. */
     private fun nativeState(native: LuaTimedActionNew): NativeState? {
         val player = native.chr as? IsoPlayer ?: return null
         if (
@@ -52,7 +52,7 @@ object ActionCompletion {
         val transactions =
             Accessor.tryGet<ConcurrentLinkedQueue<*>>(ActionManager::class.java, "actions", null)
                 ?: return null
-        var found: NetTimedAction? = null
+        var found: NativeState? = null
         for (candidate in transactions) {
             val candidateId = Accessor.tryGet<Byte>(candidate, "id", null)
             val candidateOwner = Accessor.tryGet<PlayerID>(candidate, "playerId", null) ?: continue
@@ -60,14 +60,14 @@ object ActionCompletion {
             if (
                 found != null ||
                     candidate !is NetTimedAction ||
-                    candidateOwner.getPlayer() !== player ||
-                    Accessor.tryGet<TransactionState>(candidate, "state", null) !=
-                        TransactionState.Done
+                    candidateOwner.getPlayer() !== player
             )
                 return null
-            found = candidate
+            val state = Accessor.tryGet<TransactionState>(candidate, "state", null)
+            if (state != TransactionState.Accept && state != TransactionState.Done) return null
+            found = NativeState(candidate, id, state == TransactionState.Done)
         }
-        return found?.let { NativeState(it, id) }
+        return found
     }
 
     private fun permitted(native: LuaTimedActionNew, name: String): Boolean {
@@ -82,13 +82,18 @@ object ActionCompletion {
         native: LuaTimedActionNew,
         state: NativeState,
         wait: NativeWait?,
-    ): Boolean {
+    ): NativeState? {
         if (wait != null && (wait.revoked || System.nanoTime() - wait.deadlineNanos >= 0))
-            return false
-        val current = nativeState(native)
-        return current != null &&
-            current.id == state.id &&
-            current.transaction === state.transaction
+            return null
+        val current = nativeState(native) ?: return null
+        if (
+            current.id != state.id ||
+                current.transaction !== state.transaction ||
+                (state.done || wait?.doneObserved == true) && !current.done
+        )
+            return null
+        if (current.done && wait != null) wait.doneObserved = true
+        return current
     }
 
     /** Only a genuine native start may retire the previous episode's terminal revocation. */
@@ -124,13 +129,18 @@ object ActionCompletion {
                 wait != null &&
                     (wait.id != state.id ||
                         wait.transaction.get() !== state.transaction ||
+                        wait.doneObserved && !state.done ||
                         System.nanoTime() - wait.deadlineNanos >= 0)
         ) {
             if (wait != null) wait.revoked = true
             return false
         }
-        val completed = permitted(native, "allowNativeCompletion")
-        if (!unchanged(native, state, wait)) {
+        if (state.done && wait != null) wait.doneObserved = true
+        // Replicated effects can invalidate Lua while the native terminal packet is
+        // still in flight. Accept grants only a bounded hold, never completion.
+        val completed = state.done && permitted(native, "allowNativeCompletion")
+        val checked = unchanged(native, state, wait)
+        if (checked == null) {
             if (wait != null) wait.revoked = true
             return false
         }
@@ -140,11 +150,12 @@ object ActionCompletion {
             return true
         }
         val waiting = permitted(native, "allowNativeCompletionWait")
-        if (!waiting || !unchanged(native, state, wait)) {
+        val held = if (waiting) unchanged(native, checked, wait) else null
+        if (held == null) {
             if (wait != null) wait.revoked = true
             return false
         }
-        if (wait == null) waits[native] = NativeWait(state.transaction, state.id)
+        if (wait == null) waits[native] = NativeWait(state.transaction, state.id, held.done)
         return true
     }
 

@@ -48,10 +48,22 @@ getTimestampMs=function()return now end
 getCore=function()return {getGameMode=function()return 'Sandbox' end}end
 local quantizedCalendar=false
 local calendarOffset=0
+local frameClock={id=0,ms=0,now=now,manual=false,offset=0}
+frameClock.world={getFrameNo=function()
+ if not frameClock.manual and now~=frameClock.now then
+  frameClock.ms=math.max(0,now-frameClock.now);frameClock.now=now;frameClock.id=frameClock.id+1
+ end
+ return frameClock.id
+end}
+getWorld=function()return frameClock.world end
 getGameTime=function()return {
- getCalender=function()return {getTimeInMillis=function()return (quantizedCalendar and math.floor(now/60000)*60000 or now)+calendarOffset end}end,
- getNightsSurvived=function()return math.floor(now/86400000)end,
- getTimeOfDay=function()return (now/3600000+7)%24 end}end
+ getCalender=function()return {getTimeInMillis=function()
+  local world=now+frameClock.offset
+  return(quantizedCalendar and math.floor(world/60000)*60000 or world)+calendarOffset
+ end}end,
+ getNightsSurvived=function()return math.floor((now+frameClock.offset)/86400000)end,
+ getTimeOfDay=function()return((now+frameClock.offset)/3600000+7)%24 end,
+ getGameWorldSecondsSinceLastUpdate=function()return frameClock.ms/1000 end}end
 local tickCallbacks,menuCallbacks={},{}
 Events.OnTick.Add=function(callback)tickCallbacks[#tickCallbacks+1]=callback end
 Events.OnMainMenuEnter={Add=function(callback)menuCallbacks[#menuCallbacks+1]=callback end}
@@ -390,6 +402,7 @@ local function reset()
     preparationReceipts={}
     player.sitting=false
     worlds={};floor.items={};currentSquare=here
+    frameClock.offset=0;frameClock.manual=false;frameClock.ms=0;frameClock.now=now;frameClock.id=frameClock.id+1
 end
 
 reset()
@@ -407,9 +420,13 @@ local workout=reachExercise(q)
 assert(workout.startMS==now and workout.endMS==now+600000,'workout duration counted time spent waiting')
 assert(currentExercise=='squats' and workout.fitnessUI==nil,'native exercise must exist only after preparation and outlive UI')
 now=now+150000
+assert(fitnessQueue.progress(workout).elapsed==0,'reading progress earned an unobserved frame')
+workout:update()
 local progress=assert(fitnessQueue.progress(workout))
 assert(math.abs(progress.elapsed-2.5)<.000001 and progress.total==10 and math.abs(progress.fraction-.25)<.000001,'fitness progress did not use elapsed game time')
 now=workout.endMS+60000
+assert(fitnessQueue.progress(workout).fraction==.25,'reading progress advanced the native frame accumulator')
+workout:update()
 assert(fitnessQueue.progress(workout).fraction==1,'elapsed progress overflowed planned duration')
 local effects=repeats
 finish(q,workout)
@@ -1442,6 +1459,103 @@ do
   activeNative=body.action
   return body,originalTail
  end
+ -- B42.21 SyncClockPacket.processClient bytecode21-36 replaces timeOfDay
+ -- with the received server value. Native frame elapsed/frameNo are unchanged.
+ -- Exercise the exact source-pinned native/managed action callbacks around that reset.
+ for _,managed in ipairs({false,true})do
+  for _,host in ipairs({false,true})do
+   for _,jump in ipairs({-2400000,2400000})do
+    reset();enabled=managed;client=host
+    local body
+    if managed then
+     local pending;pending,q=request('squats',10);expand(pending,q);body=reachExercise(q)
+     activeNative=body.action
+    else body=nativeWorkout('squats',10)end
+    frameClock.manual=true
+    local function frame(ms)
+     frameClock.id=frameClock.id+1;frameClock.ms=ms;now=now+ms;frameClock.now=now
+    end
+    if host then receipt={state='started',token='sync-clock-confirmed'};body:update()end
+    local beforeStops=nativeStops
+    frame(60000);body:update()
+    local sample=assert(fitnessQueue.timing(body))
+    assert(math.abs(sample.elapsed-1)<1e-6,'first actual active minute missing')
+    frameClock.offset=jump -- Actual SyncClock setter semantics; no engine frame has elapsed.
+    body:update()
+    assert(nativeStops==beforeStops and math.abs(fitnessQueue.timing(body).elapsed-1)<1e-6,
+     'SyncClock reset changed earned active duration: '..tostring(managed)..':'..tostring(host)..':'..jump)
+    for _=1,10 do
+     local read=fitnessQueue.timing(body);if managed then fitnessQueue.progress(body);fitnessQueue.describe(body)end
+     assert(math.abs(read.elapsed-1)<1e-6,'read-only timing/progress advanced the workout')
+    end
+    for minute=2,9 do frame(60000);body:update();assert(nativeStops==beforeStops,'active timer stopped early')end
+    frame(60000);body:update()
+    local ended=fitnessQueue.timing(body)
+    assert(nativeStops==beforeStops+1 and ended.elapsed==10 and ended.fraction==1,
+     'SyncClock reset extended or shortened the selected interval')
+    assert(ended.source=='active-native-frames'and ended.sampleMS==ended.startMS+600000 and ended.stopMS==ended.sampleMS)
+    body:update();assert(nativeStops==beforeStops+1,'same frame replayed native stop')
+   end
+  end
+ end
+ print('PASS native/managed SP/Host timers retain earned active duration through forward/backward SyncClock resets')
+ for _,managed in ipairs({false,true})do
+  reset();enabled=managed;client=true;frameClock.manual=true
+  frameClock.ms=900000 -- The frame containing start is not nine earned minutes.
+  local body
+  if managed then
+   local pending;pending,q=request('squats',10);expand(pending,q);body=reachExercise(q);activeNative=body.action
+  else body=nativeWorkout('squats',10)end
+  body:update();assert(fitnessQueue.timing(body).activeMS==0,'start credited its current/preparation frame')
+  local function frame(ms)
+   frameClock.id=frameClock.id+1;frameClock.ms=ms;now=now+ms;frameClock.now=now
+  end
+  frame(300000);body:update()
+  assert(fitnessQueue.timing(body).activeMS==300000 and fitnessQueue.timing(body).elapsed==0,
+   'unconfirmed active time became confirmed progress or disappeared')
+  frame(120000);receipt={state='started',token='skip-confirmation-frame'};body:update()
+  local confirmed=fitnessQueue.timing(body)
+  assert(confirmed.confirmed and confirmed.activeMS==0 and confirmed.elapsed==0,
+   'Host confirmation credited its current frame or pre-confirmation interval')
+  local stops=nativeStops
+  for _=1,8 do body:update();fitnessQueue.timing(body);if managed then fitnessQueue.progress(body)end end
+  assert(fitnessQueue.timing(body).activeMS==0 and nativeStops==stops,'repeated same-frame calls earned time')
+  frame(200000);body:update();frameClock.ms=900000;body:update()
+  assert(fitnessQueue.timing(body).activeMS==200000,'changed delta replayed an already observed frame')
+  for _,bad in ipairs({-1,math.huge,0/0})do
+   frameClock.id=frameClock.id+1;frameClock.ms=bad;body:update()
+   assert(fitnessQueue.timing(body).activeMS==200000,'invalid native frame delta earned time')
+  end
+  frame(200000);body:update();frame(199999);body:update()
+  assert(nativeStops==stops and fitnessQueue.timing(body).activeMS==599999,'variable native frames shortened full duration')
+  frame(1);body:update()
+  local stopped=fitnessQueue.timing(body)
+  assert(nativeStops==stops+1 and stopped.activeMS==600000 and stopped.stopMS==confirmed.startMS+600000,
+   'variable native frames failed the exact full interval')
+  frame(1000);receipt={state='started',token='late-started-receipt'};body:update()
+  local late=fitnessQueue.timing(body)
+  assert(nativeStops==stops+1 and late.startMS==confirmed.startMS and late.activeMS==600000 and late.stopMS==stopped.stopMS,
+   'late started receipt restarted or extended an already stopped timer')
+ end
+ print('PASS start/confirmation frame exclusion, read-only progress, repeated frames, variable native deltas and frozen late-receipt stops')
+ for _,managed in ipairs({false,true})do
+  reset();enabled=managed
+  local body
+  if managed then
+   local pending;pending,q=request('squats',10);expand(pending,q)
+   for _=1,20 do if q.queue[1].Type=='ISFitnessAction'then break end;runCurrent(q)end
+   body=assert(q.queue[1]);assert(body.Type=='ISFitnessAction')
+  else
+   q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK'})
+   body=assert(q.queue[#q.queue].onCompleteArgs.p1)
+  end
+  body.action=nativeAction();local stops=nativeStops
+  assert(fitnessQueue.timing(body)==nil,'unstarted constructor acquired active duration')
+  body:forceStop()
+  assert(nativeStops==stops+1 and fitnessQueue.timing(body)==nil and not currentExercise,
+   'stopping an unstarted native body invented time or lost its original stop')
+ end
+ print('PASS allocated unstarted native/managed bodies stop without inventing an active clock')
  for _,host in ipairs({false,true})do
   reset();enabled=false;client=host
   local bag=item('Bag_Schoolbag',nil,'BACK');bag.favorite=true;player.worn.BACK=bag

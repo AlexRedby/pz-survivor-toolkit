@@ -50,23 +50,53 @@ function O.reset(player,id)
  O.records,O.violations,O.epoch={}, {}, O.epoch+1;O.tailStart=nil;O.placements={};O.player,O.case=player,id
  previousSamples={};postStopAction=nil
 end
+local function serverClock()return GameTime.getServerTimeMills()end
+local function serverTiming(row,phase)
+ if not row.serverTiming then return end
+ local ok,problem=pcall(function()
+  local timing=row.serverTiming;local now=serverClock()
+  if phase=='start'then
+   timing.source='GameTime.getServerTimeMills:System.nanoTime';timing.startMS=now
+   timing.minutesPerDay=getGameTime():getMinutesPerDay();timing.samples=0;timing.worldMS=0;timing.realMS=0
+  elseif phase=='sample'then
+   local world,real=durationFrame();timing.samples=timing.samples+1
+   if real<=0 or world<0 then error('invalid native frame elapsed')end
+   local scale=world/real
+   timing.minScale=math.min(timing.minScale or scale,scale);timing.maxScale=math.max(timing.maxScale or scale,scale)
+   -- The first frame may include time before serverStart; never credit it.
+   if timing.lastMS then timing.worldMS=timing.worldMS+world;timing.realMS=timing.realMS+real
+   else timing.firstSampleMS=now end
+   timing.lastMS=now
+  else timing.stopMS=now;timing.elapsedMS=now-timing.startMS end
+ end)
+ if not ok then row.serverTiming.error=tostring(problem)end
+end
+function O.serverSample()
+ local row=O.active and O.active.fitnessWitness
+ if row then serverTiming(row,'sample')end
+end
 local function start(action)
  if action.character~=O.player then return end
  if O.active then O.violations[#O.violations+1]='next-workout-before-server-stop'end
  local frameGameMS,frameRealMS=durationFrame()
  local row={exercise=action.exeDataType,minutes=action.timeToExe,maxTime=action:getDuration(),reps=0,
-  startMS=clock(),durationStartMS=durationClock(),before=O.clinical(action.character),minEndurance=O.clinical(action.character).endurance,
+  startMS=clock(),durationStartMS=durationClock(),startFrameNo=O.multiSpec and getWorld():getFrameNo()or nil,before=O.clinical(action.character),minEndurance=O.clinical(action.character).endurance,
   durationStartFrameGameMS=frameGameMS,durationStartFrameRealMS=frameRealMS,
   previousStopSettled=not O.active,startEquipment=O.inventory and O.inventory(action.character)or nil,
   startStorage=O.captureStorage and O.storage(action.character)or nil}
  if O.case=='empty-restore'then row.nativeClock={constructorStartMS=action.startMS,deadlineMS=action.endMS,
   observedBodyStartMS=row.startMS,source=isServer()and 'ISFitnessAction.serverStart'or 'SP first started sample'}end
+ if O.multiSpec then
+  row.multiStorage=O.multiStorage(action.character)
+  if isServer()then row.serverTiming={};serverTiming(row,'start')end
+ end
  O.records[#O.records+1]=row;O.active=action;action.fitnessWitness=row
 end
 local function stopped(action,method)
  local row=action.fitnessWitness
  if not row or row.stopMS then return end
- row.stopMS=clock();row.durationStopMS=durationClock();row.stopMethod=method;row.after=O.clinical(action.character)
+ row.stopMS=clock();row.worldStopMS=durationClock();row.durationStopMS=row.worldStopMS;row.stopMethod=method;row.after=O.clinical(action.character)
+ serverTiming(row,'stop')
  if row.postStopXP then row.afterXPEventCount=#row.postStopXP.events end
  row.durationStopFrameGameMS,row.durationStopFrameRealMS=durationFrame()
  if row.nativeClock then row.nativeClock.constructorStartAtStopMS=action.startMS;row.nativeClock.deadlineAtStopMS=action.endMS end
@@ -108,6 +138,11 @@ function O.receipt(player)
  end
  return receipt
 end
+function O.durationStop(action,timing)
+ if isClient()or isServer()or not timing or timing.source~='active-native-frames'then return end
+ local row=action.fitnessWitness
+ if row and timing.stopMS then row.timerStartMS=timing.startMS;row.timerStopMS=timing.stopMS;row.timerSource=timing.source end
+end
 -- SP reads the real live action without replacing any source-guarded client method.
 function O.sample(current)
  if isClient()or isServer()then return end
@@ -116,8 +151,8 @@ function O.sample(current)
  if not current.fitnessWitness then
   start(current);if O.case~='empty-restore'then current.fitnessWitness.startMS=current.startMS end
   local fitness=PZSurvivorToolkit and PZSurvivorToolkit.ActionQueueFitness
-  local progress=fitness and fitness.progress(current)
-  if progress then current.fitnessWitness.durationStartMS=progress.startMS end
+  local progress=fitness and (fitness.timing and fitness.timing(current)or fitness.progress(current))
+  if progress then current.fitnessWitness.timerStartMS=progress.startMS;current.fitnessWitness.timerSource=progress.source end
  end
  local row=current.fitnessWitness
  local sample=O.case=='late-exhaustion'and {reps=current.repnb,clinical=O.clinical(current.character),
@@ -144,7 +179,7 @@ local tailStartOriginal=ISReadABook.serverStart
 ISReadABook.serverStart=function(action,...)
  if action.character==O.player and action.item:getID()==O.tailID then
   O.tailStart={id=action.item:getID(),kind=action.item:getFullType(),callback='ISReadABook.serverStart',inventory=O.inventory(action.character),
-   activation=O.activation(action.character),storage=O.captureStorage and O.storage(action.character)or nil,workouts=#O.records,observerActive=O.active~=nil}
+   multiStorage=O.multiSpec and O.multiStorage(action.character)or nil,activation=O.activation(action.character),storage=O.captureStorage and O.storage(action.character)or nil,workouts=#O.records,observerActive=O.active~=nil}
  end
  return tailStartOriginal(action,...)
 end
@@ -152,6 +187,7 @@ require 'TimedActions/ISDropWorldItemAction'
 local dropCompleteOriginal=ISDropWorldItemAction.complete
 ISDropWorldItemAction.complete=function(action,...)
  local result=dropCompleteOriginal(action,...)
+ if O.multiSpec then O.multiDrop(action,'ISDropWorldItemAction.complete',result==true)end
  if O.captureStorage and action.character==O.player and action.item and action.item:getID()==O.bagID then
   O.placements[#O.placements+1]=O.placement(action.character,'ISDropWorldItemAction.complete',result==true)
  end

@@ -1,5 +1,10 @@
 local O=require 'QueueFitnessObservation'
 local F={}
+function F.multiCase(id)return id=='multi-storage'or id=='multi-storage-closed'end
+local function storage(id)return F.multiCase(id)and require 'QueueFitnessStorage'or nil end
+function F.multiSnapshot(state)return storage(state.case).snapshot(state.player,state.ids.multiStorage)end
+function F.multiStart(state,action,callback)return storage(state.case).observeStart(state,action,callback)end
+function F.multiPlacement(state,action,callback,succeeded)return storage(state.case).placement(state,action,callback,succeeded)end
 function F.restorationCase(id)return id=='active-cancel-restore'or id=='pickup-cancel-restore'or id=='placement-cancel-restore'end
 function F.borrowedCase(id)return id=='closed-ui-restore'or id=='empty-restore'or F.restorationCase(id)end
 function F.activation(player)
@@ -114,6 +119,7 @@ function F.prepare(player,id,previous)
  assert(not player:getFitness():getCurrentExe(),'fitness not idle before prepare')
  if previous then
   assert(previous.verified,'unverified previous fitness fixture')
+  if F.multiCase(previous.case)then storage(previous.case).removePrevious(previous)end
   for _,item in pairs(previous.items)do
    local live=player:getInventory():getItemById(item:getID())
    if live then
@@ -122,11 +128,13 @@ function F.prepare(player,id,previous)
    end
   end
  end
- local state={case=id,player=player,items={},ids={case=id,items={}}}
+ local state={case=id,player=player,items={},ids={case=id,items={}}};local multi=storage(id)
  local order=F.restorationCase(id)and {'bag','front','tail','hammer','screwdriver','dumbbell'}or {'front','tail','bag','hammer','screwdriver','dumbbell'}
  for _,name in ipairs(order)do
   local destination=(F.borrowedCase(id)and name=='dumbbell'or F.restorationCase(id)and name=='front')and state.items.bag:getItemContainer()or player:getInventory()
-  local item=assert(destination:AddItem(F.restorationCase(id)and name=='hammer'and 'Base.Torch'or types[name]),'missing fitness fixture item '..name)
+  if multi and name=='dumbbell'then destination=multi.propContainer(state)end
+  local kind=F.restorationCase(id)and name=='hammer'and 'Base.Torch'or types[name]
+  local item=assert(destination:AddItem(multi and multi.coreType(id,name,kind)or kind),'missing fitness fixture item '..name)
   state.items[name]=item;state.ids.items[name]=item:getID()
  end
  for name,perk in pairs({front=Perks.Woodwork,tail=Perks.Doctor})do
@@ -144,11 +152,13 @@ function F.prepare(player,id,previous)
   state.items.bag:setFavorite(true)
   state.items.hammer:setCurrentUses(state.items.hammer:getMaxUses());state.items.hammer:setActivated(true)
  end
- O.reset(player,id);O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.borrowedCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.borrowedCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
+ if multi then multi.prepare(state)end
+ O.reset(player,id);O.multiSpec=state.ids.multiStorage;O.multiPlacements={};O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.borrowedCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.borrowedCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
+ if multi then state.ids.multiBefore=F.multiSnapshot(state)end
  if isServer()then
   -- InventoryContainer serialization includes its children. Send the owning root bag
   -- once; sending the nested dumbbell again would create a duplicate replica.
-  for _,item in pairs(state.items)do
+  for _,name in ipairs({'front','tail','bag','hammer','screwdriver','dumbbell'})do local item=state.items[name]
    if item:getContainer()==player:getInventory()then sendAddItemToContainer(item:getContainer(),item)end
   end
   sendClothing(player,state.items.bag:canBeEquipped(),player:getWornItem(state.items.bag:canBeEquipped()));sendEquip(player)
@@ -157,11 +167,12 @@ function F.prepare(player,id,previous)
  return state
 end
 function F.resolve(player,ids)
- local state={case=ids.case,player=player,ids=ids,items={}}
+ local state={case=ids.case,player=player,ids=ids,items={}};local multi=storage(ids.case)
  for name in pairs(types)do
   local id=ids.items[name];if type(id)~='number'then return end
   local item=player:getInventory():getItemById(id);if not item or item:getID()~=id then return end
-  if item:getFullType()~=(F.restorationCase(ids.case)and name=='hammer'and 'Base.Torch'or types[name])then error('fitness ID/type differs '..name)end
+  local kind=F.restorationCase(ids.case)and name=='hammer'and 'Base.Torch'or types[name]
+  if item:getFullType()~=(multi and multi.coreType(ids.case,name,kind)or kind)then error('fitness ID/type differs '..name)end
   state.items[name]=item
  end
  return state
@@ -169,6 +180,7 @@ end
 function F.prepareReady(state)
  if not state then return false end
  local player,items=state.player,state.items
+ if F.multiCase(state.case)then return storage(state.case).resolveReady(state)end
  if F.restorationCase(state.case)and (not items.hammer:isActivated()or not items.bag:isFavorite())then return false end
  return not F.borrowedCase(state.case)or (player:getPrimaryHandItem()==items.hammer
   and player:getSecondaryHandItem()==items.screwdriver and player:getWornItem(items.bag:canBeEquipped())==items.bag)
@@ -208,6 +220,7 @@ end
 function F.receipt(state)
  local player=state.player;local result=O.receipt(player)
  state.strandedCurrent=player:getFitness():getCurrentExe()
+ if F.multiCase(state.case)then result.multiStorage=F.multiSnapshot(state);result.multiPlacements=O.multiPlacements end
  result.case=state.case;result.inventory=F.inventory(player);result.removed=state.removed or false
  result.tailRead=player:getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
  result.frontRead=player:getAlreadyReadPages(state.items.front:getFullType())==state.items.front:getNumberOfPages()
@@ -372,10 +385,18 @@ end
 function F.releaseEquipment(state)
  -- Fixture cleanup only after a recorded case and the real native queue has settled.
  local player=state.player
+ if F.multiCase(state.case)then storage(state.case).release(state);return end
  player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil)
  local bag=player:getInventory():getItemById(state.ids.items.bag)
  if bag and player:isEquipped(bag)then player:removeWornItem(bag,false)end
  if isServer()then sendClothing(player,state.items.bag:canBeEquipped(),player:getWornItem(state.items.bag:canBeEquipped()));sendEquip(player)end
+end
+O.multiStorage=function(player)return O.multiSpec and require('QueueFitnessStorage').snapshot(player,O.multiSpec)or nil end
+O.multiDrop=function(action,callback,succeeded)
+ if O.multiSpec and action.character==O.player then
+  local row=require('QueueFitnessStorage').placement({case=O.case,player=O.player,ids={multiStorage=O.multiSpec}},action,callback,succeeded)
+  if row then O.multiPlacements[#O.multiPlacements+1]=row end
+ end
 end
 O.inventory=F.inventory;O.activation=F.activation
 O.storage=function(player)return F.storage(player,O.bagID)end

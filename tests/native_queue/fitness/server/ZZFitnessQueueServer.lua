@@ -98,6 +98,7 @@ Events.OnClientCommand.Add(function(module,name,player,args)
  if not ok then if name=='Verify'then verifyDiagnostic(problem)end;fail(player,problem)end
 end)
 Events.OnTick.Add(function()
+ if O.serverSample then O.serverSample()end
  if readySince and not peersReady then
   local ok,problem=pcall(function()
    assert(getTimestampMs()-readySince<90000,'fitness peer readiness deadline')

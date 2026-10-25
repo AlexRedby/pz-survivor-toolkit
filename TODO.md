@@ -28,7 +28,8 @@
 
 # Exercise ground storage
 
-- [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
+- [ ] Check moving away from grounded exercise bags in disposable full-pack B42.21 SP/Host native/Toolkit profiles. Preserve exact bag/content/prop identities and real reachability; do not teleport resources or substitute a same-type bag during cleanup.
+- [ ] Check a second player's competing pickup of exercise storage in full-pack Host native/Toolkit profiles. Require authoritative conservation, exact ownership and safe cleanup with the independent queue tail; never recover an item already taken by another actor.
 
 # Container editor visual states
 

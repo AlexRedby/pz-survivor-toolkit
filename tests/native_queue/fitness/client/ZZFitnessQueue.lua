@@ -20,8 +20,9 @@ local function minutes()
  if case()=='late-exhaustion'then return config.kind=='mp'and 60 or 30 end
  return (case()=='burpees-30'or case()=='squats-30')and 30 or 10
 end
-local function exerciseForCase(id)return (id=='burpees-30'or id=='late-exhaustion')and 'burpees'or (id=='missing-dumbbell'or F.borrowedCase(id))and 'bicepscurl'or 'squats'end
-local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or id=='squats-30'or id=='late-exhaustion'or F.restorationCase(id)end
+local function multiCase(id)return id=='multi-storage'or id=='multi-storage-closed'end
+local function exerciseForCase(id)return (id=='burpees-30'or id=='late-exhaustion')and 'burpees'or (id=='missing-dumbbell'or F.borrowedCase(id)or multiCase(id))and 'bicepscurl'or 'squats'end
+local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or id=='squats-30'or id=='late-exhaustion'or F.restorationCase(id)or multiCase(id)end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
 -- Retain the exact workout after it stops being the head. Native removal and
@@ -60,7 +61,7 @@ local function observeDurationContinuation(nextAction)
    local terminal=isClient()and record and T.ActionQueueAcknowledgements.observe(action,record)or not isClient()and 'singleplayer'
    command.durationContinuation={workoutStartMS=sample.workoutStartMS,workoutEndMS=sample.workoutEndMS,
     reachedNativeClock=sample.reachedNativeClock,stopNativeClock=sample.stopNativeClock,reachedTimestampMilliseconds=sample.reachedTimestampMilliseconds,
-    continuationNativeClock=O.durationClock(),continuationTimestampMilliseconds=getTimestampMs(),
+    continuationNativeClock=sample.stopNativeClock,continuationTimestampMilliseconds=getTimestampMs(),
     delayMilliseconds=getTimestampMs()-sample.reachedTimestampMilliseconds,tailId=nextAction.item:getID(),
     callback='ISBaseTimedAction.begin',nativeAbsent=not action.character:getCharacterActions():contains(action.action),
     terminalState=terminal or false,token=record and record.token or false}
@@ -72,6 +73,14 @@ end
 assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{started=function(action)
  observeDurationContinuation(action)
  if state and state.isolation and state.isolation.status=='started'then F.isolationStarted(state,action);return end
+ if command and state and multiCase(case())then
+  local witness=F.multiStart(state,action)
+  if witness then command.multiStarts[#command.multiStarts+1]=witness end
+  if action.Type=='ISReadABook'and action.character==state.player and action.item
+   and action.item:getID()==state.ids.items.tail then
+   command.multiBeforeTail={callback='ISBaseTimedAction.begin',nativeClock=O.durationClock(),frameNo=getWorld():getFrameNo(),snapshot=F.multiSnapshot(state),inventory=F.inventory(state.player)}
+  end
+ end
  if not command or not state or not F.borrowedCase(case())then return end
  if action.Type=='ISEquipWeaponAction'and getmetatable(action)==ISEquipWeaponAction and action.character==state.player
   and action.item and action.item:getID()==state.ids.items.dumbbell and action.item:getFullType()=='Base.DumbBell'then
@@ -94,11 +103,20 @@ assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{start
 end,begin=function(action,phase)
  if state and state.isolation and state.isolation.status=='started'then return F.isolationBegin(state,action,phase)end
  if command and state and action and action.Type=='ISFitnessAction' and action.character==state.player and phase=='stop' then
+  if multiCase(case())then command.multiStopFrame=getWorld():getFrameNo()end
   command.nativeStopCalls=(command.nativeStopCalls or 0)+1
+  if O.durationStop then O.durationStop(action,T.ActionQueueFitness.timing(action))end
   sampleDurationStop(action) -- Observe before native reset/pruning can retire this exact body.
   if case()=='late-exhaustion'then
    assert(not command.exhaustionStop,'duplicate local exhaustion stop')
    command.exhaustionStop={state=O.noteStop(action),timing=T.ActionQueueFitness.timing(action),timestampMilliseconds=getTimestampMs()}
+  end
+ end
+ if command and state and multiCase(case())and action and action.character==state.player
+  and (phase=='perform'or phase=='complete')and action.Type=='ISDropWorldItemAction'
+  and getmetatable(action)==ISDropWorldItemAction and action.item then
+  for _,ref in ipairs(state.ids.multiStorage.bags)do
+   if action.item:getID()==ref.id and action.item:getFullType()==ref.kind then return true end
   end
  end
  -- Queue-disabled ActionCompletion dispatches finish only for an accepted observer.
@@ -111,6 +129,8 @@ end,finish=function(action,phase,succeeded)
  if command and state and action and action.Type=='ISFitnessAction' and action.character==state.player and phase=='stop' and succeeded then
   command.nativeStopReturns=(command.nativeStopReturns or 0)+1
  end
+ if not isClient()and not isServer()and command and state and multiCase(case())and phase=='complete'
+  and action.character==state.player and action.Type=='ISDropWorldItemAction'then O.multiDrop(action,'ISDropWorldItemAction.complete',succeeded==true)end
  if not isClient()and not isServer()and command and state and F.borrowedCase(case())
   and action.character==state.player and action.Type=='ISDropWorldItemAction'and getmetatable(action)==ISDropWorldItemAction
   and action.item and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'and phase=='complete'then
@@ -240,6 +260,19 @@ local function rejectedRequest(exercise,first,last)
  end
  raw('REQUEST_REJECTED',{case=case(),exercise=exercise,children=children,callbacks=callbacks})
 end
+local multiMergeObserved=false
+local function observeMultiMerge()
+ if not multiCase(case())or multiMergeObserved then return end
+ local intent=assert(T.ActionQueueTidyIntent,'native transfer observation unavailable')
+ local previous=ISInventoryTransferAction.checkQueueList
+ intent.observeTransfers(function(action)
+  if state and multiCase(case())and action.character==state.player then
+   F.multiStart(state,action,'ISInventoryTransferAction.checkQueueList')
+  end
+ end,function(action)return state~=nil and multiCase(case())and action.character==state.player end)
+ assert(ISInventoryTransferAction.checkQueueList==previous,'fixture must not replace native transfer methods')
+ multiMergeObserved=true
+end
 local function enqueue(exercise)
  ui.selectedExe=exercise;ui:selectedNewExercise();ui.exeTime:setText(tostring(minutes()));ui:updateButtons(queue().queue[1])
  if not ui.ok.enable then
@@ -247,6 +280,7 @@ local function enqueue(exercise)
   error('native fitness OK not enabled')
  end
  local before=#queue().queue;ui:onClick(ui.ok)
+ if multiCase(case())then observeMultiMerge()end
  local first=assert(queue().queue[before+1],'native fitness menu produced no request')
  local requestAction
  for i=before+1,#queue().queue do
@@ -270,6 +304,7 @@ local function dispatch()
  command={menuDispatched=true,nativeDurations=true,minutes=minutes(),frontMinutes=immediate(id)and 0 or 12,
   waitingNoExercise=true,waitingNoClinicalEffects=true,activeObserved=false,activeCancelled=false,pendingCancelled=false,
   reordered=false,closedUI=false,startedOrder={},activeAcks={},terminalAcks={},progressSamples={},durationStops={},queueDrained=false}
+ if multiCase(id)then command.multiStarts={}end
  if not immediate(id)then front=read(state.items.front)end
  local first=enqueue(exerciseForCase(id))
  if id=='sequential'then enqueue('pushups')end
@@ -290,7 +325,7 @@ local function dispatch()
   assert(API.move(queue(),first,tail,true),'pending fitness reorder rejected')
   command.reordered=true
   assert(queue():indexOf(front)<queue():indexOf(tail)and queue():indexOf(tail)<queue():indexOf(first),'whole workout order differs')
- elseif id=='closed-ui-restore'then ui:onClick(ui.close);command.closedUI=true end
+ elseif id=='closed-ui-restore'or id=='multi-storage-closed'then ui:onClick(ui.close);command.closedUI=true end
  if id=='missing-dumbbell'or id=='exhaustion'then request('Mutate')end
  phase='running';since=getTimestampMs();quiet=nil
 end
@@ -366,7 +401,7 @@ local function observe()
   end
   if not native and not progressSeen[current]then
    if progress and progress.fraction>0 then
-    local sampleMS=O.durationClock();local expected=math.max(0,math.min(minutes(),(sampleMS-progress.startMS)/60000))
+    local sampleMS=progress.sampleMS;local expected=math.max(0,math.min(minutes(),(sampleMS-progress.startMS)/60000))
     assert(progress.total==minutes() and progress.elapsed>0 and progress.elapsed<=minutes() and progress.fraction<=1
      and math.abs(progress.elapsed-expected)<.000001 and math.abs(progress.fraction-progress.elapsed/minutes())<.000001,
      'fitness displayed progress differs from selected native time')
@@ -413,6 +448,7 @@ local function finishCase()
  local localInventory=F.inventory(getPlayer())
  command.queueDrained=empty();command.clientInventory=localInventory
  if F.borrowedCase(case())then command.clientActivation=F.activation(getPlayer());command.clientStorage=F.storage(getPlayer(),state.ids.items.bag)end
+ if multiCase(case())then command.multiFinal=F.multiSnapshot(state)end
  command.clientCurrentExerciseCleared=not getPlayer():getFitness():getCurrentExe()
  local problem
  if case()=='late-exhaustion'then

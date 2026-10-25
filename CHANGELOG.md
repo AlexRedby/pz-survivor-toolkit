@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.267
+
+- Fixed: Fitness measures earned active native frames instead of the synchronized world clock. Host clock corrections no longer shorten or extend a workout; preparation, repeated reads and the confirmation frame add no time. Native interruptions, effects and stop/cleanup ordering stay intact.
+
 ### 0.1.266
 
 - Return accelerated time to normal when a nearby audible alarm starts. Uses MP Fast Forward's existing safety veto in multiplayer and native speed controls in single-player; adds no notifications or windows. Requires the matching Java Patches alarm bridge.
@@ -1206,6 +1210,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.60
+
+- Fixed: A paid multiplayer action no longer resets the queue when its item change arrives before the native completion packet. An exact accepted transaction can wait for its confirmed result within the existing deadline; completion still requires native Done and the sealed server receipt. Local cancellation and stale/rejected transactions remain authoritative.
 
 ### 0.1.59
 

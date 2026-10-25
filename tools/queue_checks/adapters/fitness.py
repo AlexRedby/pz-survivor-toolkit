@@ -12,7 +12,7 @@ import shutil
 from ..mod_selection import metadata, mod_ids
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
-         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'squats-30', 'late-exhaustion', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore']
+         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'squats-30', 'late-exhaustion', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore', 'multi-storage', 'multi-storage-closed']
 PROJECT = Path(__file__).resolve().parents[3]
 MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 SCENARIO_ACTIONS = {'fitness-ui': {
@@ -25,7 +25,8 @@ SCENARIO_ACTIONS = {'fitness-ui': {
         'move-independent': {'pending-reorder': {'effectsVerified': True, 'independentMoveVerified': True}},
         'cancel-active': {'active-cancel': {'effectsVerified': True, 'activeCancelVerified': True}},
         'lost-before-start': {'missing-dumbbell': {'effectsVerified': True, 'missingItemVerified': True}},
-        'restore-hands': {'closed-ui-restore': {'effectsVerified': True, 'restoreVerified': True}},
+        'restore-hands': {case: {'effectsVerified': True, 'restoreVerified': True}
+                          for case in ('closed-ui-restore', 'multi-storage', 'multi-storage-closed')},
         'server-authority': {'sequential': {'effectsVerified': True, 'serverAuthorityVerified': True}},
     },
     'toolkit_only': ['cancel-waiting', 'move-independent', 'lost-before-start'],
@@ -60,7 +61,8 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted(path for path in (root / 'fitness').rglob('*') if path.suffix in ('.lua', '.java')), root / 'health/shared/QueueHealthEvents.lua',
-            root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua']
+            root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua',
+            Path(project) / 'tools/queue_checks/adapters/fitness_storage.py']
 
 
 def _validity_probe(project, output, game, jdk, locations):
@@ -171,13 +173,15 @@ def _exhaustion_without_training(before, after):
 
 RESTORATION_CASES = ('active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore')
 EARLY_CANCEL_CASES = ('pickup-cancel-restore', 'placement-cancel-restore')
-IMMEDIATE_CASES = ('empty', 'empty-restore', 'active-cancel', 'burpees-30', 'squats-30', 'late-exhaustion', *RESTORATION_CASES)
+IMMEDIATE_CASES = ('empty', 'empty-restore', 'active-cancel', 'burpees-30', 'squats-30', 'late-exhaustion', 'multi-storage', 'multi-storage-closed', *RESTORATION_CASES)
 BORROWED_CASES = ('closed-ui-restore', 'empty-restore', *RESTORATION_CASES)
 
 
 def _expected_exercises(case, mode):
     if case == 'exhaustion' or mode == 'toolkit' and case in ('pending-cancel', 'missing-dumbbell', *EARLY_CANCEL_CASES):
         return []
+    if case in ('multi-storage', 'multi-storage-closed'):
+        return ['bicepscurl']
     if case in ('burpees-30', 'squats-30', 'late-exhaustion'):
         return ['squats' if case == 'squats-30' else 'burpees']
     return ['squats', 'pushups'] if case == 'sequential' else ['bicepscurl' if case in ('missing-dumbbell', *BORROWED_CASES) else 'squats']
@@ -331,13 +335,13 @@ def _late_exhaustion(command, receipt, mp, native, tail_id, minutes):
     if (not exhausted(state) or not _matches(state, dict(exerciseStarted=False, exerciseEnded=True, started=True))
             or not _number(local.get('timestampMilliseconds'))
             or not _matches(timing, dict(confirmed=True, stopping=mp and not native, total=minutes))
-            or not all(_number(timing.get(key)) for key in ('startMS', 'endMS', 'stopMS', 'stopTimestampMS'))
+            or not all(_number(timing.get(key)) for key in ('startMS', 'endMS', 'stopMS', 'stopTimestampMS', 'worldSampleMS'))
             or not _matches(stop, dict(startMS=timing.get('startMS'), endMS=timing.get('endMS'),
                                       stopMS=timing.get('stopMS'), confirmed=True))
             or timing.get('endMS', 0) - timing.get('startMS', 0) != minutes * 60000
             or not 600000 < timing.get('stopMS', 0) - timing.get('startMS', 0) < minutes * 60000
             or not _number(state.get('durationMS')) or not _number(timing.get('stopMS'))
-            or not 0 <= state['durationMS'] - timing['stopMS'] < 60000
+            or state['durationMS'] != timing['worldSampleMS']
             or command.get('cancelCallback') is not None or command.get('mutationObserved', False) is not False
             or command.get('activeCancelled') is not False
             or type(command.get('nativeStopCalls')) is not int or command['nativeStopCalls'] != 1
@@ -365,8 +369,8 @@ def _late_exhaustion(command, receipt, mp, native, tail_id, minutes):
             or type(record.get('lastRepEnduranceMoodle')) is not int or not 0 <= record['lastRepEnduranceMoodle'] <= 4
             or not _number(record.get('durationStartMS')) or not _number(timing.get('startMS'))
             or abs(record['durationStartMS'] - timing['startMS']) >= 60000
-            or not _number(record.get('durationStopMS')) or not _number(timing.get('stopMS'))
-            or abs(record['durationStopMS'] - timing['stopMS']) >= 60000
+            or not _number(record.get('durationStopMS')) or not _number(timing.get('worldSampleMS'))
+            or abs(record['durationStopMS'] - timing['worldSampleMS']) >= 60000
             or record.get('stopMethod') != ('serverStop' if mp else 'observed-native-removal')
             or mp and not _matches(record.get('stopCallbacks'), dict(serverStop=1))
             or mp and record.get('stopCallbacks', {}).get('complete', 0) != 0):
@@ -431,7 +435,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
     expected_fields = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in IMMEDIATE_CASES else 12,
         activeObserved=bool(_expected_exercises(case, selection['mode'])), queueDrained=True, clientCurrentExerciseCleared=True,
         pendingCancelled=not native and case == 'pending-cancel', reordered=not native and case == 'pending-reorder',
-        activeCancelled=case in ('active-cancel', 'active-cancel-restore'), closedUI=case == 'closed-ui-restore')
+        activeCancelled=case in ('active-cancel', 'active-cancel-restore'), closedUI=case in ('closed-ui-restore', 'multi-storage-closed'))
     if case in ('burpees-30', 'squats-30'):
         delay = command.get('durationStopDelayMilliseconds')
         if not _number(delay) or not 0 <= delay < 5000:
@@ -667,6 +671,9 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or not all(type(square[key]) is int for key in square)
                     or isinstance(placements, list) and placements and not _matches(placements[0].get('storage', {}).get('world'), square)):
                 issues.append('Fitness cancellation did not target exact active native bag placement: ' + case)
+    if case in ('multi-storage', 'multi-storage-closed'):
+        from .fitness_storage import verify_storage
+        issues.extend(verify_storage(case, command, prep, receipt, mp))
     last_stop, last_duration_stop = None, None
     for record in records:
         before, after, rep = record.get('before'), record.get('after'), record.get('lastRep')
@@ -930,7 +937,7 @@ def verify(root, selection, catalog):
             sequentialVerified=not problems and case=='sequential', waitingCancelVerified=not problems and case=='pending-cancel' and selection['mode']=='toolkit',
             independentMoveVerified=not problems and case=='pending-reorder' and selection['mode']=='toolkit',
             activeCancelVerified=not problems and case in ('active-cancel', 'active-cancel-restore'), missingItemVerified=not problems and case=='missing-dumbbell',
-            restoreVerified=not problems and case in BORROWED_CASES, receipt=receipt, command=row.get('command'))
+            restoreVerified=not problems and case in (*BORROWED_CASES, 'multi-storage', 'multi-storage-closed'), receipt=receipt, command=row.get('command'))
         outcomes.append(dict(actor='client1', case=case, status='failed' if problems else 'passed', reason='; '.join(problems), outcome=outcome))
     if len(set(used_ids)) != len(used_ids):
         issues.append('Fitness fixture IDs overlap between cases')

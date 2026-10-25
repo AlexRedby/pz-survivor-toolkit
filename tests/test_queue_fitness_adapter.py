@@ -37,7 +37,7 @@ class FitnessAdapterTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.selection = dict(suite='fitness', kind='sp', mode='toolkit', cases=list(fitness.CASES),
+        self.selection = dict(suite='fitness', kind='sp', mode='toolkit', cases=[case for case in fitness.CASES if case not in ('multi-storage','multi-storage-closed')],
                               clients=1, languages=['EN'], mods=list(fitness.MODS), options={})
 
     def evidence(self):
@@ -152,7 +152,7 @@ class FitnessAdapterTests(unittest.TestCase):
                     tailInitiallyQueued=True,tailPagesAtRequest=99,tailTotalPages=100,tailPagesAtFinish=99 if mode=='native' else 100)
                 command['durationStops'][0]['stopMS']=end
                 command['exhaustionStop']=dict(state=state,timestampMilliseconds=1000,timing=dict(
-                    startMS=0,endMS=minutes*60000,stopMS=end,stopTimestampMS=1000,confirmed=True,stopping=mp and mode=='toolkit',total=minutes))
+                    startMS=0,endMS=minutes*60000,stopMS=end,worldSampleMS=end,stopTimestampMS=1000,confirmed=True,stopping=mp and mode=='toolkit',total=minutes))
                 if mode=='toolkit':
                     command['durationContinuation']=dict(workoutStartMS=0,workoutEndMS=minutes*60000,
                         reachedNativeClock=end,stopNativeClock=end,reachedTimestampMilliseconds=1000,
@@ -398,7 +398,7 @@ class FitnessAdapterTests(unittest.TestCase):
         """)
         lua.globals().F=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
         source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
-        for name in ('immediate','exerciseForCase'):
+        for name in ('multiCase','immediate','exerciseForCase'):
             line=next(line for line in source.splitlines() if line.startswith('local function '+name+'('))
             lua.execute(line.replace('local function ','function ',1))
         start=source.index('local function dispatch()');end=source.index('local function observe()',start)
@@ -653,6 +653,7 @@ class FitnessAdapterTests(unittest.TestCase):
         lua.globals().T=lua.globals().PZSurvivorToolkit
         lua.execute((ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua').read_text())
         lua.execute('assert(operationsDependencyLoads==1)')
+        lua.execute(next(line for line in source.splitlines() if line.startswith('local function multiCase(')).replace('local function ','function ',1))
         lua.execute(source[start:end])
         lua.execute("""
             local lifecycle=T.ActionQueueLifecycle
@@ -672,6 +673,18 @@ class FitnessAdapterTests(unittest.TestCase):
              local wrong=action();change(wrong);assert(not lifecycle.begin(wrong,'complete'),'unrelated callback accepted')
             end
             assert(not lifecycle.begin(action(),'stop')and not lifecycle.begin(nil,'complete'))
+            end
+            for _,id in ipairs({'multi-storage','multi-storage-closed'})do
+             caseID=id;state.ids.multiStorage={bags={{id=20,kind='Base.Bag_Schoolbag'},{id=21,kind='Base.Bag_Satchel'},{id=22,kind='Base.Bag_FannyPackFront'}}}
+             local paid={};O.multiDrop=function(a,callback,succeeded)paid[#paid+1]={id=a.item:getID(),callback=callback,succeeded=succeeded}end
+             for _,ref in ipairs(state.ids.multiStorage.bags)do
+              local exact=action();exact.item.getID=function()return ref.id end;exact.item.getFullType=function()return ref.kind end
+              assert(lifecycle.begin(exact,'perform'));lifecycle.finish(exact,'perform',true)
+              assert(lifecycle.begin(exact,'complete'));lifecycle.finish(exact,'complete',true)
+             end
+             assert(#paid==3 and paid[3].id==22 and paid[3].callback=='ISDropWorldItemAction.complete'and paid[3].succeeded)
+             local foreign=action();foreign.item.getID=function()return 999 end
+             assert(not lifecycle.begin(foreign,'complete'))
             end
         """)
 
@@ -980,6 +993,24 @@ class FitnessAdapterTests(unittest.TestCase):
                     else:command['durationContinuation']={}
                     with self.subTest(mode=mode,kind=kind,change=change):self.assertTrue(self.verify(evidence)['issues'])
 
+    def test_late_exhaustion_keeps_raw_and_active_clock_domains_separate(self):
+        for kind in ('sp','mp'):
+            self.selection.update(mode='toolkit',kind=kind,cases=['late-exhaustion'],clients=2 if kind=='mp' else 1,
+                languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+            for offset in (-1000,1000):
+                evidence=self.evidence();local=evidence[0][1]['command']['exhaustionStop']
+                local['state']['durationMS']+=offset;local['timing']['worldSampleMS']+=offset
+                with self.subTest(kind=kind,offset=offset):self.assertEqual(self.verify(evidence)['issues'],[])
+            for change in ('missing','nonfinite','wrong-type','stale','authority-drift'):
+                evidence=self.evidence();local=evidence[0][1]['command']['exhaustionStop']
+                if change=='missing':local['timing'].pop('worldSampleMS')
+                elif change=='nonfinite':local['timing']['worldSampleMS']=float('nan')
+                elif change=='wrong-type':local['timing']['worldSampleMS']='1620000'
+                elif change=='stale':local['timing']['worldSampleMS']-=1
+                else:
+                    local['state']['durationMS']+=60000;local['timing']['worldSampleMS']+=60000
+                with self.subTest(kind=kind,change=change):self.assertTrue(self.verify(evidence)['issues'])
+
     def test_host_cached_server_moodle_is_telemetry_not_the_local_stop_cause(self):
         for mode in ('native','toolkit'):
             self.selection.update(mode=mode,kind='mp',cases=['late-exhaustion'],clients=2,languages=['EN','RU'],options={'mp_host':True})
@@ -1222,15 +1253,17 @@ class FitnessAdapterTests(unittest.TestCase):
                   and observer.placements[1].callback=='ISDropWorldItemAction.complete')
                 else
                  assert(ISFitnessAction.exeLooped==originalLoop)
-                 PZSurvivorToolkit={ActionQueueFitness={progress=function()return {startMS=0}end}}
+                 PZSurvivorToolkit={ActionQueueFitness={timing=function()return {startMS=-600000,stopMS=0,source='active-native-frames'}end}}
                  advance()
                  observer.sample(action);action.repnb=2;calls.xp=10;advance();observer.sample(action)
-                 fit.current=nil;advance();observer.sample(nil)
+                 fit.current=nil;advance();observer.durationStop(action,PZSurvivorToolkit.ActionQueueFitness.timing(action));observer.sample(nil)
                  local receipt=observer.receipt(player)
                  assert(calls.start==0 and calls.loop==0 and calls.stop==0 and calls.xp==10)
                  assert(#receipt.records==1 and receipt.records[1].reps==2)
-                 assert(receipt.records[1].durationStartMS==0 and math.abs(receipt.records[1].durationStopMS-3000)<.00001,
-                  'SP duration lost the managed workout start before its first observation tick')
+                 assert(math.abs(receipt.records[1].durationStartMS-1000)<.00001 and math.abs(receipt.records[1].durationStopMS-3000)<.00001,
+                  'SP duration must remain independent of a false production timer')
+                 assert(receipt.records[1].timerStartMS==-600000 and receipt.records[1].timerStopMS==0
+                  and receipt.records[1].timerSource=='active-native-frames','runtime timer diagnostics lost')
                  assert(receipt.serverStopSettled and receipt.currentExerciseCleared)
                 end
                 PZSurvivorToolkit=nil

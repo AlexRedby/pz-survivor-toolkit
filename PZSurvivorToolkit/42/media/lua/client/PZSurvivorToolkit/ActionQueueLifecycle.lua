@@ -126,8 +126,8 @@ end
 function Lifecycle.allowNativeCompletion(action, nativeAction)
     return nativeCompletionState(action,nativeAction,false)=='completed'
 end
--- Waiting is not completion. Java may hold only a unique standard native Done
--- transaction, with an absolute deadline, and must suppress its stale update.
+-- Waiting is not completion. Java may hold an exact accepted standard transaction
+-- until Done and its sealed receipt, with an absolute deadline and no stale update.
 function Lifecycle.allowNativeCompletionWait(action, nativeAction)
     local state=nativeCompletionState(action,nativeAction,true)
     return state=='started'or state=='completed'
