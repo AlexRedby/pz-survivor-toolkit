@@ -10,6 +10,14 @@ assert(not p:isTimedActionInstant(),'Native action durations required')
 assert(type(config.videoRoot)=='string' and config.videoRoot:sub(1,1)=='/' and type(config.ffmpeg)=='string' and config.ffmpeg:sub(1,1)=='/','Absolute video paths required')
 if WoodPrototypeTick then Events.OnTick.Remove(WoodPrototypeTick) end
 cartLabDrive(0);cartLabGait(0);setGameSpeed(1)
+-- Fixed bare-foot outfit exposes knees and toe roll in before/after captures.
+p:setFemale(false);p:getDescriptor():setFemale(false)
+p:clearWornItems();p:getHumanVisual():setHairModel('CrewCut');p:getHumanVisual():setBeardModel('')
+for _,name in ipairs({'Base.Tshirt_DefaultTEXTURE_TINT','Base.Shorts_LongDenim'}) do
+ local clothing=assert(p:getInventory():AddItem(name),name)
+ p:setWornItem(clothing:getBodyLocation(),clothing)
+end
+p:resetModel()
 -- Keep the longer metal wheelbarrow fully visible during camera follow at Sprint.
 getCore():doZoomScroll(0,1)
 p:setPerkLevelDebug(Perks.Sprinting,10);p:getXp():setXPToLevel(Perks.Sprinting,10)

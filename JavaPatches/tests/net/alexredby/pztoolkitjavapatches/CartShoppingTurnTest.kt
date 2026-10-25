@@ -398,6 +398,9 @@ object CartShoppingTurnTest {
         var jitterDrift = 0.0
         var jitterNative = 0.0
         var jitterDeclined = 0
+        var maxAnkleCorrection = 0f
+        var maxKneeCorrection = 0f
+        var nativeSwingSamples = 0
         for ((turn, clip, jitter) in
             listOf(
                 Triple(1f, left, false),
@@ -450,7 +453,7 @@ object CartShoppingTurnTest {
                 for ((i, side) in listOf("L", "R").withIndex()) {
                     val p = (phase + (if (i == 1) .5f else 0f)) % 1f
                     if (
-                        p in 0.65f..0.90f &&
+                        p in 0.55f..0.95f &&
                             previous != null &&
                             frame > 60 &&
                             kotlin.math.abs(turn) == 1f
@@ -468,6 +471,52 @@ object CartShoppingTurnTest {
                     }
                     val foot = actor.getBone("Bip01_${side}_Foot").index
                     if (matrixError(poses[foot]!!, before[foot]) > 1e-4) changed++
+                    val toe = actor.getBone("Bip01_${side}_Toe0").index
+                    val knee = actor.getBone("Bip01_${side}_Calf").index
+                    val delta =
+                        poses[foot]!!
+                            .getTranslation(Vector3f())
+                            .sub(before[foot].getTranslation(Vector3f()))
+                    val ankleCorrection = kotlin.math.hypot(delta.x, delta.z)
+                    val kneeCorrection =
+                        poses[knee]!!
+                            .getTranslation(Vector3f())
+                            .distance(before[knee].getTranslation(Vector3f()))
+                    maxAnkleCorrection = maxOf(maxAnkleCorrection, ankleCorrection)
+                    maxKneeCorrection = maxOf(maxKneeCorrection, kneeCorrection)
+                    check(ankleCorrection <= .025002f, "bounded additive ankle correction")
+                    check(kneeCorrection <= .025002f, "bounded native knee displacement")
+                    close(delta.y.toDouble(), 0.0, "native ankle height")
+                    close(
+                        poses[toe]!!.m31().toDouble(),
+                        before[toe].m31().toDouble(),
+                        "native toe height/roll",
+                    )
+                    for (index in listOf(foot, toe)) {
+                        check(
+                            matrixError(
+                                Matrix4f(poses[index]).setTranslation(0f, 0f, 0f),
+                                Matrix4f(before[index]).setTranslation(0f, 0f, 0f),
+                            ) < 2e-5,
+                            "native foot/toe rotation",
+                        )
+                    }
+                    val nativeToe = Matrix4f(before[foot]).invert().mul(before[toe])
+                    val correctedToe = Matrix4f(poses[foot]).invert().mul(poses[toe])
+                    check(
+                        matrixError(nativeToe, correctedToe) < 2e-5,
+                        "native toe articulation relative to ankle",
+                    )
+                    if (p in .20f..0.52f) {
+                        nativeSwingSamples++
+                        for (part in listOf("Thigh", "Calf", "Foot", "Toe0")) {
+                            val index = actor.getBone("Bip01_${side}_$part").index
+                            check(
+                                matrixError(poses[index]!!, before[index]) < 2e-5,
+                                "source swing retained after stance-offset release: $side $p $part",
+                            )
+                        }
+                    }
                     for ((a, b) in listOf("Thigh" to "Calf", "Calf" to "Foot")) {
                         val ai = actor.getBone("Bip01_${side}_$a").index
                         val bi = actor.getBone("Bip01_${side}_$b").index
@@ -503,14 +552,15 @@ object CartShoppingTurnTest {
             }
         }
         println(
-            "SHOPPING_SUPPORT_DIAGNOSTIC changed=$changed measured=$fullSupport corrected=$supportDrift native=$nativeDrift jitter=$jitterDrift jitterNative=$jitterNative",
+            "SHOPPING_SUPPORT_DIAGNOSTIC changed=$changed measured=$fullSupport corrected=$supportDrift native=$nativeDrift jitter=$jitterDrift jitterNative=$jitterNative maxAnkle=$maxAnkleCorrection maxKnee=$maxKneeCorrection",
         )
         check(changed > 100, "support correction actually applied")
+        check(nativeSwingSamples > 500, "native swing trajectory measured")
         if (contactDump != null)
             java.nio.file.Files.writeString(Path.of(contactDump), dump.append(']').toString())
         check(
-            supportDrift < nativeDrift * .65,
-            "support contacts reduce world sliding: $supportDrift / $nativeDrift",
+            supportDrift < nativeDrift * .995,
+            "small additive contacts modestly reduce world sliding: $supportDrift / $nativeDrift",
         )
         check(
             jitterDrift <= jitterNative * 1.01,
@@ -543,6 +593,29 @@ object CartShoppingTurnTest {
             release.update(root, lastView.copy(phase = Float.NaN), actor, baseline, .53) == null,
             "invalid phase clears contact",
         )
+        // Reverse, inactive and discontinuous remote roots cannot retain old stance anchors.
+        for (inactive in listOf(lastView.copy(walk = -1f), lastView.copy(turn = 0f))) {
+            check(
+                release.update(root, inactive, actor, baseline, .54) == null,
+                "reverse/inactive gait clears contacts",
+            )
+            check(
+                release.update(root, lastView, actor, baseline, .55) == null,
+                "resuming starts with native gait",
+            )
+        }
+        for (jump in listOf(root.copy(x = root.x + 2), root.copy(angle = root.angle + .5))) {
+            val reset = CartShoppingFeet.State()
+            reset.update(root, lastView, actor, baseline, 0.0)
+            check(
+                reset.update(jump, lastView.copy(phase = .6f), actor, baseline, .02) == null,
+                "teleport/yaw snapshot correction declines support",
+            )
+            check(
+                reset.update(jump, lastView.copy(phase = .61f), actor, baseline, .2) == null,
+                "discontinuous root keeps native gait while settling",
+            )
+        }
         // An impossible foot goal must not leave a half-solved leg or move the body.
         val unchanged = Array<Matrix4f?>(baseline.size) { Matrix4f(baseline[it]) }
         val far =

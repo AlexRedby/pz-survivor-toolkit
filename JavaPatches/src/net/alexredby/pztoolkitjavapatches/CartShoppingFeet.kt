@@ -31,14 +31,14 @@ internal object CartShoppingFeet {
     class Frame
     internal constructor(internal val targets: Array<Matrix4f?>, internal val influence: Float)
 
+    // Keep native swing/roll and add only a small planar stance residual.
+    private const val MAX_CORRECTION = .025f
+
     private class Contact {
         var point: Vector3f? = null
-        var start = Vector3f()
-        var landing = Vector3f()
-        var angle = 0.0
-        var startAngle = 0.0
-        var landingAngle = 0.0
-        var swinging = false
+        val correction = Vector3f()
+        val release = Vector3f()
+        var swinging = true
     }
 
     class State {
@@ -47,51 +47,29 @@ internal object CartShoppingFeet {
         private var previousPhase = Double.NaN
         private var previousTime = Double.NaN
         private var age = 0.0
-        private var cycle = .88
         private var cached: Frame? = null
         private var previousTurn = Float.NaN
         private var previousWalk = Float.NaN
-        private var vx = 0.0
-        private var vy = 0.0
-        private var omega = 0.0
-
-        private data class Heading(val time: Double, val angle: Double)
-
-        private val headings = java.util.ArrayDeque<Heading>()
-        private var unwrapped = 0.0
         private var quietUntil = Double.NEGATIVE_INFINITY
 
         fun clear() {
-            for (contact in contacts) contact.point = null
+            for (contact in contacts) {
+                contact.point = null
+                contact.correction.zero()
+                contact.release.zero()
+                contact.swinging = true
+            }
             previous = null
             previousPhase = Double.NaN
             previousTime = Double.NaN
+            previousTurn = Float.NaN
+            previousWalk = Float.NaN
             age = 0.0
-            cycle = .88
             cached = null
-            vx = 0.0
-            vy = 0.0
-            omega = 0.0
-            headings.clear()
-            unwrapped = 0.0
             quietUntil = Double.NEGATIVE_INFINITY
         }
 
-        private fun predict(root: Root, seconds: Double): Root {
-            val angle = omega * seconds
-            val dx: Double
-            val dy: Double
-            if (abs(omega) < 1e-4) {
-                dx = vx * seconds
-                dy = vy * seconds
-            } else {
-                dx = (vx * sin(angle) + vy * (cos(angle) - 1)) / omega
-                dy = (vx * (1 - cos(angle)) + vy * sin(angle)) / omega
-            }
-            return Root(root.x + dx, root.y + dy, root.angle + angle)
-        }
-
-        /** Producer-only planner. Each swing aims at the middle of the next support interval. */
+        /** Capture native toe contact in stance; swing only releases the last additive offset. */
         fun update(
             root: Root,
             view: CartShoppingTurn.View,
@@ -124,142 +102,75 @@ internal object CartShoppingFeet {
                     previousWalk == view.walk
             )
                 return cached
-            previousTurn = view.turn
-            previousWalk = view.walk
-            val seconds = (now - previousTime).coerceIn(0.0, .1)
+            val elapsed = now - previousTime
+            val seconds = if (elapsed.isFinite()) elapsed.coerceIn(0.0, .1) else 0.0
             val advance = (view.phase.toDouble() - previousPhase + 1.0) % 1.0
-            // A snapshot yaw correction is not a human step. Native walking remains stable while
-            // waiting for a half-second of reliable root motion; no extra network fields are
-            // needed.
+            // A remote snapshot correction or teleport is not a step. Wait for stable roots
+            // before capturing another native contact, rather than dragging an old anchor.
             if (
                 old != null &&
-                    seconds.isFinite() &&
-                    seconds > 1e-5 &&
-                    abs(wrap(root.angle - old.angle)) > maxOf(.1, 6 * seconds)
+                    (elapsed < 0 ||
+                        kotlin.math.hypot(root.x - old.x, root.y - old.y) > .5 ||
+                        abs(wrap(root.angle - old.angle)) > maxOf(.1, 6 * seconds) ||
+                        advance > .3)
             ) {
                 clear()
                 quietUntil = now + .5
-            }
-            if (now < quietUntil) {
-                previous = root
-                previousPhase = view.phase.toDouble()
-                previousTime = now
-                cached = null
-                return null
-            }
-
-            if (
-                old != null &&
-                    (kotlin.math.hypot(root.x - old.x, root.y - old.y) > .5 ||
-                        abs(wrap(root.angle - old.angle)) > 1.2 ||
-                        advance > .3)
-            )
+            } else if (old != null && previousTurn * view.turn < 0f) {
                 clear()
-            else if (old != null && seconds.isFinite() && seconds > 1e-5) {
-                val dt = seconds
-                age += dt
-                if (advance > 1e-5) cycle += ((seconds / advance).coerceIn(.88, 2.0) - cycle) * .2
-                val blend = 1.0 - kotlin.math.exp(-dt / .06)
-                vx += ((root.x - old.x) / dt - vx) * blend
-                vy += ((root.y - old.y) / dt - vy) * blend
-                unwrapped += wrap(root.angle - old.angle)
-                headings.addLast(Heading(now, unwrapped))
-                while (headings.size > 2 && headings.elementAt(1).time < now - .2) headings
-                    .removeFirst()
-                val first = headings.first
-                val span = now - first.time
-                if (span > .03) {
-                    val observed = ((unwrapped - first.angle) / span).coerceIn(-4.0, 4.0)
-                    omega += (observed - omega) * (1.0 - kotlin.math.exp(-dt / .08))
-                }
+            } else if (old != null && seconds.isFinite()) {
+                age += seconds
             }
             previous = root
             previousPhase = view.phase.toDouble()
             previousTime = now
+            previousTurn = view.turn
+            previousWalk = view.walk
+            if (now < quietUntil) return null.also { cached = null }
+
+            val weight = abs(view.turn) * view.walk * smooth(0.0, .16, age)
             val targets = arrayOfNulls<Matrix4f>(2)
             for ((i, side) in listOf("L", "R").withIndex()) {
                 val foot = actor.getBone("Bip01_${side}_Foot") ?: continue
                 val toe = actor.getBone("Bip01_${side}_Toe0") ?: continue
-                val hip = actor.getBone("Bip01_${side}_Thigh") ?: continue
                 val native = poses.getOrNull(foot.index) ?: continue
                 val toePose = poses.getOrNull(toe.index) ?: continue
-                val hipPose = poses.getOrNull(hip.index) ?: continue
                 val contact = contacts[i]
                 val p = (view.phase.toDouble() + (if (i == 1) .5 else 0.0)) % 1.0
                 val swinging = p < .53 || p >= .98
-                val t = ((p + .02) % 1.0) / .55
-                val sourcePoint = toePose.getTranslation(Vector3f())
-                if (contact.point == null) {
-                    contact.point = root.world(sourcePoint)
-                    contact.start.set(contact.point!!)
-                    contact.landing.set(contact.point!!)
-                    contact.angle = root.angle
-                    contact.startAngle = root.angle
-                    contact.landingAngle = root.angle
-                    contact.swinging = false
-                }
                 if (swinging) {
-                    if (!contact.swinging) {
-                        contact.start.set(contact.point!!)
-                        contact.startAngle = contact.angle
+                    if (!contact.swinging) contact.release.set(contact.correction)
+                    contact.point = null
+                    // Native animation supplies every swing position and rotation. Only decay
+                    // the previous stance correction through the first .18 of the cycle.
+                    contact.correction
+                        .set(contact.release)
+                        .mul((1 - smooth(0.0, .18, (p + .02) % 1.0)).toFloat())
+                } else {
+                    val source = toePose.getTranslation(Vector3f())
+                    if (contact.point == null) {
+                        contact.point = root.world(source)
+                        contact.correction.zero()
                     }
-                    if (!contact.swinging || t < .7) {
-                        val untilLanding = (1 - t) * .55 * cycle
-                        val middle = predict(root, untilLanding + .45 * cycle / 2)
-                        // A wider placement beside the predicted hip, rather than turning on a
-                        // forward-walk foot that has already landed at the wrong side of the arc.
-                        val neutral =
-                            Vector3f(
-                                hipPose.m30() + (if (i == 0) .04f else -.04f),
-                                sourcePoint.y,
-                                -.08f,
-                            )
-                        val landing = middle.world(neutral)
-                        contact.landing.set(landing)
-                        contact.landingAngle = root.angle + omega * untilLanding
-                    }
-                    val ease = smooth(0.0, 1.0, t)
-                    contact.point!!.set(contact.start).lerp(contact.landing, ease.toFloat())
-                    val outward =
-                        (.04 * sin(Math.PI * t) + .005 * sin(Math.PI * t) * sin(Math.PI * t))
-                            .toFloat() * (if (i == 0) 1 else -1)
-                    val offset = root.world(Vector3f(outward, 0f, 0f))
-                    contact.point!!.add(
-                        (offset.x - root.x).toFloat(),
-                        0f,
-                        (offset.z - root.y).toFloat(),
-                    )
-                    contact.angle =
-                        contact.startAngle + wrap(contact.landingAngle - contact.startAngle) * ease
-                } else if (contact.swinging) {
-                    contact.point!!.set(contact.landing)
-                    contact.angle = contact.landingAngle
+                    val residual = root.local(contact.point!!).sub(source)
+                    residual.y = 0f
+                    val distance = residual.length()
+                    if (distance > MAX_CORRECTION) residual.mul(MAX_CORRECTION / distance)
+                    val blend = (1 - kotlin.math.exp(-seconds / .035)).toFloat()
+                    contact.correction.lerp(residual, blend)
                 }
                 contact.swinging = swinging
-                val yaw = -wrap(root.angle - contact.angle).toFloat()
-                val turned =
-                    Matrix4f()
-                        .rotationY(yaw)
-                        .mul(Matrix4f(native).setTranslation(0f, 0f, 0f))
-                        .setTranslation(native.getTranslation(Vector3f()))
-                val localToe = Matrix4f(native).invert().transformPosition(sourcePoint)
-                val turnedToe = turned.transformPosition(localToe)
-                val goal = root.local(contact.point!!)
-                val weight = abs(view.turn) * view.walk * smooth(0.0, .16, age)
-                val lift = if (swinging) .015 * sin(Math.PI * t).let { it * it } else 0.0
-                val target =
-                    Matrix4f(turned)
-                        .setTranslation(
-                            native.m30() + goal.x - turnedToe.x,
-                            native.m31() + lift.toFloat(),
-                            native.m32() + goal.z - turnedToe.z,
-                        )
+                val correction = Vector3f(contact.correction).mul(weight.toFloat())
                 targets[i] =
-                    Matrix4f().also { CartTransitionMath.blend(native, target, weight, it) }
+                    Matrix4f(native)
+                        .setTranslation(
+                            native.m30() + correction.x,
+                            native.m31(),
+                            native.m32() + correction.z,
+                        )
             }
             if (age < 1e-6) return null.also { cached = null }
-            return Frame(targets, (abs(view.turn) * view.walk * smooth(0.0, .16, age)).toFloat())
-                .also { cached = it }
+            return Frame(targets, weight.toFloat()).also { cached = it }
         }
     }
 
@@ -298,6 +209,12 @@ internal object CartShoppingFeet {
             for ((i, side) in listOf("L", "R").withIndex()) {
                 val goal = frame.targets[i] ?: continue
                 val index = actor.getBone("Bip01_${side}_Foot")?.index ?: return false
+                if (
+                    goal
+                        .getTranslation(Vector3f())
+                        .distanceSquared(original[index].getTranslation(Vector3f())) < 1e-12f
+                )
+                    continue
                 val target = Matrix4f()
                 if (
                     !CartTransitionMath.blend(original[index], goal, weight * caps[i], target) ||
@@ -305,7 +222,17 @@ internal object CartShoppingFeet {
                 )
                     return false
             }
-            openKnees(working, actor, frame.influence)
+            // Near full extension a small ankle delta can amplify into a large knee move.
+            // Limit that independently and retain the native bend plane chosen by fitFoot.
+            for (side in listOf("L", "R")) {
+                val knee = actor.getBone("Bip01_${side}_Calf")?.index ?: return false
+                if (
+                    working[knee]!!
+                        .getTranslation(Vector3f())
+                        .distance(original[knee].getTranslation(Vector3f())) > MAX_CORRECTION
+                )
+                    return false
+            }
             return separated(working, actor)
         }
         var cap = 1.0
@@ -321,26 +248,6 @@ internal object CartShoppingFeet {
         }
         for (i in 0 until count) poses[i]!!.set(working[i])
         return true
-    }
-
-    /** A small native-hinge swivel opens the passing calves without moving either foot. */
-    private fun openKnees(poses: Array<out Matrix4f?>, actor: SkinningData, weight: Float) {
-        for (side in listOf("L", "R")) {
-            val thigh = actor.getBone("Bip01_${side}_Thigh") ?: continue
-            val calf = actor.getBone("Bip01_${side}_Calf") ?: continue
-            val foot = actor.getBone("Bip01_${side}_Foot") ?: continue
-            val hip = poses[thigh.index]!!.getTranslation(Vector3f())
-            val axis = poses[foot.index]!!.getTranslation(Vector3f()).sub(hip)
-            if (axis.lengthSquared() < 1e-8f) continue
-            val angle = (Math.toRadians(11.0) * weight * (if (side == "L") 1 else -1)).toFloat()
-            val change =
-                Matrix4f()
-                    .translation(hip)
-                    .rotate(angle, axis.normalize())
-                    .translate(-hip.x, -hip.y, -hip.z)
-            change.mul(poses[thigh.index], poses[thigh.index])
-            change.mul(poses[calf.index], poses[calf.index])
-        }
     }
 
     private fun separated(poses: Array<out Matrix4f?>, actor: SkinningData): Boolean {

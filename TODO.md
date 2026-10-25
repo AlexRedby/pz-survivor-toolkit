@@ -1,6 +1,6 @@
 # Shopping cart turn footwork
 
-- [ ] Run the native-walk-based shopping gait, bounded support-step experiment and stable-handle fix with the full selected mod pack on macOS SP/Host once `VanillaVehiclesAnimated` is available. Check entry/release, a small correction and held turns, retaining reverse/fast gait controls. Cart-only SP capture and two-client Host render evidence confirm the moving-turn motion, bounded cadence and native-gait fallback on abrupt network yaw corrections; font-loading errors keep those runtime reports at needs-review rather than clean PASS.
+- [ ] Run the native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host once `VanillaVehiclesAnimated` is available. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
 
 # Container editor visual states
 
