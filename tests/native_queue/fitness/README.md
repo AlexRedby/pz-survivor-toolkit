@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,late-exhaustion,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore,multi-storage,multi-storage-closed`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,late-exhaustion,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore,multi-storage,multi-storage-closed,storage-walk-away,storage-peer-pickup`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -83,8 +83,30 @@ source snapshot; a later merge can happen after an earlier bag is already recove
 Actual drop completions and authoritative final identities establish paid effects.
 The server placement witness uses native constructor arguments and a linked world
 item; it does not require the client-only `isPlaceItem` flag, which is absent from
-the native constructor wire schema. Moving away and a competing player's pickup
-remain separate unverified cases.
+the native constructor wire schema.
+
+
+The `storage-walk-away` case interrupts an actually started borrowed-prop workout
+through the original `ISWalkToCursor.create`, after a paid repetition. It requires
+real native walking out of pickup range, one successful original walk callback and
+all exact bag/content/prop IDs conserved at their actual endpoints. The original
+unread tail is cleared by the native movement request; this is expected player
+intent. A new native reader must begin only after walking and cleanup settle,
+with no invented item recovery or paid exercise effects.
+
+The Host-only `storage-peer-pickup` case approaches the origin with the second real
+client before Fitness OK. A server-side paid repetition grants one exact bag
+pickup; the peer must provide its own native completed/nonrejected item transaction
+and successful original perform. Authoritative origin plus both inventory roots
+must show that same favourite bag and its original book content at the peer, with
+the borrowed dumbbell retained by the workout actor. The workout keeps its full
+selected duration and independent reader. The peer reads its separate book only
+after pickup; its outcome is a `competing-picker`, not a second workout actor.
+
+Both negative cases use one favourite schoolbag, a favourite borrowed dumbbell and
+an exact-ID book inside that bag. They leave unavailable world/peer resources
+untouched after the frozen case receipt; later cases use new IDs in the same
+private save. Registration and offline falsification do not establish a live pass.
 
 Other workouts retain the menu's native minimum of ten game minutes and the original
 `ISFitnessAction:getDuration()`. Queued cases use six remaining book pages at the

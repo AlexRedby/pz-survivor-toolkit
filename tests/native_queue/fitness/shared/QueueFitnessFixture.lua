@@ -1,12 +1,13 @@
 local O=require 'QueueFitnessObservation'
 local F={}
+function F.negativeCase(id)return id=='storage-walk-away'or id=='storage-peer-pickup'end
 function F.multiCase(id)return id=='multi-storage'or id=='multi-storage-closed'end
 local function storage(id)return F.multiCase(id)and require 'QueueFitnessStorage'or nil end
 function F.multiSnapshot(state)return storage(state.case).snapshot(state.player,state.ids.multiStorage)end
 function F.multiStart(state,action,callback)return storage(state.case).observeStart(state,action,callback)end
 function F.multiPlacement(state,action,callback,succeeded)return storage(state.case).placement(state,action,callback,succeeded)end
 function F.restorationCase(id)return id=='active-cancel-restore'or id=='pickup-cancel-restore'or id=='placement-cancel-restore'end
-function F.borrowedCase(id)return id=='closed-ui-restore'or id=='empty-restore'or F.restorationCase(id)end
+function F.borrowedCase(id)return id=='closed-ui-restore'or id=='empty-restore'or F.restorationCase(id)or F.negativeCase(id)end
 function F.activation(player)
  local rows={}
  local function scan(container)
@@ -129,9 +130,9 @@ function F.prepare(player,id,previous)
   end
  end
  local state={case=id,player=player,items={},ids={case=id,items={}}};local multi=storage(id)
- local order=F.restorationCase(id)and {'bag','front','tail','hammer','screwdriver','dumbbell'}or {'front','tail','bag','hammer','screwdriver','dumbbell'}
+ local order=(F.restorationCase(id)or F.negativeCase(id))and {'bag','front','tail','hammer','screwdriver','dumbbell'}or {'front','tail','bag','hammer','screwdriver','dumbbell'}
  for _,name in ipairs(order)do
-  local destination=(F.borrowedCase(id)and name=='dumbbell'or F.restorationCase(id)and name=='front')and state.items.bag:getItemContainer()or player:getInventory()
+  local destination=(F.borrowedCase(id)and name=='dumbbell'or (F.restorationCase(id)or F.negativeCase(id))and name=='front')and state.items.bag:getItemContainer()or player:getInventory()
   if multi and name=='dumbbell'then destination=multi.propContainer(state)end
   local kind=F.restorationCase(id)and name=='hammer'and 'Base.Torch'or types[name]
   local item=assert(destination:AddItem(multi and multi.coreType(id,name,kind)or kind),'missing fitness fixture item '..name)
@@ -152,9 +153,11 @@ function F.prepare(player,id,previous)
   state.items.bag:setFavorite(true)
   state.items.hammer:setCurrentUses(state.items.hammer:getMaxUses());state.items.hammer:setActivated(true)
  end
+ if F.negativeCase(id)then require('QueueFitnessStorageNegative').prepare(state)end
  if multi then multi.prepare(state)end
- O.reset(player,id);O.multiSpec=state.ids.multiStorage;O.multiPlacements={};O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.borrowedCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.borrowedCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
+ O.reset(player,id);O.negativeSpec=state.ids.negativeStorage;O.negativePeer=nil;O.multiSpec=state.ids.multiStorage;O.multiPlacements={};O.tailID=state.ids.items.tail;O.bagID=state.ids.items.bag;O.captureStorage=F.borrowedCase(id);state.ids.before=O.clinical(player);state.ids.inventory=F.inventory(player);state.ids.activation=F.activation(player);if F.borrowedCase(id)then state.ids.storage=F.storage(player,state.ids.items.bag)end
  if multi then state.ids.multiBefore=F.multiSnapshot(state)end
+ if F.negativeCase(id)then state.ids.negativeBefore=require('QueueFitnessStorageNegative').snapshot(player,state.ids.negativeStorage)end
  if isServer()then
   -- InventoryContainer serialization includes its children. Send the owning root bag
   -- once; sending the nested dumbbell again would create a duplicate replica.
@@ -180,6 +183,7 @@ end
 function F.prepareReady(state)
  if not state then return false end
  local player,items=state.player,state.items
+ if F.negativeCase(state.case)then return require('QueueFitnessStorageNegative').ready(state)end
  if F.multiCase(state.case)then return storage(state.case).resolveReady(state)end
  if F.restorationCase(state.case)and (not items.hammer:isActivated()or not items.bag:isFavorite())then return false end
  return not F.borrowedCase(state.case)or (player:getPrimaryHandItem()==items.hammer
@@ -221,6 +225,7 @@ function F.receipt(state)
  local player=state.player;local result=O.receipt(player)
  state.strandedCurrent=player:getFitness():getCurrentExe()
  if F.multiCase(state.case)then result.multiStorage=F.multiSnapshot(state);result.multiPlacements=O.multiPlacements end
+ if F.negativeCase(state.case)then result.negativeStorage=require('QueueFitnessStorageNegative').snapshot(player,state.ids.negativeStorage,state.negativePeer);result.peerPickup=state.peerPicked or false;result.peerGrant=state.peerGrant or false end
  result.case=state.case;result.inventory=F.inventory(player);result.removed=state.removed or false
  result.tailRead=player:getAlreadyReadPages(state.items.tail:getFullType())==state.items.tail:getNumberOfPages()
  result.frontRead=player:getAlreadyReadPages(state.items.front:getFullType())==state.items.front:getNumberOfPages()

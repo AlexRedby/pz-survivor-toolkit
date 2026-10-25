@@ -945,6 +945,7 @@ local function repairTidyFloor(character, callback, ...)
         or ISInventoryPage ~= tidyFloorPage or not tidyFloorGetter
         or tidyFloorPage.GetFloorContainer ~= tidyFloorGetter then return callback(...) end
     local queue = ISTimedActionQueue.getTimedActionQueue(character)
+    local idle = #queue.queue == 0 and not character:hasTimedActions()
     local add, buffered = ISTimedActionQueue.add, {}
     ISTimedActionQueue.add = function(action) buffered[#buffered + 1] = action; return queue end
     local results = pack(pcall(callback, ...))
@@ -962,7 +963,8 @@ local function repairTidyFloor(character, callback, ...)
     if controller then controller.updateOperationState(queue) end
     local inventory = character:getInventory()
     local floor = tidyFloorGetter(character:getPlayerNum())
-    local planned, transfers = {}, {}
+    local planned, transfers, incoming = {}, {}, {}
+    local precedingKnown = true
     local function validTransfer(action, item)
         return action and action.character == character and getmetatable(action) == ISInventoryTransferAction
             and instanceof(action.item, "InventoryItem") and action.item:getID() == item:getID()
@@ -971,7 +973,23 @@ local function repairTidyFloor(character, callback, ...)
             and tidyActionUnchanged(action)
     end
     for _, action in ipairs(buffered) do
-        if action.character == character and getmetatable(action) == P4RestoreFloorAction and tidyActionUnchanged(action) then
+        local class, keep = getmetatable(action), true
+        local known = action.character == character and tidyActionUnchanged(action)
+        if known and class == ISInventoryTransferAction and instanceof(action.item, "InventoryItem")
+            and action.destContainer == inventory and action.srcContainer ~= inventory then
+            incoming[action.item:getID()] = action.item:getFullType()
+        end
+        if idle and precedingKnown and known and class == ISWearClothing and nativeClothingMethods()
+            and instanceof(action.item, "InventoryItem") then
+            local old = action.item
+            local item = inventory:getItemById(old:getID())
+            -- P4 retains its original worn object after native Host placement.
+            -- Native start replaces it by ID and dereferences nil when the bag
+            -- stayed on the ground or another player took it. Leave fresh exact
+            -- replicas to that native resolver, and unknown/incoming work alone.
+            if incoming[old:getID()] ~= old:getFullType() and (not instanceof(item, "InventoryItem")
+                or item:getID() ~= old:getID() or item:getFullType() ~= old:getFullType()) then keep = false end
+        elseif action.character == character and class == P4RestoreFloorAction and tidyActionUnchanged(action) then
             local old = action.item
             local item = instanceof(old, "InventoryItem") and inventory:getItemById(old:getID())
             if item and old ~= item and item:getID() == old:getID() and item:getFullType() == old:getFullType()
@@ -1001,7 +1019,8 @@ local function repairTidyFloor(character, callback, ...)
             and instanceof(action.item, "InventoryItem") and action.srcContainer == inventory and action.destContainer == floor then
             transfers[action.item:getID()] = action
         end
-        planned[#planned + 1] = action
+        if keep then planned[#planned + 1] = action end
+        precedingKnown = precedingKnown and known
     end
     for _, action in ipairs(planned) do add(action) end
     return unpack(results, 2, results.n)

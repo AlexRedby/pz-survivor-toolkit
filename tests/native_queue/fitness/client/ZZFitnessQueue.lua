@@ -15,6 +15,9 @@ local started,done,phase,index,failed,since,quiet,idle=false,false,'prepare',1,0
 local peerCase,peerBook,peerComplete,actor,stopReached,returnSeen,recoverySeen,recoveryActions
 local ready,setupSince,preparedInitialized,prepareLogged=false,0,false,nil
 local peersReady,peersReceipt,isolationAuthority,isolationFinalAuthority=false,nil,nil,nil
+local peerSpec,compState,compGranted,compReported,compReady,competitionReady
+local function negativeCase(id)return id=='storage-walk-away'or id=='storage-peer-pickup'end
+local function negative()return require 'QueueFitnessStorageNegative'end
 local function case()return config.cases[index]end
 local function minutes()
  if case()=='late-exhaustion'then return config.kind=='mp'and 60 or 30 end
@@ -22,7 +25,7 @@ local function minutes()
 end
 local function multiCase(id)return id=='multi-storage'or id=='multi-storage-closed'end
 local function exerciseForCase(id)return (id=='burpees-30'or id=='late-exhaustion')and 'burpees'or (id=='missing-dumbbell'or F.borrowedCase(id)or multiCase(id))and 'bicepscurl'or 'squats'end
-local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or id=='squats-30'or id=='late-exhaustion'or F.restorationCase(id)or multiCase(id)end
+local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or id=='squats-30'or id=='late-exhaustion'or F.restorationCase(id)or multiCase(id)or negativeCase(id)end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
 -- Retain the exact workout after it stops being the head. Native removal and
@@ -71,6 +74,8 @@ end
 -- The shared native begin boundary runs before native actions allocate/start,
 -- including queue-disabled mode. Observation changes no callback or queue work.
 assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{started=function(action)
+ if state and state.ids.negativeStorage then negative().begin(state,action,'start')end
+ if compState then require('QueueFitnessCompetition').begin(compState,action,'start')end
  observeDurationContinuation(action)
  if state and state.isolation and state.isolation.status=='started'then F.isolationStarted(state,action);return end
  if command and state and multiCase(case())then
@@ -79,6 +84,16 @@ assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{start
   if action.Type=='ISReadABook'and action.character==state.player and action.item
    and action.item:getID()==state.ids.items.tail then
    command.multiBeforeTail={callback='ISBaseTimedAction.begin',nativeClock=O.durationClock(),frameNo=getWorld():getFrameNo(),snapshot=F.multiSnapshot(state),inventory=F.inventory(state.player)}
+  end
+ end
+ if command and state and negativeCase(case())and action.Type=='ISReadABook'and action.item and action.item:getID()==state.ids.items.tail then
+  command.negativeBeforeTail=negative().snapshot(state.player,state.ids.negativeStorage)
+  if case()=='storage-walk-away'then
+   if command.freshReader then
+    assert(not command.freshReader.begin and getmetatable(action)==ISReadABook and action.minutesPerPage==2,'fresh native reader differs or repeated')
+    command.freshReader.begin={callback='ISBaseTimedAction.begin',id=action.item:getID(),kind=action.item:getFullType(),
+     snapshot=command.negativeBeforeTail,timestampMS=getTimestampMs()}
+   else command.oldTailStarted=true end
   end
  end
  if not command or not state or not F.borrowedCase(case())then return end
@@ -101,9 +116,12 @@ assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{start
    callback='ISBaseTimedAction.begin',storage=F.storage(action.character,state.ids.items.bag)}
  end
 end,begin=function(action,phase)
+ if state and state.ids.negativeStorage and negative().begin(state,action,phase)then return true end
+ if compState and require('QueueFitnessCompetition').begin(compState,action,phase)then return true end
  if state and state.isolation and state.isolation.status=='started'then return F.isolationBegin(state,action,phase)end
  if command and state and action and action.Type=='ISFitnessAction' and action.character==state.player and phase=='stop' then
   if multiCase(case())then command.multiStopFrame=getWorld():getFrameNo()end
+  if negativeCase(case())then command.negativeStop={callback='ISFitnessAction.stop',state=O.stopState(action),snapshot=negative().snapshot(state.player,state.ids.negativeStorage)}end
   command.nativeStopCalls=(command.nativeStopCalls or 0)+1
   if O.durationStop then O.durationStop(action,T.ActionQueueFitness.timing(action))end
   sampleDurationStop(action) -- Observe before native reset/pruning can retire this exact body.
@@ -125,6 +143,8 @@ end,begin=function(action,phase)
   and action.Type=='ISDropWorldItemAction'and getmetatable(action)==ISDropWorldItemAction and action.item~=nil
   and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'
 end,finish=function(action,phase,succeeded)
+ if state and state.ids.negativeStorage then negative().finish(state,action,phase,succeeded)end
+ if compState then require('QueueFitnessCompetition').finish(compState,action,phase,succeeded)end
  if state and state.isolation and state.isolation.status=='started'then F.isolationFinish(state,action,phase,succeeded);return end
  if command and state and action and action.Type=='ISFitnessAction' and action.character==state.player and phase=='stop' and succeeded then
   command.nativeStopReturns=(command.nativeStopReturns or 0)+1
@@ -211,7 +231,9 @@ Events.OnServerCommand.Add(function(module,name,value)
  elseif name=='Prepared'then ids=value elseif name=='Verified'then receipt=value elseif name=='Mutated'then mutation=value
  elseif name=='NativeRep'then
   if command and value.case==case()then command.authoritativeReps=value.reps end
- elseif name=='Released'then phase='released'elseif name=='Peer'then peerCase,peerBook=value.case,value.book
+ elseif name=='Released'then phase='released'elseif name=='Peer'then peerCase,peerBook=value.case,value.book;peerSpec=value.storage;compState,compGranted,compReported,compReady=nil,false,false,false
+ elseif name=='CompetitionReady'then assert(value.case==case(),'competition ready case differs');competitionReady=true
+ elseif name=='CompetitionPickup'then assert(peerCase==value.case and peerSpec and value.bag==peerSpec.bag.id,'competition grant differs');compGranted=true
  elseif name=='PeerComplete'then peerComplete=true elseif name=='PeersReady'then peersReceipt=value end
 end)
 Events.OnGameStart.Add(function()
@@ -305,6 +327,7 @@ local function dispatch()
   waitingNoExercise=true,waitingNoClinicalEffects=true,activeObserved=false,activeCancelled=false,pendingCancelled=false,
   reordered=false,closedUI=false,startedOrder={},activeAcks={},terminalAcks={},progressSamples={},durationStops={},queueDrained=false}
  if multiCase(id)then command.multiStarts={}end
+ if negativeCase(id)then command.negativeBefore=negative().snapshot(state.player,state.ids.negativeStorage)end
  if not immediate(id)then front=read(state.items.front)end
  local first=enqueue(exerciseForCase(id))
  if id=='sequential'then enqueue('pushups')end
@@ -331,6 +354,7 @@ local function dispatch()
 end
 local function observe()
  local player=getPlayer();local current=queue().queue[1]
+ if negativeCase(case())then negative().observeWalk(state)end
  if case()=='exhaustion'and command.mutationObserved then player:getStats():set(CharacterStat.ENDURANCE,.01)end
  O.sample(current)
  if F.borrowedCase(case())and current and current.Type=='ISInventoryTransferAction'and current.item
@@ -416,6 +440,13 @@ local function observe()
    local record=T.ActionQueueAcknowledgements.capture(current)
    if record and not ack[current]then ack[current]=record;command.activeAcks[#command.activeAcks+1]=record.token end
   end
+  if case()=='storage-walk-away'and not command.walkAway then
+   command.walkActiveSince=command.walkActiveSince or getTimestampMs()
+   local reps=isClient()and (command.authoritativeReps or 0)>0 or not isClient()and current.repnb>0
+   if reps and getTimestampMs()-command.walkActiveSince>=3500 and timing and timing.confirmed then
+    command.walkAway=negative().walk(state,tail)
+   end
+  end
   local clinical=O.clinical(player)
   -- In Host the authoritative rep witness is server-side. Native animation progress plus
   -- at least three real seconds and a started acknowledgement precede cancellation.
@@ -449,6 +480,7 @@ local function finishCase()
  command.queueDrained=empty();command.clientInventory=localInventory
  if F.borrowedCase(case())then command.clientActivation=F.activation(getPlayer());command.clientStorage=F.storage(getPlayer(),state.ids.items.bag)end
  if multiCase(case())then command.multiFinal=F.multiSnapshot(state)end
+ if negativeCase(case())then command.negativeFinal=negative().snapshot(state.player,state.ids.negativeStorage)end
  command.clientCurrentExerciseCleared=not getPlayer():getFitness():getCurrentExe()
  local problem
  if case()=='late-exhaustion'then
@@ -479,11 +511,23 @@ end
 local function peerTick()
  if peerCase and peerBook then
   local book=getPlayer():getInventory():getItemById(peerBook);if not book then return end
+  if peerSpec and peerCase=='storage-peer-pickup'and not compReported then
+   local C=require 'QueueFitnessCompetition'
+   compState=compState or C.approach(getPlayer(),peerSpec)
+   local phase=C.poll(compState)
+   if phase=='ready'and not compReady then
+    sendClientCommand('FitnessQueueTest','CompetitionReady',{case=peerCase,bag=peerSpec.bag.id});compReady=true
+   end
+   if phase=='ready'and compGranted then C.pickup(compState);phase=C.poll(compState)end
+   if phase~='picked'then return end
+   local proof=C.result(compState);proof.snapshot=negative().snapshot(getPlayer(),peerSpec,nil,'client2')
+   sendClientCommand('FitnessQueueTest','CompetitionPicked',{case=peerCase,proof=proof});compReported=proof
+  end
   if not seen then
    book:setAlreadyReadPages(book:getNumberOfPages()-1);getPlayer():setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
    read(book);seen=true
   elseif empty()and getPlayer():getAlreadyReadPages(book:getFullType())==book:getNumberOfPages()then
-   emit({event='case',id=peerCase,book=peerBook,read=true,queueDrained=true})
+   emit({event='case',id=peerCase,book=peerBook,read=true,queueDrained=true,peerPickup=compReported or false})
    peerCase,peerBook,seen=nil,nil,nil
   end
  end
@@ -524,6 +568,7 @@ Events.OnTick.Add(function()
     getPlayer():getStats():set(CharacterStat.ENDURANCE,1);getPlayer():getStats():set(CharacterStat.FATIGUE,0)
     preparedInitialized=true
    end
+   if case()=='storage-peer-pickup'and not competitionReady then return end
    if not F.prepareReady(state)then
     local now=getTimestampMs()
     if not prepareLogged or now-prepareLogged>=5000 then
@@ -552,6 +597,15 @@ Events.OnTick.Add(function()
    end
    observe()
    if idle>=10 then
+    if case()=='storage-walk-away'and command.walkAway and not command.freshReader then
+     local witness=negative().observeWalk(state)
+     assert(witness.nativeStarted and witness.nativeCompleted and witness.maxDisplacement>=2 and witness.oldTailCancelled,'native walk did not leave the exercise origin')
+     command.afterWalk=negative().snapshot(state.player,state.ids.negativeStorage)
+     local pages,total=state.player:getAlreadyReadPages(state.items.tail:getFullType()),state.items.tail:getNumberOfPages()
+     assert(pages<total,'old reader consumed pages before native interruption')
+     command.freshReader={callback='ISInventoryPaneContextMenu.onLiteratureItems',snapshot=command.afterWalk,timestampMS=getTimestampMs(),pages=pages,total=total}
+     tail=read(state.items.tail);idle=0;quiet=nil;return
+    end
     quiet=quiet or getTimestampMs()
     if getTimestampMs()-quiet>=2000 then phase='receipt';request('Verify')end
    else quiet=nil end
@@ -582,7 +636,7 @@ Events.OnTick.Add(function()
    index=index+1
    if not case()then finish();return end
    ids,receipt,mutation,state,command,front,tail,requests,seen,ack,progressSeen,menuGate=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-   phase='prepare';since=getTimestampMs();idle=0;preparedInitialized=false;prepareLogged=nil
+   phase='prepare';since=getTimestampMs();idle=0;preparedInitialized=false;prepareLogged=nil;competitionReady=false
   end
  end)
  if not ok then

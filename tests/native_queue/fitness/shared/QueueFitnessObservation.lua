@@ -86,6 +86,7 @@ local function start(action)
   startStorage=O.captureStorage and O.storage(action.character)or nil}
  if O.case=='empty-restore'then row.nativeClock={constructorStartMS=action.startMS,deadlineMS=action.endMS,
   observedBodyStartMS=row.startMS,source=isServer()and 'ISFitnessAction.serverStart'or 'SP first started sample'}end
+ if O.negativeSpec then row.negativeStorage=require('QueueFitnessStorageNegative').snapshot(action.character,O.negativeSpec,O.negativePeer)end
  if O.multiSpec then
   row.multiStorage=O.multiStorage(action.character)
   if isServer()then row.serverTiming={};serverTiming(row,'start')end
@@ -179,7 +180,7 @@ local tailStartOriginal=ISReadABook.serverStart
 ISReadABook.serverStart=function(action,...)
  if action.character==O.player and action.item:getID()==O.tailID then
   O.tailStart={id=action.item:getID(),kind=action.item:getFullType(),callback='ISReadABook.serverStart',inventory=O.inventory(action.character),
-   multiStorage=O.multiSpec and O.multiStorage(action.character)or nil,activation=O.activation(action.character),storage=O.captureStorage and O.storage(action.character)or nil,workouts=#O.records,observerActive=O.active~=nil}
+   multiStorage=O.multiSpec and O.multiStorage(action.character)or nil,negativeStorage=O.negativeSpec and require('QueueFitnessStorageNegative').snapshot(action.character,O.negativeSpec,O.negativePeer)or nil,activation=O.activation(action.character),storage=O.captureStorage and O.storage(action.character)or nil,workouts=#O.records,observerActive=O.active~=nil}
  end
  return tailStartOriginal(action,...)
 end

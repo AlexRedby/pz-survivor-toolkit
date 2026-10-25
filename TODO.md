@@ -30,11 +30,6 @@
 
 - [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP checks with 55 mods and menu-Host checks with 67 mods cover stationary Base.CarNormal driver/passenger transitions and both cancellations, separate lead-foot steps for entry/exit, measured support-foot contacts, pelvis transfer, body/clothing agreement, clean HUD-free video review and authoritative seat occupancy. They do not establish second-client or other vehicle geometry coverage.
 
-# Exercise ground storage
-
-- [ ] Check moving away from grounded exercise bags in disposable full-pack B42.21 SP/Host native/Toolkit profiles. Preserve exact bag/content/prop identities and real reachability; do not teleport resources or substitute a same-type bag during cleanup.
-- [ ] Check a second player's competing pickup of exercise storage in full-pack Host native/Toolkit profiles. Require authoritative conservation, exact ownership and safe cleanup with the independent queue tail; never recover an item already taken by another actor.
-
 # Container editor visual states
 
 - [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.

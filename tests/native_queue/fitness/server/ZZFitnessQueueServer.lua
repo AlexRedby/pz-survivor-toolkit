@@ -1,5 +1,6 @@
 if not isServer()then return end
 local F=require 'QueueFitnessFixture'
+local function negative()return require 'QueueFitnessStorageNegative'end
 local O=require 'QueueFitnessObservation'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
@@ -8,10 +9,23 @@ local readyReports,readySince,peersReady={},nil,false
 O.onRep=function(action,row)
  if state and action.character==state.player then
   sendServerCommand(state.player,'FitnessQueueTest','NativeRep',{case=state.case,exercise=row.exercise,reps=row.reps})
+  if state.case=='storage-peer-pickup'and not state.peerGrant then
+   assert(state.peerReady and state.negativePeer,'peer must arrive before workout')
+   local spec=state.ids.negativeStorage;local snapshot=negative().snapshot(state.player,spec,state.negativePeer)
+   local bag,prop=negative().endpoint(snapshot,spec.bag.id),negative().endpoint(snapshot,spec.prop.id)
+   assert(bag and bag.container=='world'and bag.world.linked and prop and prop.container=='client1-root','grant requires paid placement and borrowed prop')
+   state.peerGrant={reps=row.reps,peerOnlineID=state.negativePeer:getOnlineID(),snapshot=snapshot}
+   sendServerCommand(state.negativePeer,'FitnessQueueTest','CompetitionPickup',{case=state.case,bag=spec.bag.id})
+  end
  end
 end
 local function online(name)
  local values=getOnlinePlayers();for i=0,values:size()-1 do if values:get(i):getUsername()==name then return values:get(i)end end
+end
+local function peerAtOrigin(player,spec)
+ local here=player:getCurrentSquare();local origin=getCell():getGridSquare(spec.origin.x,spec.origin.y,spec.origin.z)
+ return here and origin and here:getZ()==spec.origin.z and math.abs(here:getX()-spec.origin.x)<=1
+  and math.abs(here:getY()-spec.origin.y)<=1 and (here==origin or not origin:isBlockedTo(here))
 end
 local function raw(marker,row)print('[FITNESS_TEST] '..marker..' '..JSON.encode(row))end
 local function fail(player,error)
@@ -46,6 +60,27 @@ Events.OnClientCommand.Add(function(module,name,player,args)
    assert(not previousReport or previousReport.player==player and previousReport.onlineID==args.onlineID,'fitness readiness identity changed')
    readyReports[actor]={player=player,onlineID=args.onlineID};readySince=readySince or getTimestampMs();return
   end
+  if name=='CompetitionReady'or name=='CompetitionPicked'then
+   assert(state and state.case=='storage-peer-pickup'and args.case==state.case and player==peer
+    and online('client2')==peer and peer:getOnlineID()==state.ids.peerOnlineID and not peer:isDead(),'competition sender/case identity differs')
+   local spec=state.ids.negativeStorage
+   if name=='CompetitionReady'then
+    assert(not state.peerReady and not state.pendingPeerReady and not state.peerReadyFailed and args.bag==spec.bag.id and not state.peerGrant,'duplicate or mismatched peer readiness')
+    -- The command and native player movement use different ordered channels.
+    -- Wait for the real authoritative pose; client readiness grants nothing.
+    state.pendingPeerReady={since=getTimestampMs(),onlineID=peer:getOnlineID()};return
+   end
+   assert(peerAtOrigin(peer,spec),'peer not in native reach')
+   assert(state.peerReady and state.peerGrant and not state.peerPicked and type(args.proof)=='table','pickup outside granted phase')
+   local proof=args.proof
+   assert(proof.id==spec.bag.id and proof.kind==spec.bag.kind and proof.phase=='picked'and proof.callbacks==1
+    and proof.transaction and proof.transaction.id==spec.bag.id and proof.transaction.completed==true
+    and proof.transaction.rejected==false and type(proof.transaction.transactionId)=='number'and proof.transaction.transactionId~=0,'peer pickup proof differs')
+   local snapshot=negative().snapshot(state.player,spec,peer)
+   local bag,prop=negative().endpoint(snapshot,spec.bag.id),negative().endpoint(snapshot,spec.prop.id)
+   assert(bag and bag.container=='client2-root'and bag.favorite and prop and prop.container=='client1-root','paid peer pickup authority differs')
+   state.peerPicked={proof=proof,snapshot=snapshot,onlineID=peer:getOnlineID()};return
+  end
   assert(player:getUsername()=='client1'and args.case==config.cases[index],'fitness authority actor/order differs')
   if name=='Prepare'then
    assert(peersReady and peersMatch(),'both actual clients must report fixture-ready before preparation')
@@ -61,8 +96,9 @@ Events.OnClientCommand.Add(function(module,name,player,args)
    peer:setAlreadyReadPages(peerBook:getFullType(),peerBook:getNumberOfPages()-1);sendAddItemToContainer(peer:getInventory(),peerBook)
    state=F.prepare(player,args.case,previous);previous=nil
    state.ids.peerBook=peerBook:getID();state.ids.peerOnlineID=peer:getOnlineID()
+   if state.ids.negativeStorage then state.negativePeer=peer;O.negativePeer=peer end
    raw('PREPARED',state.ids);sendServerCommand(player,module,'Prepared',state.ids)
-   sendServerCommand(peer,module,'Peer',{case=args.case,book=peerBook:getID()})
+   sendServerCommand(peer,module,'Peer',{case=args.case,book=peerBook:getID(),storage=state.case=='storage-peer-pickup'and state.ids.negativeStorage or nil})
   elseif name=='Mutate'then
    assert(state and not pending,'fitness mutation out of order');local row=F.mutate(state)
    raw('MUTATED',row);sendServerCommand(player,module,'Mutated',row)
@@ -113,6 +149,18 @@ Events.OnTick.Add(function()
    for _,report in pairs(readyReports)do fail(report.player,problem)end
    readySince=nil;return
   end
+ end
+ if state and state.pendingPeerReady then
+  local wait=state.pendingPeerReady
+  local ok,problem=pcall(function()
+   assert(getTimestampMs()-wait.since<5000,'authoritative peer reach deadline')
+   assert(state.case=='storage-peer-pickup'and state.negativePeer==peer and online('client2')==peer
+    and peer:getOnlineID()==wait.onlineID and peer:getOnlineID()==state.ids.peerOnlineID and not peer:isDead(),'peer readiness identity changed')
+   if not peerAtOrigin(peer,state.ids.negativeStorage)or peer:hasTimedActions()or not peer:getCharacterActions():isEmpty()then return end
+   state.peerReady={onlineID=peer:getOnlineID(),position=negative().position(peer)};state.pendingPeerReady=nil
+   sendServerCommand(state.player,'FitnessQueueTest','CompetitionReady',{case=state.case})
+  end)
+  if not ok then state.pendingPeerReady=nil;state.peerReadyFailed=true;fail(state.player,problem)end
  end
  if state and state.exhausted then state.player:getStats():set(CharacterStat.ENDURANCE,.01)end
  if not pending then return end

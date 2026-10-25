@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.269
+
+- Fixed: In multiplayer, Tidy Up Meister no longer queues native clothing restoration for an original item that has left the character's inventory, such as an exercise bag left behind or taken by another player. Valid exact-ID replacements and unrelated restoration actions retain their normal behavior.
+
 ### 0.1.268
 
 - Keep the retained-item mark when refilling a welding torch, including saved Stick marks. Context-menu refill returns the replacement torch to its original container after the authoritative result arrives. Replace the obsolete consumed-torch return so it cannot cancel the following propane-tank return in Host; native fuel costs remain unchanged.

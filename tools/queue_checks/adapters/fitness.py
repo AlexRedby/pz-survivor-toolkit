@@ -12,7 +12,7 @@ import shutil
 from ..mod_selection import metadata, mod_ids
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
-         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'squats-30', 'late-exhaustion', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore', 'multi-storage', 'multi-storage-closed']
+         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'squats-30', 'late-exhaustion', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore', 'multi-storage', 'multi-storage-closed', 'storage-walk-away', 'storage-peer-pickup']
 PROJECT = Path(__file__).resolve().parents[3]
 MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 SCENARIO_ACTIONS = {'fitness-ui': {
@@ -36,7 +36,7 @@ SCENARIO_ACTIONS = {'fitness-ui': {
 def definitions():
     return {'fitness': {'status': 'ready', 'clients': 2, 'default_mods': list(MODS),
         'scenario_actions': SCENARIO_ACTIONS,
-        'cases': [dict(id=case, producer='fitness-ui', capability='effect', kinds=['sp', 'mp'],
+        'cases': [dict(id=case, producer='fitness-ui', capability='effect', kinds=['mp'] if case=='storage-peer-pickup' else ['sp', 'mp'],
                        languages=['EN', 'RU'], modes=['native', 'toolkit']) for case in CASES]}}
 
 
@@ -50,7 +50,7 @@ def validate(selection):
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     languages = selection.get('languages')
     if (type(cases) is not list or not cases or cases != [case for case in CASES if case in cases]
-            or kind not in ('sp', 'mp') or selection.get('mode') not in ('native', 'toolkit')
+            or kind not in ('sp', 'mp') or kind=='sp'and 'storage-peer-pickup'in cases or selection.get('mode') not in ('native', 'toolkit')
             or type(clients) is not int or clients != (2 if kind == 'mp' else 1)
             or (languages not in (['EN'], ['RU']) if kind == 'sp' else languages != ['EN', 'RU'])
             or selection.get('mods') != MODS or selection.get('options', {}).get('world_template')
@@ -62,7 +62,8 @@ def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted(path for path in (root / 'fitness').rglob('*') if path.suffix in ('.lua', '.java')), root / 'health/shared/QueueHealthEvents.lua',
             root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua',
-            Path(project) / 'tools/queue_checks/adapters/fitness_storage.py']
+            Path(project) / 'tools/queue_checks/adapters/fitness_storage.py',
+            Path(project) / 'tools/queue_checks/adapters/fitness_negative.py']
 
 
 def _validity_probe(project, output, game, jdk, locations):
@@ -409,6 +410,9 @@ def _late_exhaustion(command, receipt, mp, native, tail_id, minutes):
 
 
 def _case(case, row, prep, receipt, selection, mutation=None):
+    if case in ('storage-walk-away','storage-peer-pickup'):
+        from .fitness_negative import verify_negative
+        return verify_negative(case,row,prep,receipt,selection)
     issues = []
     native, mp = selection['mode'] == 'native', selection['kind'] == 'mp'
     minutes = (60 if mp else 30) if case == 'late-exhaustion' else 30 if case in ('burpees-30', 'squats-30') else 10
@@ -930,6 +934,8 @@ def verify(root, selection, catalog):
             found = [row for row in peer_rows if row.get('id') == case]
             if len(found) != 1 or found[0].get('book') != prep.get('peerBook'):
                 problems.append('Fitness peer exact book identity differs: ' + case)
+            if case=='storage-peer-pickup' and (len(found)!=1 or not _same(found[0].get('peerPickup'),(receipt.get('peerPickup',{}).get('proof') if isinstance(receipt.get('peerPickup'),dict) else None))):
+                problems.append('Fitness independent peer pickup witness differs: ' + case)
         used_ids.extend(prep.get('items', {}).values())
         issues.extend(problems)
         outcome = dict(effectsVerified=not problems, serverAuthorityVerified=not problems and selection['kind']=='mp',
@@ -950,7 +956,7 @@ def verify(root, selection, catalog):
         for result in outcomes:
             peer_result = copy.deepcopy(result)
             peer_result['actor'] = 'client2'
-            peer_result['outcome'].update(participantRole='independent-reader', workoutActor='client1')
+            peer_result['outcome'].update(participantRole='competing-picker' if result['case']=='storage-peer-pickup' else 'independent-reader', workoutActor='client1')
             peers.append(peer_result)
         outcomes.extend(peers)
     shared = [issue for issue in issues if not any(issue.endswith(': ' + case) for case in cases)]

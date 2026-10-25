@@ -3433,6 +3433,102 @@ do
     isClient,isMultiplayer,getCell,getPlayerLoot=client,multi,cell,loot
     ISInventoryPage.floorContainer[1]=cached
 end
+-- P4's idle worn snapshot may still point at a bag left on the ground or taken
+-- by a peer. Native Host wear start rebinds that ID to nil before dereferencing it.
+do
+    local client, getWorn = isClient, player.getWornItem
+    isClient = function() return true end
+    local worn = {}
+    player.getWornItem = function(_, location) return worn[location] end
+    local floor = {class = 'ItemContainer', getType = function() return 'floor' end,
+        getContainingItem = function() end, getParent = function() return square end}
+    local peerInventory = {class = 'ItemContainer', getType = function() return 'inventory' end,
+        getContainingItem = function() end, getParent = function() end}
+    local function bag(container, id)
+        local value = item(container, id)
+        value.class, value.equippedAt = 'InventoryContainer', 'base:back'
+        value.getFullType = function() return 'Base.Bag_Schoolbag' end
+        value.IsInventoryContainer = function() return true end
+        value.getWorldItem = function() end
+        return value
+    end
+    local function clearIntent()
+        for _, callback in ipairs(events.OnMainMenuEnter or {}) do callback() end
+    end
+    for _, queueEnabled in ipairs({false, true}) do
+        for _, endpoint in ipairs({'ground-four-tiles', 'peer', 'wrong-type', 'fresh-replica'}) do
+            clearIntent(); reset(); enabled = queueEnabled; doNotReequip = false
+            worn = {}; player.primary, player.secondary = nil, nil
+            local source = endpoint == 'peer' and peerInventory or floor
+            local missing = bag(source, 17501)
+            local lookalike = bag(inventory, 17502)
+            local valid = bag(inventory, 17503); valid.equippedAt = 'base:fannypackfront'
+            local hand = item(inventory, 17504)
+            inventory.values = {lookalike, valid, hand}
+            local live
+            if endpoint == 'fresh-replica' or endpoint == 'wrong-type' then
+                live = bag(inventory, missing:getID()); inventory.values[#inventory.values + 1] = live
+                if endpoint == 'wrong-type' then live.getFullType = function() return 'Base.Other' end end
+            end
+            if endpoint == 'ground-four-tiles' then
+                local away = {getX = function() return 4 end, getY = function() return 0 end, getZ = function() return 0 end}
+                local world = {getItem = function() return missing end, getSquare = function() return away end}
+                missing.getWorldItem = function() return world end
+            end
+            if not live then
+                local probe = ISWearClothing:new(player, missing)
+                local ok, problem = pcall(probe.start, probe)
+                assert(not ok and probe.item == nil and tostring(problem):find('nil'),
+                    'regression must execute native Host start nil-rebinding before the repair')
+            end
+            local session = TidyFixture.captureSession(player)
+            session.restoreWorn, session.restoreHands = true, true
+            session.wornItems = {['base:back'] = missing, ['base:fannypackfront'] = valid}
+            session.primaryItem = hand
+            compat.fixtureRepairTidyFloor(player, function() TidyFixture.queueRestore(session) end)
+            local missingWear, validWear, handEquip
+            for _, action in ipairs(queue.queue) do
+                if action.Type == 'ISWearClothing' and action.item == missing then missingWear = action end
+                if action.Type == 'ISWearClothing' and action.item == valid then validWear = action end
+                if action.Type == 'ISEquipWeaponAction' and action.item == hand then handEquip = action end
+            end
+            assert(handEquip and validWear and queue:indexOf(handEquip) < queue:indexOf(validWear),
+                'missing worn storage must preserve P4 hand/clothing actions and order')
+            assert((missingWear ~= nil) == (endpoint == 'fresh-replica'),
+                'P4 emitted unavailable exact worn item into native Host start: ' .. endpoint)
+            if missingWear then
+                assert(missingWear.item == missing, 'filter must leave private original-item metadata unchanged')
+                worn['base:back'] = live
+                missingWear:begin()
+                missingWear:start()
+                assert(missingWear.item == live, 'native Host start must retain its fresh exact-ID/type resolver')
+            end
+            assert(missing:getContainer() == source and lookalike:getContainer() == inventory,
+                'wear filter moved unavailable storage or selected a same-type substitute')
+        end
+    end
+    for _, mutation in ipairs({'callback', 'instance', 'foreign', 'incoming', 'unknown-before', 'busy'}) do
+        clearIntent(); reset(); doNotReequip = false; player.primary, player.secondary = nil, nil
+        local missing = bag(floor, 17511)
+        local wear = ISWearClothing:new(player, missing)
+        local before
+        if mutation == 'callback' then wear.onCompleteFunc = function() end
+        elseif mutation == 'instance' then wear.start = function() end
+        elseif mutation == 'foreign' then wear.character = setmetatable({}, {__index = player})
+        elseif mutation == 'incoming' then before = ISInventoryTransferAction:new(player, missing, floor, inventory)
+        elseif mutation == 'unknown-before' then before = ISBaseTimedAction:new(player)
+        elseif mutation == 'busy' then ISTimedActionQueue.add(ISBaseTimedAction:new(player)) end
+        compat.fixtureRepairTidyFloor(player, function()
+            if before then ISTimedActionQueue.add(before) end
+            ISTimedActionQueue.add(wear)
+        end)
+        local actualQueue = ISTimedActionQueue.getTimedActionQueue(wear.character)
+        assert(actualQueue:indexOf(wear) ~= -1 and (not before or queue:indexOf(before) < queue:indexOf(wear)),
+            'unknown callback, pending supplier or nonidle work must remain unchanged: ' .. mutation)
+    end
+    clearIntent(); reset(); player.getWornItem = getWorn; isClient = client
+    print('PASS real P4 missing world/peer worn storage, native nil-rebind and exact Host replica preservation')
+end
 -- Match the early-Compat / later-ActionQueue startup order, including inherited P4 stop methods.
 local previousStop=ISBaseTimedAction.stop
 ISBaseTimedAction.stop=function(...) return previousStop(...) end

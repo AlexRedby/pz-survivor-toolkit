@@ -37,7 +37,7 @@ class FitnessAdapterTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.selection = dict(suite='fitness', kind='sp', mode='toolkit', cases=[case for case in fitness.CASES if case not in ('multi-storage','multi-storage-closed')],
+        self.selection = dict(suite='fitness', kind='sp', mode='toolkit', cases=[case for case in fitness.CASES if case not in ('multi-storage','multi-storage-closed','storage-walk-away','storage-peer-pickup')],
                               clients=1, languages=['EN'], mods=list(fitness.MODS), options={})
 
     def evidence(self):
@@ -398,7 +398,7 @@ class FitnessAdapterTests(unittest.TestCase):
         """)
         lua.globals().F=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessFixture.lua').read_text())
         source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
-        for name in ('multiCase','immediate','exerciseForCase'):
+        for name in ('negativeCase','multiCase','immediate','exerciseForCase'):
             line=next(line for line in source.splitlines() if line.startswith('local function '+name+'('))
             lua.execute(line.replace('local function ','function ',1))
         start=source.index('local function dispatch()');end=source.index('local function observe()',start)
@@ -654,6 +654,7 @@ class FitnessAdapterTests(unittest.TestCase):
         lua.execute((ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua').read_text())
         lua.execute('assert(operationsDependencyLoads==1)')
         lua.execute(next(line for line in source.splitlines() if line.startswith('local function multiCase(')).replace('local function ','function ',1))
+        lua.execute("negativeCase=function(id)return id=='storage-walk-away'or id=='storage-peer-pickup'end")
         lua.execute(source[start:end])
         lua.execute("""
             local lifecycle=T.ActionQueueLifecycle
@@ -1608,6 +1609,7 @@ class FitnessAdapterTests(unittest.TestCase):
         source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
         start=source.index('local function sampleDurationStop(action)')
         end=source.index("),'fitness native reader boundary observer unavailable')",start)+len("),'fitness native reader boundary observer unavailable')")
+        lua.execute("negativeCase=function(id)return id=='storage-walk-away'or id=='storage-peer-pickup'end")
         lua.execute(source[start:end])
         lua.execute("""
             isItemTransactionDone=function(id)return id==17 end;isItemTransactionRejected=function()return false end
