@@ -18,6 +18,13 @@ local class=ISFitnessAction
 local ui=ISFitnessUI
 local click=ui.onClick
 local activate=ISInventoryPaneContextMenu.onActivateItem
+local continuationOwner=Toolkit.ActionQueueNativeContinuation
+local continuationCallback=continuationOwner and continuationOwner.isCallback
+local function approvedContinuation(name,callback)
+ return Toolkit.ActionQueueNativeContinuation==continuationOwner and continuationOwner
+  and continuationOwner.isCallback==continuationCallback and type(continuationCallback)=='function'
+  and continuationCallback(name,callback)==true
+end
 local cartDropOwner=Toolkit.ActionQueueCarts
 local cartDropCallback=cartDropOwner and cartDropOwner.isDropCallback
 local cartDropMatch=cartDropOwner and cartDropOwner.isNonCartDrop
@@ -52,6 +59,9 @@ local childSources={ISEquipWeaponAction=1814269902,ISUnequipAction=229487418,ISW
  ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935,ISDropWorldItemAction=2862163534}
 local function approvedChange(kind,name)
  local carts=Toolkit.ActionQueueCarts
+ if kind=='ISWaitWhileGettingUp' and name=='perform' then
+  return approvedContinuation(name,classes[kind].methods[name]) and approvedContinuation(name,ISWaitWhileGettingUp[name])
+ end
  if kind=='ISDropWorldItemAction' then
   return approvedDrop(name,classes[kind].methods[name]) and approvedDrop(name,ISDropWorldItemAction[name])
  end
@@ -78,6 +88,7 @@ for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction',
    if kind~='ISFitnessAction' and kind~='ISInventoryTransferAction' and name~='derive' and not Proof.closure(callback,kind..'.lua') then
     local approved=kind=='ISUnequipAction' and (name=='new' or name=='complete') and approvedUnequipConstructor(owner.new)
      or kind=='ISDropWorldItemAction' and approvedDrop(name,callback)
+     or kind=='ISWaitWhileGettingUp' and approvedContinuation(name,callback)
     trusted=trusted and approved==true
    end
   end
@@ -123,6 +134,7 @@ local function root(player,ref)
  return item and item:getContainer()==player:getInventory() and item or nil
 end
 local function unchanged()
+ if continuationOwner and not approvedContinuation('perform',ISWaitWhileGettingUp.perform) then return false end
  if (not Proof.closure(ISUnequipAction.new,'ISUnequipAction.lua') or not Proof.closure(ISUnequipAction.complete,'ISUnequipAction.lua'))
   and not approvedUnequipConstructor(ISUnequipAction.new) then return false end
  for _,name in ipairs({'new','isValid','complete'}) do

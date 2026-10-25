@@ -233,7 +233,7 @@ local function panel(kind,minutes)
     return setmetatable({player=player,selectedExe=kind,exeData=FitnessExercises.exercisesType[kind],fitness=fitness,itemsToReequip={},
         exeTime={getInternalText=function()return tostring(minutes or 10)end}},ISFitnessUI)
 end
-f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');f.project('BulkActions')
+f.project('ActionQueueOperations');f.project('ActionQueueNativeContinuation');f.project('ActionQueueDefinitions');f.project('BulkActions')
 local policy=f.project('ActionQueuePolicy')
 ISInventoryPaneContextMenu.getContainers=function()return list({})end
 local receipt,preparationReceipts=nil,{}

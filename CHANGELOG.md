@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.264
+
+- **Fixed:** Native get-up continuations retain their place before later queued work, including Fitness and context-menu door/window callbacks with queue editing disabled. The original callback and native action admission still run; reset, cancellation or changed ownership revoke late continuation additions.
+
 ### 0.1.263
 
 - **Shopping carts:** Replace the stiff procedural gait with body-leading turns built from native walking, retaining knee motion, heel/toe roll and a gently moving torso. Use phase-matched straight and turning clips with slight leg separation; stationary pivots and wheelbarrows retain their existing clips.
