@@ -1,3 +1,9 @@
+# Accepted cart animation main delivery
+
+- [ ] Merge current origin/main, preserving concurrent work and the accepted cart gait/handle fixes.
+- [ ] Set shipped component versions above current main, reconcile changelog entries and run the affected cart checks on the integrated sources.
+- [ ] Push the verified integration to main and verify the remote result; do not install it into the personal game profile.
+
 # Shopping cart turn footwork
 
 - [ ] Run the native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host once `VanillaVehiclesAnimated` is available. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
