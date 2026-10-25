@@ -1191,6 +1191,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.56
+
+- **Compatibility:** Remove a proven orphan mesh-object animation channel from three DAMN Library clips before skeletal import. Preserve all skeletal frames and transforms; changed or unknown inputs keep native handling and diagnostics. No third-party assets are copied or rewritten.
+
 ### 0.1.55
 
 - **Vehicles:** Synchronize the rendered passenger position and both legs with Toolkit's entry/exit steps. Keep the support foot planted during weight transfer, lift the swinging foot and apply the same corrected pose to body and clothing. Normalize the chair animation's raised origin; logical seat ownership, collision, action completion and network messages stay native.

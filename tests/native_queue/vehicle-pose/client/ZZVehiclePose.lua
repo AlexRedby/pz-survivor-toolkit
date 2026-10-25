@@ -42,7 +42,7 @@ local function check(p, v, c)
     assert(v:getSeat(p) == c.seat, 'Wrong final seat')
     assert(not p:getVariableBoolean('bEnteringVehicle') and not p:getVariableBoolean('bExitingVehicle'), 'Stale transition flag')
     assert(not p:getVariableBoolean('EnterAnimationFinished') and not p:getVariableBoolean('ExitAnimationFinished'), 'Stale completion flag')
-    if isClient() then sendClientCommand('VehiclePoseTest', 'check', {id=id, name=c.name, seat=c.seat})
+    if isClient() then sendClientCommand('VehiclePoseTest', 'check', {id=id, name=c.name, seat=c.seat, contents=vehicleStartupContents(v)})
     else print('[VEHICLE_POSE] AUTHORITY ' .. c.name); authority=c.name end
 end
 local function run()

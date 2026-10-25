@@ -62,6 +62,14 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.core.skinnedmodel.model.jassimp.ImportedSkeleton", methodName="process", warmUp=true, strictMatch=true)
+    public static class DamnLibraryAnimationInput {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.core.skinnedmodel.model.jassimp.ImportedSkeletonParams params) {
+            DamnLibraryAnimationBindings.prepare(params);
+        }
+    }
+
     public static void main(String[] args) throws ClassNotFoundException {
         MainSupport.startup();
     }

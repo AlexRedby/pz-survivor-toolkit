@@ -175,6 +175,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.CartEmergencyDropTest'] = 'CART_EMERG
 CHECKS['net.alexredby.pztoolkitjavapatches.CartPickupApproachTest'] = 'CART_PICKUP_APPROACH_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartObserverPoseTest'] = 'CART_OBSERVER_POSE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartObserverRenderTest'] = 'CART_OBSERVER_RENDER_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.DamnLibraryAnimationChecks'] = 'DAMN_LIBRARY_ANIMATION_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleStepPoseTest'] = 'VEHICLE_STEP_POSE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleTransitionRenderTest'] = 'VEHICLE_TRANSITION_RENDER_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
@@ -318,7 +319,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.55',
+    'version': '0.1.56',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

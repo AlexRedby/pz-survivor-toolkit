@@ -26,6 +26,9 @@ public final class Main {
         }
     }
 
+    @LuaMethod(name="vehicleStartupContents", global=true)
+    public static String vehicleContents(zombie.vehicles.BaseVehicle vehicle) { return StartupNetworkProbe.contents(vehicle); }
+
     @LuaMethod(name="vehiclePoseBoundary", global=true)
     public static String boundary(IsoPlayer player, zombie.vehicles.BaseVehicle vehicle, int seat, boolean entering) {
         var animation=player.getAnimationPlayer();

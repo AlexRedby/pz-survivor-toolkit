@@ -28,9 +28,11 @@ def validate(selection):
             or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
         raise ValueError('Vehicle poses require fresh SP/menu Host, one EN client, Toolkit and Java Patches')
     options = selection.get('options', {})
-    for key in ('vehicle_pose_capture', 'vehicle_pose_baseline'):
+    for key in ('vehicle_pose_capture', 'vehicle_pose_baseline', 'vehicle_pose_new_music_probe'):
         if key in options and not isinstance(options[key], bool):
             raise ValueError(key + ' must be boolean')
+    if options.get('vehicle_pose_new_music_probe') and (selection['kind'] != 'mp' or 'NewMusic' not in selection['mods']):
+        raise ValueError('Early New Music probe requires menu Host and the selected NewMusic mod')
     if options.get('vehicle_pose_capture'):
         ffmpeg = Path(options.get('ffmpeg', ''))
         if not ffmpeg.is_absolute() or not ffmpeg.is_file() or not os.access(ffmpeg, os.X_OK):
@@ -45,7 +47,7 @@ def sources(project, selection):
     base = Path(project) / 'tests/native_queue'
     return (sorted((base / 'vehicle-pose').rglob('*.lua'))
             + sorted((base / 'startup').rglob('*.lua'))
-            + [base / 'vehicle-doors/shared/VehicleDoorsFixture.lua', base / 'vehicle-pose/Main.java', base / 'vehicle-pose/StepPoseProbe.java',
+            + [base / 'vehicle-doors/shared/VehicleDoorsFixture.lua', base / 'vehicle-pose/Main.java', base / 'vehicle-pose/StepPoseProbe.java', base / 'vehicle-pose/StartupNetworkProbe.java',
                Path(project) / 'tools/queue_checks/vehicle_pose_samples.py',
                Path(project) / 'tools/queue_checks/vehicle_step_samples.py'])
 
@@ -56,7 +58,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     classes = Path(output) / 'pose-probe-classes'; classes.mkdir()
     subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
         os.pathsep.join(str(Path(game) / jar) for jar in ('projectzomboid.jar', 'ZombieBuddy.jar')),
-        '-d', str(classes), str(base / 'vehicle-pose/Main.java'), str(base / 'vehicle-pose/StepPoseProbe.java')],
+        '-d', str(classes), str(base / 'vehicle-pose/Main.java'), str(base / 'vehicle-pose/StepPoseProbe.java'), str(base / 'vehicle-pose/StartupNetworkProbe.java')],
         check=True, capture_output=True, text=True, timeout=60)
     for role, settings in runtime['roles'].items():
         target = Path(output) / role / 'mods/ActionQueueTest/42/media/lua'
@@ -64,6 +66,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             text = (base / 'startup' / side / name).read_text().replace('posX=10835,posY=10144', 'posX=10640,posY=10144')
             (target / side / name).write_text(text)
         shutil.copy2(base / 'vehicle-doors/shared/VehicleDoorsFixture.lua', target / 'shared/VehicleDoorsFixture.lua')
+        (target / 'shared/VehiclePoseProbeConfig.lua').write_text('return {newMusic=' + str(bool(selection.get('options', {}).get('vehicle_pose_new_music_probe', False))).lower() + '}\n')
         helper = Path(settings['cache']) / 'mods/VehiclePoseProbe'
         jar = helper / '42/media/java/VehiclePoseProbe.jar'; jar.parent.mkdir(parents=True)
         with zipfile.ZipFile(jar, 'x') as archive:
@@ -102,12 +105,16 @@ def verify(root, selection, catalog):
     authority = (Path(root) / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
     if re.findall(re.escape(MARKER) + r'AUTHORITY (\S+)', authority) != CHECKS:
         issues.append('Missing authoritative passenger occupancy checks')
+    if selection['kind'] == 'mp' and re.findall(re.escape(MARKER) + r'CONTENTS (\S+) ', authority) != CHECKS:
+        issues.append('Missing exact server/client vehicle container checks')
     if re.findall(re.escape(MARKER) + r'POSE (\S+) ', text) != CHECKS:
         issues.append('Missing active native transition track probes')
     if MARKER + 'CLEAN_VIEW visible=0 global=false' not in text:
         issues.append('Missing clean HUD-free presentation check')
     if selection['kind'] == 'mp' and MARKER + 'CLEAN_VIEW visible=0 global=false names=false' not in text:
         issues.append('Host nameplates are still enabled')
+    if selection.get('options', {}).get('vehicle_pose_new_music_probe') and authority.count('[STARTUP_NET] MUSIC_PROBE ') != 1:
+        issues.append('Missing controlled early New Music placeholder conversion')
     motion_issues, motion = analyze(text, baseline=selection.get('options', {}).get('vehicle_pose_baseline', False))
     issues.extend(motion_issues)
     step_issues, steps = analyze_steps(text) if not selection.get('options', {}).get('vehicle_pose_baseline') else ([], {})
