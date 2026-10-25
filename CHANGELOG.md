@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.270
+
+- Fixed: Project Cook resolves the selected pot to its exact live inventory instance after pickup and refreshes ingredient availability when it enters the inventory, in SP and Host. A stale floor reference no longer hides usable ingredients or makes ingredient addition retry with “Not Available” after the ingredient has reached the inventory. Recipe checks, native costs, leftovers and the remembered return destination remain unchanged, with the action queue enabled or disabled.
+
 ### 0.1.269
 
 - Fixed: In multiplayer, Tidy Up Meister no longer queues native clothing restoration for an original item that has left the character's inventory, such as an exercise bag left behind or taken by another player. Valid exact-ID replacements and unrelated restoration actions retain their normal behavior.

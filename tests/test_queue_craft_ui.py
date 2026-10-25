@@ -230,7 +230,7 @@ class CraftUIAdapterTests(unittest.TestCase):
             path = project / 'tests/native_queue' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture')
-        expected = [Path(craft_ui.craft.__file__), *(project / 'tests/native_queue' / name for name in paths)]
+        expected = [Path(craft_ui.craft.__file__), Path(craft_ui.__file__).with_name('craft_ui_water.py'), *(project / 'tests/native_queue' / name for name in paths)]
         self.assertCountEqual(expected,
                               craft_ui.sources(project, self.selection))
         runtime = {'roles': {'client1': {'cache': str(self.root / 'client1')}}}

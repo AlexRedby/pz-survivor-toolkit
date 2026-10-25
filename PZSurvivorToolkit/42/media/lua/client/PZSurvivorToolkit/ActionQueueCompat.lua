@@ -1138,6 +1138,31 @@ local function loadSource(id, module, eventName)
     return true
 end
 
+local function normalizeCookBase(panel, invalidate)
+    if not ownerUnchanged("Project_Cook") or not instanceUnchanged(panel, PJCK_EvoPanel)
+        or not panel.player or panel.player:isDead() then return end
+    local selected = panel.baseItem
+    if not instanceof(selected, "InventoryItem") then panel._toolkitCookRootCache = nil; return end
+    local root = panel.player:getInventory()
+    local item = root:getItemById(selected:getID())
+    -- Root arrival keeps the object in SP but can replace a floor proxy in Host.
+    -- Resolve only the exact selected ID/type in the actor's actual root; keep the source's
+    -- recipe, return target and replacement bookkeeping.
+    if instanceof(item, "InventoryItem") and item:getID() == selected:getID()
+        and item:getFullType() == selected:getFullType()
+        and item:getContainer() == root and root:contains(item) then
+        local previous = panel._toolkitCookRootCache
+        if item ~= selected or type(previous) ~= "table" or getmetatable(previous) ~= nil
+            or previous.item ~= item or previous.root ~= root then
+            panel.baseItem = item
+            panel._toolkitCookRootCache = {item = item, root = root}
+            invalidate(panel)
+        end
+    else
+        panel._toolkitCookRootCache = nil
+    end
+end
+
 local names = {"ISInventoryTransferAction", "ISWalkToTimedAction", "ISWalkToTimedActionF", "ISPathFindAction",
     "ISWashClothing", "ISEquipWeaponAction", "ISUnequipAction", "ISWearClothing", "ISClothingExtraAction",
     "ISAttachItemHotbar", "ISDetachItemHotbar", "ISQueueActionsAction", "NEQ_AttachAction", "P4RestoreAction", "P4RestoreFloorAction", "ISAddItemInRecipe"}
@@ -1315,6 +1340,28 @@ function Compat.install()
                             PJCK_EvoPanel[name] = function(self, ...)
                                 if not instanceUnchanged(self, PJCK_EvoPanel) then return callback(self, ...) end
                                 return Operations.run(function(...) return scoped({id = "Project_Cook", owner = self}, callback, self, ...) end, ...)
+                            end
+                        end
+                        local refresh, resolve = PJCK_EvoPanel.setContainers, PJCK_EvoPanel.resolveCurrentBaseItem
+                        local getter, inputs, invalidate = PJCK_EvoPanel.getBaseItem, PJCK_EvoPanel.getInputList, PJCK_EvoPanel.invalidateInputCaches
+                        if Proof.closure(refresh, "PJCK_EvoPanel.lua") and Proof.closure(resolve, "PJCK_EvoPanel.lua")
+                            and Proof.closure(getter, "PJCK_EvoPanel.lua") and Proof.closure(inputs, "PJCK_EvoPanel.lua")
+                            and Proof.closure(invalidate, "PJCK_EvoPanel.lua") then
+                            PJCK_EvoPanel.setContainers = function(self, ...)
+                                normalizeCookBase(self, invalidate)
+                                return refresh(self, ...)
+                            end
+                            PJCK_EvoPanel.resolveCurrentBaseItem = function(self, preferPlayerInventory, ...)
+                                if preferPlayerInventory == true then normalizeCookBase(self, invalidate) end
+                                return resolve(self, preferPlayerInventory, ...)
+                            end
+                            PJCK_EvoPanel.getBaseItem = function(self, ...)
+                                normalizeCookBase(self, invalidate)
+                                return getter(self, ...)
+                            end
+                            PJCK_EvoPanel.getInputList = function(self, ...)
+                                normalizeCookBase(self, invalidate)
+                                return inputs(self, ...)
                             end
                         end
                     end
