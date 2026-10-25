@@ -1,3 +1,7 @@
+# Legacy Host launchers
+
+- [ ] Retain the optional `start-host.ps1` / `start-host.command` files, packaging and launcher checks only until automatic Host loading has native macOS/Linux qualification as well as Windows. Remove those scripts and their packaging/test consumers once a normal client-only-loader launch on each platform starts a patched Host child with saved approvals and an inherited-loader control proves no duplicate agent. They remain fallback entrypoints for existing installations, not the normal user workflow.
+
 # Shopping cart turn footwork
 
 - [ ] Run the accepted native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.

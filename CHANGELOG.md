@@ -1203,6 +1203,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.58
+
+- **Host startup:** Supply ZombieBuddy automatically to the native Host/soft-reset server process when the client is already patched. Normal Steam launches no longer require a separate Host launcher. Preserve saved approval policy, native server arguments and existing explicit/inherited loaders; diagnose duplicate loaders and unsupported native startup instead of changing system-wide JVM settings. Vehicle diagnostics remain controlled in-game.
+
 ### 0.1.57
 
 - **Host vehicle inventory:** Include early item changes in each recipient's first native vehicle snapshot, then send later changes on the same ordered channel. Cover direct vehicle containers and bags directly inside them; preserve native transfers, recipient relevance and diagnostics, and reset synchronization across reconnects, world changes, vehicle deletion and ID reuse.

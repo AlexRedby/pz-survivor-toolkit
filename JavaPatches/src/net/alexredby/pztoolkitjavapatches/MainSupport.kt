@@ -372,6 +372,7 @@ internal object MainSupport {
         MannequinZoneData.prepare()
         val fences = FenceValidation.install(FenceValidation.SUPPORTED)
         val itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED)
+        val hostLoader = HostLoader.install()
         // Define before patch registration: recursive loads during another transform bypass
         // instrumentation.
         if (Main.CART_TRANSITION_SUPPORTED)
@@ -436,7 +437,9 @@ internal object MainSupport {
                 ", actionAcknowledgements=" +
                 ActionAcknowledgements.SUPPORTED +
                 ", craftBench=" +
-                CraftBenchReferences.SUPPORTED,
+                CraftBenchReferences.SUPPORTED +
+                ", hostLoader=" +
+                hostLoader,
         )
     }
 

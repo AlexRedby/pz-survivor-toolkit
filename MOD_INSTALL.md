@@ -5,7 +5,7 @@ For the Steam edition of **Project Zomboid B42.21**, in single-player or **Host*
 | Your task | Start here |
 |---|---|
 | I received the prepared `SurvivorQoL` folder | [Client setup](#client) |
-| I host the game | [Client setup](#client), then [server profile](#server) and [Host launcher](JavaPatches/README.md#host-save-approvals-first) |
+| I host the game | [Client setup](#client), then [server profile](#server) and [Host loader/approvals](JavaPatches/README.md#host-save-approvals-first) |
 | I need to create the folder for everyone | [Prepare once](#prepare-once), then distribute it |
 | I already use an older version | [Update the set](#update-the-set) |
 | The loader or a vehicle fix seems inactive | [Activation checks](JavaPatches/README.md#verify-activation) and [vehicle logs](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs) |
@@ -41,7 +41,7 @@ Install **ZombieBuddy 2.3.4+** on every client and in the server process. A Work
 
 - **Windows client/Host:** use the official [ZombieBuddyInstaller.exe](https://github.com/zed-0xff/ZombieBuddy/releases/tag/windows_installer), select **Install or update ZombieBuddy**, then **Both** for normal and alternate launches. Review and apply its changes.
 - **macOS / Linux client:** copy `ZombieBuddy.jar` from `steamapps/workshop/content/108600/3619862853/mods/ZombieBuddy/libs/` into the game Java directory. On macOS this is `Project Zomboid.app/Contents/Java/`; on Linux it is usually `ProjectZomboid/projectzomboid/`. Add `-javaagent:ZombieBuddy.jar --` to the game's Steam launch options. The final two hyphens are required. Follow the [author's installation guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md) for launch variants.
-- **Host:** leave Steam running and use the prepared `start-host.ps1` on Windows or `start-host.command` on macOS, following [these commands](JavaPatches/README.md#server-loader). They also pass the loader to Host's separate server process. A regular client-only Steam launch does not guarantee this.
+- **Host:** with Java Patches 0.1.58+ enabled in the client and Host profile, launch normally through Steam. Toolkit supplies ZombieBuddy to Host's separate server process automatically. Save JAR approvals before hosting and check [both processes](JavaPatches/README.md#server-loader); special Host/vehicle-trace launchers are no longer required. Diagnostics are controlled in-game.
 - **Dedicated server:** follow the [server JVM and approval steps](JavaPatches/README.md#server-loader). Check the server log as well as the client log.
 
 After launching the client, check for **ZombieBuddy ... loaded** in the upper-left corner. Java approval is per machine/account and JAR content; distribute the built mod folders, not another person's approval file.
@@ -66,7 +66,7 @@ The server owner prepares one copy for everyone. Players receiving it do not nee
 1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit). Install **Python 3.10+**, **JDK 25+** and unpack the [Kotlin 2.4.21 compiler distribution](https://github.com/JetBrains/kotlin/releases/tag/v2.4.21) on the build machine; preparation builds Toolkit and Java Patches. Point `KOTLIN_HOME` to the distribution root containing `lib/` (not `bin/`); the build prefers `--kotlin-home`, then `KOTLIN_HOME`, then `kotlinc` on `PATH`.
 2. Install the [ZombieBuddy loader](#zombiebuddy-loader) there. The game Java directory must contain both `projectzomboid.jar` and `ZombieBuddy.jar`.
 3. From the repository root run `python3 tools/prepare_install.py` on macOS/Linux, or `py -3 tools/prepare_install.py` on Windows. For a custom installation add `--game "/path/to/folder-containing-both-jars"`; to choose a JDK add `--jdk "/path/to/jdk-25"`. To select Kotlin explicitly add `--kotlin-home "/path/to/kotlin-distribution"`. The build requires compiler and stdlib version 2.4.21 and downloads nothing; a missing or mismatched compiler fails preparation. Add `--check` to run the native JVM regression checks too.
-4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZToolkitJavaPatches`, `Server/SurvivorQoL-selected.ini`, the Windows/macOS Host launchers, this installation guide and `JavaPatches/README.md`. It contains repository mods only; Workshop supplies the rest. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
+4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZToolkitJavaPatches`, `Server/SurvivorQoL-selected.ini`, optional legacy Windows/macOS Host launchers, this installation guide and `JavaPatches/README.md`. It contains repository mods only; Workshop supplies the rest. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
 
 ## Vehicle diagnostics
 
