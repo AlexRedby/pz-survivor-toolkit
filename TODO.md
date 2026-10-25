@@ -1,7 +1,6 @@
 # Startup fixes main integration
 
-- [ ] Confirm the full-pack two-client Host inventory scenario on the final merged artifact.
-- [ ] Record final evidence, save a clean local result and push the verified integration to main.
+- [ ] Push the verified startup fixes integration to main.
 
 # Shopping cart turn footwork
 
