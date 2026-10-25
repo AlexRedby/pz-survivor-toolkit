@@ -1,7 +1,3 @@
-# Startup fixes main integration
-
-- [ ] Push the verified startup fixes integration to main.
-
 # Shopping cart turn footwork
 
 - [ ] Run the accepted native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
