@@ -71,7 +71,7 @@ class FitnessAdapterTests(unittest.TestCase):
             if case == 'missing-dumbbell':
                 final['items'] = [row for row in final['items'] if row['id'] != ids['dumbbell']]
             exercises = fitness._expected_exercises(case, mode)
-            minutes = 30 if case == 'burpees-30' else 10
+            minutes = 30 if case in ('burpees-30','squats-30') else 10
             records = []
             for i, exercise in enumerate(exercises):
                 start = i*700000
@@ -84,10 +84,11 @@ class FitnessAdapterTests(unittest.TestCase):
                     minEndurance=.8, lastRep=clinical(10,.8,1,1), currentExerciseCleared=True,
                     serverStopReturned=True, previousStopSettled=True))
             if case=='empty-restore':
-                records[0].update(startMS=120000,lastRepMS=121000,nativeClock=dict(constructorStartMS=0,deadlineMS=600000,
-                    constructorStartAtStopMS=0,deadlineAtStopMS=600000,observedBodyStartMS=120000,
+                records[0].update(startMS=120000,stopMS=720001,lastRepMS=121000,nativeClock=dict(constructorStartMS=120000,deadlineMS=720000,
+                    constructorStartAtStopMS=120000,deadlineAtStopMS=720000,observedBodyStartMS=120000,
                     source='ISFitnessAction.serverStart' if mp else 'SP first started sample'))
-                records[0].update(durationStartMS=120000,durationStopMS=720000)
+                records[0].update(durationStartMS=120000,durationStopMS=720001)
+                if mp:records[0]['stopCallbacks']=dict(serverStop=1)
             if case in fitness.BORROWED_CASES:
                 for record in records:
                     start_inventory=copy.deepcopy(inventory)
@@ -112,15 +113,19 @@ class FitnessAdapterTests(unittest.TestCase):
                 terminalAcks=[dict(token='token'+str(i), state='canceled') for i in range(len(exercises))])
             command['initialClinical']=copy.deepcopy(prep['before'])
             if case=='empty-restore':
-                command['nativeWorkoutClock']=dict(constructorStartMS=0,deadlineMS=600000,constructorStartAtRemovalMS=0,deadlineAtRemovalMS=600000,
-                    observedBodyStartMS=120000,observedRemovalMS=660000,source='actual started ISFitnessAction')
+                command.update(nativeStopCalls=1,nativeStopReturns=1)
+                command['nativeWorkoutClock']=dict(constructorStartMS=120000,deadlineMS=720000,constructorStartAtRemovalMS=120000,deadlineAtRemovalMS=720000,
+                    observedBodyStartMS=120000,observedRemovalMS=720001,source='actual started ISFitnessAction')
                 if mode=='native':command['requestNativeClock']=dict(constructorStartMS=0,deadlineMS=600000)
             command['progressSamples']=[dict(exercise=exercise,total=minutes,elapsed=2,fraction=2/minutes,
                 startMS=i*700000,sampleMS=i*700000+120000,label=f'2.0 / {minutes} minutes') for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
             command['durationStops']=[dict(startMS=i*700000,endMS=i*700000+minutes*60000,
                 stopMS=i*700000+(100000 if case in ('active-cancel','active-cancel-restore') else minutes*60000),confirmed=True)
-                for i,exercise in enumerate(exercises)] if mode=='toolkit' else []
-            if case=='burpees-30' and mode=='toolkit':
+                for i,exercise in enumerate(exercises)]
+            if case=='empty-restore':
+                command['durationStops'][0].update(startMS=120000,endMS=720000,stopMS=720001)
+                if mode=='toolkit':command['progressSamples'][0].update(startMS=120000,sampleMS=240000)
+            if case in ('burpees-30','squats-30'):
                 command['durationStopDelayMilliseconds']=0
                 command['durationStops'][0]['stopMS']=1800001
                 command['durationContinuation']=dict(workoutStartMS=0,workoutEndMS=1800000,
@@ -140,8 +145,8 @@ class FitnessAdapterTests(unittest.TestCase):
                 placed=mode=='native' or case!='pickup-cancel-restore'
                 receipt['placements']=[dict(callback='ISDropWorldItemAction.complete',succeeded=True,nativeClock=800000,
                     storage=dict(storage_snapshot(ids,inventory,'world',True),favorite=prep['storage']['favorite']),inventory=ground_inventory(ids,inventory))] if placed else []
-                if mode=='native':
-                    # P4 restores after this reader; native timing and callbacks stay intact.
+                if mode=='native' and case!='empty-restore':
+                    # Explicit native cancellation controls retain their observed boundary.
                     boundary=command['beforeTail']
                     boundary['inventory']=ground_inventory(ids,inventory);boundary['inventory'].update(primary=ids['dumbbell'])
                     boundary['storage']=dict(storage_snapshot(ids,inventory,'world',True),favorite=prep['storage']['favorite'])
@@ -263,40 +268,89 @@ class FitnessAdapterTests(unittest.TestCase):
                     self.assertFalse(prep['storage']['favorite']);self.assertEqual(row['receipt']['records'][0]['minutes'],10)
                     self.assertTrue(all(value['status']=='passed' for value in result['outcomes']))
 
-    def test_empty_restore_separates_native_constructor_deadline_from_shorter_body(self):
+    def test_empty_restore_uses_confirmed_active_deadline_without_spending_preparation(self):
         for mode in ('native','toolkit'):
             for kind in ('sp','mp'):
                 self.selection.update(mode=mode,kind=kind,cases=['empty-restore'],clients=2 if kind=='mp' else 1,
                     languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
                 evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
-                self.assertLess(record['stopMS']-record['startMS'],600000)
+                self.assertGreaterEqual(record['stopMS']-record['startMS'],600000)
                 self.assertEqual(self.verify(evidence)['issues'],[])
+                if mode=='native':
+                    command=evidence[0][1]['command']
+                    self.assertLess(command['requestNativeClock']['constructorStartMS'],command['nativeWorkoutClock']['constructorStartMS'])
                 unavailable=copy.deepcopy(evidence);telemetry=unavailable[0][1]['receipt']['records'][0]['nativeClock']
                 for key in ('constructorStartMS','deadlineMS','constructorStartAtStopMS','deadlineAtStopMS'):telemetry.pop(key)
                 self.assertEqual(bool(self.verify(unavailable)['issues']),kind!='mp')
-                for change in ('missing','span','reset-request','reset-body','expired-start','early-stop','missing-body-clock','authority-reset','body-conflated'):
-                    evidence=copy.deepcopy(self.evidence());command=evidence[0][1]['command'];record=evidence[0][1]['receipt']['records'][0]
+                for change in ('missing','span','request-span','request-after-active','changed-start','changed-deadline','expired-start',
+                               'early-stop','missing-body-clock','authority-reset','spent-preparation','local-early','local-unconfirmed'):
+                    evidence=self.evidence();command=evidence[0][1]['command'];record=evidence[0][1]['receipt']['records'][0]
                     clock=command['nativeWorkoutClock']
                     if change=='missing':command.pop('nativeWorkoutClock')
                     elif change=='span':clock['deadlineMS']-=60000;clock['deadlineAtRemovalMS']-=60000
-                    elif change=='reset-request':
+                    elif change=='request-span':
                         if mode!='native':continue
                         command['requestNativeClock']['constructorStartMS']+=60000
-                    elif change=='reset-body':clock['constructorStartAtRemovalMS']+=60000
+                    elif change=='request-after-active':
+                        if mode!='native':continue
+                        command['requestNativeClock']=dict(constructorStartMS=180000,deadlineMS=780000)
+                    elif change=='changed-start':clock['constructorStartAtRemovalMS']+=60000
+                    elif change=='changed-deadline':clock['deadlineAtRemovalMS']+=60000
                     elif change=='expired-start':clock['observedBodyStartMS']=clock['deadlineMS']
                     elif change=='early-stop':clock['observedRemovalMS']=clock['deadlineMS']-1
                     elif change=='missing-body-clock':record.pop('nativeClock')
                     elif change=='authority-reset':record['nativeClock']['deadlineAtStopMS']+=60000
-                    else:record['startMS']=record['nativeClock']['constructorStartMS']
+                    elif change=='spent-preparation':
+                        # Old constructor timer expires after only eight body minutes.
+                        clock.update(constructorStartMS=0,deadlineMS=600000,constructorStartAtRemovalMS=0,
+                                     deadlineAtRemovalMS=600000,observedRemovalMS=600001)
+                        record.update(stopMS=600001,durationStopMS=600001)
+                        record['nativeClock'].update(constructorStartMS=0,deadlineMS=600000,
+                            constructorStartAtStopMS=0,deadlineAtStopMS=600000)
+                        command['durationStops'][0].update(startMS=0,endMS=600000,stopMS=600001)
+                    elif change=='local-early':command['durationStops'][0]['stopMS']=719999
+                    else:command['durationStops'][0]['confirmed']=False
                     with self.subTest(mode=mode,kind=kind,change=change):self.assertTrue(self.verify(evidence)['issues'])
                 equality=self.evidence();command=equality[0][1]['command'];record=equality[0][1]['receipt']['records'][0]
                 clock=command['nativeWorkoutClock'];clock['observedRemovalMS']=clock['deadlineMS'];record['stopMS']=clock['deadlineMS']
                 with self.subTest(mode=mode,kind=kind,boundary='exact-deadline'):
-                    self.assertEqual(bool(self.verify(equality)['issues']),mode=='native')
-        # Existing controls keep their strict authoritative body-duration guard.
+                    self.assertEqual(self.verify(equality)['issues'],[])
         self.selection.update(kind='mp',mode='native',cases=['closed-ui-restore'],clients=2,languages=['EN','RU'],options={'mp_host':True})
         evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0];record['stopMS']=record['startMS']+480000
         self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+
+    def test_empty_restore_native_tail_requires_restored_inventory_activation_and_storage(self):
+        for kind in ('sp','mp'):
+            self.selection.update(mode='native',kind=kind,cases=['empty-restore'],clients=2 if kind=='mp' else 1,
+                languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+            for boundary in ('beforeTail','tailStart') if kind=='mp' else ('beforeTail',):
+                for change in ('hands','prop','activation','storage'):
+                    evidence=self.evidence();row=evidence[0][1];prep=evidence[1][0][1]
+                    witness=row['command']['beforeTail'] if boundary=='beforeTail' else row['receipt']['tailStart']
+                    if change=='hands':witness['inventory']['primary']=False
+                    elif change=='prop':
+                        next(item for item in witness['inventory']['items'] if item['id']==prep['items']['dumbbell'])['container']='root'
+                    elif change=='activation':witness['activation']={'foreign':True}
+                    else:witness['storage']['contents']=[]
+                    with self.subTest(kind=kind,boundary=boundary,change=change):
+                        self.assertEqual(row['receipt']['inventory'],prep['inventory'])
+                        self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_empty_restore_requires_one_native_stop_and_no_authoritative_completion_replay(self):
+        for mode in ('native','toolkit'):
+            for kind in ('sp','mp'):
+                self.selection.update(mode=mode,kind=kind,cases=['empty-restore'],clients=2 if kind=='mp' else 1,
+                    languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+                for field in ('nativeStopCalls','nativeStopReturns'):
+                    for value in (None,False,0,2):
+                        evidence=self.evidence();command=evidence[0][1]['command']
+                        if value is None:command.pop(field)
+                        else:command[field]=value
+                        with self.subTest(mode=mode,kind=kind,field=field,value=value):self.assertTrue(self.verify(evidence)['issues'])
+                if kind=='mp':
+                    for callbacks in ({},{'serverStop':0},{'serverStop':2},{'serverStop':1,'complete':1},{'serverStop':True}):
+                        evidence=self.evidence();evidence[0][1]['receipt']['records'][0]['stopCallbacks']=callbacks
+                        with self.subTest(mode=mode,callbacks=callbacks):self.assertTrue(self.verify(evidence)['issues'])
 
     def test_empty_restore_actual_dispatch_enqueues_only_one_workout_and_tail(self):
         try:
@@ -645,6 +699,48 @@ class FitnessAdapterTests(unittest.TestCase):
             else:command['recoveryStarts']=[{}]
             with self.subTest(change=change):self.assertTrue(self.verify(evidence)['issues'])
 
+    def test_squats_30_requires_full_selected_body_and_exact_terminal_continuation_in_both_modes(self):
+        self.assertEqual(fitness.CASES[fitness.CASES.index('burpees-30')+1], 'squats-30')
+        for mode in ('native', 'toolkit'):
+            for kind in ('sp', 'mp'):
+                self.selection.update(cases=['squats-30'], mode=mode, kind=kind, clients=2 if kind=='mp' else 1,
+                    languages=['EN','RU'] if kind=='mp' else ['EN'], options={'mp_host':True} if kind=='mp' else {})
+                fitness.validate(self.selection)
+                evidence=self.evidence();command=evidence[0][1]['command'];record=evidence[0][1]['receipt']['records'][0]
+                with self.subTest(mode=mode,kind=kind):
+                    self.assertEqual(self.verify(evidence)['issues'], [])
+                    self.assertEqual(command['minutes'],30);self.assertEqual(command['frontMinutes'],0)
+                    self.assertEqual(command['startedOrder'],['squats']);self.assertEqual(record['exercise'],'squats')
+                    self.assertEqual(record['minutes'],30)
+                    self.assertGreaterEqual(record['durationStopMS']-record['durationStartMS'],1800000)
+                    self.assertEqual(command['durationStops'][0]['endMS']-command['durationStops'][0]['startMS'],1800000)
+                    self.assertEqual(bool(command['progressSamples']),mode=='toolkit')
+                for change in ('short-body','short-local','unconfirmed','short-selection','changed-deadline',
+                               'missing-continuation','early-continuation','late-continuation','wrong-workout','wrong-terminal'):
+                    evidence=self.evidence();command=evidence[0][1]['command'];record=evidence[0][1]['receipt']['records'][0]
+                    if change=='short-body':record['durationStopMS']=record['durationStartMS']+1798999
+                    elif change=='short-local':command['durationStops'][0]['stopMS']=1799999
+                    elif change=='unconfirmed':command['durationStops'][0]['confirmed']=False
+                    elif change=='short-selection':command['minutes']=10;record['minutes']=10
+                    elif change=='changed-deadline':command['durationStops'][0]['endMS']-=60000
+                    elif change=='missing-continuation':command.pop('durationContinuation')
+                    elif change=='early-continuation':command['durationContinuation']['continuationNativeClock']=1799999
+                    elif change=='late-continuation':command['durationContinuation'].update(delayMilliseconds=5000,continuationTimestampMilliseconds=6000)
+                    elif change=='wrong-workout':record['exercise']='burpees';command['startedOrder']=['burpees']
+                    else:command['durationContinuation']['terminalState']='started'
+                    with self.subTest(mode=mode,kind=kind,change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_burpees_native_exhaustion_before_thirty_minutes_remains_failed(self):
+        self.selection.update(cases=['burpees-30'],mode='native')
+        evidence=self.evidence();row=evidence[0][1];record=row['receipt']['records'][0]
+        record.update(reps=39,minEndurance=.243,stopMS=1620000,durationStopMS=1620000)
+        row['command']['durationStops'][0]['stopMS']=1620000
+        row.update(status='failed',reason='independent-tail-not-preserved')
+        result=self.verify(evidence)
+        self.assertTrue(result['issues'])
+        self.assertTrue(any('full duration' in issue or 'actual local stop' in issue for issue in result['issues']))
+        self.assertFalse(any(outcome.get('status')=='passed' for outcome in result['outcomes']))
+
     def test_burpees_duration_stop_rejects_missing_or_delayed_native_removal(self):
         self.selection['cases'] = ['burpees-30']
         for delay in (None, -1, 5000, 30000, float('nan')):
@@ -745,7 +841,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 reader=setmetatable({Type='ISReadABook',character=player,item={getID=function()return 42 end,
                     getFullType=function()return 'Base.BookFirstAid1'end}},ISReadABook)
                 ack[workout]={token='exact-token',state='started'}
-                T={ActionQueueFitness={progress=function(action)return {startMS=action.startMS,endMS=action.endMS,sampleMS=gameClock,
+                T={ActionQueueFitness={timing=function(action)return {startMS=action.startMS,endMS=action.endMS,sampleMS=gameClock,
                   stopMS=gameClock>=action.endMS and 1800001 or nil,stopTimestampMS=1000,confirmed=true}end},
                  ActionQueueAcknowledgements={observe=function(action,record)
                     assert(action==workout and record==ack[workout]);return record.state end}}
@@ -756,8 +852,8 @@ class FitnessAdapterTests(unittest.TestCase):
                 -- The workout is absent/head changed, but keep its original stopwatch.
                 now=1020;nativePresent=false;sampleStop(workout)
                 assert(command.durationStopDelayMilliseconds==20)
-                local progress=T.ActionQueueFitness.progress
-                T.ActionQueueFitness.progress=function()return nil end -- private workout record was pruned
+                local timing=T.ActionQueueFitness.timing
+                T.ActionQueueFitness.timing=function()return nil end -- private workout record was pruned
                 now=1200;ack[workout].state='canceled';observeTail(reader)
                 local proof=command.durationContinuation
                 assert(proof.delayMilliseconds==200 and proof.reachedTimestampMilliseconds==1000
@@ -766,7 +862,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 assert(proof.terminalState==(network and 'canceled'or 'singleplayer'))
                 now=10000;sampleStop(workout);observeTail(reader)
                 assert(command.durationContinuation==proof and proof.delayMilliseconds==200)
-                T.ActionQueueFitness.progress=progress
+                T.ActionQueueFitness.timing=timing
                 -- A wrong actor/tail/class or early reader earns no continuation proof.
                 command={};stopReached={};gameClock=1799999;observeTail(reader)
                 assert(not command.durationContinuation)
@@ -777,7 +873,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 reader.character=player;setmetatable(reader,{});observeTail(reader);assert(not command.durationContinuation)
             """)
 
-    def test_toolkit_requires_precise_full_body_with_only_observed_native_frame_uncertainty(self):
+    def test_both_modes_require_precise_full_body_with_only_observed_native_frame_uncertainty(self):
         for kind in ('sp', 'mp'):
             self.selection.update(cases=['burpees-30'],kind=kind,clients=2 if kind=='mp' else 1,
                 languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
@@ -822,9 +918,12 @@ class FitnessAdapterTests(unittest.TestCase):
             self.selection.update(mode='native',cases=['burpees-30'])
             evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
             record.pop('durationStartMS');record.pop('durationStopMS')
-            self.assertEqual(self.verify(evidence)['issues'],[])
-            record['stopMS']=1740000
             self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+            evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+            record['durationStopMS']=record['durationStartMS']+1798999
+            self.assertTrue(any('full duration' in issue for issue in self.verify(evidence)['issues']))
+            evidence=self.evidence();command=evidence[0][1]['command'];command['durationStops'][0]['stopMS']=command['durationStops'][0]['endMS']-1
+            self.assertTrue(any('actual local stop' in issue for issue in self.verify(evidence)['issues']))
             self.selection['mode']='toolkit'
 
     def test_original_regularity_receipts_remain_valid_for_existing_cases(self):

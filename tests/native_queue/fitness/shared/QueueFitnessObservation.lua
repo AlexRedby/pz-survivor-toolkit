@@ -106,6 +106,8 @@ end
 for _,method in ipairs({'serverStop','complete'})do
  local original=ISFitnessAction[method]
  ISFitnessAction[method]=function(action,...)
+  local row=action.fitnessWitness
+  if row then row.stopCallbacks=row.stopCallbacks or {};row.stopCallbacks[method]=(row.stopCallbacks[method] or 0)+1 end
   local result=original(action,...);stopped(action,method);return result
  end
 end

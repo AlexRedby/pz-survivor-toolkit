@@ -248,6 +248,7 @@ PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function(action)return pr
 local nativeFitness={complete=ISFitnessAction.complete,exeLooped=ISFitnessAction.exeLooped,animEvent=ISFitnessAction.animEvent,
     serverStart=ISFitnessAction.serverStart,serverStop=ISFitnessAction.serverStop}
 local lifecycle=f.project('ActionQueueLifecycle')
+local lifecycleSweep=assert(tickCallbacks[#tickCallbacks],'guarded stop sweep not registered')
 f.project('ActionQueueTidyIntent')
 local fitnessQueue=f.project('ActionQueueFitness')
 -- BulkFood installs this native binding after ActionQueue/Fitness loads. Execute
@@ -382,6 +383,7 @@ local function finish(q,action)
     error('fitness cleanup did not converge')
 end
 local function reset()
+    for _,callback in ipairs(menuCallbacks)do callback()end
     player.primary,player.secondary=nil,nil;player.worn={};player.inventory=container();player.vars={}
     enabled,client,receipt=true,false,nil
     currentExercise=nil
@@ -852,6 +854,7 @@ assert(fitnessQueue.canSkip(pickup),'bag taken after pickup scheduling did not s
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 assert(not player.worn.BACK and backpack:getContainer()~=player.inventory,'stale cleanup stole the bag back')
 print('PASS in-flight placement cancellation and storage taken between pickup planning and execution')
+local coreCompleted=ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted=nativeCompleted
 
 reset();client=true;now=3600000
@@ -1398,6 +1401,148 @@ if SaucedCartsSource then
  print('PASS actual late SaucedCarts equipment/drop wrappers preserve normal and cancelled borrowing with guarded admission')
 end
 
+-- Run the actual shared Base.stop/tick branches against the native UI producer.
+-- Java removal and the server receipt are explicit, separately delayed boundaries.
+do
+ local savedCompleted=ISTimedActionQueue.onCompleted
+ ISTimedActionQueue.onCompleted=coreCompleted
+ local beginAt=assert(coreSource:find('local function clearStop(queue)',1,true))
+ local endAt=assert(coreSource:find('Queue.label =',beginAt,true))
+ assert(loadstring('local Queue,Toolkit,Policy,Operations,Settlement = ...\n'..
+  'local craft,live,stoppable,resumableWorld=Policy.isCraftAction,Policy.live,Policy.stoppable,Policy.resumableWorld\n'..
+  'local Batch,processPriority=nil,nil\n'..assert(coreSource:match('(local function updateOperationState.-\nend)'))..'\n'..coreSource:sub(beginAt,endAt-1),
+  '@PZSurvivorToolkit/ActionQueue.lua'))(core,PZSurvivorToolkit,policy,PZSurvivorToolkit.ActionQueueOperations,settlement)
+ PZSurvivorToolkit.ActionQueueAcknowledgements.reset=function()end
+ ISLogSystem={logAction=function()end}
+ player.getTimedActionToRetrigger=function()end;player.setTimedActionToRetrigger=function()end
+ local actions=player.getCharacterActions
+ local pressedCancel=player.pressedCancelAction
+ player.pressedCancelAction=function()return false end
+ player.isRunning=function()return false end;player.isSprinting=function()return false end
+ local activeNative
+ player.getCharacterActions=function()return {contains=function(_,value)return value==activeNative end}end
+ local function nativeWorkout(kind,minutes)
+  q=f.queue(head());window=panel(kind,minutes)
+  window:onClick({internal='OK'})
+  local requested=assert(q.queue[#q.queue].onCompleteArgs.p1)
+  local constructorStart=requested.startMS
+  local originalTail=head();ISTimedActionQueue.add(originalTail)
+  removeCurrent(q);now=now+240000
+  for _=1,20 do
+   local current=assert(q.queue[1])
+   if current.Type=='ISFitnessAction'then break end
+   if current.Type=='ISWaitWhileGettingUp'then
+    current.action=nativeAction();current:perform()
+   else runCurrent(q)end
+  end
+  local body=runCurrent(q)
+  assert(body==requested and not fitnessQueue.isManaged(body),'native control became a managed/editor action')
+  assert(body.startMS==now and body.startMS>constructorStart and body.endMS==now+minutes*60000,
+   'native workout spent its requested timer in preparation')
+  activeNative=body.action
+  return body,originalTail
+ end
+ for _,host in ipairs({false,true})do
+  reset();enabled=false;client=host
+  local bag=item('Bag_Schoolbag',nil,'BACK');bag.favorite=true;player.worn.BACK=bag
+  local prop=item('DumbBell',bag.inner);prop.favorite=true
+  local primary,secondary=item('Hammer'),item('Screwdriver');player.primary,player.secondary=primary,secondary
+  local body,reader=nativeWorkout('bicepscurl',30)
+  q.toolkitOperationsInvalid=true;body.toolkitQueueOperation.toolkitCancelled=true
+  if host then
+   body.toolkitNativeTransaction=91;body.toolkitNativeKind='ISFitnessAction'
+   receipt={state='started'};body:update()
+  end
+  local started=now;local stopsBefore=nativeStops
+  now=started+1800000-1;body:update()
+  assert(nativeStops==stopsBefore and not q.toolkitCancel,'native thirty-minute workout ended early')
+  now=started+1800000;body:update()
+  assert(nativeStops==stopsBefore+1 and q.toolkitCancel==body,'native expiry did not arm one exact terminal stop')
+  local queued=#q.queue;window:update();equipmentTick()
+  assert(#q.queue==queued and q.queue[2]==reader,'native UI appended restoration before its stop settled')
+  body:stop();assert(q.queue[1]==body and q.queue[2]==reader and q.toolkitCancelStopped,
+   'native stop cleared the independent reader')
+  local moodles=player.getMoodles
+  if host then player.getMoodles=function()return {getMoodleLevel=function()return 4 end}end end
+  -- An already-paid final endurance update cannot retroactively turn a sealed
+  -- natural endpoint into an earlier exhaustion stop. Input cancellation still revokes it.
+  q:tick();assert(q.queue[1]==body,'queue advanced before native removal')
+  activeNative=nil
+  if host then
+   q:tick();assert(q.queue[1]==body,'Host advanced before matching terminal receipt')
+   receipt.state='canceled'
+  end
+  q:tick()
+  player.getMoodles=moodles
+  assert(q.queue[1]~=body and q.queue[1]~=reader,'native cleanup was not inserted before independent tail')
+  for _=1,30 do if q.queue[1]==reader then break end;runCurrent(q)end
+  assert(q.queue[1]==reader and player.primary==primary and player.secondary==secondary and player.worn.BACK==bag
+   and prop:getContainer()==bag.inner and bag:isFavorite() and prop:isFavorite() and #worlds==0,
+   'native terminal failed exact bag/prop/hands restoration before reader')
+  assert(nativeStops==stopsBefore+1,'native terminal replayed exercise stop/effects')
+  window:update();equipmentTick();assert(#q.queue==1,'native restoration episode replayed after release')
+ end
+ for _,cause in ipairs({'move','aim','climb','sit','exhaustion','cancel','cancel-after-expiry','cancel-after-stop','cancel-after-stop-new-panel'})do
+  reset();enabled=false;client=true
+  local body,reader=nativeWorkout('squats',10)
+  body.toolkitNativeTransaction=92;body.toolkitNativeKind='ISFitnessAction';receipt={state='started'};body:update()
+  local restore
+  if cause=='move'then restore=player.pressedMovement;player.pressedMovement=function()return true end
+  elseif cause=='aim'then restore=player.isAiming;player.isAiming=function()return true end
+  elseif cause=='climb'then restore=player.isClimbing;player.isClimbing=function()return true end
+  elseif cause=='sit'then restore=player.isSittingOnFurniture;player.isSittingOnFurniture=function()return true end
+  elseif cause=='exhaustion'then restore=player.getMoodles;player.getMoodles=function()return {getMoodleLevel=function()return 4 end}end end
+  now=now+600001
+  if cause=='cancel'then window:onClick({internal='CANCEL'})
+  else body:update();if cause=='cancel-after-expiry' or cause=='cancel-after-stop' or cause=='cancel-after-stop-new-panel'then
+    assert(q.toolkitCancel==body,'fixture failed to reach natural stop wait')
+    if cause=='cancel-after-stop' or cause=='cancel-after-stop-new-panel'then body:stop();activeNative=nil end
+    if cause=='cancel-after-stop-new-panel'then window=panel('squats',10)end
+    window:onClick({internal='CANCEL'});window:update()
+   end
+  end
+  if cause=='cancel-after-stop' or cause=='cancel-after-stop-new-panel'then q:tick()else body:stop();activeNative=nil end
+  assert(#q.queue==0 and q.current==nil,cause..' borrowed natural-expiry permission and retained tail')
+  if cause=='move'then player.pressedMovement=restore
+  elseif cause=='aim'then player.isAiming=restore
+  elseif cause=='climb'then player.isClimbing=restore
+  elseif cause=='sit'then player.isSittingOnFurniture=restore
+  elseif cause=='exhaustion'then player.getMoodles=restore end
+ end
+ reset();enabled=false;client=true
+ local detachedBag=item('Bag_Schoolbag',nil,'BACK');player.worn.BACK=detachedBag
+ local detachedProp=item('DumbBell',detachedBag.inner)
+ player.primary,player.secondary=item('Hammer'),item('Screwdriver')
+ local detachedBody=nativeWorkout('bicepscurl',10)
+ detachedBody.toolkitNativeTransaction=93;detachedBody.toolkitNativeKind='ISFitnessAction';receipt={state='started'}
+ detachedBody:update();now=now+600001;detachedBody:update();detachedBody:stop();activeNative=nil
+ local oldQueue,oldPanel=q,window
+ local foreign=head();local replacement=f.queue(foreign)
+ local replacementList=replacement.queue;replacement.toolkitOperationGeneration=17
+ lifecycleSweep();fitnessPrune();equipmentTick();oldPanel:update();oldQueue:tick();oldPanel:update();equipmentTick()
+ assert(ISTimedActionQueue.queues[player]==replacement and replacement.queue==replacementList and #replacement.queue==1
+  and replacement.current==foreign and replacement.queue[1]==foreign and replacement.toolkitOperationGeneration==17,
+  'detached stop or old UI appended/replayed restoration into replacement queue')
+ assert(detachedBag:getWorldItem() and detachedProp:getContainer()==player:getInventory(),
+  'detached cleanup replayed native pickup/return effects')
+ reset();enabled=false
+ q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK'})
+ assert(currentExercise=='squats','fixture failed to reserve constructor exercise')
+ q:resetQueue();fitnessPrune();equipmentTick()
+ assert(currentExercise==nil and window.currentExercice==nil,'canceled native preparation stranded constructor/UI state')
+ q.queue[1]=head();q.current=q.queue[1] -- Native Java allocation is modeled by runCurrent in this fixture.
+ window:onClick({internal='OK'})
+ assert(q.queue[2] and q.queue[2].Type=='ISWaitWhileGettingUp','canceled empty-hand native request blocked later workout')
+ reset();enabled=false
+ q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK'})
+ local replacement=ISFitnessAction:new(player,'squats',10,FitnessExercises.exercisesType.squats,'squats')
+ q:resetQueue();fitnessPrune()
+ assert(replacement.fitness:getCurrentExe()==exerciseStates.squats,'old unstarted request cleared a later same-kind constructor state')
+ player.getCharacterActions=actions;player.pressedCancelAction=pressedCancel
+ ISTimedActionQueue.onCompleted=savedCompleted
+ print('PASS native UI thirty-minute timer, original stop/removal/Host receipt, exact cleanup before reader and explicit input/cancel distinction')
+end
+
 -- A changed source present before capture must not acquire a new permission.
 native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
 f.project('ActionQueueDefinitions')
@@ -1411,4 +1556,10 @@ reset();q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK
 nativeWait=assert(q.queue[2])
 assert(nativeWait.Type=='ISWaitWhileGettingUp' and not untrusted.isManaged(nativeWait),'unverified native source acquired managed producer permission')
 sourceOverride=nil
-print('PASS pre-existing native source mismatch falls back without managed permissions')
+native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+f.project('ActionQueueDefinitions')
+local foreignConstructor=function(self,character,foreignMinutes,foreignData,extraWireField) return {} end
+ISFitnessAction.new=foreignConstructor
+f.project('ActionQueueFitness')
+assert(ISFitnessAction.new==foreignConstructor,'unsupported constructor lost its original parameter-name wire ABI')
+print('PASS pre-existing native source/constructor mismatch falls back without managed permissions or wire-schema changes')

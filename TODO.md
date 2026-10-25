@@ -27,9 +27,8 @@
 
 # Exercise ground storage
 
-- [ ] Resolve the queue-disabled Fitness control's native stop boundary: after the workout, `ISFitnessAction.stop` calls base stop/reset and discards the independent reader before UI restoration runs. Preserve `.codex/investigations/native-completion-order-20261025/getup-native-host01` as a failed overall Host control: the get-up continuation now starts the workout before the reader, but the reader is subsequently canceled. Keep the original failed `after-final/host-delay-native` evidence too; do not weaken reader-order/restoration assertions or count either full control as passed. Retain explicit user stop/reset behavior when correcting natural completion.
+- [ ] Separate the existing `burpees-30` declaration's legitimate runtime exhaustion from positive timer coverage. Preserve the 39-repetition/endurance-0.243 failed control in `.codex/investigations/native-terminal-20261025/after02/sp-native`, add authoritative stop-cause/earned-interval assertions for late exhaustion, and preserve the intended native/managed cancellation differences. Keep `squats-30` as the full selected-duration control; do not bypass native stamina limits or silently relabel the failed row.
 
-- [ ] Diagnose the queue-disabled native Fitness constructor timer: a thirty-minute burpees request in the full-pack Host control produced only twenty-six authoritative workout minutes after preparation. Require the complete selected body duration without changing native effects; preserve the failed control separately from the verified Toolkit timer.
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 
 # Container editor visual states
@@ -85,6 +84,8 @@ These are implementation and verification gaps, not evidence that every action u
 - [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
 - [ ] Extend the generated edit oracle and existing scenario matrix to native partial completion, cleanup, replaced resources and delayed/duplicate outcomes. Gate each additional consumable/transfer adapter on exact conservation and at-most-once effects, without enumerating every pair of action names.
 - [ ] Extend the new required-state/resource/capacity/in-flight/unknown denial reasons to remaining legacy adapters and surface the specific prerequisite or missing integration in the UI. Preserve independent edits around genuinely unrelated work.
+
+- [ ] Gate additional successful terminal-stop producers on the shared stop capability: native petting, luring (including its earlier direct `stop`), milking, blood collection and hutch floor cleaning. Prove natural success versus stress/resource exhaustion and exact once-only yield through source-backed and SP/Host cases before registration; investigate shearing's ambiguous boolean result separately. Keep unsupported producers on their native path.
 
 - [ ] Extend live SP/MP gates for the shared lifecycle to the remaining families: unavailable target, late continuation, exact consumption and independent tail, before replacing their local completion intercepts.
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.

@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -29,10 +29,20 @@ outcomes; the peer outcome explicitly records `participantRole=independent-reade
 and `workoutActor=client1`. It does not claim that the peer performed a workout.
 The server verifies the peer is connected and its book is fully read.
 
-The `burpees-30` case selects thirty minutes through the native menu and records
-local native removal after the selected duration. Toolkit requires removal within
-five real seconds, plus the ordinary authoritative outcome, real exercise effects
-and completed independent tail. Its registration is not a native pass.
+The `squats-30` case is the positive thirty-minute timer control. Both modes require
+a full confirmed interval, real native repetitions/effects, native removal and the
+independent reader within five real seconds, with the exact terminal receipt in Host.
+The diagnostic `burpees-30` request retains the same strict duration gate, but the
+default character can legitimately exhaust stamina first (the preserved control
+ended after about 27 minutes and 39 repetitions). That failed row remains failed;
+it is not evidence of a timer defect and must not be made green by bypassing stamina.
+The separate late-exhaustion classification remains in the project TODO.
+
+The natural `empty-restore` control requires one local native stop in both modes and
+one authoritative `serverStop` without completion replay in Host. Its original
+constructor request and confirmed active timer are observed separately: preparation
+must not consume the selected body interval. The exact bag, prop and hand items must
+be restored before the independent reader, with queue editing enabled or disabled.
 
 Other workouts retain the menu's native minimum of ten game minutes and the original
 `ISFitnessAction:getDuration()`. Queued cases use six remaining book pages at the

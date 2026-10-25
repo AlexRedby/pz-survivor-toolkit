@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.265
+
+- **Fixed:** Native Fitness keeps its full selected duration after preparation, including with queue editing disabled. Natural completion retains the independent tail, waits for the original native stop/server receipt, and restores the exact borrowed gear before the next action. Explicit cancellation, movement, exhaustion and changed ownership still interrupt through the native path.
+
 ### 0.1.264
 
 - **Fixed:** Native get-up continuations retain their place before later queued work, including Fitness and context-menu door/window callbacks with queue editing disabled. The original callback and native action admission still run; reset, cancellation or changed ownership revoke late continuation additions.
