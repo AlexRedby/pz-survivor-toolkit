@@ -5,6 +5,7 @@ local Toolkit = PZSurvivorToolkit
 local Equipment = {}
 Toolkit.FitnessEquipment = Equipment
 local Proof = require 'PZSurvivorToolkit/SourceProof'
+local nativeRestoration
 local panels, borrowed, episodes = {}, setmetatable({}, {__mode = "k"}), setmetatable({}, {__mode = "k"})
 
 local function matches(item, ref)
@@ -273,7 +274,7 @@ function Equipment.install(ui)
         -- already-applied native change using the game's own Equip packet.
         if isClient() and player:isLocalPlayer() and getSpecificPlayer(player:getPlayerNum()) == player
             and secondary ~= player:getSecondaryHandItem() then player:updateHandEquips() end
-        if #refs > 0 then
+        do
             local handle, episode = {}, {player = player, queue = queue, refs = refs}
             episodes[handle], panels[panel] = episode, handle
             if intent and intent == Toolkit.ActionQueueTidyIntent and intent.observeTransfers == observe then
@@ -307,6 +308,9 @@ function Equipment.install(ui)
         local handle = panels[panel]
         local episode = handle and episodes[handle]
         local refs = episode and episode.refs
+        -- A settled native terminal owns this exact restoration episode until
+        -- its stop packet/receipt has finished; UI ticks cannot append it behind the tail.
+        if episode and episode.hold then return end
         if refs and panel.currentExercice and not panel.player:getFitness():getCurrentExe() then
             panels[panel] = nil
             episode.cleanupGeneration = (ISTimedActionQueue.queues[panel.player].toolkitOperationGeneration or 0)
@@ -316,6 +320,7 @@ function Equipment.install(ui)
                 for _, ref in ipairs(refs) do if matches(item, ref) then panel.itemsToReequip[key] = nil; break end end
             end
             update(panel)
+            if #refs == 0 then retire(handle); return end
             if not panel.player:isDead() then
                 Equipment.pickups(panel.player, refs, function(action) ISTimedActionQueue.add(action) end)
                 ISTimedActionQueue.add(Toolkit.ActionQueueOperations.command(panel.player, restore, handle))
@@ -323,6 +328,45 @@ function Equipment.install(ui)
             return
         end
         return update(panel)
+    end
+    nativeRestoration = function(action, panel)
+        local handle = panels[panel]
+        local episode = handle and episodes[handle]
+        if not episode or episode.player ~= action.character or episode.hold
+            or panel.player ~= action.character or panel.currentExercice ~= action.exeData.type
+            or ui.update ~= updateHook or ui.equipItems ~= equipHook then return end
+        local exercise, items = panel.currentExercice, panel.itemsToReequip
+        local snapshot = {}; for key, item in pairs(items) do snapshot[key] = item end
+        episode.hold = action
+        local function release()
+            if episode.hold == action then episode.hold = nil end
+            if ISTimedActionQueue.queues[episode.player] ~= episode.queue
+                or getSpecificPlayer(episode.player:getPlayerNum()) ~= episode.player then
+                if panels[panel] ~= handle or episodes[handle] ~= episode then return end
+                panels[panel] = nil
+                retire(handle)
+                if panel.player ~= episode.player or panel.currentExercice ~= exercise or panel.itemsToReequip ~= items then return end
+                for key, item in pairs(snapshot) do if items[key] ~= item then return end end
+                for key, item in pairs(items) do if snapshot[key] ~= item then return end end
+                -- This detached panel no longer owns restoration into the new
+                -- queue. Leave every real item where the native effects put it.
+                panel.itemsToReequip, panel.currentExercice = {}, nil
+            end
+        end
+        local function valid()
+            if panels[panel] ~= handle or episodes[handle] ~= episode or episode.hold ~= action
+                or ui.update ~= updateHook or ui.equipItems ~= equipHook or panel.player ~= episode.player
+                or panel.currentExercice ~= exercise or panel.itemsToReequip ~= items then return false end
+            for key, item in pairs(snapshot) do if items[key] ~= item then return false end end
+            for key, item in pairs(items) do if snapshot[key] ~= item then return false end end
+            return true
+        end
+        local function cleanup()
+            if not valid() then release(); return end
+            release()
+            updateHook(panel)
+        end
+        return cleanup, release, valid
     end
     ui.equipItems, ui.update = equipHook, updateHook
     -- Native restoration normally depends on the window remaining open.
@@ -338,6 +382,12 @@ function Equipment.install(ui)
     end)
     if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() panels, borrowed, episodes = {}, setmetatable({}, {__mode = "k"}), setmetatable({}, {__mode = "k"}) end) end
     return true
+end
+
+-- Only the source-proven native UI producer has an episode in this registry.
+-- The returned callbacks retain no public action-field capability.
+function Equipment.deferRestoration(action, panel)
+    if nativeRestoration then return nativeRestoration(action, panel) end
 end
 
 return Equipment

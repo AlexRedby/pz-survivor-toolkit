@@ -31,6 +31,14 @@ internal object CartGrip {
     }
 
     private val matrices = ThreadLocal.withInitial(::Matrices)
+
+    private class FootMatrices {
+        // Kept separate from reach's scratch because aim/adjust reuse matrices during the solve.
+        val poses = arrayOfNulls<Matrix4f>(60)
+        val target = Matrix4f()
+    }
+
+    private val footMatrices = ThreadLocal.withInitial(::FootMatrices)
     private val headNeutrals = WeakHashMap<AnimationClip, WeakHashMap<SkinningData, Quaternionf?>>()
 
     private fun pose(poses: Array<out Matrix4f?>?, index: Int): Matrix4f =
@@ -381,6 +389,77 @@ internal object CartGrip {
         adjust(poses, actor, root, state.adjustment)
     }
 
+    /** Fit one cosmetic foot target without committing a failed or partial leg solve. */
+    @JvmStatic
+    fun fitFoot(
+        poses: Array<out Matrix4f?>?,
+        actor: SkinningData?,
+        side: String?,
+        target: Matrix4f?,
+    ): Boolean {
+        if (poses == null || actor == null || target == null || side != "L" && side != "R")
+            return false
+        val scratch = footMatrices.get()
+        val count = actor.numBones()
+        if (count <= 0 || count > scratch.poses.size || count > poses.size) return false
+        val foot = actor.getBone("Bip01_${side}_Foot") ?: return false
+        val calf = foot.parent ?: return false
+        val thigh = calf.parent ?: return false
+        if (calf.name != "Bip01_${side}_Calf" || thigh.name != "Bip01_${side}_Thigh") return false
+        fun indexed(bone: SkinningBone): Boolean =
+            bone.index in 0 until count && actor.getBoneAt(bone.index) === bone
+        if (!indexed(thigh) || !indexed(calf) || !indexed(foot)) return false
+        fun affine(value: Matrix4f): Boolean =
+            value.isFinite() &&
+                Math.abs(value.m03()) < 1e-5f &&
+                Math.abs(value.m13()) < 1e-5f &&
+                Math.abs(value.m23()) < 1e-5f &&
+                Math.abs(value.m33() - 1f) < 1e-5f &&
+                value.determinant3x3().isFinite() &&
+                value.determinant3x3() > 1e-8f
+        fun unit(x: Float, y: Float, z: Float): Boolean =
+            Math.abs(x * x + y * y + z * z - 1f) < 1e-4f
+        // A target may translate and rotate the ankle, but must never resize/shear its descendants.
+        if (
+            !affine(target) ||
+                !unit(target.m00(), target.m01(), target.m02()) ||
+                !unit(target.m10(), target.m11(), target.m12()) ||
+                !unit(target.m20(), target.m21(), target.m22()) ||
+                Math.abs(
+                    target.m00() * target.m10() +
+                        target.m01() * target.m11() +
+                        target.m02() * target.m12(),
+                ) >= 1e-4f ||
+                Math.abs(
+                    target.m00() * target.m20() +
+                        target.m01() * target.m21() +
+                        target.m02() * target.m22(),
+                ) >= 1e-4f ||
+                Math.abs(
+                    target.m10() * target.m20() +
+                        target.m11() * target.m21() +
+                        target.m12() * target.m22(),
+                ) >= 1e-4f
+        )
+            return false
+        scratch.target.set(target)
+        for (i in 0 until count) if (descendant(actor.getBoneAt(i), thigh)) {
+            val source = poses[i] ?: return false
+            if (!affine(source)) return false
+            val working = scratch.poses[i] ?: Matrix4f().also { scratch.poses[i] = it }
+            working.set(source)
+        }
+        if (!reach(scratch.poses, actor, foot.name, scratch.target, null, false, 1f, true))
+            return false
+        for (i in 0 until count) if (
+            descendant(actor.getBoneAt(i), thigh) && !affine(pose(scratch.poses, i))
+        )
+            return false
+        for (i in 0 until count) if (descendant(actor.getBoneAt(i), thigh))
+            pose(poses, i).set(pose(scratch.poses, i))
+        return true
+    }
+
     // Solve two links without stretching; leg correction keeps the planted foot target.
     @JvmStatic
     fun reach(
@@ -437,6 +516,7 @@ internal object CartGrip {
         policyWeight: Float,
         preserveFootMotion: Boolean,
         metal: Boolean,
+        shopping: Boolean = false,
     ): Boolean {
         if (!policyWeight.isFinite() || policyWeight < 0 || policyWeight > 1) return false
         val skeleton = actor ?: throw NullPointerException()
@@ -462,7 +542,7 @@ internal object CartGrip {
         )
             return false
         val clavicle = upper.parent
-        // Both wheelbarrows need bounded shoulder reach; their elbow bend policies remain separate.
+        // Held grips need bounded shoulder reach; each handle keeps its own elbow bend policy.
         if (
             (wood || bodyDelta != null) &&
                 distance > a + b - .01f &&
@@ -542,7 +622,18 @@ internal object CartGrip {
                 if (policyWeight < 1) Vector3f(bend).fma(-bend.dot(axis), axis) else null
             bend.set(goal).sub(shoulder).fma(-b, Vector3f(target.m00(), target.m01(), target.m02()))
             bend.fma(-bend.dot(axis), axis).normalize()
-            val relaxed = bodyDelta.transformDirection(Vector3f(0f, -1f, if (wood) 1f else .25f))
+            // A transverse shopping bar allows relaxed elbows outside the shoulder line.
+            // Keep the fifteen-degree outward hint local to shopping grips; shafts retain their
+            // pose.
+            val relaxed =
+                bodyDelta.transformDirection(
+                    Vector3f(
+                        if (shopping) (if (handName == "Bip01_L_Hand") 1f else -1f) * .25881905f
+                        else 0f,
+                        if (shopping) -.96592583f else -1f,
+                        if (wood) 1f else .25f,
+                    ),
+                )
             relaxed.fma(-relaxed.dot(axis), axis).normalize()
             // Keep the elbow down/back instead of lifting it just to minimize the wrist angle.
             val extra =
@@ -577,8 +668,7 @@ internal object CartGrip {
         aim(poses, skeleton, forearm, solved, wrist, goal)
         val adjustment = matrices.get().adjustment
         if (bodyDelta != null) {
-            // Pronation belongs in the forearm, rather than twisting the entire underhand turn at
-            // the wrist.
+            // Distribute palm rotation through the forearm instead of twisting only the wrist.
             val forearmAxis = goal.sub(solved, Vector3f()).normalize()
             val from = pose(poses, forearm.index).transformDirection(Vector3f(0f, 0f, 1f))
             val to = target.transformDirection(Vector3f(0f, 0f, 1f))
@@ -720,7 +810,9 @@ internal object CartGrip {
                 (point ?: throw NullPointerException()).set(
                     -150.07166f,
                     343.47412f,
-                    if (left) .809756f else -.809769f,
+                    // Center the wider grasp on the measured straight bar, including its
+                    // continuation beyond the thicker sleeve; both palms remain supported.
+                    if (left) .95877537f else -.98122463f,
                 )
             "WheelbarrowWood" ->
                 (point ?: throw NullPointerException()).set(
@@ -922,16 +1014,24 @@ internal object CartGrip {
                         actor,
                         "Bip01_${side}_Hand",
                         target,
-                        if ((model ?: throw NullPointerException()).startsWith("Wheelbarrow")) delta
-                        else null,
+                        // Shopping grips also need a stable elbow plane and forearm pronation.
+                        // Otherwise the native walking swing is corrected entirely at the wrist.
+                        delta,
                         "WheelbarrowWood".equals(model),
                         1f,
                         false,
                         "WheelbarrowMetal".equals(model),
+                        CartShopping.model(model),
                     )
             )
                 return false
-            closeFingers(poses, actor, side, grasp(female, model), model.startsWith("Wheelbarrow"))
+            closeFingers(
+                poses,
+                actor,
+                side,
+                grasp(female, model),
+                model?.startsWith("Wheelbarrow") == true,
+            )
         }
         return true
     }
@@ -998,6 +1098,21 @@ internal object CartGrip {
         return null
     }
 
+    /** Fit the held endpoint before pickup/setdown blends it with the grounded cart. */
+    @JvmStatic
+    fun shoppingStance(
+        slot: ModelSlotRenderData?,
+        owner: ModelInstance?,
+        cart: Matrix4f?,
+    ): Boolean {
+        val body = body(slot, owner) ?: return false
+        val skin = owner?.model?.tag as? SkinningData ?: return false
+        val actor = owner.animPlayer.getSkinningData()
+        val delta = Matrix4f()
+        val poses = livePoses(actor, skin, body.matrixPalette, delta, false, 0f) ?: return false
+        return CartShoppingStance.apply(poses, actor, slot!!.character.isFemale(), delta, cart, 1f)
+    }
+
     @JvmStatic
     fun render(
         slot: ModelSlotRenderData?,
@@ -1036,16 +1151,39 @@ internal object CartGrip {
         // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed
         // handles.
         val shopping = CartShopping.model(model)
+        val turn = if (shopping) CartShoppingTurn.view(slot, owner) else null
         if (shopping) pressure = 0f
+        var turnSource = false
         var poses =
-            if (CartWheelbarrow.forModel(model) != null || shopping)
-                livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
-            else poses(clip, actor, change)
+            if (CartWheelbarrow.forModel(model) != null || shopping) {
+                val live =
+                    livePoses(actor, bodySkin, body.matrixPalette, change, turn != null, pressure)
+                turnSource = turn != null && live != null
+                // Missing lower-body data must retain the original held-hand solve.
+                live
+                    ?: if (turn != null)
+                        livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
+                    else null
+            } else poses(clip, actor, change)
+        val turnApplied =
+            turnSource &&
+                turn != null &&
+                poses != null &&
+                CartShoppingTurn.apply(poses, actor, turn)
         if (
             poses == null ||
                 (CartWheelbarrow.forModel(model) != null || shopping) &&
                     (!referenceThumb(poses, actor, clip, "L") ||
                         !referenceThumb(poses, actor, clip, "R")) ||
+                shopping &&
+                    !CartShoppingStance.apply(
+                        poses,
+                        actor,
+                        slot.character.isFemale(),
+                        change,
+                        cart,
+                        1f,
+                    ) ||
                 !grip(poses, actor, model, slot.character.isFemale(), change, cart, pressure)
         )
             return false
@@ -1124,7 +1262,7 @@ internal object CartGrip {
                 calmRunningHead(poses, actor, runReference, runWeight)
             }
         }
-        skinSlot(slot, owner, clip, actor, poses)
+        skinSlot(slot, owner, clip, actor, poses, turnApplied)
         return true
     }
 
@@ -1644,7 +1782,7 @@ internal object CartGrip {
                 !"WheelbarrowMetal".equals(model)
         ) {
             if (!grip(poses, actor, model, female, delta, cart)) return false
-        } else
+        } else {
             for (side in arrayOf("L", "R")) {
                 val skeleton = actor ?: throw NullPointerException()
                 val hand = skeleton.getBone("Bip01_${side}_Hand")
@@ -1672,6 +1810,7 @@ internal object CartGrip {
                         reachWeight,
                         false,
                         "WheelbarrowMetal".equals(model),
+                        CartShopping.model(model),
                     )
                 )
                     return false
@@ -1691,6 +1830,7 @@ internal object CartGrip {
                         pose(poses, i),
                     )
             }
+        }
         return true
     }
 

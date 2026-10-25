@@ -32,6 +32,18 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.265
+
+- **Fixed:** Native Fitness keeps its full selected duration after preparation, including with queue editing disabled. Natural completion retains the independent tail, waits for the original native stop/server receipt, and restores the exact borrowed gear before the next action. Explicit cancellation, movement, exhaustion and changed ownership still interrupt through the native path.
+
+### 0.1.264
+
+- **Fixed:** Native get-up continuations retain their place before later queued work, including Fitness and context-menu door/window callbacks with queue editing disabled. The original callback and native action admission still run; reset, cancellation or changed ownership revoke late continuation additions.
+
+### 0.1.263
+
+- **Shopping carts:** Replace the stiff procedural gait with body-leading turns built from native walking, retaining knee motion, heel/toe roll and a gently moving torso. Use phase-matched straight and turning clips with slight leg separation; stationary pivots and wheelbarrows retain their existing clips.
+
 ### 0.1.262
 
 - **Vehicles:** Enter with a leading-foot step, bend and transfer weight over the planted foot, then bring the trailing leg inside. Use a separate exit motion with a foot planted outside before standing. Match the native driving seat and retain native action timing, cancellation and completion events. Requires Java Patches 0.1.55 for doorway position and foot contacts.
@@ -920,7 +932,6 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.56
 
-- **Vehicle inventory / Host:** Include changes made before a recipient's first vehicle snapshot in that snapshot, then send later direct vehicle-container additions/removals on the vehicle's ordered channel. Track actual connection and vehicle lifetimes; preserve authoritative item identities and normal non-vehicle transport.
 - **Fixed:** Planting inputs such as sunflower seeds, potatoes and herbs gain Farming/Seed tags while preserving their food/medical roles; empty seed packets keep Farming without Seed. Roles come from native crop definitions and seed-packet recipes.
 - **Fixed:** Inventory filters, previews and Quartermaster tag rules match individual items, including mixed-category stacks; unrelated items sharing a category or display name are not included. Partial-category tag selections use stable rules across UI languages; manual Quartermaster category/item selections remain additive.
 
@@ -1192,11 +1203,17 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### 0.1.56
+### 0.1.57
 
 - **Host vehicle inventory:** Include early item changes in each recipient's first native vehicle snapshot, then send later changes on the same ordered channel. Cover direct vehicle containers and bags directly inside them; preserve native transfers, recipient relevance and diagnostics, and reset synchronization across reconnects, world changes, vehicle deletion and ID reuse.
 
 - **Compatibility:** Remove a proven orphan mesh-object animation channel from three DAMN Library clips before skeletal import. Preserve all skeletal frames and transforms; changed or unknown inputs keep native handling and diagnostics. No third-party assets are copied or rewritten.
+
+### 0.1.56
+
+- **Shopping carts:** Share a bounded walking phase across straight motion and turns, with smooth entry/release and a small planar stance correction that releases through the original swing. Preserve native foot roll and protect the knees without predicted landing targets, wide foot arcs or forced knee splay. Abrupt network yaw corrections retain native walking until root motion is stable; reverse and fast gaits retain their native clips.
+- **Shopping carts:** Keep the handle stable through walking and turning, widen the supported grasp and relax the elbows without arching the back. Share the reachable held position with pickup/setdown and the physical rear-axle pivot.
+- **Shopping carts:** Steer around the held model's fixed rear axle, including item scale, during forward/reverse travel and stationary turns. Keep the front casters free, match stationary steps to the handle arc and retain angular ramping across short movement budgets. Wheelbarrow handling and multiplayer packet fields/rate retain their existing behavior.
 
 ### 0.1.55
 

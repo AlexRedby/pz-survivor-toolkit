@@ -45,28 +45,22 @@ public final class Main {
         }
     }
 
-    @Patch(className="zombie.network.PacketTypes$PacketType", methodName="send", warmUp=true, strictMatch=true)
-    public static class VehicleInventoryWritten {
+    @Patch(className="zombie.core.raknet.UdpConnection", methodName="endPacket", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryChannel {
         @Patch.OnEnter(skipOn=true)
-        public static boolean enter(@Patch.This zombie.network.PacketTypes.PacketType type,
-                @Patch.Argument(0) IConnection connection,
+        public static boolean enter(@Patch.This UdpConnection connection, @Patch.Argument(0) int priority,
+                @Patch.Argument(1) int reliability, @Patch.Argument(value=2, readOnly=false) byte ordering,
                 @Patch.Local("toolkitWrittenInventory") VehicleInventoryOrdering.Scope scope) {
-            scope = VehicleInventoryOrdering.written(connection, type, VehicleInventoryOrdering.SUPPORTED);
+            scope = VehicleInventoryOrdering.written(connection, VehicleInventoryOrdering.SUPPORTED);
+            ordering = VehicleInventoryOrdering.ordering(connection, reliability, ordering);
             return scope != null && scope.coalesce;
         }
         @Patch.OnExit(onThrowable=Throwable.class)
-        public static void exit(@Patch.Local("toolkitWrittenInventory") VehicleInventoryOrdering.Scope scope,
+        public static void exit(@Patch.Argument(0) int priority, @Patch.Argument(1) int reliability,
+                @Patch.Argument(2) byte ordering,
+                @Patch.Local("toolkitWrittenInventory") VehicleInventoryOrdering.Scope scope,
                 @Patch.Thrown Throwable failure) {
             VehicleInventoryOrdering.end(scope, failure);
-        }
-    }
-
-    @Patch(className="zombie.core.raknet.UdpConnection", methodName="endPacket", warmUp=true, strictMatch=true)
-    public static class VehicleInventoryChannel {
-        @Patch.OnEnter
-        public static void enter(@Patch.This UdpConnection connection, @Patch.Argument(0) int priority,
-                @Patch.Argument(1) int reliability, @Patch.Argument(value=2, readOnly=false) byte ordering) {
-            ordering = VehicleInventoryOrdering.ordering(connection, reliability, ordering);
         }
     }
 

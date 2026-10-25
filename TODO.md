@@ -1,8 +1,11 @@
 # Startup fixes main integration
 
-- [ ] Merge current origin/main, preserve its cart/Fitness changes and assign Java Patches a version newer than main.
-- [ ] Verify both startup fixes and affected shared hooks in the merged build; confirm the full-pack two-client Host inventory scenario on the final artifact.
-- [ ] Record final evidence and a clean local result; deliver to main or install only according to the clarified request.
+- [ ] Confirm the full-pack two-client Host inventory scenario on the final merged artifact.
+- [ ] Record final evidence, save a clean local result and push the verified integration to main.
+
+# Shopping cart turn footwork
+
+- [ ] Run the accepted native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
 
 # Winter, base and Jeep additions
 
@@ -26,9 +29,6 @@
 
 # Exercise ground storage
 
-- [ ] Resolve the remaining queue-disabled Host Fitness get-up/control ordering failure: the native `addGetUpAndThen` appends the workout behind the already queued reader (`tailStart.workouts=0`). Preserve `.codex/investigations/native-completion-order-20261025/after-final/host-delay-native` as a failed overall control, despite verified final equipment and a completed exact-ID prop return. Do not weaken the reader-order assertions or report the full paired control as passed.
-
-- [ ] Diagnose the queue-disabled native Fitness constructor timer: a thirty-minute burpees request in the full-pack Host control produced only twenty-six authoritative workout minutes after preparation. Require the complete selected body duration without changing native effects; preserve the failed control separately from the verified Toolkit timer.
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 
 # Container editor visual states
@@ -84,6 +84,8 @@ These are implementation and verification gaps, not evidence that every action u
 - [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
 - [ ] Extend the generated edit oracle and existing scenario matrix to native partial completion, cleanup, replaced resources and delayed/duplicate outcomes. Gate each additional consumable/transfer adapter on exact conservation and at-most-once effects, without enumerating every pair of action names.
 - [ ] Extend the new required-state/resource/capacity/in-flight/unknown denial reasons to remaining legacy adapters and surface the specific prerequisite or missing integration in the UI. Preserve independent edits around genuinely unrelated work.
+
+- [ ] Gate additional successful terminal-stop producers on the shared stop capability: native petting, luring (including its earlier direct `stop`), milking, blood collection and hutch floor cleaning. Prove natural success versus stress/resource exhaustion and exact once-only yield through source-backed and SP/Host cases before registration; investigate shearing's ambiguous boolean result separately. Keep unsupported producers on their native path.
 
 - [ ] Extend live SP/MP gates for the shared lifecycle to the remaining families: unavailable target, late continuation, exact consumption and independent tail, before replacing their local completion intercepts.
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.

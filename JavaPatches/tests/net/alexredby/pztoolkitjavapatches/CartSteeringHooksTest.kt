@@ -230,6 +230,7 @@ object CartSteeringHooksTest {
         val dot = fullType.indexOf('.')
         cart.setModule(fullType.substring(0, dot))
         cart.setType(fullType.substring(dot + 1))
+        cart.worldScale = 1f
     }
 
     private fun check(condition: Boolean, message: String) {
@@ -1728,6 +1729,90 @@ object CartSteeringHooksTest {
         }
     }
 
+    private fun shoppingRearAxleControls(unsafe: Unsafe, states: Map<*, *>) {
+        val player = unsafe.allocateInstance(Player::class.java) as Player
+        val cart = unsafe.allocateInstance(InventoryContainer::class.java) as InventoryContainer
+        player.inventory = ItemContainer()
+        player.primary = cart
+        player.secondary = cart
+        cart.setContainer(player.inventory)
+        type(cart, "SaucedCarts.ShoppingCart")
+        player.walkSpeed = .8f
+        val input = IsoPlayer.InputState()
+        val keys = Keys()
+        player.keys = keys
+        val time = GameTime.getInstance()
+        val old = time.fpsMultiplier
+        try {
+            time.fpsMultiplier = 1f
+            for (scale in floatArrayOf(.6f, 1f, 1.7f)) for (sign in intArrayOf(-1, 1)) {
+                cart.worldScale = scale
+                player.keyboard = true
+                keys.set(0, sign)
+                CartSteeringHooks.reset(player)
+                player.actualX = 0f
+                player.actualY = 0f
+                player.moving = false
+                CartSteeringHooks.heading(player)
+                val state = states[player]
+                val axle = CartShopping.axle(scale)
+                direction(player, sign * Math.PI / 2)
+                CartSteeringHooks.input(player, input)
+                player.moving = true
+                CartSteeringHooks.heading(player)
+                check(
+                    sign * player.stepX < 0 && player.stepY == 0f,
+                    "shopping handle steps opposite the stationary yaw",
+                )
+                CartSteeringHooks.movement(player, .02f, 0f)
+                CartSteeringHooks.heading(player)
+                check(
+                    field(state, "heading").getDouble(state) == 0.0,
+                    "blocked shopping turn cannot rotate",
+                )
+                repeat(30) {
+                    CartSteeringHooks.input(player, input)
+                    accept(player, CartSteeringHooks.movement(player, .02f, 0f))
+                    val h = field(state, "heading").getDouble(state)
+                    check(
+                        Math.hypot(
+                            player.actualX + axle * Math.cos(h) - axle,
+                            player.actualY + axle * Math.sin(h),
+                        ) < 1e-5,
+                        "shopping stationary turn must hold the rear axle, not a virtual front pivot",
+                    )
+                }
+                check(
+                    sign * field(state, "heading").getDouble(state) > .1,
+                    "shopping stationary turn must make progress",
+                )
+                player.keyboard = false
+                for (reverse in booleanArrayOf(false, true)) {
+                    CartSteeringHooks.reset(player)
+                    player.actualX = 0f
+                    player.actualY = 0f
+                    player.moving = true
+                    CartSteeringHooks.heading(player)
+                    direction(player, (if (reverse) Math.PI else 0.0) + sign * .3)
+                    CartSteeringHooks.input(player, input)
+                    val movement = CartSteeringHooks.movement(player, .02f, 0f)
+                    check(movement.getLength() <= .020001f, "shopping steering cannot add speed")
+                    accept(player, movement)
+                    val h = field(states[player], "heading").getDouble(states[player])
+                    val dx = player.actualX + axle * (Math.cos(h) - 1)
+                    val dy = player.actualY + axle * Math.sin(h)
+                    check(
+                        Math.abs(-dx * Math.sin(h / 2) + dy * Math.cos(h / 2)) < 1e-6,
+                        "shopping moving/reverse rear axle must roll without lateral travel",
+                    )
+                }
+            }
+        } finally {
+            CartSteeringHooks.reset(player)
+            time.fpsMultiplier = old
+        }
+    }
+
     private fun stationaryControls(unsafe: Unsafe, states: Map<*, *>) {
         val player = unsafe.allocateInstance(Player::class.java) as Player
         val cart = unsafe.allocateInstance(InventoryContainer::class.java) as InventoryContainer
@@ -2337,28 +2422,35 @@ object CartSteeringHooksTest {
         return clips.values.iterator().next()
     }
 
-    private fun stationaryCadence(unsafe: Unsafe, states: Map<*, *>) {
+    private fun stationaryCadence(unsafe: Unsafe, states: Map<*, *>, shopping: Boolean = false) {
         val player = unsafe.allocateInstance(Player::class.java) as Player
         val cart = unsafe.allocateInstance(InventoryContainer::class.java) as InventoryContainer
         player.inventory = ItemContainer()
         player.primary = cart
         player.secondary = cart
         cart.setContainer(player.inventory)
-        type(cart, "SaucedWheelbarrow.WheelbarrowWood")
+        type(
+            cart,
+            if (shopping) "SaucedCarts.ShoppingCart" else "SaucedWheelbarrow.WheelbarrowWood",
+        )
         player.walkSpeed = .8f
         val project = java.nio.file.Path.of(System.getProperty("pz.test.project", "."))
         val media = project.resolve("PZSurvivorToolkit/42/media")
         val node =
             AnimNode.Parse(
                 media
-                    .resolve("AnimSets/player/movement/toolkit_cart_wood_pivot_walk.xml")
+                    .resolve(
+                        "AnimSets/player/movement/" +
+                            if (shopping) "toolkit_cart_pivot_walk.xml"
+                            else "toolkit_cart_wood_pivot_walk.xml",
+                    )
                     .toString(),
             )
         check(
             node != null &&
                 node.name.equals(CartLegPace.pivotName(cart.getFullType(), false, false)) &&
                 node.blend2dPicker != null,
-            "stationary regression must load the current production wooden walking node",
+            "stationary regression must load the current production walking node",
         )
         val clips = HashMap<String, AnimationClip>()
         val nativeFolder = java.nio.file.Path.of("media/anims_X/Bob")
@@ -2389,6 +2481,9 @@ object CartSteeringHooksTest {
         model.isAccessible = true
         val oldModel = model.get(ModelManager.instance)
         val input = IsoPlayer.InputState()
+        val keys = Keys()
+        player.keys = keys
+        player.keyboard = shopping
         val time = GameTime.getInstance()
         val oldFps = time.fpsMultiplier
         try {
@@ -2410,6 +2505,7 @@ object CartSteeringHooksTest {
                 val target = initial + sign * Math.PI / 2
                 field(state, "heading").setDouble(state, initial)
                 field(state, "target").setDouble(state, initial)
+                if (shopping) keys.set(0, sign)
                 direction(player, target)
                 CartSteeringHooks.input(player, input)
                 player.moving = true
@@ -2422,6 +2518,20 @@ object CartSteeringHooksTest {
                 var maxPace = 0f
                 var frame = 0
                 while (frame < fps * 6 && field(state, "stationary").getBoolean(state)) {
+                    if (
+                        shopping &&
+                            Math.abs(
+                                CartSteeringMath.wrap(
+                                    field(state, "heading").getDouble(state) - initial,
+                                ),
+                            ) >= Math.PI / 2
+                    ) {
+                        keys.set(0, 0)
+                        CartSteeringHooks.input(player, input)
+                        player.moving = false
+                        CartSteeringHooks.heading(player)
+                        break
+                    }
                     CartSteeringHooks.input(player, input)
                     check(
                         Math.abs(player.stepX) == 1f && player.stepY == 0f,
@@ -2441,16 +2551,43 @@ object CartSteeringHooksTest {
                     val before = field(state, "heading").getDouble(state)
                     val x = player.actualX
                     val y = player.actualY
-                    val step = CartSteeringHooks.movement(player, budget.toFloat(), 0f)
+                    val shortFrame = shopping && frame == fps / 3
+                    val supplied = if (shortFrame) 0.0 else budget
+                    val plannedBefore = field(state, "stationaryRate").getDouble(state)
+                    val step = CartSteeringHooks.movement(player, supplied.toFloat(), 0f)
+                    if (shopping) {
+                        val plannedAfter = field(state, "stationaryRate").getDouble(state)
+                        if (shortFrame) {
+                            check(
+                                step.getLength() == 0f,
+                                "missing shopping root cannot invent motion",
+                            )
+                            check(
+                                Math.abs(plannedAfter) >= Math.abs(plannedBefore),
+                                "missing shopping root cannot restart the angular ramp",
+                            )
+                        } else if (
+                            frame > fps / 2 &&
+                                Math.abs(CartSteeringMath.wrap(target - before)) > .45
+                        ) {
+                            check(
+                                step.getLength() > budget * .9,
+                                "shopping sidestep cadence must follow the actual orbit instead of wasting most of its stride",
+                            )
+                        }
+                    }
                     check(
-                        step.getLength() <= budget + 1e-7,
+                        step.getLength() <= supplied + 1e-7,
                         "stationary steering cannot invent native root distance",
                     )
                     accept(player, step)
                     val after = field(state, "heading").getDouble(state)
                     if (player.actualX == x && player.actualY == y) {
                         rounded = true
-                        check(after == before, "rounded native root cannot rotate the cart")
+                        check(
+                            Math.abs(CartSteeringMath.wrap(after - before)) < 1e-12,
+                            "rounded native root cannot rotate the cart",
+                        )
                     }
                     check(
                         after.isFinite(),
@@ -2460,17 +2597,25 @@ object CartSteeringHooksTest {
                 }
                 check(
                     !field(state, "stationary").getBoolean(state) &&
-                        Math.abs(
-                            CartSteeringMath.wrap(
-                                target - field(state, "heading").getDouble(state),
-                            ),
-                        ) < Math.toRadians(.5),
-                    "calibrated stationary root must finish at world coordinates: $fps/$sign",
+                        (if (shopping)
+                            Math.abs(
+                                CartSteeringMath.wrap(
+                                    field(state, "heading").getDouble(state) - initial,
+                                ),
+                            ) >= Math.PI / 2
+                        else
+                            Math.abs(
+                                CartSteeringMath.wrap(
+                                    target - field(state, "heading").getDouble(state),
+                                ),
+                            ) < Math.toRadians(.5)),
+                    "calibrated stationary root must finish at world coordinates: $fps/$sign shopping=$shopping speed=$walkSpeed heading=${field(state, "heading").getDouble(state)} target=$target pace=${player.legPace} rate=${field(state, "stationaryRate").getDouble(state)}",
                 )
-                check(
-                    maxPace > if (walkSpeed > .5) 1.2 else .78,
-                    "larger full steps must preserve the responsive native turn budget",
-                )
+                if (!shopping)
+                    check(
+                        maxPace > if (walkSpeed > .5) 1.2 else .78,
+                        "larger full steps must preserve the responsive native turn budget",
+                    )
                 if (fps == 144)
                     check(rounded, "high-FPS regression must exercise sub-ULP native root frames")
                 player.inputX = 0f
@@ -2479,9 +2624,11 @@ object CartSteeringHooksTest {
                 player.moving = false
                 CartSteeringHooks.heading(player)
             }
-            forwardWalkBudget(player, states, node, clips)
-            forwardFastBudget(player, states, clips)
-            nativeDirectionChanges(player, states, input, node, clips)
+            if (!shopping) {
+                forwardWalkBudget(player, states, node, clips)
+                forwardFastBudget(player, states, clips)
+                nativeDirectionChanges(player, states, input, node, clips)
+            }
         } finally {
             CartSteeringHooks.reset(player)
             time.fpsMultiplier = oldFps
@@ -2494,12 +2641,13 @@ object CartSteeringHooksTest {
         CartLocomotionBlendChecks.check()
         zombie.core.random.RandStandard.INSTANCE.init()
         zombie.core.random.RandLua.INSTANCE.init()
-        val tiny = CartSteeringMath.step(0.0, 0.0, .0002, 1.0 / 60, 0.0)
+        val tiny =
+            CartSteeringMath.step(0.0, 0.0, .0002, 1.0 / 60, 0.0, 1.0, CartSteeringMath.Step())
         check(
             !CartSteeringHooks.blockedStep(tiny, 10825.5f, 10142.5f, 0.0),
             "float-rounded first Sprint step must not restart its acceleration forever",
         )
-        val wall = CartSteeringMath.step(0.0, 0.0, .02, 1.0 / 60, 0.0)
+        val wall = CartSteeringMath.step(0.0, 0.0, .02, 1.0 / 60, 0.0, 1.0, CartSteeringMath.Step())
         check(
             CartSteeringHooks.blockedStep(wall, 10825.5f, 10142.5f, 0.0),
             "a real blocked budget must release Sprint momentum",
@@ -2876,8 +3024,10 @@ object CartSteeringHooksTest {
         keyboardControls(unsafe, states)
         keyboardReleaseControls(unsafe, states)
         keyboardWorldReleaseControls(unsafe, states)
+        shoppingRearAxleControls(unsafe, states)
         stationaryControls(unsafe, states)
         stationaryCadence(unsafe, states)
+        stationaryCadence(unsafe, states, true)
         brakeControls(unsafe, states)
         residualBrake(unsafe, states)
         residualBrakeEdges(unsafe, states)
