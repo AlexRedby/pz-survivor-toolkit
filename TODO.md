@@ -1,6 +1,6 @@
 # Injured cart main integration
 
-- [ ] Capture exact inputs for the merged metal-cart injury grip failures, correct the bounded torso solver, and pass focused native SP/Host checks with the rebuilt candidate.
+- [ ] Pass the final metal-cart injury matrix and focused wood/shopping SP and owner/observer Host checks with the rebuilt candidate.
 - [ ] Recheck latest main, publish with a normal fast-forward push, and verify the remote revision.
 
 # Welding torch refill

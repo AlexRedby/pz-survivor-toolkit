@@ -1147,6 +1147,48 @@ internal object CartGrip {
         return change.rotateY(yaw * amount).translate(-pivot.x, -pivot.y, -pivot.z)
     }
 
+    private fun injuryChestAmount(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        left: Matrix4f,
+        right: Matrix4f,
+        pivot: Vector3f,
+        yaw: Float,
+        lean: Float,
+        leanAxis: Vector3f?,
+        metal: Boolean,
+    ): Float {
+        var change = injuryChestChange(pivot, yaw, lean, 1f, leanAxis)
+        var low = 0f
+        var high = 1f
+        if (!injuredArmsReachable(poses, actor, left, right, change, metal)) {
+            // Both arms can fit inside the bounded path even when its far endpoint overshoots.
+            // Find a feasible bracket without mutating the native pose, then refine its entry.
+            var found = false
+            for (i in 1 until 16) {
+                val amount = i / 16f
+                change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
+                if (injuredArmsReachable(poses, actor, left, right, change, metal)) {
+                    low = (i - 1) / 16f
+                    high = amount
+                    found = true
+                    break
+                }
+            }
+            if (!found) return Float.NaN
+        }
+        for (i in 0 until 16) {
+            val amount = (low + high) * .5f
+            change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
+            if (injuredArmsReachable(poses, actor, left, right, change, metal)) high = amount
+            else low = amount
+        }
+        // Stay just inside the feasible interval despite matrix/IK floating-point rounding.
+        val inset = Math.min(1f, high + .001f)
+        change = injuryChestChange(pivot, yaw, lean, inset, leanAxis)
+        return if (injuredArmsReachable(poses, actor, left, right, change, metal)) inset else high
+    }
+
     /**
      * Injured locomotion may yaw the chest beyond both fixed handles; keep the native hip and legs
      * live.
@@ -1195,51 +1237,28 @@ internal object CartGrip {
                 )
                 .toFloat() * injuryWeight
         val lean = Math.toRadians((if (metal) 39 else 12).toDouble()).toFloat() * injuryWeight
-        // Current metal handles need lateral and forward clearance together. Lean toward their
-        // center around the fixed chest pivot; a fixed world-X axis spends the same angular
-        // budget moving the more distant shoulder away from its handle during a heavy limp.
-        val leanAxis =
-            if (metal) {
-                val center =
-                    left
-                        .getTranslation(Vector3f())
-                        .add(right.getTranslation(Vector3f()))
-                        .mul(.5f)
-                        .sub(pivot)
-                val up = Vector3f(0f, 1f, 0f)
-                delta?.transformDirection(up)
-                val axis = up.cross(center)
-                if (!axis.isFinite() || axis.lengthSquared() < .00000001f) return 0f
-                axis.normalize()
-            } else null
-        var change = injuryChestChange(pivot, yaw, lean, 1f, leanAxis)
-        var low = 0f
-        var high = 1f
-        if (!injuredArmsReachable(poses, actor, left, right, change, metal)) {
-            // Both arms can fit inside the bounded path even when its far endpoint overshoots.
-            // Find a feasible bracket without mutating the native pose, then refine its entry.
-            var found = false
-            for (i in 1 until 16) {
-                val amount = i / 16f
-                change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
-                if (injuredArmsReachable(poses, actor, left, right, change, metal)) {
-                    low = (i - 1) / 16f
-                    high = amount
-                    found = true
-                    break
-                }
-            }
-            if (!found) return 0f
+        // Preserve the established path wherever it fits. Native arm asymmetry can require
+        // that axis even when leaning toward the handle center helps a different foot phase.
+        var leanAxis: Vector3f? = null
+        var amount = injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, null, metal)
+        if (!amount.isFinite() && metal) {
+            // Heavy limp poses can need lateral and forward clearance together. Offer a second
+            // bounded path toward both current handle targets, keeping the same chest pivot.
+            val center =
+                left
+                    .getTranslation(Vector3f())
+                    .add(right.getTranslation(Vector3f()))
+                    .mul(.5f)
+                    .sub(pivot)
+            val up = Vector3f(0f, 1f, 0f)
+            delta?.transformDirection(up)
+            val axis = up.cross(center)
+            if (!axis.isFinite() || axis.lengthSquared() < .00000001f) return 0f
+            leanAxis = axis.normalize()
+            amount = injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, leanAxis, true)
         }
-        for (i in 0 until 16) {
-            val amount = (low + high) * .5f
-            change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
-            if (injuredArmsReachable(poses, actor, left, right, change, metal)) high = amount
-            else low = amount
-        }
-        // Stay just inside the feasible interval despite matrix/IK floating-point rounding.
-        val amount = Math.min(1f, high + .001f)
-        change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
+        if (!amount.isFinite()) return 0f
+        val change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
         for (i in 0 until actor.numBones()) if (descendant(actor.getBoneAt(i), chest))
             change.mul(pose(poses, i), pose(poses, i))
         live.setTranslation(pivot)
