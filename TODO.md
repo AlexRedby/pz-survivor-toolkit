@@ -2,8 +2,6 @@
 
 - [ ] After installation is requested, check snow/wetness and Open Jackets/VVA/cart visuals, exterior-light insects and performance, Jeep parts/animations/lighting/repair/towing, and furniture movement with exact container contents and Quartermaster designations in isolated full-pack macOS B42.21 SP/Host saves. Check reload and the second player's view/state; author declarations and selection checks do not establish runtime compatibility.
 
-- [ ] Check New Music vehicle-loot Add/Remove ordering outside initial debug spawning and during later container mutations before choosing a sender-side fix. Controlled early-cassette conversion reproduced the missing-vehicle messages, while the later full vehicle snapshot preserved exact resolved item IDs and removed the placeholder on both replicas. Any ordering fix must preserve current state, connection/world identity and vehicle-ID reuse safety; do not blindly replay stale packets or suppress the runtime errors.
-
 # New Music selection
 
 - [ ] After installation is requested, check new ABBA/Queen/Fleetwood Mac media loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.

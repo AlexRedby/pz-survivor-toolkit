@@ -920,6 +920,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.56
 
+- **Vehicle inventory / Host:** Include changes made before a recipient's first vehicle snapshot in that snapshot, then send later direct vehicle-container additions/removals on the vehicle's ordered channel. Track actual connection and vehicle lifetimes; preserve authoritative item identities and normal non-vehicle transport.
 - **Fixed:** Planting inputs such as sunflower seeds, potatoes and herbs gain Farming/Seed tags while preserving their food/medical roles; empty seed packets keep Farming without Seed. Roles come from native crop definitions and seed-packet recipes.
 - **Fixed:** Inventory filters, previews and Quartermaster tag rules match individual items, including mixed-category stacks; unrelated items sharing a category or display name are not included. Partial-category tag selections use stable rules across UI languages; manual Quartermaster category/item selections remain additive.
 
@@ -1192,6 +1193,8 @@ The older README associates medicine indicators with this label, but no separate
 ## Toolkit Java Patches
 
 ### 0.1.56
+
+- **Host vehicle inventory:** Include early item changes in each recipient's first native vehicle snapshot, then send later changes on the same ordered channel. Cover direct vehicle containers and bags directly inside them; preserve native transfers, recipient relevance and diagnostics, and reset synchronization across reconnects, world changes, vehicle deletion and ID reuse.
 
 - **Compatibility:** Remove a proven orphan mesh-object animation channel from three DAMN Library clips before skeletal import. Preserve all skeletal frames and transforms; changed or unknown inputs keep native handling and diagnostics. No third-party assets are copied or rewritten.
 

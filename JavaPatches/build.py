@@ -106,7 +106,8 @@ def build_kotlin_relocator(jdk, home, destination, *, run=None):
     return [str(Path(jdk) / 'bin/java'), '-cp', os.pathsep.join([str(destination), compiler]), 'RelocateKotlin']
 
 
-CHECKS = {'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
+CHECKS = {'zombie.vehicles.VehicleInventoryOrderingChecks': 'VEHICLE_INVENTORY_ORDERING_CHECKS_PASS',
+          'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
           'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
           'net.alexredby.javapatchfixture.KotlinRuntimeChecks': 'KOTLIN_RUNTIME_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
