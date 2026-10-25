@@ -275,7 +275,7 @@ class QuartermasterBackpack(unittest.TestCase):
         cases = distribution.definitions()[distribution.SUITE]['cases']
         self.assertEqual([(case['id'], case['kinds']) for case in cases],
                          [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']), ('batch', ['mp']),
-                          ('barricaded-door', ['sp'])])
+                          ('barricaded-door', ['sp', 'mp'])])
         distribution.validate(self.selection)
         for changes in ({'kind': 'mp'}, {'cases': ['sort', 'backpack']}, {'mode': 'native'},
                         {'languages': ['RU']}, {'clients': 2}, {'mods': distribution.MODS[:-1]},
@@ -385,33 +385,77 @@ class QuartermasterBatch(unittest.TestCase):
 
 
 class QuartermasterBarricadedDoor(unittest.TestCase):
-    def test_requires_detour_intact_barricade_and_exact_item_effects(self):
-        selection = dict(suite=distribution.SUITE, cases=['barricaded-door'], kind='sp', mode='toolkit',
-                         clients=1, languages=['EN'], mods=distribution.MODS, options={})
-        distribution.validate(selection)
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.selection = dict(suite=distribution.SUITE, cases=['barricaded-door'], kind='sp', mode='toolkit',
+                              clients=1, languages=['EN'], mods=distribution.MODS, options={})
+        self.prepared = {'ids': [501, 502]}
+        self.authority = dict(self.prepared, moved=2, normalDoorOpened=True, barricadedDoorClosed=True,
+                              barricadeIntact=True, conserved=True)
+        self.result = dict(self.authority, nativeWalking=True, detour=True)
+
+    def record(self, event, value):
+        return '[QM_DOOR] ' + event + ' ' + json.dumps(value) + '\n'
+
+    def write(self, kind='sp'):
+        events = [('PREPARED', self.prepared), ('RESULT', self.result)]
+        if kind == 'sp':
+            events.append(('AUTHORITY', self.authority))
+        events += [('CLEANUP', {'objects': 15, 'localRemoved': True, 'registryCleared': True}),
+                   ('COMPLETE', {'case': 'barricaded-door'})]
+        client = ''.join(self.record(*row) for row in events)
+        server = self.record('PREPARED', self.prepared) + self.record('AUTHORITY', self.authority) + self.record('CLEANUP', {'objects': 15})
+        (self.root / 'client1-launch.log').write_text(client)
+        (self.root / 'server-launch.log').write_text(server)
+        return client, server
+
+    def test_requires_menu_host_and_keeps_supported_sp(self):
+        distribution.validate(self.selection)
         with self.assertRaises(ValueError):
-            distribution.validate(dict(selection, kind='mp'))
-        prepared = {'ids': [501, 502]}
-        result = dict(prepared, moved=2, nativeWalking=True, detour=True, normalDoorOpened=True,
-                      barricadedDoorClosed=True, barricadeIntact=True, conserved=True)
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            def verify(value, suffix='[QM_DOOR] COMPLETE\n'):
-                text = ('[QM_DOOR] PREPARED ' + json.dumps(prepared) + '\n'
-                        '[QM_DOOR] RESULT ' + json.dumps(value) + '\n' + suffix)
-                (root / 'client1-launch.log').write_text(text)
-                return distribution.verify(root, selection, {})
-            self.assertEqual(verify(result)['issues'], [])
-            for key in result:
-                wrong = dict(result)
-                wrong[key] = [501, 599] if key == 'ids' else 1 if key == 'moved' else False
-                with self.subTest(key=key):
-                    self.assertTrue(verify(wrong)['issues'])
-            for suffix in ('', '[QM_DOOR] COMPLETE\n[QM_DOOR] COMPLETE\n',
-                           '[QM_BACKPACK] COMPLETE\n', '[QM_DOOR] COMPLETE extra\n',
-                           '[QM_DOOR] COMPLETE\n[QM_DOOR] FAIL changed door\n'):
-                with self.subTest(suffix=suffix):
-                    self.assertTrue(verify(result, suffix)['issues'])
+            distribution.validate(dict(self.selection, kind='mp'))
+        distribution.validate(dict(self.selection, kind='mp', options={'mp_host': True}))
+
+    def test_requires_detour_intact_barricade_and_exact_item_effects(self):
+        self.write()
+        self.assertEqual(distribution.verify(self.root, self.selection, {})['issues'], [])
+        for key in self.result:
+            original = self.result[key]
+            self.result[key] = [501, 599] if key == 'ids' else 1 if key == 'moved' else False
+            with self.subTest(key=key):
+                self.write()
+                self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+            self.result[key] = original
+        client, _ = self.write()
+        lines = client.splitlines(keepends=True)
+        for bad in ([client.replace(line, '') for line in lines] + [client + line for line in lines]
+                    + [''.join(reversed(lines)), client + '[QM_DOOR] FAIL changed door\n']):
+            (self.root / 'client1-launch.log').write_text(bad)
+            self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+
+    def test_host_requires_independent_matching_authority_and_cleanup(self):
+        selection = dict(self.selection, kind='mp', options={'mp_host': True})
+        client, server = self.write('mp')
+        self.assertEqual(distribution.verify(self.root, selection, {})['issues'], [])
+        for key in self.authority:
+            wrong = dict(self.authority)
+            wrong[key] = [501, 599] if key == 'ids' else 1 if key == 'moved' else False
+            (self.root / 'server-launch.log').write_text(
+                self.record('PREPARED', self.prepared) + self.record('AUTHORITY', wrong) + self.record('CLEANUP', {'objects': 15}))
+            with self.subTest(key=key):
+                self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
+        for bad in ('', server + server, ''.join(reversed(server.splitlines(keepends=True))),
+                    server.replace('"objects": 15', '"objects": 14'), server.splitlines(keepends=True)[0]):
+            (self.root / 'server-launch.log').write_text(bad)
+            self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
+        self.write('mp')
+        (self.root / 'client1-launch.log').write_text(client.replace(self.record('CLEANUP', {'objects': 15, 'localRemoved': True, 'registryCleared': True}), ''))
+        self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
+        for field in ('localRemoved', 'registryCleared'):
+            self.write('mp')
+            (self.root / 'client1-launch.log').write_text(client.replace('"' + field + '": true', '"' + field + '": false'))
+            self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
 
 
 if __name__ == '__main__':

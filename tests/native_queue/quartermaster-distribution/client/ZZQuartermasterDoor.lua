@@ -1,65 +1,22 @@
 local config=require 'QueueTestSelection'
 if config.cases[1]~='barricaded-door' then return end
+local F=require 'QuartermasterDoorFixture'
 local JSON=require 'QueueHealthEvents'
 local started,done,since,phase=false,false,0,'prepare'
-local point,boxes,doors,barricade,owned,items,ids,designatedAt
+local point,state,packet,authority,cleaned
 local updates,walked,detour=0,false,false
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
-local function square(x,y)return assert(getCell():getGridSquare(point.x+x,point.y+y,point.z))end
-local function place(player)
- local origin=player:getCurrentSquare()
- for radius=2,25 do for dx=-radius,radius do for dy=-radius,radius do
-  if math.abs(dx)==radius or math.abs(dy)==radius then
-   local x,y,z=origin:getX()+dx,origin:getY()+dy,origin:getZ()
-   local clear=true
-   for a=-2,7 do for b=-7,7 do
-    local sq=getCell():getGridSquare(x+a,y+b,z)
-    if not sq or not sq:canStand() or not sq:isFree(false) or sq:getRoom() or sq:getObjects():size()>1 then clear=false end
-   end end
-   if clear then
-    player:teleportTo(x,y,z);player:setX(x+0.5);player:setY(y+0.5)
-    player:setLastX(x+0.5);player:setLastY(y+0.5);player:setCurrentSquareFromPosition()
-    return {x=x,y=y,z=z}
-   end
-  end
- end end end
- error('No clear loaded pad for barricaded-door fixture')
-end
-local function prepare(player)
- assert(not isClient() and not isServer(),'door fixture requires isolated SP')
- point=place(player);boxes={};owned={};doors={};items={};ids={}
- for _,dx in ipairs({-1,3,5})do
-  local sq=square(dx,0)
-  local box=IsoThumpable.new(getCell(),sq,'carpentry_01_16',false,{})
-  box:setBlockAllTheSquare(true);box:setIsContainer(true)
-  box:getContainer():setType('crate');box:getContainer():setCapacity(100);box:getContainer():setExplored(true)
-  sq:AddSpecialObject(box);owned[#owned+1]=box;boxes[#boxes+1]=box
- end
- for index,kind in ipairs({'Base.Nails','Base.Apple'})do
-  local item=assert(boxes[1]:getContainer():AddItem(kind));items[index]=item;ids[index]=item:getID()
-  LootSorter.setBoxItems(boxes[index+1],0,{[item:getDisplayName()]=true})
- end
- designatedAt=getTimestampMs()
- -- A short blocked route, with a longer ordinary door in the same wall.
- for y=-5,5 do
-  local sq=square(1,y)
-  local door=y==0 or y==3
-  local object=door and IsoDoor.new(getCell(),sq,getSprite('fixtures_doors_01_0'),false)
-   or IsoObject.new(getCell(),sq,getSprite('walls_exterior_wooden_01_0'))
-  if door then
-   object:setLocked(false);object:setLockedByKey(false);sq:AddSpecialObject(object);doors[y]=object
-  else sq:AddTileObject(object)end
-  owned[#owned+1]=object
- end
- barricade=assert(IsoBarricade.AddBarricadeToObject(doors[0],false));barricade:addPlank(player)
- owned[#owned+1]=barricade
- assert(doors[0]:isBarricaded() and not doors[0]:IsOpen() and barricade:getNumPlanks()==1,'native barricade missing')
- print('[QM_DOOR] PREPARED '..JSON.encode({ids=ids}))
-end
+local function emit(event,value)print('[QM_DOOR] '..event..' '..JSON.encode(value))end
+Events.OnServerCommand.Add(function(module,command,value)
+ if module~=F.module then return end
+ if command=='Prepared'then assert(not packet,'duplicate door preparation reply');packet=value
+ elseif command=='Verified'then assert(not authority,'duplicate door authority reply');authority=value
+ elseif command=='Cleaned'then assert(not cleaned,'duplicate door cleanup reply');cleaned=value end
+end)
 local function dispatch()
  local loot=assert(getPlayerLoot(0));loot:refreshBackpacks();loot.inventoryPane:refreshContainer()
  local controls=assert(loot.controlsUI)
- local handler=controls:checkHandler(ISLootWindowObjectControlHandler_LootSorterDistribute,boxes[1],boxes[1]:getContainer())
+ local handler=controls:checkHandler(ISLootWindowObjectControlHandler_LootSorterDistribute,state.boxes[1],state.boxes[1]:getContainer())
  assert(handler:shouldBeVisible(),'distribution control hidden')
  local button=handler:getControl();local before=LootSorter._sortRunSeq or 0
  LootSorter.DEBUG=true;button.onclick(button.target,button)
@@ -77,41 +34,65 @@ local function tick()
  local player=getPlayer()
  if phase=='prepare'then
   if updates<30 then return end
-  prepare(player);phase='settle';updates=0
+  point=F.place(player)
+  if isClient()then sendClientCommand(F.module,'Prepare',point)
+  else state=F.prepare(player,point);packet=F.descriptor(state)end
+  phase='resolve'
+ elseif phase=='resolve'then
+  if not packet then return end
+  if not state then state=F.resolve(packet);if not state then return end end
+  assert(#state.owned==15 and #state.ids==2,'door fixture descriptor differs')
+  emit('PREPARED',{ids=state.ids});phase='settle';updates=0
  elseif phase=='settle'then
-  -- Let native path-map tasks consume the real walls, doors and barricade.
-  if updates<60 or not LootSorter.isRegistrySynced() or not LootSorter.arePresetsSynced()then return end
+  if updates<60 or not LootSorter.isRegistrySynced()or not LootSorter.arePresetsSynced()then return end
+  local found={}
+  for _,entry in ipairs(LootSorter.gatherBoxes(player))do
+   for index=2,3 do if entry.obj==state.boxes[index]then found[index]=true end end
+  end
+  if not found[2]or not found[3]then return end
+  assert(not state.doors[3]:IsOpen(),'ordinary detour door was opened before distribution')
   dispatch();phase='sorting'
  elseif phase=='sorting'then
   local current=queue().current
-  if current and current.Type=='LootSorterWalkAction' and current:isStarted()then walked=true end
+  if current and current.Type=='LootSorterWalkAction'and current:isStarted()then walked=true end
   if player:getY()>point.y+2 and player:getY()<point.y+4 then detour=true end
-  assert(not doors[0]:IsOpen() and doors[0]:isBarricaded() and barricade:getNumPlanks()==1,
+  assert(not state.doors[0]:IsOpen()and state.doors[0]:isBarricaded()
+   and state.barricade:getNumPlanks()==state.planks and state.barricade:getHealth()==state.originalHealth,
    'routing opened/damaged the barricaded door')
   if #queue().queue>0 or player:hasTimedActions()then return end
-  assert(walked and detour and doors[3]:IsOpen(),'native walk did not take the ordinary-door detour')
-  for index,item in ipairs(items)do
-   assert(item:getContainer()==boxes[index+1]:getContainer(),'distribution stopped before item '..index)
-   local count=0
-   for _,box in ipairs(boxes)do if box:getContainer():contains(item)then count=count+1 end end
-   if player:getInventory():contains(item)then count=count+1 end
-   assert(count==1 and boxes[index+1]:getContainer():getItemById(ids[index])==item,'item identity/conservation failed')
+  assert(walked and detour,'native walk did not take the ordinary-door detour')
+  local result=F.receipt(player,state);if not result then return end
+  local localResult={};for key,value in pairs(result)do localResult[key]=value end
+  localResult.nativeWalking=true;localResult.detour=true;emit('RESULT',localResult)
+  if isClient()then sendClientCommand(F.module,'Verify',{})
+  else authority=result;emit('AUTHORITY',result)end
+  phase='verified'
+ elseif phase=='verified'then
+  if not authority then return end
+  assert(authority.ids[1]==state.ids[1]and authority.ids[2]==state.ids[2]and authority.moved==2
+   and authority.conserved and authority.normalDoorOpened and authority.barricadedDoorClosed and authority.barricadeIntact,
+   'door authority reply differs')
+  if isClient()then sendClientCommand(F.module,'Cleanup',{});phase='cleaned'
+  else
+   cleaned=F.cleanup(state)
+   if cleaned then phase='cleaned'end
   end
-  print('[QM_DOOR] RESULT '..JSON.encode({ids=ids,moved=2,nativeWalking=true,detour=true,
-   normalDoorOpened=true,barricadedDoorClosed=true,barricadeIntact=true,conserved=true}))
-  phase='cleanup'
- elseif phase=='cleanup'then
-  if getTimestampMs()-designatedAt<LootSorter.ADD_GRACE_MS+1000 then return end
-  for index=2,3 do LootSorter.setBoxItems(boxes[index],0,{})end
-  for index=#owned,1,-1 do
-   local object=owned[index];local sq=object:getSquare()
-   if sq and object:getObjectIndex()>=0 then sq:transmitRemoveItemFromSquare(object)end
+ elseif phase=='cleaned'and cleaned then
+  assert(cleaned.objects==15,'door cleanup did not acknowledge all owned objects')
+  -- Server removal and registry replication travel independently of the cleanup ACK.
+  for _,object in ipairs(state.owned)do if object:getObjectIndex()>=0 then return end end
+  local registry=LootSorter.getRegistry()
+  for index=2,3 do
+   local target=packet.objects[packet.boxes[index]]
+   local key=math.floor(target.x)..','..math.floor(target.y)..','..math.floor(target.z)
+   if registry[key]then return end
   end
-  print('[QM_DOOR] COMPLETE');done=true
+  emit('CLEANUP',{objects=15,localRemoved=true,registryCleared=true})
+  emit('COMPLETE',{case='barricaded-door'});done=true
  end
 end
 Events.OnTick.Add(function()
  if not started or done then return end
- local ok,problem=pcall(function()assert(getTimestampMs()-since<180000,'door distribution timeout phase='..phase);tick()end)
+ local ok,problem=pcall(function()assert(getTimestampMs()-since<240000,'door distribution timeout phase='..phase);tick()end)
  if not ok then done=true;print('[QM_DOOR] FAIL '..tostring(problem))end
 end)

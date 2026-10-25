@@ -15,20 +15,20 @@ def definitions():
                    'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                               'kinds': kinds, 'languages': ['EN'], 'modes': ['toolkit']}
                              for case, kinds in [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']),
-                                                 ('batch', ['mp']), ('barricaded-door', ['sp'])]]}}
+                                                 ('batch', ['mp']), ('barricaded-door', ['sp', 'mp'])]]}}
 
 
 def validate(selection):
     if (selection.get('cases') not in (['sort'], ['backpack'], ['deposit'], ['batch'], ['barricaded-door']) or selection.get('kind') not in ('sp', 'mp')
-            or (selection.get('cases') in (['backpack'], ['barricaded-door']) and selection.get('kind') != 'sp')
+            or (selection.get('cases') == ['backpack'] and selection.get('kind') != 'sp')
             or selection.get('mode') != 'toolkit' or selection.get('clients', 1) != 1
             or selection.get('languages') != ['EN'] or not set(MODS) <= set(selection.get('mods', []))
             or selection.get('options', {}).get('world_template')
             or selection.get('cases') == ['batch'] and selection.get('kind') != 'mp'
             or selection.get('cases') == ['batch'] and selection.get('options', {}).get('mp_host') is not True
-            or selection.get('cases') == ['deposit'] and selection.get('kind') == 'mp'
+            or selection.get('cases') in (['deposit'], ['barricaded-door']) and selection.get('kind') == 'mp'
             and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Distribution requires sort/deposit in fresh SP/Host or backpack/barricaded-door in fresh SP, one EN client and Toolkit')
+        raise ValueError('Distribution requires sort/deposit/barricaded-door in fresh SP/Host or backpack in fresh SP, one EN client and Toolkit')
 
 
 def sources(project, selection):
@@ -52,7 +52,12 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 def complete(selection, role, text):
     if selection.get('cases') == ['barricaded-door']:
-        return role == 'client1' and text.count('[QM_DOOR] COMPLETE') == 1
+        try:
+            rows = _deposit_records(text, 'QM_DOOR')
+            return (role == 'client1' and sum(event == 'COMPLETE' for event, _ in rows) == 1
+                    and _exact(rows[-1], ('COMPLETE', {'case': 'barricaded-door'})))
+        except (ValueError, IndexError):
+            return False
     if selection.get('cases') == ['batch']:
         try:
             records = [value for event, value in _deposit_records(text, 'QM_BATCH') if event == 'COMPLETE']
@@ -237,31 +242,48 @@ def _batch(root, selection):
 
 
 def _barricaded_door(root, selection):
-    issues, receipt = [], None
+    issues, receipt, authority_receipt = [], None, None
     try:
-        text = (Path(root) / 'client1-launch.log').read_text(errors='replace')
-        records = re.findall(r'\[QM_DOOR\] (PREPARED|RESULT|COMPLETE)(?:[ \t]|$)([^\r\n]*)', text, re.MULTILINE)
-        if [event for event, _ in records] != ['PREPARED', 'RESULT', 'COMPLETE']:
-            raise ValueError('Door fixture preparation/result/completion missing, duplicated or reordered')
-        prepared, receipt = [json.loads(value) for _, value in records[:2]]
-        ids = prepared.get('ids') if type(prepared) is dict else None
+        root, kind = Path(root), selection['kind']
+        text = (root / 'client1-launch.log').read_text(errors='replace')
+        records = _deposit_records(text, 'QM_DOOR')
+        events = ['PREPARED', 'RESULT', *(['AUTHORITY'] if kind == 'sp' else []), 'CLEANUP', 'COMPLETE']
+        if [event for event, _ in records] != events:
+            raise ValueError('Door fixture lifecycle missing, duplicated or reordered')
+        local = dict(records)
+        prepared, receipt = local['PREPARED'], local['RESULT']
+        ids = prepared.get('ids')
         if (type(ids) is not list or len(ids) != 2 or any(type(value) is not int for value in ids)
                 or len(set(ids)) != 2 or set(prepared) != {'ids'}):
             raise ValueError('Door fixture needs two unique item identities')
-        expected = dict(ids=ids, moved=2, nativeWalking=True, detour=True, normalDoorOpened=True,
-                        barricadedDoorClosed=True, barricadeIntact=True, conserved=True)
-        if (type(receipt) is not dict or set(receipt) != set(expected)
-                or any(type(receipt[key]) is not type(value) or receipt[key] != value
-                       for key, value in expected.items())
-                or any(type(value) is not int for value in receipt['ids'])):
+        expected = dict(ids=ids, moved=2, normalDoorOpened=True, barricadedDoorClosed=True,
+                        barricadeIntact=True, conserved=True)
+        if not _exact(receipt, dict(expected, nativeWalking=True, detour=True)):
             raise ValueError('Barricaded-door routing or exact distribution effects differ')
-        if not complete(selection, 'client1', text) or records[2][1].strip() or '[QM_DOOR] FAIL ' in text:
-            raise ValueError('Door fixture completion gate missing or fixture failed')
+        authority = (root / 'server-launch.log').read_text(errors='replace') if kind == 'mp' else text
+        if kind == 'mp':
+            remote = _deposit_records(authority, 'QM_DOOR')
+            if [event for event, _ in remote] != ['PREPARED', 'AUTHORITY', 'CLEANUP']:
+                raise ValueError('Door authority or cleanup receipt missing, duplicated or reordered')
+            remote = dict(remote)
+        else:
+            remote = local
+        authority_receipt = remote['AUTHORITY']
+        if not _exact(remote['PREPARED'], prepared) or not _exact(authority_receipt, expected):
+            raise ValueError('Door authoritative item/door/barricade effects differ')
+        cleanup = {'objects': 15, 'localRemoved': True, 'registryCleared': True}
+        if (not _exact(local['CLEANUP'], cleanup)
+                or not _exact(remote['CLEANUP'], cleanup if kind == 'sp' else {'objects': 15})
+                or not _exact(local['COMPLETE'], {'case': 'barricaded-door'})
+                or not complete(selection, 'client1', text)
+                or any('[QM_DOOR] FAIL ' in value or '[QUEUE_TEST] FAIL ' in value for value in (text, authority))):
+            raise ValueError('Door fixture completion/cleanup gate missing or fixture failed')
     except (OSError, ValueError, KeyError, TypeError) as error:
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'barricaded-door',
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
-            'evidence': {'receipt': receipt, 'limits': ['Single-player native toolbar callback; no Host or physical input coverage.']}}
+            'evidence': {'receipt': receipt, 'authority': authority_receipt,
+                         'limits': ['Native toolbar callback in SP or one-client menu Host; no physical input or second client.']}}
 
 
 def verify(root, selection, catalog):
