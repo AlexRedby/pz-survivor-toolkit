@@ -274,7 +274,8 @@ class QuartermasterBackpack(unittest.TestCase):
     def test_backpack_case_is_separate_fresh_sp_with_existing_required_mods(self):
         cases = distribution.definitions()[distribution.SUITE]['cases']
         self.assertEqual([(case['id'], case['kinds']) for case in cases],
-                         [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']), ('batch', ['mp'])])
+                         [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']), ('batch', ['mp']),
+                          ('barricaded-door', ['sp'])])
         distribution.validate(self.selection)
         for changes in ({'kind': 'mp'}, {'cases': ['sort', 'backpack']}, {'mode': 'native'},
                         {'languages': ['RU']}, {'clients': 2}, {'mods': distribution.MODS[:-1]},
@@ -381,6 +382,36 @@ class QuartermasterBatch(unittest.TestCase):
                             server.replace('"destinations": [1, 1, 1, 3]', '"destinations": [2, 1, 1, 3]')]:
                 (root / 'server-launch.log').write_text(invalid)
                 self.assertTrue(distribution.verify(root, selection, {})['issues'])
+
+
+class QuartermasterBarricadedDoor(unittest.TestCase):
+    def test_requires_detour_intact_barricade_and_exact_item_effects(self):
+        selection = dict(suite=distribution.SUITE, cases=['barricaded-door'], kind='sp', mode='toolkit',
+                         clients=1, languages=['EN'], mods=distribution.MODS, options={})
+        distribution.validate(selection)
+        with self.assertRaises(ValueError):
+            distribution.validate(dict(selection, kind='mp'))
+        prepared = {'ids': [501, 502]}
+        result = dict(prepared, moved=2, nativeWalking=True, detour=True, normalDoorOpened=True,
+                      barricadedDoorClosed=True, barricadeIntact=True, conserved=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def verify(value, suffix='[QM_DOOR] COMPLETE\n'):
+                text = ('[QM_DOOR] PREPARED ' + json.dumps(prepared) + '\n'
+                        '[QM_DOOR] RESULT ' + json.dumps(value) + '\n' + suffix)
+                (root / 'client1-launch.log').write_text(text)
+                return distribution.verify(root, selection, {})
+            self.assertEqual(verify(result)['issues'], [])
+            for key in result:
+                wrong = dict(result)
+                wrong[key] = [501, 599] if key == 'ids' else 1 if key == 'moved' else False
+                with self.subTest(key=key):
+                    self.assertTrue(verify(wrong)['issues'])
+            for suffix in ('', '[QM_DOOR] COMPLETE\n[QM_DOOR] COMPLETE\n',
+                           '[QM_BACKPACK] COMPLETE\n', '[QM_DOOR] COMPLETE extra\n',
+                           '[QM_DOOR] COMPLETE\n[QM_DOOR] FAIL changed door\n'):
+                with self.subTest(suffix=suffix):
+                    self.assertTrue(verify(result, suffix)['issues'])
 
 
 if __name__ == '__main__':

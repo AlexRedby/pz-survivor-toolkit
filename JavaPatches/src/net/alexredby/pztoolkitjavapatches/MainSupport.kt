@@ -370,6 +370,7 @@ internal object MainSupport {
         BasementRoomLookup.prepare()
         BasementHallKey.prepare()
         MannequinZoneData.prepare()
+        BarricadedDoorPaths.prepare()
         val fences = FenceValidation.install(FenceValidation.SUPPORTED)
         val itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED)
         val hostLoader = HostLoader.install()
@@ -438,6 +439,8 @@ internal object MainSupport {
                 ActionAcknowledgements.SUPPORTED +
                 ", craftBench=" +
                 CraftBenchReferences.SUPPORTED +
+                ", barricadedDoors=" +
+                BarricadedDoorPaths.SUPPORTED +
                 ", hostLoader=" +
                 hostLoader,
         )

@@ -1215,6 +1215,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.61
+
+- **Fixed:** Player pathfinding treats closed barricaded doors as obstacles and takes an available detour, preventing Distribute Loot from attempting the door and clearing its remaining queue. Ordinary doors, zombie destructive routes and reopening the route after barricade removal retain their native behavior.
+
 ### 0.1.60
 
 - Fixed: A paid multiplayer action no longer resets the queue when its item change arrives before the native completion packet. An exact accepted transaction can wait for its confirmed result within the existing deadline; completion still requires native Done and the sealed server receipt. Local cancellation and stale/rejected transactions remain authoritative.

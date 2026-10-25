@@ -185,6 +185,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.HostLoaderChecks'] = 'HOST_LOADER_CHE
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleStepPoseTest'] = 'VEHICLE_STEP_POSE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleTransitionRenderTest'] = 'VEHICLE_TRANSITION_RENDER_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
+CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR_PATH_CHECKS_PASS'
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
 
 def positive_timeout(value):
@@ -325,7 +326,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.60',
+    'version': '0.1.61',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',
@@ -333,7 +334,7 @@ MOD_INFO = {
     'javaJarFile': 'media/java/PZToolkitJavaPatches.jar',
     'javaPkgName': 'net.alexredby.pztoolkitjavapatches',
     'ZBVersionMin': '2.3.4',
-    'description': 'B42.21 fixes for skipped alarm-clock triggers and duplicate alarm-setting packets, stale optional item-stat fields in reused network packets, item-transaction cancellation ownership and aggregate ordinary container-batch admission, missing-action completion detection, common action completion boundaries and native action outcome acknowledgements, client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, stale workstation component references after square object-index changes, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, late medical updates and requests after patient disconnect, medical visual removal synchronization, null-animal hutch unloading crashes, five native string-property startup exceptions, two malformed native fluid-container names, premature breakable-fence validation, missing level-three wooden-fence material metadata, the native Piano recipe icon, cross-cell basement room lookup loss, the duplicate stock basement-access hall persistent key, the malformed stock mannequin zone, early native font-page loading and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for alarm catch-up, cassette playback, safe queue build interruption, workstation reference recovery and vehicle authority recovery. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. The font startup fix requires explicit early patches_jar activation of the separate local font JAR; enabling the mod alone is insufficient. Includes client cart steering and floor contact for the selected shopping cart and wheelbarrows. Unsupported target bytecode disables the patches.',
+    'description': 'B42.21 fixes for barricaded-door pathfinding, skipped alarm-clock triggers and duplicate alarm-setting packets, stale optional item-stat fields in reused network packets, item-transaction cancellation ownership and aggregate ordinary container-batch admission, missing-action completion detection, common action completion boundaries and native action outcome acknowledgements, client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, stale workstation component references after square object-index changes, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, late medical updates and requests after patient disconnect, medical visual removal synchronization, null-animal hutch unloading crashes, five native string-property startup exceptions, two malformed native fluid-container names, premature breakable-fence validation, missing level-three wooden-fence material metadata, the native Piano recipe icon, cross-cell basement room lookup loss, the duplicate stock basement-access hall persistent key, the malformed stock mannequin zone, early native font-page loading and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for alarm catch-up, cassette playback, safe queue build interruption, workstation reference recovery and vehicle authority recovery. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. The font startup fix requires explicit early patches_jar activation of the separate local font JAR; enabling the mod alone is insufficient. Includes client cart steering and floor contact for the selected shopping cart and wheelbarrows. Unsupported target bytecode disables the patches.',
 }
 
 

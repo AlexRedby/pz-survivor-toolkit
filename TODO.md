@@ -1,3 +1,9 @@
+# Barricaded-door delivery and Host verification
+
+- [ ] Integrate the completed door-path fix with current origin/main; preserve newer runtime/build and distribution scenarios, choose a newer Java Patches version, and run merged focused checks before pushing main.
+- [ ] Add authoritative one-client Host coverage for the barricaded-door distribution detour, item conservation and unchanged barricade; run the isolated available-pack scenario.
+- [ ] Publish verified follow-up test changes and remove completed TODO entries.
+
 # Welding torch refill
 
 - [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host after local `damnlib` and `92jeepYJ` sources are available. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.

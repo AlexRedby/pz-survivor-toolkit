@@ -15,12 +15,12 @@ def definitions():
                    'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                               'kinds': kinds, 'languages': ['EN'], 'modes': ['toolkit']}
                              for case, kinds in [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']),
-                                                 ('batch', ['mp'])]]}}
+                                                 ('batch', ['mp']), ('barricaded-door', ['sp'])]]}}
 
 
 def validate(selection):
-    if (selection.get('cases') not in (['sort'], ['backpack'], ['deposit'], ['batch']) or selection.get('kind') not in ('sp', 'mp')
-            or (selection.get('cases') == ['backpack'] and selection.get('kind') != 'sp')
+    if (selection.get('cases') not in (['sort'], ['backpack'], ['deposit'], ['batch'], ['barricaded-door']) or selection.get('kind') not in ('sp', 'mp')
+            or (selection.get('cases') in (['backpack'], ['barricaded-door']) and selection.get('kind') != 'sp')
             or selection.get('mode') != 'toolkit' or selection.get('clients', 1) != 1
             or selection.get('languages') != ['EN'] or not set(MODS) <= set(selection.get('mods', []))
             or selection.get('options', {}).get('world_template')
@@ -28,7 +28,7 @@ def validate(selection):
             or selection.get('cases') == ['batch'] and selection.get('options', {}).get('mp_host') is not True
             or selection.get('cases') == ['deposit'] and selection.get('kind') == 'mp'
             and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Distribution requires sort/deposit in fresh SP/Host or backpack in fresh SP, one EN client and Toolkit')
+        raise ValueError('Distribution requires sort/deposit in fresh SP/Host or backpack/barricaded-door in fresh SP, one EN client and Toolkit')
 
 
 def sources(project, selection):
@@ -46,10 +46,13 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                            ('shared', 'QueueHealthEvents.lua')]:
             (lua / side).mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / ('health' if side == 'shared' else 'startup') / side / name, lua / side)
-    runtime['fixture'] = {'server_ready': '[STARTUP_TEST] SERVER_READY', 'sandbox': {'Zombies': 6}}
+    runtime['fixture'] = {'server_ready': '[STARTUP_TEST] SERVER_READY', 'sandbox': {'Zombies': 6},
+                          'failure_markers': ['[QM_DOOR] FAIL ']}
 
 
 def complete(selection, role, text):
+    if selection.get('cases') == ['barricaded-door']:
+        return role == 'client1' and text.count('[QM_DOOR] COMPLETE') == 1
     if selection.get('cases') == ['batch']:
         try:
             records = [value for event, value in _deposit_records(text, 'QM_BATCH') if event == 'COMPLETE']
@@ -233,7 +236,37 @@ def _batch(root, selection):
             'evidence': {'receipts': receipts, 'limits': ['Menu Host with one client, native queued container transfers; no physical UI input.']}}
 
 
+def _barricaded_door(root, selection):
+    issues, receipt = [], None
+    try:
+        text = (Path(root) / 'client1-launch.log').read_text(errors='replace')
+        records = re.findall(r'\[QM_DOOR\] (PREPARED|RESULT|COMPLETE)(?:[ \t]|$)([^\r\n]*)', text, re.MULTILINE)
+        if [event for event, _ in records] != ['PREPARED', 'RESULT', 'COMPLETE']:
+            raise ValueError('Door fixture preparation/result/completion missing, duplicated or reordered')
+        prepared, receipt = [json.loads(value) for _, value in records[:2]]
+        ids = prepared.get('ids') if type(prepared) is dict else None
+        if (type(ids) is not list or len(ids) != 2 or any(type(value) is not int for value in ids)
+                or len(set(ids)) != 2 or set(prepared) != {'ids'}):
+            raise ValueError('Door fixture needs two unique item identities')
+        expected = dict(ids=ids, moved=2, nativeWalking=True, detour=True, normalDoorOpened=True,
+                        barricadedDoorClosed=True, barricadeIntact=True, conserved=True)
+        if (type(receipt) is not dict or set(receipt) != set(expected)
+                or any(type(receipt[key]) is not type(value) or receipt[key] != value
+                       for key, value in expected.items())
+                or any(type(value) is not int for value in receipt['ids'])):
+            raise ValueError('Barricaded-door routing or exact distribution effects differ')
+        if not complete(selection, 'client1', text) or records[2][1].strip() or '[QM_DOOR] FAIL ' in text:
+            raise ValueError('Door fixture completion gate missing or fixture failed')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        issues.append(str(error))
+    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'barricaded-door',
+            'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
+            'evidence': {'receipt': receipt, 'limits': ['Single-player native toolbar callback; no Host or physical input coverage.']}}
+
+
 def verify(root, selection, catalog):
+    if selection.get('cases') == ['barricaded-door']:
+        return _barricaded_door(root, selection)
     if selection.get('cases') == ['batch']:
         return _batch(root, selection)
     if selection.get('cases') == ['deposit']:
