@@ -217,8 +217,30 @@ getPlayerLoot=function() return page end
 getTexture=function(path) return path end
 getText=function(key) return key end
 local transfers={}
-ISInventoryPane={transferItemsByWeight=function(_,entries) transfers[#transfers+1]=entries;return entries end}
-ISInventoryPaneContextMenu={onMoveItemsTo=function(entries) transfers[#transfers+1]=entries;return entries end}
+local function transferEntries(entries) transfers[#transfers+1]=entries;return entries end
+ISInventoryPane={
+    transferItemsByWeight=function(_,entries) return transferEntries(entries) end,
+    onContext=function(pane) return ISInventoryPaneContextMenu.onMoveItemsTo(Protection.items({pane.items[pane.buttonOption]}), inv, pane.player) end,
+    doGrabOnJoypadSelected=function(pane) return ISInventoryPaneContextMenu.onGrabItems(Protection.items({pane.items[pane.joyselection+1]}), pane.player) end,
+}
+ISInventoryPaneContextMenu={addToolTip=function() return {} end,onMoveItemsTo=function(entries,destination,playerNum)
+    if destination=='floor' then return ISInventoryPaneContextMenu.onDropItems(entries,playerNum) end
+    return transferEntries(entries)
+end}
+for _,name in ipairs({'onGrabItems','onGrabHalfItems','onGrabOneItems','onPutItems','onDropItems'}) do
+    ISInventoryPaneContextMenu[name]=transferEntries
+end
+ISInventoryPaneContextMenu.createMenu=function(playerNum,inInventory,rows)
+    local actual=Protection.items(rows)
+    local child={options={}}
+    for _,name in ipairs({'onGrabItems','onGrabHalfItems','onGrabOneItems','onPutItems','onDropItems'}) do
+        child.options[#child.options+1]={onSelect=ISInventoryPaneContextMenu[name],target=rows}
+    end
+    child.options[#child.options+1]={onSelect=ISInventoryPaneContextMenu.onMoveItemsTo,target=actual}
+    local menu={options={{subOption=1}},getSubMenu=function() return child end}
+    menu.actual,menu.child=actual,child
+    return menu
+end
 ISInventoryPageTransferHandler={canTransferItem=function() return true end}
 local sent={}
 sendClientCommand=function(actor,module,command,args) sent[#sent+1]={actor=actor,module=module,command=command,args=args} end
@@ -232,6 +254,7 @@ end}
 callbacks.OnFillInventoryObjectContextMenu[1](0,menu,{held})
 local option=menu.options[1]
 assert(option.pzstKey=='retainItem' and option.name=='UI_PZSurvivorToolkit_retain_item')
+assert(option.iconTexture=='media/textures/PZSurvivorToolkit/item_retained.png' and option.toolTip.description=='UI_PZSurvivorToolkit_retain_item_tip')
 option.onSelect(option.target,option.param1)
 assert(#sent==1 and sent[1].command=='Set' and sent[1].args.retained and not R.isRetained(held),'menu callback sends request without optimistic mutation')
 local result={request=sent[1].args.request,accepted=1,rejected=0}
@@ -242,12 +265,30 @@ assert(R.isRetained(held) and refreshes==2)
 R.apply(mine,true)
 local mass=ISInventoryPane.transferItemsByWeight({}, {held,mine}, inv)
 assert(#mass==0,'mass pane moves must skip retained items')
-ISMouseDrag={dragging={{items={held,held}}}}
-assert(#ISInventoryPane.transferItemsByWeight({}, {held}, inv)==1,'one explicit drag row may move retained item')
+ISMouseDrag={dragging={{items={held,held}},{items={mine,mine}}}}
+assert(#ISInventoryPane.transferItemsByWeight({}, {held,mine}, inv)==2,'explicit multirow drag may move all retained items')
+assert(#ISInventoryPane.transferItemsByWeight({}, {held}, inv)==1,'narrowed drag callback keeps the same explicit intent')
+local foreign=item(99,inv,{pzstRetained=true})
+assert(#ISInventoryPane.transferItemsByWeight({}, {held,foreign}, inv)==0,'unrelated callback cannot borrow the current drag')
 ISMouseDrag=nil
-assert(#ISInventoryPaneContextMenu.onMoveItemsTo({held,mine},inv,0)==0,'multirow context mass moves skip retention')
-assert(#ISInventoryPaneContextMenu.onMoveItemsTo({held},inv,0)==1,'deliberate single-item context moves remain allowed')
-assert(not ISInventoryPageTransferHandler.canTransferItem(held,inv,player),'CleanUI quick transfers cannot bypass retention')
+assert(#ISInventoryPaneContextMenu.onMoveItemsTo({held,mine},inv,0)==0,'automatic multirow context calls skip retention')
+assert(#ISInventoryPaneContextMenu.onMoveItemsTo({held},inv,0)==0,'automatic one-item Move to Floor also keeps retention')
+local selected={{items={held,held}},{items={mine,mine}}}
+local transferMenu=ISInventoryPaneContextMenu.createMenu(0,false,selected)
+assert(#ISInventoryPaneContextMenu.onMoveItemsTo(transferMenu.actual,inv,0)==2,'menu Move gets its distinct flattened multirow payload')
+assert(#ISInventoryPaneContextMenu.onMoveItemsTo(transferMenu.actual,'floor',0)==2,'selected floor move keeps intent through nested Drop')
+for index=1,5 do
+    local option=transferMenu.child.options[index]
+    assert(#option.onSelect(option.target,0)==2,'manual Grab/Half/One/Put/Drop must keep the selected retained objects')
+end
+assert(#ISInventoryPaneContextMenu.onMoveItemsTo(transferMenu.actual,inv,1)==0,'another player cannot reuse a menu payload')
+transferMenu.actual[#transferMenu.actual+1]=foreign
+assert(#ISInventoryPaneContextMenu.onMoveItemsTo(transferMenu.actual,inv,0)==0,'mutated payload must not bless extra retained objects')
+assert(#ISInventoryPane.onContext({items={selected[1]},buttonOption=1,player=0})==1,'single-row action buttons keep their explicit selection')
+assert(#ISInventoryPane.doGrabOnJoypadSelected({items={selected[1]},joyselection=0,player=0})==1,'controller picks keep their explicit selection')
+assert(#ISInventoryPaneContextMenu.onMoveItemsTo({held},inv,0)==0,'row/controller scopes must not leak to later automatic transfers')
+assert(not ISInventoryPageTransferHandler.canTransferItem(held,inv,player),'CleanUI Transfer All cannot bypass retention')
+assert(R.isRetained(held) and R.isRetained(mine),'manual transfer never clears retained flags')
 local before=ISInventoryPane.transferItemsByWeight;R.install();assert(before==ISInventoryPane.transferItemsByWeight,'pane hooks idempotent')
 assert(R.isContextWrapper(ISInventoryPaneContextMenu,'onMoveItemsTo'))
 local reviewed=ISInventoryPaneContextMenu.onMoveItemsTo
@@ -263,3 +304,74 @@ client,server=false,false
 R.setRetained(0,{held},false)
 assert(not R.isRetained(held),'SP authoritative local edit works')
 print('Retained-item migration, authoritative admission, replay bounds, menu callback, state and transfer hooks passed.')
+
+-- Execute the installed game's actual option builders: Grab uses the original
+-- rows, while the controller's Move submenu uses a separately flattened array.
+if NativeInventoryContextMenuSource then
+    local source=NativeInventoryContextMenuSource:gsub('\r','')
+    local first=assert(source:find('function ISInventoryPaneContextMenu.doGrabMenu(',1,true))
+    local last=assert(source:find('function ISInventoryPaneContextMenu.doEvorecipeMenu(',first,true))
+    assert(loadstring(source:sub(first,last-1),'native retention grab builder'))()
+    first=assert(source:find('local moveItems = ISInventoryPane.getActualItems(items)',1,true))
+    last=assert(source:find('    if tests.animalCorpse then',first,true))
+    local buildMove=assert(loadstring('return function(context,items,player,playerObj,playerInv,isInPlayerInventory,loot)\n'
+        ..source:sub(first,last-1)..'\nend','native retention move builder'))()
+    local function context(rootMenu)
+        local value={options={},root=rootMenu}
+        value.root=value.root or value
+        value.children={}
+        function value:addOption(label,target,callback,param1,param2)
+            local option={name=label,target=target,onSelect=callback,param1=param1,param2=param2}
+            self.options[#self.options+1]=option
+            return option
+        end
+        function value:getNew()
+            local child=context(self.root)
+            child.menuID=#self.root.children+1
+            self.root.children[child.menuID]=child
+            return child
+        end
+        function value:addSubMenu(option,child) option.subOption=child.menuID end
+        function value:getSubMenu(index) return self.root.children[index] end
+        return value
+    end
+    page.inventory=inv
+    inv.isItemAllowed=function() return true end
+    inv.getItems=function() return list({}) end
+    player.getJoypadBind=function() return 0 end
+    player.getWornItems=function() return list({}) end
+    player.getPrimaryHandItem=function() end
+    player.getSecondaryHandItem=function() end
+    isForceDropHeavyItem=function() return false end
+    ISInventoryPane.getActualItems=Protection.items
+    ISInventoryPage={GetFloorContainer=function() return crate end,lootAll=function() end,transferAll=function() end}
+    ISInventoryPaneContextMenu.canUnpack=function() return true end
+    ISInventoryPaneContextMenu.canMoveTo=function() end
+    ISInventoryPaneContextMenu.hasRoomForAny=function() return true end
+    ISInventoryPaneContextMenu.createMenu=function(playerNum,inInventory,rows)
+        local result=context()
+        ISInventoryPaneContextMenu.doGrabMenu(result,rows,playerNum)
+        buildMove(result,rows,playerNum,player,inv,inInventory,page)
+        return result
+    end
+    R.install()
+    R.apply(held,true);R.apply(mine,true);R.apply(worldNested,true)
+    local rows={{items={held,held,mine}},{items={worldNested,worldNested}}}
+    local nativeMenu=ISInventoryPaneContextMenu.createMenu(0,false,rows)
+    for index=1,3 do
+        local option=nativeMenu.options[index]
+        assert(option.target==rows and option.param1==0,'native Grab/One/Half use original rows and player param1')
+        assert(#option.onSelect(option.target,option.param1)==2,
+            'native-built Grab/One/Half callback must retain the registered original row payload')
+    end
+    local child=nativeMenu:getSubMenu(nativeMenu.options[4].subOption)
+    local move=child.options[1]
+    assert(move.target~=rows and #move.target==3 and move.param1==inv and move.param2==0,
+        'native Move submenu uses separately flattened items, destination param1 and player param2')
+    assert(#move.onSelect(move.target,move.param1,move.param2)==3,
+        'native-built Move submenu must register its separate flattened payload')
+    assert(#move.onSelect(move.target,move.param1,1)==0,'native-built Move intent remains bound to its player')
+    assert(#ISInventoryPaneContextMenu.onMoveItemsTo({held,mine,worldNested},inv,0)==0,
+        'a fresh automatic array cannot inherit native menu registration')
+    print('Retention menu registration passed with actual native Grab and Move submenu builders.')
+end

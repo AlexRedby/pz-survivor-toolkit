@@ -44,6 +44,9 @@ function Rows.restoreAnchor(pane, anchor)
             and ((anchor.name and value.name == anchor.name)
                 or (anchor.items[1] and value.items[1] == anchor.items[1]))) then
             pane.firstSelect = index
+            -- This index belongs to the refreshed projection. A later packet
+            -- can refresh again before render rebuilds the old physical map.
+            if pane.items and pane.items[index] ~= value then table.wipe(pane.items) end
             return true
         end
     end)

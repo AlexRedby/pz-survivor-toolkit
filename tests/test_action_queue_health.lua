@@ -592,6 +592,28 @@ local description=PZSurvivorToolkit.ActionQueueDefinitions.describe(display)
 assert(description.signature=='ContextMenu_Remove_Glass' and description.target:find('Doctor / Part ',1,true),'pending medical presentation names the actual treatment and patient/body part')
 assert(description.icon()=='texture:Base.Bandage','medical requests retain a dedicated medical icon without a selected item')
 
+-- Unknown producers still execute natively, but cannot acquire child contracts
+-- and therefore need no membership snapshot of an unrelated long tail.
+do
+    local calls = 0
+    local pending = HealthPanelAction:new(f.player, {
+        isValid = function() return true end,
+        perform = function() calls = calls + 1 end,
+    })
+    local q = f.queue(pending)
+    local tail = f.action(ISReadABook, {item=f.item('Base.BookCarpentry1')})
+    for i = 1, 2048 do q.queue[#q.queue + 1] = tail end
+    q.onCompleted = function(self, current)
+        assert(current == pending)
+        table.remove(self.queue, 1)
+        self.current = self.queue[1]
+    end
+    local visits = assert(loadfile(ProjectRoot..'/tests/support/queue_registry_visits.lua'))()
+    local scanned = visits(q.queue, function() pending:perform() end)
+    assert(scanned == 0 and calls == 1 and #q.queue == 2048 and q.current == tail
+        and not adapter.inspect(pending), 'unknown medical execution must not snapshot the tail or gain a contract')
+end
+
 -- Rebuild against the actual queue stop wrapper, installed before medical class capture.
 local oldFresh=freshHealth
 adapter=oldFresh(nil,true);policy=PZSurvivorToolkit.ActionQueuePolicy
@@ -606,10 +628,21 @@ local bandage=supply('Base.Bandage')
 f.player.inventory.items={bandage}
 f.player.inventory.getItems=function(self)return list(self.items) end
 f.player.inventory.getItemById=function(self,id)for _,item in ipairs(self.items)do if item:getID()==id then return item end end end
+-- Runtime scenarios keep the native queue object registered throughout action
+-- construction and execution. Replacing it afterward deliberately revokes the
+-- operation's settlement ownership and belongs in a separate negative case.
+local function queuedRequest(body, kind, ...)
+    local q = ISTimedActionQueue.getTimedActionQueue(f.player)
+    q:resetQueue()
+    local pending = request(body, kind, ...)
+    local tail = f.action(ISReadABook, {item=f.item('Base.BookCarpentry1')})
+    tail.begin = function() end
+    ISTimedActionQueue.add(pending)
+    ISTimedActionQueue.add(tail)
+    return q, pending, tail
+end
 local wound=wound('HApplyBandage')
-parent=request(wound,'HApplyBandage','Base.Bandage')
-book=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')});book.begin=function()end
-queue=f.queue(parent,book)
+queue,parent,book=queuedRequest(wound,'HApplyBandage','Base.Bandage')
 parent:perform();child=queue.current
 assert(child.Type=='ISApplyBandage' and policy.inspect(child),'real queue expansion captures before starting the child')
 child.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
@@ -620,18 +653,14 @@ assert(queue.toolkitCancelStopped and queue.queue[2]==book,'native stop preserve
 queue:tick()
 assert(queue.current==book and #queue.queue==1,'native queue resumes the original tail after medical stop')
 bandage=supply('Base.Bandage')
-parent=request(wound,'HApplyBandage','Base.Bandage')
-book=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')});book.begin=function()end
-queue=f.queue(parent,book)
+queue,parent,book=queuedRequest(wound,'HApplyBandage','Base.Bandage')
 parent.action={isStarted=function()return false end}
 f.player.inventory.items={}
 assert(not parent:isValid(),'missing future supply invalidates the native parent before starting')
 queue:tick()
 assert(queue.current==book and #queue.queue==1,'Java removal without stop skips only the never-started medical operation')
 bandage=supply('Base.Bandage')
-parent=request(wound,'HApplyBandage','Base.Bandage')
-book=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')});book.begin=function()end
-queue=f.queue(parent,book);parent:perform();child=queue.current
+queue,parent,book=queuedRequest(wound,'HApplyBandage','Base.Bandage');parent:perform();child=queue.current
 child.action={isStarted=function()return false end}
 f.player.inventory.items={}
 queue:tick()
@@ -639,15 +668,25 @@ assert(queue.current==book and #queue.queue==1,'an expanded child invalidated wh
 local nativeWarnings=0
 DebugType={Action={warn=function()nativeWarnings=nativeWarnings+1 end}}
 for _,mode in ipairs({'started','foreign-token'}) do
-    bandage=supply('Base.Bandage');parent=request(wound,'HApplyBandage','Base.Bandage')
-    book=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')});book.begin=function()end
-    queue=f.queue(parent,book);parent:perform();child=queue.current
+    bandage=supply('Base.Bandage')
+    queue,parent,book=queuedRequest(wound,'HApplyBandage','Base.Bandage');parent:perform();child=queue.current
     child.action={isStarted=function()return mode=='started' end}
     if mode=='foreign-token' then child.toolkitQueueOperation=book.toolkitQueueOperation end
     f.player.inventory.items={};queue:tick()
     assert(queue.current==nil and #queue.queue==0,'unstarted recovery cannot bypass native handling of '..mode)
 end
 assert(nativeWarnings==2,'both ineligible recovery cases retain the native reset path')
+-- A real queue replacement revokes the earlier constructor's settlement scope;
+-- preserving an unrelated tail must never borrow a record owned by another queue.
+bandage=supply('Base.Bandage')
+queue,parent,book=queuedRequest(wound,'HApplyBandage','Base.Bandage')
+local previousQueue=queue
+queue=f.queue(parent,book)
+parent.action={isStarted=function()return false end}
+f.player.inventory.items={}
+queue:tick()
+assert(queue~=previousQueue and queue.current==nil and #queue.queue==0 and not wound.covered,
+    'replaced queue cannot reuse stale medical settlement ownership')
 -- Medical handlers can borrow from a root bag that is absent from the UI's equipped-container list.
 local inventory=f.player.inventory
 inventory.class='ItemContainer';inventory.getParent=function()end;inventory.getContainingItem=function()end;inventory.getType=function()return 'inventory' end
@@ -656,9 +695,7 @@ local bag={class='ItemContainer',getType=function()return 'bag' end,getContainin
     getParent=function()end,isExistYet=function()return true end}
 assert(policy.isCarriedContainer(bag,f.player),'an unequipped carried bag remains a valid return destination')
 local bandage=supply('Base.Bandage');bandage.getIsCraftingConsumed=function()return false end
-parent=request(wound,'HApplyBandage','Base.Bandage')
-book=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')});book.begin=function()end
-queue=f.queue(parent,book);parent:perform();child=queue.current
+queue,parent,book=queuedRequest(wound,'HApplyBandage','Base.Bandage');parent:perform();child=queue.current
 child.toolkitQueueOperation.toolkitPickups={[bandage]=bag}
 child.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
 PZSurvivorToolkit.BulkActions.guardTransfer=function()end
@@ -684,9 +721,8 @@ do
     local inventoryUI=getPlayerInventory
     getPlayerInventory=function()return {inventoryPane={inventoryPage={backpacks={{inventory=inventory},{inventory=bag}}}}} end
     local body=part()
-    local pending=request(body,'HApplyBandage','Base.Bandage')
-    local tail=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')});tail.begin=function()end
-    local q=f.queue(pending,tail);pending:perform();getPlayerInventory=inventoryUI
+    local q,pending,tail=queuedRequest(body,'HApplyBandage','Base.Bandage')
+    pending:perform();getPlayerInventory=inventoryUI
     local preparation=q.current
     assert(preparation.Type=='ISInventoryTransferAction' and preparation.item==pendingBandage
         and preparation.srcContainer==bag and preparation.destContainer==inventory,'native medical expansion captures its carried-bag preparation')
@@ -705,7 +741,7 @@ do
     assert(token.toolkitCancelled and not body.covered and q.current.Type=='ISInventoryTransferAction'
         and q.current.item==borrowed and q.current.destContainer==bag and q.queue[2]==tail,
         'never-started native preparation rejection keeps borrowed returns and the unrelated tail')
-    inventory.items=priorItems;ISTimedActionQueue.queues[f.player]=queue
+    inventory.items=priorItems
 end
 owner.getContainer=function()return {} end
 assert(not policy.isCarriedContainer(bag,f.player),'a removed or foreign bag cannot borrow the carried-return permission')
@@ -1142,14 +1178,24 @@ if NativeWishlistWorkshopRoot then
         end
         local oldUI=getPlayerInventory
         if bag then getPlayerInventory=function()return {inventoryPane={inventoryPage={backpacks={{inventory=f.player.inventory},{inventory=bag}}}}}end end
+        local q=f.queue() -- Register before the constructor captures operation ownership.
         local pending=replaceRequest(body)
         local tail=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')});tail.begin=function()end
-        local q=f.queue(pending,tail)
+        q.queue,q.current={pending,tail},pending
         q.onCompleted=function(self,current)
             if PZSurvivorToolkit.ActionQueueOperations.deferCompletion(self,current)then return end
             table.remove(self.queue,1);self.current=self.queue[1]
         end
-        pending:perform();getPlayerInventory=oldUI
+        local scans, nativeIpairs = 0, ipairs
+        ipairs=function(values)
+            if values==q.queue and debug.getinfo(2,'S').source:find('ActionQueueHealth.lua',1,true) then scans=scans+1 end
+            return nativeIpairs(values)
+        end
+        local ok, failure=pcall(pending.perform,pending)
+        ipairs=nativeIpairs
+        getPlayerInventory=oldUI
+        assert(ok,failure)
+        assert(scans==2,'replacement child capture must reuse its ordered discovery instead of scanning the queue again: '..scans)
         return q.queue[1],q.queue[#q.queue-1],pending,q,body,item,tail,bag
     end
     local dirty=clinicalWound('HRemoveBandage')

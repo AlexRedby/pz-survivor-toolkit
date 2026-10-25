@@ -40,6 +40,13 @@ local nativeDropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOf
 local transferItemGuard
 local inspect
 local ordinaryTransfer
+local pendingReturnReason, pendingReturnGuard
+local function pendingReturnTarget(queue, action)
+    return action.Type == "ISInventoryTransferAction" and action.allowMissingItems == true
+        and action.srcContainer == queue.character:getInventory()
+        and action.destContainer ~= action.srcContainer and action ~= queue.current
+        and not action.action and queue:indexOf(action) > 1
+end
 local sharedEditResource
 local targetCheckers = {}
 local targetModules = {world = "ActionQueueWorld", generators = "ActionQueueGenerators"}
@@ -114,6 +121,7 @@ function Policy.cancelReason(queue, action, context)
     if appliance(action) then return Policy.cancelOperationReason(queue, action, context) end
     local contract = inspect and inspect(action, context)
     if contract and contract.cancelOperation == false then return "dependent" end
+    if pendingReturnTarget(queue, action) then return pendingReturnReason(queue, action, context) end
     if action.Type == "ISQueueActionsAction" then
         if not deferredWorld(action) and not (contract and contract.deferred) then return "dependent" end
         return Policy.cancelOperationReason(queue, action, context)
@@ -390,9 +398,14 @@ local function ordinaryTransferContainer(container, character)
         or ItemEditAdapters and type(ItemEditAdapters.worldContainer) == "function"
             and ItemEditAdapters.worldContainer(container, character) ~= nil
 end
-ordinaryTransfer = function(action)
+local function transferHelpersMatch()
     if not transferMethodsAdopted then return true end
     for _, guard in ipairs(transferHelperGuards) do if not guard() then return false end end
+    return true
+end
+ordinaryTransfer = function(action)
+    if not transferHelpersMatch() then return false end
+    if not transferMethodsAdopted then return true end
     return ordinaryTransferContainer(action.srcContainer, action.character)
         and ordinaryTransferContainer(action.destContainer, action.character)
 end
@@ -422,10 +435,17 @@ local function callbacksSafe(action)
             and action.onCompleteFunc == action.toolkitQueueSafeOnComplete and action.toolkitTransferGuard
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, action.toolkitTransferGuard.original)))
 end
-local function nativeMatches(action, snapshot)
+local function nativeMatches(action, snapshot, observingCleanup)
     if getmetatable(action) ~= snapshot.class or action.Type ~= snapshot.class.Type or not callbacksSafe(action) then return false end
     if snapshot.startHelperGuard and not snapshot.startHelperGuard() then return false end
-    if snapshot.class == ISInventoryTransferAction and not ordinaryTransfer(action) then return false end
+    if snapshot.class == ISInventoryTransferAction then
+        if not transferHelpersMatch() then return false end
+        if not ordinaryTransfer(action) and not observingCleanup then
+            local settlement = Toolkit.ActionQueueSettlement
+            if not settlement or type(settlement.isCleanupPickup) ~= "function"
+                or not settlement.isCleanupPickup(action) then return false end
+        end
+    end
     for _, name in ipairs(lifecycle) do
         if action[name] ~= snapshot.methods[name] and not (name == "stop" and action.Type == "ISInventoryTransferAction"
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, snapshot.methods.stop)) then return false end
@@ -446,6 +466,15 @@ function Policy.matchesNative(action)
     local snapshot = snapshots[getmetatable(action)]
     return snapshot ~= nil and nativeMatches(action, snapshot)
 end
+-- Binding verification only: this does not grant queue edit permission. Shared
+-- settlement must separately prove the exact earned drop/current cleanup owner.
+function Policy.matchesCleanupPickupBinding(action)
+    local snapshot = snapshots[getmetatable(action)]
+    return snapshot ~= nil and snapshot.class == ISInventoryTransferAction
+        and action.srcContainer and action.srcContainer:getType() == "floor"
+        and action.destContainer == action.character:getInventory()
+        and nativeMatches(action, snapshot, true)
+end
 local function resources(action)
     local result = {items = {}, itemTypes = {}, targets = {}, cancelWaiting = true, interrupt = "finish-step"}
     for _, field in ipairs({"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}) do
@@ -457,7 +486,7 @@ local function resources(action)
     end
     return result
 end
-local function registerNative(name, inspector, helpers)
+local function registerNative(name, inspector, helpers, applies)
     local class = _G[name]
     if not class or snapshots[class] then return end
     local snapshot = {class = class, methods = {}, helpers = {}}
@@ -469,7 +498,8 @@ local function registerNative(name, inspector, helpers)
     snapshots[class] = snapshot
     Definitions.registerBehavior("native." .. name, {
         types = {name},
-        matches = function(action) return nativeMatches(action, snapshot) end,
+        -- Family-owned native cleanup must not claim unrelated uses of the same class.
+        matches = function(action) return nativeMatches(action, snapshot) and (not applies or applies(action)) end,
         inspect = inspector,
     })
 end
@@ -927,9 +957,15 @@ inspect = function(action, context)
         if context then context.contracts[action] = {} end
         return
     end
-    if not context then return Definitions.inspect(action) end
     local result = {Definitions.inspect(action)}
-    context.contracts[action] = result
+    local settlement = Toolkit.ActionQueueSettlement
+    if result[1] and settlement and settlement.requiredStep(action) then
+        local contract = {}
+        for key, value in pairs(result[1]) do contract[key] = value end
+        contract.cancelOperation, contract.cancelWaiting = false, false
+        result[1] = contract
+    end
+    if context then context.contracts[action] = result end
     return unpack(result, 1, 3)
 end
 Policy.inspect = inspect
@@ -1358,6 +1394,60 @@ local function editCapacityConflict(queue, edit, first, last, to, context)
     end
 end
 
+-- Dropping an automatic return is a deliberate "keep carried" intent, not
+-- cancellation of the body that still needs the borrowed item. Only the exact
+-- earned loan may waive its return; later dependencies/capacity still apply.
+pendingReturnGuard = function(action, reference)
+    if not nativePendingCancelHasNoEffects() or action.forceCancel ~= nativeForceCancel
+        or not callbacksSafe(action) or action.item:getID() ~= reference.id
+        or action.item:getFullType() ~= reference.fullType then return false end
+    local intent = Toolkit.ActionQueueTidyIntent
+    if intent and type(intent.canKeepReturn) == "function" then
+        if not intent.canKeepReturn(action) then return false end
+    elseif P4TidyUpMeister then return false end
+    local groups = action.queueList
+    if groups == nil then return true end
+    if type(groups) ~= "table" or getmetatable(groups) then return false end
+    local count = 0
+    for index in pairs(groups) do if index ~= 1 then return false end; count = count + 1 end
+    if count == 0 then return true end
+    if type(groups[1]) ~= "table" or type(groups[1].items) ~= "table" then return false end
+    count = 0
+    for index, item in pairs(groups[1].items) do
+        if index ~= 1 or item ~= action.item and not (ItemEditAdapters
+            and type(ItemEditAdapters.matchesTransferMember) == "function"
+            and ItemEditAdapters.matchesTransferMember(action, item)) then return false end
+        count = count + 1
+    end
+    return count == 1
+end
+pendingReturnReason = function(queue, action, context)
+    local settlement = Toolkit.ActionQueueSettlement
+    if not settlement or not settlement.canWaivePendingReturn
+        or not settlement.canWaivePendingReturn(action, pendingReturnGuard) then return "dependent" end
+    local index = queue:indexOf(action)
+    local capacity = {first = index, last = index}
+    for otherIndex, other in ipairs(queue.queue) do
+        if other ~= action then
+            if not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
+            if otherIndex > index then
+                local shared = sharedItem(action, other, context)
+                if shared then return "operation_shared_item", nil, nil, other, shared end
+                local conflict = sharedWorldTarget(action, other, context)
+                    or dynamicConflict(action, other, context) or dynamicConflict(other, action, context)
+                if conflict then return "operation_dependent", nil, nil, other, conflict end
+            end
+            local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context)
+            if blocker then return "container_capacity", nil, nil, other, blocker end
+        end
+    end
+end
+function Policy.commitReturnCancellation(action, capability)
+    local settlement = Toolkit.ActionQueueSettlement
+    return settlement and settlement.waivePendingReturn
+        and settlement.waivePendingReturn(capability, action, pendingReturnGuard) or false
+end
+
 function Policy.cancelOperationReason(queue, action, context)
     context = context or {contracts = {}, items = {}}
     context.editFallback = nil
@@ -1691,9 +1781,15 @@ function Policy.evaluateCancel(queue, action, whole)
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
     else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
     reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    local returnWaiver
+    if not reason and not whole and pendingReturnTarget(queue, action) then
+        returnWaiver = Toolkit.ActionQueueSettlement.pendingReturnWaiver(action, pendingReturnGuard)
+        if not returnWaiver then reason = "unavailable" end
+    end
     if not reason and not Policy.editUnchanged(queue, snapshot) then reason = "unavailable" end
     return {allowed = reason == nil, reason = reason, first = first, last = last,
-        mode = queue and action == queue.current and "active" or "pending", blocker = blocker, resource = resource, snapshot = snapshot}
+        mode = returnWaiver and "pending-return" or queue and action == queue.current and "active" or "pending",
+        returnWaiver = returnWaiver, blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
 local function priorityDecision(queue, action, preempt, decide)

@@ -25,7 +25,7 @@ end
 
 local function setup(savedFile, mediaActive, medicineActive, navigatorActive, extraMods)
     local world = { now = 0, squares = {}, objects = {}, saves = 0, file = savedFile or "",
-        itemReads = 0, inspections = 0, maxItemReads = 0, maxInspections = 0 }
+        itemReads = 0, inspections = 0, maxItemReads = 0, maxInspections = 0, gridReads = 0 }
     local function event()
         local handlers = {}
         return { Add = function(handler) handlers[#handlers + 1] = handler end,
@@ -52,7 +52,10 @@ local function setup(savedFile, mediaActive, medicineActive, navigatorActive, ex
     function world.player:isDead() return self.dead end
     getPlayer = function() return world.player end
     local function key(x, y, z) return x .. ":" .. y .. ":" .. z end
-    world.cell = { getGridSquare = function(_, x, y, z) return world.squares[key(x, y, z)] end }
+    world.cell = { getGridSquare = function(_, x, y, z)
+        world.gridReads = world.gridReads + 1
+        return world.squares[key(x, y, z)]
+    end }
     getCell = function() return world.cell end
     local core = { isDoingTextEntry = function(self)
         assert(self ~= nil, "Core.isDoingTextEntry is an instance method")
@@ -795,7 +798,7 @@ end)
 test("both settings groups commit before shared ground cleanup while paused", function()
     local w = setup()
     local options = w:loadWishlist()
-    PZSurvivorWishlist.Client = {isWanted = function() return true end}
+    PZSurvivorWishlist.Client = {hasWanted = function() return true end, isWanted = function() return true end}
     local pile = {}
     for i = 1, 1000 do
         pile[i] = w:add(.5, .5, 0, "Base.Hammer")
@@ -1097,7 +1100,8 @@ test("wishlist highlights only wanted visible loose items and cooperates with To
     local w = setup()
     local wanted, enabled = true, true
     PZSurvivorWishlist = {
-        Client = { isWanted = function(_, fullType) return wanted and fullType == "Base.Hammer" end },
+        Client = { hasWanted = function() return wanted end,
+            isWanted = function(_, fullType) return wanted and fullType == "Base.Hammer" end },
         Settings = { groundEnabled = function() return enabled end,
             color = function() return {r = 0.25, g = 0.85, b = 0.75, a = 1} end },
     }
@@ -1143,7 +1147,10 @@ test("wishlist revisions, colour and enable changes reclassify owned outlines", 
     local list = {revision = 1, entries = { ["Base.Hammer"] = {done = false} }}
     local enabled, colour = true, {r = 0.25, g = 0.85, b = 0.75, a = 1}
     PZSurvivorWishlist = {
-        Client = {isWanted = function(_, fullType)
+        Client = {hasWanted = function()
+            for _, entry in pairs(list.entries) do if not entry.done then return true end end
+            return false
+        end, isWanted = function(_, fullType)
             return list.entries[fullType] and not list.entries[fullType].done
         end},
         Settings = {groundEnabled = function() return enabled end, color = function() return colour end},
@@ -1178,7 +1185,8 @@ test("one scanner retains the separate normal and wanted radii", function()
     local w = setup()
     local enabled = true
     PZSurvivorWishlist = {
-        Client = {isWanted = function(_, fullType) return fullType == "Base.Hammer" end},
+        Client = {hasWanted = function() return true end,
+            isWanted = function(_, fullType) return fullType == "Base.Hammer" end},
         Settings = {groundEnabled = function() return enabled end,
             color = function() return {r = 0.25, g = 0.85, b = 0.75, a = 1} end},
     }
@@ -1211,7 +1219,8 @@ end)
 test("wanted and normal items share the same dense-pile budget", function()
     local w = setup()
     PZSurvivorWishlist = {
-        Client = {isWanted = function(_, fullType) return fullType == "Base.Hammer" end},
+        Client = {hasWanted = function() return true end,
+            isWanted = function(_, fullType) return fullType == "Base.Hammer" end},
         Settings = {groundEnabled = function() return true end,
             color = function() return {r = 0.25, g = 0.85, b = 0.75, a = 1} end},
     }
@@ -1227,6 +1236,114 @@ test("wanted and normal items share the same dense-pile budget", function()
     end
     assert(w.maxItemReads <= 128, "wanted items must not start a second discovery pass")
     assert(w.maxInspections <= 256, "wanted items must not start a second maintenance pass")
+end)
+
+test("movement discovery reuses successful maintenance only within the current tick", function()
+    local w = setup()
+    local pile = {}
+    for i = 1, 16 do pile[i] = w:add(0.5, 0.5, 0, "Base.Hammer") end
+    w:advance(5)
+    for i = 1, 10 do
+        w.player.x = i % 2 == 0 and 0.5 or 1.5
+        w:advance(1)
+        equal(w.itemReads, 16, "movement still discovers the nearby pile on this tick")
+        equal(w.inspections, 16, "overlapping discovery must not re-inspect maintained objects")
+    end
+    pile[1].square.visible[0] = false
+    w:advance(1)
+    for _, object in ipairs(pile) do equal(object:isHighlighted(0), false, "next-tick FOV remains live") end
+    pile[1].square.visible[0] = true
+    w.player.x = 2.5
+    w:advance(1)
+    for _, object in ipairs(pile) do equal(object:isHighlighted(0), true) end
+    pile[1]:setHighlightColor(0, 0.1, 0.2, 0.3, 1)
+    pile[1]:setOutlineHighlightCol(0, 0.1, 0.2, 0.3, 1)
+    w:advance(1)
+    pile[1].square.visible[0] = false
+    w:advance(1)
+    equal(pile[1]:isHighlighted(0), true, "next-tick foreign takeover is never claimed or cleared")
+end)
+
+test("empty authoritative Wishlist does no world work while moving and wakes for new goals", function()
+    local w = setup()
+    w:apply("Enabled", false)
+    w:loadWishlist()
+    Events.OnServerCommand = {Add = function() end}
+    getSpecificPlayer = function(num) if w.player and num == w.player.num then return w.player end end
+    getNumActivePlayers = function() return 1 end
+    isClient = function() return true end
+    sendClientCommand = function() end
+    PZSurvivorWishlist.Service = {username = function() return "local" end}
+    local originalRequire = require
+    require = function() end
+    dofile(client .. "PZSurvivorWishlist/Client.lua")
+    require = originalRequire
+    local C = PZSurvivorWishlist.Client
+    local function snapshot(entries, shared)
+        C.receive(0, {lists = shared and {{id = "shared", owner = "other", entries = entries}}
+            or {{id = "local", owner = "local", entries = entries}}})
+    end
+    local pile = {}
+    for i = 1, 500 do
+        local object = w:add(0.5, 0.5, 0, "Base.Hammer")
+        object.item.getFullType = function() return object.name end
+        pile[i] = object
+    end
+    snapshot({})
+    for i = 1, 120 do
+        w.player.x = i % 2 == 0 and 0.5 or 1.5
+        w:advance(1)
+    end
+    equal(w.gridReads, 0, "empty wanted membership must not query world squares")
+    equal(w.maxItemReads, 0, "empty wanted membership must not discover loose items")
+    equal(w.maxInspections, 0, "empty wanted membership must not inspect items")
+    snapshot({["Base.Hammer"] = {done = false}})
+    w:advance(100)
+    for _, object in ipairs(pile) do equal(object:isHighlighted(0), true) end
+    assert(w.maxItemReads <= 128 and w.maxInspections <= 256, "new goals retain dense-pile budgets")
+    snapshot({["Base.Hammer"] = {done = true}})
+    w:advance(8)
+    equal(w.highlighter.getStatus().highlightedObjects, 0, "completed final goal clears every owned highlight")
+    local reads = w.gridReads
+    w:advance(60)
+    equal(w.gridReads, reads, "completed goals return to idle world workload")
+    snapshot({["Base.Hammer"] = {done = false}}, true)
+    w:advance(100)
+    equal(pile[1]:isHighlighted(0), true, "shared goals wake the scanner without movement")
+    snapshot({}) -- the shared list was revoked
+    w:advance(8)
+    equal(w.highlighter.getStatus().highlightedObjects, 0)
+    reads = w.gridReads
+    w:advance(30)
+    equal(w.gridReads, reads, "revoked final goal returns to idle")
+    local query, outsideNormalRadius = w.cell.getGridSquare, false
+    w.cell.getGridSquare = function(cell, x, y, z)
+        if math.abs(x - math.floor(w.player.x)) > 5 or math.abs(y - math.floor(w.player.y)) > 5 then
+            outsideNormalRadius = true
+        end
+        return query(cell, x, y, z)
+    end
+    w:apply("Radius", 1)
+    w:apply("Enabled", true)
+    w:advance(100)
+    equal(pile[1]:isHighlighted(0), true, "normal highlighting remains independent of empty Wishlist")
+    equal(outsideNormalRadius, false, "empty Wishlist must not expand normal discovery to radius fifteen")
+    w:apply("Enabled", false)
+    w:advance(8)
+    snapshot({["Base.Hammer"] = {done = false}})
+    w:advance(100)
+    Events.OnMainMenuEnter.fire()
+    w:advance(8)
+    equal(C.hasWanted(0), false, "reconnect cannot retain previous-session goals")
+    reads = w.gridReads
+    w:advance(30)
+    equal(w.gridReads, reads)
+    Events.OnGameStart.fire()
+    w:advance(1)
+    equal(C.hasWanted(0), false)
+    snapshot({["Base.Hammer"] = {done = false}})
+    w:advance(100)
+    equal(pile[1]:isHighlighted(0), true, "new session snapshots resume highlighting")
 end)
 
 print("Passed " .. count .. " behavioural tests (Lua 5.1; game rendering remains untested).")

@@ -53,16 +53,21 @@ function Inventory.marks(pane)
 end
 
 function Inventory.draw(pane)
-    if not pane.column3 or not pane.itemHgt or pane.itemHgt <= 0 then return end
-    local texture = getTexture("media/ui/Entity/keep_item_icon.png")
+    if not pane.column2 or not pane.column3 or not pane.itemHgt or pane.itemHgt <= 0 then return end
+    local texture = getTexture("media/textures/PZSurvivorToolkit/item_retained.png")
     if not texture then return end
-    local size = math.max(8, math.min(12, pane.itemHgt - 6))
-    local x = pane.column3 - size - 6
-    if x < 0 then return end
+    -- Pixel-authored lock: keep a square silhouette and whole-pixel placement.
+    local size = math.min(16, math.floor(pane.itemHgt - 4))
+    if size < 12 then return end
     local header, scroll = pane.headerHgt or 0, pane:getYScroll()
     for _, index in ipairs(Inventory.marks(pane)) do
-        local y = header + (index - 1) * pane.itemHgt + (pane.itemHgt - size) / 2
-        if y + scroll >= header and y + scroll + size <= pane.height then
+        local entry = pane.items[index]
+        local group = type(entry) == "table" and entry.items ~= nil
+        -- Expanded children have no item icon. Use that empty gutter rather
+        -- than the end of the name column, where detail bars and values extend.
+        local x = math.floor((group and pane.column3 or pane.column2) - size - 6)
+        local y = math.floor(header + (index - 1) * pane.itemHgt + (pane.itemHgt - size) / 2)
+        if x >= 0 and y + scroll >= header and y + scroll + size <= pane.height then
             pane:drawTextureScaled(texture, x, y, size, size, 1, 1, 1, 1)
         end
     end

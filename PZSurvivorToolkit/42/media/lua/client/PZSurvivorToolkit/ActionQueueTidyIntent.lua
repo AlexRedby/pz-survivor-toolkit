@@ -27,8 +27,65 @@ end
 local function state(player)
     local queue=ISTimedActionQueue.getTimedActionQueue(player)
     local value=states[player]
-    if not value or value.queue~=queue then clear(player);value={queue=queue,pending={},pickups={},hands={},worn={},attached={},activation={},versions={},idle=0};states[player]=value end
+    if not value or value.queue~=queue then clear(player);value={queue=queue,pending={},pickups={},returnIntents={},hands={},worn={},attached={},activation={},versions={},idle=0};states[player]=value end
     return value
+end
+-- A committed return waiver is deliberate inventory intent. Its publication
+-- comes from Settlement's private earned-loan proof, never from a copied flag.
+function Intent.canKeepReturn(action)
+    if not guard then return P4TidyUpMeister == nil end
+    local player=action and action.character
+    local queue=player and ISTimedActionQueue.queues[player]
+    return player and not player:isDead() and getSpecificPlayer(player:getPlayerNum())==player
+        and queue and queue.character==player and getmetatable(action)==ISInventoryTransferAction
+        and action.srcContainer==player:getInventory() and action.destContainer~=action.srcContainer
+        and guard() and guard(action) or false
+end
+function Intent.keepReturn(action,handle)
+    if not guard then return P4TidyUpMeister == nil end
+    if not Intent.canKeepReturn(action) or type(Settlement.returnRetention)~='function' then return false end
+    local retained=Settlement.returnRetention(handle,action)
+    local player=action.character
+    local queue=ISTimedActionQueue.queues[player]
+    local inventory=player:getInventory()
+    if not retained or retained.character~=player or retained.queue~=queue
+        or retained.generation~=(queue.toolkitOperationGeneration or 0)
+        or retained.source~=inventory or retained.source~=action.srcContainer
+        or retained.destination~=action.destContainer or retained.item~=action.item
+        or not instanceof(retained.item,'InventoryItem') or retained.item:getContainer()~=inventory
+        or inventory:getItemById(retained.item:getID())~=retained.item then return false end
+    local owner=retained.owner
+    if owner and (type(owner.id)~='number' or type(owner.fullType)~='string') then return false end
+    local value=state(player)
+    value.returnIntents[retained.item:getID()]={item=identity(retained.item),source=inventory,destination=retained.destination,
+        generation=retained.generation,owner=owner and {id=owner.id,kind=owner.fullType} or nil}
+    return true
+end
+local function keptReturn(player,value,action)
+    local retained=action.item and value.returnIntents[action.item:getID()]
+    if not retained or retained.generation~=(value.queue.toolkitOperationGeneration or 0)
+        or retained.source~=player:getInventory() or action.srcContainer~=retained.source
+        or resolve(player,retained.item)~=action.item then return false end
+    local groups=action.queueList
+    if type(groups)~='table' or #groups~=1 or type(groups[1].items)~='table'
+        or #groups[1].items~=1 then return false end
+    local member=groups[1].items[1]
+    local adapters=PZSurvivorToolkit.ActionQueueItemEditAdapters
+    if member~=action.item and not (adapters and type(adapters.matchesTransferMember)=='function'
+        and adapters.matchesTransferMember(action,member)) then return false end
+    local destination=retained.destination
+    if retained.owner then
+        local holder=player:getInventory():getItemById(retained.owner.id)
+        if not same(holder,retained.owner) then return false end
+        if type(holder.getInventory)=='function' then destination=holder:getInventory()
+        elseif type(holder.getItemContainer)=='function' then destination=holder:getItemContainer()
+        else return false end
+        local policy=PZSurvivorToolkit.ActionQueuePolicy
+        if policy and type(policy.isCarriedContainer)=='function' then
+            if not policy.isCarriedContainer(destination,player) then return false end
+        elseif holder:getContainer()~=player:getInventory() then return false end
+    end
+    return action.destContainer==destination
 end
 local function confirm(record)
     local action,player=record.executor or record.action,record.player
@@ -230,6 +287,8 @@ function Intent.finish(action,phase,succeeded)
             if valid and value and action.srcContainer==player:getInventory() and action.destContainer~=action.srcContainer
                 and not resolve(player,ref) then
                 value.pickups[ref.id]=nil
+                local retained=value.returnIntents[ref.id]
+                if retained and retained.item.kind==ref.kind then value.returnIntents[ref.id]=nil end
                 -- An already-finished intent belongs to this borrowing episode.
                 -- A late receipt cannot protect a later automatic pickup of it.
                 for pending,previous in pairs(value.pending) do
@@ -365,6 +424,10 @@ function Intent.update(player,callback,...)
         if action.character==player and value.queue:indexOf(action)==-1 then transfers[action]=nil end
     end
     for id,ref in pairs(value.pickups) do if not resolve(player,ref) then value.pickups[id]=nil end end
+    for id,retained in pairs(value.returnIntents) do
+        if retained.generation~=(value.queue.toolkitOperationGeneration or 0)
+            or retained.source~=player:getInventory() or not resolve(player,retained.item) then value.returnIntents[id]=nil end
+    end
     local empty=#value.queue.queue==0 and not player:hasTimedActions()
     -- P4 may construct restoration on its first idle callback. Hold that idle
     -- boundary only; active native updates and action timers continue unchanged.
@@ -418,10 +481,25 @@ function Intent.update(player,callback,...)
         if item.IsClothing and item:IsClothing() then return item:getBodyLocation() end
         return item.canBeEquipped and item:canBeEquipped()
     end
+    -- Only the exact guarded P4 return produced in this idle batch can pair
+    -- with a floor relocation. Keep unrelated returns and native equipment work.
+    local retainedReturns,retainedFloors={},{}
+    for _,action in ipairs(actions) do
+        if action.character==player and getmetatable(action)==ISInventoryTransferAction
+            and guard(action) and keptReturn(player,value,action) then
+            retainedReturns[action]=true
+            if type(action.destContainer.getType)=='function' and action.destContainer:getType()=='floor' then
+                retainedFloors[action.item:getID()]=action.item
+            end
+        end
+    end
     local buffered={}
     for _,action in ipairs(actions) do
         local class=getmetatable(action)
         if action.character~=player or not guard(action) then buffered[#buffered+1]=action
+        elseif retainedReturns[action] or class==P4RestoreFloorAction and action.item
+            and retainedFloors[action.item:getID()]==action.item then
+            -- The committed exact return and its paired floor placement were waived.
         elseif override and (class==ISEquipWeaponAction or class==ISUnequipAction
             and (same(action.item,identity(primary)) or same(action.item,identity(secondary)))) then
             -- Rebuild the validated hand group with only the explicit slots overlaid.

@@ -602,19 +602,77 @@ do
     assert(not operations.installVolumeProducer(),'foreign replacement cannot be adopted or wrapped again')
 end
 
--- An unexpected producer error must stay visible without leaving subsequent
--- independent enqueues inside the failed command's insertion boundary.
-reset()
-local broken = operations.command(player, function() error('producer failure sentinel') end, {})
-local untouched = action()
-q.queue, q.current = {broken, untouched}, broken
-local succeeded, failure = pcall(broken.start, broken)
-assert(not succeeded and tostring(failure):find('producer failure sentinel', 1, true))
-assert(not q:isCurrentActionAddingOtherActions(), 'failed expansion retained the native insertion boundary')
-local following = enqueue()
-assert(q.queue[2] == untouched and q.queue[3] == following,
-    'independent enqueue was inserted into the failed producer instead of after the existing tail')
-assert(following.toolkitQueueOperation ~= broken.toolkitQueueOperation)
+-- The same native insertion scope is used by owned and ordinary native commands.
+-- Failure must close it even after children were queued, without treating partial
+-- effects as completion or letting a later independent request inherit ownership.
+PZSurvivorToolkit.Settings.actionQueue = function() return queueEnabled end
+local commandFactories = {
+    toolkit = function(callback) return operations.command(player, callback, {}) end,
+    native = function(callback) return ISQueueActionsAction:new(player, callback) end,
+}
+for kind, factory in pairs(commandFactories) do
+    for _, afterChild in ipairs({false, true}) do
+        reset()
+        local failure, child, completions = {}, nil, 0
+        local broken = factory(function()
+            if afterChild then child = enqueue() end
+            error(failure)
+        end)
+        broken.forceComplete = function() completions = completions + 1 end
+        local untouched = action('IndependentTail')
+        ISTimedActionQueue.add(broken); ISTimedActionQueue.add(untouched)
+        local succeeded, result = pcall(broken.start, broken)
+        assert(not succeeded and result == failure, kind .. ' hid the producer error')
+        assert(completions == 0, kind .. ' completed a failed expansion')
+        assert(not q:isCurrentActionAddingOtherActions() and broken._numAddedActions == nil,
+            kind .. ' retained the native insertion boundary')
+        if child then
+            assert(q.queue[2] == child and child.toolkitQueueOperation == broken.toolkitQueueOperation,
+                kind .. ' rolled back or detached an already-enqueued child')
+        end
+        local following = enqueue()
+        assert(q.queue[#q.queue - 1] == untouched and q.queue[#q.queue] == following,
+            kind .. ' inserted independent work inside the failed producer')
+        assert(following.toolkitQueueOperation ~= broken.toolkitQueueOperation)
+    end
+    reset()
+    local completions = 0
+    local empty = factory(function() end)
+    empty.forceComplete = function() completions = completions + 1 end
+    local untouched = action('IndependentTail')
+    ISTimedActionQueue.add(empty); ISTimedActionQueue.add(untouched)
+    empty:start()
+    assert(completions == 1 and #q.queue == 2 and q.queue[2] == untouched
+        and not q:isCurrentActionAddingOtherActions(), kind .. ' empty success discarded independent work')
+
+    reset()
+    local child, body
+    local parent = factory(function()
+        child = factory(function() body = enqueue() end)
+        child.forceComplete = function() end
+        ISTimedActionQueue.add(child)
+    end)
+    parent.forceComplete = function() end
+    untouched = action('IndependentTail')
+    ISTimedActionQueue.add(parent); ISTimedActionQueue.add(untouched)
+    parent:start()
+    assert(q.queue[2] == child and child.toolkitQueueOperation == parent.toolkitQueueOperation)
+    q:onCompleted(parent)
+    child:start()
+    assert(q.queue[1] == child and q.queue[2] == body and q.queue[3] == untouched
+        and body.toolkitQueueOperation == parent.toolkitQueueOperation
+        and not q:isCurrentActionAddingOtherActions(), kind .. ' nested expansion lost its ordering or ownership')
+end
+-- Disabling controls retains the native empty-expansion stop contract.
+reset(); queueEnabled = false
+local stopped, completed = 0, 0
+local nativeEmpty = ISQueueActionsAction:new(player, function() end)
+nativeEmpty.forceStop = function() stopped = stopped + 1 end
+nativeEmpty.forceComplete = function() completed = completed + 1 end
+ISTimedActionQueue.add(nativeEmpty)
+nativeEmpty:start()
+assert(stopped == 1 and completed == 0, 'disabled queue changed native empty-command semantics')
+queueEnabled = true
 reset()
 
 print('Action operation grouping: native contracts, volume slider/deferred commits and foreign helper guards passed.')

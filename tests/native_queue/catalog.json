@@ -1,6 +1,32 @@
 {
   "schema": 1,
   "suites": {
+    "vehicle-diagnostics": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "PZSurvivorToolkit"
+      ],
+      "cases": [
+        {
+          "id": "controls",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        }
+      ]
+    },
     "health": {
       "status": "ready",
       "scenario_actions": {
@@ -2310,6 +2336,190 @@
         },
         {
           "id": "manual-grass",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        }
+      ]
+    },
+    "cleanup-cancel": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "ZombieBuddy",
+        "PZToolkitJavaPatches",
+        "AnimalTrailerSyncMPFix",
+        "NeatUI_Framework",
+        "MoodleFramework",
+        "CleanUI",
+        "PZSurvivorToolkit",
+        "VHSSkillNameInTooltip",
+        "MPFastForward",
+        "EURY_CONTAINERS",
+        "CleanHotBar",
+        "Neat_Crafting",
+        "Project_Cook",
+        "P4TidyUpMeister",
+        "B42MoodleDescriptionsExpanded",
+        "DetailedDescriptionsForOccupationsAndTraits",
+        "PeekAView",
+        "PZShareMapNotes",
+        "BetterGeneratorInfo",
+        "MapSymbolsPlusDeonHand",
+        "NeatUI_Equipment",
+        "EURY_CLOTHINGINFO",
+        "RainCleansBlood",
+        "Neat_Building_UIOnly",
+        "EatSmartInt",
+        "Drink_Smart",
+        "WashFix",
+        "Neat_Crafting_AddonXP",
+        "Neat_Building_AddonXP",
+        "SmartRadialMenu",
+        "WashOrRot_MP",
+        "GasPumpIndicator",
+        "MiniHealthPlus",
+        "TheShortcut",
+        "TVRadio_ReInvented",
+        "RealisticDash",
+        "Navigator",
+        "SaucedCarts",
+        "saucedwheelbarrow",
+        "saucedwheelbarrow_Craft",
+        "ZombieVisibilityFix",
+        "PlumbedSinkMainsFix",
+        "VanillaVehiclesAnimated",
+        "AnimatedVehiclePartsFix",
+        "CarRoofFix",
+        "NepHighBeams",
+        "ReverseDriveLights",
+        "ArcheryNexus",
+        "WildernessProgressionArcheryNexusCompanion",
+        "EURY_DST",
+        "Ivmakk_ForagingTooltipExtended",
+        "CustomLightSwitch",
+        "NicksTurnOffFridges",
+        "VehicleRepairOverhaul",
+        "VehicleSalvageOverhaulB42"
+      ],
+      "scenario_actions": {
+        "earned-native-cleanup": {
+          "mods": [
+            "ZombieBuddy",
+            "PZToolkitJavaPatches",
+            "AnimalTrailerSyncMPFix",
+            "NeatUI_Framework",
+            "MoodleFramework",
+            "CleanUI",
+            "PZSurvivorToolkit",
+            "VHSSkillNameInTooltip",
+            "MPFastForward",
+            "EURY_CONTAINERS",
+            "CleanHotBar",
+            "Neat_Crafting",
+            "Project_Cook",
+            "P4TidyUpMeister",
+            "B42MoodleDescriptionsExpanded",
+            "DetailedDescriptionsForOccupationsAndTraits",
+            "PeekAView",
+            "PZShareMapNotes",
+            "BetterGeneratorInfo",
+            "MapSymbolsPlusDeonHand",
+            "NeatUI_Equipment",
+            "EURY_CLOTHINGINFO",
+            "RainCleansBlood",
+            "Neat_Building_UIOnly",
+            "EatSmartInt",
+            "Drink_Smart",
+            "WashFix",
+            "Neat_Crafting_AddonXP",
+            "Neat_Building_AddonXP",
+            "SmartRadialMenu",
+            "WashOrRot_MP",
+            "GasPumpIndicator",
+            "MiniHealthPlus",
+            "TheShortcut",
+            "TVRadio_ReInvented",
+            "RealisticDash",
+            "Navigator",
+            "SaucedCarts",
+            "saucedwheelbarrow",
+            "saucedwheelbarrow_Craft",
+            "ZombieVisibilityFix",
+            "PlumbedSinkMainsFix",
+            "VanillaVehiclesAnimated",
+            "AnimatedVehiclePartsFix",
+            "CarRoofFix",
+            "NepHighBeams",
+            "ReverseDriveLights",
+            "ArcheryNexus",
+            "WildernessProgressionArcheryNexusCompanion",
+            "EURY_DST",
+            "Ivmakk_ForagingTooltipExtended",
+            "CustomLightSwitch",
+            "NicksTurnOffFridges",
+            "VehicleRepairOverhaul",
+            "VehicleSalvageOverhaulB42"
+          ],
+          "scope": "Current full selected pack, disposable macOS SP/menu Host. Real BulkFood/native eat mask removal and native onLiteratureItems borrowed First Aid book pickup/read/allowMissing return. Toolkit public per-operation cancellation after confirmed preparation preserves the exact borrowed-item/mask cleanup before an independent reader; original P4 hands/activation restore retains native idle-session timing and is required at final idle. Queue-off controls execute unchanged producers to natural native/P4 completion. Exact item/container, worn/hands, food portion/paid borrowed pages, native lifecycle and authority evidence; programmatic native entrypoints, no physical input.",
+          "checks": {
+            "server-authority": {
+              "mask-after-removal": {
+                "authoritative": true,
+                "cleanupRestored": true,
+                "tailCompleted": true
+              },
+              "p4-after-pickup": {
+                "authoritative": true,
+                "cleanupRestored": true,
+                "tailCompleted": true
+              }
+            },
+            "cancel-active": {
+              "mask-after-removal": {
+                "cancelled": true,
+                "cleanupBeforeTail": true
+              },
+              "p4-after-pickup": {
+                "cancelled": true,
+                "cleanupBeforeTail": true
+              }
+            }
+          },
+          "toolkit_only": [
+            "cancel-active"
+          ]
+        }
+      },
+      "cases": [
+        {
+          "id": "mask-after-removal",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ],
+          "languages": [
+            "EN"
+          ]
+        },
+        {
+          "id": "p4-after-pickup",
           "producer": "fixture",
           "capability": "effect",
           "kinds": [

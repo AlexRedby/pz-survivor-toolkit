@@ -75,17 +75,40 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="start", warmUp=true, strictMatch=true)
+    public static class RemoteActionStarted {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action) {
+            ActionCompletion.nativeStarted(action, Main.COMPLETION_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="update", warmUp=true, strictMatch=true)
+    public static class RemoteActionUpdate {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action) {
+            return ActionCompletion.skipNativeUpdate(action, Main.COMPLETION_SUPPORTED);
+        }
+    }
+
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="perform", warmUp=true, strictMatch=true)
     public static class ActionPerformed {
         @Patch.OnEnter
         public static void enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
                 @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope) {
             scope = MainSupport.beginPerformed(action);
+            if (scope == null && ActionCompletion.needsNativeWaitObservation(action, Main.COMPLETION_SUPPORTED))
+                scope = ActionCompletion.observeOnly(action, "perform");
+            ActionCompletion.captureNativePerform(action, scope);
         }
         @Patch.OnExit(onThrowable=Throwable.class)
         public static void exit(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
                 @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
-            MainSupport.performed(action, scope, failure);
+            try {
+                MainSupport.performed(action, scope, failure);
+            } finally {
+                ActionCompletion.nativePerformed(action, scope, failure);
+            }
         }
     }
 
@@ -323,6 +346,15 @@ public final class Main {
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
             @Patch.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
             MainSupport.bindCartSlot(slot, source);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="init", strictMatch=true)
+    public static class VehicleTransitionSlot {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
+            @Patch.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
+            VehicleTransitionRender.capture(slot, source, VehicleTransitionRender.SUPPORTED);
         }
     }
 

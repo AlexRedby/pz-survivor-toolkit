@@ -143,6 +143,37 @@ local function finish(menu, selected)
     menu:setWidth(menu:calcWidth())
 end
 
+-- Native repair parents are created before mods filter the available recipes.
+-- Inspect the completed source tree, before organization saves it for restoration.
+local function removeEmptyRepairs(menu, repairLabel, visited)
+    if visited[menu] ~= nil then return visited[menu] end
+    visited[menu] = true
+    local selected, changed, hasContent = menu.options[menu.mouseOver], false, false
+    for index = #menu.options, 1, -1 do
+        local option = menu.options[index]
+        local child = option.subOption and menu:getSubMenu(option.subOption)
+        local childHasContent = child and removeEmptyRepairs(child, repairLabel, visited)
+        local name = option.name
+        local repair = type(name) == "string" and (name == repairLabel
+            or name:sub(1, #repairLabel + 1) == repairLabel .. " ")
+        if repair and not option.onSelect and not option.isDefaultOption and not option.isTitle
+            and child and not childHasContent then
+            child:hideAndChildren()
+            if menu.subMenu == child then menu.subMenu = nil end
+            table.remove(menu.options, index)
+            if menu.optionPool then menu.optionPool[#menu.optionPool + 1] = option end
+            if selected == option then selected, menu.mouseOver = nil, -1 end
+            changed = true
+        elseif not option.isDefaultOption and not option.isTitle then
+            -- Disabled choices still explain their material and skill requirements.
+            hasContent = true
+        end
+    end
+    if changed then finish(menu, selected) end
+    visited[menu] = hasContent
+    return hasContent
+end
+
 local function removeAncestors(menu)
     local options = {}
     for _, option in ipairs(menu.options) do
@@ -449,11 +480,16 @@ end
 
 function Organizer.organize(root)
     if busy or not root or (root.parent and root.parent.options) or root.toolkitContextSkip then return end
-    if not PZSurvivorToolkit.Settings.contextMenus() then restore(root); return end
+    if not PZSurvivorToolkit.Settings.contextMenus() then
+        restore(root)
+        removeEmptyRepairs(root, getText("ContextMenu_Repair"), {})
+        return
+    end
     if root.toolkitContextState then
         if root.toolkitContextTagRevision == currentTagRevision() then return end
         restore(root)
     end
+    removeEmptyRepairs(root, getText("ContextMenu_Repair"), {})
     Organizer.ensureLoaded()
     Organizer.refreshTagSamples()
     refreshMenuTags(root)

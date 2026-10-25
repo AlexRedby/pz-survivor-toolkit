@@ -78,6 +78,10 @@ def verify(root, selection, catalog):
                     or any(type(value) is not int for value in row['ids']) or len(set(row['ids'])) != 4):
                 raise ValueError(role + ': missing or invalid retention/transfer evidence')
             evidence[role] = row
+            if not reload:
+                multiple = receipts.records(text, MARKER, 'MULTIPLE')
+                if multiple != [dict(role=role, ids=[row['ids'][0], row['ids'][3]], retained=True)]:
+                    raise ValueError(role + ': missing exact manual multi-item transfer evidence')
             if MARKER + 'FAIL ' in text:
                 raise ValueError(role + ': failure marker')
             if role != 'server' and not complete(selection, role, text):

@@ -217,12 +217,16 @@ PZSurvivorToolkit.ItemRetention.isRetained = function(x) return x.stuck end
 local stuck, ordinary, favorite = w.item('Stack', 2), w.item('Other', 1), w.item('Favorite', 1)
 stuck.stuck, favorite.favorite = true, true
 w.nearby(w.container())
-ISMouseDrag.dragging = {stuck, ordinary}
+ISMouseDrag.dragging = {stuck, ordinary, favorite}
 plan = D.plan(pane, {stuck, ordinary, favorite}, w.target)
-assert(not plan.accepted[stuck] and plan.accepted[ordinary] and not plan.accepted[favorite],
-    'mixed drag protects Stick and favorites')
+assert(plan.accepted[stuck] and plan.accepted[ordinary] and not plan.accepted[favorite],
+    'manual mixed drag may move retained items while preserving favorites')
 ISMouseDrag.dragging = {{items = {stuck, stuck}}, ordinary}
-assert(not D.plan(pane, {stuck}, w.target).accepted[stuck], 'a narrowed callback must retain original mixed drag intent')
+assert(D.plan(pane, {stuck}, w.target).accepted[stuck], 'a narrowed callback preserves original manual mixed drag intent')
+ISMouseDrag.dragging = {ordinary}
+assert(not D.plan(pane, {stuck}, w.target).accepted[stuck], 'foreign callbacks cannot borrow an unrelated drag')
+ISMouseDrag.dragging = nil
+assert(not D.plan(pane, {stuck}, w.target).accepted[stuck], 'automatic deposit preserves retained items')
 ISMouseDrag.dragging = {{items = {stuck, stuck}}}
 assert(D.plan(pane, {stuck}, w.target).accepted[stuck], 'original explicit row permits its Stick item')
 ISMouseDrag.dragging = {favorite}
@@ -455,7 +459,7 @@ local function checkSelectedStockAffinity(native)
     local incoming = world.item('Incoming', 1, 'Food')
     stuck.stuck = true; tagged.values = {stuck}
     world.nearby(fallback, tagged)
-    ISMouseDrag.dragging = {stuck, incoming}
+    ISMouseDrag.dragging = nil
     -- Toolkit's installed transfer wrapper removes this protected item before BC.
     local executionItems = native and {incoming} or {stuck, incoming}
     world.queued = {}; world.pane():transferItemsByWeight(executionItems, world.target)

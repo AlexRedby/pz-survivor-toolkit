@@ -80,31 +80,16 @@ Version 0.1.10 repairs an occupied vehicle whose physics owner disagrees with it
 
 Install the same updated Java mod on the server and clients, save the changed JAR approval and restart them. The repair needs ZombieBuddy **in the Host child/server process**; check `vehicleOwnership=true` and the server's actual `zombie.vehicles.BaseVehicle` transformation.
 
-**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. `-Dpz.vehicle.trace=true` only enables logs; it is not a server INI, sandbox or Mod Options setting. Add it to the Java options of the server and every client for one diagnostic run.
+**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. After updating the matching Toolkit and Java Patches on clients and Host, use **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics**:
 
-**macOS Host:** from the prepared folder, a process-local setting reaches the host player and child server:
+- **Record traces on this client** starts or stops this player's recording immediately.
+- **Record traces on the Host server** starts or stops the child server's recording without restarting it. Only the actual Host owner's server connection is authorized. The checkbox waits for a server reply and reports a timeout instead of assuming success. Other players keep their own local recording controls.
 
-```sh
-JDK_JAVA_OPTIONS=-Dpz.vehicle.trace=true ./start-host.command
-```
+Closing the window keeps both recordings running. There is no time or record-count cutoff. Switches are transient; process restart returns to off unless the optional legacy `-Dpz.vehicle.trace=true` startup flag is still present. No JVM flag is needed for the UI workflow. An older or unavailable Java patch on either side is reported in the window; installing a changed JAR still requires the normal one-time update/restart and approvals.
 
-**Windows Host:** append `"-Dpz.vehicle.trace=true"` to the existing `vmArgs` array in the game's `ProjectZomboid64.json` for the host player, keeping the loader and other arguments. Enable the child server flag only for this launch in PowerShell:
+Traces are UTF-8 files under the current cache/profile, normally `Zomboid/Logs/PZToolkitVehicleTrace/`: `client/vehicle-sync.log`, `server/vehicle-sync.log`, or `sp/vehicle-sync.log`. The read-only field below each checkbox shows its absolute path. The Host child shares the owner's profile but uses its separate `server` folder. Each file rotates before exceeding 5 MiB; `.1` is the newest backup and `.4` the oldest, keeping five files / 25 MiB per side. Re-enabling or restarting appends to existing files; rotation discards the oldest history. Keep the current file and all four backups from the server and affected clients together. Do not use simultaneous processes with the same profile and side folder.
 
-```powershell
-$previousVehicleOptions = $env:JDK_JAVA_OPTIONS
-try {
-    $env:JDK_JAVA_OPTIONS = ($previousVehicleOptions + ' -Dpz.vehicle.trace=true').Trim()
-    powershell -NoProfile -ExecutionPolicy Bypass -File .\start-host.ps1 -Game "D:\SteamLibrary\steamapps\common\ProjectZomboid"
-} finally {
-    $env:JDK_JAVA_OPTIONS = $previousVehicleOptions
-}
-```
-
-`JDK_JAVA_OPTIONS` reaches the child Java launcher; the Windows native client uses its own JSON `vmArgs`, so configure both. **Other clients and dedicated servers:** append the same `-D` property to their JVM arguments (or JSON `vmArgs`) alongside the existing loader, before the Java main class. Restart every affected process. On macOS/Linux Steam clients, include it before the final `--` in the existing Java launch options; the supplied macOS Host helper uses the environment command above instead.
-
-After collecting one run, remove the flag from persistent JVM/JSON/Steam options and restart. The process-local Host environment settings above do not persist between terminal sessions.
-
-`[VEHICLE_SYNC]` lines contain the side, vehicle/local-player/driver/owner IDs, authority, position, towing links, sent/received physics samples and server acceptance. `repair` records the previous authority and the new owner. Tracing is off by default; enabled runs stop after ten minutes from the first occupied/owned vehicle or 5,000 lines, sample each event/vehicle at most once per second, and retain at most 256 sampling keys. Preserve the host/server and both client logs together. The trace does not change packets or vehicle state.
+`[VEHICLE_SYNC]` samples contain side, vehicle/local-player/driver/owner IDs, authority, position, towing links, sent/received physics samples and server acceptance. `repair` records the previous authority and the new owner. Samples go only to these rotated files, avoiding an unbounded duplicate in console/DebugLog; console notices report recording starts, stops and I/O failures. Recording flushes samples and closes the stream when stopped. An I/O failure reports `error` without repeated retry spam; correct the underlying file/disk problem and explicitly enable recording again. Sampling retains the once-per-second limit per event/vehicle and up to 256 recent sampling keys, reusing expired slots as vehicles change. It does not change packets or vehicle state.
 
 The native regression command checks the original handoff failure, reconciliation guards, idempotency, towing ownership and disabled/enabled trace bounds, alongside the existing Java patch regressions. The vehicle-recovery candidate was validated before integration with the fluid-name guard, using an isolated macOS B42.21 Host test with two connected clients and a child `GameServer -coop`, with microphone capture disabled. It reproduces the authority loss through a controlled collision/entry/release ordering. With the repair, the guest then drives 25.5 tiles with accepted server physics and matching poses on all three processes. Separate live checks cover towing/untowing and driver/passenger seat handoffs. The affected user save, spontaneous incidence and real WAN loss remain separate verification limits.
 

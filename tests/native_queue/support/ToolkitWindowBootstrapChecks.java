@@ -1,11 +1,49 @@
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.instruction.InvokeInstruction;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
 /** No GLFW initialization or native window creation; run with JDK 25. */
 public final class ToolkitWindowBootstrapChecks {
+    private static void visibilityChecks() throws Exception {
+        Path directory = Files.createTempDirectory("toolkit-window-visibility-");
+        Path gate = directory.resolve("visible.txt");
+        Path target = directory.resolve("target.txt");
+        String token = "123:456";
+        try {
+            if (ToolkitWindowBootstrap.visibleAcknowledged(gate, token)) throw new AssertionError("Missing visibility token accepted");
+            Files.writeString(gate, token + "\n");
+            if (!ToolkitWindowBootstrap.visibleAcknowledged(gate, token)) throw new AssertionError("Owned visibility token rejected");
+            for (String invalid : new String[] {"", "123:456", "999:456\n", "123:999\n", "123:456:current\n", "123:456\nextra", "x".repeat(300)}) {
+                Files.writeString(gate, invalid);
+                rejectVisibility(gate, token);
+            }
+            Files.delete(gate);
+            Files.writeString(target, token + "\n");
+            Files.createSymbolicLink(gate, target);
+            rejectVisibility(gate, token);
+            Files.delete(gate);
+            Files.createDirectory(gate);
+            rejectVisibility(gate, token);
+        } finally {
+            Files.deleteIfExists(gate);
+            Files.deleteIfExists(target);
+            Files.deleteIfExists(directory);
+        }
+    }
+
+    private static void rejectVisibility(Path gate, String token) throws Exception {
+        try {
+            ToolkitWindowBootstrap.visibleAcknowledged(gate, token);
+            throw new AssertionError("Invalid visibility acknowledgement accepted: " + gate);
+        } catch (IllegalStateException expected) {
+            // Files exist atomically; any unexpected content or nonregular input is fatal.
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         if (!System.getProperty("os.name").startsWith("Mac")
                 || System.getProperty("toolkit.test.windowGate") == null) {
@@ -37,7 +75,8 @@ public final class ToolkitWindowBootstrapChecks {
             }));
         }
         var expected = Map.of("glfwDefaultWindowHints", 1, "glfwShowWindow", 2,
-            "glfwFocusWindow", 1, "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2);
+            "glfwFocusWindow", 1, "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2,
+            "glfwPollEvents", 1);
         if (!calls.equals(expected)) throw new AssertionError("Unexpected hooks: " + calls);
         byte[] changed = original.clone();
         changed[changed.length - 1] ^= 1;
@@ -55,6 +94,7 @@ public final class ToolkitWindowBootstrapChecks {
         try (var stream = ClassLoader.getSystemResourceAsStream("org/lwjglx/opengl/Display.class")) {
             if (!Arrays.equals(original, stream.readAllBytes())) throw new AssertionError("Class resource changed");
         }
-        System.out.println("PASS exact hooks, verifier, unknown fingerprint rejection, agent definition, original resource preserved; GLFW not initialized");
+        visibilityChecks();
+        System.out.println("PASS exact hooks, verifier, unknown fingerprint rejection, agent definition, original resource preserved, fail-closed visibility tokens; GLFW not initialized");
     }
 }

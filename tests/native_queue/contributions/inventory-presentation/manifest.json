@@ -51,7 +51,11 @@
     "[INVENTORY_SCREEN] WISHLIST vanilla calls=1 borders=1 target=visible bounds=true",
     "[INVENTORY_SCREEN] WISHLIST clean-again calls=1 borders=1 target=visible bounds=true",
     "[INVENTORY_SCREEN] WISHLIST rows-disabled calls=1 borders=0 target=visible bounds=true",
-    "[INVENTORY_SCREEN] WISHLIST_SETUP_RESTORED state=true rows=true renderer=true"
+    "[INVENTORY_SCREEN] WISHLIST_SETUP_RESTORED state=true rows=true renderer=true",
+    "[INVENTORY_SCREEN] HIDDEN_REFRESH clean discovery=true aggregate=true rows=deferred count=deferred",
+    "[INVENTORY_SCREEN] HIDDEN_REOPEN clean rows=fresh count=fresh pending=false",
+    "[INVENTORY_SCREEN] HIDDEN_REFRESH vanilla discovery=true aggregate=true rows=deferred count=deferred",
+    "[INVENTORY_SCREEN] HIDDEN_REOPEN vanilla rows=fresh count=fresh pending=false"
   ],
   "completion_marker": "[INVENTORY_SCREEN] COMPLETE",
   "failure_marker": "[INVENTORY_SCREEN] FAIL"

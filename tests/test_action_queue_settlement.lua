@@ -1268,6 +1268,187 @@ local function pickupFixture(client, ids)
     end
     return s
 end
+-- Explicitly cancelling one pending return retains the exact earned item while
+-- the body keeps running. Later body cancellation cannot recreate that return.
+local function pendingReturnFixture(client, unearned)
+    local s = pickupFixture(client)
+    assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+    s.movePickup(1)
+    if not unearned then assert(s.finishPickup(true)) end
+    s.current.Type = 'ISReadABook'
+    local action = {Type = 'ISInventoryTransferAction', character = s.player, toolkitQueueOperation = s.token,
+        item = s.members[1], srcContainer = s.root, destContainer = s.source, allowMissingItems = true}
+    s.settlement.track(s.current, 'body'); s.settlement.track(action, 'body')
+    s.queue.current, s.queue.queue = s.current, {s.current, action, s.tail}
+    PZSurvivorToolkit.ActionQueuePolicy.matchesNative = function(value) return value == action and s.nativeLive ~= false end
+    s.returnGuard = function(value, member)
+        return s.returnGuardLive ~= false and value == action and member.id == 181 and member.fullType == 'Base.Test'
+    end
+    s.pendingReturn = action
+    return s
+end
+for _, client in ipairs({false, true}) do
+    local s = pendingReturnFixture(client)
+    local action = s.pendingReturn
+    local handle = s.settlement.pendingReturnWaiver(action, s.returnGuard)
+    assert(handle and s.settlement.canWaivePendingReturn(action, s.returnGuard)
+        and s.settlement.operationState(s.current).borrowings[1].state == 'active',
+        'preview must not waive an earned obligation')
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard))
+    assert(not s.settlement.waivePendingReturn(handle, action, s.returnGuard)
+        and not s.settlement.pendingReturnWaiver(action, s.returnGuard), 'the exact loan can be waived only once')
+    assert(s.queue.current == s.current and s.queue.queue[2] == action and s.root.items[181] == action.item
+        and action.item:getContainer() == s.root and s.counts() == 0,
+        'waiving a loan must not schedule, remove, transfer or release any native work')
+    table.remove(s.queue.queue, 2)
+    assert(s.settlement.operationState(s.current).borrowings[1].state == 'waived')
+    s.token.toolkitCancelled = true
+    assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+    assert(s.counts() == 0 and s.queue.queue[2] == s.tail and s.root.items[181] == action.item,
+        'later cancellation must not resurrect a waived loan from its legacy pickup hint')
+end
+-- A committed keep intent crosses to the existing restoration integration only
+-- at the synchronous private boundary; neither preview nor history can replay it.
+for _, client in ipairs({false, true}) do
+    local s = pendingReturnFixture(client)
+    local action = s.pendingReturn
+    local handle = s.settlement.pendingReturnWaiver(action, s.returnGuard)
+    assert(not s.settlement.returnRetention({}, action) and not s.settlement.returnRetention(handle, action))
+    local oldIntent = PZSurvivorToolkit.ActionQueueTidyIntent
+    local receipt, calls
+    calls = 0
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        calls = calls + 1
+        assert(actual == action and capability == handle)
+        assert(not s.settlement.returnRetention(capability, s.current))
+        receipt = assert(s.settlement.returnRetention(capability, actual))
+        assert(not s.settlement.returnRetention(capability, actual), 'a committed keep receipt is one-use')
+        return true
+    end}
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard))
+    assert(calls == 1 and receipt.character == action.character and receipt.queue == s.queue
+        and receipt.generation == (s.queue.toolkitOperationGeneration or 0)
+        and receipt.item == action.item and receipt.source == s.root and receipt.destination == action.destContainer)
+    assert(not s.settlement.returnRetention(handle, action)
+        and not s.settlement.waivePendingReturn(handle, action, s.returnGuard),
+        'a historical waiver cannot re-arm a later restoration session')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
+for _, failure in ipairs({'reject', 'error'}) do
+    local s = pendingReturnFixture(false)
+    local action = s.pendingReturn
+    local handle = s.settlement.pendingReturnWaiver(action, s.returnGuard)
+    local oldIntent = PZSurvivorToolkit.ActionQueueTidyIntent
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        assert(s.settlement.returnRetention(capability, actual))
+        if failure == 'error' then error('fixture unavailable integration') end
+        return false
+    end}
+    assert(not s.settlement.waivePendingReturn(handle, action, s.returnGuard)
+        and s.settlement.operationState(s.current).borrowings[1].state == 'active'
+        and s.queue.queue[2] == action and s.counts() == 0,
+        'unavailable restoration integration must not partially waive/remove the return')
+    assert(not s.settlement.returnRetention(handle, action))
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        return s.settlement.returnRetention(capability, actual) ~= nil
+    end}
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard), 'failed publication must preserve the usable original cancellation')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
+for _, client in ipairs({false, true}) do
+    local s = pendingReturnFixture(client, true)
+    assert(not s.settlement.canWaivePendingReturn(s.pendingReturn, s.returnGuard)
+        and not s.settlement.pendingReturnWaiver(s.pendingReturn, s.returnGuard),
+        'physical possession alone cannot waive an unearned native borrowing')
+end
+for _, client in ipairs({false, true}) do
+    for _, mutation in ipairs({'native', 'guard', 'guard-error', 'started', 'native-start', 'step-start', 'required',
+        'shared', 'destination', 'source', 'item', 'actor', 'generation', 'queue', 'removed', 'stop', 'token-stop', 'copy'}) do
+        local s = pendingReturnFixture(client)
+        local action = s.pendingReturn
+        local handle = s.settlement.pendingReturnWaiver(action, s.returnGuard)
+        assert(handle)
+        if mutation == 'native' then s.nativeLive = false
+        elseif mutation == 'guard' then s.returnGuardLive = false
+        elseif mutation == 'guard-error' then s.returnGuard = function() error('changed guard') end
+        elseif mutation == 'started' then action.started = true
+        elseif mutation == 'native-start' then action.action = {}
+        elseif mutation == 'step-start' then s.settlement.started(action)
+        elseif mutation == 'required' then
+            PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+            local preparation = s.settlement.track(s.pickup, 'prepare')
+            assert(s.settlement.cleanup(action, preparation))
+        elseif mutation == 'shared' then
+            s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {items = {[181] = true}})
+        elseif mutation == 'destination' then action.destContainer = {}
+        elseif mutation == 'source' then action.srcContainer = {}
+        elseif mutation == 'item' then action.item = s.item(181, s.root); s.root.items[181] = action.item
+        elseif mutation == 'actor' then action.character = {}
+        elseif mutation == 'generation' then s.queue.toolkitOperationGeneration = 1
+        elseif mutation == 'queue' then ISTimedActionQueue.queues[s.player] = {character = s.player, queue = {}}
+        elseif mutation == 'removed' then table.remove(s.queue.queue, 2)
+        elseif mutation == 'stop' then s.queue.toolkitGroupCancel = {}
+        elseif mutation == 'token-stop' then s.token.toolkitCancelled = true
+        elseif mutation == 'copy' then local copied = {}; for key, value in pairs(action) do copied[key] = value end; action = copied end
+        assert(not s.settlement.waivePendingReturn(handle, action, s.returnGuard), mutation .. ': stale capability must not waive')
+        local state = s.settlement.operationState(s.current)
+        assert(not state or state.borrowings[1].state == 'active', mutation .. ': rejection altered its earned loan')
+        assert(s.counts() == 0, mutation .. ': rejection must not construct cleanup')
+    end
+end
+for _, client in ipairs({false, true}) do
+    local s = pendingReturnFixture(client)
+    local oldReturn = s.pendingReturn
+    local handle = s.settlement.pendingReturnWaiver(oldReturn, s.returnGuard)
+    assert(not s.settlement.waivePendingReturn({}, oldReturn, s.returnGuard)
+        and not s.settlement.waivePendingReturn(handle, oldReturn, function() return true end),
+        'neither a fabricated handle nor another caller proof can waive a borrowing')
+    assert(s.settlement.waivePendingReturn(handle, oldReturn, s.returnGuard))
+    -- A separate later native departure and pickup opens a genuinely new loan.
+    -- Its fresh receipt must earn cleanup independently of the old user intent.
+    local value = oldReturn.item
+    s.root.items[181], s.source.items[181], value.container = nil, value, s.source
+    local pickup = {Type = 'ISInventoryTransferAction', character = s.player, toolkitQueueOperation = s.token,
+        item = value, srcContainer = s.source, destContainer = s.root, action = {}, transactionId = 91,
+        queueList = {{items = {value}}}}
+    s.settlement.remember(s.scope, pickup, {knownInputs = true, items = {[181] = true}})
+    assert(s.settlement.preparePickup(s.scope, pickup))
+    s.queue.current, s.queue.queue = pickup, {pickup, s.current, s.tail}
+    assert(s.settlement.beginPickup(s.scope, pickup, s.guard))
+    s.source.items[181], s.root.items[181], value.container = nil, value, s.root
+    pickup.queueList, pickup.transactionId = {}, 0
+    assert(s.settlement.finishPickup(s.scope, pickup, true))
+    s.queue.current, s.queue.queue = s.current, {s.current, s.tail}
+    local state = s.settlement.operationState(s.current)
+    assert(state.borrowings[1].state == 'waived' and state.borrowings[2].state == 'active',
+        'the old intent must not contaminate a distinct earned borrowing')
+    assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+    assert(s.counts() == 1 and s.queue.queue[2].item == value and s.queue.queue[3] == s.tail,
+        'a fresh exact loan needs its own required return despite the historical waiver')
+end
+for _, client in ipairs({false, true}) do
+    local s = pendingReturnFixture(client)
+    local secondItem = s.item(182, s.source); s.source.items[182] = secondItem
+    local second = {Type = 'ISInventoryTransferAction', character = s.player, toolkitQueueOperation = s.token,
+        item = secondItem, srcContainer = s.source, destContainer = s.root, action = {}, transactionId = 19,
+        queueList = {{items = {secondItem}}}}
+    s.settlement.remember(s.scope, second, {knownInputs = true, items = {[182] = true}})
+    assert(s.settlement.preparePickup(s.scope, second))
+    s.queue.current, s.queue.queue = second, {second, s.current, s.pendingReturn, s.tail}
+    assert(s.settlement.beginPickup(s.scope, second, s.guard))
+    s.source.items[182], s.root.items[182], secondItem.container = nil, secondItem, s.root
+    second.queueList, second.transactionId = {}, 0
+    assert(s.settlement.finishPickup(s.scope, second, true))
+    s.queue.current, s.queue.queue = s.current, {s.current, s.pendingReturn, s.tail}
+    local handle = s.settlement.pendingReturnWaiver(s.pendingReturn, s.returnGuard)
+    assert(handle and s.settlement.waivePendingReturn(handle, s.pendingReturn, s.returnGuard))
+    table.remove(s.queue.queue, 2)
+    assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+    assert(s.counts() == 1 and s.queue.queue[2].item == secondItem and s.queue.queue[3] == s.tail,
+        'waiving one loan must preserve required settlement for another exact item')
+    assert(s.settlement.operationState(s.current).borrowings[1].state == 'waived'
+        and s.settlement.operationState(s.current).borrowings[2].state == 'active')
+end
 local function assertOwnership(s, expected, owners, shared)
     local facts = s.settlement.returnOwnership(s.returnObligation)
     assert(#facts == #s.members, 'ownership diagnostics must retain every observed native member')
@@ -1537,4 +1718,500 @@ for _,client in ipairs({false,true}) do
     assertOwnership(s,{'completed'},{s.token})
 end
 next = savedNext
-print('Shared settlement: effect-bound pickup ownership, exact native attempts and no effect replay passed.')
+-- Persistent phases require the exact native receipt and its observed effect,
+-- never source membership. Diagnostics and copied handles grant no authority.
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'completed', 'rejected', 'unobserved', 'different-action', 'copied', 'reset'}) do
+        local s = setup(client)
+        PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+        local removal, restore = s.action(), s.action()
+        removal.action = {}
+        s.queue.current, s.queue.queue = removal, {removal, s.current, restore, s.tail}
+        if client then
+            removal.toolkitNativeTransaction, removal.toolkitNativeKind = 51, 'ISUnequipAction'
+            s.receipt(removal, 'started')
+        end
+        local handle = s.settlement.track(removal, 'prepare')
+        assert(handle == s.settlement.track(removal, 'body'), 'enqueue cannot replace the reviewed preparation role')
+        assert(s.settlement.cleanup(restore, handle))
+        local other = s.action(); other.action = {}
+        local proof = s.settlement.captureEffect(outcome == 'different-action' and other or removal)
+        if outcome ~= 'different-action' then assert(s.settlement.bindEffect(handle, proof)) end
+        local credit = handle
+        if outcome == 'copied' then credit = {}; for key, value in pairs(handle) do credit[key] = value end end
+        if outcome == 'reset' then s.queue.toolkitOperationGeneration = 1 end
+        if client then s.receipt(removal, outcome == 'rejected' and 'rejected' or 'completed') end
+        local earned = s.settlement.earn(credit, proof, outcome ~= 'unobserved')
+        assert(earned == (outcome == 'completed' or not client and outcome == 'rejected'),
+            outcome .. ': effect proof must belong to the original live step')
+        if earned or outcome ~= 'unobserved' then
+            assert(not s.settlement.earn(credit, proof, true), 'an earned or invalid step cannot be credited twice')
+        end
+        if outcome ~= 'reset' then
+            local state = s.settlement.operationState(removal)
+            assert(state.steps[1].phase == 'prepare')
+            state.steps[1].state = 'earned' -- value copy cannot pay the real obligation
+            s.queue.current, s.queue.queue = s.current, {s.current, restore, s.tail} -- source removal is already pruned
+            local request = {action = s.current, token = s.token}
+            assert(s.settlement.finish(s.queue, request, s.discard))
+            assert((s.queue.queue[2] == restore) == earned,
+                outcome .. ': only a confirmed preparation retains restoration after source pruning')
+            assert(s.queue.queue[#s.queue.queue] == s.tail)
+            assert(not s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard),
+                'a new request object cannot settle the same operation twice')
+        else
+            assert(not s.settlement.operationState(removal), 'a reset permanently retires the old operation seal')
+            assert(not s.settlement.track(s.current, 'body'), 'an old token cannot acquire a new generation')
+        end
+    end
+end
+
+-- The independent tail waits for late authority AND exact replication. A
+-- rejected preparation is isolated; missing authority times out without replay.
+for _, outcome in ipairs({'completed', 'rejected', 'timeout'}) do
+    local s = setup(true)
+    local removal = s.action(); removal.action = {}
+    s.queue.current, s.queue.queue = removal, {removal, s.current, s.tail}
+    removal.toolkitNativeTransaction, removal.toolkitNativeKind = 52, 'ISUnequipAction'
+    s.receipt(removal, 'started')
+    local handle = s.settlement.track(removal, 'prepare')
+    local proof = s.settlement.captureEffect(removal)
+    assert(s.settlement.bindEffect(handle, proof))
+    s.queue.current, s.queue.queue = s.current, {s.current, s.tail}
+    s.queue.toolkitGroupCancel = {action = s.current, token = s.token}
+    assert(s.settlement.cancellationState(s.queue, s.current) == 'waiting')
+    assert(not s.settlement.finish(s.queue, s.queue.toolkitGroupCancel, s.discard)
+        and s.queue.queue[2] == s.tail and s.counts() == 0,
+        'an uncertain preparation cannot schedule cleanup or release its tail')
+    if outcome == 'timeout' then
+        s.advance(30001)
+        assert(s.settlement.cancellationState(s.queue, s.current) == 'failed')
+    else
+        s.receipt(removal, outcome)
+        if outcome == 'completed' then
+            assert(s.settlement.cancellationState(s.queue, s.current) == 'waiting',
+                'authority alone cannot stand in for exact local replication')
+            assert(s.settlement.earn(handle, proof, true))
+        end
+        assert(s.settlement.cancellationState(s.queue, s.current) == 'ready')
+    end
+end
+
+-- Cancellation planning consumes the exact earned P4 episode. A legacy hint
+-- may not resurrect an already-returned, shared, rejected or unresolved pickup.
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs(client and {'earned', 'shared', 'returned', 'rejected', 'unresolved'}
+        or {'earned', 'shared', 'returned', 'unresolved'}) do
+        local s = pickupFixture(client)
+        if outcome == 'shared' then
+            s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {items = {[181] = true}})
+        end
+        if client and outcome == 'rejected' then s.transaction.done, s.transaction.rejected = false, true end
+        assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
+        if outcome ~= 'unresolved' and outcome ~= 'rejected' then s.movePickup(1) end
+        assert(s.finishPickup(true))
+        if outcome == 'returned' then s.makeReturn(); s.completeReturn() end
+        s.queue.current, s.queue.queue = s.current, {s.current, s.tail}
+        s.token.toolkitCancelled = true
+        local request = {action = s.current, token = s.token}
+        s.queue.toolkitGroupCancel = request
+        if outcome == 'unresolved' then
+            assert(s.settlement.cancellationState(s.queue, s.current) == 'waiting')
+            s.advance(30001)
+            assert(s.settlement.cancellationState(s.queue, s.current) == 'failed')
+        else
+            assert(s.settlement.finish(s.queue, request, s.discard), outcome .. ': isolated cancellation must settle')
+            local n = s.counts()
+            assert(n == (outcome == 'earned' and 1 or 0), outcome .. ': only exclusively earned borrowing creates a return')
+            assert(s.queue.queue[#s.queue.queue] == s.tail)
+            if outcome == 'earned' then
+                local action = s.queue.queue[2]
+                s.queue.current = action; table.remove(s.queue.queue, 1)
+                action.action, action.transactionId = {}, 80
+                action.queueList = {{items = {action.item}}}
+                s.transaction.done, s.transaction.rejected = true, false
+                assert(s.settlement.beginPlannedReturn(action, s.guard))
+                assert(s.settlement.requiredStep(action))
+                local copy = {}; for key, value in pairs(action) do copy[key] = value end
+                assert(not s.settlement.requiredStep(copy), 'copied cleanup presentation cannot acquire required ownership')
+                action.queueList, action.transactionId = {}, 0
+                assert(s.settlement.finishPlannedReturn(action, true))
+                assert(s.settlement.completionState(s.queue, action) == 'waiting',
+                    'retokenized return cannot release its tail before exact endpoint replication')
+                s.root.items[181], s.members[1].container, s.source.items[181] = nil, s.source, s.members[1]
+                assert(s.settlement.completionState(s.queue, action) == 'ready')
+                assert(s.settlement.operationState(s.current).borrowings[1].state == 'completed',
+                    'native return receipt retires the same borrowed episode')
+            end
+        end
+    end
+end
+-- The common observer must see a real start, successful callback, exact live
+-- effect and (in Host) sealed receipt, even on the normal non-cancelled path.
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'completed', 'rejected', 'missing-start', 'unmarked', 'callback-failure', 'changed-guard', 'timeout', 'empty'}) do
+        local s = setup(client)
+        local observer, transfers
+        PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(_, _, value) transfers = value end}
+        PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+        local action = s.action(); action.Type, action.action = 'ISUnequipAction', {}
+        s.queue.current, s.queue.queue = action, {action, s.tail}
+        local guard, changed, captures = true, false, 0
+        local handle = s.settlement.observePreparation(action, {
+            guard = function(value) return value == action and guard end,
+            capture = function() captures = captures + 1; if outcome ~= 'empty' then return {original = true} end end,
+            observed = function(_, before) assert(before.original); return changed end,
+        })
+        assert(handle and observer and transfers and not s.settlement.earned(handle))
+        local restore = s.action(); restore.Type = 'ISQueueActionsAction'
+        assert(s.settlement.cleanupAfter(restore, {handle}))
+        if outcome ~= 'missing-start' then s.settlement.started(action); observer.started(action) end
+        if client and outcome ~= 'unmarked' then
+            action.toolkitNativeTransaction, action.toolkitNativeKind = 71, action.Type
+            s.receipt(action, 'started')
+        end
+        observer.begin(action, 'perform')
+        changed = true
+        if outcome == 'changed-guard' then guard = false end
+        observer.finish(action, 'perform', outcome ~= 'callback-failure')
+        if not client then observer.finish(action, 'complete', outcome ~= 'callback-failure') end
+        if outcome == 'changed-guard' then guard = false end
+        if client and outcome ~= 'unmarked' then
+            if outcome ~= 'timeout' then s.receipt(action, outcome == 'rejected' and 'rejected' or 'completed')
+            else s.advance(30001) end
+        end
+        local expected = outcome == 'empty' and 'ready'
+            or (outcome == 'completed' or not client and (outcome == 'rejected' or outcome == 'timeout' or outcome == 'unmarked')) and 'ready'
+            or client and outcome == 'rejected' and 'ready' or 'failed'
+        assert(s.settlement.completionState(s.queue, action) == expected, outcome .. ': normal continuation proof gate')
+        local earned = expected == 'ready' and outcome ~= 'empty' and not (client and outcome == 'rejected')
+        assert(s.settlement.earned(handle) == earned, outcome .. ': only actual preparation earns restoration')
+        assert(captures == (outcome == 'missing-start' and 0 or 1))
+        local copy = {}; for key, value in pairs(handle) do copy[key] = value end
+        assert(not s.settlement.earned(copy))
+        s.queue.current, s.queue.queue = restore, {restore, s.tail}
+        local child = s.action(); child.Type = 'ISEquipWeaponAction'
+        assert(s.settlement.inheritCleanup(child, restore) == earned)
+        assert(s.settlement.requiredStep(child) == earned)
+        s.queue.toolkitOperationGeneration = 1
+        assert(not s.settlement.earned(handle) and not s.settlement.requiredStep(child))
+    end
+end
+
+-- A late Host terminal and its exact local effect gate NORMAL continuation too.
+do
+    local s = setup(true)
+    local observer
+    PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+    PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+    local action = s.action(); action.Type, action.action = 'ISUnequipAction', {}
+    s.queue.current, s.queue.queue = action, {action, s.tail}
+    local observed = false
+    local handle = s.settlement.observePreparation(action, {guard = function() return true end,
+        capture = function() return {} end, observed = function() return observed end})
+    s.settlement.started(action); observer.started(action)
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 72, action.Type
+    observer.begin(action, 'perform'); observer.finish(action, 'perform', true)
+    assert(s.settlement.completionState(s.queue, action) == 'waiting')
+    s.receipt(action, 'started'); s.receipt(action, 'completed')
+    assert(s.settlement.completionState(s.queue, action) == 'waiting' and not s.settlement.earned(handle))
+    observed = true
+    assert(s.settlement.completionState(s.queue, action) == 'ready' and s.settlement.earned(handle))
+end
+
+-- Normal and cancelled cleanup consume the same private borrowing episode.
+-- Scheduling a return is not payment and cannot schedule it a second time.
+for _, client in ipairs({false, true}) do
+    for _, cancelled in ipairs({false, true}) do
+        local s = setup(client)
+        s.root.isExistYet = function() return true end
+        local observer, events
+        PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(_, _, value) events = value end}
+        PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+        ISTimedActionQueue.add = function(action) table.insert(s.queue.queue, 2, action) end
+        local value = s.item(191, s.source); s.source.items[191] = value
+        local pickup = s.action()
+        pickup.Type, pickup.action, pickup.item = 'ISInventoryTransferAction', {}, value
+        pickup.srcContainer, pickup.destContainer = s.source, s.root
+        pickup.queueList, pickup.transactionId = {{items = {value}}}, 21
+        s.queue.current, s.queue.queue = pickup, {pickup, s.current, s.tail}
+        local handle = s.settlement.observePreparation(pickup, {guard = function(action) return action == pickup end,
+            capture = function() return {source = s.source} end, observed = function() return value.container == s.root end})
+        assert(handle)
+        s.settlement.started(pickup); observer.started(pickup)
+        assert(events.begin(pickup))
+        pickup.queueList, pickup.transactionId = {}, 0
+        assert(events.finish(pickup, true))
+        assert(s.settlement.completionState(s.queue, pickup) == 'waiting')
+        s.source.items[191], s.root.items[191], value.container = nil, value, s.root
+        assert(s.settlement.completionState(s.queue, pickup) == 'ready' and s.settlement.earned(handle))
+        local restoration = s.action(); restoration.Type = 'ISQueueActionsAction'
+        assert(s.settlement.cleanupAfter(restoration, {handle}))
+        if cancelled then
+            s.queue.current, s.queue.queue = s.current, {s.current, restoration, s.tail}
+            assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+            assert(s.queue.queue[2] == restoration and s.queue.queue[3].Type == 'ISInventoryTransferAction')
+            s.queue.current = restoration; table.remove(s.queue.queue, 1)
+            assert(not s.settlement.enqueueBorrowedReturn(handle), 'retained command must not duplicate a planned return')
+        else
+            s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
+            local foreign = {character = s.player, toolkitQueueOperation = {}, Type = 'ISQueueActionsAction'}
+            local foreignEffect = {character = s.player, toolkitQueueOperation = foreign.toolkitQueueOperation, action = {}}
+            s.queue.current, s.queue.queue = foreignEffect, {foreignEffect, s.tail}
+            local foreignHandle = s.settlement.track(foreignEffect, 'prepare')
+            local receipt = s.settlement.captureEffect(foreignEffect)
+            if client then
+                foreignEffect.toolkitNativeTransaction, foreignEffect.toolkitNativeKind = 81, 'ISUnequipAction'
+                s.receipt(foreignEffect, 'started'); receipt = s.settlement.captureEffect(foreignEffect)
+                s.receipt(foreignEffect, 'completed')
+            end
+            assert(s.settlement.earn(foreignHandle, receipt, true))
+            assert(s.settlement.cleanup(foreign, foreignHandle))
+            s.queue.current, s.queue.queue = foreign, {foreign, s.tail}
+            assert(not s.settlement.enqueueBorrowedReturn(handle), 'an unrelated required command cannot consume another operation borrowing')
+            s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
+            local action = s.settlement.enqueueBorrowedReturn(handle)
+            assert(action and s.settlement.requiredStep(action) and action.toolkitQueueOperation == s.token)
+            assert(not s.settlement.enqueueBorrowedReturn(handle))
+        end
+        assert(s.counts() == 1 and value.container == s.root,
+            'return scheduling must not synthesize item transfer or spend a confirmed borrowing')
+        assert(s.settlement.operationState(pickup).borrowings[1].state == 'active')
+    end
+end
+
+-- P4 sees synchronous enqueue first. Family preparation must reuse its exact
+-- borrowing episode, including P4's foreign-task claims and transaction history.
+for _, client in ipairs({false, true}) do
+    for _, shared in ipairs({false, true}) do
+        local s = pickupFixture(client)
+        local observer, listeners = nil, {}
+        ISInventoryTransferAction = {}
+        setmetatable(s.pickup, ISInventoryTransferAction)
+        PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(callback, canObserve, events)
+            listeners[#listeners + 1] = {callback = callback, events = events}
+        end}
+        PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+        PZSurvivorToolkit.ActionQueuePolicy.matchesNative = s.guard
+        PZSurvivorToolkit.ActionQueuePolicy.isOrdinaryTransfer = function() return true end
+        ISTimedActionQueue.add = function(action) table.insert(s.queue.queue, 2, action) end
+        local constructor = ISInventoryTransferUtil.newInventoryTransferAction
+        ISInventoryTransferUtil.newInventoryTransferAction = function(...)
+            local action = constructor(...)
+            action.action, action.transactionId, action.queueList = {}, 71, {{items = {action.item}}}
+            return setmetatable(action, ISInventoryTransferAction)
+        end
+        local function event(name, action, ...)
+            local accepted = false
+            for _, listener in ipairs(listeners) do
+                local callback = listener.events and listener.events[name]
+                if callback and callback(action, ...) then accepted = true end
+            end
+            return accepted
+        end
+        local function merge(action)
+            event('merging', action)
+            for _, listener in ipairs(listeners) do listener.callback(action) end
+        end
+        if shared then
+            local reader = {character = s.player, toolkitQueueOperation = {}}
+            assert(s.settlement.remember(s.scope, reader, {knownInputs = true, items = {[181] = true}}))
+        end
+        local handle = s.settlement.observePreparation(s.pickup, {guard = s.guard,
+            capture = function() return {source = s.source} end,
+            observed = function() return s.members[1].container == s.root end})
+        assert(handle and #s.settlement.operationState(s.pickup).borrowings == 1,
+            'family observation duplicated the P4 native pickup episode')
+        s.settlement.started(s.pickup); observer.started(s.pickup)
+        assert(event('begin', s.pickup)); merge(s.pickup)
+        s.movePickup(1)
+        s.pickup.queueList, s.pickup.transactionId = {}, 0
+        assert(event('finish', s.pickup, true))
+        assert(s.settlement.completionState(s.queue, s.pickup) == 'ready' and s.settlement.earned(handle))
+        local state = s.settlement.operationState(s.pickup)
+        assert(#state.borrowings == 1 and state.borrowings[1].state == 'active',
+            'shared observers did not earn one exact native pickup')
+        local restoration = s.action(); restoration.Type = 'ISQueueActionsAction'
+        assert(s.settlement.cleanupAfter(restoration, {handle}))
+        s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
+        local returning = s.settlement.enqueueBorrowedReturn(handle)
+        assert(not s.settlement.enqueueBorrowedReturn(handle), 'one pickup scheduled a duplicate return')
+        if shared then
+            assert(not returning and s.counts() == 0,
+                'family observation lost P4 foreign-task ownership and created an exclusive return')
+        else
+            assert(returning and s.counts() == 1 and s.queue.queue[2] == returning,
+                'the single shared native pickup must schedule one exact return')
+            s.queue.current, s.queue.queue = returning, {returning, s.tail}
+            assert(event('begin', returning)); merge(returning)
+            local value = s.members[1]
+            s.root.items[181], s.source.items[181], value.container = nil, value, s.source
+            returning.queueList, returning.transactionId = {}, 0
+            assert(event('finish', returning, true))
+            assert(s.settlement.completionState(s.queue, returning) == 'ready')
+            state = s.settlement.operationState(s.pickup)
+            assert(#state.borrowings == 1 and state.borrowings[1].state == 'completed' and s.counts() == 1,
+                'the shared pickup and return did not close one exact borrowing episode')
+        end
+    end
+end
+
+-- A stale or changed pre-enqueue binding cannot be replaced with a fresh claim.
+for _, changed in ipairs({'source', 'generation', 'retired'}) do
+    local s = pickupFixture(false)
+    PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function() return true end}
+    PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+    if changed == 'source' then s.pickup.srcContainer = {}
+    elseif changed == 'generation' then s.scope.generation = s.scope.generation + 1
+    else s.settlement.close(s.scope) end
+    assert(not s.settlement.observePreparation(s.pickup, {guard = s.guard,
+        capture = function() return {} end, observed = function() return true end}),
+        changed .. ': a mismatched existing pickup acquired preparation proof')
+    assert(#s.settlement.operationState(s.pickup).borrowings == 1,
+        changed .. ': rejecting reuse created a replacement borrowing episode')
+end
+
+-- Floor cleanup is an earned-drop capability, not a generic floor edit grant.
+-- Native transfer authority and exact replication still gate the following work.
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'completed', 'unearned', 'wrong-world', 'different-item', 'changed-binding', 'rejected', 'timeout', 'reset'}) do
+        local s = setup(client)
+        s.root.isExistYet = function() return true end
+        s.source.getType = function() return 'floor' end
+        local observer
+        PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+        local value = s.item(211, s.root);s.root.items[211] = value
+        local world, square = {}, {}
+        world.getItem = function() return value end
+        world.getSquare = function() return square end
+        square.getWorldObjects = function() return {contains = function(_, item) return item == world end} end
+        value.getWorldItem = function() return world end
+        local drop = s.action();drop.Type, drop.action, drop.item = 'ISDropWorldItemAction', {}, value
+        s.queue.current, s.queue.queue = drop, {drop, s.tail}
+        local handle = s.settlement.observePreparation(drop, {guard = function() return true end,
+            capture = function() return {square = square} end, observed = function() return value.container == s.source end})
+        s.settlement.started(drop);observer.started(drop)
+        if client then drop.toolkitNativeTransaction,drop.toolkitNativeKind = 75,drop.Type;s.receipt(drop,'started') end
+        observer.begin(drop,'perform')
+        s.root.items[211],s.source.items[211],value.container = nil,value,s.source
+        if outcome ~= 'unearned' then
+            if client then s.receipt(drop,'completed') end
+            observer.finish(drop,client and 'perform' or 'complete',true)
+            assert(s.settlement.earned(handle))
+        end
+        local parent = s.action();parent.Type = 'ISQueueActionsAction'
+        assert(s.settlement.cleanup(parent,handle))
+        s.queue.current,s.queue.queue = parent,{parent,s.tail}
+        local action = s.action();action.Type,action.action,action.item = 'ISInventoryTransferAction',{},value
+        action.srcContainer,action.destContainer,action.queueList,action.transactionId = s.source,s.root,{{items={value}}},19
+        local policy=PZSurvivorToolkit.ActionQueuePolicy
+        policy.inspect=function(current)
+            if current.Type == 'ISInventoryTransferAction' then return s.settlement.isCleanupPickup(current) and {} or nil end
+            return {}
+        end
+        policy.matchesCleanupPickupBinding=function(current) return outcome~='changed-binding' and current==action end
+        policy.matchesNative=function(current) return s.settlement.isCleanupPickup(current) end
+        policy.isOrdinaryTransfer=function() return false end
+        if outcome=='wrong-world' then world.getSquare=function() return {} end end
+        if outcome=='different-item' then action.item=s.item(212,s.source);action.item.getWorldItem=function() return world end end
+        local allowed=outcome~='unearned' and outcome~='wrong-world' and outcome~='different-item' and outcome~='changed-binding'
+        assert(s.settlement.observeCleanupTransfer(action,parent)==allowed,outcome..': only exact earned floor recovery may be observed')
+        assert(s.settlement.isCleanupPickup(action)==allowed)
+        local copy={};for key,v in pairs(action)do copy[key]=v end
+        assert(not s.settlement.isCleanupPickup(copy),'copied safe fields cannot authorize a floor pickup')
+        if allowed then
+            s.queue.current,s.queue.queue=action,{action,s.tail}
+            if outcome=='rejected' and client then s.transaction.done,s.transaction.rejected=false,true end
+            assert(s.settlement.beginPlannedReturn(action,policy.matchesNative))
+            action.queueList,action.transactionId={},0
+            assert(s.settlement.finishPlannedReturn(action,true))
+            if outcome=='reset' then
+                s.queue.toolkitOperationGeneration=1
+                assert(not s.settlement.isCleanupPickup(action) and not s.settlement.requiredStep(action)
+                    and not s.settlement.operationState(action) and not s.settlement.plannedReturnMatches(action))
+            elseif outcome=='rejected' and client then
+                assert(s.settlement.completionState(s.queue,action)=='ready','a rejected native cleanup is isolated, never replayed')
+            else
+                assert(s.settlement.completionState(s.queue,action)=='waiting','native completion alone cannot replace replica proof')
+                if outcome=='timeout' then s.advance(30001);assert(s.settlement.completionState(s.queue,action)=='failed')
+                else
+                    s.source.items[211],s.root.items[211],value.container=nil,value,s.root
+                    assert(s.settlement.completionState(s.queue,action)=='ready')
+                    local state=s.settlement.operationState(action)
+                    local step=state.steps[#state.steps]
+                    assert(step.phase=='cleanup' and step.state=='earned' and step.plannedTransfer and step.transferDirection=='pickup')
+                    assert(#state.borrowings==0,'recovering a grounded bag must not borrow it back from the floor')
+                end
+            end
+        end
+    end
+end
+
+-- A source container can be reidentified only through its private exact owner
+-- after native pickup replaces that bag's Java/container replica.
+for _, client in ipairs({false,true}) do
+    for _, ownerState in ipairs({'replaced','different-type','not-carried','missing'})do
+        local s=setup(client)
+        s.root.isExistYet=function()return true end
+        local oldOwner=s.item(221,s.root);oldOwner.fullType='Base.Bag_Schoolbag'
+        oldOwner.getInventory=function()return s.source end
+        s.source.getContainingItem=function()return oldOwner end
+        s.root.items[221]=oldOwner
+        local value=s.item(222,s.source);s.source.items[222]=value
+        local pickup=s.action();pickup.Type,pickup.action,pickup.item='ISInventoryTransferAction',{},value
+        pickup.srcContainer,pickup.destContainer,pickup.queueList,pickup.transactionId=s.source,s.root,{{items={value}}},20
+        local scope=s.settlement.deferred(s.player,s.token)
+        assert(s.settlement.remember(scope,pickup,{knownInputs=true,items={[222]=true}}))
+        assert(s.settlement.preparePickup(scope,pickup))
+        local handle=s.settlement.track(pickup,'prepare')
+        s.queue.current,s.queue.queue=pickup,{pickup,s.tail}
+        local guard=function()return true end
+        assert(s.settlement.beginPickup(scope,pickup,guard))
+        s.source.items[222],s.root.items[222],value.container=nil,value,s.root
+        pickup.queueList,pickup.transactionId={},0
+        assert(s.settlement.finishPickup(scope,pickup,true) and s.settlement.earned(handle))
+        local fresh={items={},carried=ownerState~='not-carried',isExistYet=function()return true end}
+        fresh.getItemById=function(self,id)return self.items[id]end
+        local owner=s.item(221,s.root);owner.fullType=ownerState=='different-type' and 'Base.Bag_Other' or 'Base.Bag_Schoolbag'
+        owner.getInventory=function()return fresh end
+        s.root.items[221]=ownerState~='missing' and owner or nil
+        local parent=s.action();parent.Type='ISQueueActionsAction'
+        PZSurvivorToolkit.ActionQueuePolicy.inspect=function()return {}end
+        assert(s.settlement.cleanup(parent,handle))
+        s.queue.current,s.queue.queue=parent,{parent,s.tail}
+        ISTimedActionQueue.add=function(action)table.insert(s.queue.queue,2,action)end
+        if ownerState=='replaced' then
+            -- A cancelled workout cannot return its prop while its bag is still
+            -- on the ground. Its retained restoration later recovers that owner.
+            s.root.items[221]=nil
+            s.queue.current,s.queue.queue=s.current,{s.current,parent,s.tail}
+            assert(s.settlement.finish(s.queue,{action=s.current,token=s.token},s.discard))
+            assert(s.counts()==0 and s.queue.queue[2]==parent)
+            s.root.items[221]=owner
+            s.queue.current,s.queue.queue=parent,{parent,s.tail}
+            local child={Type='ISQueueActionsAction',character=s.player,toolkitQueueOperation=parent.toolkitQueueOperation}
+            assert(s.settlement.remember(scope,child,{knownInputs=true,items={[222]=true}}))
+            assert(not s.settlement.enqueueBorrowedReturn(handle),'an unproved new-token claim remains shared')
+            assert(s.settlement.inheritCleanup(child,parent))
+        end
+        local action=s.settlement.enqueueBorrowedReturn(handle)
+        assert((action~=nil)==(ownerState=='replaced'),ownerState..': source owner proof must remain exact and carried')
+        if action then
+            assert(action.destContainer==fresh and action.destContainer~=s.source)
+            s.queue.current,s.queue.queue=action,{action,s.tail}
+            action.action,action.transactionId,action.queueList={},21,{{items={value}}}
+            assert(s.settlement.beginPlannedReturn(action,guard))
+            s.root.items[222],fresh.items[222],value.container=nil,value,fresh
+            action.queueList,action.transactionId={},0
+            assert(s.settlement.finishPlannedReturn(action,true))
+            assert(s.settlement.completionState(s.queue,action)=='ready')
+            assert(s.settlement.operationState(pickup).borrowings[1].state=='completed')
+        end
+    end
+end
+
+print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')

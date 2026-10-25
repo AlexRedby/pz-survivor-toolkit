@@ -17,6 +17,20 @@ local function find(menu,key)
   if option.subOption then local sub=menu:getSubMenu(option.subOption);local value=sub and find(sub,key);if value then return value end end
  end
 end
+local function selectedTransfer(items, callback)
+ local carried=items[1]:isInPlayerInventory()
+ local pane=(carried and getPlayerInventory(0)or getPlayerLoot(0)).inventoryPane
+ local menu=assert(ISInventoryPaneContextMenu.createMenu(0,carried,items,150,150,pane),'Transfer menu missing')
+ local function findCallback(context)
+  for _,option in ipairs(context.options or {})do
+   if option.onSelect==callback and not option.notAvailable then return option end
+   if option.subOption then local sub=context:getSubMenu(option.subOption);local found=sub and findCallback(sub);if found then return found end end
+  end
+ end
+ local option=assert(findCallback(menu),'Selected transfer menu callback missing')
+ option.onSelect(option.target,option.param1,option.param2,option.param3,option.param4,option.param5,option.param6)
+ menu:hideAndChildren()
+end
 local function dispatch(item,release)
  local pane=getPlayerLoot(0).inventoryPane
  if item:isInPlayerInventory()then pane=getPlayerInventory(0).inventoryPane end
@@ -148,8 +162,33 @@ Events.OnTick.Add(function()
      observed()
     end
    end
+  elseif phase=='ManualMultiple'and role=='client1'and not actionAt then
+   selectedTransfer({assert(F.item(state,1)),assert(F.item(state,4))},ISInventoryPaneContextMenu.onGrabItems)
+   actionAt=getTimestampMs()
+  elseif phase=='MultipleMoved'then
+   local valid=role=='client1'and F.check(state,'multiple')or role~='client1'
+    and state.container:getItemById(packet.ids[1])==nil and state.container:getItemById(packet.ids[4])==nil
+    and R.isRetained(state.container:getItemById(packet.ids[3]))
+   if valid then
+    if seen~=phase then emit('MULTIPLE',{role=role,ids={packet.ids[1],packet.ids[4]},retained=true})end
+    observed()
+   end
+  elseif phase=='ManualReturn'and role=='client1'and not actionAt then
+   getPlayerLoot(0):setForceSelectedContainer(state.container)
+   selectedTransfer({assert(F.item(state,1)),assert(F.item(state,4))},ISInventoryPaneContextMenu.onPutItems)
+   actionAt=getTimestampMs()
   elseif phase=='Distribute'and role=='client1'and not actionAt then
    getPlayerLoot(0):setForceSelectedContainer(state.container)
+   -- Check the same native stand the sorter will select, after the crate has
+   -- become a blocking object and with the actual cargo actor as its origin.
+   local crateSquare=state.crate:getSquare()
+   local stand=AdjacentFreeTileFinder.Find(crateSquare,player)
+   local function position(square)
+    return square and square:getX()..','..square:getY()..','..square:getZ()or 'nil'
+   end
+   assert(stand and stand:canStand()and not stand:isVehicleIntersecting(),
+    'Fixture Distribute stand overlaps an obstacle: actor='..position(player:getCurrentSquare())
+     ..' crate='..position(crateSquare)..' stand='..position(stand))
    local handler=ISLootWindowObjectControlHandler_LootSorterDistribute:new()
    handler.container=state.container;handler.playerNum=0;handler.lootWindow=getPlayerLoot(0)
    assert(handler:shouldBeVisible(),'Distribute toolbar unavailable')
@@ -167,7 +206,7 @@ Events.OnTick.Add(function()
    player:teleportTo(math.floor(packet.x),math.floor(packet.y),0)
    player:setX(packet.x);player:setY(packet.y);player:setNextX(packet.x);player:setNextY(packet.y)
    player:setLastX(packet.x);player:setLastY(packet.y)
-   ISInventoryPaneContextMenu.onGrabItems({assert(F.item(state,1))},0);actionAt=getTimestampMs()
+   selectedTransfer({assert(F.item(state,1))},ISInventoryPaneContextMenu.onGrabItems);actionAt=getTimestampMs()
   elseif phase=='Moved'then
    if role=='client1' then if F.check(state,'manual')then observed()end
    elseif state.container:getItemById(packet.ids[1])==nil

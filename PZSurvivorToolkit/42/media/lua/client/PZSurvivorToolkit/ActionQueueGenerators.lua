@@ -183,10 +183,13 @@ local function execute(character, target)
         if #live == 0 then return end
         return target.callback(target.args[1], object, live, nil, target.args[5])
     end
-    local queue, before = ISTimedActionQueue.getTimedActionQueue(character), {}
-    for _, member in ipairs(queue.queue) do before[member] = true end
-    local result = target.callback(unpack(target.args, 1, target.args.n))
+    local queue, before
     if target.trusted and target.kind == "ISTakeGenerator" then
+        queue, before = ISTimedActionQueue.getTimedActionQueue(character), {}
+        for _, member in ipairs(queue.queue) do before[member] = true end
+    end
+    local result = target.callback(unpack(target.args, 1, target.args.n))
+    if before and target.trusted and target.kind == "ISTakeGenerator" then
         for _, member in ipairs(queue.queue) do
             if not before[member] and member.Type == "ISUnequipAction" then
                 equipmentRecords[member] = {character = character, item = member.item, token = member.toolkitQueueOperation}

@@ -57,6 +57,7 @@ ISBaseTimedAction.begin = function(action)
     if media then media.start(action) end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and isClient() then intent.start(action) end
+    Toolkit.ActionQueueLifecycle.started(action)
     local token = action.toolkitQueueOperation
     if type(token) == "table" then token.toolkitStarted = true end
     local result = begin(action)
@@ -69,6 +70,20 @@ function Queue.cancel(queue, action)
     local decision = Policy.evaluateCancel(queue, action)
     Policy.record("cancel", action, decision)
     if not decision.allowed then return false, decision.reason end
+    if decision.mode == "pending-return" then
+        if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
+        decision = Policy.evaluateCancel(queue, action)
+        if not decision.allowed then return false, decision.reason end
+        if decision.mode ~= "pending-return" or not Policy.commitReturnCancellation(action, decision.returnWaiver) then
+            return false, "unavailable"
+        end
+        -- The proven empty native callback cannot transfer/replay anything.
+        -- Keep the parent token and body live; retire just this exact return.
+        if Batch then Batch.discard(action) end
+        action:forceCancel()
+        queue:removeFromQueue(action)
+        return true
+    end
     if craft(action) then return Queue.cancelOperation(queue, action) end
     -- Policy validates deferred commands as complete operations. Execute that
     -- same edit, so required preparation cannot be detached from its body.
@@ -106,11 +121,19 @@ function Queue.cancelOperation(queue, action, expected)
     decision = Policy.evaluateCancel(queue, action, true)
     if not decision.allowed then return false, decision.reason end
     if decision.first ~= first or decision.last ~= last then return false, "unavailable" end
-    if Operations.invalidate then Operations.invalidate(action.toolkitQueueOperation) end
-    if Batch then Batch.cancel(action) end
+    local request
     if first == 1 and queue.current == queue.queue[1] then
         local current = queue.current
-        queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
+        request = {action = current, token = current.toolkitQueueOperation}
+        if not stoppable(current) then
+            Toolkit.ActionQueueLifecycle.acceptFinishStepCancellation(queue, current, request, decision)
+        end
+    end
+    if Operations.invalidate then Operations.invalidate(action.toolkitQueueOperation) end
+    if Batch then Batch.cancel(action) end
+    if request then
+        local current = queue.current
+        queue.toolkitGroupCancel = request
         if stoppable(current) then
             Toolkit.ActionQueueLifecycle.requestStop(queue, current, "cancel", "operation")
         end
@@ -150,11 +173,11 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         and not (action.action and action.action.hasStalled and action.action:hasStalled()) then Batch.completed(action) end
     local request = queue.toolkitGroupCancel
     if request and request.action == action then
-        queue.toolkitGroupCancel = nil
         if live(queue) and queue.current == action and queue.queue[1] == action
             and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false) then
-            finishGroup(queue, request)
+            if not finishGroup(queue, request) then queue:resetQueue(); return end
         end
+        queue.toolkitGroupCancel = nil
     end
     if processPriority then processPriority(queue, false) end
     if Toolkit.Settings.actionQueue() and Toolkit.BulkFood and queue.current == action and queue.queue[1] == action then
@@ -334,6 +357,18 @@ ISTimedActionQueue.cancelQueue = function(queue)
     return cancelQueue(queue)
 end
 
+-- Call only after the interruption branch authorizes this exact action and anchor.
+local function insertResumed(queue, action, index, receipt)
+    -- Native constructors restore saved pages; world work prepares tools and validates again.
+    local resumed = action.Type == "ISReadABook" and ISReadABook:new(queue.character, action.item)
+        or Toolkit.ActionQueueWorld.resume(action, receipt)
+    if resumed then
+        resumed.toolkitQueueOperation = action.toolkitQueueOperation
+        if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
+        table.insert(queue.queue, index + 1, resumed)
+    end
+end
+
 local tick = ISTimedActionQueue.tick
 ISTimedActionQueue.tick = function(queue)
     -- Walking may continue native inventory actions. Keep their completed callback
@@ -395,13 +430,7 @@ ISTimedActionQueue.tick = function(queue)
             local index = resumeAfter and queue:indexOf(resumeAfter)
             if state == "canceled" and index and index > 1
                 and (action.Type ~= "ISReadABook" or stoppable(action)) then
-                local resumed = action.Type == "ISReadABook" and ISReadABook:new(queue.character, action.item)
-                    or Toolkit.ActionQueueWorld.resume(action, wait.acknowledgement)
-                if resumed then
-                    resumed.toolkitQueueOperation = action.toolkitQueueOperation
-                    if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
-                    table.insert(queue.queue, index + 1, resumed)
-                end
+                insertResumed(queue, action, index, wait.acknowledgement)
             end
             queue:onCompleted(action)
             return
@@ -412,14 +441,7 @@ ISTimedActionQueue.tick = function(queue)
             if stopped then
                 local index = resumeAfter and queue:indexOf(resumeAfter)
                 if index and index > 1 and stoppable(action) then
-                    -- Native constructors restore saved pages; world work prepares tools and validates again.
-                    local resumed = action.Type == "ISReadABook" and ISReadABook:new(queue.character, action.item)
-                        or Toolkit.ActionQueueWorld.resume(action)
-                    if resumed then
-                        resumed.toolkitQueueOperation = action.toolkitQueueOperation
-                        if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
-                        table.insert(queue.queue, index + 1, resumed)
-                    end
+                    insertResumed(queue, action, index)
                 end
                 queue:onCompleted(action)
                 return

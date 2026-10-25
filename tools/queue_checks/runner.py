@@ -8,7 +8,7 @@ import sys
 import time
 
 from .report import events, execution_issues, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds, coop, desktop
+from . import adapters, admission, pack, worlds, coop, desktop, glfw
 from .native import font_preload
 
 
@@ -137,12 +137,16 @@ def run(root, resource_wait=300):
     if adapter:
         adapter.validate(selection)
     _verify_live_inputs(root, selection, runtime)
+    gui_access = desktop.require_gui_access()
+    glfw_args = glfw.arguments(root, runtime.get('glfw'))
     with admission.acquire(root, selection, runtime, resource_wait, legacy_lock=LOCK) as resources:
         changed = verify_manifest(root, 'source-manifest.json', True) + verify_manifest(root, 'snapshot-hashes.json')
         if changed:
             raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
         input_guards = _verify_live_inputs(root, selection, runtime)
         window_manager = desktop.prepare(selection)
+        window_manager.evidence['gui_access'] = gui_access
+        window_manager.evidence['glfw'] = runtime['glfw']
         processes, streams, displayed = {}, [], set()
         execution = {"status": "running", "platform": "darwin", "processes": {}, "peer_disconnected": False, 'attachments': [],
                      'resources': resources, 'input_guards': input_guards, 'desktop': window_manager.evidence}
@@ -175,7 +179,7 @@ def run(root, resource_wait=300):
                 arguments = ["-cp", "projectzomboid.jar", "zombie.network.GameServer", "-servername", runtime["server_name"], "-adminpassword", "smoke-local-only"]
             else:
                 arguments = ["-XstartOnFirstThread", "-cp", str(config["classes"]) + os.pathsep + "projectzomboid.jar", "ToolkitSmokeLauncher"]
-            window_args = window_manager.arguments(cache, config["classes"]) if role != "server" else []
+            window_args = (glfw_args + window_manager.arguments(cache, config["classes"])) if role != "server" else []
             command = base + window_args + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if hosted and role == 'client1':
                 command = base + window_args + ['-Dtoolkit.test.hostCache=' + str(cache)] + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]

@@ -84,7 +84,16 @@ Events.OnTick.Add(function()
   elseif phase=='Mark'then
    if F.check(state,'marked')then advance('Marked')end
   elseif phase=='Marked'then
-   if observed.client1==phase and observed.client2==phase then advance('Distribute')end
+   if observed.client1==phase and observed.client2==phase then advance('ManualMultiple')end
+  elseif phase=='ManualMultiple'then
+   if F.check(state,'multiple')then
+    emit('MULTIPLE',{role='server',ids={state.packet.ids[1],state.packet.ids[4]},retained=true})
+    advance('MultipleMoved')
+   end
+  elseif phase=='MultipleMoved'then
+   if observed.client1==phase and observed.client2==phase then advance('ManualReturn')end
+  elseif phase=='ManualReturn'then
+   if F.check(state,'marked')then advance('Distribute')end
   elseif phase=='Distribute'then
    if F.check(state,'distributed')then advance('Distributed')end
   elseif phase=='Distributed'then

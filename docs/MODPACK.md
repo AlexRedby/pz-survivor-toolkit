@@ -7,15 +7,15 @@ Reference for the selected third-party mods, Workshop IDs, dependencies, load or
 
 This is the project’s selected set, not a general recommendation list. The INI is authoritative; entries also identify features already included in Toolkit and separate mods to disable. Upstream compatibility claims are distinguished from checks performed with this pack.
 
-**Inventory, equipment and storage:** [Show VHS Skills in Tooltip](#1-show-vhs-skills-in-tooltip), [Better Containers](#3-better-containers), [Clean HotBar](#4-clean-hotbar), [Tidy Up Meister](#7-tidy-up-meister), [NeatUI Equipment](#15-neatui-equipment), [Better Clothing Info](#16-better-clothing-info), [CleanUI](#28-cleanui), [The Shortcut](#29-the-shortcut), [Item classification and retained items: Toolkit](#32-item-classification-and-retained-items-toolkit), [Transfer a Specified Quantity: Toolkit](#33-transfer-a-specified-quantity-toolkit), [Included Quartermaster](#included-quartermaster).
+**Inventory, equipment and storage:** [Show VHS Skills in Tooltip](#1-show-vhs-skills-in-tooltip), [Better Containers](#3-better-containers), [Clean HotBar](#4-clean-hotbar), [Tidy Up Meister](#7-tidy-up-meister), [NeatUI Equipment](#15-neatui-equipment), [Better Clothing Info](#16-better-clothing-info), [CleanUI](#28-cleanui), [The Shortcut](#29-the-shortcut), [Item classification and retained items: Toolkit](#32-item-classification-and-retained-items-toolkit), [Transfer a Specified Quantity: Toolkit](#33-transfer-a-specified-quantity-toolkit), [Included Quartermaster](#included-quartermaster), [Spongie's Open Jackets](#55-spongies-open-jackets), [Furniture Push & Pull](#61-furniture-push--pull).
 
 **Crafting, food, farming and medicine:** [Neat Crafting](#5-neat-crafting), [Project Cook](#6-project-cook), [Research indicator: Toolkit](#18-research-indicator-toolkit), [Neat Building](#19-neat-building), [Eat Smart](#20-eat-smart), [Drink Smart](#21-drink-smart), [Washing Menus Improved](#22-washing-menus-improved), [Neat Crafting & Neat Building - XP & Mod Display](#23-neat-crafting--neat-building---xp--mod-display), [Wash Or Rot](#25-wash-or-rot), [Mini Health Plus](#27-mini-health-plus), [Planting information: Toolkit](#31-planting-information-toolkit), [Medicine Indicators: Toolkit + Moodle Framework](#34-medicine-indicators-toolkit--moodle-framework).
 
-**World, navigation and multiplayer:** [MP Fast Forward](#2-mp-fast-forward), [Moodle Descriptions Expanded](#8-moodle-descriptions-expanded), [Detailed Descriptions for Occupations and Traits](#9-detailed-descriptions-for-occupations-and-traits), [Peek a View](#10-peek-a-view), [Share Map Notes](#12-share-map-notes), [Better Generator Info](#13-better-generator-info), [Map Symbols Plus (Hand-drawn)](#14-map-symbols-plus-hand-drawn), [Rain Cleans Blood](#17-rain-cleans-blood), [Smart Radial Menu](#24-smart-radial-menu), [Gas Pump Indicator](#26-gas-pump-indicator), [Zombie Visibility Fix + Stair-O-Vision](#41-zombie-visibility-fix--stair-o-vision), [Plumbed Sink Mains Water Fix](#42-plumbed-sink-mains-water-fix), [Detailed Skill Tooltips](#49-detailed-skill-tooltips), [Foraging Tooltip Extended](#50-foraging-tooltip-extended), [Custom Light Switch](#51-custom-light-switch), [Nick's Turn Off Fridges](#52-nicks-turn-off-fridges).
+**World, navigation and multiplayer:** [MP Fast Forward](#2-mp-fast-forward), [Moodle Descriptions Expanded](#8-moodle-descriptions-expanded), [Detailed Descriptions for Occupations and Traits](#9-detailed-descriptions-for-occupations-and-traits), [Peek a View](#10-peek-a-view), [Share Map Notes](#12-share-map-notes), [Better Generator Info](#13-better-generator-info), [Map Symbols Plus (Hand-drawn)](#14-map-symbols-plus-hand-drawn), [Rain Cleans Blood](#17-rain-cleans-blood), [Smart Radial Menu](#24-smart-radial-menu), [Gas Pump Indicator](#26-gas-pump-indicator), [Zombie Visibility Fix + Stair-O-Vision](#41-zombie-visibility-fix--stair-o-vision), [Plumbed Sink Mains Water Fix](#42-plumbed-sink-mains-water-fix), [Detailed Skill Tooltips](#49-detailed-skill-tooltips), [Foraging Tooltip Extended](#50-foraging-tooltip-extended), [Custom Light Switch](#51-custom-light-switch), [Nick's Turn Off Fridges](#52-nicks-turn-off-fridges), [Climb Ladders](#56-climb-ladders), [Immersive Snow](#58-immersive-snow), [JB's Bugs In Lights](#59-jbs-bugs-in-lights).
 
-**Vehicles, carts and archery:** [Realistic Dashboard & Gauges](#35-realistic-dashboard--gauges), [Navigator](#36-navigator), [SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft](#40-saucedcarts-saucedwheelbarrow-and-wheelbarrow-craft), [Nepenthe's High Beams](#44-nepenthes-high-beams), [Reverse Drive Lights](#45-reverse-drive-lights), [Vanilla Vehicles Animated](#46-vanilla-vehicles-animated), [Animated Vehicle Parts Fix](#47-animated-vehicle-parts-fix), [Archery Nexus + Wilderness Progression](#48-archery-nexus--wilderness-progression), [Vehicle Aim Roof Fix](#53-vehicle-aim-roof-fix), [Vehicle Repair Overhaul](#54-vehicle-repair-overhaul).
+**Vehicles, carts and archery:** [Realistic Dashboard & Gauges](#35-realistic-dashboard--gauges), [Navigator](#36-navigator), [SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft](#40-saucedcarts-saucedwheelbarrow-and-wheelbarrow-craft), [Nepenthe's High Beams](#44-nepenthes-high-beams), [Reverse Drive Lights](#45-reverse-drive-lights), [Vanilla Vehicles Animated](#46-vanilla-vehicles-animated), [Animated Vehicle Parts Fix](#47-animated-vehicle-parts-fix), [Archery Nexus + Wilderness Progression](#48-archery-nexus--wilderness-progression), [Vehicle Aim Roof Fix](#53-vehicle-aim-roof-fix), [Vehicle Repair Overhaul](#54-vehicle-repair-overhaul), ['92 Jeep YJ Wrangler + that DAMN Library](#60-92-jeep-yj-wrangler--that-damn-library).
 
-**Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
+**Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [New Music](#57-new-music), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
 
 
 ## 1 Show VHS Skills in Tooltip
@@ -367,3 +367,79 @@ The whole-vehicle **Salvage Vehicle** action requires MetalWelding 4, Mechanics 
 Keep the upstream sandbox defaults unless deliberately changing the world: engine rebuild, vanilla fixing recipes, repair of fully broken parts and bypassing removal prerequisites are off; diminishing repairs remain enabled; nearby-container and nearby-ground material searches are on. The INI does not modify existing sandbox values.
 
 Known upstream limitation in the downloaded package: the salvage sandbox UI defines `VSO_EnableFullVehicleSalvaging` / `VSO_SalvageTime_*`, but the consumers read `VRO_EnableFullVehicleSalvaging` / `VRO_SalvageTime_*`. Those visible controls therefore do not reliably govern the corresponding behavior; full salvage falls back to enabled. Whole-vehicle action duration is independently `2000 - MetalWelding * 20`. This selection does not patch upstream code. Check real fuel/material/XP changes, repair and salvage menus, VVA parts, reload and a second Host player's view in disposable saves. Removing VRO also removes existing Fix-A-Flat items according to the author.
+
+
+## 55 Spongie's Open Jackets
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=2812326159) · Workshop `2812326159` · Mods `SpnOpenClothBase`, `SpnOpenCloth`
+
+Open jackets, roll shirt sleeves, tie sweaters around the waist and tuck trousers into boots. Opening clothing reduces insulation; rolled sleeves expose the forearms, and a tied sweater protects only the lower body. Trouser tucking is cosmetic. The author declares B42.21+ Stable and multiplayer support. Clothing introduced in B42 is not covered yet.
+
+Enable both modules, with Base (`SpnOpenClothBase`) before Vanilla Items (`SpnOpenCloth`); the supplied INI includes both from the same Workshop item. Fluffy Hair is needed only for open hoodies and is not selected. Opening and rolling a jacket simultaneously can make skirts invisible because of a clothing-mask limitation reported by the author. No separate save-add/removal guarantee was found. Full-pack macOS B42.21 SP/Host clothing changes, actual insulation/protection, Better Clothing Info, Tidy Up Meister and remote appearance synchronization remain unverified.
+
+## 56 Climb Ladders
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3774776279) · Workshop `3774776279` · Mod `SubirEscaleras`
+
+Adds **Climb up the ladder** and **Climb down the ladder** to world ladders, including moved ladders. Hold **E** for about half a second or use the ladder's context menu to climb up; right-click the ground near the top opening to climb down. The shortcut is configurable under Options > Key Bindings > Climb Ladders. The author declares B42.15+ and SP/MP support, with server-confirmed movement broadcast to other players.
+
+The author says the mod adds no items, recipes or tiles and does not modify the saved world. The separate Build Ladders companion adds construction recipes and is optional; it is not selected. The author describes exit checks and climb restrictions for exhaustion, an unsplinted broken leg and overloading. Existing-world/removal safety and full-pack B42.21 SP/Host ascent/descent, moved/multistorey ladders, blocked exits, Toolkit menus/queue and remote animation remain unverified. Workshop reports include a Muldraugh police-station roof ladder moving a player through a wall; verify target ladders in a disposable save before relying on them for an escape.
+
+
+## 57 New Music
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3739256725) · Workshop `3739256725` · Mod `NewMusic`
+
+Plays audible cassette, CD and vinyl recordings through portable and world devices, with headphones, covers and multiplayer playback tracking. The base mod includes a Zomboid OST media item; additional artists and songs come from separate music packs. The selected period packs are listed below; load NewMusic before all three. The author links B42-compatible packs from the Workshop page; older True Music packs can require conversion and are not automatic dependencies.
+
+The author declares Build 42, single-player and hosted multiplayer support, and permits adding the mod mid-save. No required framework or Java loader is listed. Install the Workshop item on Host and every client and enable `NewMusic` as supplied in the INI. Keep existing sandbox settings; the INI supplies neither media-spawn settings nor player volume preferences. The author describes a separate playback system rather than vanilla radio internals; coexistence with TV & Radio ReInvented still requires a full-pack check.
+
+Full-pack macOS B42.21 SP/Host audio output, device/battery controls, ground-to-hand continuity, save/reload and second-player synchronization remain unverified. Recent Workshop reports mention performance costs with large music collections and inventory/loot-panel problems on controllers; these reports do not establish a cause or resolution in this set. Check audible playback and responsiveness in a disposable profile before using a gameplay world. Do not remove a content mod from an existing save without checking its removal instructions and preserving backups.
+
+### Selected songs released before 1993
+
+These New Music Builder packs by Ben Jelkin contain the following published album lists. Workshop supplies the audio directly; it is not copied into either repository mod. Enable each pack on Host and every client after `NewMusic`.
+
+| Pack | Workshop ID | Mod ID | Published album dates | Workshop size |
+|---|---|---|---|---|
+| [ABBA Gold: Greatest Hits](https://steamcommunity.com/sharedfiles/filedetails/?id=3784065691) | `3784065691` | `NMBJABBA` | Gold (1992 compilation) | 87.678 MB |
+| [Queen](https://steamcommunity.com/sharedfiles/filedetails/?id=3777937059) | `3777937059` | `NMBJQ` | A Night at the Opera (1975), News of the World (1977), Jazz (1978), The Game (1980), Innuendo (1991) | 254.933 MB |
+| [Fleetwood Mac](https://steamcommunity.com/sharedfiles/filedetails/?id=3751236222) | `3751236222` | `NMBJFM` | Fleetwood Mac (1975), Rumours (1977), Tusk (1979), Mirage (1982), Tango in the Night (1987) | 290.121 MB |
+
+The combined reported download size is approximately 633 MB, excluding the New Music base. Dates and contents were checked against the published Workshop track/album lists on 25 October 2026; later Workshop updates can change the selection or size. The pages identify these as B42 New Music content packs and list no additional framework. This is not a full-pack B42.21 SP/Host playback test. Keep existing media-spawn settings and check new loot, actual audio, cassette sides, save/reload, responsiveness and synchronized listening in a disposable profile.
+
+
+## 58 Immersive Snow
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3810071828) · Workshop `3810071828` · Mod `ImmersiveSnow`
+
+Adds footprints, animal tracks, tire ruts, snowy clothing/vehicles, frosted windows and breath vapour. Falling/melting snow can wet clothing and walking in snow wets footwear; individual effects and a low-end mode are configurable. It follows the world's existing weather and does not create winter or force snow. Keep the existing world's sandbox settings.
+
+The author declares B42.20+, multiplayer and existing-save support, and lists Open Jackets and KI5 vehicles among supported visuals. No required dependency is listed for the base mod. The optional Project Viewpoint addon is not selected. The author reports some vehicle-angle flicker; recent users also report disappearing vehicle textures and performance costs, without a cause established for this pack. Full-pack macOS B42.21 SP/Host snow/wetness, VVA/Jeep/cart visuals, lighting and remote appearance remain unverified. The author says tracks are not saved and removal keeps saves loadable; use the upstream clean-save procedure and backups if removing it.
+
+## 59 JB's Bugs In Lights
+
+[Steam Workshop](https://steamcommunity.com/workshop/filedetails/?id=3717902500) · Workshop `3717902500` · Mod `JB_BugsInLights`
+
+Renders insects around outdoor lights, normally in warm summer weather without rain. Mod Options control their number/size and seasonal, time-of-day and weather restrictions. No required dependencies are listed. The author declares B42 SP/MP and permits adding/removing it during a save; a separate B42.21 full-pack check is still needed. Check outdoor lamp appearance, coexistence with Custom Light Switch, responsiveness and the second Host player's view. Keep the configured limits modest if rendering becomes costly.
+
+## 60 '92 Jeep YJ Wrangler + that DAMN Library
+
+| Selected mod | Workshop ID | Mod ID |
+|---|---|---|
+| [that DAMN Library](https://steamcommunity.com/sharedfiles/filedetails/?id=3171167894) | `3171167894` | `damnlib` |
+| ['92 Jeep YJ Wrangler](https://steamcommunity.com/workshop/filedetails/?id=3287727378) | `3287727378` | `92jeepYJ` |
+
+The library is required and loads before the Jeep; Vehicle Repair Overhaul and its salvage module remain after the vehicle mods. Only the main Jeep module `92jeepYJ` is selected. The optional `92jeepYJJP18` enables spawning of the Jurassic Park JP18 variant and requires the main Jeep; it remains disabled. The Jeep supplies animated/visible vehicle parts, a visible cabin, four seats, towing and craftable/found customization parts, including roof racks and protection. Its independent model is not supplied by Vanilla Vehicles Animated.
+
+The official Workshop package was downloaded with anonymous SteamCMD and checked on 25 October 2026 (manifest `3349470027312534949`). For B42.21, the main module selects `92jeepYJ/42.13/mod.info`, whose only dependency is `require=\damnlib`. JP18 selects `92jeepYJJP18/42.0/mod.info`, with `require=\92jeepYJ`; its only Lua file adds `Base.92jeepYJjp` to vehicle-spawn distributions. The dependency is one-way: ordinary Jeep requires the library, and JP18 requires ordinary Jeep. The selected library/main pair is complete without JP18.
+
+The author permits adding the Jeep to an existing save and declares B42.13+ SP/MP; the library declares B42.20+ SP/MP. These are upstream claims, not full-pack verification. The INI does not spawn a Jeep or reset explored areas. Check its actual availability, parts/recipes, repair/salvage menus, lights, aiming/entry animations, towing and second-player state with VVA, Animated Vehicle Parts Fix, CarRoofFix, Toolkit and Immersive Snow in isolated macOS B42.21 SP/Host saves. Workshop supplies both mods; no files are repacked into Toolkit.
+
+## 61 Furniture Push & Pull
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3781319724) · Workshop `3781319724` · Mod `FurniturePushPull`
+
+Adds Push/Pull to move supported floor furniture by one tile, including multi-tile furniture and filled containers. Strength and furniture weight affect movement time/stamina; movement can attract zombies. The author describes server-authoritative multiplayer movement and permits adding it to existing saves. Version 1.2.1 explicitly updates placement for B42.21 and fixes an earlier disappearance bug. No required dependencies are listed.
+
+Attached sinks and other unsafe fixtures are protected, and plant-drying racks are excluded. Recent Workshop reports still describe disappearing crates in mixed mod sets; comments suggesting particular causes do not establish the cause in this pack. Before moving valuable storage, verify exact container/item identities, contents and Quartermaster designations, appearance and reload persistence in an isolated full-pack macOS B42.21 SP/Host save. Also check multi-tile geometry, doors, ground loot, competing players and remote state. Toolkit context-menu/queue compatibility and conservation of storage settings remain unverified.

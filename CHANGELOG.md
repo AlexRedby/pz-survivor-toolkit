@@ -11,6 +11,14 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Downloaded B42 metadata confirms the main Jeep requires only `damnlib`; optional JP18 adds Jurassic Park spawns and requires the main Jeep. JP18/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.
+
+- **Added:** Three New Music packs with songs released before 1993: ABBA Gold (`NMBJABBA`, Workshop `3784065691`), Queen (`NMBJQ`, `3777937059`) and Fleetwood Mac (`NMBJFM`, `3751236222`), after `NewMusic` (62 Mod IDs / 57 Workshop items). Published album lists span 1975-1992 and the packs total approximately 633 MB. Existing sandbox settings are preserved; full-pack SP/Host playback remains unverified.
+
+- **Added:** New Music (`NewMusic`, Workshop `3739256725`) to the B42.21 selection (59 Mod IDs / 54 Workshop items), for audible cassette/CD/vinyl playback. The base includes a Zomboid OST recording; additional song packs are selected separately. Full-pack SP/Host playback, performance and TV & Radio ReInvented coexistence remain unverified.
+
+- **Added:** Spongie's Open Jackets (`SpnOpenClothBase` before `SpnOpenCloth`, Workshop `2812326159`) and Climb Ladders (`SubirEscaleras`, Workshop `3774776279`) to the B42.21 selection (58 Mod IDs / 53 Workshop items). Adds open/rolled clothing variants and world-ladder climbing. Optional Fluffy Hair and Build Ladders remain unselected; full-pack SP/Host behavior is unverified.
+
 - **Added:** Vehicle Repair Overhaul and its B42 Vehicle Salvage Overhaul module from Workshop `2757712197`, loaded base-first after the other vehicle mods (55 Mod IDs / 51 Workshop items). Adds repair options and whole-vehicle salvage; full-pack SP/Host behavior and the upstream sandbox-setting controls remain unverified.
 
 - **Added:** Vehicle Aim Roof Fix (`CarRoofFix`, Workshop `3781616141`) after the VVA pair in the B42.21 selection (54 Mod IDs / 51 Workshop items), to keep visible occupants seated during right-mouse look-around/aiming. Full-pack SP/Host behavior remains unverified.
@@ -24,13 +32,98 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.263
+
+- **Shopping carts:** Replace the stiff procedural gait with body-leading turns built from native walking, retaining knee motion, heel/toe roll and a gently moving torso. Use phase-matched straight and turning clips with slight leg separation; stationary pivots and wheelbarrows retain their existing clips.
+
+### 0.1.262
+
+- **Vehicles:** Enter with a leading-foot step, bend and transfer weight over the planted foot, then bring the trailing leg inside. Use a separate exit motion with a foot planted outside before standing. Match the native driving seat and retain native action timing, cancellation and completion events. Requires Java Patches 0.1.55 for doorway position and foot contacts.
+
+### 0.1.261
+
+- **Fixed:** A completed Host action no longer discards the remaining queue while its matching server receipt is still in transit. The same cancellation and ownership checks apply with queue editing enabled or disabled; native effects are never replayed. Requires Java Patches 0.1.54.
+
+### 0.1.260
+
+- Declare the replaced standalone Survivor Wishlist, Quartermaster, Container Capacity Indicator, Item Details, HasResearch, Seed Season Indicator, organizedCategories, Medicine Moodles, Take Any Amount and TV & Radio ReInvented 42.20 fix mods incompatible with Toolkit, preventing accidental duplicate activation in the native Mods selector.
+
+### 0.1.259
+
+- **Fixed:** Native Fitness preparation with queue editing disabled now synchronizes its cleared secondary hand in Host and returns a prop borrowed from a placed bag to that exact recovered bag. Restoration requires the observed native pickup and, in Host, its completed item transaction; missing storage or changed bindings cannot select a replacement prop or bag.
+
+### 0.1.258
+
+- **Action queue:** Cancel a confirmed pending borrowed-item return separately to keep that item carried while its current action continues. Preserve later dependencies and capacity, exact item ownership and other required cleanup; later cancellation and P4 idle restoration do not recreate the deliberately removed return.
+- **Action queue / Host:** Recognize a detached transfer-group copy of the same exact carried item after native inventory replication, retaining live source, item identity, callback and resource checks.
+- **Action queue UI:** Show neutral crosses before a permission check, distinguish an unavailable hovered cancel, and retain the reason when a click is rejected. Group and child controls keep fresh validation at release.
+
+### 0.1.257
+
+- **Exercise:** Use continuous game time for queued workout progress and completion, counting Host training from its confirmed server start. Remove the extra whole-minute pause after 100% while retaining the full selected duration and confirmed equipment recovery.
+
+### 0.1.256
+
+- **Action queue:** Share the reconstruction and insertion of interrupted reading/building actions after their existing local-stop or server-cancellation checks. Preserve saved progress, operation ownership and authoritative result guards.
+- **Performance:** Avoid unused queue snapshots for generator commands and unsupported medical producers; reuse the ordered child list when capturing replacement-bandage actions.
+- **Action queue:** Share deferred expansion across native, Toolkit and reviewed mod commands. Close the native child-insertion scope before propagating a producer error, so later independent requests cannot be inserted into the failed operation. Preserve already-enqueued children, native error handling, successful empty expansion and existing edit/cleanup contracts.
+
+### 0.1.255
+
+- **Action queue / Host:** Let an exactly matched, server-completed native action finish its original client callback when the optional queue is disabled. Preserve explicit cancellation, movement, reset and stale-transaction guards; disabling queue controls no longer makes confirmed preparation clear unrelated queued work.
+
+### 0.1.254
+
+- Add a separate Host server recording switch beside local vehicle diagnostics. Authenticate the real Host connection, show confirmed server status and file paths, and handle delayed or missing replies without claiming success.
+
+### 0.1.253
+
+- Add a vehicle-diagnostics window under Toolkit Mod Options with a live recording checkbox and status. Start and stop bounded client logs during play without JVM flags or a restart; the checkbox is not saved between launches.
+
+### 0.1.252
+
+- **Inventory:** Keep Shift selection anchored to the same physical item when retained-item groups refresh in CleanUI, including repeated refreshes before the next render.
+
+### 0.1.251
+
+- **Action queue / Host:** Preserve the independent queue tail when cancelling an in-flight preparation step whose effect the server has already completed. Finish that exact native step before required equipment recovery; explicit movement, stop and reset still cancel normally.
+- **Action queue / cleanup:** Scope the food-mask clothing contract to its own restoration actions so it cannot block bag restoration and borrowed-prop returns after exercising.
+- **Action queue / fitness:** Restore hands, worn bags and borrowed exercise props only after their native preparation effects are confirmed, including grounded storage and its exact native pickup. Wait for Host transactions and exact item replication on normal completion and cancellation; share guarded prop returns so repeated cleanup cannot duplicate a return. Preserve native workout duration, costs, stop behavior and queue-disabled controls.
+
+### 0.1.250
+
+- **Performance:** Avoid duplicate nearby-container discovery after a simultaneous turn and tile change. Defer unused details rows and counts while the loot window is fully hidden and idle; rebuild on reopening while preserving reachable containers, Better Containers aggregates and live transfer/crafting inputs. Build CleanUI container-weight tooltips when the window is shown instead of during hidden discovery.
+- **Performance:** Build filter-menu item snapshots only when needed and skip the extra empty-selection projection. Reuse capacity-bar weight readings for up to 200 ms, invalidating on container changes; transfer capacity checks remain immediate.
+
+### 0.1.249
+
+- **Inventory:** Allow deliberate transfers of several retained items through drag-and-drop, context menus, quantity commands and Smart Deposit. Keep protection during Take/Transfer All, automatic Move to Floor and loot distribution; manual moves keep their retained flags.
+
+- **Inventory:** Replace the compressed Keep marker with a high-contrast lock drawn at up to 16 pixels. Put expanded-child markers in the empty icon gutter so they do not cover condition or fluid values. Use the same lock in the retention menu, with clearer EN/RU wording and a tooltip explaining mass-transfer protection and deliberate manual moves.
+
+### 0.1.248
+
+- **Changed:** Vehicle glass is replacement-only: remove Vehicle Repair Overhaul repairs for windshields, side/rear windows and military glass in both Lua and script-recipe modes. Keep glass removal/installation, other vehicle repairs and metal window armor/frame repairs.
+- **Fixed:** Hide empty Repair submenus for installed and loose vehicle parts when Vehicle Repair Overhaul offers no repairs, including fully broken parts with their repair option disabled. Keep unavailable choices that explain missing materials or skills, and preserve sandbox repair rules.
+
+
+### 0.1.247
+
+- **Vehicle occupants:** Keep the character seated while entering or exiting a vehicle, preventing the native chair animation from raising their head and shoulders through visible roofs. Preserve the native animation completion events and 0.625-second duration; vehicle positioning, sounds, cancellation and Host action handling stay with the game.
+
+### 0.1.246
+
+- **Performance:** Skip ground discovery and the extra Wishlist search radius when no active goal has a concrete wanted item type. Authoritative list changes and new sessions update this idle gate without scanning membership on every tick.
+- **Performance:** Reuse successful ground-item visibility and highlight checks within one tick when discovery overlaps maintenance. Keep next-tick visibility/ownership reads, movement discovery and dense-pile budgets.
+- **Performance:** Reduce repeated native reads during vehicle-light updates: reject unlit cars before proximity work, read local-player positions once per update, and share each car's script and the live lamp-list reference. Keep the 100 ms cadence, source membership checks and lamp, power, movement and unload cleanup.
+
 ### 0.1.245
 
-- **Changed:** Replace stiff procedural shopping-cart steps with a body-leading turn built from native walking, retaining heel/toe roll, knee motion and a gently moving torso. Slight leg separation prevents the native trouser surfaces from crossing.
+- **Exercise:** Put worn and held storage on the ground before exercising instead of carrying its full unequipped weight. Recover the same nearby bags and restore their worn/hand slots afterward, preserving contents and favourite flags. Applies with queue controls enabled or disabled; missing/distant bags and newly occupied worn slots are left alone. Native placement/pickup limits, workout duration, XP and fatigue remain unchanged. Full-pack SP/Host gameplay verification is pending.
 
 ### 0.1.244
 
-- **Changed:** Added the accepted upright shopping-cart walking-turn clips with shorter forward-diagonal steps and gradual weight transfer. Straight walking, stationary pivots and wheelbarrow animations retain their existing clips.
+- **Action queue / cancellation:** Keep preparation, work and required restoration in persistent operation records. Confirm mask removal before retaining its restoration; wait for Host outcomes and exact item replication before releasing independent work. Use confirmed P4 pickup/return episodes when returning borrowed tools, preserving shared ownership, native equipment restoration and explicit equipment choices. Repeated queue cancellation cannot discard already-required restoration, and completed effects are never replayed.
 
 ### 0.1.243
 
@@ -1104,27 +1197,25 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.56
 
-- **Changed:** Preserve the native shopping-cart walking step during turns, with a small planar support correction that releases through the original swing. Removed predicted landing targets, wide foot arcs and forced knee splay. Correction limits also protect the knees; native foot roll, body/hand fit and straight walking retain their existing motion. Abrupt network yaw corrections retain native walking until the root motion is stable, without new network fields or changed cart physics.
+- **Shopping carts:** Share a bounded walking phase across straight motion and turns, with smooth entry/release and a small planar stance correction that releases through the original swing. Preserve native foot roll and protect the knees without predicted landing targets, wide foot arcs or forced knee splay. Abrupt network yaw corrections retain native walking until root motion is stable; reverse and fast gaits retain their native clips.
+- **Shopping carts:** Keep the handle stable through walking and turning, widen the supported grasp and relax the elbows without arching the back. Share the reachable held position with pickup/setdown and the physical rear-axle pivot.
+- **Shopping carts:** Steer around the held model's fixed rear axle, including item scale, during forward/reverse travel and stationary turns. Keep the front casters free, match stationary steps to the handle arc and retain angular ramping across short movement budgets. Wheelbarrow handling and multiplayer packet fields/rate retain their existing behavior.
 
 ### 0.1.55
 
-- **Changed:** Give shopping-cart forward walking and turning one shared visual phase with a bounded cadence and smooth entry/release. Partial turns no longer mix legs from unrelated phases. Physical movement and multiplayer packet fields/rate retain their existing behavior; reverse and fast gaits retain their native clips.
+- **Vehicles:** Synchronize the rendered passenger position and both legs with Toolkit's entry/exit steps. Keep the support foot planted during weight transfer, lift the swinging foot and apply the same corrected pose to body and clothing. Normalize the chair animation's raised origin; logical seat ownership, collision, action completion and network messages stay native.
 
 ### 0.1.54
 
-- **Fixed:** Keep the shopping-cart handle stable through walking and authored turn cycles instead of copying every shoulder sway into fore/aft cart motion. Elbows absorb the movement, with reach/folding guards for other native postures and the same cosmetic turn pose used by the steering-axle calculation.
+- **Fixed:** Hold an invalidated standard Host action whose exact native transaction is already Done while waiting, for up to 30 seconds, for its matching completion receipt. Suppress its stale update and let the original native callback finish once. Explicit stops, ownership changes, rejected/ambiguous transactions and expired waits cannot revive the action; successfully completed loop actions retain native behavior.
 
 ### 0.1.53
 
-- **Changed:** Blend the authored shopping-cart turn into the rendered body and clothing during forward walking turns, with smooth entry/release and slot-owned pose snapshots. Native movement, collisions and the existing multiplayer packet format remain unchanged. Full selected-pack SP/Host visual verification is pending.
+- Replace vehicle-trace time/record cutoffs with continuous UTF-8 file recording, rotating at 5 MiB with four backups per side. Preserve sampled cadence, reuse sampling slots over long sessions, and expose recoverable file errors without duplicating samples to console logs.
 
 ### 0.1.52
 
-- Make stationary shopping-cart turns more responsive, match the sidestep cadence to the rear-axle arc, and retain the planned angular ramp across short native movement budgets.
-
-- Widen the shopping-cart grasp along the supported handle and relax the elbows outward, preserving the natural carrying stance and wheelbarrow grips.
-- Fix severely folded shopping-cart arms without arching the back: retain native torso, pelvis and leg motion, and give the character room behind the handle within both arms' reachable range. Distribute palm rotation through the forearm; share the adjusted held position with pickup/setdown and the physical rear-axle pivot.
-- Correct shopping-cart turning to use the held model's fixed rear wheel axle, including item scale, during forward/reverse travel and stationary turns. Keep the front casters free to follow their own paths and match character steps to the corrected handle arc; wheelbarrow handling is unchanged.
+- Allow bounded vehicle-sync recording to be started and stopped at runtime. Keep the optional startup JVM flag, sampling limits and unchanged vehicle/network behavior; a completed recording can be explicitly restarted.
 
 ### 0.1.51
 
@@ -1331,6 +1422,8 @@ Previously named **PZ Network Fix** through 0.1.1.
 - **Fixed:** Required JDK 25 or newer to read B42.21 game dependencies while retaining Java 17 output compatibility.
 
 ## Development tools
+
+- **macOS native tests:** Keep connected sleeping displays available through a sealed, fingerprint-checked private GLFW copy. Default automatic launch routes windows through AeroSpace or uses a transparent sleep-only fallback, then reveals them only after verified workspace recovery. Add explicit desktop-policy CLI flags, separate startup/discovery deadlines and a bounded wake-transition grace; diagnose sandbox GUI access without asking users to wake the display. Real GPU, SP and Host startup checks passed with the physical display asleep; vanilla runtime diagnostics remain visible in reports.
 
 - **Cart action invalidation diagnostics:** Add a selected native world-identity loss/cancellation/retry bank with exact source and action binding, preserved cart/cargo, all-role endpoints and historical terminal replay refusal. Add a composed native signed-byte reuse regression through the production acknowledgement and Lua receiver; keep natural allocator wrap and production migration separate.
 

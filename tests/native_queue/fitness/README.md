@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -54,7 +54,13 @@ worn schoolbag, then closes the actual window immediately after enqueue. Toolkit
 must show real native pickup progress and the authority must observe that dumbbell
 in the primary hand, with the bag unequipped, at workout start. Final receipts
 require the dumbbell back inside that exact bag, both original held IDs restored,
-the same schoolbag worn again and every other inventory endpoint preserved.
+the same schoolbag worn again and every other inventory endpoint preserved. Toolkit also requires one real native
+root-to-source-bag return begin and its completed shared borrowing receipt before
+the independent reader. Read-only client begin and Host serverStart snapshots must
+already contain the returned exact-ID/type dumbbell inside the recovered original
+bag, with both original hands and worn bag restored. A late final P4 restoration
+cannot satisfy this normal-cleanup boundary. Native controls keep their actual
+pre-reader differences and original timer/order failures.
 
 The observer never replaces source-guarded client/SP action methods. SP reads the
 real live `repnb` and clinical state; the server wraps its own native
@@ -90,3 +96,88 @@ before and after cleanup. Host verifies the same idle boundary before recording
 its failed receipt and recovers only after the client confirms publication of the
 failed case. This allows later controls to run; it never turns the failed case
 into a pass or changes the recorded clinical/tail observations.
+
+Host native restoration controls can also leave a client constructor stranded after
+an authoritative zero-workout failure. After publishing that unchanged failed row,
+the fixture may isolate `closed-ui-restore` or one of the three focused restoration
+cases. It requires the exact constructor captured at the original request and
+failure, empty client native/Lua queues, inactive observers, no started workouts,
+and a fresh read-only server idle snapshot with the same six IDs. Only that local
+constructor is cleared. `ISOLATION_STARTED`, server `ISOLATION_READY` and
+`ISOLATION_SETTLED` witnesses retain the original failure, immediate before/after
+state and actual native cleanup. A grounded bag must return through its genuine
+native begin, completed item transaction and successful perform callback; final
+client and fresh server snapshots must conserve every exact item ID/type, bag
+contents and favourite flag, with the bag carried again. Actual native hand,
+activation and prop endpoint differences remain recorded and failed by the original
+case checks. No item or gear is reconstructed. Each wait is bounded to 45 real
+seconds; a rejected gate or timeout emits `ISOLATION_FAILED` and stops without
+advancing to the next case. This isolation does not establish the cause of the
+original native failure or turn it into a pass.
+
+The `empty-restore` case starts with an empty queue, the original Hammer and
+screwdriver held, a non-favourite schoolbag worn and the exact dumbbell inside it.
+It uses the real ten-minute biceps-curl menu request, leaves the UI open and queues
+only the independent tail reader after the workout request. It never requests
+cancellation or runs the front reader. A pass requires one full natural workout
+with real clinical effects, the exact world bag and contents at workout start,
+real native placement/recovery, and the ordinary borrowed-equipment return gates.
+Toolkit must complete its exact shared prop return and restore equipment before
+the tail begins; native pre-tail differences and genuine native failures remain
+visible under the existing checks. This case adds an ordinary-completion control
+without changing the queued closed-UI or active-cancel controls. Its separate
+clock telemetry records the native constructor window, actual observed workout
+start and removal. Vanilla constructs the ten-minute deadline before equipment
+preparation; a natural Host body can therefore last less than ten minutes. This
+new case requires an unchanged selected constructor window and client removal
+strictly after that native deadline, while preserving real authoritative workout
+effects and measuring its body duration separately. Existing cases retain their
+original duration assertions.
+The native get-up callback can advance to the already-queued reader before
+appending the workout. This is a recorded native ordering difference, not a
+separate fixture front reader. It consumes part of the unchanged constructor
+window; it cannot satisfy Toolkit's workout/restoration-before-reader contract.
+
+The focused `active-cancel-restore`, `pickup-cancel-restore` and
+`placement-cancel-restore` cases start with an
+active exact-ID Torch and screwdriver held, a schoolbag worn, and the dumbbell
+inside that bag together with the unused front book as conserved contents. The
+bag is a favourite and must keep that flag on both replicas. Active cancellation
+waits for six confirmed native preparation effects in order: prop pickup, both
+original hand removals, bag unequip, actual ground placement and prop equip. It
+also waits for real exercise repetitions
+and (in Toolkit Host) its started acknowledgement. Pickup cancellation instead
+targets the actual positive-progress native transfer and its live Host transaction,
+before either hand or the worn bag is removed. Placement cancellation targets a
+real positive-progress native `ISDropWorldItemAction`. Toolkit must finish the
+atomic placement, recover the same world bag through a completed native transfer,
+then restore equipment and return the prop. Neither early-cancel case may equip
+the prop or execute a workout. Toolkit must finish the borrowed prop pickup, return the same dumbbell exactly once, restore
+both original held items, bag and Torch activation before an independent reader,
+and preserve the independent reader. Value-only
+settlement snapshots prove native callback/transaction-confirmed effects; queue
+disappearance is never a receipt. A read-only observer at the shared native begin boundary snapshots the original
+equipment before the real reader begins, in both queue modes. The Host reader's
+actual serverStart callback also records live authoritative equipment and activation, delegating once.
+
+Both queue-disabled controls invoke the real Fitness OK and CANCEL callbacks.
+Native CANCEL during pickup does nothing, so that control must complete one full
+native workout with real repetitions and clinical effects. Native active-workout
+CANCEL stops the actual workout. Controls preserve native equipment/UI behavior.
+The selected P4 Tidy Up Meister 2.0.8 restores the original hands, worn bag and
+activation and returns the dumbbell to its captured source bag after the native
+queue drains, following the independent reader. Both modes require the exact final
+preparation inventory and activation. Native pre-reader equipment and activation
+snapshots retain the observed baseline differences; only Toolkit requires complete
+restoration before the reader begins. The native closed-UI control's existing
+constructor-clock and duration failures remain failures.
+
+World storage receipts verify the exact bag ID/type, native world-object linkage,
+placement square, favourite flag and conserved front-book contents. The prop is
+separately accounted for in root inventory while its bag is on the ground. SP
+records actual placement completion through the shared read-only boundary; Host
+records it after the real server `complete`, delegated exactly once. Recovery
+requires an actual native begin witness plus the sealed completed pickup state;
+root/world disappearance alone proves no effect. Queue-disabled CANCEL during
+placement is the real native no-op, so its workout, order and timer failures remain
+visible under the same guards.

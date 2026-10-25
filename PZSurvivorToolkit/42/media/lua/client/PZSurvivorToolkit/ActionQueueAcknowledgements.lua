@@ -36,7 +36,11 @@ local function receipt(action, queue, args)
     local captured = {action = action, character = character, player = character:getPlayerNum(),
         online = character:getOnlineID(), queue = queue, native = action.action,
         generation = queue.toolkitOperationGeneration or 0, epoch = queue[queueEpoch],
-        transaction = args.transaction, kind = args.kind, token = args.token, state = 'started'}
+        transaction = args.transaction, kind = args.kind, token = args.token, state = 'started',
+        settingsOff = PZSurvivorToolkit.Settings ~= nil and PZSurvivorToolkit.Settings.actionQueue() == false,
+        operation = action.toolkitQueueOperation,
+        operationCanceled = type(action.toolkitQueueOperation) == 'table' and rawget(action.toolkitQueueOperation, 'toolkitCancelled'),
+        operationsInvalid = rawget(queue, 'toolkitOperationsInvalid')}
     local record = {queue = queue, native = captured.native, generation = captured.generation,
         token = args.token, transaction = args.transaction, kind = args.kind, state = 'started'}
     record[receiptMarker] = function(candidate) if candidate == record then return captured end end
@@ -123,6 +127,28 @@ end
 
 function Acknowledgements.state(action, record)
     if record and Acknowledgements.capture(action) == record then return record.state end
+end
+
+-- Pin the UI state already present at native Started, so unchanged disabled
+-- bookkeeping cannot veto paid native completion. This grants no scheduler
+-- ownership or queue edit rights; Lifecycle retains all native stop guards.
+local function disabledNativeSettlement(action, record)
+    local captured = identity(action, record)
+    if not captured or not current(captured.queue, action)
+        or not captured.settingsOff or not PZSurvivorToolkit.Settings or PZSurvivorToolkit.Settings.actionQueue() ~= false
+        or action.toolkitQueueOperation ~= captured.operation
+        or (captured.operation ~= nil and type(captured.operation) ~= 'table')
+        or rawget(captured.queue, 'toolkitOperationsInvalid') ~= captured.operationsInvalid then return false end
+    local canceled = type(action.toolkitQueueOperation) == 'table' and rawget(action.toolkitQueueOperation, 'toolkitCancelled')
+    return canceled == captured.operationCanceled and captured or nil
+end
+function Acknowledgements.allowsDisabledNativeCompletion(action, record)
+    local captured=disabledNativeSettlement(action,record)
+    return not not(captured and captured.state=='completed')
+end
+function Acknowledgements.allowsDisabledNativeCompletionWait(action, record)
+    local captured=disabledNativeSettlement(action,record)
+    return not not(captured and (captured.state=='started'or captured.state=='completed'))
 end
 
 -- A captured receipt can settle after native Done advances the queue. This

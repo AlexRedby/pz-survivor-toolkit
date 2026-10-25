@@ -20,3 +20,7 @@ PZ Survivor Toolkit is a quality-of-life project for the user's personal gamepla
 Run tests related to the change and affected consumers; do not run the full suite by default. A broader set of fast, inexpensive checks is fine. Run expensive checks, including full builds and native game/integration runs, only when the affected behavior or specific risks require them.
 
 Use the [development guide](docs/DEVELOPMENT.md#checks-and-packaging) for test selection and coverage limits, and the [native runner guide](tests/native_queue/README.md) for in-game scenarios.
+
+## macOS native-test launch
+
+Use the common runner's default `auto` desktop policy; do not select a strategy based on screen lock or ask the user to wake the screen. Run the GUI command outside the sandbox in the logged-in macOS session. An unavailable CoreGraphics probe means GUI access is unknown, not that the display needs waking. Automatic routing isolates owned windows through AeroSpace, permits the guarded fallback only with confirmed physical-display sleep, and recovers discoverable fallback windows into the test workspace. Explicit `--desktop-mode aerospace` requires placement; legacy `current` retains the guarded automatic policy. Never change the user's display state, workspace or focus to enable a test. Prepare a fresh snapshot when the runner requests one; do not bypass its input or PID/window guards. See [desktop launch](tests/native_queue/README.md#desktop-launch) for the command and validation limits.

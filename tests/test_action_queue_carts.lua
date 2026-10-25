@@ -543,13 +543,21 @@ local pinCode='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/
 local maskHookCode='local unequipHookInitialized=false\n'
     ..assert(restrictionsSource:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
     ..assert(restrictionsSource:match('(local function wrapUnequipNew%(%).-\nend)'))..'\n'
-    ..assert(restrictionsSource:match('(local function initUnequipHook%(%).-\nend)'))..'\nreturn initUnequipHook'
+    ..assert(restrictionsSource:match('(local function initUnequipHook%(%).-\nend)'))..'\n'
+    ..'local dropActionHookInitialized=false\n'
+    ..assert(restrictionsSource:match('(local function wrapDropNew%(%).-\nend)'))..'\n'
+    ..assert(restrictionsSource:match('(local function initDropActionHook%(%).-\nend)'))
+    ..'\nreturn function() initUnequipHook();initDropActionHook() end'
 for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegate','foreign-lifecycle','preinstalled'}) do
     -- Rebuild the fixture so the helper must observe native predecessors before the real OnGameStart hook.
     local maskFixture=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     local character=maskFixture.player
+    local maskInstanceof=instanceof
+    instanceof=function(value,kind)return maskInstanceof(value,kind)
+        or kind=='InventoryItem' and type(value)=='table' and value.class=='InventoryContainer' end
     ItemBodyLocation={};ISWearClothing={isStopOnWalk=function() return false end}
     maskFixture.native('shared/TimedActions/ISUnequipAction.lua')
+    maskFixture.native('shared/TimedActions/ISDropWorldItemAction.lua')
     local removed=0
     character.removeWornItem=function() removed=removed+1 end
     character.getPrimaryHandItem,character.getSecondaryHandItem=function() end,function() end
@@ -601,6 +609,7 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
     if mode=='foreign-lifecycle' then ISUnequipAction.start=function() error('foreign start') end end
     if mode=='foreign-delegate' then ISUnequipAction.complete=function() error('foreign predecessor') end end
     if mode=='preinstalled' then source(maskHookCode,restrictionsPath)() end
+    local dropBefore={new=ISDropWorldItemAction.new,isValid=ISDropWorldItemAction.isValid,complete=ISDropWorldItemAction.complete}
     local maskCarts=maskFixture.project('ActionQueueCarts');assert(maskCarts.install())
     for _,callback in ipairs(pendingStarts) do callback() end
     local mask=maskFixture.item('Base.Hat_GasMask_nofilter')
@@ -610,12 +619,24 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
     assert(owned.maxTimeInit==50 and owned.reason=='food','actual wrapper changed native constructor arguments')
     assert(not maskPolicy.inspect(foreign),'unmarked identical mask removal borrowed food ownership')
     local contract,adapter=maskPolicy.inspect(owned)
-    if mode~='valid' then assert(not contract,'changed source or preinstalled helper acquired mask permission: '..mode)
+    if mode~='valid' then
+        assert(not contract,'changed source or preinstalled helper acquired mask permission: '..mode)
+        if mode=='changed-source' or mode=='preinstalled' then
+            assert(not maskCarts.isDropCallback('new',ISDropWorldItemAction.new),'unverified drop predecessor/source acquired storage permission: '..mode)
+        end
     else
         assert(adapter=='compat.food-mask-unequip' and contract.preparationFinish and maskPolicy.preparationCanFinish(owned),
             'owned native mask removal did not regain preparation cancellation')
         character.getPrimaryHandItem=function(self) return self.primary end
         character.getSecondaryHandItem=function(self) return self.secondary end
+        local bag=maskFixture.item('Base.Bag_Schoolbag');bag.class='InventoryContainer'
+        local drop=setmetatable({Type='ISDropWorldItemAction',item=bag,character=character},ISDropWorldItemAction)
+        assert(maskCarts.isNonCartDrop(drop),'actual pinned non-cart drop wrappers lost the native storage branch')
+        for name,callback in pairs(dropBefore)do
+            assert(maskCarts.isDropCallback(name,callback) and maskCarts.isDropCallback(name,ISDropWorldItemAction[name]),
+                'actual drop-hook transition lost its exact native predecessor/replacement: '..name)
+        end
+        bag.cart=true;assert(not maskCarts.isNonCartDrop(drop),'cart acquired ordinary storage drop permission');bag.cart=nil
         assert(maskCarts.isUnequipConstructor(originalNew) and maskCarts.isUnequipConstructor(ISUnequipAction.new)
             and maskCarts.isNonCartUnequip(owned) and maskCarts.isNonCartItem(mask) and maskCarts.equipmentSafe(character),
             'observed native delegate did not expose the exact non-cart equipment proof')

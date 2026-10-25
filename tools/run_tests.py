@@ -89,7 +89,7 @@ def configure_test_sources(lua, name, args):
         lua.globals().NativePZLuaRoot = str(args.native_action_root)
     if name == 'test_container_appearance_controls.lua' and args.native_action_root:
         lua.globals().NativeColorPickerSource = (args.native_action_root / 'client/ISUI/ISColorPickerHSB.lua').read_text(encoding='utf-8')
-    if name in ('test_container_configuration_menus.lua', 'test_smart_deposit.lua'):
+    if name in ('test_container_configuration_menus.lua', 'test_smart_deposit.lua', 'test_inventory_refresh.lua'):
         if args.native_action_root:
             lua.globals().NativeInventoryPageSource = (args.native_action_root / 'client/ISUI/ISInventoryPage.lua').read_text(encoding='utf-8')
     if name in ("test_highlighter.lua", "test_item_details.lua") and args.native_mod_options:
@@ -135,7 +135,7 @@ def configure_test_sources(lua, name, args):
         lua.globals().OCItemStickSource = args.oc_stick_source.read_text(encoding="utf-8")
     if name == "test_inventory_filter.lua" and args.oc_display_source:
         lua.globals().OCDisplayOverrideSource = args.oc_display_source.read_text(encoding="utf-8")
-    if name in ("test_action_queue_operations.lua", "test_quantity_transfers.lua") and args.native_inventory_context_menu:
+    if name in ("test_action_queue_operations.lua", "test_quantity_transfers.lua", "test_item_retention.lua") and args.native_inventory_context_menu:
         lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
         if name == "test_quantity_transfers.lua":
             lua.globals().NativeTextBoxSource = (args.native_inventory_context_menu.parent / "ISTextBox.lua").read_text(encoding="utf-8")
@@ -178,6 +178,7 @@ def main() -> None:
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
     parser.add_argument("--fridge-source", type=Path, help="Nick's Turn Off Fridges active media/lua directory")
     parser.add_argument("--vva-source", type=Path, help="Vanilla Vehicles Animated effective content root containing media/")
+    parser.add_argument("--vro-source", type=Path, help="Vehicle Repair Overhaul effective content root containing media/")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--oc-stick-source", type=Path, help="organizedCategories_itemStick.lua for Quantity transfer protection checks")
     parser.add_argument("--oc-display-source", type=Path, help="organizedCategories_displayOverride.lua for inventory stack splitting checks")

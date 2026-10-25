@@ -264,6 +264,62 @@ local function setup(changed,foreignMerge,alias,missing)
     return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,world=world,container=container,
         properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,empty=empty,runTransfer=runTransfer,drinks=function()return drinks end}
 end
+-- Native Host transfer lists can retain the detached pre-replication proxy;
+-- the exact current root object alone supplies the modeled item facts/effects.
+local function hostTransferMember()
+    local s=setup()
+    isClient=function()return true end
+    s.water.container=s.root
+    local action=s.transfer(s.water,s.root,s.bagInventory)
+    local member=s.item();member.id=s.water:getID();member.container=nil
+    action.queueList[1].items[1]=member
+    return s,action,member
+end
+do
+    local s,action,member=hostTransferMember()
+    assert(member~=action.item and s.adapters.matchesTransferMember(action,member))
+    local edit=assert(s.adapters.transfer(action),'exact detached Host member must retain full native transfer contract')
+    assert(edit.complete and edit.resources[1].facts.item==s.water and edit.resources[1].effects[1].set==s.bagInventory)
+    local contract=assert(s.policy.inspect(action))
+    assert(contract.edit and contract.edit.complete and contract.cancelOperation~=false,
+        'native Host detached proxy must not turn the transfer into an unknown/uncancellable contract')
+    assert(action.item==s.water and action.queueList[1].items[1]==member and member.container==nil
+        and s.water:getContainer()==s.root,'binding inspection must never rebind or move either native item')
+    isClient=function()return false end
+    assert(not s.adapters.matchesTransferMember(action,member)and not s.adapters.transfer(action),'SP clones cannot use Host provenance')
+end
+for _,mutation in ipairs({'id','type','located','canonical-missing','canonical-replaced','canonical-not-root','source-not-root',
+    'missing-root','missing-character','not-item','missing-getter'})do
+    local s,action,member=hostTransferMember()
+    if mutation=='id'then member.id=member.id+1
+    elseif mutation=='type'then member.getFullType=function()return'Base.Foreign'end
+    elseif mutation=='located'then member.container=s.bagInventory
+    elseif mutation=='canonical-missing'then s.root.getItemById=function()end
+    elseif mutation=='canonical-replaced'then local replacement=s.item();replacement.id=s.water:getID();replacement.container=s.root;s.root.getItemById=function()return replacement end
+    elseif mutation=='canonical-not-root'then s.water.container=s.bagInventory
+    elseif mutation=='source-not-root'then action.srcContainer=s.bagInventory
+    elseif mutation=='missing-root'then action.character={getInventory=function()end}
+    elseif mutation=='missing-character'then action.character=nil
+    elseif mutation=='not-item'then member.class='NotInventoryItem'
+    elseif mutation=='missing-getter'then member.getContainer=nil end
+    assert(not s.adapters.matchesTransferMember(action,member),mutation..': unsafe Host proxy binding accepted')
+    if mutation~='missing-root'and mutation~='missing-character'then
+        assert(not s.adapters.transfer(action),mutation..': unsafe Host proxy gained a transfer contract')
+    end
+end
+for _,mutation in ipairs({'multi-item','sparse-items','multi-group','group-field','callback','group-type','time','native-method','consumed'})do
+    local s,action,member=hostTransferMember()
+    if mutation=='multi-item'then action.queueList[1].items[2]=s.item()
+    elseif mutation=='sparse-items'then action.queueList[1].items[3]=s.item()
+    elseif mutation=='multi-group'then action.queueList[2]=action.queueList[1]
+    elseif mutation=='group-field'then action.queueList[1].foreign=true
+    elseif mutation=='callback'then action.onCompleteFunc=function()end
+    elseif mutation=='group-type'then action.queueList[1].type='Base.Foreign'
+    elseif mutation=='time'then action.queueList[1].time=action.maxTime+1
+    elseif mutation=='native-method'then ISInventoryTransferAction.isValid=function()return true end
+    elseif mutation=='consumed'then s.water.consumed=true end
+    assert(not s.adapters.transfer(action),mutation..': member identity bypassed the existing native transfer guards')
+end
 do
     local s=setup();local pickup=s.transfer();local restore=s.transfer(nil,s.root,s.bagInventory)
     local a,b=assert(s.adapters.transfer(pickup)),assert(s.adapters.transfer(restore))

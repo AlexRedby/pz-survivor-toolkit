@@ -65,6 +65,8 @@ class ModIntegrations(unittest.TestCase):
             self.write(root / relative, text)
         if full:
             self.write(root / 'Proximity/Proximity_SmartDeposit.lua', 'BC smart deposit')
+            self.write(root / 'Proximity.lua', 'BC proximity')
+            self.write(root / 'Proximity/Proximity_ISInventoryPane.lua', 'BC proximity pane')
             self.write(root / 'Customize/Customize_ISInventoryPage.lua', 'BC page customizer')
         return root
 
@@ -191,7 +193,7 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual({'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_search.lua',
                           'test_inventory_layout.lua', 'test_inventory_interaction.lua',
                           'test_inventory_transfer_operations.lua', 'test_container_configuration_menus.lua',
-                          'test_smart_deposit.lua'}, requested)
+                          'test_smart_deposit.lua', 'test_inventory_refresh.lua'}, requested)
         self.assertEqual({'CleanUIInventoryPaneSource': 'CleanUI pane',
                           'CleanUIVanillaInventoryPaneSource': 'CleanUI vanilla pane'},
                          self.bound(args, 'test_inventory_transfer_operations.lua'))
@@ -258,7 +260,8 @@ class ModIntegrations(unittest.TestCase):
         self.containers(full=True)
         self.lock_sources()
         args, requested = self.configure(['EURY_CONTAINERS'])
-        self.assertEqual({'test_bc_filter_compat.lua', 'test_smart_deposit.lua', 'test_container_configuration_menus.lua'}, requested)
+        self.assertEqual({'test_bc_filter_compat.lua', 'test_smart_deposit.lua', 'test_container_configuration_menus.lua',
+                          'test_inventory_refresh.lua'}, requested)
         self.assertEqual({'NativeBCFilterSource': 'category filters',
                           'NativeBCInventoryCategorySource': 'inventory category',
                           'NativeBCCategoryStoreSource': 'category store',
@@ -266,6 +269,10 @@ class ModIntegrations(unittest.TestCase):
                           'NativeBCIOSource': 'INI IO'}, self.bound(args, 'test_bc_filter_compat.lua'))
         smart = self.bound(args, 'test_smart_deposit.lua')
         self.assertEqual('BC smart deposit', smart['NativeBCSmartDepositSource'])
+        refresh = self.bound(args, 'test_inventory_refresh.lua')
+        self.assertEqual('BC proximity', refresh['NativeBCProximitySource'])
+        self.assertEqual('BC proximity pane', refresh['NativeBCProximityPaneSource'])
+        self.assertEqual('CleanUI page', refresh['CleanUIInventoryPageSource'])
         self.assertEqual('CleanUI page', smart['CleanUIInventoryPageSource'])
         self.assertEqual('BC page customizer',
                          self.bound(args, 'test_container_configuration_menus.lua')['NativeBCPageCustomizerSource'])
