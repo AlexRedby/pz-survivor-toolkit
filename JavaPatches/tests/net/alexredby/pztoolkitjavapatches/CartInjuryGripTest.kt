@@ -223,7 +223,7 @@ object CartInjuryGripTest {
             count++
         }
         check(
-            count == if (args.size > 1) args[1].toInt() else 26,
+            count == if (args.size > 1) args[1].toInt() else 29,
             "missing representative injury captures",
         )
         check(
