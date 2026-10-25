@@ -1,3 +1,10 @@
+# Injured cart main integration
+
+- [ ] Integrate current origin/main, preserving its Kotlin runtime and newer cart locomotion.
+- [ ] Port injury blending, gait pacing and adaptive grip to the current implementation; migrate affected tests and fixture consumers.
+- [ ] Resolve component versions/changelog against latest main; run affected regressions and a focused native check where integration changes behavior.
+- [ ] Recheck latest main, publish with a normal fast-forward push, and verify the remote revision.
+
 # Injured cart locomotion
 
 - [ ] Repeat the injury checks with the complete selected mod set once its missing Workshop mods are available.
