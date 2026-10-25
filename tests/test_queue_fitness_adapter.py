@@ -1621,6 +1621,61 @@ class FitnessAdapterTests(unittest.TestCase):
             assert(#rows-beforeLimit<=512 and rows[#rows].marker=='NATIVE_TRACE_LIMIT','trace failed to bound a case')
         """)
 
+    def test_receipt_order_fault_requires_explicit_diagnostic_host_and_bounded_delay(self):
+        self.selection.update(kind='mp',clients=2,languages=['EN','RU'],options={
+            'mp_host':True,'fitness_diagnostics':True,'fitness_receipt_delay_ms':250})
+        fitness.validate(self.selection)
+        for delay in (True,0,49,1001,250.5,'250'):
+            candidate=copy.deepcopy(self.selection);candidate['options']['fitness_receipt_delay_ms']=delay
+            with self.subTest(delay=delay),self.assertRaises(ValueError):fitness.validate(candidate)
+        candidate=copy.deepcopy(self.selection);candidate['options']['fitness_diagnostics']=False
+        with self.assertRaises(ValueError):fitness.validate(candidate)
+        candidate=copy.deepcopy(self.selection);candidate.update(kind='sp',clients=1,languages=['EN'])
+        with self.assertRaises(ValueError):fitness.validate(candidate)
+
+    def test_receipt_order_fault_releases_the_same_real_packet_once_without_effects(self):
+        try:
+            from lupa.lua51 import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for receipt ordering checks')
+        lua=LuaRuntime()
+        lua.execute("""
+            package.preload['QueueHealthEvents']=function()return {encode=function(row)return tostring(row)end}end
+            now=0;logs={};dispatched={};ticks={};getTimestampMs=function()return now end
+            Events={OnServerCommand={Add=function()end},OnTick={Add=function(fn)ticks[#ticks+1]=fn end}}
+            root={};player={getInventory=function()return root end,getOnlineID=function()return 7 end}
+            native={};action={Type='ISDropWorldItemAction',character=player,action=native,
+              toolkitNativeTransaction=3,toolkitNativeKind='ISDropWorldItemAction'}
+            queue={character=player,current=action,queue={action}}
+            ISTimedActionQueue={queues={[player]=queue},resetQueue=function()end,cancelQueue=function()end}
+            L={allowNativeCompletion=function()return false end,registerObserver=function()return true end}
+            PZSurvivorToolkit={ActionQueueLifecycle=L}
+            context={case=function()return 'empty-restore'end,player=function()return player end,active=function()return true end,
+              emit=function(marker,row)logs[#logs+1]=row end}
+            triggerEvent=function(event,module,command,args)
+              assert(event=='OnServerCommand'and not L.delayNativeReceipt(module,command,args),'release recaptured its own packet')
+              dispatched[#dispatched+1]={module,command,args}
+            end
+        """)
+        lua.globals().D=lua.execute((ROOT/'tests/native_queue/fitness/client/QueueFitnessDiagnostics.lua').read_text())
+        lua.execute("""
+            D.install({kind='mp',options={fitness_diagnostics=true,fitness_receipt_delay_ms=250}},context)
+            local args={protocol=1,player=7,transaction=3,kind='ISDropWorldItemAction',token='real-wire-token',state='completed'}
+            for _,change in ipairs({{player=99},{transaction=4},{kind='ISReadABook'},{state='started'}})do
+              local other={};for k,v in pairs(args)do other[k]=v end;for k,v in pairs(change)do other[k]=v end
+              assert(not L.delayNativeReceipt('PZSurvivorToolkitActions','State',other),'unrelated packet was retained')
+            end
+            assert(not L.delayNativeReceipt('Other','State',args)and not L.delayNativeReceipt('PZSurvivorToolkitActions','Other',args))
+            assert(L.delayNativeReceipt('PZSurvivorToolkitActions','State',args))
+            assert(not L.delayNativeReceipt('PZSurvivorToolkitActions','State',args),'same receipt retained twice')
+            now=249;ticks[1]();assert(#dispatched==0)
+            now=250;ticks[1]();assert(#dispatched==1 and dispatched[1][3]==args,'real packet identity was replaced')
+            now=1000;ticks[1]();assert(#dispatched==1 and not L.delayNativeReceipt('PZSurvivorToolkitActions','State',args))
+            assert(args.protocol==1 and args.player==7 and args.transaction==3 and args.kind=='ISDropWorldItemAction'
+              and args.token=='real-wire-token'and args.state=='completed','delayed packet contents changed')
+            assert(queue.current==action and queue.queue[1]==action and action.action==native,'fault changed native work')
+        """)
+
     def test_prepared_refresh_uses_exact_live_replicas_without_reinitializing_or_forcing_state(self):
         try:
             from lupa import LuaRuntime

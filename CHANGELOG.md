@@ -11,6 +11,14 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Downloaded B42 metadata confirms the main Jeep requires only `damnlib`; optional JP18 adds Jurassic Park spawns and requires the main Jeep. JP18/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.
+
+- **Added:** Three New Music packs with songs released before 1993: ABBA Gold (`NMBJABBA`, Workshop `3784065691`), Queen (`NMBJQ`, `3777937059`) and Fleetwood Mac (`NMBJFM`, `3751236222`), after `NewMusic` (62 Mod IDs / 57 Workshop items). Published album lists span 1975-1992 and the packs total approximately 633 MB. Existing sandbox settings are preserved; full-pack SP/Host playback remains unverified.
+
+- **Added:** New Music (`NewMusic`, Workshop `3739256725`) to the B42.21 selection (59 Mod IDs / 54 Workshop items), for audible cassette/CD/vinyl playback. The base includes a Zomboid OST recording; additional song packs are selected separately. Full-pack SP/Host playback, performance and TV & Radio ReInvented coexistence remain unverified.
+
+- **Added:** Spongie's Open Jackets (`SpnOpenClothBase` before `SpnOpenCloth`, Workshop `2812326159`) and Climb Ladders (`SubirEscaleras`, Workshop `3774776279`) to the B42.21 selection (58 Mod IDs / 53 Workshop items). Adds open/rolled clothing variants and world-ladder climbing. Optional Fluffy Hair and Build Ladders remain unselected; full-pack SP/Host behavior is unverified.
+
 - **Added:** Vehicle Repair Overhaul and its B42 Vehicle Salvage Overhaul module from Workshop `2757712197`, loaded base-first after the other vehicle mods (55 Mod IDs / 51 Workshop items). Adds repair options and whole-vehicle salvage; full-pack SP/Host behavior and the upstream sandbox-setting controls remain unverified.
 
 - **Added:** Vehicle Aim Roof Fix (`CarRoofFix`, Workshop `3781616141`) after the VVA pair in the B42.21 selection (54 Mod IDs / 51 Workshop items), to keep visible occupants seated during right-mouse look-around/aiming. Full-pack SP/Host behavior remains unverified.
@@ -27,6 +35,18 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 ### 0.1.262
 
 - **Vehicles:** Enter with a leading-foot step, bend and transfer weight over the planted foot, then bring the trailing leg inside. Use a separate exit motion with a foot planted outside before standing. Match the native driving seat and retain native action timing, cancellation and completion events. Requires Java Patches 0.1.55 for doorway position and foot contacts.
+
+### 0.1.261
+
+- **Fixed:** A completed Host action no longer discards the remaining queue while its matching server receipt is still in transit. The same cancellation and ownership checks apply with queue editing enabled or disabled; native effects are never replayed. Requires Java Patches 0.1.54.
+
+### 0.1.260
+
+- Declare the replaced standalone Survivor Wishlist, Quartermaster, Container Capacity Indicator, Item Details, HasResearch, Seed Season Indicator, organizedCategories, Medicine Moodles, Take Any Amount and TV & Radio ReInvented 42.20 fix mods incompatible with Toolkit, preventing accidental duplicate activation in the native Mods selector.
+
+### 0.1.259
+
+- **Fixed:** Native Fitness preparation with queue editing disabled now synchronizes its cleared secondary hand in Host and returns a prop borrowed from a placed bag to that exact recovered bag. Restoration requires the observed native pickup and, in Host, its completed item transaction; missing storage or changed bindings cannot select a replacement prop or bag.
 
 ### 0.1.258
 
@@ -1174,6 +1194,10 @@ The older README associates medicine indicators with this label, but no separate
 ### 0.1.55
 
 - **Vehicles:** Synchronize the rendered passenger position and both legs with Toolkit's entry/exit steps. Keep the support foot planted during weight transfer, lift the swinging foot and apply the same corrected pose to body and clothing. Normalize the chair animation's raised origin; logical seat ownership, collision, action completion and network messages stay native.
+
+### 0.1.54
+
+- **Fixed:** Hold an invalidated standard Host action whose exact native transaction is already Done while waiting, for up to 30 seconds, for its matching completion receipt. Suppress its stale update and let the original native callback finish once. Explicit stops, ownership changes, rejected/ambiguous transactions and expired waits cannot revive the action; successfully completed loop actions retain native behavior.
 
 ### 0.1.53
 

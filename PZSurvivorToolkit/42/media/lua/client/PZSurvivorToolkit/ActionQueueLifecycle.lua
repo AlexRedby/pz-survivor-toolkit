@@ -91,7 +91,7 @@ end
 -- reaches update()/Done. Java verifies its exact standard transaction and stop
 -- flags; this gate verifies current queue ownership and the sealed server receipt.
 -- It never executes callbacks, effects or queue advancement.
-function Lifecycle.allowNativeCompletion(action, nativeAction)
+local function nativeCompletionState(action, nativeAction, waiting)
     local character=action and action.character
     local queue=character and ISTimedActionQueue.queues[character]
     if not isClient()then
@@ -116,9 +116,19 @@ function Lifecycle.allowNativeCompletion(action, nativeAction)
     end
     local acknowledgements=Toolkit.ActionQueueAcknowledgements
     local receipt=acknowledgements and acknowledgements.capture(action)
-    if not editing and not (receipt and acknowledgements.allowsDisabledNativeCompletion
-        and acknowledgements.allowsDisabledNativeCompletion(action,receipt)) then return false end
-    return receipt~=nil and acknowledgements.state(action,receipt)=='completed'
+    local disabled = acknowledgements and (waiting and acknowledgements.allowsDisabledNativeCompletionWait
+        or acknowledgements.allowsDisabledNativeCompletion)
+    if not editing and not (receipt and disabled and disabled(action,receipt)) then return end
+    return receipt and acknowledgements.state(action,receipt)
+end
+function Lifecycle.allowNativeCompletion(action, nativeAction)
+    return nativeCompletionState(action,nativeAction,false)=='completed'
+end
+-- Waiting is not completion. Java may hold only a unique standard native Done
+-- transaction, with an absolute deadline, and must suppress its stale update.
+function Lifecycle.allowNativeCompletionWait(action, nativeAction)
+    local state=nativeCompletionState(action,nativeAction,true)
+    return state=='started'or state=='completed'
 end
 
 -- Policy grants permission before reaching this shared native stop boundary.

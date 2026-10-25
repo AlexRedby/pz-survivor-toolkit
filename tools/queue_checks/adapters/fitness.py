@@ -2,6 +2,9 @@
 import copy
 import json
 import math
+import os
+import subprocess
+import zipfile
 from pathlib import Path
 import re
 import shutil
@@ -37,6 +40,10 @@ def definitions():
 
 
 def validate(selection):
+    delay = selection.get('options', {}).get('fitness_receipt_delay_ms')
+    if delay is not None and (type(delay) is not int or not 50 <= delay <= 1000
+            or selection.get('kind') != 'mp' or selection.get('options', {}).get('fitness_diagnostics') is not True):
+        raise ValueError('Fitness receipt delay requires diagnostic Host and 50..1000 integer milliseconds')
     cases = selection.get('cases')
     kind = selection.get('kind')
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
@@ -52,14 +59,42 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'fitness').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
+    return [*sorted(path for path in (root / 'fitness').rglob('*') if path.suffix in ('.lua', '.java')), root / 'health/shared/QueueHealthEvents.lua',
             root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua']
+
+
+def _validity_probe(project, output, game, jdk, locations):
+    classes = Path(output) / 'fitness-probe/classes'
+    classes.mkdir(parents=True)
+    classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar',
+                                        Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar']))
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+                    str(Path(project) / 'tests/native_queue/fitness/java/Main.java')],
+                   check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted(classes.rglob('*.class'))
+    if not compiled:
+        raise ValueError('Fitness validity probe compilation produced no classes')
+    jar = classes.parent / 'FitnessValidityProbe.jar'
+    with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for path in compiled:
+            archive.write(path, path.relative_to(classes).as_posix())
+    return jar
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     root = Path(project) / 'tests/native_queue'
+    probe = _validity_probe(project, output, game, jdk, locations) if selection.get('options', {}).get('fitness_diagnostics') is True else None
+    if probe:
+        runtime.setdefault('fixture', {})['mods'] = ['FitnessValidityProbe']
     for role in runtime['roles'].values():
+        if probe:
+            layer = Path(role['cache']) / 'mods/FitnessValidityProbe/42'
+            (layer / 'media/java').mkdir(parents=True, exist_ok=True)
+            (layer / 'mod.info').write_text('name=Isolated Fitness validity probe\nid=FitnessValidityProbe\nversionMin=42.21\n'
+                                          'require=\\ZombieBuddy\njavaPkgName=net.alexredby.fitnessprobe\n'
+                                          'javaJarFile=media/java/FitnessValidityProbe.jar\n')
+            shutil.copy2(probe, layer / 'media/java/FitnessValidityProbe.jar')
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for side, source in [('shared', root / 'health/shared/QueueHealthEvents.lua'),
                              ('client', root / 'startup/client/ZZStartup.lua')]:
