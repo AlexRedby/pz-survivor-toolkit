@@ -1,6 +1,5 @@
 # Injured cart locomotion
 
-- [ ] Finish injured Host owner/observer verification for a mild right-leg injury with the shopping cart when native window routing is stable. Check fast turns and injury/healing while already moving; preserve native injury variables and exact cart/cargo identity.
 - [ ] Repeat the injury checks with the complete selected mod set once its missing Workshop mods are available.
 
 # Shopping cart animation port
