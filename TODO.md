@@ -1,3 +1,7 @@
+# Welding torch refill
+
+- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host after local `damnlib` and `92jeepYJ` sources are available. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
+
 # Legacy Host launchers
 
 - [ ] Retain the optional `start-host.ps1` / `start-host.command` files, packaging and launcher checks only until automatic Host loading has native macOS/Linux qualification as well as Windows. Remove those scripts and their packaging/test consumers once a normal client-only-loader launch on each platform starts a patched Host child with saved approvals and an inherited-loader control proves no duplicate agent. They remain fallback entrypoints for existing installations, not the normal user workflow.

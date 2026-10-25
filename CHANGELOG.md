@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.268
+
+- Keep the retained-item mark when refilling a welding torch, including saved Stick marks. Context-menu refill returns the replacement torch to its original container after the authoritative result arrives. Replace the obsolete consumed-torch return so it cannot cancel the following propane-tank return in Host; native fuel costs remain unchanged.
+
 ### 0.1.267
 
 - Fixed: Fitness measures earned active native frames instead of the synchronized world clock. Host clock corrections no longer shorten or extend a workout; preparation, repeated reads and the confirmation frame add no time. Native interruptions, effects and stop/cleanup ordering stay intact.
