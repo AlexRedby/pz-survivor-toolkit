@@ -71,7 +71,7 @@ class FitnessAdapterTests(unittest.TestCase):
             if case == 'missing-dumbbell':
                 final['items'] = [row for row in final['items'] if row['id'] != ids['dumbbell']]
             exercises = fitness._expected_exercises(case, mode)
-            minutes = 30 if case in ('burpees-30','squats-30') else 10
+            minutes = (60 if mp else 30) if case=='late-exhaustion' else 30 if case in ('burpees-30','squats-30') else 10
             records = []
             for i, exercise in enumerate(exercises):
                 start = i*700000
@@ -133,6 +133,32 @@ class FitnessAdapterTests(unittest.TestCase):
                     continuationNativeClock=1800002,continuationTimestampMilliseconds=1100,delayMilliseconds=100,
                     callback='ISBaseTimedAction.begin',tailId=ids['tail'],nativeAbsent=True,
                     terminalState='canceled' if mp else 'singleplayer',token='token0' if mp else False)
+            if case=='late-exhaustion':
+                end=1620000
+                state=dict(clinical=clinical(10,.243,1,1),enduranceMoodle=3,threshold=2,
+                    pressedMovement=False,moving=False,aiming=False,climbing=False,sittingFurniture=False,
+                    vehicle=False,dead=False,asleep=False,pressedCancel=False,exerciseStarted=False,exerciseEnded=True,
+                    calendarMS=end,durationMS=end,started=True,type='ISFitnessAction',exercise='burpees',minutes=minutes)
+                record=records[0]
+                record.update(stopMS=end,durationStopMS=end,lastRepMS=end-1000,lastRepDurationMS=end-1000,
+                    lastRep=clinical(10,.243,1,1),lastRepBefore=clinical(9,.262,.99,.99),minEndurance=.243,
+                    repObservationSource='server exeLooped' if mp else 'SP adjacent native samples',repSampleDelta=1,lastRepEnduranceMoodle=2,
+                    postStopXP=dict(baseline=copy.deepcopy(state['clinical']),events=[]),afterXPEventCount=0,
+                    after=clinical(10,.243,1,1),stopEntry=copy.deepcopy(state),
+                    stopMethod='serverStop' if mp else 'observed-native-removal')
+                if mp:record['stopEntry']['threshold']=False;record['stopCallbacks']=dict(serverStop=1)
+                receipt.update(tailRead=mode!='native',clinical=copy.deepcopy(record['after']),receiptCalendarMS=end+1000,receiptDurationMS=end+1000)
+                command.update(nativeStopCalls=1,nativeStopReturns=1,durationStopDelayMilliseconds=50,
+                    tailInitiallyQueued=True,tailPagesAtRequest=99,tailTotalPages=100,tailPagesAtFinish=99 if mode=='native' else 100)
+                command['durationStops'][0]['stopMS']=end
+                command['exhaustionStop']=dict(state=state,timestampMilliseconds=1000,timing=dict(
+                    startMS=0,endMS=minutes*60000,stopMS=end,stopTimestampMS=1000,confirmed=True,stopping=mp and mode=='toolkit',total=minutes))
+                if mode=='toolkit':
+                    command['durationContinuation']=dict(workoutStartMS=0,workoutEndMS=minutes*60000,
+                        reachedNativeClock=end,stopNativeClock=end,reachedTimestampMilliseconds=1000,
+                        continuationNativeClock=end+100,continuationTimestampMilliseconds=1100,delayMilliseconds=100,
+                        callback='ISBaseTimedAction.begin',tailId=ids['tail'],nativeAbsent=True,
+                        terminalState='canceled' if mp else 'singleplayer',token='token0' if mp else False)
             if case=='pending-reorder' and mode=='toolkit':command['reorderedTailBeforeStart']=True
             if case in fitness.BORROWED_CASES and mode=='toolkit':
                 command.update(borrowedTransferProgress=True,borrowedTool=ids['dumbbell'],borrowedSourceBag=ids['bag'])
@@ -926,6 +952,86 @@ class FitnessAdapterTests(unittest.TestCase):
             self.assertTrue(any('actual local stop' in issue for issue in self.verify(evidence)['issues']))
             self.selection['mode']='toolkit'
 
+    def test_late_exhaustion_preserves_earned_work_and_native_tail_difference(self):
+        for mode in ('native','toolkit'):
+            for kind in ('sp','mp'):
+                self.selection.update(mode=mode,kind=kind,cases=['late-exhaustion'],clients=2 if kind=='mp' else 1,
+                    languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+                with self.subTest(mode=mode,kind=kind):self.assertEqual(self.verify()['issues'],[])
+                for change in ('healthy','moodle','movement','deadline','unconfirmed','no-authority','no-cost','no-xp',
+                               'duplicate-stop','wrong-stop','tail','skipped-reps','wrong-continuation','late-removal','stop-xp','unexplained-xp'):
+                    evidence=self.evidence();command=evidence[0][1]['command'];record=evidence[0][1]['receipt']['records'][0]
+                    if change=='healthy':command['exhaustionStop']['state']['clinical']['endurance']=.8
+                    elif change=='moodle':command['exhaustionStop']['state']['enduranceMoodle']=2
+                    elif change=='movement':command['exhaustionStop']['state']['pressedMovement']=True
+                    elif change=='deadline':command['exhaustionStop']['timing']['stopMS']=command['exhaustionStop']['timing']['endMS']
+                    elif change=='unconfirmed':command['exhaustionStop']['timing']['confirmed']=False
+                    elif change=='no-authority':record.pop('stopEntry')
+                    elif change=='no-cost':record['lastRepBefore']['endurance']=.243
+                    elif change=='no-xp':record['lastRepBefore']['fitnessXP']=10;record['lastRepBefore']['strengthXP']=10
+                    elif change=='duplicate-stop':command['nativeStopCalls']=2
+                    elif change=='wrong-stop':record['stopMethod']='complete'
+                    elif change=='tail':command['tailPagesAtFinish']=100 if mode=='native' else 99
+                    elif change=='skipped-reps':record['repSampleDelta']=2
+                    elif change=='late-removal':command['durationStopDelayMilliseconds']=5000
+                    elif change=='stop-xp':record['stopEntry']['clinical']['fitnessXP']+=1
+                    elif change=='unexplained-xp':evidence[0][1]['receipt']['clinical']['fitnessXP']+=1
+                    elif mode=='toolkit':command['durationContinuation']['nativeAbsent']=False
+                    else:command['durationContinuation']={}
+                    with self.subTest(mode=mode,kind=kind,change=change):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_host_cached_server_moodle_is_telemetry_not_the_local_stop_cause(self):
+        for mode in ('native','toolkit'):
+            self.selection.update(mode=mode,kind='mp',cases=['late-exhaustion'],clients=2,languages=['EN','RU'],options={'mp_host':True})
+            for cached in (0,1,2,3,4):
+                evidence=self.evidence();record=evidence[0][1]['receipt']['records'][0]
+                record['stopEntry']['enduranceMoodle']=cached
+                with self.subTest(mode=mode,cached=cached):self.assertEqual(self.verify(evidence)['issues'],[])
+                for change in ('healthy-server','healthy-client','client-moodle','bad-cache','early-horizon'):
+                    changed=copy.deepcopy(evidence);receipt=changed[0][1]['receipt'];entry=receipt['records'][0]['stopEntry']
+                    if change=='healthy-server':entry['clinical']['endurance']=.5
+                    elif change=='healthy-client':changed[0][1]['command']['exhaustionStop']['state']['clinical']['endurance']=.5
+                    elif change=='client-moodle':changed[0][1]['command']['exhaustionStop']['state']['enduranceMoodle']=2
+                    elif change=='bad-cache':entry['enduranceMoodle']=-1
+                    else:receipt['receiptDurationMS']=receipt['records'][0]['durationStopMS']-1
+                    with self.subTest(mode=mode,cached=cached,change=change):self.assertTrue(self.verify(changed)['issues'])
+
+    def test_late_exhaustion_accounts_each_post_stop_xp_event_without_claiming_its_caller(self):
+        for kind in ('sp','mp'):
+            self.selection.update(mode='toolkit',kind=kind,cases=['late-exhaustion'],clients=2 if kind=='mp' else 1,
+                languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+            for prefix in ((1,) if kind=='mp' else (0,1)):
+                evidence=self.evidence();receipt=evidence[0][1]['receipt'];record=receipt['records'][0]
+                end=record['stopMS'];sample=copy.deepcopy(record['postStopXP']['baseline']);sample['fitnessXP']+=1
+                event=dict(perk='Fitness',amount=1,clinical=sample,calendarMS=end+prefix*100,
+                    durationMS=end+prefix*100,currentExerciseCleared=True,observerActive=prefix==0,
+                    nativeAbsent=True,reps=record['reps'],enduranceWarning=.25)
+                record['postStopXP']['events']=[event]
+                record['afterXPEventCount']=1-prefix
+                if prefix==0:record['after']['fitnessXP']+=1
+                receipt['clinical']['fitnessXP']+=1
+                with self.subTest(kind=kind,prefix=prefix):self.assertEqual(self.verify(evidence)['issues'],[])
+                for change in ('missing','duplicate','amount','strength','native-present','exercise','healthy','reps','source-error',
+                               'wrong-prefix','after-horizon','unexplained','extra-regularity','stop-cost'):
+                    changed=copy.deepcopy(evidence);r=changed[0][1]['receipt'];rec=r['records'][0];ledger=rec['postStopXP'];e=ledger['events'][0]
+                    if change=='missing':ledger['events']=[];rec['afterXPEventCount']=0
+                    elif change=='duplicate':ledger['events']*=2
+                    elif change=='amount':e['amount']=2
+                    elif change=='strength':e['perk']='Strength'
+                    elif change=='native-present':
+                        if kind=='mp':e['observerActive']=True
+                        else:e['nativeAbsent']=False
+                    elif change=='exercise':e['currentExerciseCleared']=False
+                    elif change=='healthy':e['clinical']['endurance']=.5
+                    elif change=='reps':e['reps']+=1
+                    elif change=='source-error':ledger['error']='observation failed'
+                    elif change=='wrong-prefix':rec['afterXPEventCount']=prefix
+                    elif change=='after-horizon':e['durationMS']=r['receiptDurationMS']+1
+                    elif change=='unexplained':r['clinical']['fitnessXP']+=1
+                    elif change=='extra-regularity':e['clinical']['regularity']['burpees']+=1
+                    else:rec['stopEntry']['clinical']['strengthXP']+=1
+                    with self.subTest(kind=kind,prefix=prefix,change=change):self.assertTrue(self.verify(changed)['issues'])
+
     def test_original_regularity_receipts_remain_valid_for_existing_cases(self):
         self.selection['cases'] = ['empty']
         evidence = self.evidence()
@@ -1081,6 +1187,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 originalStart,originalLoop,originalStop=ISFitnessAction.start,ISFitnessAction.exeLooped,ISFitnessAction.stop
                 package.preload['TimedActions/ISFitnessAction']=function()return ISFitnessAction end
             """)
+            lua.execute('Events={AddXP={Add=function()end}}')
             observation=lua.execute(source)
             lua.globals().observer=observation
             lua.execute("""
@@ -1155,6 +1262,7 @@ class FitnessAdapterTests(unittest.TestCase):
                 getCalender=function()return {getTimeInMillis=function()return 0 end}end}end
             isServer=function()return false end
         """)
+        lua.execute('Events={AddXP={Add=function()end}}')
         lua.globals().observer=lua.execute((ROOT/'tests/native_queue/fitness/shared/QueueFitnessObservation.lua').read_text())
         lua.execute("""
             assert(observer.durationClock()==0 and observer.clock()==0)

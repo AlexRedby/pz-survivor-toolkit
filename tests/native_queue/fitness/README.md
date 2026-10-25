@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,late-exhaustion,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -36,7 +36,30 @@ The diagnostic `burpees-30` request retains the same strict duration gate, but t
 default character can legitimately exhaust stamina first (the preserved control
 ended after about 27 minutes and 39 repetitions). That failed row remains failed;
 it is not evidence of a timer defect and must not be made green by bypassing stamina.
-The separate late-exhaustion classification remains in the project TODO.
+The separate `late-exhaustion` case requests thirty minutes of burpees in SP and
+sixty in Host through the native menu, with full initial endurance and lets native repetitions spend it normally. It requires a
+confirmed earned interval between ten minutes and the selected deadline, a client/SP stop snapshot
+with exhausted endurance and no input interruption, plus a real last paid repetition
+and authoritative stop snapshot. Host uses the server's `exeLooped` pre/post values;
+SP uses adjacent native samples and rejects a skipped predecessor for that last rep.
+The stop cause comes from the client snapshot, not from a generic server `serverStop`.
+Host authority must show real low raw endurance and paid effects; its cached Moodle
+remains telemetry because native `serverStop` neither refreshes nor tests that cache.
+Exactly one original stop must settle without completion replay. Fitness and Strength
+XP are exact at the last paid repetition/stop boundary. Later `Events.AddXP` entries
+must account for every additional point: only observed Fitness +1 with no current exercise, low endurance and no added
+training effects is accepted. SP requires the exact native body absent. MP requires
+a returned serverStop with no later repetitions, plus final idle and the client
+removal/terminal boundary; its Lua action has a network action rather than the SP
+BaseAction pointer, so that pointer-absence flag is not server proof.
+This is compatible with vanilla idle endurance training; the generic event itself
+has no caller identity. Unexplained XP and Strength changes still fail. Receipts freeze
+the event horizon, including awards between native removal and the next SP sample. The native control
+must cancel its still-unread tail; Toolkit must preserve that tail and start it only
+after native removal and its matching Host terminal receipt. This explicit control
+difference is expected. A thirty-minute Host request can reach its timer before
+exhaustion under the native server effects; that diagnostic failure is preserved,
+and does not justify lowering stamina or reclassifying a timer stop as exhaustion. The historical strict `burpees-30` result remains failed.
 
 The natural `empty-restore` control requires one local native stop in both modes and
 one authoritative `serverStop` without completion replay in Host. Its original

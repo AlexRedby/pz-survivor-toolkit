@@ -16,9 +16,12 @@ local peerCase,peerBook,peerComplete,actor,stopReached,returnSeen,recoverySeen,r
 local ready,setupSince,preparedInitialized,prepareLogged=false,0,false,nil
 local peersReady,peersReceipt,isolationAuthority,isolationFinalAuthority=false,nil,nil,nil
 local function case()return config.cases[index]end
-local function minutes()return (case()=='burpees-30'or case()=='squats-30')and 30 or 10 end
-local function exerciseForCase(id)return id=='burpees-30'and 'burpees'or (id=='missing-dumbbell'or F.borrowedCase(id))and 'bicepscurl'or 'squats'end
-local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or id=='squats-30'or F.restorationCase(id)end
+local function minutes()
+ if case()=='late-exhaustion'then return config.kind=='mp'and 60 or 30 end
+ return (case()=='burpees-30'or case()=='squats-30')and 30 or 10
+end
+local function exerciseForCase(id)return (id=='burpees-30'or id=='late-exhaustion')and 'burpees'or (id=='missing-dumbbell'or F.borrowedCase(id))and 'bicepscurl'or 'squats'end
+local function immediate(id)return id=='empty'or id=='empty-restore'or id=='active-cancel'or id=='burpees-30'or id=='squats-30'or id=='late-exhaustion'or F.restorationCase(id)end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
 -- Retain the exact workout after it stops being the head. Native removal and
@@ -37,7 +40,7 @@ local function sampleDurationStop(action)
   command.durationStops[#command.durationStops+1]={startMS=progress.startMS,endMS=progress.endMS,
    stopMS=progress.stopMS,confirmed=progress.confirmed}
  end
- if (case()=='burpees-30'or case()=='squats-30')and command.durationStopDelayMilliseconds==nil and not action.character:getCharacterActions():contains(action.action)then
+ if (case()=='burpees-30'or case()=='squats-30'or case()=='late-exhaustion')and command.durationStopDelayMilliseconds==nil and not action.character:getCharacterActions():contains(action.action)then
   command.durationStopDelayMilliseconds=getTimestampMs()-sample.reachedTimestampMilliseconds
  end
  return sample
@@ -46,7 +49,7 @@ local function observeDurationContinuation(nextAction)
  if command and type(seen)=='table'then
   for action in pairs(seen)do sampleDurationStop(action)end
  end
- if (case()~='burpees-30'and case()~='squats-30')or not command or not state or command.durationContinuation
+ if (case()~='burpees-30'and case()~='squats-30'and case()~='late-exhaustion')or not command or not state or command.durationContinuation
   or not nextAction or nextAction.Type~='ISReadABook'or getmetatable(nextAction)~=ISReadABook
   or nextAction.character~=state.player or not nextAction.item
   or nextAction.item:getID()~=state.ids.items.tail or nextAction.item:getFullType()~='Base.BookFirstAid1'then return end
@@ -93,6 +96,10 @@ end,begin=function(action,phase)
  if command and state and action and action.Type=='ISFitnessAction' and action.character==state.player and phase=='stop' then
   command.nativeStopCalls=(command.nativeStopCalls or 0)+1
   sampleDurationStop(action) -- Observe before native reset/pruning can retire this exact body.
+  if case()=='late-exhaustion'then
+   assert(not command.exhaustionStop,'duplicate local exhaustion stop')
+   command.exhaustionStop={state=O.noteStop(action),timing=T.ActionQueueFitness.timing(action),timestampMilliseconds=getTimestampMs()}
+  end
  end
  -- Queue-disabled ActionCompletion dispatches finish only for an accepted observer.
  return command~=nil and state~=nil and F.borrowedCase(case())and action~=nil
@@ -268,6 +275,11 @@ local function dispatch()
  if id=='sequential'then enqueue('pushups')end
  if F.borrowedCase(id)then command.propEquipObserved=false;command.returnCount=0;command.returnStarts={};command.recoveryStarts={} end
  tail=read(state.items.tail)
+ if id=='late-exhaustion'then
+  command.tailInitiallyQueued=queue():indexOf(tail)~=-1
+  command.tailPagesAtRequest=state.player:getAlreadyReadPages(state.items.tail:getFullType())
+  command.tailTotalPages=state.items.tail:getNumberOfPages()
+ end
  command.waitStartMS=O.clock();command.initialClinical=O.clinical(getPlayer())
  if front then command.waitingNoExercise=not getPlayer():getFitness():getCurrentExe()end
  if id=='pending-cancel'and not native then
@@ -403,8 +415,12 @@ local function finishCase()
  if F.borrowedCase(case())then command.clientActivation=F.activation(getPlayer());command.clientStorage=F.storage(getPlayer(),state.ids.items.bag)end
  command.clientCurrentExerciseCleared=not getPlayer():getFitness():getCurrentExe()
  local problem
- if not receipt.tailRead then problem='independent-tail-not-preserved'
- elseif not receipt.serverStopSettled or not receipt.currentExerciseCleared then problem='native-fitness-stop-not-settled'end
+ if case()=='late-exhaustion'then
+  command.tailPagesAtFinish=getPlayer():getAlreadyReadPages(state.items.tail:getFullType())
+  if receipt.tailRead~=(not native)then problem='exhaustion-tail-control-differs'end
+ elseif not receipt.tailRead then problem='independent-tail-not-preserved'
+ end
+ if not problem and (not receipt.serverStopSettled or not receipt.currentExerciseCleared)then problem='native-fitness-stop-not-settled'end
  local published={event='case',id=case(),status=problem and 'failed'or 'passed',reason=problem,command=command,receipt=receipt}
  emit(published)
  if problem then failed=failed+1 end

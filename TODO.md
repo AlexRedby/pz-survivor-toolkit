@@ -27,8 +27,6 @@
 
 # Exercise ground storage
 
-- [ ] Separate the existing `burpees-30` declaration's legitimate runtime exhaustion from positive timer coverage. Preserve the 39-repetition/endurance-0.243 failed control in `.codex/investigations/native-terminal-20261025/after02/sp-native`, add authoritative stop-cause/earned-interval assertions for late exhaustion, and preserve the intended native/managed cancellation differences. Keep `squats-30` as the full selected-duration control; do not bypass native stamina limits or silently relabel the failed row.
-
 - [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
 
 # Container editor visual states
