@@ -20,9 +20,31 @@ public final class Main {
             long now=System.currentTimeMillis();
             if (current==null || !(slot.character instanceof IsoPlayer p) || !p.isLocalPlayer() || now-lastRender<25) return;
             lastRender=now;
+            StepPoseProbe.render(slot,current,now);
             System.out.println("[VEHICLE_POSE] RENDER " + current + " ms=" + now + " x=" + slot.x + " y=" + slot.y
                 + " z=" + slot.z + " inVehicle=" + slot.inVehicle + " local=" + slot.inVehicleX + "," + slot.inVehicleY + "," + slot.inVehicleZ);
         }
+    }
+
+    @LuaMethod(name="vehiclePoseBoundary", global=true)
+    public static String boundary(IsoPlayer player, zombie.vehicles.BaseVehicle vehicle, int seat, boolean entering) {
+        var animation=player.getAnimationPlayer();
+        var offset=vehicle.getPassengerPosition(seat,entering?"outside":"inside").getOffset();
+        float origin=offset.y+vehicle.getScript().getModel().getOffset().y;
+        var out=new StringBuilder();
+        for (String side:new String[]{"L","R"}) {
+            int index=animation.getSkinningBoneIndex("Bip01_"+side+"_Foot",-1);
+            out.append(side).append("Y=").append(origin+1.5f*animation.getModelTransformAt(index).m13).append(' ');
+        }
+        return out.toString();
+    }
+
+    @LuaMethod(name="vehiclePoseCleanView", global=true)
+    public static String cleanView() {
+        int visible=0;
+        for (var ui:zombie.ui.UIManager.getUI()) if (ui.isVisible()) visible++;
+        return "visible="+visible+" global="+zombie.ui.UIManager.visibleAllUi
+            +" names="+zombie.network.ServerOptions.getInstance().displayUserName.getValue();
     }
 
     @LuaMethod(name="vehiclePoseCheck", global=true)
@@ -44,7 +66,7 @@ public final class Main {
             if (!expectedClip.equals(name))
                 throw new IllegalStateException("Unexpected transition track: " + name + " weight=" + track.getBlendWeight());
             if (!track.isLooping()) {
-                if (!"Bob_IdleDriving".equals(expectedClip) && track.reverse != player.getVariableBoolean("bExitingVehicle"))
+                if (!"Bob_IdleDriving".equals(expectedClip) && track.reverse)
                     throw new IllegalStateException("Transition played in the wrong direction");
                 if (Math.abs(track.getDuration() / track.getSpeedDelta() - .625f) > .00001f)
                     throw new IllegalStateException("Changed native transition duration");

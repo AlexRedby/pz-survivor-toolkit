@@ -175,6 +175,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.CartEmergencyDropTest'] = 'CART_EMERG
 CHECKS['net.alexredby.pztoolkitjavapatches.CartPickupApproachTest'] = 'CART_PICKUP_APPROACH_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartObserverPoseTest'] = 'CART_OBSERVER_POSE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartObserverRenderTest'] = 'CART_OBSERVER_RENDER_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.VehicleStepPoseTest'] = 'VEHICLE_STEP_POSE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleTransitionRenderTest'] = 'VEHICLE_TRANSITION_RENDER_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}

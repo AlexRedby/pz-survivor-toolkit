@@ -3,7 +3,7 @@
     <m_Name>default</m_Name>
     <m_AnimName>Bob_ToolkitVehicleEnter</m_AnimName>
     <m_Looped>false</m_Looped>
-    <!-- Native chair movement settles into the driving pose; exit retraces it.
+    <!-- The near foot steps to the threshold before the body lowers into the seat.
          VehicleTransitionRender synchronizes only the rendered seat transfer. -->
     <m_BlendTime>0.00</m_BlendTime>
     <m_SpeedScale>1.60</m_SpeedScale>

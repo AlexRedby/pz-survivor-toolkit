@@ -15,9 +15,10 @@ import zombie.core.skinnedmodel.model.jassimp.ImportedSkeleton;
 import zombie.core.skinnedmodel.model.jassimp.ImportedSkeletonParams;
 import zombie.core.skinnedmodel.model.jassimp.JAssImpImporter;
 import zombie.core.skinnedmodel.model.jassimp.ProcessedAiSceneParams;
+import net.alexredby.pztoolkitjavapatches.VehicleStepPose;
 
 /** Rebuild the vehicle transition from the supported native Bob skeleton and clips.
- * Compile with CartClipCheck.java and the game JAR, then run with GAME OUTPUT_PREFIX.
+ * Compile with CartClipCheck.java, the current patch JAR and game JAR, then run with GAME OUTPUT_PREFIX [enter|exit].
  * OUTPUT_PREFIX.json feeds cart_clip_bake.py --template GAME/media/anims_X/Bob/Bob_Idle.x
  * --name Bob_ToolkitVehicleEnter; OUTPUT_PREFIX.tsv is its CartClipCheck oracle.
  * Outputs are authoring intermediates; this helper never installs a mod.
@@ -52,7 +53,9 @@ public final class VehicleTransitionGenerate {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 2) throw new IllegalArgumentException("GAME OUTPUT_PREFIX");
+        if (args.length < 2 || args.length > 3) throw new IllegalArgumentException("GAME OUTPUT_PREFIX [enter|exit]");
+        boolean exiting = args.length == 3 && args[2].equals("exit");
+        if (args.length == 3 && !exiting && !args[2].equals("enter")) throw new IllegalArgumentException("expected enter or exit");
         var chair = read(Path.of(args[0], "media/anims_X/Bob/Bob_SatChairIn.x"));
         var drive = read(Path.of(args[0], "media/anims_X/Bob/Bob_IdleDriving.x"));
         if (chair.clip.getDuration() != 1f || !chair.actor.boneIndices.keySet().equals(drive.actor.boneIndices.keySet()))
@@ -60,16 +63,25 @@ public final class VehicleTransitionGenerate {
         var chairTrack = track(chair);
         var driveTrack = track(drive);
         driveTrack.UpdateKeyframes(0);
+        var standing = CartClipCheck.sample(chairTrack, chair.actor, 0f);
+        var driving = CartClipCheck.sample(driveTrack, drive.actor, 0f);
+        var references = new VehicleStepPose.References(
+            standing[chair.actor.boneIndices.get("Bip01")].getTranslation(new Vector3f()),
+            standing[chair.actor.boneIndices.get("Bip01_L_Foot")], standing[chair.actor.boneIndices.get("Bip01_R_Foot")],
+            driving[drive.actor.boneIndices.get("Bip01")].getTranslation(new Vector3f()),
+            driving[drive.actor.boneIndices.get("Bip01_L_Foot")], driving[drive.actor.boneIndices.get("Bip01_R_Foot")]);
+        // Canonical full-pack CarNormal calibration. Runtime IK retargets the same contacts
+        // to the actual native seat positions, including the opposite doorway.
+        var outside = new Vector3f(1.130038f, -.26007798f, .220038f);
+        var inside = new Vector3f(.319956f, .239876f, .159978f);
         var json = new StringBuilder("[");
         var tsv = new StringBuilder();
         for (int frame = 0; frame <= 60; frame++) {
             float time = frame / 60f;
-            // Retain the standing/bending first half, then settle limbs and root
-            // into the actual driving pose instead of the floor-relative chair pose.
-            float blend = Math.max(0, Math.min(1, (time - .5f) / .5f));
-            blend = blend * blend * (3 - 2 * blend);
-            chairTrack.setCurrentTimeValue(time);
-            chairTrack.setPreviousTimeValue(time);
+            float blend = VehicleStepPose.drivingBlend(time, exiting);
+            float chairTime = VehicleStepPose.chairTime(time, exiting);
+            chairTrack.setCurrentTimeValue(chairTime);
+            chairTrack.setPreviousTimeValue(chairTime);
             chairTrack.UpdateKeyframes(0);
             var local = new Matrix4f[chair.actor.numBones()];
             var models = new Matrix4f[local.length];
@@ -89,6 +101,8 @@ public final class VehicleTransitionGenerate {
                 local[i] = new Matrix4f().translationRotate(p.x, p.y, p.z, q);
             }
             for (int i = 0; i < local.length; i++) CartClipCheck.model(i, chair.actor, local, models);
+            if (VehicleStepPose.solve(chair.actor, models, references, outside, inside, time, exiting) == null)
+                throw new AssertionError("unreachable canonical foot target: " + time + " exit=" + exiting);
             if (frame > 0) json.append(',');
             json.append("{\"time\":").append(time).append(",\"bones\":{");
             for (int i = 0; i < models.length; i++) {

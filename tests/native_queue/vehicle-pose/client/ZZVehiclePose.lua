@@ -2,7 +2,25 @@ require 'Vehicles/TimedActions/ISEnterVehicle'
 require 'Vehicles/TimedActions/ISExitVehicle'
 local F = require 'VehicleDoorsFixture'
 local config = require 'VehiclePoseConfig'
-local recording = false
+local recording, cleanReported = false, false
+-- Disposable presentation only. Repeat before UI drawing so late mod windows,
+-- dashboards and MiniHealth Plus's body-outline panel cannot cover the capture.
+local function cleanView()
+    if not isIngameState() or not getPlayer() then return end
+    UIManager.setVisibleAllUI(false)
+    local ui=UIManager.getUI()
+    for i=0,ui:size()-1 do ui:get(i):setVisible(false) end
+    local tip=UIManager.getToolTip()
+    if tip then tip:setVisible(false) end
+    if recording and not cleanReported then
+        local state=vehiclePoseCleanView()
+        assert(string.find(state,'visible=0 global=false',1,true),state)
+        print('[VEHICLE_POSE] CLEAN_VIEW ' .. state)
+        cleanReported=true
+    end
+end
+Events.OnPreUIDraw.Add(cleanView)
+
 local cases = {
     {name='enter-driver', enter=true, seat=0},
     {name='cancel-exit', cancel=true, seat=0},
@@ -30,6 +48,7 @@ end
 local function run()
     local p = getPlayer()
     p:setGodMod(true)
+    cleanView()
     getCore():setAutoZoom(0,false)
     if getCore():getZoom(0)>.501 then getCore():doZoomScroll(0,-1) end
     if ISCharacterInfoWindow and ISCharacterInfoWindow.instance then ISCharacterInfoWindow.instance:setVisible(false) end
@@ -64,6 +83,7 @@ local function run()
         local c=cases[index]
         getCore():TakeFullScreenshot('vehicle-pose-' .. c.name .. '-before.png')
         print('[VEHICLE_POSE] SAMPLE ' .. c.name .. ' before ' .. vehiclePoseSample(p))
+        print('[VEHICLE_POSE] CONTACT_BASE ' .. c.name .. ' ' .. vehiclePoseBoundary(p,vehicle(),c.enter and (c.seat >= 0 and c.seat or 0) or vehicle():getSeat(p),c.enter or false))
         ISTimedActionQueue.add(action)
         started=nil; shot=false; ticks=0; stage='active'
     elseif stage == 'active' then
@@ -74,8 +94,12 @@ local function run()
             ticks=ticks+1
             print('[VEHICLE_POSE] SAMPLE ' .. c.name .. ' active ' .. vehiclePoseSample(p))
             if getTimestampMs()-started >= 180 and not shot then
-                print('[VEHICLE_POSE] POSE ' .. c.name .. ' ' .. vehiclePoseCheck(p, config.baseline and 'Bob_IdleDriving' or 'Bob_ToolkitVehicleEnter'))
-                getCore():TakeFullScreenshot('vehicle-pose-' .. c.name .. '.png')
+                print('[VEHICLE_POSE] POSE ' .. c.name .. ' ' .. vehiclePoseCheck(p, config.baseline and 'Bob_IdleDriving' or (c.enter and 'Bob_ToolkitVehicleEnter' or 'Bob_ToolkitVehicleExit')))
+                -- A synchronous full screenshot stalls this .625s action and drops
+                -- its weight-transfer frames. The continuous framebuffer video is
+                -- the active capture; retain a frame index for offline extraction.
+                if recording then print('[VEHICLE_POSE] FRAME ' .. c.name .. ' index=' .. toolkitVideoStatus().frames)
+                else getCore():TakeFullScreenshot('vehicle-pose-' .. c.name .. '.png') end
                 shot=true
                 if c.cancel then ISTimedActionQueue.clear(p) end
             end

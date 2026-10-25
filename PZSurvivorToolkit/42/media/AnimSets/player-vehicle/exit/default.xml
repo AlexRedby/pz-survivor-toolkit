@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <animNode>
     <m_Name>default</m_Name>
-    <m_AnimName>Bob_ToolkitVehicleEnter</m_AnimName>
-    <m_AnimReverse>true</m_AnimReverse>
+    <m_AnimName>Bob_ToolkitVehicleExit</m_AnimName>
     <m_Looped>false</m_Looped>
-    <!-- Native chair movement settles into the driving pose; exit retraces it.
+    <!-- The near foot steps out before the trailing foot lifts; the body rises outside.
          VehicleTransitionRender synchronizes only the rendered seat transfer. -->
     <m_BlendTime>0.00</m_BlendTime>
     <m_SpeedScale>1.60</m_SpeedScale>

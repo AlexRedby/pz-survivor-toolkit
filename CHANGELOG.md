@@ -26,7 +26,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.259
 
-- **Vehicles:** Restore a standing-to-seated entry and the reverse exit transition instead of instantly applying the driving pose outside the door. Match the final pose to the native driving seat and retain native action timing, cancellation and completion events. Requires Java Patches 0.1.54 for the synchronized visual transfer through the doorway.
+- **Vehicles:** Enter with a leading-foot step, bend and transfer weight over the planted foot, then bring the trailing leg inside. Use a separate exit motion with a foot planted outside before standing. Match the native driving seat and retain native action timing, cancellation and completion events. Requires Java Patches 0.1.54 for doorway position and foot contacts.
 
 ### 0.1.258
 
@@ -1173,7 +1173,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.54
 
-- **Vehicles:** Synchronize the rendered passenger position with Toolkit's entry/exit animation, lowering the body before moving inside and moving outside before standing. Normalize the chair animation's raised origin during the transfer; logical seat ownership, collision, action completion and network messages stay native.
+- **Vehicles:** Synchronize the rendered passenger position and both legs with Toolkit's entry/exit steps. Keep the support foot planted during weight transfer, lift the swinging foot and apply the same corrected pose to body and clothing. Normalize the chair animation's raised origin; logical seat ownership, collision, action completion and network messages stay native.
 
 ### 0.1.53
 

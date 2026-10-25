@@ -4,7 +4,7 @@
 
 # Vehicle entry and exit roof clipping
 
-- [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP/menu-Host checks cover stationary Base.CarNormal driver/passenger transitions and both cancellations with the full 55-mod pack, standing/seated pose samples, intermediate rendered doorway positions, video review and authoritative seat occupancy. They do not establish second-client or other vehicle geometry coverage; the native occlusion silhouette remains visible.
+- [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP/menu-Host checks cover stationary Base.CarNormal driver/passenger transitions and both cancellations with the full 55-mod pack, separate lead-foot steps for entry/exit, measured support-foot contacts, pelvis transfer, body/clothing agreement, clean HUD-free video review and authoritative seat occupancy. They do not establish second-client or other vehicle geometry coverage.
 
 # Exercise ground storage
 

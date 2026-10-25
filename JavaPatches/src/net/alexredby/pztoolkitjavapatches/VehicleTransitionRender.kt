@@ -1,15 +1,20 @@
 package net.alexredby.pztoolkitjavapatches
 
+import java.util.WeakHashMap
+import org.joml.Matrix4f
 import org.joml.Vector3f
 import zombie.core.skinnedmodel.ModelManager
 import zombie.core.skinnedmodel.animation.AnimationTrack
 import zombie.core.skinnedmodel.model.ModelSlotRenderData
+import zombie.core.skinnedmodel.model.SkinningData
 
 /**
  * Synchronize the cosmetic seat transfer without moving the reserved passenger or sending packets.
  */
 internal object VehicleTransitionRender {
     const val CLIP = "Bob_ToolkitVehicleEnter"
+    const val EXIT_CLIP = "Bob_ToolkitVehicleExit"
+    private val references = WeakHashMap<SkinningData, VehicleStepPose.References>()
     private const val BODY_SCALE = 1.5f // Model.CharacterModelCameraBegin
     @JvmField
     val SUPPORTED =
@@ -40,7 +45,7 @@ internal object VehicleTransitionRender {
     @JvmStatic
     fun transition(track: AnimationTrack?, entering: Boolean, exiting: Boolean): Boolean =
         track != null &&
-            track.currentClip?.name == CLIP &&
+            (track.currentClip?.name == CLIP || track.currentClip?.name == EXIT_CLIP) &&
             !track.looping &&
             track.getBlendWeight().isFinite() &&
             track.getBlendWeight() > 0f &&
@@ -49,8 +54,9 @@ internal object VehicleTransitionRender {
             track.getCurrentAnimationTime().isFinite() &&
             track.getCurrentAnimationTime() in 0f..track.getDuration() &&
             !(entering && exiting) &&
-            (!entering || !track.reverse) &&
-            (!exiting || track.reverse)
+            !track.reverse &&
+            (!entering || track.currentClip.name == CLIP) &&
+            (!exiting || track.currentClip.name == EXIT_CLIP)
 
     /**
      * Apply in native vehicle-local units. Bone coordinates are body-local, scaled and Z-flipped by
@@ -71,6 +77,45 @@ internal object VehicleTransitionRender {
                 -BODY_SCALE * root.y * fraction,
                 BODY_SCALE * root.z * fraction,
             )
+
+    /** Rejected IK retains the direction-correct cosmetic path; cancellation stays inside. */
+    @JvmStatic
+    fun fallbackPosition(
+        outside: Vector3f,
+        inside: Vector3f,
+        root: Vector3f,
+        phase: Float,
+        entering: Boolean,
+        exiting: Boolean,
+    ): Vector3f {
+        val fraction = if (entering || exiting) seating(if (exiting) 1f - phase else phase) else 1f
+        return position(outside, inside, root, fraction, Vector3f())
+    }
+
+    @JvmStatic
+    @Synchronized
+    private fun references(actor: SkinningData): VehicleStepPose.References? {
+        references[actor]?.let {
+            return it
+        }
+        val standing = ModelManager.instance.getAnimationClip("Bob_SatChairIn") ?: return null
+        val driving = ModelManager.instance.getAnimationClip("Bob_IdleDriving") ?: return null
+        fun pose(clip: zombie.core.skinnedmodel.animation.AnimationClip, name: String): Matrix4f? {
+            val result = Matrix4f()
+            return if (CartGrounding.referencePose(clip, actor, name, result)) result else null
+        }
+        val result =
+            VehicleStepPose.References(
+                (pose(standing, "Bip01") ?: return null).getTranslation(Vector3f()),
+                pose(standing, "Bip01_L_Foot") ?: return null,
+                pose(standing, "Bip01_R_Foot") ?: return null,
+                (pose(driving, "Bip01") ?: return null).getTranslation(Vector3f()),
+                pose(driving, "Bip01_L_Foot") ?: return null,
+                pose(driving, "Bip01_R_Foot") ?: return null,
+            )
+        references[actor] = result
+        return result
+    }
 
     /**
      * The synchronized init has copied the native passenger offset; only these draw-local fields
@@ -104,6 +149,8 @@ internal object VehicleTransitionRender {
                 chosen = track
         }
         val track = chosen ?: return
+        // Use one phase for this immutable draw snapshot, including first-use reference work.
+        val phase = track.getCurrentAnimationTime() / track.getDuration()
         val inside = vehicle.getPassengerPosition(seat, "inside")?.getOffset() ?: return
         val outside = vehicle.getPassengerPosition(seat, "outside")?.getOffset() ?: return
         val modelOffset = vehicle.getScript()?.getModel()?.getOffset() ?: return
@@ -112,10 +159,37 @@ internal object VehicleTransitionRender {
         // Native bone-model matrices use the transposed LWJGL storage convention.
         val rootMatrix = animation.getModelTransformAt(rootIndex)
         val root = Vector3f(rootMatrix.m03, rootMatrix.m13, rootMatrix.m23)
-        val fraction =
-            if (entering || exiting) seating(track.getCurrentAnimationTime() / track.getDuration())
-            else 1f
-        val origin = position(outside, inside, root, fraction, Vector3f()).add(modelOffset)
+        var origin =
+            fallbackPosition(
+                outside,
+                inside,
+                root,
+                phase,
+                entering,
+                exiting,
+            )
+        if (entering || exiting) {
+            val actor = animation.getSkinningData()
+            val reference = references(actor)
+            val poses = VehicleStepPalette.extract(slot, source.model, actor)
+            if (reference != null && poses != null) {
+                val stepOrigin =
+                    VehicleStepPose.solve(
+                        actor,
+                        poses,
+                        reference,
+                        outside,
+                        inside,
+                        phase,
+                        exiting,
+                    )
+                if (
+                    stepOrigin != null && VehicleStepPalette.apply(slot, source.model, actor, poses)
+                )
+                    origin = stepOrigin
+            }
+        }
+        origin.add(modelOffset)
         if (!origin.x.isFinite() || !origin.y.isFinite() || !origin.z.isFinite()) return
         // A cancelled exit returns to the native inside offset while its retiring clip blends away.
         slot.inVehicleX = origin.x
