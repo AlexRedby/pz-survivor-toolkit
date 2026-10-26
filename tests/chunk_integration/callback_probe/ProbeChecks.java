@@ -6,6 +6,9 @@ import java.io.PrintStream;
 import java.io.StringReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import me.zed_0xff.zombie_buddy.PatchEngine;
 import se.krka.kahlua.converter.KahluaConverterManager;
 import se.krka.kahlua.integration.LuaCaller;
@@ -31,8 +34,70 @@ public final class ProbeChecks {
     private static void check(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
     }
+    private static void await(CountDownLatch latch, String message) {
+        try { check(latch.await(10, TimeUnit.SECONDS), message); }
+        catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
+    }
+    /** Forces an entered call to leave after disable, before finish can inspect its state. */
+    private static void finishRaceChecks() throws Exception {
+        J2SEPlatform platform = new J2SEPlatform();
+        KahluaTable env = platform.newTable(); env.rawset("n", 0.0);
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1),
+            workerDone = new CountDownLatch(1), finishDone = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        env.rawset("block", (JavaFunction)(frame, count) -> {
+            entered.countDown(); await(release, "callback was not released"); return 0;
+        });
+        LuaClosure callback = closure("block(); n=n+1", "finish-race.lua", env);
+        Event event = event("LoadGridsquare", callback);
+        Path cache = Files.createTempDirectory("chunk-probe-finish-race-");
+        Files.writeString(cache.resolve("smoke-user.txt"), "explicitly-owned-finish-race-test\n");
+        Files.writeString(cache.resolve(Main.OPT_IN), Main.expectedToken() + "\n");
+        check(Main.start(cache), "race capture guards refused start");
+        if ("manual".equals(Main.captureMode())) check(Main.beginWindow(), "race capture did not begin");
+        Thread worker = new Thread(() -> {
+            try {
+                KahluaThread thread = new KahluaThread(platform, env);
+                thread.debugOwnerThread = Thread.currentThread();
+                LuaManager.thread = thread;
+                LuaCaller caller = new LuaCaller(new KahluaConverterManager());
+                check(event.trigger(env, caller, new Object[0]), "race event return changed");
+            } catch (Throwable problem) { failure.compareAndSet(null, problem); }
+            finally { workerDone.countDown(); }
+        }, "chunk-probe-race-worker");
+        Thread finisher = new Thread(() -> {
+            try { Main.finish(); }
+            catch (Throwable problem) { failure.compareAndSet(null, problem); }
+            finally { finishDone.countDown(); }
+        }, "chunk-probe-race-finisher");
+        worker.setDaemon(true); finisher.setDaemon(true);
+        worker.start();
+        await(entered, "woven worker callback was not entered");
+        synchronized (Main.states) {
+            finisher.start();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (Main.enabled && System.nanoTime() < deadline) Thread.sleep(1);
+            check(!Main.enabled, "finish did not disable before waiting for states");
+            release.countDown();
+            await(workerDone, "worker did not exit while finish was blocked on states");
+        }
+        await(finishDone, "finish did not complete after states were released");
+        if (failure.get() != null) throw new AssertionError("woven race failed", failure.get());
+        check(Double.valueOf(1.0).equals(env.rawget("n")), "racing finish changed original callback execution");
+        String status = Files.readString(cache.resolve("chunk-callbacks-status.txt"));
+        check(status.contains("status=incomplete") && status.contains("reason=unfinished-callback"),
+            "dropped callback was falsely reported complete: " + status);
+        try (var files = Files.list(cache)) { for (Path file : files.toList()) Files.delete(file); }
+        Files.delete(cache);
+        System.out.println("CHUNK_CALLBACK_FINISH_RACE_CHECK_PASS");
+    }
     public static void main(String[] args) throws Exception {
         PatchEngine.applyPatches("toolkit.chunkprobe", ProbeChecks.class.getClassLoader());
+        if (args.length == 1 && args[0].equals("--finish-race")) {
+            finishRaceChecks();
+            System.out.println("CHUNK_CALLBACK_PROBE_CHECK_PASS");
+            System.exit(0);
+        }
         J2SEPlatform platform = new J2SEPlatform();
         KahluaTable env = platform.newTable(); env.rawset("n", 0.0);
         KahluaThread thread = new KahluaThread(platform, env); thread.debugOwnerThread = Thread.currentThread();
@@ -41,6 +106,7 @@ public final class ProbeChecks {
         LuaClosure callback = closure("n=n+1", "probe-callback.lua", env);
         Event event = event("LoadGridsquare", callback);
         Path cache = Files.createTempDirectory("chunk-probe-check-cache-");
+        check(!Main.beginWindow(), "unarmed capture began");
         check(!Main.start(cache), "missing owned marker must refuse capture");
         check(event.trigger(env, caller, new Object[0]), "disabled event return changed");
         check(Double.valueOf(1.0).equals(env.rawget("n")), "disabled callback did not run");
@@ -52,6 +118,13 @@ public final class ProbeChecks {
         Files.writeString(cache.resolve(Main.OPT_IN), Main.expectedToken() + "\n");
         check(!Main.matchesHash(new ByteArrayInputStream(new byte[]{1}), Main.EVENT_HASH), "mismatched bytes accepted");
         check(Main.start(cache), "valid native/owned-cache gates refused capture: " + Main.diagnostic);
+        if ("manual".equals(Main.captureMode())) {
+            check(!Main.enabled, "manual capture included startup");
+            event.trigger(env, caller, new Object[0]);
+            check(Main.local.get() == null, "pre-window callback allocated telemetry");
+            check(Main.beginWindow(), "manual capture did not begin");
+        }
+        check(!Main.beginWindow(), "duplicate begin reset capture");
         check(!event("LoadGridsquare").trigger(env, caller, new Object[0]), "empty event return changed");
         ByteArrayOutputStream capture = new ByteArrayOutputStream();
         PrintStream stdout = System.out, stderr = System.err;
@@ -61,6 +134,8 @@ public final class ProbeChecks {
             Main.State state = Main.local.get();
             check(state.stats.get(callback).calls == 1 && state.depth == 0, "woven callback not measured once");
             check(state.stats.get(callback).nanos > 0 && state.stats.get(callback).max > 0, "missing inclusive timing");
+            check(state.stats.get(callback).maxCompleted - state.stats.get(callback).maxStarted
+                == state.stats.get(callback).max, "maximum callback interval mismatch");
             caller.protectedCallVoid(thread, callback, new Object[0]);
             caller.protectedCallVoid(thread, callback, (Object) null);
             event("OtherEvent", callback).trigger(env, caller, new Object[0]);
@@ -107,8 +182,13 @@ public final class ProbeChecks {
         Main.finish();
         String status = Files.readString(cache.resolve("chunk-callbacks-status.txt"));
         check(status.contains("status=incomplete") && status.contains("reason=handler-capacity"), "diagnostic not recorded");
-        check(Files.readString(cache.resolve("chunk-callbacks.tsv")).startsWith("file\tline\tcalls\tnanos\tmax_ns\n"),
+        check(status.contains("capture_mode=" + Main.captureMode()) && status.contains("window_start_ns="), "missing capture interval");
+        String aggregates = Files.readString(cache.resolve("chunk-callbacks.tsv"));
+        check(aggregates.startsWith("file\tline\tcalls\tnanos\tmax_ns\tmax_started_ns\tmax_completed_ns\n"),
             "unexpected aggregate output");
+        Main.finish();
+        check(!Main.beginWindow(), "finished capture restarted");
+        check(aggregates.equals(Files.readString(cache.resolve("chunk-callbacks.tsv"))), "repeated finish rewrote output");
         try (var files = Files.list(cache)) { for (Path file : files.toList()) Files.delete(file); }
         Files.delete(cache);
         System.out.println("CHUNK_CALLBACK_PROBE_CHECK_PASS");

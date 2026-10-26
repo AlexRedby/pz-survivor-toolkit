@@ -10,6 +10,8 @@ time. Indirect LuaCaller calls inside a handler
 are excluded. Nested events have separate frames; nested LoadGridsquare handlers
 are measured individually, and their time remains included in the outer handler.
 Durations are unadjusted and include instrumentation overhead.
+Each maximum retains its start/completion `System.nanoTime()` values, allowing
+comparison with other probes in the same JVM. This adds no per-call event stream.
 
 Build into a new standalone output directory, using an already owned disposable
 cache containing a nonempty regular `smoke-user.txt` marker:
@@ -47,6 +49,17 @@ and produces `chunk-callbacks.tsv` plus `chunk-callbacks-status.txt` in the owne
 cache. Require `status=complete` before interpreting the aggregates. Removing the
 fixture from the selected test Mod IDs ends its use; nothing is installed globally.
 
+For a route or another bounded scenario, build with `--capture-mode manual`.
+Startup remains unmeasured. In the owning test coordinator, require
+`chunkCallbackProbeBegin()` to return true immediately before the workload and
+call `chunkCallbackProbeFinish()` before its terminal completion/failure marker.
+The fixture allows one interval per JVM. A repeated begin returns false without
+resetting data; a repeated finish preserves the first output. The status file
+records the capture mode and monotonic window boundaries. An unmatched finish
+is incomplete. The same cache/token guards apply before the interval begins.
+Use the recorded interval to confirm overlap with stage data; maximum timestamps
+identify only each handler's longest invocation, not all calls or chunk identities.
+
 There is no probe output during capture. Telemetry is bounded to 16 threads,
 128 handlers per thread and 64 nested event frames. Capacity, nesting or telemetry
 failures disable measurements and retain a diagnostic. Original callbacks still
@@ -64,9 +77,12 @@ These resource guards do not establish compatibility with other in-memory
 weaving. The checks exercise actual woven Event returns, callback side effects,
 both three-argument LuaCaller overloads, direct/indirect/nested calls, escaping
 error identity, cache guards, quiet capture, capacity failure and continued native
-callback execution. They do not establish full-pack or Host compatibility.
+callback execution. A separate woven concurrency check forces an entered callback
+to exit after disable but before finish reads its state; dropped work must leave
+an incomplete result. They do not establish full-pack or Host compatibility.
 
 The earlier disposable prototype was used for the separate full-pack startup
 profile. That result is not a native run of this final fixture and its guards.
-This fixture provides no moving-route coverage, frame attribution, exclusive
-timing, or evidence that a measured callback caused a frame hitch.
+The fixture alone provides no route-acceptance check, frame attribution, exclusive
+timing, or evidence that a measured callback caused a frame hitch. A manual
+capture needs a separately verified scenario and matching stage/frame data.
