@@ -5,7 +5,9 @@
 
 # Storage performance stabilization
 
-- [ ] Investigate collapsed loot rows as the next measured candidate: the 0.1.278 dense run retains 30 builds/about 1.8 s discovery work when collapsed, while fully hidden rows have zero builds/about 0.31 s. Preserve visible title counts and tooltips; first verify which collapsed UI consumers need live rows before extending deferral.
+- [ ] Fix Better Containers aggregate selection after CleanUI switches to vanilla: the native pane update removes physical items whose real container differs from the aggregate; BC's singleton pane installer covers only the initial class. The actual-source reproduction is `.codex/investigations/collapsed-storage-20261026/bc-vanilla-selection-repro.py`; the full-67-mod baseline failure is `/tmp/pz-collapse-base/client1/console.txt`. Design class-aware integration preserving each class's native fallback and all upstream hooks; do not repair lost selection after the fact or temporarily swap globals/reset upstream installation guards. Audit the related page installer before choosing the shared integration point.
+  - [ ] Cover both aggregate types and UI classes, repeated toggles, ordinary inventories and removed physical items with actual-source regressions.
+  - [ ] Make the native selection guard wait for an observed natural pane update before checking the following draw. The current next-draw-only guard can pass before vanilla prunes selection; preserve exact item/anchor/raw-reference checks and qualify the fix with the locked full pack.
 
 # Cart motion full-pack compatibility
 
@@ -174,7 +176,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Warehouse client workload
 
-- [ ] Run the corrected `inventory-presentation/scenes` native hidden-loot/reopen stages in CleanUI and vanilla when an awake macOS display is available. Require live raw stock, deferred hidden rows/count/tooltips, fresh reopen and a clean runtime audit; keep the runner's default desktop policy.
 - [ ] Extend the full 67-mod SP warehouse walking capture to native menu Host, including another player's container edits, crafting inputs and quick transfers with loot hidden. Existing SP walking and Host transfer/Grab checks do not establish concurrent-player behavior or the user-save stutter cause; keep GPU/FPS claims separate from Lua wall time and UI callback cadence.
 
 # Vehicle diagnostics controls
@@ -182,6 +183,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 - [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
 
 # Process friction
+
+- [ ] Make optional inventory-refresh source coverage explicit: `tools/run_tests.py --game ... --test test_inventory_refresh` does not bind CleanUI/Better Containers, so those source-backed sections are silently omitted. Report missing integrations or provide a required-source mode; use explicit current 42.19/42.21 source paths for this change.
 
 - [ ] Qualify the bare game-JVM Kahlua model/server harness before using it as a full-suite gate: the storage segment passes, but the complete `test_wishlist_model.lua` run fails the departed-player weak-reference/GC assertion (`/tmp/pz-wishlist-v3-kahlua/model.log`). Distinguish harness lifetime/GC behavior from a product leak; preserve the passing normal LuaJIT suite and native SP/Host evidence.
 

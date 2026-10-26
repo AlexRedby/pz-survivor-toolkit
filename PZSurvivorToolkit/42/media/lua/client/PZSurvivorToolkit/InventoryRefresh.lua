@@ -1,5 +1,6 @@
 -- Keep nearby-container discovery/BC aggregates live, but do not build unused
--- details rows for a hidden, idle loot window. Explicit pane refreshes stay live.
+-- details rows for a hidden or collapsed idle loot window. Header values and
+-- explicit pane refreshes stay live.
 require "ISUI/ISInventoryPage"
 local Classes = require "PZSurvivorToolkit/InventoryClasses"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
@@ -18,13 +19,18 @@ local function hidden(page)
     return type(page.getIsVisible) == "function" and page:getIsVisible() == false
 end
 
-local function idleHidden(page)
+local function detailsHidden(page)
+    return hidden(page) or page.isCollapsed == true
+end
+
+local function idleDetailsHidden(page)
     local pane = page.inventoryPane
-    if page.onCharacter or not hidden(page) or not pane or pane.mode ~= "details" then return false end
+    if page.onCharacter or not detailsHidden(page) or not pane or pane.mode ~= "details" then return false end
     -- Keep selection, drag, controller and active-filter consumers on their live
-    -- path. A hidden idle list has no row identity that an input can consume.
+    -- path. An idle clipped list has no row identity that an input can consume.
     if page.joyfocus or pane.joyfocus or pane.doController or pane.firstSelect
-        or pane.dragStarted or pane.toolkitVisibleItems or pane.toolkitCategory
+        or pane.dragging or pane.dragStarted or pane.draggingMarquis or pane.toolkitPendingMarquee
+        or pane.toolkitVisibleItems or pane.toolkitCategory
         or pane.toolkitTag or pane.toolkitTagRule
         or (pane.searchText and pane.searchText ~= "")
         or (pane.searchCategoryText and pane.searchCategoryText ~= "") then return false end
@@ -47,7 +53,7 @@ local function stateFor(page)
 end
 
 local function mayDefer(page, state)
-    return state.scope > 0 and not state.force and idleHidden(page)
+    return state.scope > 0 and not state.force and idleDetailsHidden(page)
 end
 
 local function gatePane(page, state)
@@ -90,6 +96,13 @@ function Refresh.flush(page)
     local values = pack(pcall(page.refreshBackpacks, page))
     state.force = previous
     return result(values)
+end
+
+local function finishUpdate(page, ...)
+    -- Native/CleanUI update can expand a pinned/dragged page without setVisible.
+    -- Flush before child input updates; forward all returns without a per-tick pack.
+    if not idleDetailsHidden(page) then Refresh.flush(page) end
+    return ...
 end
 
 local function install(class)
@@ -143,7 +156,9 @@ local function install(class)
     if count then
         class.updateItemCount = function(page, ...)
             local state = stateFor(page)
-            if mayDefer(page, state) and state.rowsPending then
+            -- Collapsed pages still draw their title/count; only fully hidden
+            -- pages may defer that separate presentation obligation.
+            if hidden(page) and mayDefer(page, state) and state.rowsPending then
                 state.countPending = true
                 return
             end
@@ -163,14 +178,14 @@ local function install(class)
     local update = class.update
     if update then
         class.update = function(page, ...)
-            if not idleHidden(page) then Refresh.flush(page) end
-            return update(page, ...)
+            if not idleDetailsHidden(page) then Refresh.flush(page) end
+            return finishUpdate(page, update(page, ...))
         end
     end
     local prerender = class.prerender
     if prerender then
         class.prerender = function(page, ...)
-            if not hidden(page) then Refresh.flush(page) end
+            if not idleDetailsHidden(page) then Refresh.flush(page) end
             return prerender(page, ...)
         end
     end

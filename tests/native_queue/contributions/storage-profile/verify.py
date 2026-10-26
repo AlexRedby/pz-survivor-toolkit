@@ -107,6 +107,12 @@ def environment(value):
         raise ValueError('Invalid native calendar observation')
 
 
+def header(value,visible):
+    if not isinstance(value,dict):raise ValueError('Missing actual header values')
+    number(value.get('count'),integer=True);number(value.get('expected'),integer=True);number(value.get('weight'))
+    if visible and value['count']!=value['expected']:raise ValueError('Visible header count is stale')
+
+
 def verify(root,text):
     if '[STORAGE_PROFILE] FAIL' in text or 'KahluaException' in text:raise ValueError('Native storage profile failed')
     def receipts(kind):
@@ -137,6 +143,7 @@ def verify(root,text):
         reached=number(row.get('reached'),4,True)
         if row.get('nativeActions')!=reached or reached%2:raise ValueError('Actual native walk did not complete its return route')
         environment(row.get('environmentInitial'));environment(row.get('environmentFinal'))
+        for key in ('headerInitial','headerFinal'):header(row.get(key),state in ('loot-collapsed','both-open'))
         before=presentation(row.get('initialPresentation'));after=presentation(row.get('finalPresentation'))
         if before['signature']!=after['signature'] or before['anchor']!=after['anchor']:
             raise ValueError('Measured walking changed selection/anchor')
@@ -165,6 +172,12 @@ def verify(root,text):
         if not isinstance(gate.get('oldId'),str) or not isinstance(gate.get('newId'),str) or gate['oldId']==gate['newId']:
             raise ValueError('Reopening did not replace an exact native identity')
         physical(gate.get('physical'));before=presentation(gate.get('before'));after=presentation(gate.get('after'))
+        if gate.get('route')!=('native-pin' if row['state']=='loot-collapsed' else 'show'):
+            raise ValueError('Collapsed reopening did not use native pin expansion')
+        header(gate.get('header'),True)
+        tooltips=gate.get('tooltips',{})
+        if tooltips.get('fresh') is not True or number(tooltips.get('checked'),integer=True)<(1 if row['mode']=='clean' else 0):
+            raise ValueError('Expanded owned-container tooltip freshness is unproven')
         if gate.get('pendingBefore')!=gate['before']['pending'] or gate.get('pendingAfter') is not False or gate['after']['pending']:
             raise ValueError('Normal show/draw retained pending work')
         if before['signature']!=after['signature'] or before['anchor']!=after['anchor']:
@@ -186,6 +199,7 @@ def verify(root,text):
         'OnTick and OnPreUIDraw wall-callback intervals are not GPU timing or FPS. Timings have 1 ms resolution.',
         'Discovery body is passive native begin/end timing and excludes outer tails; callback times are inclusive and must not be summed.',
         'Native builder counts use the reviewed refreshContainerCount modulo 10001. No page/pane method is replaced; builder CPU is not isolated.',
+        'Visible header counts are checked against native recursive inventory counts; collapsed reopening uses native pin/update without setVisible, then checks actual owned-crate capacity tooltips in CleanUI.',
         'Item setup and two-second warmups are excluded. Public highlighter state is read per tick; owned native outline flags are sampled at most once per second during controls.',
         'Ground control world is fixed at 200 distinct native objects. Public settings and Wishlist requests are used and restored; no per-item mocks.',
         'Fixed sandbox starting month/day/time and viewport; weather and random actor appearance are not overridden and per-phase conditions are recorded.',

@@ -18,6 +18,7 @@ local function method(source,name)
 end
 local function run(source,label,bcSource)
     local stats={discovery=0,rows=0,count=0,copied=0,events=0}
+    local function pack(...)return {n=select('#',...),...}end
     local function event() local handlers={};return {Add=function(fn) handlers[#handlers+1]=fn end,
         fire=function(...) for _,fn in ipairs(handlers) do fn(...) end end} end
     Events={OnGameBoot=event(),OnGameStart=event()}
@@ -27,7 +28,13 @@ local function run(source,label,bcSource)
     function player:getDir() return self.dir end
     function player:getCurrentSquare() return self.square end
     function player:getJoypadBind() return self.joypad end
+    function player:isAiming()return false end
     getSpecificPlayer=function() return player end
+    isClient=function()return false end
+    isGamePaused=function()return false end
+    isKeyDown=function()return false end
+    isMouseButtonDown=function()return false end
+    KeybindId={PAN_CAMERA='PanCamera'}
     local eff={proximityActive=true}
     local options={getEffectivePermissions=function() return eff end}
     getTexture=function() return {} end
@@ -84,16 +91,25 @@ local function run(source,label,bcSource)
     function Page:updateContainerHighlight() end
     function Page:titleBarHeight() return 20 end
     function Page:updateContainerOpenCloseSounds() end
-    function Page:prerender() self.renderedCount=self.totalItems end
+    function Page:prerender() self.renderedCount=self.totalItems;return 'draw',nil,43,nil end
+    function Page:clearMaxDrawHeight()self.clipCleared=true end
+    function Page:getMouseY()return 0 end
     if source then
         ISInventoryPage=Page
         assert(loadstring(assert(method(source,'update'),'missing upstream update')))()
+        assert(loadstring(assert(method(source,'onMouseMove'),'missing upstream hover expansion')))()
     else
+        function Page:onMouseMove()self.isCollapsed=false;self:clearMaxDrawHeight()end
         function Page:update()
+            if self.pin or (ISMouseDrag.dragging and #ISMouseDrag.dragging>0)then
+                self.isCollapsed=false;self:clearMaxDrawHeight()
+            end
             if self.lastDir~=player:getDir() then self.lastDir=player:getDir();self:refreshBackpacks()
             elseif self.lastSquare~=player:getCurrentSquare() then self.lastSquare=player:getCurrentSquare();self:refreshBackpacks() end
         end
     end
+    local originalUpdate=Page.update
+    Page.update=function(self,...)originalUpdate(self,...);return 'update',nil,41,nil end
     local function makePage()
         local page=setmetatable({player=0,visible=false,lastDir=player.dir,lastSquare=player.square,
             inventory=aggregate,capacity=100,inventoryPane=setmetatable({mode='details',selected={},items={}},Pane),
@@ -142,9 +158,45 @@ local function run(source,label,bcSource)
     assert(stats.rows==1 and lateCalls==1 and stats.count==1 and page.totalItems==4801)
     assert(page.inventoryPane.builtCount==4801,'opening must observe same-count and remote contents changes')
     page:update();assert(stats.rows==1,'opening must not cause a duplicate discovery on unchanged pose')
-    -- Visible collapsed headers retain current counts and the ordinary live rows.
-    page.isCollapsed=true;player.square={};page:update()
-    assert(stats.rows==2 and stats.count==2)
+    -- Collapse clips only details. Header counts and raw discovery remain live;
+    -- idle update/prerender must not immediately cancel the deferred row work.
+    for _,expansion in ipairs({'hover','pin','drag'})do
+        page.visible=true;page.isCollapsed=true;page.pin=false;page.clipCleared=false
+        ISMouseDrag={};sources[1].contents.n=402;player.square={}
+        local beforeRows,beforeCount,beforeDiscovery=stats.rows,stats.count,stats.discovery
+        local updated=pack(page:update())
+        assert(updated.n==4 and updated[1]=='update' and updated[3]==41 and updated[4]==nil,
+            'update wrapper lost return arity')
+        local pending=page.toolkitRefreshState
+        assert(stats.rows==beforeRows and stats.count==beforeCount+1 and page.totalItems==4802
+            and pending.rowsPending and not pending.countPending and #page.inventoryPane.items==0,
+            'collapsed idle discovery must defer rows while keeping visible header counts live')
+        page:prerender();page:update()
+        assert(stats.rows==beforeRows and stats.count==beforeCount+1 and stats.discovery==beforeDiscovery+1
+            and page.renderedCount==4802 and pending.rowsPending,
+            'collapsed draw/update flushed unused rows or repeated discovery')
+        -- Remote changes after the last deferred scan must be observed even when
+        -- expansion itself does not move/turn the player or toggle visibility.
+        sources[1].contents.n=403
+        if expansion=='hover'then page:onMouseMove(0,0)
+        elseif expansion=='pin'then page.pin=true;page:update()
+        else ISMouseDrag.dragging={{}};page:update();ISMouseDrag={} end
+        assert(not page.isCollapsed and page.clipCleared,'upstream '..expansion..' did not expand details')
+        if expansion~='hover'then
+            assert(not pending.rowsPending and page.inventoryPane.builtCount==4803,
+                'native update expansion did not flush before returning to child input consumers')
+        end
+        local drawn=pack(page:prerender())
+        assert(drawn.n==4 and drawn[1]=='draw' and drawn[3]==43 and drawn[4]==nil,
+            'prerender wrapper lost return arity')
+        assert(stats.rows==beforeRows+1 and stats.count==beforeCount+2 and page.renderedCount==4803
+            and page.inventoryPane.builtCount==4803 and not pending.rowsPending and not pending.countPending,
+            'expanded '..expansion..' draw did not synchronously consume fresh rows/count')
+        page:update();page:prerender()
+        assert(stats.rows==beforeRows+1 and stats.discovery==beforeDiscovery+2,
+            'settled expansion repeated the fresh discovery')
+    end
+    page.pin=false;sources[1].contents.n=401;page:refreshBackpacks()
     page.visible=false;page.isCollapsed=false
     -- Rebind a retained pane while the previous pane still has deferred work.
     -- The new pane may come with old rendered input targets of its own.
@@ -204,20 +256,39 @@ local function run(source,label,bcSource)
     local before=stats.rows
     local x,y,z=page.inventoryPane:refreshContainer()
     assert(x=='rows' and y==nil and z==17 and stats.rows==before+1)
-    for _,kind in ipairs({'selected','firstSelect','drag','controller','filter','search','icons'}) do
-        page.inventoryPane.selected={};page.inventoryPane.firstSelect=nil;ISMouseDrag={}
-        page.inventoryPane.doController=false;page.inventoryPane.toolkitCategory=nil
-        page.inventoryPane.searchText=nil;page.inventoryPane.mode='details'
-        if kind=='selected' then page.inventoryPane.selected[1]={}
-        elseif kind=='firstSelect' then page.inventoryPane.firstSelect=1
-        elseif kind=='drag' then ISMouseDrag.dragging={{}}
-        elseif kind=='controller' then page.inventoryPane.doController=true
-        elseif kind=='filter' then page.inventoryPane.toolkitCategory='Tool'
-        elseif kind=='search' then page.inventoryPane.searchText='nails'
-        elseif kind=='icons' then page.inventoryPane.mode='icons' end
-        before=stats.rows;page:refreshBackpacks()
-        assert(stats.rows==before+1,kind..' input/filter state must retain the live path')
+    for _,visibility in ipairs({'hidden','collapsed'})do
+        page.visible=visibility=='collapsed';page.isCollapsed=visibility=='collapsed'
+        for _,kind in ipairs({'selected','firstSelect','drag','dragFocus','dragging','marquee','pendingMarquee',
+            'controller','pageFocus','paneFocus','joypad','visibleFilter','filter','tag','rule','search','categorySearch','icons','character'}) do
+            local pane=page.inventoryPane
+            pane.selected={};ISMouseDrag={};page.joyfocus=nil;page.onCharacter=false;player.joypad=-1
+            for _,field in ipairs({'firstSelect','dragging','draggingMarquis','toolkitPendingMarquee','doController',
+                'joyfocus','toolkitVisibleItems','toolkitCategory','toolkitTag','toolkitTagRule','searchText','searchCategoryText'})do pane[field]=nil end
+            pane.mode='details'
+            if kind=='selected' then pane.selected[1]={}
+            elseif kind=='firstSelect' then pane.firstSelect=1
+            elseif kind=='drag' then ISMouseDrag.dragging={{}}
+            elseif kind=='dragFocus' then ISMouseDrag.draggingFocus=pane
+            elseif kind=='dragging' then pane.dragging=1
+            elseif kind=='marquee' then pane.draggingMarquis=true
+            elseif kind=='pendingMarquee' then pane.toolkitPendingMarquee='onMouseMoveOutside'
+            elseif kind=='controller' then pane.doController=true
+            elseif kind=='pageFocus' then page.joyfocus={}
+            elseif kind=='paneFocus' then pane.joyfocus={}
+            elseif kind=='joypad' then player.joypad=0
+            elseif kind=='visibleFilter' then pane.toolkitVisibleItems={}
+            elseif kind=='filter' then pane.toolkitCategory='Tool'
+            elseif kind=='tag' then pane.toolkitTag='tools'
+            elseif kind=='rule' then pane.toolkitTagRule={}
+            elseif kind=='search' then pane.searchText='nails'
+            elseif kind=='categorySearch' then pane.searchCategoryText='Tool'
+            elseif kind=='icons' then pane.mode='icons'
+            elseif kind=='character' then page.onCharacter=true end
+            before=stats.rows;page:refreshBackpacks()
+            assert(stats.rows==before+1,visibility..' '..kind..' input/filter state must retain the live path')
+        end
     end
+    page.visible=false;page.isCollapsed=false;page.onCharacter=false
     page.inventoryPane.mode='details'
     -- Opaque per-instance refresh owners are not replaced or deferred.
     local custom=0
@@ -246,7 +317,7 @@ local function run(source,label,bcSource)
     page.afterDiscovery=function(self)self.afterDiscovery=nil;player.square={}end
     oldSquare=page.lastSquare;page:refreshBackpacks();assert(page.lastSquare==oldSquare)
     before=stats.discovery;page:update();assert(stats.discovery==before+1)
-    print('PASS inventory refresh '..label..': 40 turn/tile changes ->40 raw rebuilds, zero hidden row/count builds; baseline80builds, BC raw contents, reopen, pending pane/class rebind, selections/drag/controller/filters, late hooks and errors remain live')
+    print('PASS inventory refresh '..label..': 40 turn/tile changes ->40 raw rebuilds, zero hidden row/count builds; collapsed rows defer/count stays live, hover/pin/drag reopen; BC contents, pane/class rebind, input guards, arity, late hooks and errors remain live')
 end
 run(nil,'doubles',NativeBCProximitySource)
 if NativeInventoryPageSource then run(NativeInventoryPageSource,'native B42',NativeBCProximitySource) end
@@ -307,13 +378,25 @@ do
     assert(stats.returns.n==4 and stats.returns[2]==nil and stats.returns[3]==31 and stats.returns[4]==nil,
         'tooltip suppression changed addContainerButton return arity')
     assert(hidden.toolkitRefreshState.tooltipsPending)
-    inventory.weight=99
+    inventory.weight=99;hidden.isCollapsed=true
     local visibleReturns=pack(hidden:setVisible(true))
     assert(visibleReturns.n==4 and visibleReturns[1]=='visible' and visibleReturns[4]==nil
         and stats.weights==1 and stats.late==2 and hidden.button.tooltip=='capacity:99'
         and hidden.inventoryPane.builtWeight==99 and hidden.countedWeight==99
         and not hidden.toolkitRefreshState.tooltipsPending,
         'show did not restore fresh complete CleanUI tooltip/rows/count')
+    local beforeRows,beforeCounts,beforeWeights=stats.rows,stats.counts,stats.weights
+    inventory.weight=100;hidden:refreshBackpacks();hidden:update();hidden:prerender()
+    assert(stats.rows==beforeRows and stats.weights==beforeWeights and stats.counts==beforeCounts+1
+        and hidden.countedWeight==100 and hidden.button.inventory==inventory and hidden.button.tooltip==nil
+        and hidden.toolkitRefreshState.rowsPending and hidden.toolkitRefreshState.tooltipsPending
+        and not hidden.toolkitRefreshState.countPending,
+        'collapsed CleanUI must defer clipped rows/tooltips while keeping title values live')
+    inventory.weight=99;hidden.isCollapsed=false;hidden:prerender()
+    assert(stats.rows==beforeRows+1 and stats.weights==beforeWeights+1
+        and hidden.button.tooltip=='capacity:99' and hidden.inventoryPane.builtWeight==99
+        and not hidden.toolkitRefreshState.rowsPending and not hidden.toolkitRefreshState.tooltipsPending,
+        'expanded CleanUI draw retained deferred rows or a stale/missing container tooltip')
     hidden.visible=false
     local before=stats.weights
     local direct=pack(hidden:addContainerButton(inventory,'texture','crate','direct',nil))
@@ -348,7 +431,7 @@ do
             kind..' path unexpectedly suppressed an immediate tooltip')
         CleanUI_Clean_ISInventoryPage=Page
     end
-    print('PASS CleanUI hidden tooltip workload: zero hidden weight reads; argument/result arity, late hooks, reopen, early/failure obligations and immediate fallbacks preserved')
+    print('PASS CleanUI hidden/collapsed tooltip workload: clipped rows/tooltips defer, title counts stay live; argument/result arity, late hooks, fresh expand, early/failure obligations and immediate fallbacks preserved')
 end
 
 -- Unlike the scheduling fixture above, execute the entire installed CleanUI
@@ -407,6 +490,7 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
     function Page:getIsVisible()return self.visible end
     function Page:setVisible(value)self.visible=value end
     function Page:checkExplored()end
+    function Page:prerender()self.renderedCount=self.totalItems end
     function Page:refreshWeight()end -- actual CleanUI method is an empty return
     function Page:titleBarHeight()return 20 end
     function Page:updateItemCount()stats.counts=stats.counts+1;self.totalItems=self.inventoryPane.inventory:getItems():size()end
@@ -476,7 +560,22 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
     assert(not state.rowsPending and not state.countPending and not state.tooltipsPending
         and stats.rows==2 and stats.counts==2 and page.totalItems==4 and #pane.itemslist==4,
         'full actual CleanUI body did not synchronously rebuild on reopen: rows='..stats.rows..' counts='..stats.counts..' total='..tostring(page.totalItems)..' rowCount='..#pane.itemslist..' pending='..tostring(state.rowsPending)..'/'..tostring(state.countPending)..'/'..tostring(state.tooltipsPending))
-    print('PASS full actual CleanUI refreshBackpacks + BC begin/buttonsAdded: hidden rows/count/tooltips defer, floor/aggregate remain live, reopen fresh')
+    page.isCollapsed=true
+    oldRows=pane.itemslist
+    local collapsedRows,collapsedCounts,collapsedWeights=stats.rows,stats.counts,stats.weights
+    ground[#ground+1]=item('collapsed-ground')
+    page:refreshBackpacks();page:refreshBackpacks();page:prerender()
+    assert(stats.rows==collapsedRows and pane.itemslist==oldRows and stats.weights==collapsedWeights
+        and stats.counts==collapsedCounts+2 and page.totalItems==5 and page.renderedCount==5
+        and state.rowsPending and not state.countPending and state.tooltipsPending
+        and aggregate:getItems():size()==5 and floor:getItems():size()==3,
+        'full actual CleanUI/BC collapsed discovery lost live contents/count or built clipped presentation')
+    page.isCollapsed=false;page:prerender()
+    assert(stats.rows==collapsedRows+1 and stats.counts==collapsedCounts+3
+        and #pane.itemslist==5 and page.renderedCount==5
+        and not state.rowsPending and not state.countPending and not state.tooltipsPending,
+        'full actual CleanUI/BC expanded draw did not flush deferred presentation')
+    print('PASS full actual CleanUI refreshBackpacks + BC begin/buttonsAdded: hidden/collapsed rows/tooltips defer, collapsed counts and floor/aggregate remain live, reopen fresh')
     if NativeBCProximityPaneSource then
         -- Actual BC update assumes every group has a duplicate header. A
         -- headerless singleton has no j=2 children, so it selects the header

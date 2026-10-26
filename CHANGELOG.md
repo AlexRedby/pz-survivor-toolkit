@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.283
+
+- **Fixed:** Collapsed loot windows defer unused item rows and container tooltips while keeping header counts and nearby contents current. Hover, pin and drag expansion restore fresh rows before input or drawing; active selections and marquee gestures retain immediate updates.
+
 ### 0.1.282
 
 - **Fixed:** Wishlist storage uses bounded directory names, so long save paths no longer prevent lists from loading. Each journal verifies the full save identity; existing lists migrate with readback verification and their original files are retained.

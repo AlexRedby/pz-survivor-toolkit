@@ -126,6 +126,28 @@ local function rememberMethods()
     methodPage,methodPane=loot,loot.inventoryPane
     methodPageFunction,methodPaneFunction=loot.refreshBackpacks,loot.inventoryPane.refreshContainer
 end
+local function headerState()
+    local inventory=loot.inventoryPane.inventory
+    return {count=loot.totalItems,expected=luautils.countItemsRecursive({luautils.findRootInventory(inventory)}),
+        weight=inventory:getCapacityWeight()}
+end
+local function freshContainerTooltips()
+    local checked=0
+    if CleanUI_isCleanInventoryUIEnabled() then
+        local owned={}
+        for _,container in ipairs(containers) do owned[container]=true end
+        for _,button in ipairs(loot.backpacks or {}) do
+            local container=button.inventory
+            if owned[container] then
+                local suffix='\n'..round(container:getCapacityWeight(),2)..' / '..container:getEffectiveCapacity(getPlayer())
+                assert(type(button.tooltip)=='string' and button.tooltip:sub(-#suffix)==suffix,'expanded container tooltip is missing/stale')
+                checked=checked+1
+            end
+        end
+        assert(checked>0,'no reachable owned crate tooltip was checked')
+    end
+    return {checked=checked,fresh=true}
+end
 local function presentationState()
     local pane=loot.inventoryPane
     local groups,fast=0,0
@@ -361,7 +383,7 @@ local function beginPhase()
         control=controlIndex>0 and controls[controlIndex] or 'ordinary',features=features(),groundObjects=#groundItems,
         highlight={sampleTicks=0,maxTracked=0,scanTicks=0,clearTicks=0,outlineSamples=0,maxOwnedHighlighted=0,maxOwnedOutlined=0},
         callbacks={},ticks={},uiIntervals={},pendingTicks=0,movementTicks=0,tileChanges=0,distance=0,reached=0,stateViolations=0,
-        initialState=statesNow(),initialPresentation=presentationState(),environmentInitial=environment(),observedNearbyMaxItems=0,observedNearbyMaxContainers=0}
+        initialState=statesNow(),initialPresentation=presentationState(),headerInitial=headerState(),environmentInitial=environment(),observedNearbyMaxItems=0,observedNearbyMaxContainers=0}
     for _,name in ipairs({'ownDiscoveryBody','lootDiscoveryBody','ownUpdateItemCount','lootUpdateItemCount','bcOnButtonsAdded'}) do active.callbacks[name]=metric() end
     Events.OnRefreshInventoryWindowContainers.Add(refreshEvent);eventInstalled=true
     observe(own,'updateItemCount','ownUpdateItemCount',pageInput)
@@ -412,7 +434,7 @@ local function finishPhase()
     active.discoveryPending=0
     active.elapsedMs=now()-phaseStart;active.tickIntervalsMs=distribution(active.ticks);active.ticks=nil
     active.uiDrawIntervalsMs=distribution(active.uiIntervals);active.uiIntervals=nil
-    active.finalState=statesNow();active.finalPresentation=presentationState();active.environmentFinal=environment();active.nativeActions=leg;active.teleportsDuringMeasurement=0
+    active.finalState=statesNow();active.finalPresentation=presentationState();active.headerFinal=headerState();active.environmentFinal=environment();active.nativeActions=leg;active.teleportsDuringMeasurement=0
     active.nativeBuildDelta=(active.finalPresentation.nativeBuildCount-active.initialPresentation.nativeBuildCount)%10001
     assert(active.initialPresentation.selection.signature==active.finalPresentation.selection.signature
         and active.initialPresentation.selection.anchor==active.finalPresentation.selection.anchor,'selection/anchor changed during measured native walking')
@@ -432,7 +454,13 @@ local function finishPhase()
     -- The native event marks page renderDirty. It models a normal container
     -- invalidation after direct test setup, identically in baseline/candidate.
     triggerEvent('OnContainerUpdate',source:getParent())
-    showLoot();stage='reopen-draw';since=now()
+    if result.state=='loot-collapsed' then
+        -- Native update owns pin expansion; do not call setVisible or clear collapse here.
+        reopen.route='native-pin';loot:setPinned();stage='reopen-pin-wait'
+    else
+        reopen.route='show';showLoot();stage='reopen-draw'
+    end
+    since=now()
 end
 local function measure()
     local time=now();local player=getPlayer()
@@ -513,14 +541,16 @@ Events.OnPostUIDraw.Add(function()
             startupChecked=true
             stage='configure'
             since=now()
-        elseif stage=='reopen-draw' then
+        elseif stage=='reopen-draw' or stage=='reopen-pin-wait' and not loot.isCollapsed then
             local refs=exactRows(reopen.old,reopen.new)
             local after=presentationState()
+            local header=headerState()
+            assert(header.count==header.expected,'reopened visible header count is stale')
             assert(not after.pending,'pending rows remain after normal show/draw')
             assert(after.selection.signature==reopen.before.selection.signature and after.selection.anchor==reopen.before.selection.anchor,'reopen discarded selection/anchor')
             log('REOPEN',{index=reopen.index,replaced=true,sourceItems=reopen.sourceItems,
                 physical=refs,oldId=tostring(reopen.old:getID()),newId=tostring(reopen.new:getID()),pendingBefore=reopen.before.pending,pendingAfter=after.pending,
-                before=reopen.before,after=after,normalPostDraw=true})
+                before=reopen.before,after=after,normalPostDraw=true,route=reopen.route,header=header,tooltips=freshContainerTooltips()})
             reopen=nil;nextPhase()
         elseif stage=='guard-select-draw' then
             local pane=loot.inventoryPane
@@ -559,7 +589,7 @@ Events.OnTick.Add(function()
         if stage=='measure' then measure()
         elseif stage=='fill' then fill()
         elseif stage=='fill-ground' then fillGround()
-        elseif stage=='reopen-draw' or stage=='startup-draw' or stage=='guard-select-draw' or stage=='guard-check-draw' then
+        elseif stage=='reopen-draw' or stage=='reopen-pin-wait' or stage=='startup-draw' or stage=='guard-select-draw' or stage=='guard-check-draw' then
             assert(now()-since<10000,'normal draw freshness deadline exceeded')
         elseif now()-since>=2000 then
             if stage=='setup' then setup();stage='fill'

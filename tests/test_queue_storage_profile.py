@@ -48,6 +48,8 @@ def rows():
              'teleportsDuringMeasurement':0,'stateViolations':0,'discoveryPending':0,'pendingTicks':500 if hidden else 0,
              'initialState':actual,'finalState':dict(actual),'initialPresentation':initial,'finalPresentation':final,
              'environmentInitial':environment(),'environmentFinal':environment(),'nativeBuildDelta':0 if hidden else 30,
+             'headerInitial':{'count':maximum,'expected':maximum,'weight':1},
+             'headerFinal':{'count':maximum,'expected':maximum,'weight':1},
              'elapsedMs':13000,'distance':24,'movementTicks':500,'tileChanges':24,'reached':6,'nativeActions':6,
              'tickIntervalsMs':{'samples':600,'p50':17,'p95':20,'max':40},'uiDrawIntervalsMs':{'samples':600,'p50':17,'p95':21,'max':50},
              'observedNearbyMaxItems':maximum,'observedNearbyMaxContainers':7,'features':dict(zip(('normal','ground','wanted'),features),radius=15),
@@ -68,7 +70,9 @@ def receipts(data=None):
         before=copy.deepcopy(row['finalPresentation']);after=state(builds=before['nativeBuildCount']+1)
         result.append(('REOPEN',{'index':row['index'],'replaced':True,'normalPostDraw':True,'sourceItems':row['sourceItems'],
             'oldId':'old'+str(row['index']),'newId':'new'+str(row['index']),'physical':{'raw':6,'rows':6,'exact':True},
-            'pendingBefore':before['pending'],'pendingAfter':False,'before':before,'after':after}))
+            'pendingBefore':before['pending'],'pendingAfter':False,'before':before,'after':after,
+            'route':'native-pin' if row['state']=='loot-collapsed' else 'show',
+            'header':{'count':6,'expected':6,'weight':1},'tooltips':{'fresh':True,'checked':3 if row['mode']=='clean' else 0}}))
     for mode in ('clean','vanilla'):
         result.append(('SELECTION',{'mode':mode,'preserved':True,'before':state(True),'hidden':state(True),'after':state(True),
                                     'physical':{'raw':2400,'rows':2400,'exact':True}}))
@@ -150,6 +154,14 @@ class StorageProfileTests(unittest.TestCase):
                        lambda r:r[0]['environmentInitial'].update(width=1600)):
             data=rows();mutate(data)
             with self.assertRaises(ValueError):V.verify(Path('/unused'),text(receipts(data)))
+
+    def test_collapsed_header_and_native_expansion_receipts_are_required(self):
+        for mutate in (lambda r:r[6][1]['headerFinal'].update(count=0),
+                       lambda r:r[7][1].update(route='show'),
+                       lambda r:r[7][1]['header'].update(count=0),
+                       lambda r:r[7][1]['tooltips'].update(checked=0)):
+            broken=receipts();mutate(broken)
+            with self.assertRaises(ValueError):V.verify(Path('/unused'),text(broken))
 
 
 if __name__=='__main__':unittest.main()
