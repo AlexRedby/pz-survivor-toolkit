@@ -1,0 +1,10 @@
+name=Optimizer Trial Lifecycle Bridge
+id=PZDrivingOptimizerBridge
+version=0.0.2
+versionMin=42.21
+versionMax=42.21
+require=\ZombieBuddy
+javaJarFile=media/java/PZDrivingOptimizerBridge.jar
+javaPkgName=net.alexredby.optimizertrial
+ZBVersionMin=2.3.4
+description=Experimental isolated single-player trial adapter. Requires explicit launcher opt-in and pinned official optimizer resources.

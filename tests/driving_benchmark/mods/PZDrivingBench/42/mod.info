@@ -1,0 +1,5 @@
+name=Driving Benchmark Starter
+id=PZDrivingBench
+description=Isolated road start with a ready car for Build 42.21 driving diagnostics.
+version=0.1.1
+versionMin=42.21

@@ -14,21 +14,34 @@ import java.security.ProtectionDomain;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.lwjgl.glfw.GLFW;
 
 /** Fixture-only agent. The installed game and its class resources stay unchanged. */
 public final class ToolkitWindowBootstrap {
     private static final String DISPLAY = "org/lwjglx/opengl/Display";
-    // B42.21 installed Display. Reject engine updates before starting any native UI.
-    private static final String DISPLAY_SHA256 = "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578";
-    private static final Map<String, Integer> EXPECTED = Map.of(
-        "glfwDefaultWindowHints", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
-        "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2,
-        "glfwPollEvents", 1);
+    // Exact installed B42.21 and reviewed xD3I d1bbdcf Display bytes only.
+    // The optimizer adds a core-context retry and a failed-HDR-window destroy.
+    private static final String DISPLAY_NATIVE_SHA256 = "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578";
+    private static final String DISPLAY_XD3I_SHA256 = "da78691b554a0341827f841abc73a34b776ecf0fde845b15703cb855a8847d57";
+    private static final Map<String, Map<String, Integer>> EXPECTED = Map.of(
+        DISPLAY_NATIVE_SHA256, Map.of(
+            "glfwDefaultWindowHints", 1, "glfwCreateWindow", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
+            "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2, "glfwPollEvents", 1),
+        DISPLAY_XD3I_SHA256, Map.of(
+            "glfwDefaultWindowHints", 1, "glfwCreateWindow", 2, "glfwShowWindow", 2, "glfwFocusWindow", 1,
+            "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 3, "glfwPollEvents", 1));
+    // These are available at window creation, after the isolated launcher's main pins them.
+    // premain checks exact bytes without initializing Display or any optimizer helper.
+    private static final Map<String, String> OPTIMIZER_PRESENTATION = Map.of(
+        "hdr", "false", "hdrAuto", "false", "macPresent", "off", "macGlCore", "false",
+        "macNativeFullscreen", "false", "borderlessFullscreen", "off");
     private static boolean agentInstalled;
     private static volatile boolean displayTransformed;
+    private static volatile boolean optimizedDisplay;
     private static long routedWindow;
     private static long pendingVisibleWindow;
+    private static final Map<Long, int[]> creationSizes = new ConcurrentHashMap<>();
 
     private static String sha256(byte[] bytes) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -39,7 +52,7 @@ public final class ToolkitWindowBootstrap {
         if (!enabled()) throw new IllegalStateException("Window isolation agent requires a macOS routing gate");
         gatePath();
         try (var stream = ToolkitWindowBootstrap.class.getClassLoader().getResourceAsStream(DISPLAY + ".class")) {
-            if (stream == null || !DISPLAY_SHA256.equals(sha256(stream.readAllBytes()))) {
+            if (stream == null || !EXPECTED.containsKey(sha256(stream.readAllBytes()))) {
                 throw new IllegalStateException("Unsupported Display resource for native window isolation");
             }
         }
@@ -54,6 +67,7 @@ public final class ToolkitWindowBootstrap {
                 if (!DISPLAY.equals(name)) return null;
                 try {
                     byte[] patched = patchDisplay(bytes);
+                    optimizedDisplay = DISPLAY_XD3I_SHA256.equals(sha256(bytes));
                     displayTransformed = true;
                     return patched;
                 } catch (Throwable error) {
@@ -69,22 +83,25 @@ public final class ToolkitWindowBootstrap {
 
     /** Pure bytecode operation, also used by preparation checks without starting native UI. */
     static byte[] patchDisplay(byte[] original) throws Exception {
-        if (!DISPLAY_SHA256.equals(sha256(original))) {
-            throw new IllegalStateException("Unsupported Display bytecode: " + sha256(original));
-        }
+        var expected = EXPECTED.get(sha256(original));
+        if (expected == null) throw new IllegalStateException("Unsupported Display bytecode: " + sha256(original));
+        return transformDisplay(original, expected);
+    }
+
+    private static byte[] transformDisplay(byte[] original, Map<String, Integer> expected) throws Exception {
         var calls = new HashMap<String, Integer>();
         var classFile = ClassFile.of();
         var patched = classFile.transformClass(classFile.parse(original),
             ClassTransform.transformingMethodBodies((builder, element) -> {
                 if (element instanceof InvokeInstruction call
                         && call.owner().asInternalName().equals("org/lwjgl/glfw/GLFW")
-                        && EXPECTED.containsKey(call.name().stringValue())) {
+                        && expected.containsKey(call.name().stringValue())) {
                     String name = call.name().stringValue();
                     calls.merge(name, 1, Integer::sum);
                     builder.invokestatic(ClassDesc.of("ToolkitWindowBootstrap"), name, call.typeSymbol());
                 } else builder.with(element);
             }));
-        if (!EXPECTED.equals(calls)) throw new IllegalStateException("Unexpected Display lifecycle: " + calls);
+        if (!expected.equals(calls)) throw new IllegalStateException("Unexpected Display lifecycle: " + calls);
         var errors = classFile.verify(patched);
         if (!errors.isEmpty()) throw new IllegalStateException("Invalid patched Display: " + errors);
         return patched;
@@ -144,6 +161,72 @@ public final class ToolkitWindowBootstrap {
         }
     }
 
+    static void requireOptimizedPresentation() {
+        for (var entry : OPTIMIZER_PRESENTATION.entrySet()) {
+            if (!entry.getValue().equals(System.getProperty("pzopt." + entry.getKey()))) {
+                throw new IllegalStateException("Optimized Display requires -Dpzopt." + entry.getKey() + "=" + entry.getValue());
+            }
+        }
+    }
+
+    public static long glfwCreateWindow(int width, int height, CharSequence title, long monitor, long share) {
+        if (enabled()) {
+            try {
+                // Unlike stock Display, the reviewed optimizer can create fullscreen directly.
+                // Fail before any native creation, not only at later mode changes.
+                if (monitor != 0) throw new IllegalStateException("Native window isolation forbids fullscreen creation");
+                if (optimizedDisplay) requireOptimizedPresentation();
+            } catch (RuntimeException error) {
+                System.err.println("[QUEUE_TEST] FAIL native window creation " + error);
+                Runtime.getRuntime().halt(71);
+                throw new AssertionError(error);
+            }
+            // Keep even a retry hidden and unfocused until the same owned routing handshake.
+            GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
+            GLFW.glfwWindowHint(GLFW.GLFW_FOCUSED, GLFW.GLFW_FALSE);
+            GLFW.glfwWindowHint(GLFW.GLFW_FOCUS_ON_SHOW, GLFW.GLFW_FALSE);
+        }
+        long window = GLFW.glfwCreateWindow(width, height, title, monitor, share);
+        if (enabled() && window != 0) creationSizes.put(window, new int[] {width, height});
+        return window;
+    }
+
+    /** Only the exactly acknowledged owned creation may restore its original geometry. */
+    static int[] routedCreationSize(long window) {
+        if (!enabled() || window == 0 || window != routedWindow) return null;
+        var requested = creationSizes.get(window);
+        return requested == null ? null : requested.clone();
+    }
+
+    private static void restoreCreationSize(long window) {
+        var requested = routedCreationSize(window);
+        if (requested == null) throw new IllegalStateException("Owned routed creation size is missing");
+        int[] width = new int[1], height = new int[1];
+        GLFW.glfwGetWindowSize(window, width, height);
+        int beforeWidth = width[0], beforeHeight = height[0];
+        if (width[0] != requested[0] || height[0] != requested[1]) {
+            // AeroSpace may tile the initially shown transparent window before discovery.
+            // Restore only the size requested at creation, after its owned floating-route ACK.
+            // The optimizer caches this final mode early and otherwise skips Core's resize.
+            GLFW.glfwSetWindowSize(window, requested[0], requested[1]);
+            long deadline = System.nanoTime() + 2_000_000_000L;
+            while (true) {
+                GLFW.glfwPollEvents();
+                GLFW.glfwGetWindowSize(window, width, height);
+                if (width[0] == requested[0] && height[0] == requested[1]) break;
+                if (System.nanoTime() >= deadline) throw new IllegalStateException(
+                    "Owned window did not restore requested creation size: " + requested[0] + "x" + requested[1]
+                        + " actual=" + width[0] + "x" + height[0]);
+                GLFW.glfwWaitEventsTimeout(0.01);
+            }
+        }
+        int[] framebufferWidth = new int[1], framebufferHeight = new int[1];
+        GLFW.glfwGetFramebufferSize(window, framebufferWidth, framebufferHeight);
+        System.out.println("[QUEUE_TEST] WINDOW_GEOMETRY pid=" + ProcessHandle.current().pid() + " glfw=" + window
+            + " requested=" + requested[0] + "x" + requested[1] + " before=" + beforeWidth + "x" + beforeHeight
+            + " actual=" + width[0] + "x" + height[0] + " framebuffer=" + framebufferWidth[0] + "x" + framebufferHeight[0]);
+    }
+
     public static void glfwShowWindow(long window) {
         if (!enabled()) { GLFW.glfwShowWindow(window); return; }
         if (window == routedWindow) { GLFW.glfwShowWindow(window); return; }
@@ -176,6 +259,7 @@ public final class ToolkitWindowBootstrap {
                 GLFW.glfwWaitEventsTimeout(0.025);
             }
             routedWindow = window;
+            restoreCreationSize(window);
             boolean current = acknowledgement.equals(token + ":current");
             pendingVisibleWindow = current ? window : 0;
             if (!current) GLFW.glfwSetWindowOpacity(window, 1.0f);
@@ -189,6 +273,7 @@ public final class ToolkitWindowBootstrap {
     }
 
     public static void glfwDestroyWindow(long window) {
+        creationSizes.remove(window);
         if (enabled() && window == routedWindow) routedWindow = 0;
         if (enabled() && window == pendingVisibleWindow) pendingVisibleWindow = 0;
         GLFW.glfwDestroyWindow(window);

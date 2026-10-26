@@ -18,7 +18,8 @@ object BytecodeSupport {
                                 MessageDigest.getInstance("SHA-256").digest(stream.readAllBytes()),
                             )
                     // Java evaluates the digest before dereferencing a nullable expected checksum.
-                    (expected ?: throw NullPointerException()).equals(checksum)
+                    (expected ?: throw NullPointerException()).equals(checksum) ||
+                        OptimizerCompatibility.supports(resource, expected, checksum)
                 }
             }
         } catch (error: Exception) {
