@@ -1,8 +1,9 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.257
+modversion=0.1.272
 category=features
+incompatible=PZSurvivorWishlist,Quartermaster,ContainerCapacityIndicator,BravoItemDetails,HasResearch,SeedSeasonIndicator,organizedCategories_core,MedicineMoodlesB42,TakeAnyAmount,TVRadioReinventedFix4220
 icon=icon.png
 poster=icon.png
 description=Quality-of-life tools for Project Zomboid. Highlights loose items on the ground, including items added by other mods.<LINE><LINE>

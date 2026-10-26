@@ -112,14 +112,39 @@ object CartLegPace {
         val mode = if (sprint) "Sprint" else if (run) "Run" else "Walk"
         var blend = owner.getVariableFloat("WalkSpeed", 0f)
         if (sprint) blend = Math.max(0f, (blend - .5f) * 2)
-        return targetSpeed(
-            node,
-            clip(if (sprint) "Bob_Run" else walk),
-            clip(if (sprint || run) "Bob_$mode" else walk),
-            if (run || sprint) blend else 1f,
-            if (run || sprint) 1f else amount.toFloat(),
-            if (sprint) .96f else 1.04f,
-        )
+        val base = if (sprint) .96f else 1.04f
+        val ordinary =
+            targetSpeed(
+                node,
+                clip(if (sprint) "Bob_Run" else walk),
+                clip(if (sprint || run) "Bob_$mode" else walk),
+                if (run || sprint) blend else 1f,
+                if (run || sprint) 1f else amount.toFloat(),
+                base,
+            )
+        val injury = CartInjury.blend(owner, node) ?: return ordinary
+        val nativeVelocity = injuryVelocity(node, injury, ::clip) ?: return ordinary
+        val healthyRadius =
+            if (run || sprint) 1f
+            else Math.max(0f, Math.min(1f, owner.getVariableFloat("WalkSpeed", .8f)))
+        val radius = if (run || sprint) 1f else CartInjury.walkMagnitude(owner, healthyRadius)
+        val effort = if (radius > 1e-6f) amount.toFloat() / radius else 0f
+        val healthy =
+            if (run || sprint) ordinary * amount.toFloat()
+            else if (radius > 1e-6f) ordinary * healthyRadius / radius else 0f
+        var nativeSpeed = base * Math.hypot(nativeVelocity.x, nativeVelocity.y).toFloat()
+        // Keep the slower authored reverse stride; injury cannot make backing up faster.
+        if (!run && !sprint && stepY < 0) {
+            val backward =
+                velocity(clip(walk), node.getDeferredBoneName(), node.getDeferredBoneAxis())
+            if (backward != null)
+                nativeSpeed =
+                    Math.min(
+                        nativeSpeed,
+                        base * healthyRadius * Math.hypot(backward.x, backward.y).toFloat(),
+                    )
+        }
+        return healthy * (1 - injury.amount) + nativeSpeed * effort * injury.amount
     }
 
     @JvmStatic
@@ -166,7 +191,8 @@ object CartLegPace {
             return
         }
         val incoming = pivotNode(player)
-        val current = blendedSpeed(incoming, stepX, stepY, ::clip)
+        val current =
+            blendedSpeed(incoming, stepX, stepY, ::clip, CartInjury.blend(player, incoming))
         val pace =
             if (speed == 0f) 0f
             else if (current > 1e-6) Math.min(2.5f, speed / current)
@@ -281,7 +307,8 @@ object CartLegPace {
         )
     }
 
-    private fun pivotNode(player: IsoPlayer?): AnimNode? {
+    @JvmStatic
+    fun pivotNode(player: IsoPlayer?): AnimNode? {
         if (player == null) return null
         val animator = player.getAdvancedAnimator()
         if (animator == null || animator.animSet == null) return null
@@ -506,6 +533,13 @@ object CartLegPace {
         val base = if (sprint) .96f else 1.04f
         if (player == null) return base
         val node = pivotNode(player) ?: return base
+        val injury = CartInjury.blend(player, node)
+        if (injury != null) {
+            val desired = targetSpeed(player, stepX, stepY)
+            val current = blendedSpeed(node, stepX, stepY, ::clip, injury)
+            return if (desired.isFinite() && current > 1e-6f) Math.min(2.5f, desired / current)
+            else base
+        }
         val mode = if (sprint) "Sprint" else if (run) "Run" else "Walk"
         if (sprint || run) {
             var speed = player.getVariableFloat("WalkSpeed", 0f)
@@ -611,6 +645,15 @@ object CartLegPace {
         stepX: Float,
         stepY: Float,
         clips: Function<String?, AnimationClip?>?,
+    ): Float = blendedSpeed(node, stepX, stepY, clips, null)
+
+    @JvmStatic
+    fun blendedSpeed(
+        node: AnimNode?,
+        stepX: Float,
+        stepY: Float,
+        clips: Function<String?, AnimationClip?>?,
+        injury: CartInjury.Blend?,
     ): Float {
         if (
             node == null ||
@@ -639,10 +682,44 @@ object CartLegPace {
             val velocity =
                 velocity(clip, node.getDeferredBoneName(), node.getDeferredBoneAxis())
                     ?: return Float.NaN
-            x += weight * velocity.x
-            y += weight * velocity.y
+            if (injury != null && injury.forward == blend.animName) {
+                val nativeVelocity = injuryVelocity(node, injury, clips) ?: return Float.NaN
+                x += weight * (velocity.x * (1 - injury.amount) + nativeVelocity.x * injury.amount)
+                y += weight * (velocity.y * (1 - injury.amount) + nativeVelocity.y * injury.amount)
+            } else {
+                x += weight * velocity.x
+                y += weight * velocity.y
+            }
         }
         return Math.hypot(x, y).toFloat()
+    }
+
+    @JvmStatic
+    fun validClip(node: AnimNode, name: String?): Boolean =
+        velocity(clip(name), node.getDeferredBoneName(), node.getDeferredBoneAxis()) != null
+
+    private fun injuryVelocity(
+        node: AnimNode,
+        injury: CartInjury.Blend,
+        clips: Function<String?, AnimationClip?>?,
+    ): Velocity? {
+        var x = 0.0
+        var y = 0.0
+        val entries = arrayOf(injury.first, injury.second, injury.third)
+        val weights = floatArrayOf(injury.a, injury.b, injury.c)
+        for (i in entries.indices) {
+            val entry = entries[i] ?: continue
+            if (weights[i] == 0f) continue
+            val velocity =
+                velocity(
+                    (clips ?: throw NullPointerException()).apply(entry.animName),
+                    node.getDeferredBoneName(),
+                    node.getDeferredBoneAxis(),
+                ) ?: return null
+            x += weights[i] * velocity.x
+            y += weights[i] * velocity.y
+        }
+        return Velocity(node.getDeferredBoneName(), node.getDeferredBoneAxis(), x, y)
     }
 
     private fun velocity(clip: AnimationClip?, bone: String?, axis: BoneAxis?): Velocity? {

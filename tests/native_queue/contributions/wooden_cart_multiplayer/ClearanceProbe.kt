@@ -1357,6 +1357,19 @@ object ClearanceProbe {
         row.append(']')
     }
 
+    private fun animationTracks(player: zombie.characters.IsoPlayer): String = buildString {
+        val animation = player.getAnimationPlayer()
+        if (animation != null && animation.getMultiTrack() != null)
+            for (track in animation.getMultiTrack().getTracks()) {
+                append(track.getName())
+                    .append('=')
+                    .append(track.getSpeedDelta())
+                    .append('@')
+                    .append(track.getBlendWeight())
+                    .append(';')
+            }
+    }
+
     @Synchronized
     @JvmStatic
     fun snapshot(slot: ModelSlotRenderData?) {
@@ -1446,6 +1459,12 @@ object ClearanceProbe {
                         .append(jsonString(player.overridePrimaryHandModel))
                         .append(",\"overrideSecondary\":")
                         .append(jsonString(player.overrideSecondaryHandModel))
+                        .append(",\"walkInjury\":")
+                        .append(player.getVariableFloat("WalkInjury", -1f))
+                        .append(",\"walkSpeed\":")
+                        .append(player.getVariableFloat("WalkSpeed", -1f))
+                        .append(",\"tracks\":")
+                        .append(jsonString(animationTracks(player)))
                         .append(",\"cart\":")
                 matrix(row, Matrix4f(cart.xfrm).transpose())
                 row.append(",\"bones\":{")

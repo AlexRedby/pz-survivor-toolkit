@@ -78,7 +78,7 @@ class LuaRunner(unittest.TestCase):
     def test_default_keeps_all_checks_and_reconnect_variants(self):
         self.invoke()
         names = [name for name, _ in self.executions]
-        conditional = {"test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
+        conditional = {"test_torch_refill.lua", "test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
                        "native_tags/check_placement.lua"}
         self.assertEqual(set(names) - {"assert(loadstring(...))"}, self.names - conditional)
         self.assertEqual(names.count("assert(loadstring(...))"), 1)

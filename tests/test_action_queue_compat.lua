@@ -32,6 +32,7 @@ end
 LootSorter = {}
 ISBaseObject = {derive = derive}
 ISPanel = {derive = derive}
+ISUIElement = {derive = derive}
 ISTableLayout = {derive = derive}
 UIFont = {Small = 'small', Medium = 'medium'}
 getTextManager = function() return {getFontHeight = function() return 12 end} end
@@ -310,6 +311,7 @@ local Outfit = {
     providesAttachments = function() return false end,
 }
 local Gather = {build = function() return {} end, find = function(_, descriptor) return descriptor.item, 'container', descriptor.item:getContainer() end}
+local projectCookUiOriginal = {}
 local loaded = {}
 require = function(module)
     if module == 'PZSurvivorToolkit/ActionQueueSettlement' then
@@ -352,7 +354,8 @@ require = function(module)
     if module == 'ISUI/WMI_WashingSubmenus' then
         source = source .. '\nWS.WMI_BuildWashMenu = function(menu, items, character, sink) return menu:addOption("Wash", character, onWashClothing3, sink, {}, items, nil, true) end\n'
     elseif module == 'P4TidyUpMeister' then source = source .. '\nTidyFixture = P4TidyUpMeister\n' end
-    local result = assert(loadstring(source, module == 'Project_Cook/PJCK_Config' and '@Project_Cook/PJCK_Config.lua' or module))()
+    local result = assert(loadstring(source, (module == 'Project_Cook/PJCK_Config' or module:match('^Project_Cook/EvolvedRecipePanel/')) and '@'..module..'.lua' or module))()
+    if module == 'Project_Cook/EvolvedRecipePanel/PJCK_InputPanel' then projectCookUiOriginal.canAddItem=PJCK_InputPanel.canAddItem end
     loaded[module] = result or true; return result
 end
 -- Load the real controller before source adapters, matching the game's lifecycle/load order.
@@ -996,12 +999,435 @@ recipe.getResultItem=function() return 'Test' end
 recipe.getItemsCanBeUse=function() return list({food}) end
 local group=panel:getItemGroupKey(food)
 panel.inputGroupCache.Ingredient[group]={usableItems={food}}
+-- A native-eligible new recipe may inherit labels without having any NEW additions yet.
+do
+ require('Project_Cook/EvolvedRecipePanel/PJCK_InputPanel');require('Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo')
+ local savedEnabled,savedManager,savedContainers,savedPolicy=enabled,RecipeManager,ISInventoryPaneContextMenu.getContainers,PJCK_Config.get().portionPolicy
+ local original=assert(projectCookUiOriginal.canAddItem,'actual original InputPanel callback missing')
+ local function sourceFood(id,kind,spice)
+  local value=item(bag,id);value.class='Food';value.fixtureSpice=spice
+  for _,name in ipairs({'isRotten','isBurnt','isFrozen','isCooked','IsDrainable','isNoRecipes'})do
+   value[name]=function(self)return self.blocked==name end
+  end
+  value.isFresh=function()return true end
+  value.isSpice=function(self)return self.fixtureSpice end
+  value.getFullType=function()return 'Base.'..kind end;value.getType=function()return kind end
+  value.getHungerChange=function()return -.4 end;value.getHungChange=value.getHungerChange
+  value.getActualWeight=function()return 1 end
+  value.getScriptItem=function()return{getHungerChange=function()return 40 end,getActualWeight=function()return 1 end}end
+  return value
+ end
+ local function setup(contained,seasonings)
+  reset()
+  local topping,spice=sourceFood(31002,'Tomato',false),sourceFood(31003,'Pepper',true)
+  local base=sourceFood(31001,'BreadSlices',false);base.container=inventory;base.kind='BreadSlices';base.contained=contained;base.seasonings=seasonings
+  base.getType=function(self)return self.kind end;base.getFullType=function(self)return 'Base.'..self.kind end
+  base.getFluidContainer=function(self)return self.fixtureFluid end
+  base.getExtraItems=function(self)local values={};for i=1,self.contained do values[i]='Base.Cheese'end;return list(values)end
+  base.haveExtraItems=function(self)return self.contained>0 end
+  base.getSpices=function(self)local values={};for i=1,self.seasonings do values[i]='Base.Salt'end;return list(values)end
+  local uiRecipe={getResultItem=function()return 'Sandwich'end,getMaxItems=function()return 4 end,
+   getMinimumWater=function(self)return self.minimumWater or 0 end,isAllowFrozenItem=function()return false end,
+   getItemRecipe=function()return{getUse=function()return 5 end}end}
+  -- Native/Java availability is a boundary input; real source builds the cached usable IDs/profiles.
+  uiRecipe.getItemsCanBeUse=function(_,actor,selected,containers)
+   assert(actor==player and selected==base and containers,'native availability arguments changed')
+   local available={};for _,value in ipairs({topping,spice})do if not value.blocked then available[#available+1]=value end end
+   return list(available)
+  end
+  inventory.values={base}
+  RecipeManager={getEvolvedRecipe=function()return list({uiRecipe})end}
+  ISInventoryPaneContextMenu.getContainers=function()return list({inventory,bag})end
+  local ui=setmetatable({player=player,baseItem=base,recipe=uiRecipe,preCookItems={},switchItems={},
+   showPossible={Ingredient=false,Seasoning=false},inputGroupCache={Ingredient={},Seasoning={}},
+   inputGroupCacheValid={Ingredient=false,Seasoning=false},Window={getAllItems=function()return list({topping,spice})end}},PJCK_EvoPanel)
+  local info=setmetatable({EvoPanel=ui,contentType='',content={},switchRecipeButton={setVisible=function()end}},PJCK_CookingInfo)
+  ui.cookingInfoPanel=info
+  local input=setmetatable({EvoPanel=ui,panelType='Ingredient'},PJCK_InputPanel)
+  local seasoning=setmetatable({EvoPanel=ui,panelType='Seasoning'},PJCK_InputPanel)
+  ui.ingredientsPanel,ui.seasoningsPanel=input,seasoning
+  info:updateContentType()
+  assert(info.contentType=='addOneFirst','real rendering state did not detect BreadSlices -> Sandwich')
+  ui:getInputList('Ingredient');ui:getInputList('Seasoning')
+  return ui,input,seasoning,info,base,topping,spice,uiRecipe
+ end
+ for _,queueMode in ipairs({true,false})do
+  for _,counts in ipairs({{0,0},{1,0},{2,0},{0,1},{2,1}})do
+   local ui,input,seasoning,info,base,topping,spice=setup(counts[1],counts[2]);enabled=queueMode
+   assert(ui:isUsableForRecipe(topping,ui.recipe,'Ingredient') and ui:getGroupUseCapacity(topping,'Ingredient')>0,
+    'real source native-usability/profile premise missing')
+   assert(original(input,topping)==(counts[1]+counts[2]==0),'original actual source did not reproduce inherited-label refusal')
+   local inputs,groups,selected=ui.cachedAvailableItems,ui.inputGroupCache,ui.preCookItems
+   for _,status in ipairs({'','showNutrition','addOneFirst'})do
+    info.contentType=status
+    assert(input:canAddItem(topping) and seasoning:canAddItem(spice),'first NEW addition must ignore inherited labels: '..status)
+    for _,pendingType in ipairs({'Ingredient','Seasoning'})do
+     ui.preCookItems={{panelType=pendingType,groupKey='some-other-selected-group'}}
+     assert(not input:canAddItem(topping)and not seasoning:canAddItem(spice),'second NEW pending addition escaped first-result limit: '..status)
+    end
+    ui.preCookItems=selected
+   end
+   info.contentType='addOneFirst'
+   assert(ui.cachedAvailableItems==inputs and ui.inputGroupCache==groups and base.contained==counts[1]and base.seasonings==counts[2],
+    'UI permission changed input caches, contained metadata or selection')
+   for _,blocked in ipairs({'isFrozen','isBurnt','isRotten','unusable'})do
+    topping.blocked=blocked;ui:invalidateInputCaches();ui:getInputList('Ingredient')
+    assert(not input:canAddItem(topping),'native-unavailable ingredient was admitted: '..blocked)
+   end
+   topping.blocked=nil;ui:invalidateInputCaches();ui:getInputList('Ingredient')
+   local data=assert(ui:getCachedGroupData(topping,'Ingredient'))
+   local full,total=data.fullUses,data.totalUses;data.fullUses,data.totalUses=0,0
+   assert(not input:canAddItem(topping),'empty portion group was admitted')
+   data.fullUses,data.totalUses=full,total
+   PJCK_Config.get().portionPolicy='full_only';data.fullUses=0
+   assert(not input:canAddItem(topping),'full-only portion rule was bypassed')
+   data.fullUses=full;PJCK_Config.get().portionPolicy=savedPolicy
+   if counts[1]+counts[2]>0 then
+    ui.recipe.minimumWater=.5;base.fixtureFluid={getAmount=function()return 0 end,getCapacity=function()return 1 end}
+    assert(info:isNeedWater(base,ui.recipe)and input:canAddItem(topping)==original(input,topping),
+     'unmet native water prerequisite escaped original UI permission')
+    ui.recipe.minimumWater=nil;base.fixtureFluid=nil
+   end
+   info.contentType='showNutrition';base.kind='Sandwich';base.contained=4
+   assert(not input:canAddItem(topping)and input:canAddItem(topping)==original(input,topping),'normal recipe MaxItems behavior changed')
+   base.contained=3;assert(input:canAddItem(topping)==original(input,topping),'normal non-transition behavior changed')
+  end
+ end
+ -- Unknown instance/class/config owners must keep the original refusal rather than gain permission.
+ for _,changed in ipairs({'input-instance','info-instance','evo-instance','foreign-child','foreign-info','global-input',
+  'global-info','global-evo','input-class','info-class','evo-class','config'})do
+  local ui,input,seasoning,info,base,topping=setup(2,0)
+  local restore
+  if changed=='input-instance'then input.getSelectedCount=function()return 0 end
+  elseif changed=='info-instance'then info.isAddOneFirst=function()return true end
+  elseif changed=='evo-instance'then ui.getCookStatus=function()return 'addOneFirst'end
+  elseif changed=='foreign-child'then ui.ingredientsPanel=seasoning
+  elseif changed=='foreign-info'then info.EvoPanel={}
+  elseif changed=='global-input'then local old=PJCK_InputPanel;PJCK_InputPanel={};restore=function()PJCK_InputPanel=old end
+  elseif changed=='global-info'then local old=PJCK_CookingInfo;PJCK_CookingInfo={};restore=function()PJCK_CookingInfo=old end
+  elseif changed=='global-evo'then local old=PJCK_EvoPanel;PJCK_EvoPanel={};restore=function()PJCK_EvoPanel=old end
+  elseif changed=='input-class'then local old=PJCK_InputPanel.getMaxAvailableCount;PJCK_InputPanel.getMaxAvailableCount=function()return 1 end;restore=function()PJCK_InputPanel.getMaxAvailableCount=old end
+  elseif changed=='info-class'then local old=PJCK_CookingInfo.isAddOneFirst;PJCK_CookingInfo.isAddOneFirst=function()return true end;restore=function()PJCK_CookingInfo.isAddOneFirst=old end
+  elseif changed=='evo-class'then local old=PJCK_EvoPanel.getCookStatus;PJCK_EvoPanel.getCookStatus=function()return 'addOneFirst'end;restore=function()PJCK_EvoPanel.getCookStatus=old end
+  else local old=PJCK_Config.get;PJCK_Config.get=function()return old()end;restore=function()PJCK_Config.get=old end end
+  assert(input:canAddItem(topping)==original(input,topping)and not original(input,topping),'unknown '..changed..' gained first-addition permission')
+  if restore then restore()end
+ end
+ reset();enabled,RecipeManager,ISInventoryPaneContextMenu.getContainers=savedEnabled,savedManager,savedContainers
+ PJCK_Config.get().portionPolicy=savedPolicy
+ print('PASS actual-source Cook rendered first-result permission, inherited metadata, native availability, capacity and unknown-owner guards in both settings')
+end
+
 local function cook()
     panel:addIngredients({{groupKey=group,panelType='Ingredient',recipeCompatible=true,recipeUse=5}},recipe,panel.baseItem)
     local first=queue.queue[1]; local book=tail(); first:start()
     assert(queue.queue[2].Type=='ISInventoryTransferAction' and queue.queue[3].Type=='ISQueueActionsAction' and queue.queue[4]==book)
     first:perform(); return queue.queue[1],book,first
 end
+-- Build unavailable rows through the actual UI source before root arrival.
+-- Availability and physical item objects are native/Java boundary inputs only.
+do
+ local savedEnabled=enabled
+ for _,queueMode in ipairs({true,false})do
+  for _,cacheKind in ipairs({'available','group'})do
+   for _,replica in ipairs({'same','clone'})do
+   reset();enabled=queueMode;food.container=bag
+   local floor={class='ItemContainer',getType=function()return 'floor'end,getParent=function()end,getContainingItem=function()end}
+   local stale=item(floor,1200)
+   local live=replica=='same'and stale or item(inventory,1200)
+   for _,value in ipairs({stale,live})do value.getFullType=function()return 'Base.Pot'end;value.getType=function()return 'Pot'end end
+   local scans=0
+   local uiRecipe={getItemRecipe=recipe.getItemRecipe,getMaxItems=recipe.getMaxItems}
+   function uiRecipe:getItemsCanBeUse(actor,base,containers)
+    assert(actor==player and containers,'native availability lost its actor/container arguments')
+    scans=scans+1
+    return list(base==live and base:getContainer()==inventory and inventory:getItemById(base:getID())==base and {food}or {})
+   end
+   local requests={{groupKey='another-queued-group',panelType='Ingredient'}}
+   local switches={[group]=food}
+   local ui=setmetatable({player=player,baseItem=stale,recipe=uiRecipe,baseItemOriginalContainer=floor,
+    pendingBaseItemTransferId=1200,pendingBaseItemTransferUntil=6000,
+    preCookItems=requests,switchItems=switches,showPossible={Ingredient=false,Seasoning=false},
+    inputGroupCache={Ingredient={},Seasoning={}},inputGroupCacheValid={Ingredient=false,Seasoning=false},
+    Window={getAllItems=function()return list({food})end}},PJCK_EvoPanel)
+   local before=ui:getInputList('Ingredient')
+   assert(#before==0 and scans==1 and ui.cachedAvailableItems:size()==0 and ui.inputGroupCacheValid.Ingredient,
+    'source did not prime its unavailable floor cache')
+   if cacheKind=='available'then ui:invalidateGroupCache('Ingredient')end
+   live.container=inventory;inventory.values={live}
+   local rows=ui:getInputList('Ingredient')
+   assert(#rows==1 and rows[1].usableItems[1]==food and rows[1].usableIds[food:getID()]
+    and rows[1].item==food and rows[1].recipeCompatible and rows[1].totalUses>0,
+    'same-ID root arrival left the source ingredient UI unavailable: '..cacheKind..' replica='..replica..' queue='..tostring(queueMode))
+   assert(scans==2 and ui.baseItem==live and ui.cachedAvailableBaseId==1200 and ui.cachedAvailableRecipe==uiRecipe,
+    'source UI did not recompute native availability once against canonical root')
+   assert(ui.preCookItems==requests and requests[1].groupKey=='another-queued-group'and ui.switchItems==switches
+    and switches[group]==food and ui.baseItemOriginalContainer==floor and ui.recipe==uiRecipe
+    and ui.pendingBaseItemTransferUntil==6000,'UI recovery discarded logical requests, selection or return state')
+   local available,groups=ui.cachedAvailableItems,ui.inputGroupCache
+   assert(ui:getBaseItem()==live and ui:resolveCurrentBaseItem(true)==live,'source getter/resolver lost canonical root')
+   ui:getInputList('Ingredient')
+   assert(ui.cachedAvailableItems==available and ui.inputGroupCache==groups and scans==2,
+    'stable canonical reference repeatedly invalidated input caches')
+   assert(ui._toolkitCookRootCache.item==live and ui._toolkitCookRootCache.root==inventory,
+    'canonical root proof did not record exact item/container')
+   live.container=floor;inventory.values={}
+   assert(ui:getBaseItem()==live and ui._toolkitCookRootCache==nil and scans==2,
+    'leaving root failed to clear proof or changed original getter/availability behavior')
+   live.container=inventory;inventory.values={live}
+   local again=ui:getInputList('Ingredient')
+   assert(#again==1 and again[1].usableItems[1]==food and scans==3,
+    'same exact object returning to root did not create one new cache generation')
+   ui:getBaseItem();ui:getInputList('Ingredient')
+   assert(scans==3 and ui.preCookItems==requests and ui.switchItems==switches,
+    'repeated proof reads rescanned or discarded logical requests')
+   end
+  end
+ end
+ reset();enabled=savedEnabled
+ print('PASS actual-source same-object/clone root generations recover cached unavailable/valid-empty-group UI exact food after root arrival in both settings')
+end
+
+-- Floor packets can leave the selected proxy's container nonnil while the
+-- authoritative same-ID replica has already arrived in root. Execute the real
+-- producer and native Lua start validator, without refreshing the panel first.
+do
+ local saved={enabled=enabled,base=panel.baseItem,source=panel.baseItemOriginalContainer,
+  pendingId=panel.pendingBaseItemTransferId,deadline=panel.pendingBaseItemTransferUntil,
+  contains=inventory.contains,consumed=consumed,result=recipe.getResultItem,groups=panel.inputGroupCache,groupValid=panel.inputGroupCacheValid}
+ inventory.contains=function(self,target)for _,value in ipairs(self.values)do if value==target then return true end end;return false end
+ recipe.getResultItem=function()return 'Pot'end
+ local floor={class='ItemContainer',getType=function()return 'floor'end,getParent=function()end,getContainingItem=function()end,
+  contains=function()return false end,getItems=function()return list({})end,getItemById=function()end}
+ for _,queueMode in ipairs({true,false})do
+  reset();enabled=queueMode;food.container=bag;panel.inputGroupCache=saved.groups
+  local stale,live=item(floor,12),item(inventory,12)
+  for _,value in ipairs({stale,live})do value.getFullType=function()return 'Base.Pot'end;value.getType=function()return 'Pot'end end
+  inventory.values={live};panel.baseItem=stale;panel.baseItemOriginalContainer=floor
+  panel.pendingBaseItemTransferId=12;panel.pendingBaseItemTransferUntil=6000
+  local pickup,book=cook()
+  assert(pickup.Type=='ISInventoryTransferAction'and pickup.item==food,'source did not queue ingredient pickup')
+  pickup:perform();inventory.values={live,food}
+  assert(food:getContainer()==inventory and stale:getContainer()==floor,'fixture did not reach post-pickup stale-floor state')
+  local command=queue.queue[1];command:start()
+  local add=queue.queue[2]
+  if not add or add.Type~='ISAddItemInRecipe'then
+   -- Diagnostic RED path: let the unchanged source exhaust its own retry window.
+   -- No recipe effect is supplied by the fixture; only wall-clock/UI boundaries
+   -- are observed, as in the existing source transfer-timeout regressions.
+   assert(ISAddItemInRecipe:new(player,recipe,live,food):isValidStart(),'canonical root recipe was already unusable')
+   local priorClock,priorHalo=getTimestampMs,HaloTextHelper
+   local now,notices,retries=100,0,0
+   getTimestampMs=function()return now end
+   HaloTextHelper={addBadText=function()notices=notices+1 end}
+   command:perform()
+   while queue.queue[1]and queue.queue[1]~=book and retries<80 do
+    local action=queue.queue[1];now=now+500;retries=retries+1
+    action:start();action:perform()
+   end
+   getTimestampMs,HaloTextHelper=priorClock,priorHalo
+   assert(notices==1 and consumed==saved.consumed and queue.queue[1]==book,
+    'source retry failure did not stay bounded without applying recipe effects')
+   error('stale-nonnull floor cache: ingredient reached root, native root recipe valid, source retried '..retries..' actions then NotAvailable='..notices..'; queue='..tostring(queueMode))
+  end
+  assert(add.baseItem==live and add.usedItem==food,'native evolved producer selected a substitute base or ingredient')
+  assert(add:isValidStart(),'actual native Lua recipe start rejected canonical root base')
+  assert(panel.baseItem==live and panel.recipe==nil and panel.baseItemOriginalContainer==floor
+   and panel.pendingBaseItemTransferUntil==6000,'canonicalization changed source selection bookkeeping')
+  command:perform();add:perform();add:complete()
+  local post=queue.queue[1];assert(post.Type=='ISQueueActionsAction','source post-use command disappeared')
+  post:start();post:perform()
+  local back=queue.queue[1]
+  assert(back.Type=='ISInventoryTransferAction'and back.item==food and back.destContainer==bag,'source leftover return changed')
+  back:perform()
+  assert(food:getContainer()==bag and queue.queue[1]==book,'source sequence lost its independent tail')
+  assert(consumed==saved.consumed+1,'source apply did not execute exactly once')
+  consumed=saved.consumed
+  reset();enabled=queueMode;panel.baseItem=live;panel.baseItemOriginalContainer=floor
+  assert(panel:queueBaseItemReturn(floor),'source return producer rejected canonical root pot')
+  local returning=queue.queue[1]
+  assert(returning.item==live and returning.destContainer==floor and returning.onCompleteFunc
+   and returning.onCompleteArgs[1]==returning and returning.onCompleteArgs[2]==panel,
+   'source remembered floor return or completion arguments changed')
+ end
+ reset();enabled=saved.enabled;food.container=bag;panel.baseItem=saved.base;panel.baseItemOriginalContainer=saved.source
+ panel.pendingBaseItemTransferId,panel.pendingBaseItemTransferUntil=saved.pendingId,saved.deadline
+ panel.inputGroupCache,panel.inputGroupCacheValid=saved.groups,saved.groupValid
+ inventory.contains,recipe.getResultItem,consumed=saved.contains,saved.result,saved.consumed
+ print('PASS actual-source stale-nonnull floor pot -> ingredient pickup -> same-ID root native apply/leftover/return producer in both settings')
+end
+
+-- The actual source refresh must keep a selected exact replica, not a wall-clock
+-- grace period. Input containers/native bindings are fixture boundary state only.
+do
+ local savedClock,savedManager,savedContainers,savedActions=getTimestampMs,RecipeManager,ISInventoryPaneContextMenu.getContainers,player.getCharacterActions
+ local savedGet,savedRootLookup,savedDead,savedContains=PJCK_Config.get,inventory.getItemById,player.isDead,inventory.contains
+ inventory.contains=function(self,target)for _,value in ipairs(self.values)do if value==target then return true end end;return false end
+ local now=6001;getTimestampMs=function()return now end
+ local parent={class='IsoObject',getSquare=function()return square end,getObjectIndex=function()return 1 end}
+ local source={class='ItemContainer',values={}}
+ function source:getType()return 'stove'end
+ function source:getContainingItem()end
+ function source:getParent()return parent end
+ function source:getSourceGrid()return square end
+ function source:getItems()return list(self.values)end
+ function source:contains(target)for _,value in ipairs(self.values)do if value==target then return true end end;return false end
+ function source:getItemById(id)for _,value in ipairs(self.values)do if value:getID()==id then return value end end end
+ parent.getContainerIndex=function(_,value)return value==source and 0 or -1 end
+ parent.getContainerByIndex=function(_,index)return index==0 and source or nil end
+ local containers=list({inventory,source})
+ ISInventoryPaneContextMenu.getContainers=function()return containers end
+ local recipe={};RecipeManager={getEvolvedRecipe=function()return list({recipe})end}
+ local function setup(queueMode)
+  reset();enabled=queueMode;now=6001;source.values={}
+  local old,live=item(nil,600),item(inventory,600)
+  local notifications={containers=0,base=0,recipe=0}
+  local widget={onUpdateContainers=function()notifications.containers=notifications.containers+1 end,
+   onUpdateBaseItem=function()notifications.base=notifications.base+1 end,onUpdateRecipe=function()notifications.recipe=notifications.recipe+1 end}
+  local panel=setmetatable({player=player,baseItem=old,recipe=recipe,baseItemOriginalContainer=source,
+   pendingBaseItemTransferId=600,pendingBaseItemTransferUntil=6000,pendingBaseItemReplacement=nil,
+   ingredientsPanel=widget,seasoningsPanel=widget,preCookItems={},switchItems={},cachedAvailableItems={}},PJCK_EvoPanel)
+  return panel,old,live,notifications
+ end
+ for _,queueMode in ipairs({true,false})do
+  for _,preference in ipairs({'false','nil'})do
+   local panel,old,live=setup(queueMode);old.container=source;inventory.values={live}
+   local result
+   if preference=='false'then result=panel:resolveCurrentBaseItem(false)else result=panel:resolveCurrentBaseItem()end
+   assert(result==old and panel.baseItem==old,'nonpreferred resolver changed its original nonnil-cache semantics')
+  end
+  do
+   local panel,old,live=setup(queueMode);old.container=source;inventory.values={live}
+   assert(panel:resolveCurrentBaseItem(true)==live and panel.baseItemOriginalContainer==source
+    and panel.recipe==recipe and panel.pendingBaseItemTransferUntil==6000,'preferred resolver lost exact root identity or source bookkeeping')
+  end
+  do
+   local panel,old=setup(queueMode);old.container=nil;source.values={old}
+   assert(panel:resolveCurrentBaseItem(true)==old,'original accessible-source resolver fallback disappeared')
+  end
+  do
+   local panel,old=setup(queueMode)
+   local dish=item(inventory,800);dish.getFullType=function()return 'Base.Result'end;inventory.values={dish}
+   panel.pendingBaseItemReplacement={expectedId=800,expectedFullType='Base.Result',beforeIds={[600]=true},['until']=12000}
+   assert(panel:resolveCurrentBaseItem(true)==dish and panel.baseItemOriginalContainer==source
+    and panel.pendingBaseItemReplacement==nil,'original pending native replacement resolver changed')
+  end
+  do
+   local panel,old,live=setup(queueMode);old.container=source;inventory.values={live}
+   local callback=PJCK_EvoPanel.resolveCurrentBaseItem
+   local calls=0;PJCK_EvoPanel.resolveCurrentBaseItem=function(self,...)calls=calls+1;return callback(self,...)end
+   local result=panel:resolveCurrentBaseItem(true)
+   PJCK_EvoPanel.resolveCurrentBaseItem=callback
+   assert(calls==1 and result==old and panel.baseItem==old,'unreviewed late resolver wrapper obtained canonicalization')
+  end
+  for _,changed in ipairs({'getBaseItem','getInputList','invalidateInputCaches'})do
+   local panel,old,live=setup(queueMode);old.container=source;inventory.values={live}
+   panel.inputGroupCacheValid={Ingredient=true,Seasoning=true}
+   panel._pjckFoodSafetySignature=panel:getFoodSafetyKnowledgeSignature()
+   panel._pjckCompatRevision=PJCK_Compat and PJCK_Compat.getRevision and PJCK_Compat.getRevision()or 0
+   local groups=panel.inputGroupCache
+   local callback=PJCK_EvoPanel[changed]
+   PJCK_EvoPanel[changed]=function(self,...)return callback(self,...)end
+   assert(panel:getBaseItem()==old and #panel:getInputList('Ingredient')==0 and panel.baseItem==old
+    and panel.inputGroupCache==groups,'unreviewed late UI callback obtained canonicalization: '..changed)
+   PJCK_EvoPanel[changed]=callback
+  end
+  do
+   local panel,old,live=setup(queueMode);panel.baseItem=live;inventory.values={live}
+   panel:getBaseItem()
+   local groups=panel.inputGroupCache
+   local getInventory=player.getInventory
+   local other={class='ItemContainer',values={live},getItemById=inventory.getItemById,contains=inventory.contains}
+   player.getInventory=function()return other end;live.container=other
+   local result=panel:getBaseItem()
+   player.getInventory=getInventory;live.container=inventory
+   assert(result==live and panel._toolkitCookRootCache.root==other and panel.inputGroupCache~=groups,
+    'changing actual actor root failed to create a new canonical cache generation')
+  end
+  for _,timestamp in ipairs({6001,6000})do
+   for _,staleRoot in ipairs({false,true})do
+    local panel,old,live,notifications=setup(queueMode);now=timestamp
+    old.container=staleRoot and inventory or nil;inventory.values={live}
+    panel:setContainers(containers)
+    assert(panel.baseItem==live and panel.recipe==recipe and panel.baseItemOriginalContainer==source,
+     'same-ID/type direct-root replica was cleared at '..timestamp..' queue='..tostring(queueMode))
+    assert(panel.pendingBaseItemTransferUntil==6000 and panel.cachedAvailableItems==nil and notifications.containers==2,
+     'exact-root normalization changed deadline or skipped source refresh side effects')
+    panel:setBaseItem(nil)
+    assert(panel.baseItem==nil and panel.recipe==nil and panel.baseItemOriginalContainer==nil,'explicit user clear was suppressed')
+   end
+  end
+  do
+   local panel,old,live=setup(queueMode);inventory.values={live}
+   local callback=PJCK_EvoPanel.setContainers
+   local calls=0
+   PJCK_EvoPanel.setContainers=function(self,...)calls=calls+1;return callback(self,...)end
+   panel:setContainers(containers)
+   PJCK_EvoPanel.setContainers=callback
+   assert(calls==1 and panel.baseItem==nil,'unreviewed late class wrapper obtained exact-root normalization')
+  end
+  -- Original grace-period and visible-source behavior stays authoritative when
+  -- no exact root replica is available; this is not a new retry scheduler.
+  for _,timestamp in ipairs({6000,6001})do
+   local panel,old=setup(queueMode);now=timestamp
+   panel:setContainers(containers)
+   assert((timestamp==6000 and panel.baseItem==old)or(timestamp==6001 and panel.baseItem==nil),
+    'missing-root deadline behavior changed')
+  end
+  do
+   local panel,old=setup(queueMode);old.container=source;source.values={old}
+   panel:setContainers(containers)
+   assert(panel.baseItem==old and panel.recipe==recipe,'visible source item was cleared at expiry')
+  end
+  for _,case in ipairs({'missing','wrong-id','wrong-type','wrong-container','nonmember','dead','unknown-panel','unknown-config','new-selection'})do
+   local panel,old,live=setup(queueMode)
+   if case=='wrong-id'then live.id=601;inventory.values={live}
+   elseif case=='wrong-type'then live.getFullType=function()return 'Base.Foreign'end;inventory.values={live}
+   elseif case=='wrong-container'then live.container=source;inventory.values={live}
+   elseif case=='nonmember'then inventory.getItemById=function()return live end;inventory.values={}
+   elseif case=='dead'then inventory.values={live};player.isDead=function()return true end
+   elseif case=='unknown-panel'then inventory.values={live};panel.getRecipe=function()return recipe end
+   elseif case=='unknown-config'then inventory.values={live};PJCK_Config.get=function()error('unreviewed config getter')end
+   elseif case=='new-selection'then
+    local replacement=item(inventory,700);inventory.values={live,replacement};panel.baseItem=replacement
+   end
+   local marker={item=old,root=source};panel._toolkitCookRootCache=marker
+   if case~='new-selection'then
+    old.container=source
+    assert(panel:getBaseItem()==old and panel.baseItem==old,'unproven getter repaired cached proxy: '..case)
+    if case=='dead'or case=='unknown-panel'or case=='unknown-config'then
+     assert(panel._toolkitCookRootCache==marker,'untrusted/dead owner mutated root proof')
+    else assert(panel._toolkitCookRootCache==nil,'missing/foreign exact root retained canonical proof: '..case)end
+    assert(panel:resolveCurrentBaseItem(true)==old and panel.baseItem==old,'unproven resolver repaired cached proxy: '..case)
+    old.container=nil
+   else
+    assert(panel:resolveCurrentBaseItem(true):getID()==700,'resolver resurrected previous selection')
+   end
+   panel:setContainers(containers)
+   if case=='new-selection'then assert(panel.baseItem:getID()==700,'old pending replica replaced new user selection')
+   else assert(panel.baseItem==nil,'missing/foreign/unreviewed base was resurrected: '..case)end
+   PJCK_Config.get,inventory.getItemById,player.isDead=savedGet,savedRootLookup,savedDead
+  end
+  -- Pending native evolved-recipe replacement retains its original source resolver
+  -- and takes precedence even if an old-type replica still exists in root.
+  for _,oldStillPresent in ipairs({false,true})do
+   local panel,old,live=setup(queueMode)
+   local dish=item(inventory,800);dish.getFullType=function()return 'Base.Result'end
+   inventory.values=oldStillPresent and {live,dish}or {dish}
+   panel.pendingBaseItemReplacement={expectedId=800,expectedFullType='Base.Result',beforeIds={[600]=true},['until']=12000}
+   panel:setContainers(containers)
+   assert(panel.baseItem==dish and panel.recipe==recipe and panel.baseItemOriginalContainer==source
+    and panel.pendingBaseItemReplacement==nil,'native recipe replacement/return bookkeeping changed')
+  end
+ end
+ reset();getTimestampMs,RecipeManager,ISInventoryPaneContextMenu.getContainers,player.getCharacterActions=savedClock,savedManager,savedContainers,savedActions
+ inventory.contains=savedContains
+ print('PASS actual-source Cook exact root cache, expiry, explicit clear, replacement and unknown callback guards in both settings')
+end
+
+
+
+
 local pickup,book,first=cook()
 pickup:perform(); command=queue.queue[1]; command:start()
 local addRecipe=queue.queue[2]
@@ -3433,6 +3859,102 @@ do
     isClient,isMultiplayer,getCell,getPlayerLoot=client,multi,cell,loot
     ISInventoryPage.floorContainer[1]=cached
 end
+-- P4's idle worn snapshot may still point at a bag left on the ground or taken
+-- by a peer. Native Host wear start rebinds that ID to nil before dereferencing it.
+do
+    local client, getWorn = isClient, player.getWornItem
+    isClient = function() return true end
+    local worn = {}
+    player.getWornItem = function(_, location) return worn[location] end
+    local floor = {class = 'ItemContainer', getType = function() return 'floor' end,
+        getContainingItem = function() end, getParent = function() return square end}
+    local peerInventory = {class = 'ItemContainer', getType = function() return 'inventory' end,
+        getContainingItem = function() end, getParent = function() end}
+    local function bag(container, id)
+        local value = item(container, id)
+        value.class, value.equippedAt = 'InventoryContainer', 'base:back'
+        value.getFullType = function() return 'Base.Bag_Schoolbag' end
+        value.IsInventoryContainer = function() return true end
+        value.getWorldItem = function() end
+        return value
+    end
+    local function clearIntent()
+        for _, callback in ipairs(events.OnMainMenuEnter or {}) do callback() end
+    end
+    for _, queueEnabled in ipairs({false, true}) do
+        for _, endpoint in ipairs({'ground-four-tiles', 'peer', 'wrong-type', 'fresh-replica'}) do
+            clearIntent(); reset(); enabled = queueEnabled; doNotReequip = false
+            worn = {}; player.primary, player.secondary = nil, nil
+            local source = endpoint == 'peer' and peerInventory or floor
+            local missing = bag(source, 17501)
+            local lookalike = bag(inventory, 17502)
+            local valid = bag(inventory, 17503); valid.equippedAt = 'base:fannypackfront'
+            local hand = item(inventory, 17504)
+            inventory.values = {lookalike, valid, hand}
+            local live
+            if endpoint == 'fresh-replica' or endpoint == 'wrong-type' then
+                live = bag(inventory, missing:getID()); inventory.values[#inventory.values + 1] = live
+                if endpoint == 'wrong-type' then live.getFullType = function() return 'Base.Other' end end
+            end
+            if endpoint == 'ground-four-tiles' then
+                local away = {getX = function() return 4 end, getY = function() return 0 end, getZ = function() return 0 end}
+                local world = {getItem = function() return missing end, getSquare = function() return away end}
+                missing.getWorldItem = function() return world end
+            end
+            if not live then
+                local probe = ISWearClothing:new(player, missing)
+                local ok, problem = pcall(probe.start, probe)
+                assert(not ok and probe.item == nil and tostring(problem):find('nil'),
+                    'regression must execute native Host start nil-rebinding before the repair')
+            end
+            local session = TidyFixture.captureSession(player)
+            session.restoreWorn, session.restoreHands = true, true
+            session.wornItems = {['base:back'] = missing, ['base:fannypackfront'] = valid}
+            session.primaryItem = hand
+            compat.fixtureRepairTidyFloor(player, function() TidyFixture.queueRestore(session) end)
+            local missingWear, validWear, handEquip
+            for _, action in ipairs(queue.queue) do
+                if action.Type == 'ISWearClothing' and action.item == missing then missingWear = action end
+                if action.Type == 'ISWearClothing' and action.item == valid then validWear = action end
+                if action.Type == 'ISEquipWeaponAction' and action.item == hand then handEquip = action end
+            end
+            assert(handEquip and validWear and queue:indexOf(handEquip) < queue:indexOf(validWear),
+                'missing worn storage must preserve P4 hand/clothing actions and order')
+            assert((missingWear ~= nil) == (endpoint == 'fresh-replica'),
+                'P4 emitted unavailable exact worn item into native Host start: ' .. endpoint)
+            if missingWear then
+                assert(missingWear.item == missing, 'filter must leave private original-item metadata unchanged')
+                worn['base:back'] = live
+                missingWear:begin()
+                missingWear:start()
+                assert(missingWear.item == live, 'native Host start must retain its fresh exact-ID/type resolver')
+            end
+            assert(missing:getContainer() == source and lookalike:getContainer() == inventory,
+                'wear filter moved unavailable storage or selected a same-type substitute')
+        end
+    end
+    for _, mutation in ipairs({'callback', 'instance', 'foreign', 'incoming', 'unknown-before', 'busy'}) do
+        clearIntent(); reset(); doNotReequip = false; player.primary, player.secondary = nil, nil
+        local missing = bag(floor, 17511)
+        local wear = ISWearClothing:new(player, missing)
+        local before
+        if mutation == 'callback' then wear.onCompleteFunc = function() end
+        elseif mutation == 'instance' then wear.start = function() end
+        elseif mutation == 'foreign' then wear.character = setmetatable({}, {__index = player})
+        elseif mutation == 'incoming' then before = ISInventoryTransferAction:new(player, missing, floor, inventory)
+        elseif mutation == 'unknown-before' then before = ISBaseTimedAction:new(player)
+        elseif mutation == 'busy' then ISTimedActionQueue.add(ISBaseTimedAction:new(player)) end
+        compat.fixtureRepairTidyFloor(player, function()
+            if before then ISTimedActionQueue.add(before) end
+            ISTimedActionQueue.add(wear)
+        end)
+        local actualQueue = ISTimedActionQueue.getTimedActionQueue(wear.character)
+        assert(actualQueue:indexOf(wear) ~= -1 and (not before or queue:indexOf(before) < queue:indexOf(wear)),
+            'unknown callback, pending supplier or nonidle work must remain unchanged: ' .. mutation)
+    end
+    clearIntent(); reset(); player.getWornItem = getWorn; isClient = client
+    print('PASS real P4 missing world/peer worn storage, native nil-rebind and exact Host replica preservation')
+end
 -- Match the early-Compat / later-ActionQueue startup order, including inherited P4 stop methods.
 local previousStop=ISBaseTimedAction.stop
 ISBaseTimedAction.stop=function(...) return previousStop(...) end
@@ -3659,6 +4181,116 @@ do
     PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=previousOperations,previousDefinitions,previousCompat
     ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.addToQueue=previousAdd,previousAfter,previousToQueue
 end
+-- An unknown refresh introduced during fresh source loading must remain native;
+-- file checksum approval does not bless a callback installed by another loader.
+do
+ local saved={require=require,mods=getActivatedMods,operations=PZSurvivorToolkit.ActionQueueOperations,
+  definitions=PZSurvivorToolkit.ActionQueueDefinitions,compat=PZSurvivorToolkit.ActionQueueCompat,
+  panel=PJCK_EvoPanel,craft=PJCK_CraftActionPanel,add=ISTimedActionQueue.add,
+  after=ISTimedActionQueue.addAfter,toQueue=ISTimedActionQueue.addToQueue,checkQueue=ISInventoryTransferAction.checkQueueList,
+  post=PJCK_postIngredientUse,process=PJCK_processIngredientEntry}
+ local injected,expected
+ for _,changed in ipairs({'setContainers','resolveCurrentBaseItem','getBaseItem','getInputList','invalidateInputCaches'})do
+ getActivatedMods=function()return {contains=function(_,id)return id=='Project_Cook'end}end
+ require=function(module)
+  if module=='Project_Cook/HandCraftPanel/PJCK_CraftActionPanel'or module=='Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel'then
+   local path=NativeWishlistWorkshopRoot..'/'..paths.Project_Cook..'/media/lua/client/'..module..'.lua'
+   local result=assert(loadstring(read(path),'@'..module..'.lua'))()
+   if module=='Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel'then
+    local callback=PJCK_EvoPanel[changed]
+    injected=function(self,...)return callback(self,...)end
+    PJCK_EvoPanel[changed]=injected
+    expected={}
+    for _,name in ipairs({'setContainers','resolveCurrentBaseItem','getBaseItem','getInputList'})do expected[name]=PJCK_EvoPanel[name]end
+   end
+   return result
+  end
+  return saved.require(module)
+ end
+ PJCK_EvoPanel,PJCK_CraftActionPanel=nil,nil
+ PZSurvivorToolkit.ActionQueueOperations={registerProducer=function()end}
+ PZSurvivorToolkit.ActionQueueDefinitions={registerBehavior=function()end}
+ local selected=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
+ assert(selected.isInstalled('Project_Cook')and injected,'early source integration unexpectedly unavailable')
+ for name,callback in pairs(expected)do assert(PJCK_EvoPanel[name]==callback,
+  'unknown early '..changed..' obtained canonicalizer at '..name)end
+ require,getActivatedMods=saved.require,saved.mods
+ PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=saved.operations,saved.definitions,saved.compat
+ PJCK_EvoPanel,PJCK_CraftActionPanel=saved.panel,saved.craft
+ ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.addToQueue=saved.add,saved.after,saved.toQueue
+ ISInventoryTransferAction.checkQueueList=saved.checkQueue
+ PJCK_postIngredientUse,PJCK_processIngredientEntry=saved.post,saved.process
+ end
+ print('PASS unknown early Cook refresh/resolver/getter/input/invalidator callbacks remain outside shared canonicalizer')
+end
+
+-- Optional UI proof must never weaken the existing evolved/handcraft/return source proof.
+do
+ local saved={require=require,reader=getModFileReader,mods=getActivatedMods,events=Events,
+  operations=PZSurvivorToolkit.ActionQueueOperations,definitions=PZSurvivorToolkit.ActionQueueDefinitions,
+  compat=PZSurvivorToolkit.ActionQueueCompat,panel=PJCK_EvoPanel,craft=PJCK_CraftActionPanel,
+  input=PJCK_InputPanel,info=PJCK_CookingInfo,add=ISTimedActionQueue.add,after=ISTimedActionQueue.addAfter,
+  toQueue=ISTimedActionQueue.addToQueue,checkQueue=ISInventoryTransferAction.checkQueueList,
+  post=PJCK_postIngredientUse,process=PJCK_processIngredientEntry}
+ local modules={
+  ['Project_Cook/HandCraftPanel/PJCK_CraftActionPanel']='client/Project_Cook/HandCraftPanel/PJCK_CraftActionPanel.lua',
+  ['Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel']='client/Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel.lua',
+  ['Project_Cook/EvolvedRecipePanel/PJCK_InputPanel']='client/Project_Cook/EvolvedRecipePanel/PJCK_InputPanel.lua',
+  ['Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo']='client/Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo.lua',
+ }
+ for _,scenario in ipairs({'known','input-source','info-source','input-early','info-early','info-missing-water','input-extra'})do
+  local loadedUi,original,expected={}
+  local changed=scenario=='input-source'and 'media/lua/'..modules['Project_Cook/EvolvedRecipePanel/PJCK_InputPanel']
+   or scenario=='info-source'and 'media/lua/'..modules['Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo']
+  getActivatedMods=function()return{contains=function(_,id)return id=='Project_Cook'end}end
+  getModFileReader=function(id,path,...)
+   local reader=saved.reader(id,path,...)
+   if id=='Project_Cook'and path==changed then
+    local readLine,first=reader.readLine,true
+    reader.readLine=function(...)
+     local line=readLine(...);if first then first=false;return line..' -- changed UI source'end;return line
+    end
+   end
+   return reader
+  end
+  require=function(module)
+   local path=modules[module]
+   if not path then return saved.require(module)end
+   if loadedUi[module]then return loadedUi[module]end
+   local result=assert(loadstring(read(NativeWishlistWorkshopRoot..'/'..paths.Project_Cook..'/media/lua/'..path),'@'..module..'.lua'))()
+   if module=='Project_Cook/EvolvedRecipePanel/PJCK_InputPanel'then
+    original=PJCK_InputPanel.canAddItem
+    if scenario=='input-early'then PJCK_InputPanel.canAddItem=function(self,...)return original(self,...)end
+    elseif scenario=='input-extra'then PJCK_InputPanel.unreviewedHelper=function()end end
+    expected=PJCK_InputPanel.canAddItem
+   elseif module=='Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo'then
+    if scenario=='info-early'then
+     local callback=PJCK_CookingInfo.isAddOneFirst
+     PJCK_CookingInfo.isAddOneFirst=function(self,...)return callback(self,...)end
+    elseif scenario=='info-missing-water'then PJCK_CookingInfo.isNeedWater=nil end
+   end
+   loadedUi[module]=result or true;return result
+  end
+  Events={OnTick={Add=function()end},OnGameStart={Add=function()end}}
+  PJCK_EvoPanel,PJCK_CraftActionPanel,PJCK_InputPanel,PJCK_CookingInfo=nil,nil,nil,nil
+  PZSurvivorToolkit.ActionQueueOperations={registerProducer=function()end}
+  PZSurvivorToolkit.ActionQueueDefinitions={registerBehavior=function()end}
+  local selected=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
+  assert(selected.isInstalled('Project_Cook'),'optional UI source disabled reviewed cooking core: '..scenario)
+  assert(selected.isInstalled('Project_Cook_FirstAddition')==(scenario=='known'),'optional first-addition proof admitted unknown source: '..scenario)
+  require('Project_Cook/EvolvedRecipePanel/PJCK_InputPanel')
+  if scenario=='known'then assert(PJCK_InputPanel.canAddItem~=original,'known UI source was not adapted')
+  else assert(PJCK_InputPanel.canAddItem==expected,'unknown UI callback was replaced: '..scenario)end
+ end
+ require,getModFileReader,getActivatedMods,Events=saved.require,saved.reader,saved.mods,saved.events
+ PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=saved.operations,saved.definitions,saved.compat
+ PJCK_EvoPanel,PJCK_CraftActionPanel,PJCK_InputPanel,PJCK_CookingInfo=saved.panel,saved.craft,saved.input,saved.info
+ ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.addToQueue=saved.add,saved.after,saved.toQueue
+ ISInventoryTransferAction.checkQueueList=saved.checkQueue
+ PJCK_postIngredientUse,PJCK_processIngredientEntry=saved.post,saved.process
+ print('PASS optional Cook first-addition source/early-closure guards retain original UI and reviewed cooking core')
+end
+
 print('Selected mod chain actual-source checks passed.')
 -- The numbered Quartermaster entry loads Compat before Policy in the game.
 -- Exercise both require-loaded and already-loaded shared repair startup orders.

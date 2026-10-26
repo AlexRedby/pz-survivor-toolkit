@@ -31,6 +31,14 @@ internal object CartGrip {
     }
 
     private val matrices = ThreadLocal.withInitial(::Matrices)
+
+    private class FootMatrices {
+        // Kept separate from reach's scratch because aim/adjust reuse matrices during the solve.
+        val poses = arrayOfNulls<Matrix4f>(60)
+        val target = Matrix4f()
+    }
+
+    private val footMatrices = ThreadLocal.withInitial(::FootMatrices)
     private val headNeutrals = WeakHashMap<AnimationClip, WeakHashMap<SkinningData, Quaternionf?>>()
 
     private fun pose(poses: Array<out Matrix4f?>?, index: Int): Matrix4f =
@@ -381,6 +389,77 @@ internal object CartGrip {
         adjust(poses, actor, root, state.adjustment)
     }
 
+    /** Fit one cosmetic foot target without committing a failed or partial leg solve. */
+    @JvmStatic
+    fun fitFoot(
+        poses: Array<out Matrix4f?>?,
+        actor: SkinningData?,
+        side: String?,
+        target: Matrix4f?,
+    ): Boolean {
+        if (poses == null || actor == null || target == null || side != "L" && side != "R")
+            return false
+        val scratch = footMatrices.get()
+        val count = actor.numBones()
+        if (count <= 0 || count > scratch.poses.size || count > poses.size) return false
+        val foot = actor.getBone("Bip01_${side}_Foot") ?: return false
+        val calf = foot.parent ?: return false
+        val thigh = calf.parent ?: return false
+        if (calf.name != "Bip01_${side}_Calf" || thigh.name != "Bip01_${side}_Thigh") return false
+        fun indexed(bone: SkinningBone): Boolean =
+            bone.index in 0 until count && actor.getBoneAt(bone.index) === bone
+        if (!indexed(thigh) || !indexed(calf) || !indexed(foot)) return false
+        fun affine(value: Matrix4f): Boolean =
+            value.isFinite() &&
+                Math.abs(value.m03()) < 1e-5f &&
+                Math.abs(value.m13()) < 1e-5f &&
+                Math.abs(value.m23()) < 1e-5f &&
+                Math.abs(value.m33() - 1f) < 1e-5f &&
+                value.determinant3x3().isFinite() &&
+                value.determinant3x3() > 1e-8f
+        fun unit(x: Float, y: Float, z: Float): Boolean =
+            Math.abs(x * x + y * y + z * z - 1f) < 1e-4f
+        // A target may translate and rotate the ankle, but must never resize/shear its descendants.
+        if (
+            !affine(target) ||
+                !unit(target.m00(), target.m01(), target.m02()) ||
+                !unit(target.m10(), target.m11(), target.m12()) ||
+                !unit(target.m20(), target.m21(), target.m22()) ||
+                Math.abs(
+                    target.m00() * target.m10() +
+                        target.m01() * target.m11() +
+                        target.m02() * target.m12(),
+                ) >= 1e-4f ||
+                Math.abs(
+                    target.m00() * target.m20() +
+                        target.m01() * target.m21() +
+                        target.m02() * target.m22(),
+                ) >= 1e-4f ||
+                Math.abs(
+                    target.m10() * target.m20() +
+                        target.m11() * target.m21() +
+                        target.m12() * target.m22(),
+                ) >= 1e-4f
+        )
+            return false
+        scratch.target.set(target)
+        for (i in 0 until count) if (descendant(actor.getBoneAt(i), thigh)) {
+            val source = poses[i] ?: return false
+            if (!affine(source)) return false
+            val working = scratch.poses[i] ?: Matrix4f().also { scratch.poses[i] = it }
+            working.set(source)
+        }
+        if (!reach(scratch.poses, actor, foot.name, scratch.target, null, false, 1f, true))
+            return false
+        for (i in 0 until count) if (
+            descendant(actor.getBoneAt(i), thigh) && !affine(pose(scratch.poses, i))
+        )
+            return false
+        for (i in 0 until count) if (descendant(actor.getBoneAt(i), thigh))
+            pose(poses, i).set(pose(scratch.poses, i))
+        return true
+    }
+
     // Solve two links without stretching; leg correction keeps the planted foot target.
     @JvmStatic
     fun reach(
@@ -437,6 +516,7 @@ internal object CartGrip {
         policyWeight: Float,
         preserveFootMotion: Boolean,
         metal: Boolean,
+        shopping: Boolean = false,
     ): Boolean {
         if (!policyWeight.isFinite() || policyWeight < 0 || policyWeight > 1) return false
         val skeleton = actor ?: throw NullPointerException()
@@ -462,7 +542,7 @@ internal object CartGrip {
         )
             return false
         val clavicle = upper.parent
-        // Both wheelbarrows need bounded shoulder reach; their elbow bend policies remain separate.
+        // Held grips need bounded shoulder reach; each handle keeps its own elbow bend policy.
         if (
             (wood || bodyDelta != null) &&
                 distance > a + b - .01f &&
@@ -542,7 +622,18 @@ internal object CartGrip {
                 if (policyWeight < 1) Vector3f(bend).fma(-bend.dot(axis), axis) else null
             bend.set(goal).sub(shoulder).fma(-b, Vector3f(target.m00(), target.m01(), target.m02()))
             bend.fma(-bend.dot(axis), axis).normalize()
-            val relaxed = bodyDelta.transformDirection(Vector3f(0f, -1f, if (wood) 1f else .25f))
+            // A transverse shopping bar allows relaxed elbows outside the shoulder line.
+            // Keep the fifteen-degree outward hint local to shopping grips; shafts retain their
+            // pose.
+            val relaxed =
+                bodyDelta.transformDirection(
+                    Vector3f(
+                        if (shopping) (if (handName == "Bip01_L_Hand") 1f else -1f) * .25881905f
+                        else 0f,
+                        if (shopping) -.96592583f else -1f,
+                        if (wood) 1f else .25f,
+                    ),
+                )
             relaxed.fma(-relaxed.dot(axis), axis).normalize()
             // Keep the elbow down/back instead of lifting it just to minimize the wrist angle.
             val extra =
@@ -577,8 +668,7 @@ internal object CartGrip {
         aim(poses, skeleton, forearm, solved, wrist, goal)
         val adjustment = matrices.get().adjustment
         if (bodyDelta != null) {
-            // Pronation belongs in the forearm, rather than twisting the entire underhand turn at
-            // the wrist.
+            // Distribute palm rotation through the forearm instead of twisting only the wrist.
             val forearmAxis = goal.sub(solved, Vector3f()).normalize()
             val from = pose(poses, forearm.index).transformDirection(Vector3f(0f, 0f, 1f))
             val to = target.transformDirection(Vector3f(0f, 0f, 1f))
@@ -720,7 +810,9 @@ internal object CartGrip {
                 (point ?: throw NullPointerException()).set(
                     -150.07166f,
                     343.47412f,
-                    if (left) .809756f else -.809769f,
+                    // Center the wider grasp on the measured straight bar, including its
+                    // continuation beyond the thicker sleeve; both palms remain supported.
+                    if (left) .95877537f else -.98122463f,
                 )
             "WheelbarrowWood" ->
                 (point ?: throw NullPointerException()).set(
@@ -922,18 +1014,291 @@ internal object CartGrip {
                         actor,
                         "Bip01_${side}_Hand",
                         target,
-                        if ((model ?: throw NullPointerException()).startsWith("Wheelbarrow")) delta
-                        else null,
+                        // Shopping grips also need a stable elbow plane and forearm pronation.
+                        // Otherwise the native walking swing is corrected entirely at the wrist.
+                        delta,
                         "WheelbarrowWood".equals(model),
                         1f,
                         false,
                         "WheelbarrowMetal".equals(model),
+                        CartShopping.model(model),
                     )
             )
                 return false
-            closeFingers(poses, actor, side, grasp(female, model), model.startsWith("Wheelbarrow"))
+            closeFingers(
+                poses,
+                actor,
+                side,
+                grasp(female, model),
+                model?.startsWith("Wheelbarrow") == true,
+            )
         }
         return true
+    }
+
+    /**
+     * The ordinary arm solver's exact positional gate, without changing a bone or attempting IK.
+     */
+    private fun injuredArmReachable(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        name: String,
+        target: Matrix4f,
+        change: Matrix4f?,
+        metal: Boolean,
+    ): Boolean {
+        val hand = actor.getBone(name)
+        if (hand == null || hand.parent == null || hand.parent.parent == null) return false
+        val forearm = hand.parent
+        val upper = forearm.parent
+        val clavicle = upper.parent
+        val shoulder = pose(poses, upper.index).getTranslation(Vector3f())
+        val elbow = pose(poses, forearm.index).getTranslation(Vector3f())
+        val wrist = pose(poses, hand.index).getTranslation(Vector3f())
+        val pivot =
+            if (clavicle == null) null else pose(poses, clavicle.index).getTranslation(Vector3f())
+        if (change != null) {
+            change.transformPosition(shoulder)
+            change.transformPosition(elbow)
+            change.transformPosition(wrist)
+            if (pivot != null) change.transformPosition(pivot)
+        }
+        val goal = target.getTranslation(Vector3f())
+        val a = shoulder.distance(elbow)
+        val b = elbow.distance(wrist)
+        var distance = shoulder.distance(goal)
+        if (
+            !distance.isFinite() ||
+                !(a + b).isFinite() ||
+                a < .00001f ||
+                b < .00001f ||
+                distance < .00001f ||
+                distance <= Math.abs(a - b)
+        )
+            return false
+        if (
+            distance > a + b - .01f &&
+                clavicle != null &&
+                (clavicle.name == "Bip01_L_Clavicle" || clavicle.name == "Bip01_R_Clavicle")
+        ) {
+            val from = shoulder.sub(pivot, Vector3f())
+            val to = goal.sub(pivot, Vector3f())
+            val c = from.length()
+            val d = to.length()
+            val reserve = a + b - distance
+            if (c < .00001f || d < .00001f || !(c + d).isFinite()) return false
+            val correction =
+                if (reserve <= 0) .005f - reserve else (.01f - reserve) * (.01f - reserve) / .02f
+            val desired = distance - correction
+            if (desired <= Math.abs(c - d)) return false
+            val angle =
+                Math.acos(Math.max(-1f, Math.min(1f, from.dot(to) / (c * d))).toDouble()).toFloat()
+            val remaining =
+                Math.acos(
+                        Math.max(
+                                -1f,
+                                Math.min(1f, (c * c + d * d - desired * desired) / (2 * c * d)),
+                            )
+                            .toDouble(),
+                    )
+                    .toFloat()
+            // Match the current held metal solver's verified Sprint-to-stop reserve.
+            val turn =
+                Math.min(
+                    angle - remaining,
+                    Math.toRadians((if (metal) 40 else 35).toDouble()).toFloat(),
+                )
+            if (!turn.isFinite()) return false
+            if (turn > .000001f) {
+                val axis = from.cross(to, Vector3f())
+                if (axis.lengthSquared() < .00000001f) return false
+                distance =
+                    Quaternionf()
+                        .rotationAxis(turn, axis.normalize())
+                        .transform(from)
+                        .add(pivot)
+                        .distance(goal)
+            }
+        }
+        return distance < a + b
+    }
+
+    private fun injuredArmsReachable(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        left: Matrix4f,
+        right: Matrix4f,
+        change: Matrix4f?,
+        metal: Boolean,
+    ): Boolean =
+        injuredArmReachable(poses, actor, "Bip01_L_Hand", left, change, metal) &&
+            injuredArmReachable(poses, actor, "Bip01_R_Hand", right, change, metal)
+
+    private fun injuryChestChange(
+        pivot: Vector3f,
+        yaw: Float,
+        lean: Float,
+        amount: Float,
+        leanAxis: Vector3f?,
+    ): Matrix4f {
+        val change = Matrix4f().translation(pivot)
+        if (leanAxis == null) change.rotateX(-lean * amount)
+        else change.rotate(lean * amount, leanAxis)
+        return change.rotateY(yaw * amount).translate(-pivot.x, -pivot.y, -pivot.z)
+    }
+
+    private fun injuryChestAmount(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        left: Matrix4f,
+        right: Matrix4f,
+        pivot: Vector3f,
+        yaw: Float,
+        lean: Float,
+        leanAxis: Vector3f?,
+        metal: Boolean,
+    ): Float {
+        var change = injuryChestChange(pivot, yaw, lean, 1f, leanAxis)
+        var low = 0f
+        var high = 1f
+        if (!injuredArmsReachable(poses, actor, left, right, change, metal)) {
+            // Both arms can fit inside the bounded path even when its far endpoint overshoots.
+            // Find a feasible bracket without mutating the native pose, then refine its entry.
+            var found = false
+            for (i in 1 until 16) {
+                val amount = i / 16f
+                change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
+                if (injuredArmsReachable(poses, actor, left, right, change, metal)) {
+                    low = (i - 1) / 16f
+                    high = amount
+                    found = true
+                    break
+                }
+            }
+            if (!found) return Float.NaN
+        }
+        for (i in 0 until 16) {
+            val amount = (low + high) * .5f
+            change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
+            if (injuredArmsReachable(poses, actor, left, right, change, metal)) high = amount
+            else low = amount
+        }
+        // Stay just inside the feasible interval despite matrix/IK floating-point rounding.
+        val inset = Math.min(1f, high + .001f)
+        change = injuryChestChange(pivot, yaw, lean, inset, leanAxis)
+        return if (injuredArmsReachable(poses, actor, left, right, change, metal)) inset else high
+    }
+
+    private data class InjuryChestFit(val axis: Vector3f, val amount: Float)
+
+    /** Minimize the bounded correction over a continuous circle of lean axes. */
+    private fun minimumMetalChest(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        left: Matrix4f,
+        right: Matrix4f,
+        pivot: Vector3f,
+        yaw: Float,
+        lean: Float,
+    ): InjuryChestFit? {
+        var bestAxis: Vector3f? = null
+        var bestAmount = Float.POSITIVE_INFINITY
+        var bestAngle = 0f
+        val interval = (Math.PI * 2 / 32).toFloat()
+        for (i in 0 until 32) {
+            val angle = interval * i
+            val axis = Quaternionf().rotationY(angle).transform(Vector3f(-1f, 0f, 0f))
+            val amount = injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, axis, true)
+            if (amount.isFinite() && amount < bestAmount) {
+                bestAxis = axis
+                bestAmount = amount
+                bestAngle = angle
+            }
+        }
+        if (bestAxis == null) return null
+        // The circle has no fixed/directed branch or angular seam. Refine the best local
+        // interval instead of jumping between separately calibrated feasible paths.
+        var span = interval
+        for (i in 0 until 8) {
+            span *= .5f
+            val center = bestAngle
+            for (side in 0 until 2) {
+                val angle = center + (if (side == 0) -span else span)
+                val axis = Quaternionf().rotationY(angle).transform(Vector3f(-1f, 0f, 0f))
+                val amount =
+                    injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, axis, true)
+                if (amount.isFinite() && amount < bestAmount) {
+                    bestAxis = axis
+                    bestAmount = amount
+                    bestAngle = angle
+                }
+            }
+        }
+        // Horizontal lean axes are orthogonal to yaw, so the full correction angle increases
+        // monotonically with amount under these limits. Minimizing it preserves the native pose.
+        return InjuryChestFit(bestAxis ?: return null, bestAmount)
+    }
+
+    /**
+     * Injured locomotion may yaw the chest beyond both fixed handles; keep the native hip and legs
+     * live.
+     */
+    @JvmStatic
+    fun injuryTorso(
+        poses: Array<out Matrix4f?>?,
+        actor: SkinningData?,
+        female: Boolean,
+        delta: Matrix4f?,
+        cart: Matrix4f?,
+        pressure: Float,
+        injuryWeight: Float,
+        idleChest: Matrix4f?,
+        model: String?,
+    ): Float {
+        if (
+            !injuryWeight.isFinite() ||
+                injuryWeight <= 0 ||
+                injuryWeight > 1 ||
+                actor == null ||
+                poses == null ||
+                CartWheelbarrow.forModel(model) == null
+        )
+            return 0f
+        val chest = actor.getBone("Bip01_Spine1") ?: return 0f
+        if (poses[chest.index] == null || idleChest == null || !idleChest.isFinite()) return 0f
+        val left = Matrix4f()
+        val right = Matrix4f()
+        val metal = model == "WheelbarrowMetal"
+        if (
+            !target(model, true, female, delta, cart, left, pressure) ||
+                !target(model, false, female, delta, cart, right, pressure) ||
+                injuredArmsReachable(poses, actor, left, right, null, metal)
+        )
+            return 0f
+        val live = pose(poses, chest.index)
+        val pivot = live.getTranslation(Vector3f())
+        val nativeYaw = Math.atan2(live.m12().toDouble(), live.m10().toDouble()).toFloat()
+        val referenceYaw =
+            Math.atan2(idleChest.m12().toDouble(), idleChest.m10().toDouble()).toFloat()
+        val yaw =
+            Math.atan2(
+                    Math.sin((nativeYaw - referenceYaw).toDouble()),
+                    Math.cos((nativeYaw - referenceYaw).toDouble()),
+                )
+                .toFloat() * injuryWeight
+        val lean = Math.toRadians((if (metal) 39 else 12).toDouble()).toFloat() * injuryWeight
+        val fit =
+            if (metal) minimumMetalChest(poses, actor, left, right, pivot, yaw, lean) else null
+        val leanAxis = fit?.axis
+        val amount =
+            if (metal) fit?.amount ?: return 0f
+            else injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, null, false)
+        if (!amount.isFinite()) return 0f
+        val change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
+        for (i in 0 until actor.numBones()) if (descendant(actor.getBoneAt(i), chest))
+            change.mul(pose(poses, i), pose(poses, i))
+        live.setTranslation(pivot)
+        return amount
     }
 
     @JvmStatic
@@ -998,6 +1363,21 @@ internal object CartGrip {
         return null
     }
 
+    /** Fit the held endpoint before pickup/setdown blends it with the grounded cart. */
+    @JvmStatic
+    fun shoppingStance(
+        slot: ModelSlotRenderData?,
+        owner: ModelInstance?,
+        cart: Matrix4f?,
+    ): Boolean {
+        val body = body(slot, owner) ?: return false
+        val skin = owner?.model?.tag as? SkinningData ?: return false
+        val actor = owner.animPlayer.getSkinningData()
+        val delta = Matrix4f()
+        val poses = livePoses(actor, skin, body.matrixPalette, delta, false, 0f) ?: return false
+        return CartShoppingStance.apply(poses, actor, slot!!.character.isFemale(), delta, cart, 1f)
+    }
+
     @JvmStatic
     fun render(
         slot: ModelSlotRenderData?,
@@ -1036,16 +1416,59 @@ internal object CartGrip {
         // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed
         // handles.
         val shopping = CartShopping.model(model)
+        val turn = if (shopping) CartShoppingTurn.view(slot, owner) else null
         if (shopping) pressure = 0f
+        var turnSource = false
         var poses =
-            if (CartWheelbarrow.forModel(model) != null || shopping)
-                livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
-            else poses(clip, actor, change)
+            if (CartWheelbarrow.forModel(model) != null || shopping) {
+                val live =
+                    livePoses(actor, bodySkin, body.matrixPalette, change, turn != null, pressure)
+                turnSource = turn != null && live != null
+                // Missing lower-body data must retain the original held-hand solve.
+                live
+                    ?: if (turn != null)
+                        livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
+                    else null
+            } else poses(clip, actor, change)
+        val injuryWeight =
+            if (CartWheelbarrow.forModel(model) != null) CartInjury.poseWeight(player) else 0f
+        val injuryReference =
+            if (injuryWeight > 0) {
+                val reference = Matrix4f()
+                if (CartGrounding.referencePose(clip, actor, "Bip01_Spine1", reference))
+                    change.mul(reference, reference)
+                else null
+            } else null
+        injuryTorso(
+            poses,
+            actor,
+            slot.character.isFemale(),
+            change,
+            cart,
+            pressure,
+            injuryWeight,
+            injuryReference,
+            model,
+        )
+        val turnApplied =
+            turnSource &&
+                turn != null &&
+                poses != null &&
+                CartShoppingTurn.apply(poses, actor, turn)
         if (
             poses == null ||
                 (CartWheelbarrow.forModel(model) != null || shopping) &&
                     (!referenceThumb(poses, actor, clip, "L") ||
                         !referenceThumb(poses, actor, clip, "R")) ||
+                shopping &&
+                    !CartShoppingStance.apply(
+                        poses,
+                        actor,
+                        slot.character.isFemale(),
+                        change,
+                        cart,
+                        1f,
+                    ) ||
                 !grip(poses, actor, model, slot.character.isFemale(), change, cart, pressure)
         )
             return false
@@ -1071,6 +1494,17 @@ internal object CartGrip {
                 // Rebuild from the unchanged native palette: never apply torso/finger adjustments
                 // twice.
                 poses = livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
+                injuryTorso(
+                    poses,
+                    actor,
+                    slot.character.isFemale(),
+                    change,
+                    fitted,
+                    pressure,
+                    injuryWeight,
+                    injuryReference,
+                    model,
+                )
                 val valid =
                     CartLegClearance.withinFootprint(fitted) &&
                         poses != null &&
@@ -1094,6 +1528,17 @@ internal object CartGrip {
                     // A refused corridor keeps the established cart/grip pose instead of forcing a
                     // fit.
                     poses = livePoses(actor, bodySkin, body.matrixPalette, change, false, pressure)
+                    injuryTorso(
+                        poses,
+                        actor,
+                        slot.character.isFemale(),
+                        change,
+                        current,
+                        pressure,
+                        injuryWeight,
+                        injuryReference,
+                        model,
+                    )
                     if (
                         poses == null ||
                             !referenceThumb(poses, actor, clip, "L") ||
@@ -1124,7 +1569,7 @@ internal object CartGrip {
                 calmRunningHead(poses, actor, runReference, runWeight)
             }
         }
-        skinSlot(slot, owner, clip, actor, poses)
+        skinSlot(slot, owner, clip, actor, poses, turnApplied)
         return true
     }
 
@@ -1644,7 +2089,7 @@ internal object CartGrip {
                 !"WheelbarrowMetal".equals(model)
         ) {
             if (!grip(poses, actor, model, female, delta, cart)) return false
-        } else
+        } else {
             for (side in arrayOf("L", "R")) {
                 val skeleton = actor ?: throw NullPointerException()
                 val hand = skeleton.getBone("Bip01_${side}_Hand")
@@ -1672,6 +2117,7 @@ internal object CartGrip {
                         reachWeight,
                         false,
                         "WheelbarrowMetal".equals(model),
+                        CartShopping.model(model),
                     )
                 )
                     return false
@@ -1691,6 +2137,7 @@ internal object CartGrip {
                         pose(poses, i),
                     )
             }
+        }
         return true
     }
 

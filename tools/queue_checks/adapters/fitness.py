@@ -2,6 +2,9 @@
 import copy
 import json
 import math
+import os
+import subprocess
+import zipfile
 from pathlib import Path
 import re
 import shutil
@@ -9,11 +12,11 @@ import shutil
 from ..mod_selection import metadata, mod_ids
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
-         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore']
+         'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'squats-30', 'late-exhaustion', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore', 'multi-storage', 'multi-storage-closed', 'storage-walk-away', 'storage-peer-pickup']
 PROJECT = Path(__file__).resolve().parents[3]
 MODS = mod_ids(metadata(PROJECT / 'SurvivorQoL-selected.ini')['Mods'])
 SCENARIO_ACTIONS = {'fitness-ui': {
-    'scope': 'Actual ISFitnessUI OK; native ten-minute squats/pushups/biceps curl and thirty-minute burpees, long native reader, exact held/worn IDs, and authoritative real repetitions/clinical changes. Host uses a second actual independent reader.',
+    'scope': 'Actual ISFitnessUI OK; native menu-duration squats/pushups/biceps curl and burpees (including natural exhaustion), long native reader, exact held/worn IDs, and authoritative real repetitions/clinical changes. Host uses a second actual independent reader.',
     'checks': {
         'success-empty': {'empty': {'effectsVerified': True, 'emptyStartVerified': True}},
         'success-queued': {'queued': {'effectsVerified': True, 'queuedStartVerified': True},
@@ -22,7 +25,8 @@ SCENARIO_ACTIONS = {'fitness-ui': {
         'move-independent': {'pending-reorder': {'effectsVerified': True, 'independentMoveVerified': True}},
         'cancel-active': {'active-cancel': {'effectsVerified': True, 'activeCancelVerified': True}},
         'lost-before-start': {'missing-dumbbell': {'effectsVerified': True, 'missingItemVerified': True}},
-        'restore-hands': {'closed-ui-restore': {'effectsVerified': True, 'restoreVerified': True}},
+        'restore-hands': {case: {'effectsVerified': True, 'restoreVerified': True}
+                          for case in ('closed-ui-restore', 'multi-storage', 'multi-storage-closed')},
         'server-authority': {'sequential': {'effectsVerified': True, 'serverAuthorityVerified': True}},
     },
     'toolkit_only': ['cancel-waiting', 'move-independent', 'lost-before-start'],
@@ -32,17 +36,21 @@ SCENARIO_ACTIONS = {'fitness-ui': {
 def definitions():
     return {'fitness': {'status': 'ready', 'clients': 2, 'default_mods': list(MODS),
         'scenario_actions': SCENARIO_ACTIONS,
-        'cases': [dict(id=case, producer='fitness-ui', capability='effect', kinds=['sp', 'mp'],
+        'cases': [dict(id=case, producer='fitness-ui', capability='effect', kinds=['mp'] if case=='storage-peer-pickup' else ['sp', 'mp'],
                        languages=['EN', 'RU'], modes=['native', 'toolkit']) for case in CASES]}}
 
 
 def validate(selection):
+    delay = selection.get('options', {}).get('fitness_receipt_delay_ms')
+    if delay is not None and (type(delay) is not int or not 50 <= delay <= 1000
+            or selection.get('kind') != 'mp' or selection.get('options', {}).get('fitness_diagnostics') is not True):
+        raise ValueError('Fitness receipt delay requires diagnostic Host and 50..1000 integer milliseconds')
     cases = selection.get('cases')
     kind = selection.get('kind')
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     languages = selection.get('languages')
     if (type(cases) is not list or not cases or cases != [case for case in CASES if case in cases]
-            or kind not in ('sp', 'mp') or selection.get('mode') not in ('native', 'toolkit')
+            or kind not in ('sp', 'mp') or kind=='sp'and 'storage-peer-pickup'in cases or selection.get('mode') not in ('native', 'toolkit')
             or type(clients) is not int or clients != (2 if kind == 'mp' else 1)
             or (languages not in (['EN'], ['RU']) if kind == 'sp' else languages != ['EN', 'RU'])
             or selection.get('mods') != MODS or selection.get('options', {}).get('world_template')
@@ -52,14 +60,44 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'fitness').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
-            root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua']
+    return [*sorted(path for path in (root / 'fitness').rglob('*') if path.suffix in ('.lua', '.java')), root / 'health/shared/QueueHealthEvents.lua',
+            root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua',
+            Path(project) / 'tools/queue_checks/adapters/fitness_storage.py',
+            Path(project) / 'tools/queue_checks/adapters/fitness_negative.py']
+
+
+def _validity_probe(project, output, game, jdk, locations):
+    classes = Path(output) / 'fitness-probe/classes'
+    classes.mkdir(parents=True)
+    classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar',
+                                        Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar']))
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+                    str(Path(project) / 'tests/native_queue/fitness/java/Main.java')],
+                   check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted(classes.rglob('*.class'))
+    if not compiled:
+        raise ValueError('Fitness validity probe compilation produced no classes')
+    jar = classes.parent / 'FitnessValidityProbe.jar'
+    with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for path in compiled:
+            archive.write(path, path.relative_to(classes).as_posix())
+    return jar
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     root = Path(project) / 'tests/native_queue'
+    probe = _validity_probe(project, output, game, jdk, locations) if selection.get('options', {}).get('fitness_diagnostics') is True else None
+    if probe:
+        runtime.setdefault('fixture', {})['mods'] = ['FitnessValidityProbe']
     for role in runtime['roles'].values():
+        if probe:
+            layer = Path(role['cache']) / 'mods/FitnessValidityProbe/42'
+            (layer / 'media/java').mkdir(parents=True, exist_ok=True)
+            (layer / 'mod.info').write_text('name=Isolated Fitness validity probe\nid=FitnessValidityProbe\nversionMin=42.21\n'
+                                          'require=\\ZombieBuddy\njavaPkgName=net.alexredby.fitnessprobe\n'
+                                          'javaJarFile=media/java/FitnessValidityProbe.jar\n')
+            shutil.copy2(probe, layer / 'media/java/FitnessValidityProbe.jar')
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for side, source in [('shared', root / 'health/shared/QueueHealthEvents.lua'),
                              ('client', root / 'startup/client/ZZStartup.lua')]:
@@ -136,15 +174,17 @@ def _exhaustion_without_training(before, after):
 
 RESTORATION_CASES = ('active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore')
 EARLY_CANCEL_CASES = ('pickup-cancel-restore', 'placement-cancel-restore')
-IMMEDIATE_CASES = ('empty', 'empty-restore', 'active-cancel', 'burpees-30', *RESTORATION_CASES)
+IMMEDIATE_CASES = ('empty', 'empty-restore', 'active-cancel', 'burpees-30', 'squats-30', 'late-exhaustion', 'multi-storage', 'multi-storage-closed', *RESTORATION_CASES)
 BORROWED_CASES = ('closed-ui-restore', 'empty-restore', *RESTORATION_CASES)
 
 
 def _expected_exercises(case, mode):
     if case == 'exhaustion' or mode == 'toolkit' and case in ('pending-cancel', 'missing-dumbbell', *EARLY_CANCEL_CASES):
         return []
-    if case == 'burpees-30':
-        return ['burpees']
+    if case in ('multi-storage', 'multi-storage-closed'):
+        return ['bicepscurl']
+    if case in ('burpees-30', 'squats-30', 'late-exhaustion'):
+        return ['squats' if case == 'squats-30' else 'burpees']
     return ['squats', 'pushups'] if case == 'sequential' else ['bicepscurl' if case in ('missing-dumbbell', *BORROWED_CASES) else 'squats']
 
 
@@ -178,16 +218,19 @@ def _empty_restore_clock(record, command, minutes, native, mp):
             or not _matches(observed, dict(source='ISFitnessAction.serverStart' if mp else 'SP first started sample'))
             or not _number(observed.get('observedBodyStartMS')) or observed['observedBodyStartMS'] != record.get('startMS')):
         return False
-    # The client owns the native deadline. Preparation consumes part of its
-    # constructor window; the authoritative body is measured independently.
+    # The active client deadline begins at actual/confirmed body start.
+    # Constructor telemetry remains a separate request-time observation.
     if (local['deadlineMS'] - local['constructorStartMS'] != minutes * 60000
             or not local['constructorStartMS'] <= local['observedBodyStartMS'] < local['deadlineMS']
-            or local['observedRemovalMS'] < local['deadlineMS']
-            or native and local['observedRemovalMS'] == local['deadlineMS']):
+            or local['observedRemovalMS'] < local['deadlineMS']):
         return False
-    if native and not _same(command.get('requestNativeClock'),
-            dict(constructorStartMS=local['constructorStartMS'], deadlineMS=local['deadlineMS'])):
-        return False
+    if native:
+        request = command.get('requestNativeClock', {})
+        if (not isinstance(request, dict)
+                or not all(_number(request.get(key)) for key in ('constructorStartMS', 'deadlineMS'))
+                or request['deadlineMS'] - request['constructorStartMS'] != minutes * 60000
+                or request['constructorStartMS'] > local['constructorStartMS']):
+            return False
     # Host constructor fields are telemetry when the native server supplies
     # them. Missing replication cannot redefine the client's deadline contract.
     fields = ('constructorStartMS', 'deadlineMS', 'constructorStartAtStopMS', 'deadlineAtStopMS')
@@ -199,16 +242,180 @@ def _empty_restore_clock(record, command, minutes, native, mp):
     elif not mp:
         return False
     if not mp and (observed['constructorStartMS'] != local['constructorStartMS']
-            or observed['deadlineMS'] != local['deadlineMS'] or record['stopMS'] < local['deadlineMS']
-            or native and record['stopMS'] == local['deadlineMS']):
+            or observed['deadlineMS'] != local['deadlineMS'] or record['stopMS'] < local['deadlineMS']):
         return False
     return True
 
 
+def _post_stop_xp(record, receipt, mp):
+    """Account native-passive-compatible AddXP events; the event has no caller identity."""
+    ledger = record.get('postStopXP', {})
+    entry = record.get('stopEntry', {})
+    if (not isinstance(ledger, dict) or ledger.get('error') is not None
+            or not _clinical(ledger.get('baseline')) or not _same(ledger['baseline'], entry.get('clinical'))
+            or not isinstance(ledger.get('events'), list) or type(record.get('afterXPEventCount')) is not int
+            or not 0 <= record['afterXPEventCount'] <= len(ledger['events'])
+            or not all(_number(receipt.get(key)) for key in ('receiptCalendarMS', 'receiptDurationMS'))):
+        return False
+    if (not _number(record.get('stopMS')) or not _number(record.get('durationStopMS'))
+            or receipt['receiptCalendarMS'] < record['stopMS']
+            or receipt['receiptDurationMS'] < record['durationStopMS']):
+        return False
+    # Server Lua has netAction, not the client's BaseAction pointer. Native
+    # ActionManager removes its network action before serverStop and retires
+    # its animation emulator after return; require the post-return boundary.
+    if mp and (record['afterXPEventCount'] != 0 or record.get('stopMethod') != 'serverStop'
+            or record.get('serverStopReturned') is not True
+            or not _matches(record.get('stopCallbacks'), dict(serverStop=1))
+            or record.get('stopCallbacks', {}).get('complete', 0) != 0):
+        return False
+    baseline = ledger['baseline']
+    if any(baseline[key] != record.get('lastRep', {}).get(key) for key in ('fitnessXP', 'strengthXP')):
+        return False
+    running = {key: baseline[key] for key in ('fitnessXP', 'strengthXP')}
+    after_xp = dict(running) if record['afterXPEventCount'] == 0 else None
+    calendar, duration = entry.get('calendarMS'), entry.get('durationMS')
+    if not _number(calendar) or not _number(duration):
+        return False
+    for index, event in enumerate(ledger['events'], 1):
+        if (not _matches(event, dict(perk='Fitness', amount=1, currentExerciseCleared=True,
+                                    reps=record.get('reps'), enduranceWarning=.25))
+                or type(event.get('observerActive')) is not bool
+                or (event['observerActive'] if mp else event.get('nativeAbsent') is not True)
+                or not _clinical(event.get('clinical'))
+                or not all(_number(event.get(key)) for key in ('calendarMS', 'durationMS'))
+                or not calendar <= event['calendarMS'] <= receipt['receiptCalendarMS']
+                or not duration <= event['durationMS'] <= receipt['receiptDurationMS']
+                or event['clinical']['endurance'] >= event['enduranceWarning']
+                or any(event['clinical'][group][key] > value for group in ('regularity', 'stiffness')
+                       for key, value in baseline[group].items())):
+            return False
+        running['fitnessXP'] += event['amount']
+        if any(event['clinical'][key] != running[key] for key in running):
+            return False
+        calendar, duration = event['calendarMS'], event['durationMS']
+        if index <= record['afterXPEventCount']:
+            if calendar > record.get('stopMS', -1) or duration > record.get('durationStopMS', -1):
+                return False
+        elif calendar < record.get('stopMS', float('inf')) or duration < record.get('durationStopMS', float('inf')):
+            return False
+        if index == record['afterXPEventCount']:
+            after_xp = dict(running)
+    return (after_xp is not None and _clinical(record.get('after')) and _clinical(receipt.get('clinical'))
+            and all(record['after'][key] == after_xp[key] and receipt['clinical'][key] == running[key] for key in running)
+            and all(snapshot[group][key] <= value for snapshot in (record['after'], receipt['clinical'])
+                    for group in ('regularity', 'stiffness') for key, value in baseline[group].items()))
+
+
+def _late_exhaustion(command, receipt, mp, native, tail_id, minutes):
+    """A partial earned workout is distinct from the strict full-duration control."""
+    issues = []
+    records = receipt.get('records')
+    local = command.get('exhaustionStop', {})
+    if not isinstance(local, dict):
+        return ['Fitness late exhaustion missing local stop witness: late-exhaustion']
+    state, timing = local.get('state', {}), local.get('timing', {})
+    if not isinstance(state, dict) or not isinstance(timing, dict):
+        return ['Fitness late exhaustion malformed local stop witness: late-exhaustion']
+    stops = command.get('durationStops')
+    stop = stops[0] if isinstance(stops, list) and len(stops) == 1 else {}
+    record = records[0] if isinstance(records, list) and len(records) == 1 else {}
+
+    def exhausted(value, authority=False):
+        return (isinstance(value, dict)
+                and _matches(value, dict(type='ISFitnessAction', exercise='burpees', minutes=minutes,
+                    pressedMovement=False, moving=False, aiming=False, climbing=False, sittingFurniture=False,
+                    vehicle=False, dead=False, asleep=False, pressedCancel=False))
+                and (value.get('threshold') is False if authority and mp else value.get('threshold') == 2)
+                # serverStop does not refresh or evaluate this cached UI value.
+                and type(value.get('enduranceMoodle')) is int
+                and (0 <= value['enduranceMoodle'] <= 4 if authority and mp else 2 < value['enduranceMoodle'] <= 4)
+                and _clinical(value.get('clinical')) and value['clinical']['endurance'] < .25
+                and _number(value.get('calendarMS')) and _number(value.get('durationMS')))
+
+    if (not exhausted(state) or not _matches(state, dict(exerciseStarted=False, exerciseEnded=True, started=True))
+            or not _number(local.get('timestampMilliseconds'))
+            or not _matches(timing, dict(confirmed=True, stopping=mp and not native, total=minutes))
+            or not all(_number(timing.get(key)) for key in ('startMS', 'endMS', 'stopMS', 'stopTimestampMS', 'worldSampleMS'))
+            or not _matches(stop, dict(startMS=timing.get('startMS'), endMS=timing.get('endMS'),
+                                      stopMS=timing.get('stopMS'), confirmed=True))
+            or timing.get('endMS', 0) - timing.get('startMS', 0) != minutes * 60000
+            or not 600000 < timing.get('stopMS', 0) - timing.get('startMS', 0) < minutes * 60000
+            or not _number(state.get('durationMS')) or not _number(timing.get('stopMS'))
+            or state['durationMS'] != timing['worldSampleMS']
+            or command.get('cancelCallback') is not None or command.get('mutationObserved', False) is not False
+            or command.get('activeCancelled') is not False
+            or type(command.get('nativeStopCalls')) is not int or command['nativeStopCalls'] != 1
+            or type(command.get('nativeStopReturns')) is not int or command['nativeStopReturns'] != 1
+            or not _number(command.get('durationStopDelayMilliseconds'))
+            or not 0 <= command['durationStopDelayMilliseconds'] < 5000):
+        issues.append('Fitness late exhaustion lacks confirmed local endurance-only stop: late-exhaustion')
+
+    entry = record.get('stopEntry', {})
+    if (not exhausted(entry, authority=True)
+            or not _number(record.get('stopMS')) or not _number(record.get('durationStopMS'))
+            or not _number(record.get('lastRepMS')) or not _number(record.get('lastRepDurationMS'))
+            or not _clinical(record.get('lastRepBefore')) or not _clinical(record.get('lastRep'))
+            or not _number(entry.get('calendarMS')) or not _number(entry.get('durationMS'))
+            or not record.get('lastRepMS', float('inf')) <= entry.get('calendarMS', -1) <= record.get('stopMS', -1)
+            or not record.get('lastRepDurationMS', float('inf')) <= entry.get('durationMS', -1) <= record.get('durationStopMS', -1)
+            or not record.get('lastRepBefore', {}).get('endurance', 0) > record.get('lastRep', {}).get('endurance', 0)
+            or not 0 <= record.get('lastRep', {}).get('endurance', 1) < .25
+            or any(record.get('lastRep', {}).get(key, 0) < record.get('lastRepBefore', {}).get(key, float('inf'))
+                   for key in ('fitnessXP', 'strengthXP'))
+            or not sum(record.get('lastRep', {}).get(key, 0) for key in ('fitnessXP', 'strengthXP'))
+                > sum(record.get('lastRepBefore', {}).get(key, 0) for key in ('fitnessXP', 'strengthXP'))
+            or record.get('repObservationSource') != ('server exeLooped' if mp else 'SP adjacent native samples')
+            or type(record.get('repSampleDelta')) is not int or record['repSampleDelta'] != 1
+            or type(record.get('lastRepEnduranceMoodle')) is not int or not 0 <= record['lastRepEnduranceMoodle'] <= 4
+            or not _number(record.get('durationStartMS')) or not _number(timing.get('startMS'))
+            or abs(record['durationStartMS'] - timing['startMS']) >= 60000
+            or not _number(record.get('durationStopMS')) or not _number(timing.get('worldSampleMS'))
+            or abs(record['durationStopMS'] - timing['worldSampleMS']) >= 60000
+            or record.get('stopMethod') != ('serverStop' if mp else 'observed-native-removal')
+            or mp and not _matches(record.get('stopCallbacks'), dict(serverStop=1))
+            or mp and record.get('stopCallbacks', {}).get('complete', 0) != 0):
+        issues.append('Fitness late exhaustion lacks authoritative paid repetitions/stop boundary: late-exhaustion')
+
+    if not _post_stop_xp(record, receipt, mp):
+        issues.append('Fitness exhaustion has unexplained post-stop XP/effects: late-exhaustion')
+
+    pages, total = command.get('tailPagesAtRequest'), command.get('tailTotalPages')
+    if (command.get('tailInitiallyQueued') is not True or type(pages) is not int or type(total) is not int
+            or total - pages != 1 or command.get('tailPagesAtFinish') != (pages if native else total)):
+        issues.append('Fitness exhaustion lost native/managed tail cancellation distinction: late-exhaustion')
+    if not native:
+        continuation = command.get('durationContinuation', {})
+        if (not _matches(continuation, dict(callback='ISBaseTimedAction.begin', nativeAbsent=True, tailId=tail_id,
+                workoutStartMS=timing.get('startMS'), workoutEndMS=timing.get('endMS'),
+                stopNativeClock=timing.get('stopMS'), reachedNativeClock=timing.get('stopMS')))
+                or not _number(continuation.get('continuationNativeClock'))
+                or not _number(continuation.get('reachedTimestampMilliseconds'))
+                or not _number(continuation.get('continuationTimestampMilliseconds'))
+                or not _number(continuation.get('delayMilliseconds'))
+                or not 0 <= continuation['delayMilliseconds'] < 5000
+                or continuation['delayMilliseconds'] != continuation['continuationTimestampMilliseconds'] - continuation['reachedTimestampMilliseconds']
+                or continuation['reachedTimestampMilliseconds'] != timing.get('stopTimestampMS')
+                or continuation.get('continuationNativeClock', -1) < timing.get('stopMS', 0)
+                or (command.get('activeAcks') != [continuation.get('token')]
+                    or command.get('terminalAcks') != [dict(token=continuation.get('token'), state='canceled')]
+                    or continuation.get('terminalState') != 'canceled'
+                    or not isinstance(continuation.get('token'), str)) and mp):
+            issues.append('Fitness exhaustion continuation preceded native removal/terminal: late-exhaustion')
+        if not mp and not _matches(continuation, dict(terminalState='singleplayer', token=False)):
+            issues.append('Fitness exhaustion single-player terminal identity differs: late-exhaustion')
+    elif command.get('durationContinuation') is not None:
+        issues.append('Fitness native exhaustion unexpectedly continued the canceled tail: late-exhaustion')
+    return issues
+
+
 def _case(case, row, prep, receipt, selection, mutation=None):
+    if case in ('storage-walk-away','storage-peer-pickup'):
+        from .fitness_negative import verify_negative
+        return verify_negative(case,row,prep,receipt,selection)
     issues = []
     native, mp = selection['mode'] == 'native', selection['kind'] == 'mp'
-    minutes = 30 if case == 'burpees-30' else 10
+    minutes = (60 if mp else 30) if case == 'late-exhaustion' else 30 if case in ('burpees-30', 'squats-30') else 10
     command = row.get('command', {})
     items = prep.get('items', {})
     if (not _matches(prep, {'case': case}) or not isinstance(items, dict)
@@ -222,7 +429,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
     if (not _inventory(receipt.get('inventory')) or not _same(receipt['inventory'], expected)
             or not _same(command.get('clientInventory'), expected)):
         issues.append('Fitness exact inventory/container/hand/worn identities differ: ' + case)
-    if (not _matches(receipt, {'case': case, 'tailRead': True, 'frontRead': case not in IMMEDIATE_CASES,
+    if (not _matches(receipt, {'case': case, 'tailRead': not (native and case == 'late-exhaustion'), 'frontRead': case not in IMMEDIATE_CASES,
                                'currentExerciseCleared': True, 'serverStopSettled': True, 'peerConnected': True,
                                'removed': items['dumbbell'] if case == 'missing-dumbbell' else False})
             or not _same(receipt.get('before'), prep['before']) or not _clinical(receipt.get('clinical'))
@@ -232,8 +439,8 @@ def _case(case, row, prep, receipt, selection, mutation=None):
     expected_fields = dict(menuDispatched=True, nativeDurations=True, minutes=minutes, frontMinutes=0 if case in IMMEDIATE_CASES else 12,
         activeObserved=bool(_expected_exercises(case, selection['mode'])), queueDrained=True, clientCurrentExerciseCleared=True,
         pendingCancelled=not native and case == 'pending-cancel', reordered=not native and case == 'pending-reorder',
-        activeCancelled=case in ('active-cancel', 'active-cancel-restore'), closedUI=case == 'closed-ui-restore')
-    if case == 'burpees-30' and not native:
+        activeCancelled=case in ('active-cancel', 'active-cancel-restore'), closedUI=case in ('closed-ui-restore', 'multi-storage-closed'))
+    if case in ('burpees-30', 'squats-30'):
         delay = command.get('durationStopDelayMilliseconds')
         if not _number(delay) or not 0 <= delay < 5000:
             issues.append('Fitness native stop remained active after selected duration: ' + case)
@@ -241,14 +448,12 @@ def _case(case, row, prep, receipt, selection, mutation=None):
         continuation = continuation if isinstance(continuation, dict) else {}
         clocks = ('workoutStartMS', 'workoutEndMS', 'reachedNativeClock', 'stopNativeClock', 'reachedTimestampMilliseconds',
                   'continuationNativeClock', 'continuationTimestampMilliseconds', 'delayMilliseconds')
-        samples = command.get('progressSamples')
-        first_sample = samples[0] if isinstance(samples, list) and samples and isinstance(samples[0], dict) else {}
         local_stops = command.get('durationStops')
         first_stop = local_stops[0] if isinstance(local_stops, list) and local_stops and isinstance(local_stops[0], dict) else {}
         if (not _matches(continuation, dict(callback='ISBaseTimedAction.begin', tailId=items['tail'], nativeAbsent=True))
                 or not all(_number(continuation.get(key)) for key in clocks)
-                or not _number(first_sample.get('startMS'))
-                or continuation.get('workoutStartMS') != first_sample['startMS']
+                or not _number(first_stop.get('startMS'))
+                or continuation.get('workoutStartMS') != first_stop['startMS']
                 or continuation['workoutEndMS'] - continuation['workoutStartMS'] != minutes * 60000
                 or continuation['reachedNativeClock'] < continuation['workoutEndMS']
                 or continuation['stopNativeClock'] != continuation['reachedNativeClock']
@@ -308,19 +513,29 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                        or abs(sample['elapsed'] - max(0, min(minutes, (sample['sampleMS']-sample['startMS'])/60000))) > 1e-6
                        or not isinstance(sample.get('label'), str) or not sample['label'] for sample in progress)):
             issues.append('Fitness visible progress does not match selected native elapsed time: ' + case)
-        stops = command.get('durationStops')
-        if (not isinstance(stops, list) or len(stops) != len(exercises)
-                or not isinstance(progress, list) or len(progress) != len(exercises)
-                or any(not isinstance(stop, dict) or not isinstance(sample, dict)
-                       or not all(_number(stop.get(key)) for key in ('startMS', 'endMS', 'stopMS'))
-                       or type(stop.get('confirmed')) is not bool
-                       or stop['startMS'] != sample.get('startMS') or stop['startMS'] < 0
-                       or stop['endMS'] - stop['startMS'] != minutes * 60000
-                       or stop['stopMS'] < stop['startMS']
-                       or case not in ('active-cancel', 'active-cancel-restore')
-                          and (stop['confirmed'] is not True or stop['stopMS'] < stop['endMS'])
-                       for stop, sample in zip(stops, progress))):
-            issues.append('Fitness actual local stop lacks a full confirmed selected interval: ' + case)
+    stops = command.get('durationStops')
+    if (not isinstance(stops, list) or len(stops) != len(exercises)
+            or not native and (not isinstance(progress, list) or len(progress) != len(exercises))
+            or isinstance(stops, list) and any(not isinstance(stop, dict)
+                   or not all(_number(stop.get(key)) for key in ('startMS', 'endMS', 'stopMS'))
+                   or type(stop.get('confirmed')) is not bool or stop['startMS'] < 0
+                   or not native and (not isinstance(progress[index], dict) or stop['startMS'] != progress[index].get('startMS'))
+                   or stop['endMS'] - stop['startMS'] != minutes * 60000
+                   or stop['stopMS'] < stop['startMS']
+                   or case not in ('active-cancel', 'active-cancel-restore', 'late-exhaustion')
+                      and (stop['confirmed'] is not True or stop['stopMS'] < stop['endMS'])
+                   for index, stop in enumerate(stops))):
+        issues.append('Fitness actual local stop lacks a full confirmed selected interval: ' + case)
+    if case == 'empty-restore':
+        if (type(command.get('nativeStopCalls')) is not int or command['nativeStopCalls'] != 1
+                or type(command.get('nativeStopReturns')) is not int or command['nativeStopReturns'] != 1):
+            issues.append('Fitness natural terminal did not run native stop exactly once: ' + case)
+        if mp and any(not isinstance(record.get('stopCallbacks'), dict)
+                      or type(record['stopCallbacks'].get('serverStop')) is not int
+                      or record['stopCallbacks']['serverStop'] != 1
+                      or type(record['stopCallbacks'].get('complete', 0)) is not int
+                      or record['stopCallbacks'].get('complete', 0) != 0 for record in records):
+            issues.append('Fitness natural terminal replayed authoritative stop/completion effects: ' + case)
     if case == 'empty-restore' and (command.get('cancelCallback') is not None
             or command.get('pickupCancelled', False) is not False or command.get('placementCancelled', False) is not False):
         issues.append('Fitness empty restoration did not finish naturally without cancellation: ' + case)
@@ -340,8 +555,8 @@ def _case(case, row, prep, receipt, selection, mutation=None):
             if not _ground_conservation(dict(storage=record.get('startStorage'), inventory=record.get('startEquipment')), prep):
                 issues.append('Fitness authoritative workout lacked exact world bag/content conservation: ' + case)
     if case in BORROWED_CASES:
-        # The selected P4 restores the native control after the independent reader.
-        # Toolkit additionally owes that exact restoration before its reader starts.
+        # Natural empty-queue restoration owes the exact gear before the reader
+        # in both modes; explicit native cancellation controls retain their evidence.
         expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', bag='Base.Bag_Schoolbag',
                               hammer='Base.Torch' if case in RESTORATION_CASES else 'Base.Hammer', screwdriver='Base.Screwdriver', dumbbell='Base.DumbBell')
         if (any(next((item for item in prep['inventory']['items'] if item['id'] == identity), {}).get('kind') != expected_types[name]
@@ -360,6 +575,11 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                 or not _same(command.get('clientActivation'), prep['activation'])
                 or not _same(receipt.get('activation'), prep['activation'])):
             issues.append('Fitness exact settled equipment activation differs: ' + case)
+        if not native or case == 'empty-restore':
+            if (not _same(before_tail.get('inventory'), expected)
+                    or not _same(before_tail.get('activation'), prep['activation'])
+                    or not _storage(before_tail.get('storage'), prep, 'root', False)):
+                issues.append('Fitness exact equipment was not restored before independent reader: ' + case)
         if not native:
             starts = command.get('returnStarts')
             if (not isinstance(starts, list) or len(starts) != 1
@@ -406,7 +626,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                                              workouts=len(exercises), observerActive=False))
                     or not _inventory(tail_start.get('inventory'))
                     or not (isinstance(tail_start.get('activation'), dict) or tail_start.get('activation') == [])
-                    or not native and (not _same(tail_start['inventory'], expected)
+                    or (not native or case == 'empty-restore') and (not _same(tail_start['inventory'], expected)
                                        or not _same(tail_start['activation'], prep['activation'])
                                        or not _storage(tail_start.get('storage'), prep, 'root', False))):
                 issues.append('Fitness authoritative reader callback lacked restored live Host replicas: ' + case)
@@ -455,6 +675,9 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or not all(type(square[key]) is int for key in square)
                     or isinstance(placements, list) and placements and not _matches(placements[0].get('storage', {}).get('world'), square)):
                 issues.append('Fitness cancellation did not target exact active native bag placement: ' + case)
+    if case in ('multi-storage', 'multi-storage-closed'):
+        from .fitness_storage import verify_storage
+        issues.extend(verify_storage(case, command, prep, receipt, mp))
     last_stop, last_duration_stop = None, None
     for record in records:
         before, after, rep = record.get('before'), record.get('after'), record.get('lastRep')
@@ -464,7 +687,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                  and all(_clinical(value) for value in (before, after, rep))
                  and all(record.get('exercise') in value['regularity'] for value in (before, after, rep))
                  and all(_number(record.get(key)) for key in ('startMS', 'stopMS', 'lastRepMS', 'minEndurance')))
-        if valid and not native:
+        if valid:
             valid = (all(_number(record.get(key)) for key in ('durationStartMS', 'durationStopMS'))
                      and all(_number(record.get(key)) and record[key] > 0 for key in
                              ('durationStartFrameGameMS', 'durationStartFrameRealMS', 'durationStopFrameGameMS', 'durationStopFrameRealMS'))
@@ -474,6 +697,8 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                      and (last_duration_stop is None or record['durationStartMS'] >= last_duration_stop)
                      and (record['durationStopMS'] - record['durationStartMS'] < 600000
                           if case in ('active-cancel', 'active-cancel-restore')
+                          else 600000 < record['durationStopMS'] - record['durationStartMS'] < minutes * 60000
+                          if case == 'late-exhaustion'
                           else record['durationStopMS'] - record['durationStartMS'] + record['durationStopFrameGameMS'] >= minutes * 60000))
             if valid:
                 last_duration_stop = record['durationStopMS']
@@ -489,11 +714,14 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                      and (last_stop is None or record['startMS'] >= last_stop)
                      and (_empty_restore_clock(record, command, minutes, native, mp) if case == 'empty-restore'
                           else not native or (duration < 600000 if case in ('active-cancel', 'active-cancel-restore')
+                                              else 600000 < duration < minutes * 60000 if case == 'late-exhaustion'
                                               else duration >= minutes * 60000)))
             last_stop = record['stopMS']
         if not valid:
             issues.append('Fitness lacks real native repetitions/XP/endurance/stiffness or full duration: ' + case)
-    if records and _clinical(receipt.get('clinical')) and _clinical(records[-1].get('after')):
+    if case == 'late-exhaustion':
+        issues.extend(_late_exhaustion(command, receipt, mp, native, items['tail'], minutes))
+    if records and case != 'late-exhaustion' and _clinical(receipt.get('clinical')) and _clinical(records[-1].get('after')):
         if any(receipt['clinical'][key] != records[-1]['after'][key] for key in ('fitnessXP', 'strengthXP')):
             issues.append('Fitness clinical XP changed after native stop settled: ' + case)
     if not records and case != 'exhaustion' and _clinical(receipt.get('clinical')):
@@ -706,6 +934,8 @@ def verify(root, selection, catalog):
             found = [row for row in peer_rows if row.get('id') == case]
             if len(found) != 1 or found[0].get('book') != prep.get('peerBook'):
                 problems.append('Fitness peer exact book identity differs: ' + case)
+            if case=='storage-peer-pickup' and (len(found)!=1 or not _same(found[0].get('peerPickup'),(receipt.get('peerPickup',{}).get('proof') if isinstance(receipt.get('peerPickup'),dict) else None))):
+                problems.append('Fitness independent peer pickup witness differs: ' + case)
         used_ids.extend(prep.get('items', {}).values())
         issues.extend(problems)
         outcome = dict(effectsVerified=not problems, serverAuthorityVerified=not problems and selection['kind']=='mp',
@@ -713,7 +943,7 @@ def verify(root, selection, catalog):
             sequentialVerified=not problems and case=='sequential', waitingCancelVerified=not problems and case=='pending-cancel' and selection['mode']=='toolkit',
             independentMoveVerified=not problems and case=='pending-reorder' and selection['mode']=='toolkit',
             activeCancelVerified=not problems and case in ('active-cancel', 'active-cancel-restore'), missingItemVerified=not problems and case=='missing-dumbbell',
-            restoreVerified=not problems and case in BORROWED_CASES, receipt=receipt, command=row.get('command'))
+            restoreVerified=not problems and case in (*BORROWED_CASES, 'multi-storage', 'multi-storage-closed'), receipt=receipt, command=row.get('command'))
         outcomes.append(dict(actor='client1', case=case, status='failed' if problems else 'passed', reason='; '.join(problems), outcome=outcome))
     if len(set(used_ids)) != len(used_ids):
         issues.append('Fitness fixture IDs overlap between cases')
@@ -726,7 +956,7 @@ def verify(root, selection, catalog):
         for result in outcomes:
             peer_result = copy.deepcopy(result)
             peer_result['actor'] = 'client2'
-            peer_result['outcome'].update(participantRole='independent-reader', workoutActor='client1')
+            peer_result['outcome'].update(participantRole='competing-picker' if result['case']=='storage-peer-pickup' else 'independent-reader', workoutActor='client1')
             peers.append(peer_result)
         outcomes.extend(peers)
     shared = [issue for issue in issues if not any(issue.endswith(': ' + case) for case in cases)]
@@ -736,6 +966,6 @@ def verify(root, selection, catalog):
             outcome['outcome'].update(effectsVerified=False, serverAuthorityVerified=False)
     return dict(issues=issues, outcomes=outcomes, evidence={'recoveries': recovery_proofs, 'isolations': isolation_proofs, 'limits': [
         'Programmatic native Fitness OK callbacks; physical mouse/controller input is not covered.',
-        'Native ten-minute workouts and real native repetitions/XP; no time or action acceleration.',
+        'Native menu durations and real native repetitions/XP; no time or action acceleration.',
         'Host uses two actual clients; the peer reads an independent exact-ID native book.',
         'Full selected pack only; native controls can fail and those failures remain visible.']})

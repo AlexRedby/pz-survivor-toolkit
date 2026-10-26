@@ -380,6 +380,8 @@ def analyze(profile):
     require(isinstance(selection, dict) and selection.get('suite') in ('cart_motion_mp', 'wooden_cart_multiplayer')
             and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
             and selection.get('cases') == ['owner_observer_motion'], 'Frozen selection does not match the Cart MP capture')
+    injury_module=runpy.run_path(str(Path(__file__).with_name('analyze-injury.py')))
+    injury=injury_module['validate_options'](selection.get('options', {}), require)
     if 'cart_wall_exit' in selection.get('options', {}):
         return runpy.run_path(str(Path(__file__).with_name('analyze-wall.py')))['analyze'](profile, selection, globals())
     extended = selection.get('options', {}).get('cart_fast_motion', False)
@@ -399,6 +401,8 @@ def analyze(profile):
     expected_phases = [('idle', 0), ('walk', 2000), ('turn', 5000), ('stop', 8000), ('reverse', 10000), ('stop-back', 12000)]
     if extended:
         expected_phases += [('run', 15000), ('sprint-turn', 16500), ('fast-stop', 18500)]
+    if injury:
+        expected_phases += [(name,target) for name,target,_,_ in injury_module['PHASES']]
     logs = {role: (profile / (role + '-launch.log')).read_text() for role in ROLES}
     for role, text in logs.items():
         require('[CLEARANCE_PROBE] ERROR' not in text and '[GRIP_POSE_PROBE] ERROR' not in text, role + ': probe error')
@@ -415,6 +419,7 @@ def analyze(profile):
         require(events[0].get('cases') == ['owner_observer_motion'] and type(events[0].get('expected')) is int and events[0]['expected'] == 1, role + ': setup selection mismatch')
         require(events[1].get('id') == 'owner_observer_motion' and events[1].get('status') == 'captured', role + ': missing capture receipt')
         require(events[1].get('cartActions', False) is actions, role + ': action capture differs from selection')
+        require(events[1].get('cartInjury', False) is injury, role + ': injury capture differs from selection')
         require(all(type(events[2].get(key)) is int and events[2][key] == value for key, value in {'expected': 1, 'performed': 1, 'skipped': 0, 'failed': 0}.items()), role + ': unsuccessful capture completion')
         phases = re.findall(r'\[CART_MP\] PHASE ([a-z-]+) wall=(\d+) elapsed=(\d+)', logs[role])
         require([phase[0] for phase in phases] == [p[0] for p in expected_phases], role + ': missing/duplicate scenario phase')
@@ -438,23 +443,25 @@ def analyze(profile):
         pads=[parse(line.split('[CART_MP] CART_PAD ',1)[1]) for line in logs['server'].splitlines() if '[CART_MP] CART_PAD ' in line]
         require(len(pads)==1, 'Unique authoritative extended pad descriptor required')
         pad=pads[0]
-        require(all(number(pad.get(k)) for k in ('minX','minY','z')) and pad.get('bankVersion')==3
-                and pad.get('size')==31 and pad.get('margin')==2 and pad.get('vegetationFree') is True
+        pad_size,pad_version=(63,5) if injury else (31,3)
+        require(all(number(pad.get(k)) for k in ('minX','minY','z')) and pad.get('bankVersion')==pad_version
+                and pad.get('size')==pad_size and pad.get('margin')==2 and pad.get('vegetationFree') is True
                 and pad.get('elevated') is True and pad['z']==7 and pad.get('floorSprite')=='carpentry_02_57',
-                'Extended bank requires native elevated vegetation-free31x31 pad with two tile cart margin')
+                'Extended bank requires native elevated vegetation-free'+str(pad_size)+'x'+str(pad_size)+' pad with two tile cart margin')
         for role in ('client1','client2'):
             setups=[parse(line.split('[CART_MP] SETUP ',1)[1]) for line in logs[role].splitlines() if '[CART_MP] SETUP ' in line]
             require(setups and all(all(row.get(k)==pad[k] for k in ('minX','minY','z','bankVersion','size','margin','vegetationFree','elevated','floorSprite')) for row in setups),
                     role+': authoritative pad bounds were not shared')
             ready=[parse(line.split('[CART_MP] PAD_READY ',1)[1]) for line in logs[role].splitlines() if '[CART_MP] PAD_READY ' in line]
-            require(len(ready)==1 and ready[0].get('floors')==961 and number(ready[0].get('wall')) and ready[0]['wall']<epoch
+            require(len(ready)==1 and ready[0].get('floors')==pad_size*pad_size and number(ready[0].get('wall')) and ready[0]['wall']<epoch
                     and all(ready[0].get(k)==pad[k] for k in ('minX','minY','z','bankVersion','size')),
                     role+': every native replicated floor was not observed')
         for role,rows in states.items():
-            require(all(pad['minX']+2<=r['x']<=pad['minX']+29 and pad['minY']+2<=r['y']<=pad['minY']+29
+            require(all(pad['minX']+pad['margin']<=r['x']<=pad['minX']+pad['size']-pad['margin']
+                        and pad['minY']+pad['margin']<=r['y']<=pad['minY']+pad['size']-pad['margin']
                         and abs(r['z']-pad['z'])<.25 for r in rows if r['wall']>=epoch-2000),
                     role+': owner/cart left validated pad interior during video')
-    active = [r for r in states['client1'] if epoch <= r['wall'] <= epoch + (26000 if extended else 15000)]
+    active = [r for r in states['client1'] if epoch <= r['wall'] <= epoch + (injury_module['DURATION'] if injury else 26000 if extended else 15000)]
     cartids = {r['primary'] for r in active}
     require(len(cartids) == 1 and next(iter(cartids)) >= 0, 'Unique equipped owner cartID required')
     cartid = next(iter(cartids))
@@ -546,6 +553,8 @@ def analyze(profile):
             result['actions']['hotkeySetdown'] = hotkey_coverage(logs, cartid, hotkey_key)
         require(spec is None or result['actions']['cargoID'] == spec['cargoID']
                 and abs(result['actions']['cargoWeight']-spec['cargoWeight']) < .001, 'Action sequence changed initial motion cargo')
+    if injury:
+        result['injury']=injury_module['analyze'](profile, selection, result)
     return result
 
 

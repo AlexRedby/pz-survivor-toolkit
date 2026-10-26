@@ -12,12 +12,22 @@ local Settlement=require 'PZSurvivorToolkit/ActionQueueSettlement'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Equipment=require 'PZSurvivorToolkit/FitnessEquipment'
 Equipment.install(ISFitnessUI)
-local records={}
+local records,nativeRecords={},{}
+local nativePanelScope,naturalStopScope
+local Lifecycle=Toolkit.ActionQueueLifecycle
+local function pack(...) return {n=select("#",...),...} end
 local native,classes,exercises={},{},{}
 local class=ISFitnessAction
 local ui=ISFitnessUI
 local click=ui.onClick
 local activate=ISInventoryPaneContextMenu.onActivateItem
+local continuationOwner=Toolkit.ActionQueueNativeContinuation
+local continuationCallback=continuationOwner and continuationOwner.isCallback
+local function approvedContinuation(name,callback)
+ return Toolkit.ActionQueueNativeContinuation==continuationOwner and continuationOwner
+  and continuationOwner.isCallback==continuationCallback and type(continuationCallback)=='function'
+  and continuationCallback(name,callback)==true
+end
 local cartDropOwner=Toolkit.ActionQueueCarts
 local cartDropCallback=cartDropOwner and cartDropOwner.isDropCallback
 local cartDropMatch=cartDropOwner and cartDropOwner.isNonCartDrop
@@ -52,6 +62,9 @@ local childSources={ISEquipWeaponAction=1814269902,ISUnequipAction=229487418,ISW
  ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935,ISDropWorldItemAction=2862163534}
 local function approvedChange(kind,name)
  local carts=Toolkit.ActionQueueCarts
+ if kind=='ISWaitWhileGettingUp' and name=='perform' then
+  return approvedContinuation(name,classes[kind].methods[name]) and approvedContinuation(name,ISWaitWhileGettingUp[name])
+ end
  if kind=='ISDropWorldItemAction' then
   return approvedDrop(name,classes[kind].methods[name]) and approvedDrop(name,ISDropWorldItemAction[name])
  end
@@ -78,6 +91,7 @@ for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction',
    if kind~='ISFitnessAction' and kind~='ISInventoryTransferAction' and name~='derive' and not Proof.closure(callback,kind..'.lua') then
     local approved=kind=='ISUnequipAction' and (name=='new' or name=='complete') and approvedUnequipConstructor(owner.new)
      or kind=='ISDropWorldItemAction' and approvedDrop(name,callback)
+     or kind=='ISWaitWhileGettingUp' and approvedContinuation(name,callback)
     trusted=trusted and approved==true
    end
   end
@@ -95,6 +109,22 @@ local function workoutClock()
  local time=getGameTime();local hour=time:getTimeOfDay()
  -- Match native world age, retaining double precision even in old saves.
  return (time:getNightsSurvived()*24+(hour>=7 and hour-7 or hour+17))*3600000
+end
+-- SyncClock replaces timeOfDay on clients. Earn duration from the native
+-- frame delta instead: IsoWorld increments frameNo before character updates.
+-- A start/confirmation anchors the current frame; it never earns that frame.
+local function startClock(record)
+ record.elapsedMS=0;record.clockStartMS=workoutClock()
+ record.clockWorld=getWorld();record.clockFrame=record.clockWorld:getFrameNo()
+end
+local function advanceClock(record)
+ if record.stopRequested then return end
+ local world=getWorld();local frame=world:getFrameNo()
+ if world~=record.clockWorld then record.clockWorld=world;record.clockFrame=frame;return end
+ if frame==record.clockFrame then return end
+ record.clockFrame=frame
+ local delta=getGameTime():getGameWorldSecondsSinceLastUpdate()*1000
+ if delta>=0 and delta<math.huge then record.elapsedMS=record.elapsedMS+delta end
 end
 local function identity(item)
  if not item then return false end
@@ -123,6 +153,7 @@ local function root(player,ref)
  return item and item:getContainer()==player:getInventory() and item or nil
 end
 local function unchanged()
+ if continuationOwner and not approvedContinuation('perform',ISWaitWhileGettingUp.perform) then return false end
  if (not Proof.closure(ISUnequipAction.new,'ISUnequipAction.lua') or not Proof.closure(ISUnequipAction.complete,'ISUnequipAction.lua'))
   and not approvedUnequipConstructor(ISUnequipAction.new) then return false end
  for _,name in ipairs({'new','isValid','complete'}) do
@@ -144,6 +175,23 @@ local function unchanged()
  end
  return true
 end
+local function validNative(action)
+ local record=nativeRecords[action]
+ if not record or enabled() or not unchanged() or action.character~=record.saved.player
+  or getmetatable(action)~=class or action.Type~=class.Type or action.exercise~=record.saved.exercise
+  or action.timeToExe~=record.saved.minutes or action.exeData~=record.saved.data
+  or action.exeDataType~=record.saved.exercise or action.fitness~=action.character:getFitness()
+  or action.fitnessUI~=record.panel or action.onStartFunc or action.onCancelFunc or action.onCompleteFunc then return end
+ for name,callback in pairs(classes.ISFitnessAction.methods) do if action[name]~=callback then return end end
+ return record
+end
+local function nativeCanEnd(player)
+ return not player:isDead() and not player:isAsleep() and not player:getVehicle()
+  and not player:isClimbing() and not player:isAiming() and not player:isSittingOnFurniture()
+  and not player:isPlayerMoving() and not player:pressedMovement(true) and not player:pressedMovement(false)
+  and not player:pressedCancelAction()
+end
+
 local function validRecord(action)
  local record=records[action]
  if not record or action.character~=record.saved.player or not unchanged()
@@ -380,7 +428,22 @@ local function prepare(player,saved)
  Settlement.cleanupAfter(restoration,saved.handles)
 end
 function Fitness.onClick(panel,button,...)
- if not enabled() or not unchanged() or not Settlement.preparationAvailable() then return click(panel,button,...) end
+ if not enabled() or not unchanged() or not Settlement.preparationAvailable() then
+  if button.internal=='CANCEL' then
+   local queue=ISTimedActionQueue.queues[panel.player]
+   local action=queue and queue.current
+   local record=action and validNative(action)
+   if record then Lifecycle.invalidateStop(queue,action) end
+  end
+  local previous=nativePanelScope
+  if not enabled() and unchanged() and button.internal=='OK' then
+   nativePanelScope={panel=panel,exercise=panel.selectedExe,minutes=tonumber(panel.exeTime:getInternalText()),data=panel.exeData}
+  else nativePanelScope=nil end
+  local result=pack(pcall(click,panel,button,...))
+  nativePanelScope=previous
+  if not result[1] then error(result[2],0) end
+  return unpack(result,2,result.n)
+ end
  if button.internal=='OK' then
   local data=exercises[panel.selectedExe]
   local minutes=tonumber(panel.exeTime:getInternalText())
@@ -404,48 +467,76 @@ local function preserve(action,pendingStart)
  if not queue or queue.current~=action or queue.queue[1]~=action or player:isDead()
   or player:isPlayerMoving() or player:pressedMovement(false) then return false end
  if queue.toolkitCancel==action then return true end
- local receipt=Toolkit.ActionQueueAcknowledgements.capture(action)
- if isClient() and not receipt and not pendingStart then return false end
- queue.toolkitCancel=action
- queue.toolkitStopIntent={reason='fitness-ended',scope='action'}
- if receipt or isClient() then
-  queue.toolkitOutcomeWait={acknowledgement=receipt,generic=true,deadline=getTimestampMs()+30000}
-  if not receipt then
-   queue.toolkitOutcomeWait.pendingStart={native=action.action,transaction=action.toolkitNativeTransaction,
-    kind=action.toolkitNativeKind,generation=queue.toolkitOperationGeneration or 0}
-  end
- end
- return true
+ if isClient() and not pendingStart and not Toolkit.ActionQueueAcknowledgements.capture(action) then return false end
+ return Lifecycle.prepareStop(queue,action,'fitness-ended','action',{pendingStart=pendingStart})
 end
 function Fitness.canPreserveStop(action) return preserve(action) end
+-- NetTimedAction uses the constructor parameter names as wire field keys.
+class.new=function(self,character,exercise,timeToExe,exeData,exeDataType)
+ local action=native.new(self,character,exercise,timeToExe,exeData,exeDataType)
+ local owner,player,minutes,data,kind=self,character,timeToExe,exeData,exeDataType
+ for _,record in pairs(nativeRecords) do if record.saved.player==player then record.ownerLost=true end end
+ local context=nativePanelScope
+ if context and owner==class and player==context.panel.player and exercise==context.exercise
+  and minutes==context.minutes and data==context.data and kind==exercise
+  and exercises[exercise] and exercises[exercise].data==data and unchanged()
+  and type(minutes)=='number' and minutes>=10 and minutes<=60 then
+  nativeRecords[action]={saved={player=player,exercise=exercise,minutes=minutes,data=data},panel=context.panel,
+   fitnessState=action.fitness:getCurrentExe()}
+ end
+ return action
+end
+-- Unknown constructors keep their own parameter-name wire schema untouched.
+if not trusted then class.new=native.new end
+
+class.stop=function(action,...)
+ return Lifecycle.runStop(action,native.stop,...)
+end
 class.start=function(action)
- local record=validRecord(action)
+ local record=validRecord(action) or validNative(action)
  if record then
   action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
-  record.started=true;record.clockStartMS=workoutClock();record.confirmed=not isClient()
+  record.started=true;startClock(record);record.confirmed=not isClient()
  end
  return native.start(action)
 end
 class.forceStop=function(action)
- local record=validRecord(action)
+ local managed=validRecord(action)
+ local record=managed or validNative(action)
+ if record and not managed and naturalStopScope==action and not record.stopRequested
+  and nativeCanEnd(action.character)
+  and action.character:getMoodles():getMoodleLevel(MoodleType.ENDURANCE)<=ISFitnessUI.enduranceLevelThreshold then
+  local queue=ISTimedActionQueue.queues[action.character]
+  local cleanup,release,restorationValid=Equipment.deferRestoration(action,record.panel)
+  if cleanup then
+   local accepted=Lifecycle.prepareStop(queue,action,'native-fitness-ended','action',{pendingStart=true,guarded=true,
+    cleanup=cleanup,release=release,validate=function()
+     return validNative(action)==record and nativeCanEnd(action.character) and restorationValid()
+    end})
+   if not accepted then release() end
+  end
+ end
  if record then
   record.stopRequested=true
-  if not record.stopClockMS then record.stopClockMS=workoutClock();record.stopTimestampMS=getTimestampMs() end
+  if record.started and not record.stopClockMS then
+   record.stopClockMS=record.clockStartMS+record.elapsedMS;record.stopTimestampMS=getTimestampMs()
+  end
  end
  -- Stop native repetitions immediately. A late started/terminal receipt gates
  -- continuation, never the outgoing native stop request.
- if preserve(action,true) then records[action].stopping=isClient() end
+ if managed and preserve(action,true) then managed.stopping=isClient() end
  return native.forceStop(action)
 end
 class.update=function(action)
- local record=validRecord(action)
+ local record=validRecord(action) or validNative(action)
+ if record and record.started then advanceClock(record) end
  if record and record.started and not record.confirmed and not record.stopRequested
-  and workoutClock()-record.clockStartMS<record.saved.minutes*60000 then
+  and record.elapsedMS<record.saved.minutes*60000 then
   local receipt=Toolkit.ActionQueueAcknowledgements.capture(action)
   if receipt and Toolkit.ActionQueueAcknowledgements.state(action,receipt)=='started' then
    -- Client Lua start precedes the server request. Count a full workout from
    -- the exact confirmed start, once; late stop receipts must never restart it.
-   record.confirmed=true;record.clockStartMS=workoutClock()
+   record.confirmed=true;startClock(record)
    action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
   end
  end
@@ -459,14 +550,18 @@ class.update=function(action)
   if not ok then error(value,0) end
   result=value
  else result=native.update(action) end
- record=validRecord(action)
- -- The bar and stop request use continuous game time, rather than rounding
- -- either endpoint to the native calendar's whole-minute steps.
+ record=validRecord(action) or validNative(action)
+ -- Only actual active frame deltas can reach the selected duration. Reads
+ -- and synchronized world-clock corrections never advance this accumulator.
  if record and record.started and not record.stopRequested
-  and workoutClock()-record.clockStartMS>=record.saved.minutes*60000 then
+  and record.elapsedMS>=record.saved.minutes*60000 then
   action.character:setVariable('ExerciseStarted',false)
   action.character:setVariable('ExerciseEnded',true)
-  action:forceStop()
+  local previous=naturalStopScope
+  naturalStopScope=action
+  local ok,value=pcall(action.forceStop,action)
+  naturalStopScope=previous
+  if not ok then error(value,0) end
  end
  return result
 end
@@ -478,6 +573,8 @@ class.forceCancel=function(action)
   and action.fitness:getCurrentExe()==record.fitnessState then action.fitness:setCurrentExercise(nil) end
  return forceCancel(action)
 end
+classes.ISFitnessAction.methods.new=class.new
+classes.ISFitnessAction.methods.stop=class.stop
 classes.ISFitnessAction.methods.forceCancel=class.forceCancel
 classes.ISFitnessAction.methods.start=class.start
 classes.ISFitnessAction.methods.forceStop=class.forceStop
@@ -532,15 +629,18 @@ Definitions.registerBehavior('toolkit.fitness-cart-unequip',{types={'ISUnequipAc
 end,inspect=contract})
 local keys={squats='IGUI_Squats',pushups='IGUI_PushUps',situp='IGUI_SitUps',burpees='IGUI_Burpees',
  barbellcurl='IGUI_BarbellCurl',dumbbellpress='IGUI_DumbbellPress',bicepscurl='IGUI_BicepsCurl'}
-function Fitness.progress(action)
- local record=validRecord(action)
+local function timing(action,record)
  if not record or action.Type~='ISFitnessAction' or not record.started then return end
- local clock=workoutClock()
+ local clock=record.clockStartMS+record.elapsedMS
  local elapsed=(record.confirmed or record.stopRequested) and math.max(0,math.min(record.saved.minutes,(clock-record.clockStartMS)/60000)) or 0
  return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes,stopping=record.stopping==true,
   startMS=record.clockStartMS,endMS=record.clockStartMS+record.saved.minutes*60000,sampleMS=clock,confirmed=record.confirmed,
-  stopMS=record.stopClockMS,stopTimestampMS=record.stopTimestampMS}
+  stopMS=record.stopClockMS,stopTimestampMS=record.stopTimestampMS,source='active-native-frames',
+  activeMS=record.elapsedMS,worldSampleMS=workoutClock()}
 end
+-- Timing observation does not imply managed ownership or edit permissions.
+function Fitness.timing(action) return timing(action,validRecord(action) or validNative(action)) end
+function Fitness.progress(action) return timing(action,validRecord(action)) end
 function Fitness.describe(action)
  local record=validRecord(action)
  if not record or (action.Type~='ISQueueActionsAction' and action.Type~='ISFitnessAction') then return end
@@ -557,9 +657,29 @@ function Fitness.describe(action)
   target=text,role=role,
   icon=function() return getItemTex(saved.data.item or 'Base.DumbBell') or getTexture('media/ui/Entity/Icon_Tools_48x48.png') end}
 end
+local function retireNative(action,record)
+ -- The original constructor changes Fitness.currentExe before queuing get-up.
+ -- If that exact unstarted request is discarded, release only its still-owned
+ -- constructor state so native UI cleanup can run. A later constructor wins.
+ if not record.started and not record.ownerLost and unchanged() and action.character==record.saved.player
+  and getSpecificPlayer(record.saved.player:getPlayerNum())==record.saved.player
+  and action.fitnessUI==record.panel and record.panel.currentExercice==record.saved.data.type
+  and action.fitness:getCurrentExe()==record.fitnessState then action.fitness:setCurrentExercise(nil) end
+ nativeRecords[action]=nil
+end
 Events.OnTick.Add(function()
  -- Kahlua ignores weak tables; retain proofs through receipt waits and cleanup while queued.
  local queues
+ for action,record in pairs(nativeRecords) do
+  local queue=ISTimedActionQueue.queues[record.saved.player]
+  if not queue then retireNative(action,record)
+  else
+   queues=queues or {}
+   local group=queues[queue]
+   if not group then group={pending={},remaining=0};queues[queue]=group end
+   group.pending[action],group.remaining=true,group.remaining+1
+  end
+ end
  for action,record in pairs(records) do
   local queue=ISTimedActionQueue.queues[record.saved.player]
   if not queue then records[action]=nil
@@ -574,14 +694,22 @@ Events.OnTick.Add(function()
   for queue,group in pairs(queues) do
    -- Stop after the last tracked member, rather than scanning an unrelated tail.
    for _,action in ipairs(queue.queue) do
+    local deferred=action.Type=='ISWaitWhileGettingUp' and action.onCompleteArgs and action.onCompleteArgs.p1
+    if nativeRecords[deferred] and group.pending[deferred] then
+     group.pending[deferred],group.remaining=nil,group.remaining-1
+     if group.remaining==0 then break end
+    end
     if group.pending[action] then
      group.pending[action],group.remaining=nil,group.remaining-1
      if group.remaining==0 then break end
     end
    end
-   for action in pairs(group.pending) do records[action]=nil end
+   for action in pairs(group.pending) do
+    records[action]=nil
+    if nativeRecords[action] then retireNative(action,nativeRecords[action]) end
+   end
   end
  end
 end)
-if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records={} end) end
+if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records,nativeRecords={},{} end) end
 return Fitness

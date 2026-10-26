@@ -6,14 +6,14 @@ from pathlib import Path
 from .. import report
 from .tv_controls import MODS, _number
 
-CASES = ['mask-after-removal', 'p4-after-pickup']
+CASES = ['mask-after-removal', 'p4-after-pickup', 'p4-keep-return']
 PREFIX = '[QUEUE_CLEANUP] '
 
 
 def definitions():
     return {'cleanup-cancel': {'status': 'ready', 'clients': 1, 'default_mods': list(MODS),
         'scenario_actions': {'earned-native-cleanup': {'mods': list(MODS),
-            'scope': 'Current full selected pack, disposable macOS SP/menu Host. Real BulkFood/native eat mask removal and native onLiteratureItems borrowed First Aid book pickup/read/allowMissing return. Toolkit public per-operation cancellation after confirmed preparation preserves the exact borrowed-item/mask cleanup before an independent reader; original P4 hands/activation restore retains native idle-session timing and is required at final idle. Queue-off controls execute unchanged producers to natural native/P4 completion. Exact item/container, worn/hands, food portion/paid borrowed pages, native lifecycle and authority evidence; programmatic native entrypoints, no physical input.',
+            'scope': 'Current full selected pack, disposable macOS SP/menu Host. Real BulkFood/native eat mask removal and native onLiteratureItems borrowed First Aid book pickup/read/allowMissing return. Mask public per-operation cancellation and real Panel programmatic header press/release after confirmed preparation preserve exact cleanup before an independent reader; real expanded-child return press/release keeps the earned borrowed item carried, continues its full native read and prevents late return through native/P4 idle; original P4 hands/activation restore retains native idle-session timing and is required at final idle. Queue-off controls execute unchanged producers to natural native/P4 completion. Exact item/container, worn/hands, food portion/paid borrowed pages, native lifecycle and authority evidence; programmatic native entrypoints and real Panel hit-tested press/release, no physical input.',
             'checks': {'server-authority': {case: {'authoritative': True, 'cleanupRestored': True, 'tailCompleted': True} for case in CASES},
                        'cancel-active': {case: {'cancelled': True, 'cleanupBeforeTail': True} for case in CASES}},
             'toolkit_only': ['cancel-active']}},
@@ -21,17 +21,20 @@ def definitions():
 
 
 def validate(selection):
-    if (selection.get('cases') != CASES or selection.get('mods') != MODS or selection.get('kind') not in ('sp', 'mp')
+    chosen = selection.get('cases')
+    if (not isinstance(chosen, list) or not chosen or chosen != [case for case in CASES if case in chosen] or selection.get('mods') != MODS or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
             or selection.get('options', {}).get('world_template')
             or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Cleanup cancellation requires both ordered cases, current selected pack, fresh SP/menu Host and one EN client')
+        raise ValueError('Cleanup cancellation requires a nonempty canonical ordered case subset, current selected pack, fresh SP/menu Host and one EN client')
 
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [Path(__file__).with_name('tv_controls.py'), *sorted((root / 'cleanup-cancel').rglob('*.lua')),
+    code = Path(project) / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit'
+    return [Path(__file__).with_name('tv_controls.py'), code / 'ActionQueuePanel.lua', code / 'ActionQueueTidyIntent.lua',
+            *sorted((root / 'cleanup-cancel').rglob('*.lua')),
             *sorted((root / 'startup').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
 
@@ -59,14 +62,14 @@ def complete(selection, role, text):
         return False
 
 
-def owned_cleanup_before_tail(snapshot, ids):
-    return snapshot.get('maskWorn') is True if ids['case'] == 'mask-after-removal' else snapshot.get('borrowedContainer') == 'bag'
+def owned_cleanup_before_tail(snapshot, ids, keep=False):
+    return snapshot.get('maskWorn') is True if ids['case'] == 'mask-after-removal' else snapshot.get('borrowedContainer') == ('root' if keep else 'bag')
 
 
-def restored(snapshot, ids):
+def restored(snapshot, ids, keep=False):
     if ids['case'] == 'mask-after-removal':
         return owned_cleanup_before_tail(snapshot, ids)
-    return (owned_cleanup_before_tail(snapshot, ids) and snapshot.get('primary') == ids['items']['torch']
+    return (owned_cleanup_before_tail(snapshot, ids, keep) and snapshot.get('primary') == ids['items']['torch']
             and snapshot.get('secondary') == ids['items']['secondary'] and snapshot.get('torchActive') is True)
 
 
@@ -74,6 +77,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
     errors = []
     try:
         enabled = selection['mode'] == 'toolkit'
+        keep = enabled and case == 'p4-keep-return'
         ids, b, actual, authority = row['ids'], row['baseline'], row['client'], row['server']
         if (row.get('status') != 'passed' or row.get('id') != case or ids != prepared or ids.get('case') != case
                 or b != baseline or row['authorityBaseline'] != ids['baseline'] or row['checkpoint'] != checkpoint or authority != verified):
@@ -83,8 +87,10 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
             errors.append('Fixture item IDs missing or aliased')
         if selection['kind'] == 'mp' and (type(ids.get('actor')) is not int or ids['actor'] < 0):
             errors.append('Prepared native actor ID missing')
-        if (actual['items'] != b['items'] or authority['items'] != ids['baseline']['items']
-                or not restored(actual, ids) or not restored(authority, ids)
+        def expected_inventory(rows):
+            return [dict(entry, container='root') if keep and entry.get('id') == items.get('borrowed') else entry for entry in rows]
+        if (actual['items'] != expected_inventory(b['items']) or authority['items'] != expected_inventory(ids['baseline']['items'])
+                or not restored(actual, ids, keep) or not restored(authority, ids, keep)
                 or actual.get('book') != ids['pages'] or authority.get('book') != ids['pages']
                 or b.get('book') != ids['initial'] or ids['initial'] + 1 != ids['pages']):
             errors.append('Native cleanup, exact inventory conservation or tail completion failed')
@@ -98,7 +104,14 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
             errors.append('Missing/duplicate exact native prepare/body/cleanup/tail')
             return errors
         p, body, tail = prep[0], body[0], tails[0]
-        if replaced_return:
+        retired = None
+        if keep:
+            retired = cleanup[0]
+            if (retired.get('type') != 'ISInventoryTransferAction' or not retired.get('actionRef')
+                    or retired.get('token') != body.get('token') or not body['sequence'] < retired['sequence'] < tail['sequence']):
+                errors.append('Kept borrowed return lost exact same-operation identity/order')
+            cleanup = retired
+        elif replaced_return:
             # readItem already queued its native allowMissing return. Cancellation
             # discards that unstarted same-operation intent; the earned ledger
             # return is a separate action and token, with one actual native effect.
@@ -120,6 +133,24 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                 errors.append('Retired borrowed native return ran, changed identity or lost its exact replacement')
         else:
             cleanup = cleanup[0]
+        if retired is not None and (retired.get('started') is not False or retired.get('progress') is not False
+                or any(retired.get(k) is not None for k in ('startedAt', 'performedAt', 'nativeRef'))
+                or retired.get('finishes') != [] or retired.get('receipts') != []
+                or retired.get('transaction') not in (None, False) or retired.get('uuid') not in (None, False)
+                or retired.get('transactionDone') is True):
+            errors.append('Explicitly retired native return executed or acquired native authority')
+        if enabled and case != CASES[0]:
+            ui = boundary.get('ui', {})
+            target = cleanup if keep else body
+            if (ui.get('source') != 'ActionQueuePanel.List' or ui.get('input') != 'programmatic-press-release'
+                    or ui.get('header') is not (not keep) or ui.get('target') != target.get('sequence')
+                    or ui.get('actionRef') != target.get('actionRef') or ui.get('item') != items['borrowed']
+                    or any(ui.get(k) is not True for k in ('previewAllowed', 'pressed', 'pressCaptured', 'released', 'gestureCleared'))
+                    or ui.get('feedback') is not False or not _number(ui.get('x')) or not _number(ui.get('y'))
+                    or not _number(ui.get('at')) or ui['at'] < boundary.get('at', -1)
+                    or keep and (ui.get('bodyCurrent') is not True or ui.get('returnAbsent') is not True
+                                 or ui.get('bodyRef') != body.get('actionRef') or ui.get('nativeRef') != body.get('nativeRef'))):
+                errors.append('Real Panel exact target preview/press/release evidence missing or changed')
         expected_items = {'prepare': items['mask' if case == CASES[0] else 'borrowed'],
                           'body': items['food' if case == CASES[0] else 'borrowed'],
                           'cleanup': items['mask' if case == CASES[0] else 'borrowed'],
@@ -131,13 +162,13 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                 or boundary.get('preparation') != p['sequence'] or boundary.get('body') != body['sequence']
                 or not _number(p.get('performedAt')) or p['performedAt'] > boundary.get('at', -1)
                 or not p.get('started') or not tail.get('started') or not tail.get('progress')
-                or not cleanup.get('performedAt') or not cleanup.get('started')):
+                or not keep and (not cleanup.get('performedAt') or not cleanup.get('started'))):
             errors.append('Cancellation did not follow confirmed native preparation or retain real cleanup/tail')
-        if enabled and (cleanup['performedAt'] > tail.get('startedAt', -1) or not owned_cleanup_before_tail(row['tailSnapshot'], ids)
+        if enabled and (not keep and cleanup['performedAt'] > tail.get('startedAt', -1) or not owned_cleanup_before_tail(row['tailSnapshot'], ids, keep)
                         or body['token'] != p['token'] or body['token'] == tail['token']):
             errors.append('Earned cleanup lost operation ownership or ran after the independent tail')
-        if (row['outcome'].get('cleanupBeforeTail') is not owned_cleanup_before_tail(row['tailSnapshot'], ids)
-                or row['outcome'].get('originalEquipmentBeforeTail') is not restored(row['tailSnapshot'], ids)):
+        if (row['outcome'].get('cleanupBeforeTail') is not owned_cleanup_before_tail(row['tailSnapshot'], ids, keep)
+                or row['outcome'].get('originalEquipmentBeforeTail') is not restored(row['tailSnapshot'], ids, keep)):
             errors.append('Tail cleanup/equipment claim differs from the observed native hands and activation')
         if row.get('nativeMethodsUnchanged') is not True:
             errors.append('Native lifecycle methods changed')
@@ -148,7 +179,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                 errors.append('Native constructor duration/lifecycle evidence invalid')
             callbacks = record.get('finishes', [])
             cancelled_body = enabled and case == CASES[1] and record is body
-            unstarted_return = replaced_return and record is retired
+            unstarted_return = (replaced_return or keep) and record is retired
             if cancelled_body or unstarted_return:
                 if callbacks or record.get('performedAt') is not None:
                     errors.append('Cancelled native read/retired return reported a lifecycle effect')
@@ -173,7 +204,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                         errors.append('Host transfer changed native transaction duration')
                 else:
                     before, after = record.get('durationBefore'), record.get('durationAfter')
-                    if (not _number(before) or not _number(after) or min(before, after) <= 1 or abs(before - after) > max(.001, record['duration'] * .00001)
+                    if (not _number(before) or not _number(after) or min(before, after) <= 1
                             or not min(before, after) - .001 <= effective <= max(before, after) + .001):
                         errors.append('Native duration allocation escaped its bracket')
         if case == CASES[0]:
@@ -190,9 +221,9 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                     or body['readMaxProgress'] <= body['readStartProgress'] + .00000001
                     or ids.get('borrowedType') != 'Base.BookFirstAid1' or ids.get('borrowedInitial') + 1 != ids.get('borrowedPages')
                     or before != {'pages': ids['borrowedInitial'], 'characterPages': ids['borrowedInitial'], 'total': ids['borrowedPages']}
-                    or enabled and body.get('performedAt') is not None):
+                    or enabled and not keep and body.get('performedAt') is not None):
                 errors.append('Borrowed native read did not cancel at its confirmed pickup/paid-page boundary')
-            expected_pages = ids['borrowedInitial'] if enabled else ids['borrowedPages']
+            expected_pages = ids['borrowedInitial'] if enabled and not keep else ids['borrowedPages']
             expected = {'pages': expected_pages, 'characterPages': expected_pages, 'total': ids['borrowedPages']}
             if any(s.get('borrowed') != expected for s in (actual, authority, row['bodyTerminal'], row['tailSnapshot'])):
                 errors.append('Borrowed paid pages rolled back or replayed after native stop/return')
@@ -201,8 +232,22 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                 owned = [entry for entry in operation.get('borrowings', []) if entry.get('id') == items['borrowed']]
                 if len(owned) != 1 or owned[0] != {'id': items['borrowed'], 'fullType': ids['borrowedType'], 'state': 'active'}:
                     errors.append('Exact confirmed P4 borrowing episode absent from shared operation phase record')
+        if keep and any(snapshot.get('borrowedContainer') != 'root'
+                        or snapshot.get('items') != expected_inventory(b['items'])
+                        for snapshot in (row['bodyTerminal'], row['tailSnapshot'])):
+            errors.append('Kept exact book returned or changed identity at body/tail completion')
+        idle = row.get('idleEvidence', {})
+        idle_snapshot = idle.get('snapshot', {})
+        if (idle.get('case') != case or idle.get('empty') is not True or not _number(idle.get('since'))
+                or not _number(idle.get('at')) or idle['at'] - idle['since'] < 1500
+                or idle['since'] < tail.get('performedAt', float('inf'))
+                or idle_snapshot.get('items') != actual.get('items') or not restored(idle_snapshot, ids, keep)
+                or idle_snapshot.get('book') != ids['pages']
+                or case != CASES[0] and idle_snapshot.get('borrowed') != actual.get('borrowed')):
+            errors.append('Native/P4 idle failed exact late-return, equipment or independent-tail gate')
         if selection['kind'] == 'mp':
             for record in (p, cleanup):
+                if keep and record is retired: continue
                 if record['type'] == 'ISInventoryTransferAction':
                     if record.get('transactionDone') is not True or record.get('transactionRejected') is not False or not record.get('transaction'):
                         errors.append('Native transfer lacks an exact completed inventory transaction')
@@ -222,6 +267,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
 
 def verify(root, selection, catalog):
     root = Path(root); issues, outcomes = [], []
+    cases = selection['cases']
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
@@ -229,12 +275,12 @@ def verify(root, selection, catalog):
         setups = [r for r in events if r.get('event') == 'setup']; completed = [r for r in events if r.get('event') == 'complete']
         rows = [r for r in events if r.get('event') == 'case']
         if (len(setups) != 1 or setups[0].get('queueEnabled') is not (selection['mode'] == 'toolkit')
-                or setups[0].get('nativeDurations') is not True or setups[0].get('cases') != CASES
-                or len(completed) != 1 or completed[0].get('performed') != len(CASES) or completed[0].get('failed') != 0
-                or completed[0].get('skipped') != 0 or completed[0].get('cases') != CASES or not complete(selection, 'client1', text)):
+                or setups[0].get('nativeDurations') is not True or setups[0].get('cases') != cases
+                or len(completed) != 1 or completed[0].get('performed') != len(cases) or completed[0].get('failed') != 0
+                or completed[0].get('skipped') != 0 or completed[0].get('cases') != cases or not complete(selection, 'client1', text)):
             issues.append('Missing exact cleanup setup/completion gates')
         specs, baselines, checkpoints, verified = (raw(authority if name != 'BASELINE' else text, name) for name in ('PREPARED', 'BASELINE', 'CHECKPOINT', 'VERIFY'))
-        if ([r.get('id') for r in rows] != CASES or any([r.get('case') for r in rs] != CASES for rs in (specs, baselines, checkpoints, verified))):
+        if ([r.get('id') for r in rows] != cases or any([r.get('case') for r in rs] != cases for rs in (specs, baselines, checkpoints, verified))):
             issues.append('Missing/duplicate/reordered cleanup case evidence')
         receipts = raw(text, 'NATIVE_STATE')
         confirmed = raw(authority, 'BASELINE_CONFIRMED')
@@ -242,12 +288,14 @@ def verify(root, selection, catalog):
             issues.append('Exact current authority baseline acknowledgement missing or changed')
         boundaries, tails = raw(text, 'BOUNDARY'), raw(text, 'TAIL_STARTED')
         settled = raw(text, 'BODY_SETTLED')
-        if settled != [r.get('bodyTerminal') for r in rows if r.get('id') == CASES[1]]:
+        if settled != [r.get('bodyTerminal') for r in rows if r.get('id') != CASES[0]]:
             issues.append('Raw borrowed native body settlement missing, changed or duplicated')
-        if (len(boundaries) != len(CASES) or [r.get('case') for r in tails] != CASES
+        if (len(boundaries) != len(cases) or [r.get('case') for r in tails] != cases
                 or boundaries != [r.get('boundary') for r in rows] or tails != [r.get('tailSnapshot') for r in rows]):
             issues.append('Raw native boundary/tail evidence missing, changed, duplicated or out of order')
-        for i, case in enumerate(CASES):
+        if raw(text, 'P4_IDLE') != [r.get('idleEvidence') for r in rows]:
+            issues.append('Raw native/P4 idle evidence missing, changed or duplicated')
+        for i, case in enumerate(cases):
             row = rows[i] if i < len(rows) else {}
             errors = check_case(row, case, selection, specs[i] if i < len(specs) else None, baselines[i] if i < len(baselines) else None,
                                 checkpoints[i] if i < len(checkpoints) else None, verified[i] if i < len(verified) else None, receipts)

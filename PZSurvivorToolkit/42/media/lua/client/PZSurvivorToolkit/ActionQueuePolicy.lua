@@ -40,6 +40,13 @@ local nativeDropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOf
 local transferItemGuard
 local inspect
 local ordinaryTransfer
+local pendingReturnReason, pendingReturnGuard
+local function pendingReturnTarget(queue, action)
+    return action.Type == "ISInventoryTransferAction" and action.allowMissingItems == true
+        and action.srcContainer == queue.character:getInventory()
+        and action.destContainer ~= action.srcContainer and action ~= queue.current
+        and not action.action and queue:indexOf(action) > 1
+end
 local sharedEditResource
 local targetCheckers = {}
 local targetModules = {world = "ActionQueueWorld", generators = "ActionQueueGenerators"}
@@ -114,6 +121,7 @@ function Policy.cancelReason(queue, action, context)
     if appliance(action) then return Policy.cancelOperationReason(queue, action, context) end
     local contract = inspect and inspect(action, context)
     if contract and contract.cancelOperation == false then return "dependent" end
+    if pendingReturnTarget(queue, action) then return pendingReturnReason(queue, action, context) end
     if action.Type == "ISQueueActionsAction" then
         if not deferredWorld(action) and not (contract and contract.deferred) then return "dependent" end
         return Policy.cancelOperationReason(queue, action, context)
@@ -1386,6 +1394,60 @@ local function editCapacityConflict(queue, edit, first, last, to, context)
     end
 end
 
+-- Dropping an automatic return is a deliberate "keep carried" intent, not
+-- cancellation of the body that still needs the borrowed item. Only the exact
+-- earned loan may waive its return; later dependencies/capacity still apply.
+pendingReturnGuard = function(action, reference)
+    if not nativePendingCancelHasNoEffects() or action.forceCancel ~= nativeForceCancel
+        or not callbacksSafe(action) or action.item:getID() ~= reference.id
+        or action.item:getFullType() ~= reference.fullType then return false end
+    local intent = Toolkit.ActionQueueTidyIntent
+    if intent and type(intent.canKeepReturn) == "function" then
+        if not intent.canKeepReturn(action) then return false end
+    elseif P4TidyUpMeister then return false end
+    local groups = action.queueList
+    if groups == nil then return true end
+    if type(groups) ~= "table" or getmetatable(groups) then return false end
+    local count = 0
+    for index in pairs(groups) do if index ~= 1 then return false end; count = count + 1 end
+    if count == 0 then return true end
+    if type(groups[1]) ~= "table" or type(groups[1].items) ~= "table" then return false end
+    count = 0
+    for index, item in pairs(groups[1].items) do
+        if index ~= 1 or item ~= action.item and not (ItemEditAdapters
+            and type(ItemEditAdapters.matchesTransferMember) == "function"
+            and ItemEditAdapters.matchesTransferMember(action, item)) then return false end
+        count = count + 1
+    end
+    return count == 1
+end
+pendingReturnReason = function(queue, action, context)
+    local settlement = Toolkit.ActionQueueSettlement
+    if not settlement or not settlement.canWaivePendingReturn
+        or not settlement.canWaivePendingReturn(action, pendingReturnGuard) then return "dependent" end
+    local index = queue:indexOf(action)
+    local capacity = {first = index, last = index}
+    for otherIndex, other in ipairs(queue.queue) do
+        if other ~= action then
+            if not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
+            if otherIndex > index then
+                local shared = sharedItem(action, other, context)
+                if shared then return "operation_shared_item", nil, nil, other, shared end
+                local conflict = sharedWorldTarget(action, other, context)
+                    or dynamicConflict(action, other, context) or dynamicConflict(other, action, context)
+                if conflict then return "operation_dependent", nil, nil, other, conflict end
+            end
+            local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context)
+            if blocker then return "container_capacity", nil, nil, other, blocker end
+        end
+    end
+end
+function Policy.commitReturnCancellation(action, capability)
+    local settlement = Toolkit.ActionQueueSettlement
+    return settlement and settlement.waivePendingReturn
+        and settlement.waivePendingReturn(capability, action, pendingReturnGuard) or false
+end
+
 function Policy.cancelOperationReason(queue, action, context)
     context = context or {contracts = {}, items = {}}
     context.editFallback = nil
@@ -1719,9 +1781,15 @@ function Policy.evaluateCancel(queue, action, whole)
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
     else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
     reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    local returnWaiver
+    if not reason and not whole and pendingReturnTarget(queue, action) then
+        returnWaiver = Toolkit.ActionQueueSettlement.pendingReturnWaiver(action, pendingReturnGuard)
+        if not returnWaiver then reason = "unavailable" end
+    end
     if not reason and not Policy.editUnchanged(queue, snapshot) then reason = "unavailable" end
     return {allowed = reason == nil, reason = reason, first = first, last = last,
-        mode = queue and action == queue.current and "active" or "pending", blocker = blocker, resource = resource, snapshot = snapshot}
+        mode = returnWaiver and "pending-return" or queue and action == queue.current and "active" or "pending",
+        returnWaiver = returnWaiver, blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
 local function priorityDecision(queue, action, preempt, decide)

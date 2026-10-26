@@ -6,6 +6,7 @@ require "PZSurvivorToolkit/ActionQueueOperations"
 require "PZSurvivorToolkit/ActionQueueSettlement"
 require "PZSurvivorToolkit/ActionQueueLifecycle"
 require "PZSurvivorToolkit/ActionQueueAcknowledgements"
+require "PZSurvivorToolkit/ActionQueueNativeContinuation"
 require "PZSurvivorToolkit/ActionQueueLabels"
 require "PZSurvivorToolkit/ActionQueueCraft"
 require "PZSurvivorToolkit/ActionQueueBatch"
@@ -70,6 +71,20 @@ function Queue.cancel(queue, action)
     local decision = Policy.evaluateCancel(queue, action)
     Policy.record("cancel", action, decision)
     if not decision.allowed then return false, decision.reason end
+    if decision.mode == "pending-return" then
+        if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
+        decision = Policy.evaluateCancel(queue, action)
+        if not decision.allowed then return false, decision.reason end
+        if decision.mode ~= "pending-return" or not Policy.commitReturnCancellation(action, decision.returnWaiver) then
+            return false, "unavailable"
+        end
+        -- The proven empty native callback cannot transfer/replay anything.
+        -- Keep the parent token and body live; retire just this exact return.
+        if Batch then Batch.discard(action) end
+        action:forceCancel()
+        queue:removeFromQueue(action)
+        return true
+    end
     if craft(action) then return Queue.cancelOperation(queue, action) end
     -- Policy validates deferred commands as complete operations. Execute that
     -- same edit, so required preparation cannot be detached from its body.
@@ -227,6 +242,7 @@ function Queue.move(queue, action, target, after)
 end
 
 local function clearStop(queue)
+    Toolkit.ActionQueueLifecycle.clearStop(queue)
     queue.toolkitCancel, queue.toolkitCancelStopped, queue.toolkitResume, queue.toolkitOutcomeWait, queue.toolkitStopIntent = nil, nil, nil, nil, nil
 end
 
@@ -268,6 +284,16 @@ ISBaseTimedAction.stop = function(action)
     if approach then approach.onStop(action) end
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.stop(action) end
     local queue = ISTimedActionQueue.queues[action.character]
+    local terminal = queue and Toolkit.ActionQueueLifecycle.deferStop(queue, action)
+    if terminal ~= nil then
+        if terminal then
+            queue.toolkitCancelStopped = true
+            action.character:setIsFarming(false)
+            return
+        end
+        clearStop(queue)
+        return stop(action)
+    end
     local world = Toolkit.ActionQueueWorld
     if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
         and ((queue.toolkitGroupCancel and queue.toolkitGroupCancel.action == action)
@@ -355,8 +381,23 @@ local function insertResumed(queue, action, index, receipt)
     end
 end
 
+local function completeStopped(queue, action, cleanup)
+    if not cleanup then return queue:onCompleted(action) end
+    return Operations.performNativeContinuation(action, function(current)
+        current:beginAddingActions()
+        cleanup(current)
+        current:endAddingActions()
+        queue:onCompleted(current)
+    end)
+end
+
 local tick = ISTimedActionQueue.tick
 ISTimedActionQueue.tick = function(queue)
+    if ISTimedActionQueue.queues[queue.character] ~= queue then
+        Toolkit.ActionQueueLifecycle.reset(queue)
+        clearStop(queue)
+        return
+    end
     -- Walking may continue native inventory actions. Keep their completed callback
     -- until Java removes the action; native stop/reset still revokes completion.
     if not live(queue) then
@@ -374,7 +415,8 @@ ISTimedActionQueue.tick = function(queue)
     if action then
         if not live(queue) or queue.current ~= action or queue.queue[1] ~= action then
             clearStop(queue)
-        elseif queue.character:isPlayerMoving() or queue.character:pressedMovement(false) then
+        elseif not Toolkit.ActionQueueLifecycle.stopValid(queue, action)
+            or queue.character:isPlayerMoving() or queue.character:pressedMovement(false) then
             queue:resetQueue()
             queue.character:setIsFarming(false)
             return
@@ -411,6 +453,8 @@ ISTimedActionQueue.tick = function(queue)
                 Operations.invalidate(wait.operation.token)
                 queue.toolkitGroupCancel = wait.operation
             end
+            local permitted, cleanup = Toolkit.ActionQueueLifecycle.takeStopCleanup(queue, action)
+            if not permitted then queue:resetQueue(); return end
             local resumeAfter = queue.toolkitResume
             clearStop(queue)
             local index = resumeAfter and queue:indexOf(resumeAfter)
@@ -418,18 +462,20 @@ ISTimedActionQueue.tick = function(queue)
                 and (action.Type ~= "ISReadABook" or stoppable(action)) then
                 insertResumed(queue, action, index, wait.acknowledgement)
             end
-            queue:onCompleted(action)
+            completeStopped(queue, action, cleanup)
             return
         elseif not queue.character:getCharacterActions():contains(action.action) then
             -- B42 sends the MP stop packet after Lua stop; resume only after Java removes the action.
             local stopped, resumeAfter = queue.toolkitCancelStopped, queue.toolkitResume
+            local permitted, cleanup = Toolkit.ActionQueueLifecycle.takeStopCleanup(queue, action)
+            if not permitted then queue:resetQueue(); return end
             clearStop(queue)
             if stopped then
                 local index = resumeAfter and queue:indexOf(resumeAfter)
                 if index and index > 1 and stoppable(action) then
                     insertResumed(queue, action, index)
                 end
-                queue:onCompleted(action)
+                completeStopped(queue, action, cleanup)
                 return
             end
         else

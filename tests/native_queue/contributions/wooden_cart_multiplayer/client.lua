@@ -30,6 +30,9 @@ local variants={['shopping-cart']='SaucedCarts.ShoppingCart',['wooden-wheelbarro
 local variant=config.options and config.options.cart_variant or 'wooden-wheelbarrow'
 local cartType=assert(variants[variant],'Unknown MP cart_variant')
 local actions=config.options and config.options.cart_actions and require 'CartMPActions' or nil
+local injury=config.options and config.options.cart_injury and require 'CartMPInjury' or nil
+local expectedPadVersion=wallSide and 4 or injury and 5 or 3
+local expectedPadSize=(wallSide or injury) and 63 or 31
 local option=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'));option:setValue(true)
 local r=assert(getFileReader('smoke-user.txt',false));local user=r:readLine();r:close()
 local videoDirectory=assert(config.videoRoot[user],'Missing role videoRoot')
@@ -37,13 +40,14 @@ assert(type(videoDirectory)=='string' and videoDirectory:match('^/'),'Absolute r
 local started,setup,epoch,done=false,nil,nil,false
 local readyAt,lastReady,lastSample,lastEquip,video,stage,lastArm,skillSince=0,0,0,0,nil,-1,0,nil
 local function emit(e) e.suite='cart_motion_mp';e.kind='mp';e.mode=config.mode;e.actor=user;J.emit(e) end
-local function fail(e) cartLabDrive(0);cartLabGait(0);if video then toolkitVideoStop() end;print('[QUEUE_TEST] FAIL CART_MP '..tostring(e));emit({event='error',reason=tostring(e)});emit({event='complete',failed=1});done=true end
+local function fail(e) cartLabDrive(0);cartLabGait(0);if injury and user=='client1' then injury.finish(getPlayer()) end;if video then toolkitVideoStop() end;print('[QUEUE_TEST] FAIL CART_MP '..tostring(e));emit({event='error',reason=tostring(e)});emit({event='complete',failed=1});done=true end
 Events.OnConnectFailed.Add(function(a,b) fail('connect '..tostring(a)..' '..tostring(b)) end)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='CartMP' then return end
  if command=='Setup' then setup=args;print('[CART_MP] SETUP '..J.encode(args))
  elseif wallSide and command=='WallCleanup' then wallCleanup=args.wall
  elseif command=='Start' then epoch=args.epoch;print('[CART_MP] START epoch='..epoch)
+ elseif injury and command=='InjuryAck' then local ok,e=pcall(injury.command,args);if not ok then fail(e) end
  elseif actions and command:sub(1,6)=='Action' then local ok,e=pcall(actions.command,command,args);if not ok then fail(e) end
  end
 end)
@@ -63,12 +67,14 @@ local prepared,armed,stopped,finishedAt,actionsFinished,padSince,padReady=false,
 local lastActionSample=0
 local extended=wallSide or config.options and config.options.cart_fast_motion
 local duration=wallSide=='front' and 18000 or wallSide and 29000 or extended and 26000 or 15000
+if injury then duration=injury.duration end
 local steps={{0,0,0,'idle'},{2000,1,0,'walk'},{5000,8,0,'turn'},{8000,0,0,'stop'},{10000,4,2,'reverse'},{12000,0,0,'stop-back'}}
 if extended and not wallSide then
  steps[#steps+1]={15000,1,1,'run'};steps[#steps+1]={16500,5,2,'sprint-turn'}
  steps[#steps+1]={18500,0,0,'fast-stop'}
 end
 if wallSide then steps=wallInput.steps(wallSide) end
+if injury then for _,step in ipairs(injury.steps) do steps[#steps+1]=step end end
 local function sampleActionPresentation(owner,now,elapsed)
  -- Short observer cancels can cross .05 progress between100ms motion samples.
  -- Read existing presentation status separately throughout the bounded action bank.
@@ -122,7 +128,7 @@ Events.OnTick.Add(function()
      print('[CART_MP] PAD_READY '..J.encode(row));padReady=true
     end
    elseif extended then
-    assert(setup.bankVersion==3 and setup.elevated==true and setup.z==7 and setup.size==31 and setup.floorSprite=='carpentry_02_57','Native elevated pad descriptor missing')
+    assert(setup.bankVersion==expectedPadVersion and setup.elevated==true and setup.z==7 and setup.size==expectedPadSize and setup.floorSprite=='carpentry_02_57','Native elevated pad descriptor missing')
     if not padSince then padSince=now end
     local count=0
     for x=setup.minX,setup.minX+setup.size-1 do for y=setup.minY,setup.minY+setup.size-1 do
@@ -130,9 +136,9 @@ Events.OnTick.Add(function()
      if floor and floor:getSpriteName()==setup.floorSprite and sq:TreatAsSolidFloor() then count=count+1 end
     end end
     assert(now-padSince<30000,'Native elevated floor replication deadline')
-    if count~=961 then return end
+    if count~=setup.size*setup.size then return end
     if not padReady then
-     print('[CART_MP] PAD_READY '..J.encode({bankVersion=3,floors=count,z=setup.z,minX=setup.minX,minY=setup.minY,size=setup.size,wall=now}))
+     print('[CART_MP] PAD_READY '..J.encode({bankVersion=setup.bankVersion,floors=count,z=setup.z,minX=setup.minX,minY=setup.minY,size=setup.size,wall=now}))
      padReady=true
     end
    end
@@ -209,7 +215,7 @@ Events.OnTick.Add(function()
    print('[CART_MP] VIDEO '..tostring(toolkitVideoStatus().file))
   end
   if video and extended and user=='client1' then
-   assert(setup.bankVersion==(wallSide and 4 or 3) and setup.size==(wallSide and 63 or 31) and setup.margin==2 and setup.vegetationFree==true,'Validated extended pad descriptor missing')
+   assert(setup.bankVersion==expectedPadVersion and setup.size==expectedPadSize and setup.margin==2 and setup.vegetationFree==true,'Validated extended pad descriptor missing')
    assert(p:getX()>=setup.minX+setup.margin and p:getX()<=setup.minX+setup.size-setup.margin
     and p:getY()>=setup.minY+setup.margin and p:getY()<=setup.minY+setup.size-setup.margin and math.abs(p:getZ()-setup.z)<.25,
     'Owner/cart margin left validated pad interior')
@@ -221,6 +227,14 @@ Events.OnTick.Add(function()
    stage=nextStage
    if user=='client1' then
     assert(p:getPerkLevel(Perks.Sprinting)==10,'Authoritative Sprinting level changed during motion')
+    if injury and steps[stage][4]=='injury-healthy' then
+     -- The healthy fast bank finishes near one pad edge. Start the appended
+     -- route toward its centre, before either moving injury/healing boundary.
+     local cx,cy=setup.minX+setup.size/2,setup.minY+setup.size/2
+     cartLabPoseHeading(math.atan2(cy-p:getY(),cx-p:getX()))
+     print('[CART_MP_INJURY] ROUTE '..J.encode({wall=now,x=p:getX(),y=p:getY(),targetX=cx,targetY=cy}))
+    end
+    if injury then injury.phase(p,steps[stage][4],now,epoch) end
     p:getStats():reset(CharacterStat.ENDURANCE)
     cartLabGait(steps[stage][3]);if not wallSide then cartLabDrive(steps[stage][2]) end
    end
@@ -239,10 +253,12 @@ Events.OnTick.Add(function()
    lastSample=now
    for i=0,online:size()-1 do print('[CART_MP_STATE] '..cartMPState(online:get(i))) end
    if wallSide and user=='client1' then wallSample(p,now,elapsed) end
+   if injury and user=='client1' then injury.sample(p,setup,now,elapsed) end
   end
   sampleActionPresentation(owner,now,elapsed)
   if elapsed>=duration then
    cartLabDrive(0);cartLabGait(0)
+   if injury and user=='client1' then injury.finish(p) end
    if actions and not actionsFinished then
     assert(elapsed<duration+35000,'MP action bank deadline')
     if user=='client1' then actions.tick(p,setup,now) end
@@ -268,7 +284,7 @@ Events.OnTick.Add(function()
    if wallSide and not wallCleanupSeen then return end
    print('[CART_MP] VIDEO_FINAL '..J.encode({file=status.file,frames=status.frames,captured=status.captured,dropped=status.dropped,seconds=status.seconds}))
    if not wallSide then print('[CART_MP_TRAFFIC] '..cartMPTraffic()) end
-   emit({event='case',id='owner_observer_motion',status='captured',cartActions=actions~=nil})
+   emit({event='case',id='owner_observer_motion',status='captured',cartActions=actions~=nil,cartInjury=injury~=nil})
    emit({event='complete',expected=1,performed=1,skipped=0,failed=0});done=true
   end
  end)

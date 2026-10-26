@@ -1330,6 +1330,8 @@ internal object CartTransition {
                 else CartShopping.align(held, model, state.cart.worldScale, delta))
             )
                 continue
+            if (profile == null && !CartGrip.shoppingStance(dataSlot, instance.parent, held))
+                continue
             if (state.placement == null)
                 state.placement = dropPlacement(dataSlot, held, model, state.item)
             if (state.placement == null) continue

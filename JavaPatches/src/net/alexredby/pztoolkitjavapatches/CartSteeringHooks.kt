@@ -259,7 +259,8 @@ internal object CartSteeringHooks {
                 owner.setVariable("ToolkitCartWoodBrake", false)
                 owner.setVariable("ToolkitCartBrakeSprint", false)
             } else if (
-                wasMoving &&
+                CartInjury.amount(owner.getVariableFloat("WalkInjury", 0f)) == 0f &&
+                    wasMoving &&
                     (state.fastMoving || state.sprintMomentum) &&
                     state.reversal.direction > 0 &&
                     !state.reversal.active &&
@@ -461,14 +462,73 @@ internal object CartSteeringHooks {
                             clearanceLean(player).toFloat(),
                             CartLegPace.woodenGaitShift(player),
                         )
+            "SaucedCarts.ShoppingCart" ->
+                CartShopping.axle(
+                    player.getPrimaryHandItem().worldScale,
+                    CartShoppingStance.shift(player),
+                )
             else -> 0.0
         }
 
-    @JvmStatic
-    private fun pivotAxle(player: IsoPlayer): Double {
-        val axle = axle(player)
-        return if (axle > 0) axle else CartSteeringMath.AXLE_DISTANCE
+    private fun stationaryStep(player: IsoPlayer, state: State, distance: Double, dt: Double) {
+        val target = if (state.stationary) state.target else state.heading
+        if (CartShopping.item(state.cart))
+            CartSteeringMath.shoppingStationaryStep(
+                state.heading,
+                target,
+                distance,
+                dt,
+                state.load,
+                axle(player),
+                state.stationaryRate,
+                state.requested,
+            )
+        else
+            CartSteeringMath.stationaryStep(
+                state.heading,
+                target,
+                distance,
+                dt,
+                state.load,
+                axle(player),
+                state.stationaryRate,
+                state.requested,
+            )
     }
+
+    private fun rollingStep(
+        player: IsoPlayer,
+        heading: Double,
+        target: Double,
+        distance: Double,
+        seconds: Double,
+        load: Double,
+        reverse: Boolean,
+        result: CartSteeringMath.Step,
+    ): CartSteeringMath.Step =
+        if (wheelbarrow(player))
+            CartSteeringMath.step(
+                heading,
+                target,
+                distance,
+                seconds,
+                load,
+                axle(player),
+                52.0,
+                reverse,
+                result,
+            )
+        else
+            CartSteeringMath.shoppingStep(
+                heading,
+                target,
+                distance,
+                seconds,
+                load,
+                axle(player),
+                reverse,
+                result,
+            )
 
     @JvmStatic
     private fun load(player: IsoPlayer): Double {
@@ -649,19 +709,20 @@ internal object CartSteeringHooks {
             else if (state.wantsMove) state.target
             else state.heading + (if (state.reversal.direction < 0) Math.PI else 0.0)
         if (state.stationaryRoot) {
-            CartSteeringMath.stationaryStep(
-                state.heading,
-                if (state.stationary) state.target else state.heading,
-                distance,
-                dt,
-                state.load,
-                pivotAxle(owner),
-                state.stationaryRate,
-                state.requested,
-            )
-            // Retain planned cadence across sub-ULP coordinates; only accepted movement changes
-            // heading.
-            state.stationaryRate = if (dt > 0) state.requested.turn() / dt else 0.0
+            stationaryStep(owner, state, distance, dt)
+            // A short extracted stride must not restart the shopping turn's acceleration.
+            // Heading still advances only by collision-accepted native root movement.
+            state.stationaryRate =
+                if (CartShopping.item(state.cart))
+                    CartSteeringMath.stationaryRate(
+                        state.heading,
+                        if (state.stationary) state.target else state.heading,
+                        dt,
+                        state.load,
+                        state.stationaryRate,
+                        true,
+                    )
+                else if (dt > 0) state.requested.turn() / dt else 0.0
         } else if (wooden(owner))
             CartSteeringMath.woodenStep(
                 state.heading,
@@ -676,14 +737,13 @@ internal object CartSteeringHooks {
                 state.requested,
             )
         else
-            CartSteeringMath.step(
+            rollingStep(
+                owner,
                 state.heading,
                 if (state.relative || state.moving) state.target else state.heading,
                 distance,
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate().toDouble(),
                 state.load,
-                axle(owner),
-                52.0,
                 if (state.relative) state.reversal.direction < 0
                 else state.moving && CartSteeringMath.reversing(state.heading, state.target),
                 state.requested,
@@ -1013,6 +1073,15 @@ internal object CartSteeringHooks {
             return
         }
         var state = state(player)
+        if (CartInjury.amount(player.getVariableFloat("WalkInjury", 0f)) > 0f && state.braking) {
+            CartLegPace.cancelBrake(player, true)
+            state.braking = false
+            state.brakeLimit = 0.0
+            state.sprintMomentum = false
+            state.momentumSprint = false
+            player.setVariable("ToolkitCartWoodBrake", false)
+            player.setVariable("ToolkitCartBrakeSprint", false)
+        }
         state.visualSpeed = -1f
         if (state.path) {
             player.setVariable("ToolkitCartBrace", false)
@@ -1031,7 +1100,10 @@ internal object CartSteeringHooks {
         // release.
         state.fastMoving = player.isRunning() || player.isSprinting()
         state.sprintMoving = player.isSprinting()
-        val sprintRequested = state.sprintRequested
+        val sprintRequested =
+            state.sprintRequested &&
+                (CartInjury.amount(player.getVariableFloat("WalkInjury", 0f)) == 0f ||
+                    player.isSprinting())
         state.sprintRequested = false
         state.load = load(player)
         var actualX = 0.0
@@ -1279,14 +1351,13 @@ internal object CartSteeringHooks {
                     state.requested,
                 )
             else
-                CartSteeringMath.step(
+                rollingStep(
+                    player,
                     state.heading,
                     state.target,
                     .03,
                     1.0 / 60,
                     state.load,
-                    axle(player),
-                    52.0,
                     if (state.relative) state.reversal.direction < 0
                     else CartSteeringMath.reversing(state.heading, state.target),
                     state.requested,
@@ -1297,16 +1368,7 @@ internal object CartSteeringHooks {
         }
         if (state.stationaryRoot) {
             // Keep the full native stride; idle blending shortens it into rapid shuffling.
-            CartSteeringMath.stationaryStep(
-                state.heading,
-                if (state.stationary) state.target else state.heading,
-                1.0,
-                dt,
-                state.load,
-                pivotAxle(player),
-                state.stationaryRate,
-                state.requested,
-            )
+            stationaryStep(player, state, 1.0, dt)
             player.setVariable(
                 "ToolkitCartStepX",
                 if (state.moving && state.stationary)
@@ -1324,7 +1386,11 @@ internal object CartSteeringHooks {
             val pace =
                 if (player.isRunning() || player.isSprinting()) 1.0
                 else
-                    Math.max(0f, Math.min(1f, player.getVariableFloat("WalkSpeed", .8f))).toDouble()
+                    CartInjury.walkMagnitude(
+                            player,
+                            Math.max(0f, Math.min(1f, player.getVariableFloat("WalkSpeed", .8f))),
+                        )
+                        .toDouble()
             player.setVariable(
                 "ToolkitCartStepX",
                 (pace * (-actualX * sin + actualY * cos) / length).toFloat(),
@@ -1337,7 +1403,13 @@ internal object CartSteeringHooks {
         var stepX = player.getVariableFloat("ToolkitCartStepX", 0f)
         var stepY = player.getVariableFloat("ToolkitCartStepY", 0f)
         var target =
-            if (wooden(player)) CartLegPace.targetSpeed(player, stepX, stepY) else Float.NaN
+            if (
+                wooden(player) ||
+                    state.stationaryRoot && CartShopping.item(state.cart) ||
+                    CartInjury.blend(player, CartLegPace.pivotNode(player)) != null
+            )
+                CartLegPace.targetSpeed(player, stepX, stepY)
+            else Float.NaN
         // Keep the requested native speed above independent of the visual picker direction.
         // Publish that same effective field to the native animator, cadence solve and Host peers.
         val gait =
@@ -1379,7 +1451,11 @@ internal object CartSteeringHooks {
         target *= wallScale
         if (state.stationaryRoot) {
             // Cargo slows the full stride's cadence instead of reducing its spatial amplitude.
-            target *= Math.max(0f, Math.min(1f, player.getVariableFloat("WalkSpeed", .8f)))
+            target *=
+                CartInjury.walkMagnitude(
+                    player,
+                    Math.max(0f, Math.min(1f, player.getVariableFloat("WalkSpeed", .8f))),
+                )
             state.sprintMomentum = false
             if (target.isFinite()) {
                 // Feed next frame's native cadence, rather than moving planted feet with a
@@ -1510,14 +1586,17 @@ internal object CartSteeringHooks {
     /** Native animation updates can enter a protected state after the heading entry hook. */
     @JvmStatic
     fun finish(character: IsoGameCharacter?) {
-        if (character is IsoPlayer && states.containsKey(character) && !enabled(character))
-            reset(character)
+        if (character is IsoPlayer) {
+            if (states.containsKey(character) && !enabled(character)) reset(character)
+            CartShoppingTurn.update(character)
+        }
     }
 
     /** Death/menu cleanup discards pending state and releases only our own variables. */
     @JvmStatic
     fun reset(player: IsoPlayer?) {
         CartMotionSync.reset(player)
+        CartShoppingTurn.reset(player)
         CartLegPace.cancelBrake(player, true)
         states.remove(player)
         val owner = player ?: throw NullPointerException()

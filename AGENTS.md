@@ -24,3 +24,11 @@ Use the [development guide](docs/DEVELOPMENT.md#checks-and-packaging) for test s
 ## macOS native-test launch
 
 Use the common runner's default `auto` desktop policy; do not select a strategy based on screen lock or ask the user to wake the screen. Run the GUI command outside the sandbox in the logged-in macOS session. An unavailable CoreGraphics probe means GUI access is unknown, not that the display needs waking. Automatic routing isolates owned windows through AeroSpace, permits the guarded fallback only with confirmed physical-display sleep, and recovers discoverable fallback windows into the test workspace. Explicit `--desktop-mode aerospace` requires placement; legacy `current` retains the guarded automatic policy. Never change the user's display state, workspace or focus to enable a test. Prepare a fresh snapshot when the runner requests one; do not bypass its input or PID/window guards. See [desktop launch](tests/native_queue/README.md#desktop-launch) for the command and validation limits.
+
+## Process friction
+
+Record process friction encountered during the current task in the root `TODO.md` as soon as it appears. This includes tool failures, unexpected errors in logs, awkward or slow setup, repetitive manual work, missing diagnostics, and a need for supporting scripts or tools outside the task's scope.
+
+Before adding an item, check `TODO.md` for the same underlying problem, including differently worded entries. Add useful new context to an existing item instead of creating a duplicate. Keep the item concise and actionable: describe the observed problem, its impact, available evidence (such as a command, error, log or file path), and the next step or completion condition. Distinguish observations from suspected causes; a full investigation is not required before recording the issue.
+
+After recording it, continue the current task. A TODO entry does not expand the task's scope or authorize unrelated tooling work. If the problem blocks progress, report the blocker and handle what is necessary to proceed within the existing authorization.

@@ -359,7 +359,16 @@ object CartFootprintTest {
                 ),
                 "invalid accepted distance cannot invent contact effort",
             )
-            val tiny = CartSteeringMath.step(0.0, 0.0, Math.ulp(x).toDouble(), 1.0 / 60, 0.0)
+            val tiny =
+                CartSteeringMath.step(
+                    0.0,
+                    0.0,
+                    Math.ulp(x).toDouble(),
+                    1.0 / 60,
+                    0.0,
+                    1.0,
+                    CartSteeringMath.Step(),
+                )
             check(
                 !CartSteeringHooks.blockedStep(tiny, x, y, 0.0),
                 "cosmetic contact tolerance must not redefine an accepted one-ULP physical step as blocked",

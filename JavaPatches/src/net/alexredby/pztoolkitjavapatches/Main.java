@@ -28,6 +28,98 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.network.packets.INetworkPacket", methodName="send", warmUp=true, strictMatch=true)
+    public static class VehicleInventorySend {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.Argument(0) IConnection connection,
+                @Patch.Argument(1) zombie.network.PacketTypes.PacketType type,
+                @Patch.Argument(2) Object[] values,
+                @Patch.Local("toolkitVehicleInventory") VehicleInventoryOrdering.Scope scope) {
+            scope = VehicleInventoryOrdering.begin(connection, type, values, VehicleInventoryOrdering.SUPPORTED);
+            return scope.coalesce;
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("toolkitVehicleInventory") VehicleInventoryOrdering.Scope scope,
+                @Patch.Thrown Throwable failure) {
+            VehicleInventoryOrdering.end(scope, failure);
+        }
+    }
+
+    @Patch(className="zombie.core.raknet.UdpConnection", methodName="endPacket", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryChannel {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This UdpConnection connection, @Patch.Argument(0) int priority,
+                @Patch.Argument(1) int reliability, @Patch.Argument(value=2, readOnly=false) byte ordering,
+                @Patch.Local("toolkitWrittenInventory") VehicleInventoryOrdering.Scope scope) {
+            scope = VehicleInventoryOrdering.written(connection, VehicleInventoryOrdering.SUPPORTED);
+            ordering = VehicleInventoryOrdering.ordering(connection, reliability, ordering);
+            return scope != null && scope.coalesce;
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Argument(0) int priority, @Patch.Argument(1) int reliability,
+                @Patch.Argument(2) byte ordering,
+                @Patch.Local("toolkitWrittenInventory") VehicleInventoryOrdering.Scope scope,
+                @Patch.Thrown Throwable failure) {
+            VehicleInventoryOrdering.end(scope, failure);
+        }
+    }
+
+    @Patch(className="zombie.network.packets.vehicle.VehicleFullUpdatePacket", methodName="write", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryFullWrite {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer) { VehicleInventoryOrdering.writing(true, null); }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer, @Patch.Thrown Throwable failure) { VehicleInventoryOrdering.writing(false, failure); }
+    }
+
+    @Patch(className="zombie.network.fields.vehicle.VehicleAuthorization", methodName="write", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryFullAuthorization {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer) {
+            VehicleInventoryOrdering.authorization(writer, false, null);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer, @Patch.Thrown Throwable failure) {
+            VehicleInventoryOrdering.authorization(writer, true, failure);
+        }
+    }
+
+    @Patch(className="zombie.network.fields.vehicle.VehiclePassengers", methodName="write", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryFullTail {
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Argument(0) zombie.core.network.ByteBufferWriter writer, @Patch.Thrown Throwable failure) { VehicleInventoryOrdering.passengersWritten(failure); }
+    }
+
+    @Patch(className="zombie.core.raknet.RakNetPeerInterface", methodName="Send", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryTransport {
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.This zombie.core.raknet.RakNetPeerInterface peer,
+                @Patch.Argument(0) java.nio.ByteBuffer bytes, @Patch.Argument(1) int priority,
+                @Patch.Argument(2) int reliability, @Patch.Argument(3) byte ordering,
+                @Patch.Argument(4) long guid, @Patch.Argument(5) boolean broadcast,
+                @Patch.Return int result, @Patch.Thrown Throwable failure) {
+            VehicleInventoryOrdering.sent(peer, bytes, guid, broadcast, result, failure);
+        }
+    }
+
+    @Patch(className="zombie.vehicles.VehicleManager", methodName="sendVehicles", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryFullRetry {
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Argument(0) UdpConnection connection) { VehicleInventoryOrdering.retry(connection); }
+    }
+
+    @Patch(className="zombie.core.raknet.UdpEngine", methodName="removeConnection", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryDisconnect {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) long guid) { VehicleInventoryOrdering.disconnected(guid); }
+    }
+
+    @Patch(className="zombie.vehicles.VehicleManager", methodName="unregisterVehicle", warmUp=true, strictMatch=true)
+    public static class VehicleInventoryDelete {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.vehicles.BaseVehicle car) { VehicleInventoryOrdering.deleted(car); }
+    }
+
     // Fail closed after an engine update. Hash original class resources, not transformed bytecode.
     public static final boolean ZOMBIE_SUPPORTED = MainPolicy.zombieSupported();
     public static final boolean VEHICLE_OWNERSHIP_SUPPORTED = MainPolicy.vehicleOwnershipSupported();
@@ -42,6 +134,8 @@ public final class Main {
     public static final boolean BUILD_SUPPORTED = MainPolicy.buildSupported();
 
     public static final boolean CART_SUPPORTED = MainPolicy.cartSupported();
+
+    public static final boolean CART_INJURY_SUPPORTED = MainPolicy.cartInjurySupported();
 
     public static final boolean CART_SYNC_SUPPORTED = MainPolicy.cartSyncSupported();
 
@@ -62,6 +156,14 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.core.skinnedmodel.model.jassimp.ImportedSkeleton", methodName="process", warmUp=true, strictMatch=true)
+    public static class DamnLibraryAnimationInput {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.core.skinnedmodel.model.jassimp.ImportedSkeletonParams params) {
+            DamnLibraryAnimationBindings.prepare(params);
+        }
+    }
+
     public static void main(String[] args) throws ClassNotFoundException {
         MainSupport.startup();
     }
@@ -75,17 +177,40 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="start", warmUp=true, strictMatch=true)
+    public static class RemoteActionStarted {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action) {
+            ActionCompletion.nativeStarted(action, Main.COMPLETION_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="update", warmUp=true, strictMatch=true)
+    public static class RemoteActionUpdate {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action) {
+            return ActionCompletion.skipNativeUpdate(action, Main.COMPLETION_SUPPORTED);
+        }
+    }
+
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="perform", warmUp=true, strictMatch=true)
     public static class ActionPerformed {
         @Patch.OnEnter
         public static void enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
                 @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope) {
             scope = MainSupport.beginPerformed(action);
+            if (scope == null && ActionCompletion.needsNativeWaitObservation(action, Main.COMPLETION_SUPPORTED))
+                scope = ActionCompletion.observeOnly(action, "perform");
+            ActionCompletion.captureNativePerform(action, scope);
         }
         @Patch.OnExit(onThrowable=Throwable.class)
         public static void exit(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
                 @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
-            MainSupport.performed(action, scope, failure);
+            try {
+                MainSupport.performed(action, scope, failure);
+            } finally {
+                ActionCompletion.nativePerformed(action, scope, failure);
+            }
         }
     }
 
@@ -323,6 +448,15 @@ public final class Main {
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
             @Patch.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
             MainSupport.bindCartSlot(slot, source);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="init", strictMatch=true)
+    public static class VehicleTransitionSlot {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
+            @Patch.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
+            VehicleTransitionRender.capture(slot, source, VehicleTransitionRender.SUPPORTED);
         }
     }
 

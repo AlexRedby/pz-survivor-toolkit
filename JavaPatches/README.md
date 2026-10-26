@@ -23,39 +23,27 @@ Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build a
 
 ## Server loader
 
-Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS, workstation crafting and vehicle ownership patches are active.
+Host starts a separate Java process. Java Patches **0.1.58+** automatically supplies ZombieBuddy to that native child when it is missing, including soft resets. Install and enable the Java mod in the client as well as the Host profile, then launch normally through Steam. No special Host launcher, system-wide environment variable or diagnostic startup flag is needed. The normal one-time client ZombieBuddy installation is still required.
 
-### Steam launch and the Host launcher
+### Steam launch and automatic Host loading
 
-Steam's **Play** button starts the client; choosing **Host** then starts a separate server JVM. The client's JVM arguments, including a ZombieBuddy argument in Steam launch options or the client JSON, are not automatically copied to that server. The client can therefore show **ZombieBuddy ... loaded** while the Host server has no Java patches or vehicle recording support.
+Steam's **Play** button starts the client; choosing **Host** then starts a separate server JVM. The INI selects the server's mods, while the one-time client loader installation and saved JAR approvals allow the Java patches to execute. With Java Patches **0.1.58+** enabled in the client, Toolkit automatically supplies ZombieBuddy to the Host child. Use the normal Steam launch after completing the setup below; the supplied scripts remain optional legacy fallbacks.
 
-The prepared Host launcher explicitly supplies the loader to the child through `JDK_JAVA_OPTIONS`, as well as loading it in the client. Steam must remain running, and you still choose your existing profile in **Host**. If another launch route already loads the matching patches in both processes, it can provide the same result; confirm this with the [server activation checks](#verify-activation). The diagnostic checkboxes control recording after loading; they cannot install the loader into an already running server.
+The diagnostics window provides an in-game activation check: a confirmed server recording state and its file path come from the server's Java bridge. A missing bridge reports that diagnostics are unavailable; a timeout means the server did not reply. The recording checkboxes work after the patches have loaded and need no diagnostic JVM flags. A vehicle desync alone does not establish that the JAR failed to load.
 
 ### Host: save approvals first
 
 1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install both prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407), [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) and [Animated Vehicle Parts Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3802266453) as well as ZombieBuddy so all selected Java mods are available before the first Host launch.
 2. In the client's **Mods** menu enable **ZombieBuddy**, **Peek a View**, **MP Vanilla Animal Trailer Sync Fix**, **Animated Vehicle Parts Fix** and **Toolkit Java Patches (Experimental)**. Restart when asked, then approve **PeekAView**, **PZToolkitJavaPatches**, **AnimalTrailerSyncMPFix** and **AnimatedVehiclePartsFix** when prompted, choosing to **save each decision**. Do this before opening Host, and repeat when a changed JAR prompts again.
-3. Close the game, leave Steam running, and launch using the appropriate command below. Then choose the configured profile in **Host**.
+3. Restart the game normally through Steam, then choose the configured profile in **Host**. Check both client and server activation below. The client startup line must include `hostLoader=true`; when a loader was missing from the native child command, the client logs `Host loader supplied to native server launch`.
 
 Saved approvals are tied to JAR content. Under normal same-account defaults, the client and Host server share `~/.zombie_buddy/mod_approvals.json` (`%USERPROFILE%\.zombie_buddy\mod_approvals.json` on Windows). Session-only approvals do not carry into the child process, whose console prompt is not exposed reliably by the Host UI. If you configure a separate ZombieBuddy `config_dir`, both processes must use the intended saved approvals.
 
-**Windows:** from the prepared `dist/SurvivorQoL` folder, using your actual game directory:
+The hook changes only the reviewed B42.21 Host child's JVM command, retaining native arguments, working directory and environment. It uses the running client's ZombieBuddy JAR, approval directory and loader policy; it does not approve changed/unknown JARs. Explicit or inherited ZombieBuddy loaders are retained without adding another one. Duplicate loaders or unrepresentable approval-directory options stop the launch with an error rather than silently weakening policy. Unknown/changed native launch bytecode disables the hook and reports `hostLoader=false`.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start-host.ps1 -Game "D:\SteamLibrary\steamapps\common\ProjectZomboid"
-```
+Verified in an isolated Windows B42.21 one-client Host startup with only the client explicitly given an agent and no inherited JVM loader environment. The server loaded the ordinary patch mod and the player connected with clean runtime logs. This is startup verification, not full-pack gameplay or native macOS/Linux qualification.
 
-`zbNative.dll` and `ZombieBuddy.jar` must already exist there after official loader setup. The launcher checks existing game JSON loader arguments to avoid adding a second copy, then passes the loader to Host through the child process environment.
-
-**macOS:** double-click the prepared `start-host.command`. For a non-default Steam library, run it from Terminal with the full game Java directory:
-
-```sh
-./start-host.command "/path/to/Project Zomboid.app/Contents/Java"
-```
-
-The launcher uses the game's bundled Apple Silicon or Intel runtime and passes one Java agent to the game and Host child. It bypasses the normal application launcher's JVM/Steam options. Both launchers leave system-wide environment variables and the Steam process untouched, and reject an existing ZombieBuddy agent in JVM environment options to prevent double loading.
-
-**Linux Host:** a supplied Host launcher has not been validated for Linux. The child must inherit the loader, for example through `JDK_JAVA_OPTIONS` on a direct bundled-Java launch, with no second loader in the client JVM arguments. Use a dedicated server below if you cannot verify both processes. Do not assume client-only Steam options patch Host.
+The supplied `start-host.ps1` and `start-host.command` are **legacy fallbacks**, not the normal launch instructions. Existing installations using them remain compatible; their inherited loader is detected. Their temporary retention/removal condition is recorded in [TODO](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/TODO.md#legacy-host-launchers). Dedicated-server startup remains separate below. Platform gameplay verification limits are recorded there too.
 
 ### Dedicated server
 
@@ -88,7 +76,7 @@ Install the same updated Java mod on the server and clients, save the changed JA
 
 **The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. The two recording controls require Toolkit 0.1.254 or newer and Java Patches 0.1.53 or newer, with matching prepared mods on every side. After the normal update/restart and saved JAR approvals:
 
-1. The Host owner launches with the [prepared Host launcher](#host-save-approvals-first), or another route verified to load the patches in both processes, and starts the usual Host profile.
+1. The Host owner completes the [Host setup](#host-save-approvals-first), launches normally through Steam with Java Patches 0.1.58+ enabled in the client, and starts the usual Host profile. Toolkit supplies the child server's loader automatically.
 2. Before driving, the Host owner opens **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics**, then enables **Record traces on this client** and **Record traces on the Host server**. Wait for **Recording is active** for both sides. The server checkbox waits for a reply; a timeout means its state is unknown, not that recording is off or confirmed active.
 3. Each other affected player opens the same window and enables **Record traces on this client**. The Host owner controls only their own client and the server; guests enable their own local recording. Only the actual Host owner's connection can control the server.
 4. Close the window and play until the problem occurs. Note the incident time, driver, observers and what each player saw. Then stop both recordings on the Host and local recording on the affected clients.

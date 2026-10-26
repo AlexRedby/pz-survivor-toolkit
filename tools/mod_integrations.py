@@ -100,10 +100,13 @@ INTEGRATIONS = {
         'tests': {'test_medicine_moodles.lua': (Source('NativeMedicineFrameworkSource', 'MF_ISMoodle.lua'),)},
     },
     'MPFastForward': {
-        'owners': ['server/000ToolkitMPFFCompatibility.lua'],
+        'owners': ['server/000ToolkitMPFFCompatibility.lua', 'client/PZSurvivorToolkit/AlarmClock.lua'],
         'option': 'mpff_source', 'root': 'media/lua',
         'tests': {'test_mpff_compat.lua': (Source('NativeMPFFConfigSource', 'shared/MPFastForward_Config.lua'),
-                                          Source('NativeMPFFServerSource', 'server/MPFastForward_Server.lua'))},
+                                          Source('NativeMPFFServerSource', 'server/MPFastForward_Server.lua')),
+                  'test_alarm_clock.lua': (Source('NativeMPFFConfigSource', 'shared/MPFastForward_Config.lua'),
+                                           Source('NativeMPFFClientSource', 'client/MPFastForward_Client.lua'),
+                                           Source('NativeMPFFPanelSource', 'client/ui/MPFF_Panel.lua'))},
     },
     'EURY_CONTAINERS': {
         'owners': ['client/000ToolkitBCCompatibility.lua', 'client/000ToolkitBCSmartDepositCompatibility.lua',

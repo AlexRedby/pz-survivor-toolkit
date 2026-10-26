@@ -5,7 +5,7 @@ local T=PZSurvivorToolkit;local native=config.mode=='native'
 local phase,index,since='prepare',1,0
 local entered,ready,done=false,false,false
 local state,ids,baseline,checkpoint,final,records,byAction,cancelEvidence,tailSnapshot,quiet,tail,body,prep
-local bodyTerminal
+local bodyTerminal,idleEvidence
 local resolveLast,resolveSeen=nil,{}
 local authorityStart,baselineRequested
 local serial=0;local tokenSerial=0;local tokenIds={};local classes={};local completedStates={}
@@ -90,9 +90,13 @@ local function duration(action,row)
  elseif not action.action then row.durationBefore=action:adjustMaxTime(row.duration)
  elseif not row.effectiveDuration then
   local after=action:adjustMaxTime(row.duration);local before=row.durationBefore
-  assert(before>1 and after>1 and math.abs(before-after)<=math.max(.001,row.duration*.00001),'native duration bracket changed')
-  assert(action.maxTime>=math.min(before,after)-.001 and action.maxTime<=math.max(before,after)+.001,'native duration allocation differs')
+  -- Native create samples live mood/temperature once. Its thermal modifier may
+  -- change between our adjacent samples; verify the actual allocation against
+  -- that real bracket rather than impose a non-native drift limit.
   row.durationAfter=after;row.effectiveDuration=action.maxTime
+  assert(type(before)=='number'and type(after)=='number'and before>1 and after>1
+   and before<math.huge and after<math.huge,'native duration bracket invalid')
+  assert(action.maxTime>=math.min(before,after)-.001 and action.maxTime<=math.max(before,after)+.001,'native duration allocation differs')
  else assert(math.abs(action.maxTime-row.effectiveDuration)<.001,'allocated native duration changed')end
 end
 local function observe()
@@ -100,6 +104,7 @@ local function observe()
  for _,action in ipairs(queue().queue)do local row=register(action);if row then duration(action,row)end end
  local action=queue().current;local row=register(action)
  if row and action.action and action:isStarted()then
+  if row.started then assert(tostring(action.action)==row.nativeRef,'native action instance changed while running')end
   if not row.started then
    row.started=true;row.startedAt=now();row.nativeRef=tostring(action.action)
    if action==tail then
@@ -155,6 +160,7 @@ Events.OnServerCommand.Add(function(module,command,args)
 end)
 local function enqueue()
  records,byAction,cancelEvidence,tailSnapshot,completedStates={}, {},nil,nil,{}
+ state.keepReturn=case()=='p4-keep-return'and not native
  baseline=snapshot();assert(authorityStart and not F.baselineDifference(state,baseline),'exact local/authority baseline required');raw('BASELINE',baseline)
  assert(not state.player:isTimedActionInstant(),'native actions must keep their duration')
  local run=T.ActionQueueOperations.run
@@ -181,6 +187,80 @@ local function preparationPaid()
  if state.mask then return not state.player:isEquippedClothing(state.mask)end
  return row.transactionDone and not row.transactionRejected and state.borrowed:getContainer()==state.player:getInventory()
 end
+-- Exercise the real Panel projection, hit test and press/release handlers.
+-- Coordinates belong to an isolated real widget; no physical input is issued.
+local function panelCancel(action,whole)
+ local panel=T.ActionQueuePanel:new(80,80,420,600)
+ panel.queue,panel.playerNum=queue(),state.player:getPlayerNum();panel:initialise();panel:addToUIManager();panel:update()
+ local list=panel.list;list:setYScroll(0)
+ assert(not list:isVScrollBarVisible(),'fixture panel must fit its complete operation without a physical scrollbar hit')
+ local function target(header)
+  for _,row in ipairs(list.items)do
+   if row.operation==action.toolkitQueueOperation and (row.header==true)==header and(header or row.item==action)then return row end
+  end
+ end
+ local header=assert(target(true),'real operation header missing')
+ if not whole then
+  local y=list:topOfItem(header.index)+header.height/2
+  assert(list:rowUnderMouse(10,y)==header,'real expand hit test differs')
+  assert(list:onMouseDown(10,y)and list.pressedToggle==header.operation,'real expand press was not captured')
+  assert(list:onMouseUp(10,y)and panel.expanded[header.operation],'real expand release did not expose children')
+ end
+ local row=assert(target(whole),'real cancel target missing');local x,y=list:cancelX()+12,list:topOfItem(row.index)+row.height/2
+ assert(list:rowUnderMouse(x,y)==row,'real cancel hit test differs')
+ local preview=T.ActionQueuePolicy.previewCancel(queue(),row.item,whole)
+ if preview.reason~=nil then
+  local selected=row.item;local q=queue()
+  local function read(callback)local ok,value=pcall(callback);return ok and value or false end
+  local function scalar(value)
+   local kind=type(value)
+   if kind=='string'or kind=='boolean'or kind=='number'and value==value and math.abs(value)<math.huge then return value end
+   return false
+  end
+  local inventory=read(function()return selected.character:getInventory()end)
+  local live=read(function()return inventory:getItemById(selected.item:getID())end)
+  local function item(value)
+   if not value then return false end
+   return{ref=tostring(value),id=read(function()return value:getID()end),fullType=read(function()return value:getFullType()end),
+    container=read(function()return tostring(value:getContainer())end),inRoot=read(function()return value:getContainer()==inventory end)}
+  end
+  local contract=read(function()return T.ActionQueuePolicy.inspect(selected)end)
+  local statusOK,status,reason,details=pcall(function()return T.ActionQueueTidyIntent.status(selected)end)
+  local intrinsicOK,intrinsic,intrinsicReason=pcall(function()return T.ActionQueueSettlement.canWaivePendingReturn(selected,function()return true end)end)
+  local group=selected.queueList and selected.queueList[1];local member=group and group.items and group.items[1]
+  raw('CANCEL_DENIED',{at=now(),reason=preview.reason,header=whole,actionRef=byAction[selected].actionRef,type=selected.Type,
+   contract={cancelOperation=contract and scalar(contract.cancelOperation)or false,cancelWaiting=contract and scalar(contract.cancelWaiting)or false,
+    callbacksSafe=contract and scalar(contract.callbacksSafe)or false,provider=contract and scalar(contract.provider)or false},
+   matchesNative=read(function()return T.ActionQueuePolicy.matchesNative(selected)==true end),
+   intrinsicWaiver=intrinsicOK and intrinsic==true,intrinsicReason=intrinsicOK and scalar(intrinsicReason)or tostring(intrinsic),
+   tidy={statusOK=statusOK,status=scalar(status),reason=scalar(reason),details=scalar(details),
+    canKeepReturn=read(function()return T.ActionQueueTidyIntent.canKeepReturn(selected)==true end)},
+   actionItem=item(selected.item),liveItem=item(live),liveEqualsAction=live~=false and live==selected.item,
+   returnDestinationMatchesPickup=prep~=nil and selected.destContainer==prep.srcContainer,
+   group1=item(member),group1EqualsAction=member~=nil and member==selected.item,groups=selected.queueList and #selected.queueList or false,
+   operationState=read(function()return T.ActionQueueSettlement.operationState(selected)end),
+   started=selected.started==true,hasNative=selected.action~=nil,nativeRef=selected.action and tostring(selected.action)or false,
+   current=selected==q.current,first=selected==q.queue[1],generation=q.toolkitOperationGeneration or 0,
+   currentType=q.current and q.current.Type or false,currentNative=q.current and q.current.action~=nil or false,
+   stopPending=q.toolkitCancel~=nil,groupStopPending=q.toolkitGroupCancel~=nil})
+ end
+ assert(preview.reason==nil,'real cancel preview denied '..tostring(preview.reason))
+ local beforeBody=queue().current;local beforeNative=beforeBody and beforeBody.action
+ local evidence={source='ActionQueuePanel.List',input='programmatic-press-release',header=whole,target=byAction[row.item].sequence,
+  actionRef=byAction[row.item].actionRef,item=itemID(row.item),previewAllowed=preview.reason==nil,x=x,y=y,at=now()}
+ evidence.pressed=list:onMouseDown(x,y)==true
+ evidence.pressCaptured=whole and list.pressedOperation and list.pressedOperation.item==row.item or not whole and list.pressedCancel==row.item
+ assert(evidence.pressed and evidence.pressCaptured,'real cancel press did not capture its exact target')
+ evidence.released=list:onMouseUp(x,y)==true;evidence.feedback=list.cancelFeedback and list.cancelFeedback.text or false
+ evidence.gestureCleared=not list.pressedOperation and not list.pressedCancel
+ evidence.bodyCurrent=queue().current==beforeBody and queue().current.action==beforeNative
+ evidence.returnAbsent=not whole and queue():indexOf(action)==-1 or false
+ evidence.bodyRef=beforeBody and byAction[beforeBody].actionRef or false;evidence.nativeRef=beforeNative and tostring(beforeNative)or false
+ assert(evidence.released and evidence.gestureCleared and not evidence.feedback,'real cancel release rejected')
+ if not whole then assert(evidence.bodyCurrent and evidence.returnAbsent,'return click stopped reading or retained the native return')end
+ panel:removeFromUIManager()
+ return evidence
+end
 local function cancelAtBoundary()
  if cancelEvidence or not prep or not body or not preparationPaid()then return end
  local current=queue().current;local currentRow=byAction[current]
@@ -204,17 +284,30 @@ local function cancelAtBoundary()
   cancelEvidence.operationState=operation
  end
  if not native then
-  local decision=T.ActionQueuePolicy.evaluateCancel(queue(),current,true)
-  cancelEvidence.allowed=decision.allowed;cancelEvidence.reason=decision.reason or false
-  assert(decision.allowed,'completed native preparation cancellation denied '..tostring(decision.reason))
-  assert(T.ActionQueue.cancelOperation(queue(),current),'public operation cancellation rejected')
+  if state.borrowed then
+   local whole=not state.keepReturn;local target=current
+   if not whole then
+    for _,action in ipairs(queue().queue)do
+     if classify(action)=='cleanup'and action.toolkitQueueOperation==body.toolkitQueueOperation then
+      assert(target==current,'ambiguous pending borrowed return');target=action
+     end
+    end
+    assert(target~=current,'pending borrowed return missing')
+   end
+   cancelEvidence.ui=panelCancel(target,whole);cancelEvidence.allowed=true;cancelEvidence.reason=false
+  else
+   local decision=T.ActionQueuePolicy.evaluateCancel(queue(),current,true)
+   cancelEvidence.allowed=decision.allowed;cancelEvidence.reason=decision.reason or false
+   assert(decision.allowed,'completed native preparation cancellation denied '..tostring(decision.reason))
+   assert(T.ActionQueue.cancelOperation(queue(),current),'public operation cancellation rejected')
+  end
   assert(queue():indexOf(tail)~=-1,'operation cancellation removed independent native tail')
  end
  raw('BOUNDARY',cancelEvidence);phase='checkpoint';request('Checkpoint')
 end
 local function finish()
  local actual=snapshot()
- assert(final.case==case()and F.sameItems(baseline.items,actual.items)and F.sameItems(ids.baseline.items,final.items),'cleanup inventory identity/container conservation failed')
+ assert(final.case==case()and F.sameFinalItems(state,baseline.items,actual.items)and F.sameFinalItems(state,ids.baseline.items,final.items),'cleanup inventory identity/container conservation failed')
  assert(F.restored(state,actual)and F.restored(state,final),'exact native cleanup was not restored on both roles')
  assert(actual.book==ids.pages and final.book==ids.pages,'independent native reader did not complete')
  assert(tailSnapshot and cancelEvidence,'native causal boundary/tail evidence missing')
@@ -223,16 +316,16 @@ local function finish()
   -- Active native Eat is finish-step: it may finish its sole paid portion before cleanup.
   assert(math.abs(actual.food.hunger-expected)<.0001 and math.abs(final.food.hunger-expected)<.0001,'native mask meal duplicated, omitted or changed its portion')
  else
-  local expected=native and ids.borrowedPages or cancelEvidence.before.borrowed.pages
-  assert(bodyTerminal and expected==(native and ids.borrowedPages or ids.borrowedInitial),'borrowed native page boundary evidence missing')
+  local expected=(native or state.keepReturn)and ids.borrowedPages or cancelEvidence.before.borrowed.pages
+  assert(bodyTerminal and expected==((native or state.keepReturn)and ids.borrowedPages or ids.borrowedInitial),'borrowed native page boundary evidence missing')
   for _,value in ipairs({actual.borrowed,final.borrowed,bodyTerminal.borrowed})do
    assert(value.pages==expected and value.characterPages==expected and value.total==ids.borrowedPages,'borrowed paid pages rolled back or replayed')
   end
  end
  emit({event='case',id=case(),status='passed',ids=ids,baseline=baseline,authorityBaseline=authorityStart,checkpoint=checkpoint,
-  boundary=cancelEvidence,records=records,bodyTerminal=bodyTerminal or false,tailSnapshot=tailSnapshot,client=actual,server=final,nativeMethodsUnchanged=true,
+  boundary=cancelEvidence,records=records,bodyTerminal=bodyTerminal or false,tailSnapshot=tailSnapshot,idleEvidence=idleEvidence,client=actual,server=final,nativeMethodsUnchanged=true,
   outcome={cleanupRestored=true,tailCompleted=true,authoritative=true,cancelled=not native,normalNativeControl=native,cleanupBeforeTail=F.ownedCleanupBeforeTail(state,tailSnapshot),originalEquipmentBeforeTail=F.restored(state,tailSnapshot)}})
- index=index+1;state=nil;ids=nil;checkpoint=nil;final=nil;tail=nil;body=nil;prep=nil;quiet=nil;bodyTerminal=nil;resolveLast=nil;resolveSeen={};authorityStart=nil;baselineRequested=nil;since=now();phase='prepare'
+ index=index+1;state=nil;ids=nil;checkpoint=nil;final=nil;tail=nil;body=nil;prep=nil;quiet=nil;bodyTerminal=nil;idleEvidence=nil;resolveLast=nil;resolveSeen={};authorityStart=nil;baselineRequested=nil;since=now();phase='prepare'
  if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
 end
 Events.OnGameStart.Add(function()entered=true;since=now()end)
@@ -264,15 +357,19 @@ Events.OnTick.Add(function()
    enqueue()
   elseif phase=='running'then cancelAtBoundary()
   elseif phase=='checkpoint'and checkpoint then phase='drain'
-  elseif phase=='drain'and empty()then
+  elseif phase=='drain'then
+   if not empty()then quiet=nil;return end
    local actual=snapshot()
    if not F.restored(state,actual)or actual.book~=ids.pages then quiet=nil;return end
-   quiet=quiet or now();if now()-quiet>=1500 then phase='verify';request('Verify')end
+   quiet=quiet or now();if now()-quiet>=1500 then
+    idleEvidence={case=case(),since=quiet,at=now(),empty=empty(),snapshot=actual};raw('P4_IDLE',idleEvidence)
+    phase='verify';request('Verify')
+   end
   elseif phase=='verify'and final then finish()end
  end)
  if not ok then
   local diagnostic=state and snapshot()or false
-  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),client=diagnostic,resolve=resolveLast or false,prepared=ids or false,records=records or{}})
+  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),boundary=cancelEvidence or false,client=diagnostic,resolve=resolveLast or false,prepared=ids or false,records=records or{}})
   print('[QUEUE_TEST] FAIL cleanup-cancel '..tostring(problem));done=true
  end
 end)

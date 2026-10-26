@@ -40,6 +40,11 @@ local projectCookActionSources = {
     {"client/Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction.lua", 222676723},
     {"shared/Project_Cook/PJCK_FrozenCooking.lua", 3756381974},
 }
+-- UI transition proof is optional; an updated panel must not disable cooking/return producers.
+local projectCookFirstAdditionSources = {
+    {"client/Project_Cook/EvolvedRecipePanel/PJCK_InputPanel.lua", 3323057587},
+    {"client/Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo.lua", 726762453},
+}
 local sourceFiles = {
     SaucedCartsTransfers = {
         {"shared/SaucedCarts/TimedActions/ISCartTransferAction.lua", 3962234240},
@@ -945,6 +950,7 @@ local function repairTidyFloor(character, callback, ...)
         or ISInventoryPage ~= tidyFloorPage or not tidyFloorGetter
         or tidyFloorPage.GetFloorContainer ~= tidyFloorGetter then return callback(...) end
     local queue = ISTimedActionQueue.getTimedActionQueue(character)
+    local idle = #queue.queue == 0 and not character:hasTimedActions()
     local add, buffered = ISTimedActionQueue.add, {}
     ISTimedActionQueue.add = function(action) buffered[#buffered + 1] = action; return queue end
     local results = pack(pcall(callback, ...))
@@ -962,7 +968,8 @@ local function repairTidyFloor(character, callback, ...)
     if controller then controller.updateOperationState(queue) end
     local inventory = character:getInventory()
     local floor = tidyFloorGetter(character:getPlayerNum())
-    local planned, transfers = {}, {}
+    local planned, transfers, incoming = {}, {}, {}
+    local precedingKnown = true
     local function validTransfer(action, item)
         return action and action.character == character and getmetatable(action) == ISInventoryTransferAction
             and instanceof(action.item, "InventoryItem") and action.item:getID() == item:getID()
@@ -971,7 +978,23 @@ local function repairTidyFloor(character, callback, ...)
             and tidyActionUnchanged(action)
     end
     for _, action in ipairs(buffered) do
-        if action.character == character and getmetatable(action) == P4RestoreFloorAction and tidyActionUnchanged(action) then
+        local class, keep = getmetatable(action), true
+        local known = action.character == character and tidyActionUnchanged(action)
+        if known and class == ISInventoryTransferAction and instanceof(action.item, "InventoryItem")
+            and action.destContainer == inventory and action.srcContainer ~= inventory then
+            incoming[action.item:getID()] = action.item:getFullType()
+        end
+        if idle and precedingKnown and known and class == ISWearClothing and nativeClothingMethods()
+            and instanceof(action.item, "InventoryItem") then
+            local old = action.item
+            local item = inventory:getItemById(old:getID())
+            -- P4 retains its original worn object after native Host placement.
+            -- Native start replaces it by ID and dereferences nil when the bag
+            -- stayed on the ground or another player took it. Leave fresh exact
+            -- replicas to that native resolver, and unknown/incoming work alone.
+            if incoming[old:getID()] ~= old:getFullType() and (not instanceof(item, "InventoryItem")
+                or item:getID() ~= old:getID() or item:getFullType() ~= old:getFullType()) then keep = false end
+        elseif action.character == character and class == P4RestoreFloorAction and tidyActionUnchanged(action) then
             local old = action.item
             local item = instanceof(old, "InventoryItem") and inventory:getItemById(old:getID())
             if item and old ~= item and item:getID() == old:getID() and item:getFullType() == old:getFullType()
@@ -1001,7 +1024,8 @@ local function repairTidyFloor(character, callback, ...)
             and instanceof(action.item, "InventoryItem") and action.srcContainer == inventory and action.destContainer == floor then
             transfers[action.item:getID()] = action
         end
-        planned[#planned + 1] = action
+        if keep then planned[#planned + 1] = action end
+        precedingKnown = precedingKnown and known
     end
     for _, action in ipairs(planned) do add(action) end
     return unpack(results, 2, results.n)
@@ -1117,6 +1141,79 @@ local function loadSource(id, module, eventName)
     end
     if sequenceWait then classes[id][sequenceWait] = snapshot(sequenceWait) end
     return true
+end
+
+local function normalizeCookBase(panel, invalidate)
+    if not ownerUnchanged("Project_Cook") or not instanceUnchanged(panel, PJCK_EvoPanel)
+        or not panel.player or panel.player:isDead() then return end
+    local selected = panel.baseItem
+    if not instanceof(selected, "InventoryItem") then panel._toolkitCookRootCache = nil; return end
+    local root = panel.player:getInventory()
+    local item = root:getItemById(selected:getID())
+    -- Root arrival keeps the object in SP but can replace a floor proxy in Host.
+    -- Resolve only the exact selected ID/type in the actor's actual root; keep the source's
+    -- recipe, return target and replacement bookkeeping.
+    if instanceof(item, "InventoryItem") and item:getID() == selected:getID()
+        and item:getFullType() == selected:getFullType()
+        and item:getContainer() == root and root:contains(item) then
+        local previous = panel._toolkitCookRootCache
+        if item ~= selected or type(previous) ~= "table" or getmetatable(previous) ~= nil
+            or previous.item ~= item or previous.root ~= root then
+            panel.baseItem = item
+            panel._toolkitCookRootCache = {item = item, root = root}
+            invalidate(panel)
+        end
+    else
+        panel._toolkitCookRootCache = nil
+    end
+end
+
+local function installCookFirstAddition()
+    if not ready.Project_Cook or not verified("Project_Cook", projectCookFirstAdditionSources)
+        or not pcall(require, "Project_Cook/EvolvedRecipePanel/PJCK_InputPanel")
+        or not pcall(require, "Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo") then return end
+    local input, info, evo = PJCK_InputPanel, PJCK_CookingInfo, PJCK_EvoPanel
+    if type(input) ~= "table" or type(info) ~= "table" or type(evo) ~= "table" then return end
+    -- Fingerprints prove the selected files; loaded closures must still belong to those files.
+    for _, source in ipairs({{input, "PJCK_InputPanel.lua"}, {info, "PJCK_CookingInfo.lua"}}) do
+        for name, callback in pairs(source[1]) do
+            if type(callback) == "function" and name ~= "derive" and not Proof.closure(callback, source[2]) then return end
+        end
+    end
+    local original, transition = input.canAddItem, info.isAddOneFirst
+    if not Proof.closure(original, "PJCK_InputPanel.lua") or not Proof.closure(transition, "PJCK_CookingInfo.lua")
+        or not Proof.closure(info.updateContentType, "PJCK_CookingInfo.lua")
+        or not Proof.closure(info.isNeedWater, "PJCK_CookingInfo.lua") then return end
+    local inputMethods, infoMethods
+    local function unchanged(class, methods)
+        if not classUnchanged(class, methods) then return false end
+        for name, callback in pairs(class) do
+            if type(callback) == "function" and methods[name] ~= callback then return false end
+        end
+        return true
+    end
+    input.canAddItem = function(self, item, ...)
+        local panel = self and self.EvoPanel
+        local cookingInfo = panel and panel.cookingInfoPanel
+        if PJCK_InputPanel ~= input or PJCK_CookingInfo ~= info or PJCK_EvoPanel ~= evo
+            or not ownerUnchanged("Project_Cook") or not unchanged(input, inputMethods) or not unchanged(info, infoMethods)
+            or not instanceUnchanged(self, input) or not instanceUnchanged(panel, evo)
+            or not instanceUnchanged(cookingInfo, info) or cookingInfo.EvoPanel ~= panel
+            or not panel.player or panel.player:isDead()
+            or not ((self.panelType == "Ingredient" and panel.ingredientsPanel == self)
+                or (self.panelType == "Seasoning" and panel.seasoningsPanel == self)) then return original(self, item, ...) end
+        local recipe, baseItem = panel:getRecipe(), panel:getBaseItem()
+        if not recipe or not baseItem or cookingInfo:isNeedWater(baseItem, recipe)
+            or not transition(cookingInfo, baseItem, recipe) then return original(self, item, ...) end
+        -- Keep the reviewed source's native availability and portion/group checks.
+        if not panel:isUsableForRecipe(item, recipe, self.panelType)
+            or panel:getGroupUseCapacity(item, self.panelType) <= panel:getSelectedGroupCount(item) then return false end
+        -- A new recipe can inherit contained labels from its base (for example, sliced bread).
+        -- Only NEW pending additions occupy the single request allowed before the native result exists.
+        return #panel:getPreCookItems("Ingredient") + #panel:getPreCookItems("Seasoning") < 1
+    end
+    inputMethods, infoMethods = snapshot(input), snapshot(info)
+    ready.Project_Cook_FirstAddition = true
 end
 
 local names = {"ISInventoryTransferAction", "ISWalkToTimedAction", "ISWalkToTimedActionF", "ISPathFindAction",
@@ -1298,6 +1395,28 @@ function Compat.install()
                                 return Operations.run(function(...) return scoped({id = "Project_Cook", owner = self}, callback, self, ...) end, ...)
                             end
                         end
+                        local refresh, resolve = PJCK_EvoPanel.setContainers, PJCK_EvoPanel.resolveCurrentBaseItem
+                        local getter, inputs, invalidate = PJCK_EvoPanel.getBaseItem, PJCK_EvoPanel.getInputList, PJCK_EvoPanel.invalidateInputCaches
+                        if Proof.closure(refresh, "PJCK_EvoPanel.lua") and Proof.closure(resolve, "PJCK_EvoPanel.lua")
+                            and Proof.closure(getter, "PJCK_EvoPanel.lua") and Proof.closure(inputs, "PJCK_EvoPanel.lua")
+                            and Proof.closure(invalidate, "PJCK_EvoPanel.lua") then
+                            PJCK_EvoPanel.setContainers = function(self, ...)
+                                normalizeCookBase(self, invalidate)
+                                return refresh(self, ...)
+                            end
+                            PJCK_EvoPanel.resolveCurrentBaseItem = function(self, preferPlayerInventory, ...)
+                                if preferPlayerInventory == true then normalizeCookBase(self, invalidate) end
+                                return resolve(self, preferPlayerInventory, ...)
+                            end
+                            PJCK_EvoPanel.getBaseItem = function(self, ...)
+                                normalizeCookBase(self, invalidate)
+                                return getter(self, ...)
+                            end
+                            PJCK_EvoPanel.getInputList = function(self, ...)
+                                normalizeCookBase(self, invalidate)
+                                return inputs(self, ...)
+                            end
+                        end
                     end
                 end
             end
@@ -1467,6 +1586,7 @@ function Compat.install()
             if target then owners[id][#owners[id] + 1] = {target = target, methods = snapshot(target)} end
         end
     end
+    installCookFirstAddition()
     if ready.P4TidyUpMeister then
         local owner=P4TidyUpMeister
         local actionPolicy,wornPolicy=owner.registerActionPolicy,owner.registerWornItemReplacement

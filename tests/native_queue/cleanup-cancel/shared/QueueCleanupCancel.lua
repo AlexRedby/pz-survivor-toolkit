@@ -1,5 +1,5 @@
 -- All fixture writes occur before baseline; snapshots only read native state.
-local F={cases={'mask-after-removal','p4-after-pickup'}}
+local F={cases={'mask-after-removal','p4-after-pickup','p4-keep-return'}}
 local resolving={}
 local function recurse(container,rows,where)
  local values=container:getItems()
@@ -105,7 +105,7 @@ function F.prepare(player,id)
   assert(ISInventoryPaneContextMenu==nil or ISInventoryPaneContextMenu.getEatingMask(player,false)==state.mask,'fixture mask is not the native eating mask')
   player:getStats():set(CharacterStat.HUNGER,.5)
   ids.maskLocation=tostring(state.mask:getBodyLocation())
- elseif id=='p4-after-pickup'then
+ elseif id=='p4-after-pickup'or id=='p4-keep-return'then
   seed('bag','Base.Bag_Schoolbag');state.source=state.bag:getItemContainer();state.source:setExplored(true)
   player:setWornItem(state.bag:canBeEquipped(),state.bag)
   seed('borrowed','Base.BookFirstAid1',state.source);seed('torch','Base.Torch');seed('secondary','Base.Screwdriver')
@@ -185,11 +185,21 @@ function F.sameItems(before,after)
  for i,a in ipairs(before)do local b=after[i];if a.id~=b.id or a.type~=b.type or a.container~=b.container then return false end end
  return true
 end
+-- The only final inventory difference requested by keep-return is the exact
+-- borrowed item's container. All IDs, types and other locations stay conserved.
+function F.sameFinalItems(state,before,after)
+ if #before~=#after then return false end
+ for i,a in ipairs(before)do local b=after[i]
+  local where=state.keepReturn and a.id==state.ids.items.borrowed and'root'or a.container
+  if a.id~=b.id or a.type~=b.type or where~=b.container then return false end
+ end
+ return true
+end
 -- Only the exact operation-owned cleanup must precede unrelated work. P4's
 -- original hand/activation restoration retains its native idle-session timing.
 function F.ownedCleanupBeforeTail(state,snapshot)
  if state.mask then return snapshot.maskWorn end
- return snapshot.borrowedContainer=='bag'
+ return snapshot.borrowedContainer==(state.keepReturn and'root'or'bag')
 end
 function F.restored(state,snapshot)
  if state.mask then return F.ownedCleanupBeforeTail(state,snapshot)end

@@ -22,6 +22,8 @@
     "wall.lua",
     "wall-input.lua",
     "analyze-wall.py",
+    "injury.lua",
+    "analyze-injury.py",
     "inventory-equip-protocol.lua",
     "inventory-equip-client.lua",
     "inventory-equip-server.lua",

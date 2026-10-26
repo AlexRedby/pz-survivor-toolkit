@@ -1,16 +1,42 @@
+# Injured cart full-pack compatibility
+
+- [ ] Repeat injured-cart locomotion and healing checks in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.
+
+# Sandwich ingredient consumption on a joining client
+
+- [ ] Reproduce the reported Project Cook “+” then Cook ingredient-consumption issue with the original bread add-ins and sandwich toppings, which are not yet identified. Compare actual raw hunger/nutrition deductions and the joining-client, host and server container states. If reproduced, fix the demonstrated shared cause while preserving native portions, completed costs and unrelated actions; require a failing regression and full-pack Host qualification with the queue enabled and disabled.
+
+# Welding torch refill
+
+- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host after local `damnlib` and `92jeepYJ` sources are available. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
+
+# Legacy Host launchers
+
+- [ ] Retain the optional `start-host.ps1` / `start-host.command` files, packaging and launcher checks only until automatic Host loading has native macOS/Linux qualification as well as Windows. Remove those scripts and their packaging/test consumers once a normal client-only-loader launch on each platform starts a patched Host child with saved approvals and an inherited-loader control proves no duplicate agent. They remain fallback entrypoints for existing installations, not the normal user workflow.
+
+# Shopping cart turn footwork
+
+- [ ] Run the accepted native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
+
+# Winter, base and Jeep additions
+
+- [ ] After installation is requested, check snow/wetness and Open Jackets/VVA/cart visuals, exterior-light insects and performance, Jeep parts/animations/lighting/repair/towing, and furniture movement with exact container contents and Quartermaster designations in isolated full-pack macOS B42.21 SP/Host saves. Check reload and the second player's view/state; author declarations and selection checks do not establish runtime compatibility.
+
+# New Music selection
+
+- [ ] After installation is requested, check new ABBA/Queen/Fleetwood Mac media loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
+
+# Open Jackets and Climb Ladders selection
+
+- [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, plus ladder ascent/descent, occupied exits, moved ladders, reload and second-player synchronization in isolated full-pack macOS B42.21 SP/Host saves. Selection and author support claims do not establish runtime compatibility.
+
 # Retained-item full-pack compatibility
 
 - [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.
 
 # Vehicle entry and exit roof clipping
 
-- [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP/Host checks cover stationary Base.CarNormal driver/passenger transitions, both cancellations, the local seated animation track and authoritative seat occupancy; screenshots include the native occlusion silhouette.
-
-# Exercise ground storage
-
-- [ ] Diagnose queue-disabled full-pack Host Fitness equipment restoration: the exact dumbbell remains in root instead of returning to its recovered source bag (both replicas agree; no item loss), and the server retains the original secondary-hand item at workout start. Require actual native return/equip transactions and exact final IDs. Preserve the native get-up callback ordering difference that runs the already-queued reader before appending the workout; do not relabel it a Toolkit ordering pass.
-- [ ] Diagnose the queue-disabled native Fitness constructor timer: a thirty-minute burpees request in the full-pack Host control produced only twenty-six authoritative workout minutes after preparation. Require the complete selected body duration without changing native effects; preserve the failed control separately from the verified Toolkit timer.
-- [ ] Check remaining exercise ground-storage combinations in disposable B42.21 full-pack SP/Host profiles: multiple worn/held bags with borrowed props (including favourites), queue-disabled/window-closed restoration, moving away and a second player's competing pickup. Require exact bag/content IDs, authoritative conservation and unchanged exercise effects.
+- [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP checks with 55 mods and menu-Host checks with 67 mods cover stationary Base.CarNormal driver/passenger transitions and both cancellations, separate lead-foot steps for entry/exit, measured support-foot contacts, pelvis transfer, body/clothing agreement, clean HUD-free video review and authoritative seat occupancy. They do not establish second-client or other vehicle geometry coverage.
 
 # Container editor visual states
 
@@ -65,6 +91,8 @@ These are implementation and verification gaps, not evidence that every action u
 - [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
 - [ ] Extend the generated edit oracle and existing scenario matrix to native partial completion, cleanup, replaced resources and delayed/duplicate outcomes. Gate each additional consumable/transfer adapter on exact conservation and at-most-once effects, without enumerating every pair of action names.
 - [ ] Extend the new required-state/resource/capacity/in-flight/unknown denial reasons to remaining legacy adapters and surface the specific prerequisite or missing integration in the UI. Preserve independent edits around genuinely unrelated work.
+
+- [ ] Gate additional successful terminal-stop producers on the shared stop capability: native petting, luring (including its earlier direct `stop`), milking, blood collection and hutch floor cleaning. Prove natural success versus stress/resource exhaustion and exact once-only yield through source-backed and SP/Host cases before registration; investigate shearing's ambiguous boolean result separately. Keep unsupported producers on their native path.
 
 - [ ] Extend live SP/MP gates for the shared lifecycle to the remaining families: unavailable target, late continuation, exact consumption and independent tail, before replacing their local completion intercepts.
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
@@ -139,3 +167,11 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Vehicle diagnostics controls
 
 - [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
+
+# Process friction
+
+- [ ] Restore the cumulative-memory MCP connection: `memory.remember` reports `Memory MCP is from an older release; reconnect the server`, while the installed CLI fallback works. Align or reconnect the MCP runtime, then confirm a normal note write and capture completion without the fallback; preserve the existing memory store.
+
+- [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
+
+- [ ] Add a reusable continuity diagnostic for native cart captures. Grip and motion checks accepted a 54-degree torso route-switch snap; diagnosing it required an external replay helper for `injury-torso-poses.jsonl`. The captured adjacent-frame JVM regression protects that failure. Complete when the normal diagnostic workflow reports correction rotation separately from native pose changes, with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without inventing a general visual-quality PASS.

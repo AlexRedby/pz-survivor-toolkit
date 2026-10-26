@@ -246,6 +246,14 @@ internal object MainPolicy {
             )
 
     @JvmStatic
+    fun cartInjurySupported(): Boolean =
+        Main.CART_SUPPORTED &&
+            BytecodeSupport.supports(
+                "zombie/core/skinnedmodel/advancedanimation/AnimLayer.class",
+                "dd53bf0235a8ef65edb71049bbadea742dcfbfaa0c8a1da7781a26b3282feb01",
+            )
+
+    @JvmStatic
     fun cartSyncSupported(): Boolean =
         Main.CART_SUPPORTED &&
             BytecodeSupport.supports(
@@ -370,8 +378,10 @@ internal object MainSupport {
         BasementRoomLookup.prepare()
         BasementHallKey.prepare()
         MannequinZoneData.prepare()
+        BarricadedDoorPaths.prepare()
         val fences = FenceValidation.install(FenceValidation.SUPPORTED)
         val itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED)
+        val hostLoader = HostLoader.install()
         // Define before patch registration: recursive loads during another transform bypass
         // instrumentation.
         if (Main.CART_TRANSITION_SUPPORTED)
@@ -401,6 +411,8 @@ internal object MainSupport {
                 Main.EQUIPMENT_SUPPORTED +
                 ", cart=" +
                 Main.CART_SUPPORTED +
+                ", cartInjury=" +
+                Main.CART_INJURY_SUPPORTED +
                 ", cartSync=" +
                 Main.CART_SYNC_SUPPORTED +
                 ", medicalTimedAction=" +
@@ -436,7 +448,11 @@ internal object MainSupport {
                 ", actionAcknowledgements=" +
                 ActionAcknowledgements.SUPPORTED +
                 ", craftBench=" +
-                CraftBenchReferences.SUPPORTED,
+                CraftBenchReferences.SUPPORTED +
+                ", barricadedDoors=" +
+                BarricadedDoorPaths.SUPPORTED +
+                ", hostLoader=" +
+                hostLoader,
         )
     }
 
@@ -558,12 +574,14 @@ internal object MainSupport {
     fun bindCartSlot(slot: ModelSlotRenderData?, source: ModelManager.ModelSlot?) {
         if (Main.CART_OBSERVER_SUPPORTED) CartObserverRender.bind(slot, source)
         if (Main.CART_TRANSITION_SUPPORTED) CartImpactPose.bind(slot, source)
+        if (Main.CART_SUPPORTED) CartShoppingTurn.bind(slot, source)
     }
 
     @JvmStatic
     fun releaseCartSlot(slot: ModelSlotRenderData?) {
         if (Main.CART_OBSERVER_SUPPORTED) CartObserverRender.release(slot)
         CartImpactPose.release(slot)
+        CartShoppingTurn.release(slot)
     }
 
     @JvmStatic

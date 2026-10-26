@@ -3,7 +3,7 @@
 The `fitness` suite exercises `ISFitnessUI:onClick(OK)` with the complete ordered
 `SurvivorQoL-selected.ini` mod set. Select any canonical ordered subset:
 
-`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore`
+`empty,queued,sequential,pending-cancel,pending-reorder,active-cancel,missing-dumbbell,exhaustion,closed-ui-restore,burpees-30,squats-30,late-exhaustion,active-cancel-restore,pickup-cancel-restore,placement-cancel-restore,empty-restore,multi-storage,multi-storage-closed,storage-walk-away,storage-peer-pickup`
 
 Use the common runner's fresh profiles, pack lock, native/toolkit controls and
 runtime log audit. The fixture never installs into the normal game profile and
@@ -29,10 +29,84 @@ outcomes; the peer outcome explicitly records `participantRole=independent-reade
 and `workoutActor=client1`. It does not claim that the peer performed a workout.
 The server verifies the peer is connected and its book is fully read.
 
-The `burpees-30` case selects thirty minutes through the native menu and records
-local native removal after the selected duration. Toolkit requires removal within
-five real seconds, plus the ordinary authoritative outcome, real exercise effects
-and completed independent tail. Its registration is not a native pass.
+The `squats-30` case is the positive thirty-minute timer control. Both modes require
+a full confirmed interval, real native repetitions/effects, native removal and the
+independent reader within five real seconds, with the exact terminal receipt in Host.
+The diagnostic `burpees-30` request retains the same strict duration gate, but the
+default character can legitimately exhaust stamina first (the preserved control
+ended after about 27 minutes and 39 repetitions). That failed row remains failed;
+it is not evidence of a timer defect and must not be made green by bypassing stamina.
+The separate `late-exhaustion` case requests thirty minutes of burpees in SP and
+sixty in Host through the native menu, with full initial endurance and lets native repetitions spend it normally. It requires a
+confirmed earned interval between ten minutes and the selected deadline, a client/SP stop snapshot
+with exhausted endurance and no input interruption, plus a real last paid repetition
+and authoritative stop snapshot. Host uses the server's `exeLooped` pre/post values;
+SP uses adjacent native samples and rejects a skipped predecessor for that last rep.
+The stop cause comes from the client snapshot, not from a generic server `serverStop`.
+Host authority must show real low raw endurance and paid effects; its cached Moodle
+remains telemetry because native `serverStop` neither refreshes nor tests that cache.
+Exactly one original stop must settle without completion replay. Fitness and Strength
+XP are exact at the last paid repetition/stop boundary. Later `Events.AddXP` entries
+must account for every additional point: only observed Fitness +1 with no current exercise, low endurance and no added
+training effects is accepted. SP requires the exact native body absent. MP requires
+a returned serverStop with no later repetitions, plus final idle and the client
+removal/terminal boundary; its Lua action has a network action rather than the SP
+BaseAction pointer, so that pointer-absence flag is not server proof.
+This is compatible with vanilla idle endurance training; the generic event itself
+has no caller identity. Unexplained XP and Strength changes still fail. Receipts freeze
+the event horizon, including awards between native removal and the next SP sample. The native control
+must cancel its still-unread tail; Toolkit must preserve that tail and start it only
+after native removal and its matching Host terminal receipt. This explicit control
+difference is expected. A thirty-minute Host request can reach its timer before
+exhaustion under the native server effects; that diagnostic failure is preserved,
+and does not justify lowering stamina or reclassifying a timer stop as exhaustion. The historical strict `burpees-30` result remains failed.
+
+The natural `empty-restore` control requires one local native stop in both modes and
+one authoritative `serverStop` without completion replay in Host. Its original
+constructor request and confirmed active timer are observed separately: preparation
+must not consume the selected body interval. The exact bag, prop and hand items must
+be restored before the independent reader, with queue editing enabled or disabled.
+
+The `multi-storage` and `multi-storage-closed` cases use the same ten-minute biceps
+curl with two worn favourite bags (schoolbag and front fanny pack), a favourite
+satchel in the primary hand, a screwdriver in the secondary hand and the favourite
+dumbbell borrowed from that satchel. Each bag contains its own exact-ID pencil.
+The closed case clicks the original CLOSE immediately after OK. Both modes require
+three real linked world bags at workout start, unchanged contents and flags, then
+all original hands/worn slots and the dumbbell inside its original held satchel
+before the independent reader on both client and authority.
+
+One native inventory-transfer begin may cover several merged bags. The fixture
+uses the existing read-only TidyIntent observer after the original `checkQueueList`,
+preserving the callback pointer and actual begin count. Each member keeps its first
+source snapshot; a later merge can happen after an earlier bag is already recovered.
+Actual drop completions and authoritative final identities establish paid effects.
+The server placement witness uses native constructor arguments and a linked world
+item; it does not require the client-only `isPlaceItem` flag, which is absent from
+the native constructor wire schema.
+
+
+The `storage-walk-away` case interrupts an actually started borrowed-prop workout
+through the original `ISWalkToCursor.create`, after a paid repetition. It requires
+real native walking out of pickup range, one successful original walk callback and
+all exact bag/content/prop IDs conserved at their actual endpoints. The original
+unread tail is cleared by the native movement request; this is expected player
+intent. A new native reader must begin only after walking and cleanup settle,
+with no invented item recovery or paid exercise effects.
+
+The Host-only `storage-peer-pickup` case approaches the origin with the second real
+client before Fitness OK. A server-side paid repetition grants one exact bag
+pickup; the peer must provide its own native completed/nonrejected item transaction
+and successful original perform. Authoritative origin plus both inventory roots
+must show that same favourite bag and its original book content at the peer, with
+the borrowed dumbbell retained by the workout actor. The workout keeps its full
+selected duration and independent reader. The peer reads its separate book only
+after pickup; its outcome is a `competing-picker`, not a second workout actor.
+
+Both negative cases use one favourite schoolbag, a favourite borrowed dumbbell and
+an exact-ID book inside that bag. They leave unavailable world/peer resources
+untouched after the frozen case receipt; later cases use new IDs in the same
+private save. Registration and offline falsification do not establish a live pass.
 
 Other workouts retain the menu's native minimum of ten game minutes and the original
 `ISFitnessAction:getDuration()`. Queued cases use six remaining book pages at the
@@ -72,7 +146,10 @@ settlement and exact inventory/hand/worn identities. Toolkit Host additionally
 requires distinct native started and terminal acknowledgement tokens. Every Toolkit
 workout also supplies a real positive `ActionQueueFitness.progress` sample and its
 nonempty display label; elapsed minutes, selected ten-minute total and fraction
-must agree with the native workout clock. The server
+must agree with the earned active-frame clock. Synchronized world-clock changes
+never earn duration; start/confirmation frames and repeated reads add no time.
+Independent raw SP/server endpoints remain separate from runtime timer diagnostics,
+and mixed-storage Host cases also record native monotonic server timestamps. The server
 must remain idle for two real seconds before issuing its final receipt.
 
 Native control deviations, missing tails, incomplete restoration, premature timers
@@ -84,7 +161,7 @@ adapter's offline checks.
 Run the focused falsification and observer checks without launching the game:
 
 ```sh
-.venv/bin/python -m unittest discover -s tests -p test_queue_fitness_adapter.py
+PZ_GAME="$PZ_GAME" .venv/bin/python -m unittest discover -s tests -p 'test_*fitness*.py'
 ```
 
 Known native constructor failures in `missing-dumbbell` and `exhaustion` can

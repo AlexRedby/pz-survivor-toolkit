@@ -160,6 +160,32 @@ object Multiplayer {
     }
 
     @JvmStatic
+    @LuaMethod(name = "cartMPInjurySync", global = true)
+    fun injurySync(p: IsoPlayer?, cartId: Int): Float {
+        val item = p?.getPrimaryHandItem()
+        check(
+            padHost() &&
+                p != null &&
+                p.getUsername() == "client1" &&
+                !p.isDead() &&
+                !p.isGodMod() &&
+                p.isExistInTheWorld() &&
+                zombie.network.GameServer.getConnectionFromPlayer(p) != null &&
+                item != null &&
+                item.getID() == cartId &&
+                p.getSecondaryHandItem() === item &&
+                item.getContainer() === p.getInventory() &&
+                net.alexredby.pztoolkitjavapatches.CartSteeringHooks.supportedCart(p),
+        ) {
+            "Connected exact native Host injury owner/cart required"
+        }
+        // Native B42 derives injury/rates on the server and sends PlayerInjuries plus
+        // full PlayerDamage to the owner. Movement packets relay it to observers.
+        p!!.getNetworkCharacterAI().syncDamage()
+        return p.getVariableFloat("WalkInjury", 0f)
+    }
+
+    @JvmStatic
     @LuaMethod(name = "cartMPState", global = true)
     fun mpState(p: IsoPlayer): String {
         timelineStats(p)
@@ -173,6 +199,10 @@ object Multiplayer {
             for (item in p.getInventory().getItems()) if (item.getID() == a.getID())
                 inventoryCount++
         val world = a?.getWorldItem()
+        val leftFoot =
+            p.getBodyDamage().getBodyPart(zombie.characters.BodyDamage.BodyPartType.Foot_L)
+        val rightFoot =
+            p.getBodyDamage().getBodyPart(zombie.characters.BodyDamage.BodyPartType.Foot_R)
         return buildString {
             append("{\"wall\":")
                 .append(System.currentTimeMillis())
@@ -232,6 +262,18 @@ object Multiplayer {
                 .append(p.getVariableFloat("WalkSpeed", -1f))
                 .append(",\"walkInjury\":")
                 .append(p.getVariableFloat("WalkInjury", -1f))
+            append(",\"injuryProbeVersion\":1,\"god\":")
+                .append(p.isGodMod())
+                .append(",\"dead\":")
+                .append(p.isDead())
+                .append(",\"leftScratch\":")
+                .append(leftFoot.getScratchTime())
+                .append(",\"rightScratch\":")
+                .append(rightFoot.getScratchTime())
+                .append(",\"leftFracture\":")
+                .append(leftFoot.getFractureTime())
+                .append(",\"rightFracture\":")
+                .append(rightFoot.getFractureTime())
             append(",\"endurance\":")
                 .append(p.getStats().get(zombie.characters.CharacterStat.ENDURANCE))
                 .append(",\"enduranceMoodle\":")

@@ -21,6 +21,7 @@ SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'
 MP_CASES = ('owner_observer_motion', 'lease_lifecycle')
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
+            'injury': ('scenario-injury.lua', 16),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stop-timing': ('scenario-stop.lua', 4),
             'pivot': ('scenario-pivot.lua', 8), 'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
@@ -62,8 +63,8 @@ VARIANTS = {'shopping-cart': 'SaucedCarts.ShoppingCart',
             'wooden-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowWood',
             'metal-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowMetal'}
 METAL_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast',
-                  'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary'}
-SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel'}
+                  'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary', 'injury'}
+SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel', 'injury'}
 SHOPPING_MODELS = {'ShoppingCartModel', 'ShoppingCartPartialModel', 'ShoppingCartFullModel',
                    'ShoppingCartFlashlightModel', 'ShoppingCartFlashlightPartialModel', 'ShoppingCartFlashlightFullModel'}
 ACTION_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'repeat', 'hotkey'}
@@ -84,6 +85,9 @@ CONTROL_POSES = {'forward-0': 0, 'forward-angle': 2.1, 'left-held': 0, 'right-he
 
 
 def scene_names(case):
+    if case == 'injury':
+        return [f'{sex}-{load}-{side}-{severity}' for sex in ('male', 'female')
+                for load in ('empty', 'full') for side in ('left', 'right') for severity in ('mild', 'heavy')]
     if case in ('motion-matrix', 'obstacle-matrix'):
         specs = ('arcs', 'slalom-up', 'slalom-down') if case == 'motion-matrix' else ('frontal', 'slide-left', 'slide-right', 'corner', 'door-closed', 'door-open')
         return [f'{sex}-{load}-{gait}-{spec}' for sex in ('male', 'female') for load in ('empty', 'full')
@@ -156,7 +160,8 @@ def definitions():
                               for case in (SP_CASES if suite == SP else MP_CASES)]}
             for suite in (SP, MP)}
     result[SP]['game_inputs'] = ['media/models_X/Skinned/MaleBody.x', 'media/models_X/Skinned/FemaleBody.x',
-        'media/models_X/Skinned/Clothes/Bob_Trousers.x', 'media/models_X/Skinned/Clothes/Kate_Trousers.x']
+        'media/models_X/Skinned/Clothes/Bob_Trousers.x', 'media/models_X/Skinned/Clothes/Kate_Trousers.x',
+        'media/AnimSets/player/movement/defaultWalk.xml']
     for case in result[SP]['cases']:
         case['scenes'] = scene_names(case['id'])
     return result
@@ -284,7 +289,7 @@ def validate(selection):
     if 'cart_hide_ui' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
             raise ValueError('cart_hide_ui requires an SP boolean selection')
-    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu', 'cart_lease_inventory', 'cart_action_invalidation', 'cart_action_admission', 'cart_observer_association'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown', 'cart_injury', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu', 'cart_lease_inventory', 'cart_action_invalidation', 'cart_action_admission', 'cart_observer_association'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
@@ -340,6 +345,15 @@ def validate(selection):
         if options.get('cart_inventory_equip') is not True or options['cart_inventory_equip_variant'] not in (
                 'female-empty', 'female-full', 'male-empty', 'male-full'):
             raise ValueError('cart_inventory_equip_variant requires an enabled bank and exact sex/load variant')
+    if options.get('cart_injury'):
+        if options.get('mp_host') is not True or options.get('cart_fast_motion') is not True:
+            raise ValueError('cart_injury requires native MP Host and cart_fast_motion')
+        if any(options.get(key) for key in ('cart_wall_exit', 'cart_actions', 'cart_hotkey_setdown', 'cart_timeline', 'cart_time_alignment', 'cart_lease_control', 'cart_lease_lifetimes', 'cart_lease_menu', 'cart_lease_inventory', 'cart_action_invalidation', 'cart_action_admission', 'cart_observer_association', 'cart_inventory_equip')):
+            raise ValueError('cart_injury requires an isolated motion bank without wall/actions/hotkey')
+        if options.get('cart_injury_side') not in ('left', 'right') or options.get('cart_injury_severity') not in ('mild', 'heavy'):
+            raise ValueError('cart_injury requires exact left/right side and mild/heavy severity')
+    elif any(key in options for key in ('cart_injury_side', 'cart_injury_severity')):
+        raise ValueError('Injury side/severity require cart_injury')
     if 'cart_wall_exit' in options:
         if suite != MP or options.get('mp_host') is not True or options['cart_wall_exit'] not in ('left', 'right', 'front'):
             raise ValueError('cart_wall_exit requires left/right/front in a native MP Host selection')
@@ -446,6 +460,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
     lifecycle = selection['suite'] == MP and selection['cases'] == ['lease_lifecycle']
     simple = lifecycle or selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'showcase', 'native-e')
+    controls = selection['suite'] == SP and selection['cases'] == ['controls']
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -461,6 +476,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     evidence = sp / 'evidence'
     variant_probes = selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart')
     sp_probes = ('GripPoseProbe', 'ClearanceProbe') if variant_probes else ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')
+    if controls:
+        sp_probes = ('GripPoseProbe',)
     if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') == 'shopping-cart' and selection['cases'] == ['wheel']:
         sp_probes += ('ShoppingWheelProbe',)
     probe_sources = ([mp / 'ClearanceProbe.kt'] if selection['suite'] == MP else
@@ -474,9 +491,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         composed = build / 'ClearanceProbe.java'
         composed.write_text(source_text.replace(anchor, 'private static final boolean FULL_TAIL_BONES = true;'))
         probe_sources = [composed if path == original else path for path in probe_sources]
-    if not manual and not simple:
+    probes = [] if manual or simple and not controls else ['ClearanceProbe'] if selection['suite'] == MP else list(sp_probes)
+    if probes:
         _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
-    probes = [] if manual or simple else ['ClearanceProbe'] if selection['suite'] == MP else list(sp_probes)
     for name in probes:
         _jar(build / (name + '.jar'), build / 'probe-classes', (mp if selection['suite'] == MP else evidence) / (name + '.mf'))
     fixture = runtime.setdefault('fixture', {})
@@ -503,7 +520,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if selection['suite'] == MP:
             if role != 'server':
                 _write(lua / 'client/QueueCartMPStartup.lua', (project / 'tests/native_queue/startup/client/ZZStartup.lua').read_text())
-            for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
+            for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('injury.lua', 'client/CartMPInjury.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
                                    ('placement.lua', 'shared/CartMPPlacement.lua'), ('wall.lua', 'shared/CartMPWall.lua'),
                                    ('wall-input.lua', 'client/CartMPWallInput.lua'), ('json.lua', 'shared/CartMPJSON.lua'),
                                    ('inventory-equip-client.lua', 'client/CartMPInventoryEquipClient.lua'),
@@ -515,6 +532,12 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                    ('action-invalidation.lua', 'shared/CartActionInvalidation.lua'),
                                    ('lease-inventory-state.lua', 'shared/CartLeaseInventoryState.lua'),
                                    ('lease-lifecycle.lua', 'shared/CartLeaseLifecycle.lua')]:
+                # PZ auto-loads client Lua files even when ZZCartMP never requires them.
+                # Bank-specific guards must only enter the selected disposable profile.
+                if origin == 'actions.lua' and not selection.get('options', {}).get('cart_actions'):
+                    continue
+                if origin == 'injury.lua' and not selection.get('options', {}).get('cart_injury'):
+                    continue
                 if origin == 'action-invalidation.lua' and selection.get('options', {}).get('cart_action_invalidation') is not True:
                     continue
                 if origin == 'lease-inventory-state.lua' and selection.get('options', {}).get('cart_lease_inventory') is not True:
@@ -546,9 +569,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             continue
         classes = Path(spec['classes'])
         if simple:
-            # An empty attachment list releases the existing startup gate without wooden probes.
+            # Simple cases retain the startup gate; controls attach their read-only grip probe.
             fixture['attach'][role] = []
-        if not manual and not simple:
+        if probes:
             shutil.copy2(build / 'probe-classes/AttachWoodenWheelProbe.class', classes / 'AttachWoodenWheelProbe.class')
         for name in probes:
             target = classes / 'probes' / (name + '.jar')
@@ -897,6 +920,9 @@ def _model_capture_coverage(cache, text, selection):
     windows = _load(evidence_root / 'scene_windows.py')
     bank = selection['cases'][0]
     wheel_draws = None
+    injury_ends = {r['case']: r['elapsed'] for r in
+                   (json.loads(line.split('[CART_INJURY] END ', 1)[1])
+                    for line in log.splitlines() if '[CART_INJURY] END ' in line)} if bank == 'injury' else {}
     if shopping and bank == 'wheel':
         try:
             wheel_draws = [json.loads(line) for line in (cache / 'shopping-wheel-draws.jsonl').read_text().splitlines()]
@@ -906,8 +932,9 @@ def _model_capture_coverage(cache, text, selection):
         return isinstance(value, list) and len(value) == 16 and all(type(v) in (int, float) and math.isfinite(v) for v in value)
     result = []
     for name, start, duration in clips:
-        seconds = windows.record_seconds(bank, name); start = int(start)
-        if abs(float(duration) - seconds) > .2:
+        seconds = injury_ends[name] / 1000 if bank == 'injury' else windows.record_seconds(bank, name)
+        start = int(start)
+        if abs(float(duration) - seconds) > (.5 if bank == 'injury' else .2):
             raise ValueError('Incomplete cart recording window: ' + name)
         row = dict(scene=name, recordSeconds=seconds)
         for kind, records in probes.items():
@@ -1302,6 +1329,25 @@ def verify(root, selection, catalog):
                  'outcome':{'animationEquivalencePass':False,'evidenceComplete':True,'nativeLifecycleVerified':True}}
                 for role in roles]}
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
+        if selection['suite'] == SP and selection['cases'] == ['injury']:
+            variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
+            report = _load(intake / 'analyze-injury.py').analyze(
+                texts['client1'], selected_scenes(selection), variant, root / 'client1')
+            _write(analysis / 'injury.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(injury=report, analysis=str(analysis))
+            if not report['injuryVerified']:
+                raise ValueError('Native injury motion failed: ' + str(report['failures']))
+            if variant == 'wooden-wheelbarrow':
+                _mesh_proof(root / 'client1')
+            else:
+                evidence['modelCapture'] = _model_capture_coverage(root / 'client1', texts['client1'], selection)
+            evidence['evidenceComplete'] = True
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'injury', 'status': 'captured',
+                 'reason': 'Native injury, limp tracks, cart steering, ownership, stops and healing verified; rendered geometry and videos require review',
+                 'outcome': {'animationEquivalencePass': False, 'geometryVerified': False,
+                             'evidenceComplete': True, 'injuryVerified': True,
+                             'partialCoverage': debug, 'selectedScenes': selected_scenes(selection)}}]}
         if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):
             report = _model_capture_coverage(root / 'client1', texts['client1'], selection)
             name = 'shopping-model-capture.json' if selection['options']['cart_variant'] == 'shopping-cart' else 'metal-model-capture.json'
@@ -1436,6 +1482,8 @@ def verify(root, selection, catalog):
                              'functionalPass': True, 'cartInventoryEquip': True}} for role in roles]}
         if selection['suite'] == MP:
             report = _load(intake / 'analyze.py').analyze(root)
+            if selection.get('options', {}).get('cart_injury') and not report.get('injury', {}).get('injuryVerified'):
+                raise ValueError('Native Host cart injury verification failed: ' + str(report.get('injury')))
             evidence['comparison'] = report
             _write(analysis / 'mp-comparison.json', json.dumps(report, indent=2, allow_nan=False))
         else:

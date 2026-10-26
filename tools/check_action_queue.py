@@ -57,7 +57,15 @@ def selection(args, catalog, options=None, desktop_mode=None):
     else:
         mods = args.mods.split(",") if args.mods else spec.get('default_mods', suite.get('default_mods', ['PZSurvivorToolkit']))
     language = args.language or spec.get('languages', ['EN'])[0]
-    clients = 1 if kind == 'sp' else suite.get('clients', 2)
+    topologies = {1 if kind == 'sp' else all_cases[identifier].get('clients', suite.get('clients', 2))
+                  for identifier in cases}
+    if len(topologies) != 1:
+        raise ValueError('Selected cases require different client topologies; run them separately')
+    clients = topologies.pop()
+    actors = {all_cases[identifier].get('actor') for identifier in cases}
+    if len(actors) != 1:
+        raise ValueError('Selected cases require different actor roles; run them separately')
+    actor = actors.pop()
     options = (report.read_json(args.config) if args.config else {}) if options is None else options
     if not isinstance(options, dict):
         raise ValueError('--config must contain a JSON object of suite options')
@@ -93,12 +101,15 @@ def selection(args, catalog, options=None, desktop_mode=None):
     resources = getattr(args, 'resources', {})
     if not isinstance(resources, dict):
         raise ValueError('resources must be an object')
-    return {"schema_version": 1, "suite": args.suite, "mode": args.mode,
+    result = {"schema_version": 1, "suite": args.suite, "mode": args.mode,
             "cases": cases, "mods": mods, 'kind': kind, 'clients': clients, 'options': options,
             'config_source': str(args.config.resolve()) if args.config else None,
             "languages": [language] if clients == 1 else ["EN", "RU"],
             "timeout_seconds": args.timeout, "ports": args.ports or [17343, 17344], 'ports_auto': args.ports is None,
             'resources': dict(admission.DEFAULTS, **resources), "expected_checks": len(cases) + 2}
+    if actor is not None:
+        result['actor'] = actor
+    return result
 
 
 def save_report(output, catalog, control=None):

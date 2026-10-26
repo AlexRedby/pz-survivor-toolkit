@@ -11,6 +11,14 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Downloaded B42 metadata confirms the main Jeep requires only `damnlib`; optional JP18 adds Jurassic Park spawns and requires the main Jeep. JP18/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.
+
+- **Added:** Three New Music packs with songs released before 1993: ABBA Gold (`NMBJABBA`, Workshop `3784065691`), Queen (`NMBJQ`, `3777937059`) and Fleetwood Mac (`NMBJFM`, `3751236222`), after `NewMusic` (62 Mod IDs / 57 Workshop items). Published album lists span 1975-1992 and the packs total approximately 633 MB. Existing sandbox settings are preserved; full-pack SP/Host playback remains unverified.
+
+- **Added:** New Music (`NewMusic`, Workshop `3739256725`) to the B42.21 selection (59 Mod IDs / 54 Workshop items), for audible cassette/CD/vinyl playback. The base includes a Zomboid OST recording; additional song packs are selected separately. Full-pack SP/Host playback, performance and TV & Radio ReInvented coexistence remain unverified.
+
+- **Added:** Spongie's Open Jackets (`SpnOpenClothBase` before `SpnOpenCloth`, Workshop `2812326159`) and Climb Ladders (`SubirEscaleras`, Workshop `3774776279`) to the B42.21 selection (58 Mod IDs / 53 Workshop items). Adds open/rolled clothing variants and world-ladder climbing. Optional Fluffy Hair and Build Ladders remain unselected; full-pack SP/Host behavior is unverified.
+
 - **Added:** Vehicle Repair Overhaul and its B42 Vehicle Salvage Overhaul module from Workshop `2757712197`, loaded base-first after the other vehicle mods (55 Mod IDs / 51 Workshop items). Adds repair options and whole-vehicle salvage; full-pack SP/Host behavior and the upstream sandbox-setting controls remain unverified.
 
 - **Added:** Vehicle Aim Roof Fix (`CarRoofFix`, Workshop `3781616141`) after the VVA pair in the B42.21 selection (54 Mod IDs / 51 Workshop items), to keep visible occupants seated during right-mouse look-around/aiming. Full-pack SP/Host behavior remains unverified.
@@ -23,6 +31,68 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit
+
+### 0.1.272
+
+- Fixed: Project Cook permits the first ingredient when starting a new dish from a food base with inherited ingredients, including filled bread slices. Its first-addition step still allows only one new selection; native eligibility, portions, recipe limits, hunger and nutrition stay unchanged.
+
+### 0.1.271
+
+- Preserve cart steering and grip while limping. Use the native injury gait and speed, respect native Run/Sprint eligibility, and keep directional turns/reverse and moving healing synchronized between Host players.
+
+### 0.1.270
+
+- Fixed: Project Cook resolves the selected pot to its exact live inventory instance after pickup and refreshes ingredient availability when it enters the inventory, in SP and Host. A stale floor reference no longer hides usable ingredients or makes ingredient addition retry with “Not Available” after the ingredient has reached the inventory. Recipe checks, native costs, leftovers and the remembered return destination remain unchanged, with the action queue enabled or disabled.
+
+### 0.1.269
+
+- Fixed: In multiplayer, Tidy Up Meister no longer queues native clothing restoration for an original item that has left the character's inventory, such as an exercise bag left behind or taken by another player. Valid exact-ID replacements and unrelated restoration actions retain their normal behavior.
+
+### 0.1.268
+
+- Keep the retained-item mark when refilling a welding torch, including saved Stick marks. Context-menu refill returns the replacement torch to its original container after the authoritative result arrives. Replace the obsolete consumed-torch return so it cannot cancel the following propane-tank return in Host; native fuel costs remain unchanged.
+
+### 0.1.267
+
+- Fixed: Fitness measures earned active native frames instead of the synchronized world clock. Host clock corrections no longer shorten or extend a workout; preparation, repeated reads and the confirmation frame add no time. Native interruptions, effects and stop/cleanup ordering stay intact.
+
+### 0.1.266
+
+- Return accelerated time to normal when a nearby audible alarm starts. Uses MP Fast Forward's existing safety veto in multiplayer and native speed controls in single-player; adds no notifications or windows. Requires the matching Java Patches alarm bridge.
+
+### 0.1.265
+
+- **Fixed:** Native Fitness keeps its full selected duration after preparation, including with queue editing disabled. Natural completion retains the independent tail, waits for the original native stop/server receipt, and restores the exact borrowed gear before the next action. Explicit cancellation, movement, exhaustion and changed ownership still interrupt through the native path.
+
+### 0.1.264
+
+- **Fixed:** Native get-up continuations retain their place before later queued work, including Fitness and context-menu door/window callbacks with queue editing disabled. The original callback and native action admission still run; reset, cancellation or changed ownership revoke late continuation additions.
+
+### 0.1.263
+
+- **Shopping carts:** Replace the stiff procedural gait with body-leading turns built from native walking, retaining knee motion, heel/toe roll and a gently moving torso. Use phase-matched straight and turning clips with slight leg separation; stationary pivots and wheelbarrows retain their existing clips.
+
+### 0.1.262
+
+- **Vehicles:** Enter with a leading-foot step, bend and transfer weight over the planted foot, then bring the trailing leg inside. Use a separate exit motion with a foot planted outside before standing. Match the native driving seat and retain native action timing, cancellation and completion events. Requires Java Patches 0.1.55 for doorway position and foot contacts.
+
+### 0.1.261
+
+- **Fixed:** A completed Host action no longer discards the remaining queue while its matching server receipt is still in transit. The same cancellation and ownership checks apply with queue editing enabled or disabled; native effects are never replayed. Requires Java Patches 0.1.54.
+
+### 0.1.260
+
+- Declare the replaced standalone Survivor Wishlist, Quartermaster, Container Capacity Indicator, Item Details, HasResearch, Seed Season Indicator, organizedCategories, Medicine Moodles, Take Any Amount and TV & Radio ReInvented 42.20 fix mods incompatible with Toolkit, preventing accidental duplicate activation in the native Mods selector.
+
+### 0.1.259
+
+- **Fixed:** Native Fitness preparation with queue editing disabled now synchronizes its cleared secondary hand in Host and returns a prop borrowed from a placed bag to that exact recovered bag. Restoration requires the observed native pickup and, in Host, its completed item transaction; missing storage or changed bindings cannot select a replacement prop or bag.
+
+### 0.1.258
+
+- **Action queue:** Cancel a confirmed pending borrowed-item return separately to keep that item carried while its current action continues. Preserve later dependencies and capacity, exact item ownership and other required cleanup; later cancellation and P4 idle restoration do not recreate the deliberately removed return.
+- **Action queue / Host:** Recognize a detached transfer-group copy of the same exact carried item after native inventory replication, retaining live source, item identity, callback and resource checks.
+- **Action queue UI:** Show neutral crosses before a permission check, distinguish an unavailable hovered cancel, and retain the reason when a click is rejected. Group and child controls keep fresh validation at release.
 
 ### 0.1.257
 
@@ -1160,6 +1230,46 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.62
+
+- Blend native injury clips into cart locomotion with matching movement budgets. Keep both wheelbarrow hands reachable through injured poses with bounded, model-specific upper-torso correction; preserve native hip/leg animation and outgoing gait fades.
+
+### 0.1.61
+
+- **Fixed:** Player pathfinding treats closed barricaded doors as obstacles and takes an available detour, preventing Distribute Loot from attempting the door and clearing its remaining queue. Ordinary doors, zombie destructive routes and reopening the route after barricade removal retain their native behavior.
+
+### 0.1.60
+
+- Fixed: A paid multiplayer action no longer resets the queue when its item change arrives before the native completion packet. An exact accepted transaction can wait for its confirmed result within the existing deadline; completion still requires native Done and the sealed server receipt. Local cancellation and stale/rejected transactions remain authoritative.
+
+### 0.1.59
+
+- Let enabled clocks and wristwatches catch a scheduled time crossed between updates, using their normal sound, wake-up and world-sound paths. Preserve daily repeats, explicit silencing, disabling and schedule edits; unchanged network setting packets no longer silence or restart a live ring. Initial load does not replay old alarms. Supports the B42.21 client and server; native sound-start events let Toolkit reset acceleration without adding UI.
+
+### 0.1.58
+
+- **Host startup:** Supply ZombieBuddy automatically to the native Host/soft-reset server process when the client is already patched. Normal Steam launches no longer require a separate Host launcher. Preserve saved approval policy, native server arguments and existing explicit/inherited loaders; diagnose duplicate loaders and unsupported native startup instead of changing system-wide JVM settings. Vehicle diagnostics remain controlled in-game.
+
+### 0.1.57
+
+- **Host vehicle inventory:** Include early item changes in each recipient's first native vehicle snapshot, then send later changes on the same ordered channel. Cover direct vehicle containers and bags directly inside them; preserve native transfers, recipient relevance and diagnostics, and reset synchronization across reconnects, world changes, vehicle deletion and ID reuse.
+
+- **Compatibility:** Remove a proven orphan mesh-object animation channel from three DAMN Library clips before skeletal import. Preserve all skeletal frames and transforms; changed or unknown inputs keep native handling and diagnostics. No third-party assets are copied or rewritten.
+
+### 0.1.56
+
+- **Shopping carts:** Share a bounded walking phase across straight motion and turns, with smooth entry/release and a small planar stance correction that releases through the original swing. Preserve native foot roll and protect the knees without predicted landing targets, wide foot arcs or forced knee splay. Abrupt network yaw corrections retain native walking until root motion is stable; reverse and fast gaits retain their native clips.
+- **Shopping carts:** Keep the handle stable through walking and turning, widen the supported grasp and relax the elbows without arching the back. Share the reachable held position with pickup/setdown and the physical rear-axle pivot.
+- **Shopping carts:** Steer around the held model's fixed rear axle, including item scale, during forward/reverse travel and stationary turns. Keep the front casters free, match stationary steps to the handle arc and retain angular ramping across short movement budgets. Wheelbarrow handling and multiplayer packet fields/rate retain their existing behavior.
+
+### 0.1.55
+
+- **Vehicles:** Synchronize the rendered passenger position and both legs with Toolkit's entry/exit steps. Keep the support foot planted during weight transfer, lift the swinging foot and apply the same corrected pose to body and clothing. Normalize the chair animation's raised origin; logical seat ownership, collision, action completion and network messages stay native.
+
+### 0.1.54
+
+- **Fixed:** Hold an invalidated standard Host action whose exact native transaction is already Done while waiting, for up to 30 seconds, for its matching completion receipt. Suppress its stale update and let the original native callback finish once. Explicit stops, ownership changes, rejected/ambiguous transactions and expired waits cannot revive the action; successfully completed loop actions retain native behavior.
 
 ### 0.1.53
 

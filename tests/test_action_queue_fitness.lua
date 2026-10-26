@@ -48,10 +48,22 @@ getTimestampMs=function()return now end
 getCore=function()return {getGameMode=function()return 'Sandbox' end}end
 local quantizedCalendar=false
 local calendarOffset=0
+local frameClock={id=0,ms=0,now=now,manual=false,offset=0}
+frameClock.world={getFrameNo=function()
+ if not frameClock.manual and now~=frameClock.now then
+  frameClock.ms=math.max(0,now-frameClock.now);frameClock.now=now;frameClock.id=frameClock.id+1
+ end
+ return frameClock.id
+end}
+getWorld=function()return frameClock.world end
 getGameTime=function()return {
- getCalender=function()return {getTimeInMillis=function()return (quantizedCalendar and math.floor(now/60000)*60000 or now)+calendarOffset end}end,
- getNightsSurvived=function()return math.floor(now/86400000)end,
- getTimeOfDay=function()return (now/3600000+7)%24 end}end
+ getCalender=function()return {getTimeInMillis=function()
+  local world=now+frameClock.offset
+  return(quantizedCalendar and math.floor(world/60000)*60000 or world)+calendarOffset
+ end}end,
+ getNightsSurvived=function()return math.floor((now+frameClock.offset)/86400000)end,
+ getTimeOfDay=function()return((now+frameClock.offset)/3600000+7)%24 end,
+ getGameWorldSecondsSinceLastUpdate=function()return frameClock.ms/1000 end}end
 local tickCallbacks,menuCallbacks={},{}
 Events.OnTick.Add=function(callback)tickCallbacks[#tickCallbacks+1]=callback end
 Events.OnMainMenuEnter={Add=function(callback)menuCallbacks[#menuCallbacks+1]=callback end}
@@ -185,6 +197,7 @@ local function container(owner)
     function value:isVehicleSeat()return false end
     function value:getCapacityWeight()return #self.items end
     function value:getMaxWeight()return 50 end
+    function value:hasRoomFor(_,item)return self:getCapacityWeight()+item:getWeight()<=self:getMaxWeight() end
     function value:setDrawDirty()end
     return value
 end
@@ -232,7 +245,7 @@ local function panel(kind,minutes)
     return setmetatable({player=player,selectedExe=kind,exeData=FitnessExercises.exercisesType[kind],fitness=fitness,itemsToReequip={},
         exeTime={getInternalText=function()return tostring(minutes or 10)end}},ISFitnessUI)
 end
-f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');f.project('BulkActions')
+f.project('ActionQueueOperations');f.project('ActionQueueNativeContinuation');f.project('ActionQueueDefinitions');f.project('BulkActions')
 local policy=f.project('ActionQueuePolicy')
 ISInventoryPaneContextMenu.getContainers=function()return list({})end
 local receipt,preparationReceipts=nil,{}
@@ -247,6 +260,7 @@ PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function(action)return pr
 local nativeFitness={complete=ISFitnessAction.complete,exeLooped=ISFitnessAction.exeLooped,animEvent=ISFitnessAction.animEvent,
     serverStart=ISFitnessAction.serverStart,serverStop=ISFitnessAction.serverStop}
 local lifecycle=f.project('ActionQueueLifecycle')
+local lifecycleSweep=assert(tickCallbacks[#tickCallbacks],'guarded stop sweep not registered')
 f.project('ActionQueueTidyIntent')
 local fitnessQueue=f.project('ActionQueueFitness')
 -- BulkFood installs this native binding after ActionQueue/Fitness loads. Execute
@@ -381,12 +395,14 @@ local function finish(q,action)
     error('fitness cleanup did not converge')
 end
 local function reset()
+    for _,callback in ipairs(menuCallbacks)do callback()end
     player.primary,player.secondary=nil,nil;player.worn={};player.inventory=container();player.vars={}
     enabled,client,receipt=true,false,nil
     currentExercise=nil
     preparationReceipts={}
     player.sitting=false
     worlds={};floor.items={};currentSquare=here
+    frameClock.offset=0;frameClock.manual=false;frameClock.ms=0;frameClock.now=now;frameClock.id=frameClock.id+1
 end
 
 reset()
@@ -404,9 +420,13 @@ local workout=reachExercise(q)
 assert(workout.startMS==now and workout.endMS==now+600000,'workout duration counted time spent waiting')
 assert(currentExercise=='squats' and workout.fitnessUI==nil,'native exercise must exist only after preparation and outlive UI')
 now=now+150000
+assert(fitnessQueue.progress(workout).elapsed==0,'reading progress earned an unobserved frame')
+workout:update()
 local progress=assert(fitnessQueue.progress(workout))
 assert(math.abs(progress.elapsed-2.5)<.000001 and progress.total==10 and math.abs(progress.fraction-.25)<.000001,'fitness progress did not use elapsed game time')
 now=workout.endMS+60000
+assert(fitnessQueue.progress(workout).fraction==.25,'reading progress advanced the native frame accumulator')
+workout:update()
 assert(fitnessQueue.progress(workout).fraction==1,'elapsed progress overflowed planned duration')
 local effects=repeats
 finish(q,workout)
@@ -851,6 +871,7 @@ assert(fitnessQueue.canSkip(pickup),'bag taken after pickup scheduling did not s
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 assert(not player.worn.BACK and backpack:getContainer()~=player.inventory,'stale cleanup stole the bag back')
 print('PASS in-flight placement cancellation and storage taken between pickup planning and execution')
+local coreCompleted=ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted=nativeCompleted
 
 reset();client=true;now=3600000
@@ -1099,7 +1120,7 @@ removeCurrent(q)
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 assert(not player.worn.BACK and backpack:getWorldItem() and not player.inventory:contains(backpack,true),
     'native queue-disabled preparation left storage in carried inventory')
-q=f.queue(head());fitness:setCurrentExercise(nil)
+q.queue[1]=head();q.current=q.queue[1];fitness:setCurrentExercise(nil)
 equipmentTick() -- No window update: this also covers closing the fitness window.
 local restorationCount=#q.queue
 equipmentTick();window:update()
@@ -1115,7 +1136,7 @@ q=f.queue(head());window=panel('squats',10);assert(window:equipItems())
 window.currentExercice='squats';fitness:setCurrentExercise('squats');removeCurrent(q)
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 currentSquare=setmetatable({x=20,y=20,z=0},{__index=here})
-q=f.queue(head());fitness:setCurrentExercise(nil);equipmentTick();removeCurrent(q)
+q.queue[1]=head();q.current=q.queue[1];fitness:setCurrentExercise(nil);equipmentTick();removeCurrent(q)
 for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
 assert(backpack:getWorldItem() and not player.worn.BACK,'native queue-disabled cleanup teleported distant storage')
 
@@ -1127,6 +1148,107 @@ assert(#q.queue==1 and currentExercise==nil and player.worn.BACK==backpack,
     'native preflight floor-capacity failure unequipped storage or constructed a workout')
 enabled=true
 print('PASS native queue-disabled ground storage, closed-window restoration, distance guards and placement preflight')
+
+-- The source-pinned native producer must restore only the exact prop it really
+-- fetched, even when Host replaces the placed carrier's Java replica.
+for _,mode in ipairs({'sp','host-replica','host-prop-replica','host-wrong-member','held-bag','empty-hands','rejected','no-effect','missing-bag','same-type-bag','moved-prop','generation','cleanup-generation','changed-callback','full-bag','tampered-snapshot','replayed-command','foreign-actor','copied-snapshot','dead-before-return'})do
+ reset();enabled=false;client=mode~='sp'
+ local bag=item('Bag_Schoolbag',nil,'BACK');bag.favorite=true;player.worn.BACK=bag
+ local prop=item('DumbBell',bag.inner);prop.favorite=true
+ local other=item('DumbBell',bag.inner)
+ local originalSecondary=item('Screwdriver');player.secondary=originalSecondary;player.primary=item('Hammer')
+ if mode=='held-bag'then player.worn.BACK=nil;player.primary=bag end
+ if mode=='empty-hands'then player.primary,player.secondary=nil,nil end
+ local handPackets=0;local updateHands=player.updateHandEquips
+ player.updateHandEquips=function()handPackets=handPackets+1 end
+ q=f.queue(head());window=panel('bicepscurl',10)
+ assert(window:equipItems())
+ assert(handPackets==(client and mode~='empty-hands'and 1 or 0) and not player.secondary,'native immediate secondary clear was not synchronized exactly once')
+ player.updateHandEquips=updateHands
+ window.currentExercice='bicepscurl';fitness:setCurrentExercise('bicepscurl');removeCurrent(q)
+ local pickup=assert(q.queue[1]);assert(pickup.Type=='ISInventoryTransferAction' and pickup.item==prop)
+ if mode=='rejected' or mode=='no-effect' then
+  pickup.action=nativeAction();pickup.transactionId=100000;transactions[100000]=mode=='rejected'and'rejected'or'completed'
+  lifecycle.begin(pickup,'perform');lifecycle.finish(pickup,'perform',true)
+  if mode=='no-effect'then bag.inner:Remove(prop);player.inventory:AddItem(prop);removeCurrent(q)end
+ elseif mode=='generation'then q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1
+ elseif mode=='host-prop-replica'or mode=='host-wrong-member'then
+  -- Host updates action.item/root before perform, while its native group retains
+  -- the original detached Java member. No client-side transfer effect is replayed.
+  local original=prop;bag.inner:Remove(original)
+  prop=item('DumbBell');prop.id=original.id;prop.favorite=true;original.source=nil
+  pickup.item=prop;pickup.action=nativeAction();pickup.transactionId=100001;transactions[100001]='completed'
+  if mode=='host-wrong-member'then
+   local foreign=item('DumbBell');player.inventory:Remove(foreign);foreign.source=nil;foreign.id=prop.id
+   pickup.queueList[1].items[1]=foreign
+  end
+  lifecycle.begin(pickup,'perform')
+  table.remove(pickup.queueList,1);pickup.item=original;pickup.transactionId=0
+  lifecycle.finish(pickup,'perform',true);removeCurrent(q)
+  for _,action in ipairs(q.queue)do if action.item==original then action.item=prop end end
+ end
+ for _=1,20 do if not q.queue[1]then break end;runCurrent(q)end
+ assert(prop:getContainer()==player.inventory and bag:getWorldItem(),'native preparation did not fetch exact prop/place its carrier')
+ if mode=='host-replica'then
+  local world=bag:getWorldItem();local fresh=item('Bag_Schoolbag',floor,'BACK');fresh.id=bag.id;fresh.favorite=bag.favorite
+  floor:Remove(bag);world.getItem=function()return fresh end;fresh.world=world;bag.world=nil
+  bag.inner:Remove(other);fresh.inner:AddItem(other);bag=fresh
+ elseif mode=='missing-bag' or mode=='same-type-bag'then
+  worlds={};floor:Remove(bag);bag.world=nil
+  if mode=='same-type-bag'then local spare=item('Bag_Schoolbag',nil,'BACK');player.worn.BACK=spare end
+ elseif mode=='moved-prop'then player.inventory:Remove(prop);other.source:AddItem(prop)
+ elseif mode=='changed-callback'then prop.changed=true
+ elseif mode=='full-bag'then bag.inner.hasRoomFor=function()return false end end
+ -- Native stop can legitimately advance generation; the already earned pickup
+ -- remains an obligation, without authorizing a second pickup or another prop.
+ q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1
+ fitness:setCurrentExercise(nil)
+ q.queue[1]=head();q.current=q.queue[1]
+ local nativeMatches=policy.matchesNative
+ if mode=='changed-callback'then policy.matchesNative=function()return true end end
+ equipmentTick();local count=#q.queue;equipmentTick();assert(#q.queue==count,'closed window cleanup was queued twice');removeCurrent(q)
+ if mode=='cleanup-generation'then q.toolkitOperationGeneration=q.toolkitOperationGeneration+1 end
+ local returnCount,commands=0,0
+ local alive=player.isDead
+ local specific=getSpecificPlayer
+ local foreign={isDead=function()return false end,getPlayerNum=function()return 9 end,getInventory=function()return container()end}
+ getSpecificPlayer=function(number)if number==9 then return foreign end;return specific(number)end
+ for _=1,30 do
+  local action=q.queue[1];if not action then break end
+  if action.Type=='ISQueueActionsAction'then
+   commands=commands+1
+   if mode=='tampered-snapshot'then
+    assert(commands>1 or type(action.args[1])=='table'and action.args[1].loan==nil and action.args[1].refs==nil,
+     'native cleanup exposed mutable provenance')
+    action.args[1].loan={earned=true};action.args[1].refs={}
+   end
+   if mode=='foreign-actor'then
+    local amount=#q.queue;action.addActionsFunction(foreign,action.args[1])
+    assert(#q.queue==amount,'foreign actor expanded another actor cleanup')
+   end
+   if mode=='copied-snapshot'then action.args[1]={loan={earned=true}}end
+   if mode=='replayed-command'then
+    action.addActionsFunction(player,action.args[1]);local amount=#q.queue
+    action.addActionsFunction(player,action.args[1]);assert(#q.queue==amount,'cleanup command replay queued duplicate work')
+   end
+   if mode=='dead-before-return'and commands==2 then player.isDead=function()return true end end
+  end
+  if action.Type=='ISInventoryTransferAction'and action.srcContainer==player.inventory and action.item==prop then returnCount=returnCount+1 end
+  runCurrent(q)
+ end
+ policy.matchesNative=nativeMatches;player.isDead=alive;getSpecificPlayer=specific
+ local restored=mode=='sp'or mode=='host-replica'or mode=='host-prop-replica'or mode=='held-bag'or mode=='empty-hands'or mode=='tampered-snapshot'or mode=='replayed-command'or mode=='foreign-actor'
+ assert(returnCount==(restored and 1 or 0),'unproved/repeated native prop return: '..mode)
+ if restored then
+  assert(prop:getContainer()==bag.inner and prop:isFavorite()and bag:isFavorite()and (mode=='held-bag'and player.primary==bag or mode~='held-bag'and player.worn.BACK==bag),
+   'native cleanup lost exact prop/carrier/favourites: '..mode)
+  assert(other:getContainer()==bag.inner,'native cleanup selected another same-type prop')
+ end
+ if mode=='missing-bag'or mode=='same-type-bag'then assert(prop:getContainer()==player.inventory,'missing carrier substituted another bag')end
+ if mode=='cleanup-generation'then assert(not player.worn.BACK,'stale cleanup changed newer equipment intent')end
+end
+enabled=true
+print('PASS native disabled Fitness observed pickup/Host hand sync, fresh carrier and failed/stale/missing-source guards')
 
 -- Execute the selected cart equipment/drop wrappers after Fitness captures native callbacks,
 -- exactly as the full mod pack's OnGameStart does. Source pins and the production
@@ -1296,6 +1418,245 @@ if SaucedCartsSource then
  print('PASS actual late SaucedCarts equipment/drop wrappers preserve normal and cancelled borrowing with guarded admission')
 end
 
+-- Run the actual shared Base.stop/tick branches against the native UI producer.
+-- Java removal and the server receipt are explicit, separately delayed boundaries.
+do
+ local savedCompleted=ISTimedActionQueue.onCompleted
+ ISTimedActionQueue.onCompleted=coreCompleted
+ local beginAt=assert(coreSource:find('local function clearStop(queue)',1,true))
+ local endAt=assert(coreSource:find('Queue.label =',beginAt,true))
+ assert(loadstring('local Queue,Toolkit,Policy,Operations,Settlement = ...\n'..
+  'local craft,live,stoppable,resumableWorld=Policy.isCraftAction,Policy.live,Policy.stoppable,Policy.resumableWorld\n'..
+  'local Batch,processPriority=nil,nil\n'..assert(coreSource:match('(local function updateOperationState.-\nend)'))..'\n'..coreSource:sub(beginAt,endAt-1),
+  '@PZSurvivorToolkit/ActionQueue.lua'))(core,PZSurvivorToolkit,policy,PZSurvivorToolkit.ActionQueueOperations,settlement)
+ PZSurvivorToolkit.ActionQueueAcknowledgements.reset=function()end
+ ISLogSystem={logAction=function()end}
+ player.getTimedActionToRetrigger=function()end;player.setTimedActionToRetrigger=function()end
+ local actions=player.getCharacterActions
+ local pressedCancel=player.pressedCancelAction
+ player.pressedCancelAction=function()return false end
+ player.isRunning=function()return false end;player.isSprinting=function()return false end
+ local activeNative
+ player.getCharacterActions=function()return {contains=function(_,value)return value==activeNative end}end
+ local function nativeWorkout(kind,minutes)
+  q=f.queue(head());window=panel(kind,minutes)
+  window:onClick({internal='OK'})
+  local requested=assert(q.queue[#q.queue].onCompleteArgs.p1)
+  local constructorStart=requested.startMS
+  local originalTail=head();ISTimedActionQueue.add(originalTail)
+  removeCurrent(q);now=now+240000
+  for _=1,20 do
+   local current=assert(q.queue[1])
+   if current.Type=='ISFitnessAction'then break end
+   if current.Type=='ISWaitWhileGettingUp'then
+    current.action=nativeAction();current:perform()
+   else runCurrent(q)end
+  end
+  local body=runCurrent(q)
+  assert(body==requested and not fitnessQueue.isManaged(body),'native control became a managed/editor action')
+  assert(body.startMS==now and body.startMS>constructorStart and body.endMS==now+minutes*60000,
+   'native workout spent its requested timer in preparation')
+  activeNative=body.action
+  return body,originalTail
+ end
+ -- B42.21 SyncClockPacket.processClient bytecode21-36 replaces timeOfDay
+ -- with the received server value. Native frame elapsed/frameNo are unchanged.
+ -- Exercise the exact source-pinned native/managed action callbacks around that reset.
+ for _,managed in ipairs({false,true})do
+  for _,host in ipairs({false,true})do
+   for _,jump in ipairs({-2400000,2400000})do
+    reset();enabled=managed;client=host
+    local body
+    if managed then
+     local pending;pending,q=request('squats',10);expand(pending,q);body=reachExercise(q)
+     activeNative=body.action
+    else body=nativeWorkout('squats',10)end
+    frameClock.manual=true
+    local function frame(ms)
+     frameClock.id=frameClock.id+1;frameClock.ms=ms;now=now+ms;frameClock.now=now
+    end
+    if host then receipt={state='started',token='sync-clock-confirmed'};body:update()end
+    local beforeStops=nativeStops
+    frame(60000);body:update()
+    local sample=assert(fitnessQueue.timing(body))
+    assert(math.abs(sample.elapsed-1)<1e-6,'first actual active minute missing')
+    frameClock.offset=jump -- Actual SyncClock setter semantics; no engine frame has elapsed.
+    body:update()
+    assert(nativeStops==beforeStops and math.abs(fitnessQueue.timing(body).elapsed-1)<1e-6,
+     'SyncClock reset changed earned active duration: '..tostring(managed)..':'..tostring(host)..':'..jump)
+    for _=1,10 do
+     local read=fitnessQueue.timing(body);if managed then fitnessQueue.progress(body);fitnessQueue.describe(body)end
+     assert(math.abs(read.elapsed-1)<1e-6,'read-only timing/progress advanced the workout')
+    end
+    for minute=2,9 do frame(60000);body:update();assert(nativeStops==beforeStops,'active timer stopped early')end
+    frame(60000);body:update()
+    local ended=fitnessQueue.timing(body)
+    assert(nativeStops==beforeStops+1 and ended.elapsed==10 and ended.fraction==1,
+     'SyncClock reset extended or shortened the selected interval')
+    assert(ended.source=='active-native-frames'and ended.sampleMS==ended.startMS+600000 and ended.stopMS==ended.sampleMS)
+    body:update();assert(nativeStops==beforeStops+1,'same frame replayed native stop')
+   end
+  end
+ end
+ print('PASS native/managed SP/Host timers retain earned active duration through forward/backward SyncClock resets')
+ for _,managed in ipairs({false,true})do
+  reset();enabled=managed;client=true;frameClock.manual=true
+  frameClock.ms=900000 -- The frame containing start is not nine earned minutes.
+  local body
+  if managed then
+   local pending;pending,q=request('squats',10);expand(pending,q);body=reachExercise(q);activeNative=body.action
+  else body=nativeWorkout('squats',10)end
+  body:update();assert(fitnessQueue.timing(body).activeMS==0,'start credited its current/preparation frame')
+  local function frame(ms)
+   frameClock.id=frameClock.id+1;frameClock.ms=ms;now=now+ms;frameClock.now=now
+  end
+  frame(300000);body:update()
+  assert(fitnessQueue.timing(body).activeMS==300000 and fitnessQueue.timing(body).elapsed==0,
+   'unconfirmed active time became confirmed progress or disappeared')
+  frame(120000);receipt={state='started',token='skip-confirmation-frame'};body:update()
+  local confirmed=fitnessQueue.timing(body)
+  assert(confirmed.confirmed and confirmed.activeMS==0 and confirmed.elapsed==0,
+   'Host confirmation credited its current frame or pre-confirmation interval')
+  local stops=nativeStops
+  for _=1,8 do body:update();fitnessQueue.timing(body);if managed then fitnessQueue.progress(body)end end
+  assert(fitnessQueue.timing(body).activeMS==0 and nativeStops==stops,'repeated same-frame calls earned time')
+  frame(200000);body:update();frameClock.ms=900000;body:update()
+  assert(fitnessQueue.timing(body).activeMS==200000,'changed delta replayed an already observed frame')
+  for _,bad in ipairs({-1,math.huge,0/0})do
+   frameClock.id=frameClock.id+1;frameClock.ms=bad;body:update()
+   assert(fitnessQueue.timing(body).activeMS==200000,'invalid native frame delta earned time')
+  end
+  frame(200000);body:update();frame(199999);body:update()
+  assert(nativeStops==stops and fitnessQueue.timing(body).activeMS==599999,'variable native frames shortened full duration')
+  frame(1);body:update()
+  local stopped=fitnessQueue.timing(body)
+  assert(nativeStops==stops+1 and stopped.activeMS==600000 and stopped.stopMS==confirmed.startMS+600000,
+   'variable native frames failed the exact full interval')
+  frame(1000);receipt={state='started',token='late-started-receipt'};body:update()
+  local late=fitnessQueue.timing(body)
+  assert(nativeStops==stops+1 and late.startMS==confirmed.startMS and late.activeMS==600000 and late.stopMS==stopped.stopMS,
+   'late started receipt restarted or extended an already stopped timer')
+ end
+ print('PASS start/confirmation frame exclusion, read-only progress, repeated frames, variable native deltas and frozen late-receipt stops')
+ for _,managed in ipairs({false,true})do
+  reset();enabled=managed
+  local body
+  if managed then
+   local pending;pending,q=request('squats',10);expand(pending,q)
+   for _=1,20 do if q.queue[1].Type=='ISFitnessAction'then break end;runCurrent(q)end
+   body=assert(q.queue[1]);assert(body.Type=='ISFitnessAction')
+  else
+   q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK'})
+   body=assert(q.queue[#q.queue].onCompleteArgs.p1)
+  end
+  body.action=nativeAction();local stops=nativeStops
+  assert(fitnessQueue.timing(body)==nil,'unstarted constructor acquired active duration')
+  body:forceStop()
+  assert(nativeStops==stops+1 and fitnessQueue.timing(body)==nil and not currentExercise,
+   'stopping an unstarted native body invented time or lost its original stop')
+ end
+ print('PASS allocated unstarted native/managed bodies stop without inventing an active clock')
+ for _,host in ipairs({false,true})do
+  reset();enabled=false;client=host
+  local bag=item('Bag_Schoolbag',nil,'BACK');bag.favorite=true;player.worn.BACK=bag
+  local prop=item('DumbBell',bag.inner);prop.favorite=true
+  local primary,secondary=item('Hammer'),item('Screwdriver');player.primary,player.secondary=primary,secondary
+  local body,reader=nativeWorkout('bicepscurl',30)
+  q.toolkitOperationsInvalid=true;body.toolkitQueueOperation.toolkitCancelled=true
+  if host then
+   body.toolkitNativeTransaction=91;body.toolkitNativeKind='ISFitnessAction'
+   receipt={state='started'};body:update()
+  end
+  local started=now;local stopsBefore=nativeStops
+  now=started+1800000-1;body:update()
+  assert(nativeStops==stopsBefore and not q.toolkitCancel,'native thirty-minute workout ended early')
+  now=started+1800000;body:update()
+  assert(nativeStops==stopsBefore+1 and q.toolkitCancel==body,'native expiry did not arm one exact terminal stop')
+  local queued=#q.queue;window:update();equipmentTick()
+  assert(#q.queue==queued and q.queue[2]==reader,'native UI appended restoration before its stop settled')
+  body:stop();assert(q.queue[1]==body and q.queue[2]==reader and q.toolkitCancelStopped,
+   'native stop cleared the independent reader')
+  local moodles=player.getMoodles
+  if host then player.getMoodles=function()return {getMoodleLevel=function()return 4 end}end end
+  -- An already-paid final endurance update cannot retroactively turn a sealed
+  -- natural endpoint into an earlier exhaustion stop. Input cancellation still revokes it.
+  q:tick();assert(q.queue[1]==body,'queue advanced before native removal')
+  activeNative=nil
+  if host then
+   q:tick();assert(q.queue[1]==body,'Host advanced before matching terminal receipt')
+   receipt.state='canceled'
+  end
+  q:tick()
+  player.getMoodles=moodles
+  assert(q.queue[1]~=body and q.queue[1]~=reader,'native cleanup was not inserted before independent tail')
+  for _=1,30 do if q.queue[1]==reader then break end;runCurrent(q)end
+  assert(q.queue[1]==reader and player.primary==primary and player.secondary==secondary and player.worn.BACK==bag
+   and prop:getContainer()==bag.inner and bag:isFavorite() and prop:isFavorite() and #worlds==0,
+   'native terminal failed exact bag/prop/hands restoration before reader')
+  assert(nativeStops==stopsBefore+1,'native terminal replayed exercise stop/effects')
+  window:update();equipmentTick();assert(#q.queue==1,'native restoration episode replayed after release')
+ end
+ for _,cause in ipairs({'move','aim','climb','sit','exhaustion','cancel','cancel-after-expiry','cancel-after-stop','cancel-after-stop-new-panel'})do
+  reset();enabled=false;client=true
+  local body,reader=nativeWorkout('squats',10)
+  body.toolkitNativeTransaction=92;body.toolkitNativeKind='ISFitnessAction';receipt={state='started'};body:update()
+  local restore
+  if cause=='move'then restore=player.pressedMovement;player.pressedMovement=function()return true end
+  elseif cause=='aim'then restore=player.isAiming;player.isAiming=function()return true end
+  elseif cause=='climb'then restore=player.isClimbing;player.isClimbing=function()return true end
+  elseif cause=='sit'then restore=player.isSittingOnFurniture;player.isSittingOnFurniture=function()return true end
+  elseif cause=='exhaustion'then restore=player.getMoodles;player.getMoodles=function()return {getMoodleLevel=function()return 4 end}end end
+  now=now+600001
+  if cause=='cancel'then window:onClick({internal='CANCEL'})
+  else body:update();if cause=='cancel-after-expiry' or cause=='cancel-after-stop' or cause=='cancel-after-stop-new-panel'then
+    assert(q.toolkitCancel==body,'fixture failed to reach natural stop wait')
+    if cause=='cancel-after-stop' or cause=='cancel-after-stop-new-panel'then body:stop();activeNative=nil end
+    if cause=='cancel-after-stop-new-panel'then window=panel('squats',10)end
+    window:onClick({internal='CANCEL'});window:update()
+   end
+  end
+  if cause=='cancel-after-stop' or cause=='cancel-after-stop-new-panel'then q:tick()else body:stop();activeNative=nil end
+  assert(#q.queue==0 and q.current==nil,cause..' borrowed natural-expiry permission and retained tail')
+  if cause=='move'then player.pressedMovement=restore
+  elseif cause=='aim'then player.isAiming=restore
+  elseif cause=='climb'then player.isClimbing=restore
+  elseif cause=='sit'then player.isSittingOnFurniture=restore
+  elseif cause=='exhaustion'then player.getMoodles=restore end
+ end
+ reset();enabled=false;client=true
+ local detachedBag=item('Bag_Schoolbag',nil,'BACK');player.worn.BACK=detachedBag
+ local detachedProp=item('DumbBell',detachedBag.inner)
+ player.primary,player.secondary=item('Hammer'),item('Screwdriver')
+ local detachedBody=nativeWorkout('bicepscurl',10)
+ detachedBody.toolkitNativeTransaction=93;detachedBody.toolkitNativeKind='ISFitnessAction';receipt={state='started'}
+ detachedBody:update();now=now+600001;detachedBody:update();detachedBody:stop();activeNative=nil
+ local oldQueue,oldPanel=q,window
+ local foreign=head();local replacement=f.queue(foreign)
+ local replacementList=replacement.queue;replacement.toolkitOperationGeneration=17
+ lifecycleSweep();fitnessPrune();equipmentTick();oldPanel:update();oldQueue:tick();oldPanel:update();equipmentTick()
+ assert(ISTimedActionQueue.queues[player]==replacement and replacement.queue==replacementList and #replacement.queue==1
+  and replacement.current==foreign and replacement.queue[1]==foreign and replacement.toolkitOperationGeneration==17,
+  'detached stop or old UI appended/replayed restoration into replacement queue')
+ assert(detachedBag:getWorldItem() and detachedProp:getContainer()==player:getInventory(),
+  'detached cleanup replayed native pickup/return effects')
+ reset();enabled=false
+ q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK'})
+ assert(currentExercise=='squats','fixture failed to reserve constructor exercise')
+ q:resetQueue();fitnessPrune();equipmentTick()
+ assert(currentExercise==nil and window.currentExercice==nil,'canceled native preparation stranded constructor/UI state')
+ q.queue[1]=head();q.current=q.queue[1] -- Native Java allocation is modeled by runCurrent in this fixture.
+ window:onClick({internal='OK'})
+ assert(q.queue[2] and q.queue[2].Type=='ISWaitWhileGettingUp','canceled empty-hand native request blocked later workout')
+ reset();enabled=false
+ q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK'})
+ local replacement=ISFitnessAction:new(player,'squats',10,FitnessExercises.exercisesType.squats,'squats')
+ q:resetQueue();fitnessPrune()
+ assert(replacement.fitness:getCurrentExe()==exerciseStates.squats,'old unstarted request cleared a later same-kind constructor state')
+ player.getCharacterActions=actions;player.pressedCancelAction=pressedCancel
+ ISTimedActionQueue.onCompleted=savedCompleted
+ print('PASS native UI thirty-minute timer, original stop/removal/Host receipt, exact cleanup before reader and explicit input/cancel distinction')
+end
+
 -- A changed source present before capture must not acquire a new permission.
 native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
 f.project('ActionQueueDefinitions')
@@ -1309,4 +1670,10 @@ reset();q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK
 nativeWait=assert(q.queue[2])
 assert(nativeWait.Type=='ISWaitWhileGettingUp' and not untrusted.isManaged(nativeWait),'unverified native source acquired managed producer permission')
 sourceOverride=nil
-print('PASS pre-existing native source mismatch falls back without managed permissions')
+native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+f.project('ActionQueueDefinitions')
+local foreignConstructor=function(self,character,foreignMinutes,foreignData,extraWireField) return {} end
+ISFitnessAction.new=foreignConstructor
+f.project('ActionQueueFitness')
+assert(ISFitnessAction.new==foreignConstructor,'unsupported constructor lost its original parameter-name wire ABI')
+print('PASS pre-existing native source/constructor mismatch falls back without managed permissions or wire-schema changes')

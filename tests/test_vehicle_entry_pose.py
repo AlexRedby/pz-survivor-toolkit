@@ -1,4 +1,4 @@
-"""Vehicle transitions stay seated and retain the native completion contract.
+"""Vehicle transitions move between standing and driving while retaining native completion.
 
 Set PZ_GAME to the game's Java directory to compare with installed native XML
 and animation sources. An explicitly configured but unavailable game is an error.
@@ -35,7 +35,7 @@ def clip_duration(game, name):
         raise ValueError("Missing animation timing in " + name)
     # X animation keys use time;component-count;values. Restrict the search to
     # the named AnimationSet so model/mesh declarations cannot supply a time.
-    times = re.findall(r"^\s*(\d+)\s*;\s*[34]\s*;", source[animation.end():], re.M)
+    times = re.findall(r"^\s*(\d+)\s*;\s*(?:3|4|16)\s*;", source[animation.end():], re.M)
     if not times or int(ticks[1]) <= 0:
         raise ValueError("Missing or invalid animation keys in " + name)
     duration = max(map(int, times)) / int(ticks[1])
@@ -45,14 +45,15 @@ def clip_duration(game, name):
 
 
 class VehicleEntryPose(unittest.TestCase):
-    def test_both_states_finish_once_without_blending_from_standing(self):
+    def test_reversible_transition_retains_native_completion(self):
         for state, finished in STATES.items():
             with self.subTest(state=state):
                 node = node_at(MOD, state)
                 self.assertEqual(node.tag, "animNode")
                 self.assertEqual(node.findtext("m_Name"), "default")
-                self.assertEqual(node.findtext("m_AnimName"), "Bob_IdleDriving")
+                self.assertEqual(node.findtext("m_AnimName"), "Bob_ToolkitVehicleEnter" if state == "enter" else "Bob_ToolkitVehicleExit")
                 self.assertEqual(node.findtext("m_Looped"), "false")
+                self.assertIsNone(node.findtext("m_AnimReverse"))
                 self.assertEqual(float(node.findtext("m_BlendTime")), 0)
                 speed = float(node.findtext("m_SpeedScale"))
                 self.assertTrue(math.isfinite(speed) and speed > 0)
@@ -60,6 +61,40 @@ class VehicleEntryPose(unittest.TestCase):
                                  "Native maxTime=-1 actions require their exact End signal")
                 self.assertFalse(node.findall("m_Conditions"),
                                  "The default fix must also apply to ordinary SP vehicles")
+
+
+    def test_authored_clip_starts_standing_and_finishes_in_driving_origin(self):
+        # Inspect the actual exported local matrices, recomposing the complete
+        # native hierarchy; a renamed seated idle cannot satisfy this contract.
+        import sys
+        sys.path.insert(0, str(ROOT / "tools"))
+        from cart_clip_bake import multiply, template_parts
+        clip = (MOD / "media/anims_X/Bob/Bob_ToolkitVehicleEnter.x").read_text()
+        _, parents = template_parts(clip)
+        animation = clip[clip.index("AnimationSet Bob_ToolkitVehicleEnter") :]
+        tracks = {}
+        for match in re.finditer(r"Animation\s*\{\s*\{\s*(\w+)\s*\}\s*AnimationKey\s*\{\s*4;\s*\d+;(.*?)\n\s*\}\s*\}", animation, re.S):
+            tracks[match[1]] = [(int(key[1]), list(map(float, key[2].split(','))))
+                               for key in re.finditer(r"(\d+);16;([^;]+);;", match[2])]
+        self.assertEqual(tracks.keys(), parents.keys())
+        poses = []
+        for endpoint in (0, -1):
+            models = {}
+            def model(bone):
+                if bone not in models:
+                    local = tracks[bone][endpoint][1]
+                    models[bone] = multiply(model(parents[bone]), local) if parents[bone] else local
+                return models[bone]
+            poses.append({bone: model(bone) for bone in parents})
+        start, end = poses
+        self.assertGreater(start["Bip01_Head"][13], .8)
+        self.assertGreater(start["Bip01"][13], .5)
+        self.assertGreater(start["Bip01_L_Foot"][13], .06)
+        for component in end["Bip01"][12:15]:
+            self.assertAlmostEqual(component, 0, delta=2e-6)
+        self.assertAlmostEqual(end["Bip01_Head"][13], .3127, delta=1e-4)
+        self.assertLess(end["Bip01_L_Foot"][13], -.15)
+        self.assertGreater(start["Bip01_Head"][13] - end["Bip01_Head"][13], .5)
 
 
 class NativeVehicleEntryTiming(unittest.TestCase):
@@ -74,8 +109,8 @@ class NativeVehicleEntryTiming(unittest.TestCase):
         if not (cls.game / "projectzomboid.jar").is_file():
             raise FileNotFoundError("PZ_GAME must contain projectzomboid.jar: " + str(cls.game))
 
-    def test_only_pose_blend_and_speed_change_and_native_duration_is_preserved(self):
-        changed_fields = {"m_AnimName", "m_BlendTime", "m_SpeedScale"}
+    def test_only_pose_direction_and_blend_change_and_native_duration_is_preserved(self):
+        changed_fields = {"m_AnimName", "m_BlendTime", "m_SpeedScale", "m_AnimReverse"}
         for state in STATES:
             with self.subTest(state=state):
                 native = node_at(self.game, state)
@@ -88,10 +123,10 @@ class NativeVehicleEntryTiming(unittest.TestCase):
                 self.assertEqual(replacement_fields, native_fields)
                 native_time = clip_duration(self.game, native.findtext("m_AnimName")) / float(
                     native.findtext("m_SpeedScale"))
-                replacement_time = clip_duration(self.game, replacement.findtext("m_AnimName")) / float(
+                replacement_time = clip_duration(MOD, replacement.findtext("m_AnimName")) / float(
                     replacement.findtext("m_SpeedScale"))
                 self.assertAlmostEqual(replacement_time, native_time, delta=1e-6,
-                                       msg="A seated clip must not change entry/exit duration")
+                                       msg="The transition must not change native entry/exit duration")
 
 
 if __name__ == "__main__":

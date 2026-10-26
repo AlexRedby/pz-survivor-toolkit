@@ -1,5 +1,6 @@
 local Fixture={}
 local Evolved=require 'QueueCookEvolvedFixture'
+local function sandwich(c)return c=='cook-sandwich-plain-joined'or c=='cook-sandwich-enriched-joined'end
 local function pool(case)return case:find('missing-batch-pool',1,true)~=nil end
 local function failure(case)return case:find('cancel-active',1,true)~=nil or pool(case)end
 local function list(container)
@@ -27,7 +28,22 @@ function Fixture.sparePresent(player,meta)
  local root=player:getInventory();local item=root:getItemById(meta.id)
  return unchanged(item,meta)and item:getContainer()==root and count(root,meta.id)==1
 end
+local function sameReceipt(a,b)
+ if type(a)~=type(b)then return false end
+ if type(a)~='table'then return a==b end
+ for k,v in pairs(a)do if not sameReceipt(v,b[k])then return false end end
+ for k in pairs(b)do if a[k]==nil then return false end end
+ return true
+end
 function Fixture.prepare(player,case,previous)
+ if previous and sandwich(previous.case)then require('QueueCookSandwichFixture').cleanup(previous);previous=nil end
+ if previous and Evolved.isCase(previous.case)then
+  assert(previous.player==player and previous.verified==true,'previous evolved case was not verified')
+  local frozen=assert(previous.frozenReceipt,'previous evolved receipt missing')
+  assert(sameReceipt(Evolved.verify(previous),frozen),'previous evolved exact resources changed')
+  -- Keep frozen evolved results in this disposable world; subsequent cases use new IDs.
+  previous=nil
+ end
  if previous then
   assert(previous.player==player and previous.verified==true and type(previous.cleanupRootItems)=='table'
    and type(previous.cleanupBags)=='table'and #previous.cleanupBags==2,'UI previous cleanup state is not verified')
@@ -62,6 +78,7 @@ function Fixture.prepare(player,case,previous)
    root:Remove(item);if isServer()then sendRemoveItemFromContainer(root,item)end
   end
  end
+ if sandwich(case)then return require('QueueCookSandwichFixture').prepare(player,case)end
  if Evolved.isCase(case)then return Evolved.prepare(player,case)end
  local state={player=player,case=case,materials={},bags={},toolMeta={},baselineOutputIds={}}
  local root=player:getInventory();state.root=root
@@ -93,6 +110,7 @@ function Fixture.prepare(player,case,previous)
  return state
 end
 function Fixture.descriptor(state)
+ if sandwich(state.case)then return require('QueueCookSandwichFixture').descriptor(state)end
  if Evolved.isCase(state.case)then return Evolved.descriptor(state)end
  local value={case=state.case,materials=state.materials,bags=state.bags,toolMeta=state.toolMeta,
   book=state.book,baselineOutputIds=state.baselineOutputIds}
@@ -102,6 +120,7 @@ function Fixture.descriptor(state)
  return value
 end
 function Fixture.resolve(player,ids)
+ if sandwich(ids.case)then return require('QueueCookSandwichFixture').resolve(player,ids)end
  if Evolved.isCase(ids.case)then return Evolved.resolve(player,ids)end
  local root=player:getInventory();local containers=ArrayList.new();containers:add(root)
  for _,id in ipairs(ids.bags)do
@@ -132,6 +151,7 @@ function Fixture.removePool(state)
  return state.poolRemoval
 end
 function Fixture.verify(state)
+ if sandwich(state.case)then return require('QueueCookSandwichFixture').verify(state)end
  if Evolved.isCase(state.case)then return Evolved.verify(state)end
  local root=state.player:getInventory();local baseline={};local outputIds={}
  local materialStates,consumed={},0

@@ -131,7 +131,7 @@ class CartAnimationNodes(unittest.TestCase):
             # NoAim idle moves diagonally; its diagonal clips can cancel the strafe roots.
             self.assertEqual({blend.attrib["referenceID"]: (blend.findtext("m_AnimName"),
                               float(blend.findtext("m_XPos")), float(blend.findtext("m_YPos")))
-                              for blend in node.findall("m_2DBlends")}, {
+                              for blend in node.findall("m_2DBlends")[:5]}, {
                 "1": ("Toolkit_CartPivot_Idle", 0, 0),
                 "2": (forward, 0, 1),
                 "3": ("Toolkit_CartPivot_Backward", 0, -1),
@@ -165,7 +165,7 @@ class CartAnimationNodes(unittest.TestCase):
         wood = copy.deepcopy(self.nodes["ToolkitWoodCartPivotWalk"][1])
         self.assertIn(("ToolkitCartWoodPivot", "BOOL", "false"), conditions(native))
         self.assertIn(("ToolkitCartWoodPivot", "BOOL", "true"), conditions(wood))
-        self.assertEqual([b.findtext("m_AnimName") for b in wood.findall("m_2DBlends")],
+        self.assertEqual([b.findtext("m_AnimName") for b in wood.findall("m_2DBlends")[:5]],
                          ["Toolkit_CartPivot_Idle", "Toolkit_CartPivot_Walk", "Toolkit_CartPivot_Backward",
                           "Toolkit_CartPivot_WoodRight", "Toolkit_CartPivot_WoodLeft"])
         wood.find("m_Name").text = native.findtext("m_Name")
@@ -180,6 +180,26 @@ class CartAnimationNodes(unittest.TestCase):
         for mode in ("Run", "Sprint"):
             self.assertFalse(any(c.findtext("m_Name") == "ToolkitCartWoodPivot"
                                  for c in self.nodes["ToolkitCartPivot" + mode][1].findall("m_Conditions")))
+
+    def test_injured_directional_fields_keep_native_clips_outside_direction_triangles(self):
+        walk = ["Bob_WalkSlow", "Bob_WalkLightLimpR", "Bob_WalkLightLimpL",
+                "Bob_WalkHeavyLimpR", "Bob_WalkHeavyLimpL", "Bob_Walk"]
+        for name, extra in {
+            "ToolkitCartPivotWalk": walk, "ToolkitWoodCartPivotWalk": walk,
+            "ToolkitCartPivotRun": ["Bob_Walk", "Bob_WalkLightLimpR", "Bob_WalkLightLimpL",
+                                    "Bob_RunLightLimpR", "Bob_RunLightLimpL", "Bob_WalkHeavyLimpR", "Bob_WalkHeavyLimpL", "Bob_Run"],
+            "ToolkitCartPivotSprint": ["Bob_Run", "Bob_Sprint"],
+        }.items():
+            node = self.nodes[name][1]
+            self.assertFalse(any(c[0] == "WalkInjury" for c in conditions(node)))
+            blends = node.findall("m_2DBlends")
+            self.assertEqual([b.findtext("m_AnimName") for b in blends[5:]], extra)
+            self.assertEqual([b.attrib["referenceID"] for b in blends],
+                             [str(i) for i in range(1, len(blends) + 1)])
+            self.assertTrue(all(float(b.findtext("m_XPos")) == float(b.findtext("m_YPos")) == 0
+                                for b in blends[5:]))
+            self.assertTrue(all(int(t.findtext("node" + str(i))) <= 5
+                                for t in node.findall("m_2DBlendTri") for i in (1, 2, 3)))
 
     def test_walk_uses_native_speed_and_injury_blending(self):
         node = self.nodes["ToolkitCartWalk"][1]

@@ -44,6 +44,14 @@ object CartLegPaceTest {
             return null
         }
 
+        override fun getVariableFloat(name: String?, fallback: Float): Float =
+            when (name) {
+                "ToolkitCartStepX" -> stepX
+                "ToolkitCartStepY" -> stepY
+                "ToolkitCartLegPace" -> pace
+                else -> fallback
+            }
+
         override fun hasAnimationPlayer(): Boolean = loaded
 
         override fun isRunning(): Boolean = run
