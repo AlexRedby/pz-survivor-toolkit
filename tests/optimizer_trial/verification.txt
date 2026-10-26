@@ -27,6 +27,9 @@ Checks on the combined source
 - Focused Lua checks passed for Research, presentation, indicators, planting/native crop data, capacity, dashboard against the real upstream source, and buffered telemetry. Eleven adapter tests, eight snapshot/provenance tests, ten PowerShell pack tests and Toolkit structure validation passed.
 - Ninety-five capture/tooling tests passed across the regular suite and its separately supplied-JDK case. This includes a real disposable Java25 JFR recording and duplicate-capture protection. PowerShell tests run on macOS; native Windows PowerShell5.1, WPR/UAC, OpenTrace, GPU/Win32 counters and CapFrameX execution are not verified here.
 
+Moving-route diagnostic follow-up
+The exact combined Toolkit0.1.285/Java0.1.65 full67 native-profile retry traversed more than600 tiles and reached about121 km/h before the preserved low-speed rule stopped the scenario. Runtime logs were clean and the diagnostic windows finalized, but the full route failed its acceptance gate. Four LoadGridsquare handlers produced402232 calls; the largest individual call was0.772ms. This does not establish that aggregate callback bursts are free, identify every native chunk/loot cost or prove a performance gain. The first traffic-blocked attempt remains a failed route. No new gameplay/profile optimization is enabled from these observations.
+
 Diagnostics retained
 Diagnostics format3/revision3.1 retains one-key JFR/CapFrameX coordination, Portable/API-port discovery, bounded download progress/timeouts and robust result collection. WPR uses an explicitly owned named session; the Windows10 help fallback requires a successful read-only help result and an actual instancename option. Optional WPR failure does not discard otherwise valid JFR/frame data. Conservative temporal coverage and raw loss evidence remain separate from file integrity.
 
