@@ -353,11 +353,15 @@ PZSurvivorToolkit.Settings.queueGroupCancel=function() return true end
 local api=f.project('ActionQueue')
 local borrowed=item('Base.BookFirstAid1',inside1)
 local token={};local borrow=transfer(borrowed,inside1,inv,token)
-q=f.queue(borrow);ops.adopt(borrow,token);borrow:perform()
-assert(token.toolkitPickups[borrowed]==inside1 and inv:contains(borrowed),'actual cart pickup did not record its original source')
-local using=f.action(ISReadABook,{item=borrowed});using.toolkitQueueOperation=token;using:begin()
+local using=f.action(ISReadABook,{item=borrowed});using.toolkitQueueOperation=token
 local returnAction=transfer(borrowed,inv,inside1,token);returnAction:setAllowMissingItems(true)
-local tail=book();q=f.queue(using,returnAction,tail)
+-- Native completion advances one persistent player queue. Replacing it after
+-- pickup invalidates the operation's queue-bound provenance by design.
+local tail=book();q=f.queue(borrow,using,returnAction,tail)
+ops.adopt(borrow,token);borrow:begin();borrow:perform()
+assert(token.toolkitPickups[borrowed]==inside1 and inv:contains(borrowed),'actual cart pickup did not record its original source')
+assert(q.current==using and q.queue[1]==using and using.action,
+    'native pickup completion did not start reading in the original queue')
 ISInventoryPaneContextMenu.getContainers=function() return {contains=function(_,value) return value==inside1 or value==inv end} end
 assert(carts.isReturn(returnAction) and not policy.cancelOperationReason(q,using),'verified SP cart return made borrowed operation uncancellable')
 assert(api.cancelOperation(q,using) and token.toolkitCancelled)
