@@ -67,6 +67,8 @@ class LocalCandidatePackage(unittest.TestCase):
             git('config', 'user.email', 'fixture@example.invalid')
             git('config', 'user.name', 'Fixture')
             write('PZSurvivorToolkit/42/mod.info', 'id=PZSurvivorToolkit\nmodversion=0.1.284\n')
+            dashboard = 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua'
+            write(dashboard, '-- committed dashboard\n')
             write('SurvivorQoL-selected.ini', 'Mods=PZSurvivorToolkit;PZToolkitJavaPatches\nWorkshopItems=123;456\n')
             write('JavaPatches/build.py', "from pathlib import Path\np=Path(__file__).parent/'build/PZToolkitJavaPatches/42/mod.info'\np.parent.mkdir(parents=True)\np.write_text('id=PZToolkitJavaPatches\\nmodversion=0.1.65\\n')\n")
             git('add', '.')
@@ -78,6 +80,7 @@ class LocalCandidatePackage(unittest.TestCase):
             candidate = git('rev-parse', 'HEAD')
             # An uncommitted product edit cannot silently become the identified candidate.
             write('PZSurvivorToolkit/42/mod.info', 'id=PZSurvivorToolkit\nmodversion=0.1.999\n')
+            write(dashboard, '-- dirty dashboard must not enter the bridge or pack\n')
             for name in LAUNCHERS:
                 write('tests/optimizer_trial/' + name, 'fixture')
             profile_revision = 'c' * 40
@@ -89,7 +92,7 @@ class LocalCandidatePackage(unittest.TestCase):
                 write('tests/driving_benchmark/' + name, 'fixture')
             def fixture_bridge(destination, *args):
                 mod = destination / BRIDGE
-                for name in (f'42/media/java/{BRIDGE}.jar', '42/media/lua/client/PZOptimizerTrialDashboard.lua'):
+                for name in (f'42/media/java/{BRIDGE}.jar',):
                     path = mod / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(b'fixture bridge')
@@ -106,6 +109,10 @@ class LocalCandidatePackage(unittest.TestCase):
                 self.assertEqual(main, proof['base_ref_revision'])
             self.assertNotEqual(main, candidate)
             self.assertEqual('0.1.285', pack['repository_mods']['PZSurvivorToolkit']['version'])
+            shipped_dashboard = output / 'mods' / dashboard
+            self.assertEqual('-- committed dashboard\n', shipped_dashboard.read_text())
+            self.assertEqual([shipped_dashboard], list((output / 'mods').rglob('*Dashboard*.lua')))
+            self.assertEqual(hashlib.sha256(shipped_dashboard.read_bytes()).hexdigest(), receipt['dashboard_sha256'])
             self.assertEqual(profile_revision, receipt['optimizer_candidate']['profile_source_revision'])
             self.assertNotEqual(profile_revision, receipt['source_revision'])
             expected = output / 'mods' / BRIDGE / '42/media/lua/client/PZOptimizerTrialExpectedMods.lua'
@@ -208,9 +215,6 @@ class BridgeManifestResources(unittest.TestCase):
             (source / 'mod.info.template').write_text(f'id={BRIDGE}\njavaJarFile=media/java/{BRIDGE}.jar\n')
             candidate = source.parent / 'candidate-manifest.json'
             candidate.write_text(json.dumps(self.candidate()))
-            dashboard = root / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua'
-            dashboard.parent.mkdir(parents=True)
-            dashboard.write_text('-- shared dashboard')
             game = base / 'game'
             game.mkdir()
             for name in ('projectzomboid.jar', 'ZombieBuddy.jar'):
@@ -220,6 +224,7 @@ class BridgeManifestResources(unittest.TestCase):
                 (classes / 'Main.class').write_bytes(b'compiled')
             with mock.patch('tools.prepare_optimizer_trial.subprocess.run', side_effect=compile_fixture):
                 mod = build_bridge(base / 'mods', game, base / 'jdk', root)
+            self.assertFalse(list(mod.rglob('*.lua')), 'bridge must not duplicate Toolkit Lua modules')
             with zipfile.ZipFile(mod / f'42/media/java/{BRIDGE}.jar') as jar:
                 self.assertEqual(b'pzopt/Helper.class=' + b'a' * 64 + b'\n', jar.read('optimizer-trial-selected.properties'))
                 self.assertEqual(b'devHordeModes=\nenabled=true\n', jar.read('optimizer-trial-profile.properties'))
