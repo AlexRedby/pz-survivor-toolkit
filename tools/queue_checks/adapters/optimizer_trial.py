@@ -1,104 +1,114 @@
 """Exercise only the selective optimizer and its bridge in a disposable SP world."""
 from pathlib import Path
-import hashlib
-import json
 import re
 import shutil
-import subprocess
-import zipfile
+import optimizer_profile
 from . import driving_benchmark as driving
+
+SP_WORLD = 'PZDrivingBench-OptimizerTrial-native-SP'
+LIFECYCLE_FAILURES = ('[OptimizerTrial] prewarm disabled:', '[OptimizerTrial] FAIL',
+            '[OptimizerTrialProbe] FAIL ', '[OptimizerTrial] telemetry flush failed',
+            '[OptimizerTrial] drive telemetry disabled', 'animalPreload: java.',
+            'anim set preload zombie-crawler:')
+FUNCTIONAL_FAILURE = '[OPTIMIZER_TRIAL_TEST] FAIL '
+FAILURES = (*LIFECYCLE_FAILURES, FUNCTIONAL_FAILURE)
 
 
 def definitions():
     value = driving.definitions()['driving-benchmark']
-    value = dict(value, clients=1, default_mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', 'PZDrivingBench'])
+    value = dict(value, clients=1, default_mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'])
     value['cases'] = [dict(value['cases'][0], kinds=['sp'], languages=['EN'])]
     return {'optimizer-trial': value}
 
 
+def driving_selection(selection):
+    # A locked gameplay pack remains exact; the starter is a separately sealed fixture.
+    mods = list(selection['mods'])
+    if 'PZDrivingBench' not in mods:
+        mods.append('PZDrivingBench')
+    return dict(selection, mods=mods)
+
+
 def validate(selection):
-    driving.validate(selection)
+    driving.validate(driving_selection(selection))
     options = selection.get('options', {})
     if selection['kind'] != 'sp' or not {'ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'} <= set(selection['mods']):
         raise ValueError('Optimizer trial requires single-player and both Toolkit components/ZombieBuddy')
     archive = options.get('optimizer_archive')
     if not isinstance(archive, str) or not Path(archive).is_absolute() or not Path(archive).is_file():
         raise ValueError('optimizer_archive must be an existing absolute official ZIP path')
+    if options.get('optimizer_prewarm', True) is not True:
+        raise ValueError('Optimizer trial requires the production preload bridge')
 
 
 def sources(project, selection):
-    base = Path(project) / 'tests/optimizer_trial'
-    return [*driving.sources(project, selection), *base.glob('java/*.java'), base / 'java/mod.info.template',
-            base / 'candidate-manifest.json', Path(project) / 'tests/native_queue/optimizer-trial/client/ZZOptimizerTrialCheck.lua', Path(project) / 'tools/prepare_optimizer_trial.py',
-            Path(project) / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua',
-            Path(selection['options']['optimizer_archive'])]
+    return [*driving.sources(project, selection), *optimizer_profile.sources(project, selection),
+            Path(project) / 'tests/driving_benchmark/mods/PZDrivingBench/42/mod.info',
+            Path(project) / 'tests/native_queue/optimizer-trial/client/ZZOptimizerTrialCheck.lua',
+            Path(project) / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua']
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
-    from prepare_optimizer_trial import build_bridge
+    validate(selection)
     project, output, game, jdk = map(Path, (project, output, game, jdk))
-    driving.stage(project, output, game, jdk, selection, locations, runtime)
-    cache = output / 'client1'
+    driving.stage(project, output, game, jdk, driving_selection(selection), locations, runtime)
+    cache = Path(runtime['roles']['client1']['cache'])
+    if 'PZDrivingBench' not in selection['mods']:
+        shutil.copytree(project / 'tests/driving_benchmark/mods/PZDrivingBench', cache / 'mods/PZDrivingBench')
+        runtime['fixture'].setdefault('mods', []).append('PZDrivingBench')
+    (cache / 'Lua/DrivingBench-run.txt').write_text(SP_WORLD + '\n')
     fixture = cache / 'mods/ActionQueueTest/42/media/lua/client'
     shutil.copy2(project / 'tests/native_queue/driving-benchmark/client/ZZDrivingBenchCheck.lua', fixture)
     shutil.copy2(project / 'tests/native_queue/optimizer-trial/client/ZZOptimizerTrialCheck.lua', fixture)
-    manifest = json.loads((project / 'tests/optimizer_trial/candidate-manifest.json').read_text())
-    archive = Path(selection['options']['optimizer_archive'])
-    if archive.is_symlink() or hashlib.sha256(archive.read_bytes()).hexdigest() != manifest['release_sha256']:
-        raise ValueError('Optimizer archive differs from pinned release')
-    with zipfile.ZipFile(game / 'projectzomboid.jar') as z:
-        for name in manifest['native_absences']:
-            if name in z.namelist():
-                raise ValueError('Unexpected pre-existing optimizer class: ' + name)
-        for name, expected in manifest['native_guards'].items():
-            if hashlib.sha256(z.read(name)).hexdigest() != expected:
-                raise ValueError('Unsupported native game class: ' + name)
-    build_bridge(cache / 'mods', game, jdk, project)
-    runtime['fixture']['mods'].append('PZDrivingOptimizerBridge')
-    classes = cache / 'classes'
-    with zipfile.ZipFile(archive) as z:
-        for name, expected in manifest['selected_files'].items():
-            data = z.read(name)
-            if hashlib.sha256(data).hexdigest() != expected or '..' in Path(name).parts or Path(name).is_absolute():
-                raise ValueError('Optimizer resource mismatch: ' + name)
-            target = classes / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-    # Add only explicit experiment properties to this fixture-owned launcher.
-    # Retain the shared runner's GLFW/window/focus/VOIP/owned-process protections.
-    launcher = classes / 'ToolkitSmokeLauncher.java'
-    text = launcher.read_text()
-    anchor = 'public static void main(String[] args) throws Exception {'
-    if text.count(anchor) != 1:
-        raise ValueError('Native launcher main changed')
-    props = {'pz.optimizerTrial.prewarm': 'true', 'pz.optimizerTrial.sourceZip': str(archive),
-             'pz.optimizerTrial.cachedir': str(cache), 'pz.optimizerTrial.profile': manifest['profile']['id'],
-             **{'pzopt.' + key: value for key, value in manifest['profile']['properties'].items()}}
-    assignments = '\n'.join('System.setProperty(' + json.dumps(k) + ', ' + json.dumps(v) + ');' for k, v in props.items())
-    launcher.write_text(text.replace(anchor, anchor + '\n' + assignments))
-    subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
-                    str(classes / 'ToolkitWindowBootstrap.java'), str(launcher)], check=True, capture_output=True)
-    runtime['fixture']['failure_markers'] += ['[OptimizerTrial] prewarm disabled:', '[OptimizerTrial] FAIL',
-                                             'animalPreload: java.', 'anim set preload zombie-crawler:', '[OPTIMIZER_TRIAL_TEST] FAIL ']
+    profile_selection = dict(selection, options={**selection.get('options', {}), 'optimizer_prewarm': True})
+    # The shared stager authenticates the archive/native bytes, builds the actual
+    # bridge and viewport observer, and keeps the overlay outside runner classes.
+    optimizer_profile.stage(project, output, game, jdk, profile_selection, runtime)
+    runtime['fixture']['failure_markers'] += [marker for marker in FAILURES
+        if marker not in runtime['fixture']['failure_markers']]
+
+
+def lifecycle_complete(text):
+    if any(marker in text for marker in LIFECYCLE_FAILURES):
+        return False
+    markers = ('[OptimizerTrial] prewarm armed; awaiting OnGameBoot; mode=singleplayer',
+        '[OptimizerTrial] official cache and preload active',
+        '[OptimizerTrial] OnGameBoot animation preload started mode=singleplayer postClientReset=false',
+        '[OptimizerTrial] animation preload joined; animal preload started mode=singleplayer',
+        '[OptimizerTrial] bridge ready mode=singleplayer client=false server=false session=1',
+        '[OptimizerTrial] animal drain invoked mode=singleplayer client=false server=false')
+    if not all(marker in text for marker in markers):
+        return False
+    profile = re.search(r'\[OptimizerTrial\] extended active profile=xd3i-b42\.21-d1bbdcf-bounded-v1 tileBatch=(true|false) '
+                        r'bakeScheduler=true occlusionRetain=true chunkHandoffDivisor=8(?:\s|$)', text)
+    if (profile is None or not re.search(r'\[OptimizerTrial\] bake scheduler used frames=[1-9]\d* grants=[1-9]\d*', text)
+            or not re.search(r'anim sets preloaded in \d+(?:[.,]\d+)? s', text)):
+        return False
+    if profile[1] == 'true' and not re.search(r'\[OptimizerTrial\] tile batch used starts=[1-9]\d* merged=[1-9]\d* stamped=[1-9]\d*', text):
+        return False
+    parsed = re.findall(r'animalPreload: (\d+) animation sets, (\d+) action groups parsed', text)
+    handed = re.findall(r'animalPreload: (\d+) action groups handed to the game, (\d+) it had loaded first', text)
+    return bool(parsed and handed and int(parsed[-1][1]) > 0
+                and sum(map(int, handed[-1])) >= int(parsed[-1][1]))
 
 
 def complete(selection, role, text):
-    return (driving.complete(selection, role, text) and '[OptimizerTrial] official cache and preload active' in text
-            and '[OptimizerTrial] extended active profile=xd3i-b42.21-d1bbdcf-bounded-v1 ' in text
-            and 'bakeScheduler=true occlusionRetain=true chunkHandoffDivisor=8' in text
+    return (driving.complete(selection, role, text) and lifecycle_complete(text)
             and '[OPTIMIZER_TRIAL_TEST] COMPLETE ' in text
-            and '[OptimizerTrial] bake scheduler used frames=' in text
-            and 'anim sets preloaded in ' in text
-            and 'action groups handed to the game' in text and '[OptimizerTrial] OnGameBoot animation preload started' in text)
+            and not any(marker in text for marker in FAILURES))
 
 
 def verify(root, selection, catalog):
     result = driving.verify(root, selection, catalog)
     text = (Path(root) / 'client1-launch.log').read_text(errors='replace')
-    if not complete(selection, 'client1', text):
+    if not lifecycle_complete(text):
         result['issues'].append('Missing real optimizer boot/animal preload completion and bridge lifecycle evidence')
-    if '[OptimizerTrial] prewarm disabled:' in text or '[OptimizerTrial] FAIL' in text or '[OPTIMIZER_TRIAL_TEST] FAIL ' in text:
-        result['issues'].append('Optimizer bridge disabled or failed')
+    if any(marker in text for marker in LIFECYCLE_FAILURES):
+        result['issues'].append('Optimizer lifecycle/preload or observer failed')
+    if FUNCTIONAL_FAILURE in text:
+        result['issues'].append('Functional optimizer walking/observation fixture failed')
+    elif '[OPTIMIZER_TRIAL_TEST] COMPLETE ' not in text:
+        result['issues'].append('Functional optimizer walking/observation completion missing')
     if result['issues']:
         for outcome in result['outcomes']:
             outcome.update(status='failed', reason='; '.join(result['issues']))

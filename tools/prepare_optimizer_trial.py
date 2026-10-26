@@ -304,7 +304,8 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         provenance = pack_provenance(root, revision, base_ref)
         java_identity = snapshot_java_source(java_source, pack_source / 'JavaPatches') if java_source is not None else None
         pack = include_pack(stage, pack_source, revision, game, jdk, kotlin_home, root, java_identity, provenance)
-        receipt = {'format': 1, 'scope': 'experimental isolated multiplayer client/menu Host and optional single-player benchmark; one world session per process',
+        receipt = {'format': 1, 'scope': 'experimental one-PC sequential single-player comparison with shared multiplayer-compatible optimizations; explicit multiplayer mode; one world session per process',
+                   'default_session': 'SinglePlayer',
                    'diagnostics_format': 3, 'diagnostics_revision': '3.1',
                    'source_only_upstream': True, **provenance, 'selected_mod_count': len(pack['mod_ids']),
                    'repository_versions': {id: row['version'] for id, row in pack['repository_mods'].items()},

@@ -77,6 +77,14 @@ class OptimizerTrialLauncherTests(unittest.TestCase):
         path.write_text(json.dumps(manifest))
         return archive, path
 
+    def test_one_pc_default_and_explicit_multiplayer_mode(self):
+        result = self.powershell(f"""
+$default=$Session
+$explicit=& {{ . {ps(LAUNCHER)} -SourceProfile {ps(self.base / 'source')} -Session Multiplayer; $Session }}
+@{{Default=$default;Explicit=$explicit}} | ConvertTo-Json
+""")
+        self.assertEqual(result, {'Default': 'SinglePlayer', 'Explicit': 'Multiplayer'})
+
     def test_parse_and_greatest_applicable_windows_flags(self):
         path = self.config()
         data = self.powershell(f"$c=Read-TrialLaunchConfig {ps(path)} ([version]'10.0.22631'); $c | ConvertTo-Json -Depth 5")
