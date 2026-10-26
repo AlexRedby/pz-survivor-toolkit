@@ -1273,7 +1273,11 @@
     "zombie/GameWindow.class": "c3a3583923191b6aea23a74e6b05e2b53302bbcded7f89cae930e364a409dfb2",
     "zombie/Lua/LuaEventManager.class": "d786c342e563fb735727beb268e39a9a40726c2e83a8ac15ec06c753580b524b",
     "zombie/gameStates/GameLoadingState.class": "72dc5070a4e8c947ad1c788b2fad8d74231d5b877e749bc361d1338afa887f3e",
-    "zombie/core/skinnedmodel/ModelManager.class": "e650c0b856580432c26ce4a3d4c1d63353cf3b319b0265be9a5188e893de716b"
+    "zombie/core/skinnedmodel/ModelManager.class": "e650c0b856580432c26ce4a3d4c1d63353cf3b319b0265be9a5188e893de716b",
+    "zombie/gameStates/IngameState.class": "07e35d9e04faa98aad8a7059e5bf82590e4d679f30941ca2469afe1555e3c10c",
+    "zombie/core/Core.class": "8f5c69740c8bf2181123a831ab68d1dfb047453687cca6dc62c77816d76ab360",
+    "zombie/gameStates/ConnectToServerState.class": "d7a0779d8ccf993cbc1f717c37194595273f1aee8bfc3ee4b20dd93c0fc55ce4",
+    "zombie/gameStates/ServerDisconnectState.class": "9e68a3402a004669c71fd2e72257094c901e388bb458e21484377b1df3736e59"
   },
   "profile": {
     "id": "xd3i-b42.21-d1bbdcf-bounded-v1",

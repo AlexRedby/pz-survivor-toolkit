@@ -89,6 +89,64 @@ class TrialPackTests(unittest.TestCase):
         self.assertIn('https://steamcommunity.com/sharedfiles/filedetails/?id=123', error)
         self.assertEqual(list(self.cache.iterdir()), [])
 
+    def test_multiplayer_selects_full_pack_and_bridge_without_starter_callbacks(self):
+        result = self.run_ps(f"""
+$r=Resolve-TrialPack {ps(self.package)} {ps(self.source)} {ps(self.workshop)} -SessionType Multiplayer
+Initialize-TrialProfile {ps(self.cache)} {ps(self.source)} {ps(self.package)} $r 6>$null | Out-Null
+@{{Ids=$r.Ids;Sources=@($r.Sources.Id);Private=@($r.Private.Id)}} | ConvertTo-Json -Depth 5
+""")
+        self.assertEqual(result['Ids'], self.ids + ['PZDrivingOptimizerBridge'])
+        self.assertIn('PZDrivingBench', result['Sources'])
+        self.assertIn('PZDrivingBench', result['Private'])
+        self.assertNotIn('mod = PZDrivingBench,', (self.cache / 'mods/default.txt').read_text())
+        self.assertTrue((self.cache / 'mods/PZDrivingBench/42/mod.info').exists())
+        # Inactive package files remain covered by the immutable private inventory.
+        (self.cache / 'mods/PZDrivingBench/42/mod.info').write_text('changed')
+        error = self.run_ps(f"$e=''; try {{ $r=Resolve-TrialPack {ps(self.package)} {ps(self.source)} {ps(self.workshop)} -SessionType Multiplayer; Initialize-TrialProfile {ps(self.cache)} {ps(self.source)} {ps(self.package)} $r 6>$null | Out-Null }} catch {{ $e=$_.Exception.Message }}; $e | ConvertTo-Json")
+        self.assertIn('Changed mod file', error)
+
+    def test_multiplayer_dependencies_cannot_reactivate_the_starter(self):
+        self.mod(self.workshop / '456/mods/Third', 'ThirdParty', require='PZDrivingBench')
+        error = self.run_ps(f"$e=''; try {{ Resolve-TrialPack {ps(self.package)} {ps(self.source)} {ps(self.workshop)} -SessionType Multiplayer | Out-Null }} catch {{ $e=$_.Exception.Message }}; $e | ConvertTo-Json")
+        self.assertIn('requires unselected Mod ID PZDrivingBench', error)
+        self.assertIn('PZDrivingBench', self.run_ps(self.resolve() + '$r.Ids | ConvertTo-Json'))
+
+    def test_session_switch_refuses_to_rewrite_an_existing_exact_selection(self):
+        self.run_ps(self.initialize() + '$true | ConvertTo-Json')
+        original = (self.cache / 'mods/default.txt').read_text()
+        error = self.run_ps(f"$e=''; try {{ $r=Resolve-TrialPack {ps(self.package)} {ps(self.source)} {ps(self.workshop)} -SessionType Multiplayer; Initialize-TrialProfile {ps(self.cache)} {ps(self.source)} {ps(self.package)} $r 6>$null | Out-Null }} catch {{ $e=$_.Exception.Message }}; $e | ConvertTo-Json")
+        self.assertIn('Modified exact pack selection', error)
+        self.assertEqual((self.cache / 'mods/default.txt').read_text(), original)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required')
+    def test_pack_activation_checks_exact_mp_ids_and_retains_sp_starter(self):
+        script = r'''
+local source, expectedIds = arg[1], {'Base','PZDrivingBench','PZDrivingOptimizerBridge'}
+local function check(client, actual, wanted)
+    local output, callback = {}, nil
+    package.loaded.PZOptimizerTrialExpectedMods = nil
+    package.preload.PZOptimizerTrialExpectedMods = function() return {revision='fixture',ids=expectedIds} end
+    function isClient() return client end
+    function print(line) output[#output+1] = line end
+    Events = {OnGameStart={Add=function(value) callback=value end}}
+    function getActivatedMods()
+        return {size=function() return #actual end,
+            get=function(_,index) return actual[index+1] end,
+            contains=function(_,id) for _,value in ipairs(actual) do if value==id then return true end end return false end}
+    end
+    dofile(source); callback()
+    assert(#output==1 and output[1]:find(wanted,1,true), table.concat(output,'\n'))
+end
+check(true, {'Base','PZDrivingOptimizerBridge'}, 'pack active revision=fixture count=2')
+check(true, expectedIds, 'PACK_MISMATCH missing= unexpected=PZDrivingBench')
+check(true, {'PZDrivingOptimizerBridge'}, 'PACK_MISMATCH missing=Base')
+check(false, expectedIds, 'pack active revision=fixture count=3')
+check(false, {'Base','PZDrivingOptimizerBridge'}, 'PACK_MISMATCH missing=PZDrivingBench')
+'''
+        result = subprocess.run([shutil.which('luajit'), '-', str(ROOT / 'tests/optimizer_trial/PZOptimizerTrialPack.lua')],
+                                input=script, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_compatible_layers_common_and_minor_selection(self):
         root = self.workshop / '456/mods/Third'
         shutil.rmtree(root)

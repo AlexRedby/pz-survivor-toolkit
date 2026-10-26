@@ -5,7 +5,9 @@ import java.lang.instrument.ClassFileTransformer
 import java.lang.instrument.Instrumentation
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.security.ProtectionDomain
+import java.util.HexFormat
 import me.zed_0xff.zombie_buddy.Accessor
 import me.zed_0xff.zombie_buddy.Agent
 import me.zed_0xff.zombie_buddy.Loader
@@ -216,11 +218,109 @@ object HostLoader {
         return "-javaagent:$jar=" + values.entries.joinToString(",") { "${it.key}=${it.value}" }
     }
 
+    internal data class OptimizerOverlay(val directory: Path, val clientClasspath: String)
+
+    private fun classpathPaths(classpath: String): List<Path> {
+        if (classpath.isBlank() || classpath.any { it == '\n' || it == '\r' || it == '\u0000' })
+            throw IOException("Invalid Host optimizer classpath")
+        return classpath.split(java.io.File.pathSeparatorChar).map { entry ->
+            if (entry.isEmpty() || '*' in entry)
+                throw IOException("Ambiguous Host optimizer classpath entry")
+            Path.of(entry).toRealPath()
+        }
+    }
+
+    // Authenticate the explicit launcher-owned directory without initializing any optimizer class.
+    // Admission reuses the exact 770-property and 888-resource policy, not a directory name match.
+    internal fun optimizerOverlay(): OptimizerOverlay? {
+        val declared = System.getProperty("pz.optimizerTrial.overlay") ?: return null
+        val directory = Path.of(declared)
+        if (
+            !directory.isAbsolute ||
+                directory.normalize() != directory ||
+                !Files.isDirectory(directory) ||
+                directory.toRealPath() != directory
+        )
+            throw IOException("Host optimizer overlay must name a distinct canonical directory")
+        val classpath = System.getProperty("java.class.path")
+        if (classpathPaths(classpath).count { it == directory } != 1)
+            throw IOException(
+                "Host optimizer overlay must occur exactly once in the client classpath",
+            )
+        val loader = HostLoader::class.java.classLoader
+        val source = loader.getResources("pzopt/Config.class").toList().singleOrNull()
+        if (
+            source == null ||
+                source.protocol != "file" ||
+                Path.of(source.toURI()).toRealPath() !=
+                    directory.resolve("pzopt/Config.class").toRealPath()
+        )
+            throw IOException(
+                "Host optimizer overlay differs from the effective client resource source",
+            )
+        val resource = "zombie/iso/IsoWorld.class"
+        val pair = OptimizerCompatibility.alternatives.getValue(resource)
+        val checksum =
+            loader.getResourceAsStream(resource)?.use {
+                HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(it.readAllBytes()))
+            }
+        if (!OptimizerCompatibility.supports(resource, pair.nativeSha256, checksum))
+            throw IOException(
+                "Host optimizer overlay lacks the exact reviewed client profile/resources",
+            )
+        return OptimizerOverlay(directory, classpath)
+    }
+
+    private fun isolateOptimizer(
+        command: List<String>,
+        main: Int,
+        overlay: OptimizerOverlay?,
+    ): List<String> {
+        if (overlay == null) return command
+        val prefix = "-Djava.class.path="
+        val indexes = (1 until main).filter { command[it].startsWith(prefix) }
+        if (
+            indexes.size != 1 ||
+                (1 until main).any {
+                    command[it] in
+                        listOf("-cp", "-classpath", "--class-path", "-jar", "-Djava.class.path") ||
+                        command[it].startsWith("--class-path=") ||
+                        command[it].startsWith('@')
+                }
+        )
+            throw IOException("Ambiguous native Host optimizer classpath arguments")
+        val index = indexes.single()
+        val original = command[index].substring(prefix.length)
+        if (original != overlay.clientClasspath)
+            throw IOException(
+                "Native Host classpath differs from the authenticated client classpath",
+            )
+        val paths = classpathPaths(original)
+        if (paths.count { it == overlay.directory } != 1)
+            throw IOException(
+                "Host optimizer overlay must occur exactly once in the child classpath",
+            )
+        val entries = original.split(java.io.File.pathSeparatorChar)
+        val clean = entries.filterIndexed { i, _ -> paths[i] != overlay.directory }
+        if (clean.isEmpty())
+            throw IOException("Host optimizer isolation would remove the entire classpath")
+        return ArrayList(command).also {
+            it[index] = prefix + clean.joinToString(java.io.File.pathSeparator)
+        }
+    }
+
     @JvmStatic
     @Throws(IOException::class)
     fun prepare(builder: ProcessBuilder): ProcessBuilder {
         val jar = loaderJar()
-        return configure(builder, jar, Agent.configDir(), HashMap(Agent.arguments))
+        return configure(
+            builder,
+            jar,
+            Agent.configDir(),
+            HashMap(Agent.arguments),
+            optimizerOverlay(),
+        )
     }
 
     internal fun configure(
@@ -228,6 +328,7 @@ object HostLoader {
         jar: Path,
         config: Path,
         arguments: Map<String, String>,
+        overlay: OptimizerOverlay? = null,
     ): ProcessBuilder {
         val command = builder.command()
         val main = command.indexOf("zombie.network.GameServer")
@@ -245,19 +346,39 @@ object HostLoader {
                 throw IOException(
                     "Cannot verify Host loader in JVM environment argument files; use explicit JVM options",
                 )
+            if (
+                overlay != null &&
+                    inherited.any {
+                        it in
+                            listOf(
+                                "-cp",
+                                "-classpath",
+                                "--class-path",
+                                "-jar",
+                                "-Djava.class.path",
+                            ) ||
+                            it.startsWith("--class-path=") ||
+                            it.startsWith("-Djava.class.path=")
+                    }
+            )
+                throw IOException("Inherited JVM options can override the isolated Host classpath")
             existing.addAll(inherited.filter { isLoader(it, jar) })
         }
         if (existing.size > 1)
             throw IOException(
                 "Multiple ZombieBuddy loaders configured for Host; remove duplicate JVM options",
             )
-        if (existing.isNotEmpty()) return builder
-        val updated = ArrayList(command)
-        updated.add(main, agentOption(jar, config, arguments))
+        val updated = ArrayList(isolateOptimizer(command, main, overlay))
+        if (existing.isEmpty()) updated.add(main, agentOption(jar, config, arguments))
         builder.command(updated)
-        System.out.println(
-            "[PZToolkitJavaPatches] Host loader supplied to native server launch (saved approvals retained)",
-        )
+        if (overlay != null)
+            System.out.println(
+                "[PZToolkitJavaPatches] Optimizer overlay excluded from native Host server classpath",
+            )
+        if (existing.isEmpty())
+            System.out.println(
+                "[PZToolkitJavaPatches] Host loader supplied to native server launch (saved approvals retained)",
+            )
         return builder
     }
 }

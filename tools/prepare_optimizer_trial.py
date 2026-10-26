@@ -62,6 +62,11 @@ def bridge_resources(manifest_path: Path) -> dict[str, str]:
         'optimizer-trial-selected.properties': properties_resource(selected, hashes=True),
         'optimizer-trial-profile.properties': properties_resource(profile.get('properties', {})),
         'optimizer-trial-native.properties': properties_resource(lifecycle, hashes=True),
+        # Two lifecycle classes are reviewed official replacements. Control and
+        # the native Host child must match stock bytes, never the optimized set.
+        'optimizer-trial-native-lifecycle.properties': properties_resource({
+            name: manifest.get('native_guards', {}).get(name, value)
+            for name, value in lifecycle.items()}, hashes=True),
     }
 
 
@@ -245,6 +250,13 @@ def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path
         manifest['java_source'] = java_source_identity
     (stage / 'pack-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     shutil.copy2(source / 'SurvivorQoL-selected.ini', stage / 'SurvivorQoL-selected.ini')
+    # Separate native menu Host preset. The SP driving starter is not active in MP.
+    host = dict(settings)
+    host.update(Mods=';'.join(ordered + [BRIDGE]), Public='false', UPnP='false')
+    (stage / 'Server').mkdir(exist_ok=True)
+    (stage / 'Server/PZOptimizerHost.ini').write_text(
+        '# Isolated optimizer diagnostics: select PZOptimizerHost in the Host menu.\n'
+        + ''.join(key + '=' + value + '\n' for key, value in host.items()))
     lua = stage / 'mods' / BRIDGE / '42/media/lua/client'
     lua.mkdir(parents=True, exist_ok=True)
     for name in ('PZOptimizerTrialPack.lua', 'PZOptimizerTrialTelemetry.lua'):
@@ -292,7 +304,7 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         provenance = pack_provenance(root, revision, base_ref)
         java_identity = snapshot_java_source(java_source, pack_source / 'JavaPatches') if java_source is not None else None
         pack = include_pack(stage, pack_source, revision, game, jdk, kotlin_home, root, java_identity, provenance)
-        receipt = {'format': 1, 'scope': 'experimental isolated single-player only',
+        receipt = {'format': 1, 'scope': 'experimental isolated multiplayer client/menu Host and optional single-player benchmark; one world session per process',
                    'diagnostics_format': 3, 'diagnostics_revision': '3.1',
                    'source_only_upstream': True, **provenance, 'selected_mod_count': len(pack['mod_ids']),
                    'repository_versions': {id: row['version'] for id, row in pack['repository_mods'].items()},

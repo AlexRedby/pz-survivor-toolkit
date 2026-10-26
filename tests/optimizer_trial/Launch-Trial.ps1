@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Optimized', 'Control')][string]$Mode = 'Optimized',
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$Session = 'Multiplayer',
     [string]$GameDir,
     [string]$WorkshopRoot,
     [string]$JdkDir,
@@ -455,7 +456,8 @@ function Write-TrialOptimizerArguments([string]$Cache, $Profile) {
     return $path
 }
 
-function New-TrialPlan([string]$Game, [string]$Cache, [string]$TrialMode, $Config, $Candidate) {
+function New-TrialPlan([string]$Game, [string]$Cache, [string]$TrialMode, $Config, $Candidate,
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$SessionType = 'SinglePlayer') {
     $classpath = @($Config.Classpath)
     $vm = @($Config.VmArgs)
     $profile = $null; $profileArgs = $null
@@ -463,10 +465,10 @@ function New-TrialPlan([string]$Game, [string]$Cache, [string]$TrialMode, $Confi
         $classpath = @($Candidate.Overlay) + $classpath
         $profile = $Candidate.Profile
         $profileArgs = Write-TrialOptimizerArguments $Cache $profile
-        $vm += @(('@' + $profileArgs), '-Dpz.optimizerTrial.prewarm=true', ('-Dpz.optimizerTrial.sourceZip=' + $Candidate.Zip), ('-Dpz.optimizerTrial.cachedir=' + $Cache))
+        $vm += @(('@' + $profileArgs), '-Dpz.optimizerTrial.prewarm=true', ('-Dpz.optimizerTrial.sourceZip=' + $Candidate.Zip), ('-Dpz.optimizerTrial.cachedir=' + $Cache), ('-Dpz.optimizerTrial.overlay=' + $Candidate.Overlay), ('-Dpz.optimizerTrial.mode=' + $SessionType.ToLowerInvariant()))
     } else { $vm += '-Dpz.optimizerTrial.prewarm=false' }
     $arguments = @($vm) + @('-cp', ($classpath -join ';'), $Config.MainClass, ('-cachedir=' + $Cache), '-novoip')
-    return [pscustomobject]@{ Mode = $TrialMode; Java = (Join-Path $Game 'jre64/bin/java.exe'); WorkingDirectory = $Game; Cache = $Cache; OptimizerProfile = $profile; OptimizerArguments = $profileArgs; WindowsVmVersion = $Config.WindowsVersion; VmArgs = $vm; Classpath = $classpath; MainClass = $Config.MainClass; Arguments = $arguments; CommandLine = (($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '); Pid = $null; JavaExitCode = $null; Activation = 'CheckedOnly'; Logs = $null; Readiness = $null; ProcessStartUtc = $null; FinishedUtc = $null; Diagnostics = $null; automaticCapFrameX = $true; gameContextPolicy = 'BufferedWorldExitV2'; TrialWorld = $null }
+    return [pscustomobject]@{ Mode = $TrialMode; Session = $SessionType; Java = (Join-Path $Game 'jre64/bin/java.exe'); WorkingDirectory = $Game; Cache = $Cache; OptimizerProfile = $profile; OptimizerArguments = $profileArgs; WindowsVmVersion = $Config.WindowsVersion; VmArgs = $vm; Classpath = $classpath; MainClass = $Config.MainClass; Arguments = $arguments; CommandLine = (($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '); Pid = $null; JavaExitCode = $null; Activation = 'CheckedOnly'; Logs = $null; Readiness = $null; ProcessStartUtc = $null; FinishedUtc = $null; Diagnostics = $null; automaticCapFrameX = $true; gameContextPolicy = 'BufferedWorldExitV2'; TrialWorld = $null }
 }
 
 function New-TrialRunName {
@@ -522,7 +524,8 @@ function Get-TrialPackActivation([string]$Text, [string]$Revision, [int]$Expecte
     return [pscustomobject]@{ Ready = ($missing.Count -eq 0 -and -not $failed); Failed = [bool]$failed; Missing = $missing }
 }
 
-function Get-TrialReadiness([string]$Text, [string]$PackRevision = '', [int]$ExpectedCount = 69) {
+function Get-TrialReadiness([string]$Text, [string]$PackRevision = '', [int]$ExpectedCount = 69,
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$SessionType = 'SinglePlayer') {
     $missing = @(); $packFailed = $false
     if ($PackRevision) {
         $packState = Get-TrialPackActivation $Text $PackRevision $ExpectedCount
@@ -530,7 +533,7 @@ function Get-TrialReadiness([string]$Text, [string]$PackRevision = '', [int]$Exp
         $packFailed = $packState.Failed
     }
     foreach ($marker in @(
-        '[OptimizerTrial] prewarm armed; awaiting OnGameBoot; SP trial only',
+        ('[OptimizerTrial] prewarm armed; awaiting OnGameBoot; mode=' + $SessionType.ToLowerInvariant()),
         '[OptimizerTrial] official cache and preload active',
         '[OptimizerTrial] extended active profile=xd3i-b42.21-d1bbdcf-bounded-v1 tileBatch=true bakeScheduler=true occlusionRetain=true chunkHandoffDivisor=8',
         '[OptimizerTrial] OnGameBoot animation preload started',
@@ -538,6 +541,8 @@ function Get-TrialReadiness([string]$Text, [string]$PackRevision = '', [int]$Exp
     )) {
         if (-not $Text.Contains($marker)) { $missing += $marker }
     }
+    if ($SessionType -eq 'Multiplayer' -and -not $Text.Contains('[OptimizerTrial] bridge ready mode=multiplayer client=true server=false session=1')) { $missing += 'connected multiplayer bridge lifecycle' }
+    if ($SessionType -eq 'Multiplayer' -and -not $Text.Contains('[OptimizerTrial] animal drain invoked mode=multiplayer client=true server=false')) { $missing += 'connected multiplayer animal drain' }
     if ($Text -notmatch '\[OptimizerTrial\] bake scheduler used frames=[1-9][0-9]* grants=[1-9][0-9]*') { $missing += 'actual chunk bake grants used' }
     if ($Text -notmatch '\[OptimizerTrial\] tile batch used starts=[1-9][0-9]* merged=[1-9][0-9]* stamped=[1-9][0-9]*') { $missing += 'actual merged tile draws with a usable patched shader' }
     if ($Text -notmatch 'anim sets preloaded in \d+(?:[.,]\d+)? s') { $missing += 'official animation preload completion' }
@@ -555,6 +560,34 @@ function Get-TrialReadiness([string]$Text, [string]$PackRevision = '', [int]$Exp
     $failed = $Text -match '\[OptimizerTrial\] PACK_MISMATCH|\[OptimizerTrial\] prewarm disabled:|(?im)^.*PZDrivingOptimizerBridge.*(?:blocked|denied)|(?im)^.*(?:blocked|denied).*PZDrivingOptimizerBridge|overrides disabled, running stock behaviour'
     $failed = $failed -or $packFailed
     return [pscustomobject]@{ Ready = ($missing.Count -eq 0 -and -not $failed); Failed = [bool]$failed; Missing = @($missing); ActionGroups = $groups; HandedOff = $handed }
+}
+
+function Get-TrialRunReadiness([string]$Text,
+    [ValidateSet('Optimized','Control')][string]$TrialMode,
+    [string]$PackRevision, [int]$ExpectedCount,
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$SessionType,
+    [string]$ContextId = '', [switch]$Menu, [bool]$PreviousFailure = $false) {
+    if ($TrialMode -eq 'Optimized') {
+        $state = Get-TrialReadiness $Text $PackRevision $ExpectedCount -SessionType $SessionType
+    } else {
+        $state = Get-TrialPackActivation $Text $PackRevision $ExpectedCount
+    }
+    $missing = @($state.Missing)
+    if ($TrialMode -eq 'Control' -and -not $Text.Contains('[OptimizerTrial] bridge inactive: explicit opt-in absent')) {
+        $missing += 'verified inactive bridge lifecycle'
+    }
+    if ($SessionType -eq 'Multiplayer') {
+        $contextPattern = '(?m)^[^\r\n]*\[OptimizerTrial\] multiplayer context ready world=' + [regex]::Escape($ContextId) + '[ \t\r]*$'
+        if (-not $ContextId -or $Text -notmatch $contextPattern) { $missing += 'connected multiplayer context observer' }
+    } elseif (-not $Menu -and -not (Test-TrialWorldReady $Text)) {
+        $missing += 'single-player starter world and car readiness'
+    }
+    $failurePattern = '\[PZDrivingBench\] FAIL |\[OptimizerTrial\] (?:prewarm disabled:|drive telemetry disabled|telemetry flush failed)|(?im)^.*PZDrivingOptimizerBridge.*(?:blocked|denied)|^.*(?:blocked|denied).*PZDrivingOptimizerBridge'
+    $failed = [bool]$state.Failed -or $PreviousFailure -or $Text -match $failurePattern
+    $groups = $null; $handed = $null
+    if ($TrialMode -eq 'Optimized') { $groups = $state.ActionGroups; $handed = $state.HandedOff }
+    return [pscustomobject]@{ Ready = ($missing.Count -eq 0 -and -not $failed); Failed = [bool]$failed;
+        Missing = @($missing); ActionGroups = $groups; HandedOff = $handed }
 }
 
 function Save-TrialPlan($Plan, [string]$Path) {
@@ -583,40 +616,49 @@ function Invoke-OptimizerTrial {
     $workshop = $WorkshopRoot
     if (-not $workshop) { $workshop = Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($game))) 'workshop/content/108600' }
     # Resolve every required mod before profile lock creation or initialization writes.
-    $resolved = Resolve-TrialPack $package (Get-FullPath $SourceProfile) $workshop
-    $jfrTools = Resolve-TrialJfrTools $package $game $JdkDir
-    $frameClient = Get-TrialCapFrameX $CapFrameXPort -Directory $CapFrameXDir
+    $resolved = Resolve-TrialPack $package (Get-FullPath $SourceProfile) $workshop -SessionType $Session
+    $jfrTools = $null; $frameClient = $null
+    if (-not $Menu) {
+        $jfrTools = Resolve-TrialJfrTools $package $game $JdkDir
+        $frameClient = Get-TrialCapFrameX $CapFrameXPort -Directory $CapFrameXDir
+    }
     $lock = Get-ProfileLock $cache
     try {
         Initialize-TrialProfile $cache (Get-FullPath $SourceProfile) $package $resolved
         Assert-TrialNoHarness $cache
         $candidate = $null
         if ($Mode -eq 'Optimized') { $candidate = Get-TrialCandidate $package $manifest -SourceZip $OptimizerZip }
-        $plan = New-TrialPlan $game $cache $Mode $config $candidate
+        $plan = New-TrialPlan $game $cache $Mode $config $candidate -SessionType $Session
+        $plan.automaticCapFrameX = -not $Menu
         $plan | Add-Member -NotePropertyName Pack -NotePropertyValue ([pscustomobject]@{ MainRevision = $resolved.Pack.main_revision; ModIds = $resolved.Ids; Sources = @($resolved.Sources | Select-Object Id, Kind, Root, Info, Version, WorkshopId) })
-        Write-Host ("Current-main pack {0}: {1} required mods + starter + bridge." -f $resolved.Pack.main_revision, $resolved.Pack.mod_ids.Count)
+        Write-Host ("Pinned candidate pack {0}: {1} active mods; session={2}." -f $resolved.Pack.main_revision, $resolved.Ids.Count, $Session)
         foreach ($sourceMod in $resolved.Sources) { Write-Host ("  {0}: {1}, version={2}, Workshop={3}, source={4}" -f $sourceMod.Id, $sourceMod.Kind, $sourceMod.Version, $sourceMod.WorkshopId, $sourceMod.Root) }
         $log = Join-Path $cache ('launch-' + $Mode.ToLowerInvariant() + '.json')
         Save-TrialPlan $plan $log
         Write-Host "Checked $Mode trial. Profile and logs: $cache"
-        Write-Host 'CapFrameX remote control is ready. The capture will be bound to the launched game PID.'
+        if (-not $Menu) { Write-Host 'CapFrameX remote control is ready. The capture will be bound to the launched game PID.' }
+        else { Write-Host 'MENU: launch without automatic recording; CapFrameX, recording JDK and WPR are not required.' }
         if ($CheckOnly) { Write-Host 'Setup checks only; game startup and activation have not been verified.'; return }
         if (-not (Get-Process steam -ErrorAction SilentlyContinue)) { throw 'Start Steam and sign in first.' }
+        if ($Session -eq 'Multiplayer') { Write-Host 'MULTIPLAYER: open Host or Join from the game menu. No starter world, teleport or vehicle spawn. Restart the game before each connection/recording.' }
         $lua = Join-Path $cache 'Lua'
         [IO.Directory]::CreateDirectory($lua) | Out-Null
         $run = ''
-        if (-not $Menu) { $run = New-TrialRunName }
-        $plan.TrialWorld = $run
+        if (-not $Menu -and $Session -eq 'SinglePlayer') { $run = New-TrialRunName }
+        $contextId = $run
+        if ($Session -eq 'Multiplayer') { $contextId = 'PZDrivingBench-OptimizerTrial-MP-' + [Guid]::NewGuid().ToString('N') }
+        $plan.TrialWorld = $contextId
+        [IO.File]::WriteAllText((Join-Path $lua 'OptimizerTrial-context-id.txt'), $contextId + "`n", $script:Utf8)
         [IO.File]::WriteAllText((Join-Path $lua 'DrivingBench-run.txt'), $run + "`n", $script:Utf8)
-        $session = New-TrialSessionLogs $cache
-        $plan.Logs = $session
+        $sessionLogs = New-TrialSessionLogs $cache
+        $plan.Logs = $sessionLogs
         $plan.Activation = 'Pending'
         Save-TrialPlan $plan $log
         $previousPath = $env:PATH; $previousApp = $env:SteamAppId; $previousGame = $env:SteamGameId
         try {
             $env:PATH = $game + ';' + (Join-Path $game 'win64') + ';' + (Join-Path $game 'jre64/bin') + ';' + $previousPath
             $env:SteamAppId = '108600'; $env:SteamGameId = '108600'
-            $process = Start-Process -FilePath $plan.Java -WorkingDirectory $game -ArgumentList $plan.CommandLine -RedirectStandardOutput $session.Stdout -RedirectStandardError $session.Stderr -PassThru
+            $process = Start-Process -FilePath $plan.Java -WorkingDirectory $game -ArgumentList $plan.CommandLine -RedirectStandardOutput $sessionLogs.Stdout -RedirectStandardError $sessionLogs.Stderr -PassThru
             # Retain the process handle before waiting (Windows PowerShell 5.1 ExitCode handling).
             $null = $process.Handle
             $plan.Pid = $process.Id
@@ -624,25 +666,25 @@ function Invoke-OptimizerTrial {
             Save-TrialPlan $plan $log
             Write-Host "Game java.exe PID: $($process.Id)"
             $readyAnnounced = $false; $failureAnnounced = $false
-            if ($Mode -eq 'Optimized') { Write-Host 'Wait for READY, then press Ctrl+Shift+F8 IN THE GAME. Exit normally after DIAGNOSTICS DONE.' }
-            else { $plan.Activation = 'ControlPending'; Save-TrialPlan $plan $log; Write-Host 'CONTROL: candidate disabled. Wait for full-pack READY and the new test world/car before capture.' }
+            if ($Menu) { Write-Host 'Join or host from the game menu. Automatic recording is disabled.' }
+            elseif ($Mode -eq 'Optimized') { Write-Host 'Wait for READY, then press Ctrl+Shift+F8 IN THE GAME. Exit normally after DIAGNOSTICS DONE.' }
+            else { $plan.Activation = 'ControlPending'; Save-TrialPlan $plan $log; Write-Host 'CONTROL: candidate disabled. Join the selected Host or load the test world, then wait for full-pack READY.' }
             while ($true) {
                 $exited = $process.WaitForExit(1000)
                 # Stop reading full logs after READY so the launcher adds no polling I/O during capture.
                 if (-not $readyAnnounced -and -not $failureAnnounced) {
-                    $sessionText = Read-TrialSessionText $session
-                    if ($Mode -eq 'Optimized') { $state = Get-TrialReadiness $sessionText $resolved.Pack.main_revision $resolved.Ids.Count }
-                    else { $state = Get-TrialPackActivation $sessionText $resolved.Pack.main_revision $resolved.Ids.Count }
+                    $sessionText = Read-TrialSessionText $sessionLogs
+                    $state = Get-TrialRunReadiness $sessionText $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session -ContextId $contextId -Menu:$Menu -PreviousFailure $failureAnnounced
                     $plan.Readiness = $state
-                    if ($state.Failed -or $sessionText.Contains('[PZDrivingBench] FAIL ') -or $sessionText.Contains('[OptimizerTrial] drive telemetry disabled')) {
+                    if ($state.Failed) {
                         $failureAnnounced = $true; $plan.Activation = 'Incomplete'
                         Save-TrialPlan $plan $log
-                        Write-Warning "INCOMPLETE: $Mode activation failed. Do not capture this run. Logs: $($session.Directory)"
-                    } elseif ($state.Ready -and ($Menu -or (Test-TrialWorldReady $sessionText))) {
+                        Write-Warning "INCOMPLETE: $Mode activation failed. Do not capture this run. Logs: $($sessionLogs.Directory)"
+                    } elseif ($state.Ready) {
                         $readyAnnounced = $true; $plan.Activation = 'Ready'
                         Save-TrialPlan $plan $log
-                        if ($Mode -eq 'Optimized') { Write-Host "READY: full pack + bounded render/chunk profile + cache/preloads verified; $($state.HandedOff)/$($state.ActionGroups) action groups accounted for. Car and optimizer ready; preparing joint diagnostics." }
-                        else { Write-Host 'READY CONTROL: full current-main modpack activation verified. Car ready; preparing joint diagnostics.' }
+                        if ($Mode -eq 'Optimized') { Write-Host "READY: full pack + bounded render/chunk profile + cache/preloads verified; $($state.HandedOff)/$($state.ActionGroups) action groups accounted for. Client and optimizer ready." }
+                        else { Write-Host 'READY CONTROL: full current-main modpack activation verified. Client ready.' }
                         if (-not $Menu -and -not $exited) {
                             $plan.Diagnostics = Invoke-TrialDiagnostics $process $plan $jfrTools -FrameClient $frameClient -SkipWpr:$SkipWpr
                             Save-TrialPlan $plan $log
@@ -653,23 +695,22 @@ function Invoke-OptimizerTrial {
             }
             $process.Refresh()
             $plan.JavaExitCode = $process.ExitCode
+            $plan.Readiness = Get-TrialRunReadiness (Read-TrialSessionText $sessionLogs) $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session -ContextId $contextId -Menu:$Menu -PreviousFailure $failureAnnounced
             if ($Mode -eq 'Optimized') {
-                $plan.Readiness = Get-TrialReadiness (Read-TrialSessionText $session) $resolved.Pack.main_revision $resolved.Ids.Count
                 if (-not $plan.Readiness.Ready) {
                     $plan.Activation = 'Incomplete'; Save-TrialPlan $plan $log
-                    throw "INCOMPLETE Optimized trial; activation was not verified. Missing: $($plan.Readiness.Missing -join '; '). Bridge failure: $($plan.Readiness.Failed). Logs: $($session.Directory); fresh console: $($session.Console)"
+                    throw "INCOMPLETE Optimized trial; activation was not verified. Missing: $($plan.Readiness.Missing -join '; '). Bridge failure: $($plan.Readiness.Failed). Logs: $($sessionLogs.Directory); fresh console: $($sessionLogs.Console)"
                 }
                 $plan.Activation = 'Verified'; Save-TrialPlan $plan $log
             } else {
-                $plan.Readiness = Get-TrialPackActivation (Read-TrialSessionText $session) $resolved.Pack.main_revision $resolved.Ids.Count
                 if (-not $plan.Readiness.Ready) {
                     $plan.Activation = 'Incomplete'; Save-TrialPlan $plan $log
-                    throw "INCOMPLETE Control trial; full current-main modpack activation was not verified. Logs: $($session.Directory)"
+                    throw "INCOMPLETE Control trial; full current-main modpack activation was not verified. Logs: $($sessionLogs.Directory)"
                 }
                 $plan.Activation = 'ControlVerified'; Save-TrialPlan $plan $log
             }
             Save-TrialPlan $plan $log
-            if ($process.ExitCode -ne 0) { throw "Project Zomboid exited with code $($process.ExitCode). See $($session.Directory)" }
+            if ($process.ExitCode -ne 0) { throw "Project Zomboid exited with code $($process.ExitCode). See $($sessionLogs.Directory)" }
         } finally {
             # Snapshot this run's console before the next launch rotates the shared console.txt.
             if ($null -ne $plan.Pid) {
@@ -678,9 +719,9 @@ function Invoke-OptimizerTrial {
                     if ($process.HasExited) {
                         $plan.FinishedUtc = [DateTime]::UtcNow.ToString('o')
                         $plan.JavaExitCode = $process.ExitCode
-                        if (Test-Path -LiteralPath $session.Console -PathType Leaf) {
-                            Assert-NoReparsePoint $session.Console
-                            Copy-Item -LiteralPath $session.Console -Destination (Join-Path $session.Directory 'session-console.txt')
+                        if (Test-Path -LiteralPath $sessionLogs.Console -PathType Leaf) {
+                            Assert-NoReparsePoint $sessionLogs.Console
+                            Copy-Item -LiteralPath $sessionLogs.Console -Destination (Join-Path $sessionLogs.Directory 'session-console.txt')
                         }
                         Save-TrialPlan $plan $log
                     }

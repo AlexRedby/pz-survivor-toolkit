@@ -1,11 +1,12 @@
--- Private single-player trial evidence. This observer never changes the world or controls.
-if isClient() or isServer() then return end
+-- Private client trial evidence. This observer never changes the world or controls.
+if isServer() then return end
 
 -- Keep the newest 30 minutes at 1 Hz. Never print/write while observing play:
 -- native Lua print synchronously writes the console on the main thread.
 local maximumSamples, maximumLineBytes = 1800, 1024
 local registered, disabled, lastAt = false, false, nil
 local active, closed, world, problem = false, true, nil, nil
+local multiplayer = false
 local samples, head, count, dropped = {}, 1, 0, 0
 local function disable(problem)
     if disabled then return end
@@ -56,7 +57,7 @@ local function collectSample()
 end
 
 local function sample()
-    if disabled or not active then return end
+    if disabled or not active or isServer() then return end
     local ok, failure = pcall(collectSample)
     if not ok then problem = disable(failure) end
 end
@@ -64,7 +65,7 @@ end
 local function flush(reason)
     -- Initial menu entry has no world/buffer. A menu followed by process exit
     -- must not print the same world twice. Abrupt termination has no end marker.
-    if closed then return end
+    if closed or isServer() then return end
     active, closed = false, true
     pcall(function()
         local identity = "format=2 world=" .. tostring(world) .. " samples=" .. count .. " dropped=" .. dropped
@@ -79,24 +80,59 @@ local function flush(reason)
     samples = {}
 end
 
+-- The pinned bridge calls this before IngameState.exit rebuilds Lua and before
+-- ServerDisconnectState.enter clears callbacks. A kick can bypass OnDisconnect.
+-- It also runs in Control mode; optimizer/preload activation is unrelated to observation.
+PZOptimizerTrialTelemetryFlush = function(reason)
+    if multiplayer and (reason == "WorldExit" or reason == "Disconnect") then flush(reason) end
+end
+if Events.OnDisconnect then Events.OnDisconnect.Add(function()
+    PZOptimizerTrialTelemetryFlush("Disconnect")
+end) end
+
+local function multiplayerIdentity()
+    local reader
+    local ok, candidate = pcall(function()
+        reader = getFileReader("OptimizerTrial-context-id.txt", false)
+        if not reader then return nil end
+        local value = reader:readLine()
+        if reader:readLine() ~= nil then return nil end
+        return value
+    end)
+    if reader then pcall(function() reader:close() end) end
+    local prefix = "PZDrivingBench-OptimizerTrial-MP-"
+    if not ok or type(candidate) ~= "string" or #candidate ~= #prefix + 32
+        or not candidate:match("^PZDrivingBench%-OptimizerTrial%-MP%-%x+$") then
+        -- Never copy a server/save/player name or reader exception into diagnostic output.
+        error("invalid multiplayer trial context identity", 0)
+    end
+    return candidate
+end
+
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() flush("MainMenu") end) end
--- Current B42 SP fires OnPostSave from GameWindow.exit and the IngameState
--- exit branch, not ordinary GameWindow.save. There is no native OnGameExit.
+-- Current B42 dispatches OnPostSave from GameWindow.exit and IngameState's
+-- Core.exiting branch, including clients, before teardown. Ordinary saves do not
+-- commit the batch. OnMainMenuEnter alone can run after Lua has been rebuilt.
 if Events.OnPostSave then Events.OnPostSave.Add(function() flush("PostSaveExit") end) end
 Events.OnGameStart.Add(function()
-    -- Do not carry an earlier SP observer into a later multiplayer session.
-    if isClient() or isServer() then disabled = true; active = false; return end
+    if isServer() then disabled = true; active = false; return end
     if not closed then return end
     samples, head, count, dropped = {}, 1, 0, 0
     active, closed, disabled, lastAt, problem = true, false, false, nil, nil
     local ok, failure = pcall(function()
-        local candidate = tostring(getWorld():getWorld())
+        multiplayer = isClient()
         world = "Unavailable"
-        if #candidate > 100 or not candidate:match("^PZDrivingBench%-OptimizerTrial%-[%w%-]+$") then
-            error("unexpected trial world identity")
+        if multiplayer then
+            world = multiplayerIdentity()
+        else
+            local candidate = tostring(getWorld():getWorld())
+            if #candidate > 100 or not candidate:match("^PZDrivingBench%-OptimizerTrial%-[%w%-]+$") then
+                error("unexpected trial world identity")
+            end
+            world = candidate
         end
-        world = candidate
         if not registered then Events.OnTickEvenPaused.Add(sample); registered = true end
+        if multiplayer then print("[OptimizerTrial] multiplayer context ready world=" .. world) end
     end)
     if not ok then problem = disable(failure) end
 end)

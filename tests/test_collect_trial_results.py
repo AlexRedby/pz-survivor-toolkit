@@ -91,11 +91,11 @@ class TrialResultsTests(unittest.TestCase):
         (run / "frame-capture.json").write_text(json.dumps(wrapper))
         return run, wrapper
 
-    def buffered_context_fixture(self, mode):
+    def buffered_context_fixture(self, mode, *, world=None, reason="PostSaveExit"):
         run = self.runs / (mode.lower() + "-run")
         launch_path = run / "launch.json"
         launch = json.loads(launch_path.read_text())
-        world = "PZDrivingBench-OptimizerTrial-" + mode
+        world = world or "PZDrivingBench-OptimizerTrial-" + mode
         launch.update(gameContextPolicy="BufferedWorldExitV2", TrialWorld=world)
         launch_path.write_text(json.dumps(launch))
         diagnostic_path = run / "diagnostics.json"
@@ -104,7 +104,7 @@ class TrialResultsTests(unittest.TestCase):
                           frameAcknowledgedUtc="2026-10-20T12:00:01Z", capFrameXSeconds=90)
         diagnostic_path.write_text(json.dumps(diagnostic))
         epoch = int(datetime.fromisoformat("2026-10-20T12:00:00+00:00").timestamp() * 1000)
-        lines = [f"LOG : Lua > [OptimizerTrial] drive telemetry flush begin format=2 world={world} samples=94 dropped=0 reason=PostSaveExit"]
+        lines = [f"LOG : Lua > [OptimizerTrial] drive telemetry flush begin format=2 world={world} samples=94 dropped=0 reason={reason}"]
         lines += [f"LOG : Lua > [OptimizerTrial] drive sample tsMs={epoch+second*1000} x=1 inVehicle=true speedKmh=40"
                   for second in range(-1, 93)]
         lines += [f"LOG : Lua > [OptimizerTrial] drive telemetry flush end format=2 world={world} samples=94 dropped=0 status=Complete"]
@@ -127,6 +127,27 @@ class TrialResultsTests(unittest.TestCase):
             self.assertEqual(context["lastSampleTsMs"] - context["firstSampleTsMs"], 93000)
             with zipfile.ZipFile(result["Path"]) as archive:
                 self.assertIn(b"drive telemetry flush end", archive.read("Runs/" + run["mode"] + "/session-console.txt"))
+
+    def test_multiplayer_opaque_context_commits_before_lua_reset(self):
+        for reason in ("Disconnect", "WorldExit", "PostSaveExit"):
+            with self.subTest(reason=reason):
+                for mode, token in (("Control", "a" * 32), ("Optimized", "b" * 32)):
+                    self.buffered_context_fixture(mode, world="PZDrivingBench-OptimizerTrial-MP-" + token,
+                                                  reason=reason)
+                result = self.collect()
+                self.assertEqual(result["Summary"]["status"], "Complete")
+                self.assertTrue(all(run["gameContext"]["status"] == "Complete"
+                                    for run in result["Summary"]["runs"]))
+
+    def test_multiplayer_exit_reasons_do_not_relax_single_player_identity(self):
+        self.buffered_context_fixture("Optimized")
+        for world in ("PZDrivingBench-OptimizerTrial-Control", "PZDrivingBench-OptimizerTrial-MP-private-name",
+                      "PZDrivingBench-OptimizerTrial-MP-" + "g" * 32):
+            with self.subTest(world=world):
+                self.buffered_context_fixture("Control", world=world, reason="Disconnect")
+                context = self.collect()["Summary"]["runs"][0]["gameContext"]
+                self.assertEqual(context["status"], "Incomplete")
+                self.assertEqual(context["reason"], "InvalidMultiplayerGameContextIdentity")
 
     def test_buffered_context_missing_truncated_foreign_or_uncommitted_is_explicit(self):
         self.buffered_context_fixture("Optimized")
