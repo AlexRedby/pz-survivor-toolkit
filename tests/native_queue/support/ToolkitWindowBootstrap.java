@@ -32,8 +32,10 @@ public final class ToolkitWindowBootstrap {
         "glfwPollEvents", 1);
     private static boolean agentInstalled;
     private static volatile boolean displayTransformed;
+    private static volatile boolean optimizedDisplay;
     private static long routedWindow;
     private static long pendingVisibleWindow;
+    private static final Map<Long, int[]> creationSizes = new ConcurrentHashMap<>();
 
     private static String sha256(byte[] bytes) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -59,6 +61,7 @@ public final class ToolkitWindowBootstrap {
                 if (!DISPLAY.equals(name)) return null;
                 try {
                     byte[] patched = patchDisplay(bytes);
+                    optimizedDisplay = DISPLAY_XD3I_SHA256.equals(sha256(bytes));
                     displayTransformed = true;
                     return patched;
                 } catch (Throwable error) {
@@ -83,13 +86,13 @@ public final class ToolkitWindowBootstrap {
             ClassTransform.transformingMethodBodies((builder, element) -> {
                 if (element instanceof InvokeInstruction call
                         && call.owner().asInternalName().equals("org/lwjgl/glfw/GLFW")
-                        && EXPECTED.containsKey(call.name().stringValue())) {
+                        && expected.containsKey(call.name().stringValue())) {
                     String name = call.name().stringValue();
                     calls.merge(name, 1, Integer::sum);
                     builder.invokestatic(ClassDesc.of("ToolkitWindowBootstrap"), name, call.typeSymbol());
                 } else builder.with(element);
             }));
-        if (!EXPECTED.equals(calls)) throw new IllegalStateException("Unexpected Display lifecycle: " + calls);
+        if (!expected.equals(calls)) throw new IllegalStateException("Unexpected Display lifecycle: " + calls);
         var errors = classFile.verify(patched);
         if (!errors.isEmpty()) throw new IllegalStateException("Invalid patched Display: " + errors);
         return patched;
@@ -149,6 +152,72 @@ public final class ToolkitWindowBootstrap {
         }
     }
 
+    static void requireOptimizedPresentation() {
+        for (var entry : OPTIMIZER_PRESENTATION.entrySet()) {
+            if (!entry.getValue().equals(System.getProperty("pzopt." + entry.getKey()))) {
+                throw new IllegalStateException("Optimized Display requires -Dpzopt." + entry.getKey() + "=" + entry.getValue());
+            }
+        }
+    }
+
+    public static long glfwCreateWindow(int width, int height, CharSequence title, long monitor, long share) {
+        if (enabled()) {
+            try {
+                // Unlike stock Display, the reviewed optimizer can create fullscreen directly.
+                // Fail before any native creation, not only at later mode changes.
+                if (monitor != 0) throw new IllegalStateException("Native window isolation forbids fullscreen creation");
+                if (optimizedDisplay) requireOptimizedPresentation();
+            } catch (RuntimeException error) {
+                System.err.println("[QUEUE_TEST] FAIL native window creation " + error);
+                Runtime.getRuntime().halt(71);
+                throw new AssertionError(error);
+            }
+            // Keep even a retry hidden and unfocused until the same owned routing handshake.
+            GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
+            GLFW.glfwWindowHint(GLFW.GLFW_FOCUSED, GLFW.GLFW_FALSE);
+            GLFW.glfwWindowHint(GLFW.GLFW_FOCUS_ON_SHOW, GLFW.GLFW_FALSE);
+        }
+        long window = GLFW.glfwCreateWindow(width, height, title, monitor, share);
+        if (enabled() && window != 0) creationSizes.put(window, new int[] {width, height});
+        return window;
+    }
+
+    /** Only the exactly acknowledged owned creation may restore its original geometry. */
+    static int[] routedCreationSize(long window) {
+        if (!enabled() || window == 0 || window != routedWindow) return null;
+        var requested = creationSizes.get(window);
+        return requested == null ? null : requested.clone();
+    }
+
+    private static void restoreCreationSize(long window) {
+        var requested = routedCreationSize(window);
+        if (requested == null) throw new IllegalStateException("Owned routed creation size is missing");
+        int[] width = new int[1], height = new int[1];
+        GLFW.glfwGetWindowSize(window, width, height);
+        int beforeWidth = width[0], beforeHeight = height[0];
+        if (width[0] != requested[0] || height[0] != requested[1]) {
+            // AeroSpace may tile the initially shown transparent window before discovery.
+            // Restore only the size requested at creation, after its owned floating-route ACK.
+            // The optimizer caches this final mode early and otherwise skips Core's resize.
+            GLFW.glfwSetWindowSize(window, requested[0], requested[1]);
+            long deadline = System.nanoTime() + 2_000_000_000L;
+            while (true) {
+                GLFW.glfwPollEvents();
+                GLFW.glfwGetWindowSize(window, width, height);
+                if (width[0] == requested[0] && height[0] == requested[1]) break;
+                if (System.nanoTime() >= deadline) throw new IllegalStateException(
+                    "Owned window did not restore requested creation size: " + requested[0] + "x" + requested[1]
+                        + " actual=" + width[0] + "x" + height[0]);
+                GLFW.glfwWaitEventsTimeout(0.01);
+            }
+        }
+        int[] framebufferWidth = new int[1], framebufferHeight = new int[1];
+        GLFW.glfwGetFramebufferSize(window, framebufferWidth, framebufferHeight);
+        System.out.println("[QUEUE_TEST] WINDOW_GEOMETRY pid=" + ProcessHandle.current().pid() + " glfw=" + window
+            + " requested=" + requested[0] + "x" + requested[1] + " before=" + beforeWidth + "x" + beforeHeight
+            + " actual=" + width[0] + "x" + height[0] + " framebuffer=" + framebufferWidth[0] + "x" + framebufferHeight[0]);
+    }
+
     public static void glfwShowWindow(long window) {
         if (!enabled()) { GLFW.glfwShowWindow(window); return; }
         if (window == routedWindow) { GLFW.glfwShowWindow(window); return; }
@@ -181,6 +250,7 @@ public final class ToolkitWindowBootstrap {
                 GLFW.glfwWaitEventsTimeout(0.025);
             }
             routedWindow = window;
+            restoreCreationSize(window);
             boolean current = acknowledgement.equals(token + ":current");
             pendingVisibleWindow = current ? window : 0;
             if (!current) GLFW.glfwSetWindowOpacity(window, 1.0f);
@@ -194,6 +264,7 @@ public final class ToolkitWindowBootstrap {
     }
 
     public static void glfwDestroyWindow(long window) {
+        creationSizes.remove(window);
         if (enabled() && window == routedWindow) routedWindow = 0;
         if (enabled() && window == pendingVisibleWindow) pendingVisibleWindow = 0;
         GLFW.glfwDestroyWindow(window);
