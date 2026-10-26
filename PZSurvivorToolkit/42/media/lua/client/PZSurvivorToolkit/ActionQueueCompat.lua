@@ -696,14 +696,28 @@ local function tidyRestoreContext(context, action)
     return result
 end
 
--- Only this reviewed menu invocation can issue a clothing-laundering capability.
--- Other WashFix entries (body, mixed All, bandages) retain their existing producer.
+-- Sealed flat and ordinary aggregate menus issue the same clothing capability.
+-- Body washing keeps its native lifecycle; transforming/bandage aggregates remain legacy.
 local washClothingCapability = {}
+local function clothingMenuSelection(args)
+    if args.n == 6 and args[4] == nil and type(args[5]) == "boolean" then
+        return args[3]
+    end
+    local data = args[3]
+    if args.n ~= 5 or type(args[4]) ~= "boolean" or type(data) ~= "table" or getmetatable(data)
+        or type(data.washYourself) ~= "boolean" or data.cleanBandages ~= false then return end
+    for key in pairs(data) do
+        if key ~= "washYourself" and key ~= "regularItems" and key ~= "cleanBandages" then return end
+    end
+    if type(data.regularItems) ~= "table" or #data.regularItems + (data.washYourself and 1 or 0) < 2 then return end
+    return data.regularItems, data
+end
 local function clothingMenuOrigin(callback, character, sink, args)
     if not Proof.closure(callback, "WMI_WashingSubmenus.lua") or not instanceof(character, "IsoGameCharacter")
-        or not instanceof(sink, "IsoObject") or args.n ~= 6 or args[1] ~= sink or args[4] ~= nil
-        or type(args[5]) ~= "boolean" or type(args[3]) ~= "table" or getmetatable(args[3]) then return end
-    local selected, count, inputs = args[3], 0, {}
+        or not instanceof(sink, "IsoObject") or args[1] ~= sink then return end
+    local selected, aggregate = clothingMenuSelection(args)
+    if type(selected) ~= "table" or getmetatable(selected) then return end
+    local count, inputs = 0, {}
     for key, item in pairs(selected) do
         if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or key > #selected
             or not instanceof(item, "Clothing") or not item.getItemAfterCleaning then return end
@@ -716,17 +730,21 @@ local function clothingMenuOrigin(callback, character, sink, args)
     end
     if count == 0 or count ~= #selected then return end
     return {capability = washClothingCapability, character = character, sink = sink,
-        root = character:getInventory(), inputs = inputs, arguments = args, transfers = {}}
+        root = character:getInventory(), inputs = inputs, arguments = args, selected = selected,
+        aggregate = aggregate, washYourself = aggregate and aggregate.washYourself, transfers = {}}
 end
 local function clothingMenuMatches(origin, args)
-    if not origin or args.n < 6 or args.n > 11 or args[1] ~= origin.character
-        or origin.character:getInventory() ~= origin.root or getmetatable(origin.arguments[3]) then return false end
+    if not origin or args.n < origin.arguments.n + 1 or args.n > 11 or args[1] ~= origin.character
+        or origin.character:getInventory() ~= origin.root then return false end
     for i = 1, origin.arguments.n do if args[i + 1] ~= origin.arguments[i] then return false end end
     -- Native ISContextMenu invokes all ten parameter slots, including trailing nils.
     for i = origin.arguments.n + 2, args.n do if args[i] ~= nil then return false end end
+    local selected, aggregate = clothingMenuSelection(origin.arguments)
+    if selected ~= origin.selected or aggregate ~= origin.aggregate or getmetatable(selected)
+        or aggregate and aggregate.washYourself ~= origin.washYourself then return false end
     local count = 0
-    for key, item in pairs(origin.arguments[3]) do
-        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or key > #origin.arguments[3]
+    for key, item in pairs(selected) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or key > #selected
             or not instanceof(item, "Clothing") or not item.getItemAfterCleaning then return false end
         local expected, after = origin.inputs[item:getID()], item:getItemAfterCleaning()
         if not expected or expected.item ~= item or expected.position ~= key or expected.fullType ~= item:getFullType()
@@ -894,44 +912,46 @@ local function adopt(action)
 end
 
 scoped = function(context, callback, ...)
-    if not context.token and (not ownerUnchanged(context.id) or not Toolkit.Settings.actionQueue()) then
-        return callback(...)
-    end
+    if not context.token and not ownerUnchanged(context.id) then return callback(...) end
+    local nativeMenu = not context.token and not Toolkit.Settings.actionQueue()
+    if nativeMenu and context.id ~= "WashFix" then return callback(...) end
     local previous = sourceScope
-    sourceScope = context
+    if not nativeMenu then sourceScope = context end
     local insert, add, addAfter, queueActions = table.insert, ISTimedActionQueue.add,
         ISTimedActionQueue.addAfter, ISTimedActionQueue.queueActions
     local addOption = ISContextMenu and ISContextMenu.addOption
     local function valid() return ownerUnchanged(context.id) and (not context.token or live(context)) end
-    ISTimedActionQueue.add = function(action)
-        if context.id == "P4TidyUpMeister" and sessions[action.character] then sessions[action.character].restored = true end
-        if not valid() then return end
-        if adopt(action) == false then return end
-        return add(action)
-    end
-    ISTimedActionQueue.addAfter = function(previousAction, action)
-        if not valid() then return end
-        if previousAction then action.toolkitQueueOperation = previousAction.toolkitQueueOperation end
-        if adopt(action) == false then return end
-        return addAfter(previousAction, action)
-    end
-    table.insert = function(target, ...)
-        local args = pack(...)
-        local action = args[args.n]
-        local queue = type(action) == "table" and action.character and ISTimedActionQueue.queues[action.character]
-        if queue and target == queue.queue then
+    if not nativeMenu then
+        ISTimedActionQueue.add = function(action)
+            if context.id == "P4TidyUpMeister" and sessions[action.character] then sessions[action.character].restored = true end
             if not valid() then return end
             if adopt(action) == false then return end
-            local results = pack(insert(target, unpack(args, 1, args.n)))
-            if rememberTidy then rememberTidy(action) end
-            Operations.invalidateTitle(action)
-            return unpack(results, 1, results.n)
+            return add(action)
         end
-        return insert(target, unpack(args, 1, args.n))
-    end
-    ISTimedActionQueue.queueActions = function(character, callback, ...)
-        if not valid() then return end
-        return queueActions(character, callback, ...)
+        ISTimedActionQueue.addAfter = function(previousAction, action)
+            if not valid() then return end
+            if previousAction then action.toolkitQueueOperation = previousAction.toolkitQueueOperation end
+            if adopt(action) == false then return end
+            return addAfter(previousAction, action)
+        end
+        table.insert = function(target, ...)
+            local args = pack(...)
+            local action = args[args.n]
+            local queue = type(action) == "table" and action.character and ISTimedActionQueue.queues[action.character]
+            if queue and target == queue.queue then
+                if not valid() then return end
+                if adopt(action) == false then return end
+                local results = pack(insert(target, unpack(args, 1, args.n)))
+                if rememberTidy then rememberTidy(action) end
+                Operations.invalidateTitle(action)
+                return unpack(results, 1, results.n)
+            end
+            return insert(target, unpack(args, 1, args.n))
+        end
+        ISTimedActionQueue.queueActions = function(character, callback, ...)
+            if not valid() then return end
+            return queueActions(character, callback, ...)
+        end
     end
     if addOption and context.id == "WashFix" then
         ISContextMenu.addOption = function(menu, label, target, callback, ...)
@@ -941,7 +961,13 @@ scoped = function(context, callback, ...)
                 callback = function(...)
                     return Operations.run(function(...)
                         local context = {id = "WashFix", target = instanceof(sink, "IsoObject") and sink or nil}
-                        if clothingMenuMatches(origin, pack(...)) then context.washOrigin = origin end
+                        if ownerUnchanged("WashFix") and clothingMenuMatches(origin, pack(...)) then
+                            context.washOrigin = origin
+                            local approach = Toolkit.ActionQueueApproach
+                            if origin.aggregate and approach and approach.runNativeBatch then
+                                return approach.runNativeBatch(origin.character, scoped, context, original, ...)
+                            end
+                        end
                         return scoped(context, original, ...)
                     end, ...)
                 end

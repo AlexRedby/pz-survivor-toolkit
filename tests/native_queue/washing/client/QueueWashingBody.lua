@@ -68,9 +68,12 @@ local function read(run)
  local action=ISReadABook:new(run.player,run.state.book);assert(action.minutesPerPage==2 and action.maxTime>1 and not run.player:isTimedActionInstant(),'body reader native cost differs')
  ISTimedActionQueue.add(action);return action
 end
-function M.start(player,state,ids,enabled)
+function M.track(player,state,ids,enabled)
  local run={body=true,player=player,state=state,ids=ids,enabled=enabled,seen={},records={},localDeferrals=0,tailIndependent=true,tailProgress=false,originalTailStarted=false,lateSourceActions=0,reset=false}
- active=run
+ active=run;return run
+end
+function M.start(player,state,ids,enabled)
+ local run=M.track(player,state,ids,enabled)
  assert(#queue(run).queue==0 and not player:hasTimedActions(),'body start requires real idle')
  assert(T.Settings.actionQueue()==enabled and T.ActionQueueCompat.isInstalled('WashFix'),'body source/setting proof absent')
  assert(T.ActionQueueCompat.verifySources('WashFix')and T.ActionQueueCompat.verifySources('P4TidyUpMeister'),'selected WashFix/P4 sources differ')

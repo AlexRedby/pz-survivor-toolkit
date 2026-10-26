@@ -1,5 +1,6 @@
 require 'TimedActions/ISWashClothing'
 local JSON=require 'QueueHealthEvents'
+local function mixedCase(case)return case=='mixed-all'or case=='mixed-reset-after-body'end
 local function bodyCase(case)return case=='body-full'or case=='body-water-limited'or case=='body-cancel'end
 local function bodyFixture()return require 'QueueWashingBodyFixture'end
 local F={bagType='Base.Bag_ALICEpack_Army',sinkSprite='location_business_office_generic_01_49',sinkEntity='Base.WaterDispenser'}
@@ -7,6 +8,7 @@ local function array(a)local r={};for i=0,a:size()-1 do r[#r+1]=a:get(i)end;retu
 local function all(c,r)r=r or {};for _,v in ipairs(array(c:getItems()))do r[#r+1]=v;if instanceof(v,'InventoryContainer')then all(v:getItemContainer(),r)end end;return r end
 local function count(c,id)local n=0;for _,v in ipairs(all(c))do if v:getID()==id then n=n+1 end end;return n end
 local function itemIds(c)local r={};for _,v in ipairs(all(c))do r[#r+1]=v:getID()end;table.sort(r);return r end
+function F.isMixed(case)return mixedCase(case)end
 function F.isCancel(case)return case=='cancel-after-pickup'end
 function F.noSoap(case)return case=='borrowed-batch'end
 function F.snapshot(item)
@@ -98,6 +100,7 @@ end
 F.createSource=sink
 local function cleanup(s)
  if bodyCase(s.case)then return bodyFixture().cleanup(s,F)end
+ if mixedCase(s.case)then assert(not s.root:getItemById(s.ids.makeup.id)and not s.player:getWornItem(ItemBodyLocation.MAKE_UP_EYES),'paid mixed body makeup survived')end
  assert(s.verified and s.player:getInventory()==s.root,'previous washing fixture was not verified')
  local bag=assert(s.root:getItemById(s.ids.bagId));assert(bag:getContainer()==s.root and bag:getFullType()==s.ids.bagType
   and count(s.root,bag:getID())==1 and not s.player:isEquipped(bag),'previous washing bag changed or remains equipped')
@@ -189,5 +192,29 @@ function F.verify(s)
  end
  if not r.tailRead then return nil,'independent washing reader incomplete'end
  s.verified=true;s.verifiedReceipt=r;return r
+end
+local basePrepare,baseResolve,baseVerify=F.prepare,F.resolve,F.verify
+function F.prepare(player,case,previous)
+ if not mixedCase(case)then return basePrepare(player,case,previous)end
+ if previous then cleanup(previous)end
+ local s=basePrepare(player,'borrowed-batch');local clothing=s.ids
+ local token=case..':'..player:getUsername()..':'..getTimestampMs();s.sink:getModData().QueueWashingOwner=token;clothing.sink.ownerToken=token
+ local body=bodyFixture().prepare(player,'body-full',F,s)
+ s.ids=body.ids;s.case=case;s.ids.case=case;s.ids.bagId=clothing.bagId;s.ids.bagType=clothing.bagType;s.ids.garments=clothing.garments
+ local water,soap=s.ids.requiredWater,s.ids.requiredSoap;for _,item in ipairs(s.ids.garments)do water=water+item.requiredWater;soap=soap+item.requiredSoap end
+ assert(s.sink:getFluidAmount()>=water and s.ids.soap.uses>=soap,'mixed native aggregate resource budget insufficient')
+ return s
+end
+function F.resolve(player,ids)
+ if not mixedCase(ids.case)then return baseResolve(player,ids)end
+ local s=baseResolve(player,ids);if not s or not bodyFixture().resolve(player,ids,F)then return end
+ s.player,s.case,s.ids=player,ids.case,ids;return s
+end
+function F.verify(s)
+ if not mixedCase(s.case)then return baseVerify(s)end
+ local clothing,reason=baseVerify(s);if not clothing then return nil,reason end
+ local body,problem=bodyFixture().verify(s,F);if not body then return nil,problem end
+ for k,v in pairs(body)do clothing[k]=v end
+ s.verifiedReceipt=clothing;return clothing
 end
 return F

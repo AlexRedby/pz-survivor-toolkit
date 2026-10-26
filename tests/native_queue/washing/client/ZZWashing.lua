@@ -3,7 +3,8 @@ require 'TimedActions/ISReadABook'
 require 'ISUI/WMI_WashingSubmenus'
 local F=require 'QueueWashingFixture'
 local function bodyCase(name)return name=='body-full'or name=='body-water-limited'or name=='body-cancel'end
-local Body
+local Body,Mixed
+local function mixedCase(name)return name=='mixed-all'or name=='mixed-reset-after-body'end
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local replayMetadata,replaySourceProof
@@ -232,22 +233,35 @@ local function dispatch(player)
   assert(run.replayProof.verified,'staged washing MP replay source no longer matches selected Toolkit')
  end
  for _,meta in ipairs(ids.garments)do run.allowed[meta.id]=true end
+ if mixedCase(case())then
+  run.mixed=true;Body=Body or require 'QueueWashingBody';Mixed=Mixed or require 'QueueWashingMixed'
+  assert(T.ActionQueueCompat.verifySources('WashFix')and T.ActionQueueCompat.verifySources('P4TidyUpMeister'),'mixed selected mod source differs')
+  assert(require('PZSurvivorToolkit/SourceProof').matches('media/lua/shared/TimedActions/ISWashYourself.lua',1510864116,nil,true),'mixed native body source differs')
+  run.bodyRun=Body.track(player,state,ids,enabled)
+ end
  local menu=ISContextMenu.get(player:getPlayerNum(),20,20)
  WS.WMI_BuildWashMenu(menu,{state.sink},player,state.sink,menu)
- local selected,index,option,tree,soaps=menuOption(menu,run.allowed)
+ local selected,index,option,tree,soaps
+ if run.mixed then
+  selected,index,option=Mixed.selectMenu(menu,player,state,ids);tree={case=case(),mixed=true};soaps=option and soapList(option.param2)
+ else selected,index,option,tree,soaps=menuOption(menu,run.allowed)end
  print('[WASHING_TEST] MENU_TREE '..JSON.encode(tree))
  assert(selected,'real flat WashFix clothing menu option missing; expectedNoSoap='..tostring(F.noSoap(case()))..' tree='..JSON.encode(tree))
+ local selectedNoSoap=option.param5;if run.mixed then selectedNoSoap=option.param4 end
  run.menu={method='WS.WMI_BuildWashMenu+ISContextMenu.onMouseUp',callback=tostring(option.onSelect),
-  exactArguments=true,noSoap=option.param5,requested=#ids.garments,bagWorn=true,inputIds={},soapId=state.soap:getID(),soapUses=state.soap:getCurrentUses(),soapList=soaps,
-  choice=F.noSoap(case())and 'bag-aggregate'or 'bag-individual'}
- for _,item in ipairs(option.param3)do run.menu.inputIds[#run.menu.inputIds+1]=item:getID()end
+  exactArguments=true,noSoap=selectedNoSoap,requested=#ids.garments,bagWorn=true,inputIds={},soapId=state.soap:getID(),soapUses=state.soap:getCurrentUses(),soapList=soaps,
+  choice=run.mixed and 'mixed-all'or F.noSoap(case())and 'bag-aggregate'or 'bag-individual'}
+ if run.mixed then run.menu.washYourself=option.param3.washYourself;run.menu.cleanBandages=option.param3.cleanBandages end
+ for _,item in ipairs(run.mixed and option.param3.regularItems or option.param3)do run.menu.inputIds[#run.menu.inputIds+1]=item:getID()end
  selected:setVisible(true);selected.mouseOver=index;selected:onMouseUp(0,0)
- observe();run.originalTail=readTail(player)
+ observe();if run.mixed then Body.observe(run.bodyRun);Mixed.assertBodyQueued(run.bodyRun)end;run.originalTail=readTail(player)
+ if run.mixed then run.bodyRun.originalTail=run.originalTail end
  local token=run.originalTail.toolkitQueueOperation
  run.tailIndependent=true
  if enabled then
   assert(type(token)=='table','original reader has no independent operation')
   for action in pairs(run.seen)do assert(action.toolkitQueueOperation~=token,'original reader grouped with washing')end
+  if run.mixed then for action in pairs(run.bodyRun.seen)do assert(action.toolkitQueueOperation~=token,'mixed body grouped with original reader')end end
  end
 end
 local function cancelAfterPickup(player)
@@ -266,6 +280,31 @@ local function cancelAfterPickup(player)
  run.resetProof.freshGeneration=queue().toolkitOperationGeneration or 0
  local freshToken=run.freshTail.toolkitQueueOperation
  run.resetProof.freshIndependent=not enabled or type(freshToken)=='table'and freshToken~=oldToken and freshToken~=oldTailToken
+end
+local function cancelAfterBody(player)
+ if case()~='mixed-reset-after-body'or run.reset then return end
+ Body.observe(run.bodyRun)
+ local finished=false
+ for action,entry in pairs(run.bodyRun.seen)do
+  if queue().current==action then return end
+  finished=entry.row.finish.perform==1
+ end
+ if not finished then return end
+ for _,entry in pairs(run.seen)do if entry.row.kind=='ISWashClothing'and(entry.row.progress or entry.row.begin.perform>0 or entry.row.begin.complete>0)then error('mixed reset missed pre-clothing-wash boundary')end end
+ local paid=Mixed.paidBody(player,state,ids);if not paid then return end
+ assert(queue():indexOf(run.originalTail)~=-1 and not run.originalTail:isStarted(),'mixed old reader already ran')
+ local generation=queue().toolkitOperationGeneration or 0;local oldTail=run.originalTail.toolkitQueueOperation
+ run.resetting=true;ISTimedActionQueue.clear(player);run.resetting=false;run.reset=true;run.resetAt=getTimestampMs()
+ run.resetProof={method='ISTimedActionQueue.clear',afterPaidBody=true,beforeClothesWash=true,paid=paid,
+  beforeGeneration=generation,afterGeneration=queue().toolkitOperationGeneration or 0,oldTailRemoved=queue():indexOf(run.originalTail)==-1}
+ assert(run.resetProof.oldTailRemoved,'mixed clear retained old reader')
+ run.freshTail=readTail(player);run.bodyRun.freshTail=run.freshTail;run.resetProof.freshGeneration=queue().toolkitOperationGeneration or 0
+ local fresh=run.freshTail.toolkitQueueOperation
+ run.resetProof.freshIndependent=not enabled or type(fresh)=='table'and fresh~=oldTail
+ if enabled then
+  for action in pairs(run.seen)do if action.toolkitQueueOperation==fresh then run.resetProof.freshIndependent=false end end
+  for action in pairs(run.bodyRun.seen)do if action.toolkitQueueOperation==fresh then run.resetProof.freshIndependent=false end end
+ end
 end
 local function advance()
  if step==#config.cases then
@@ -291,6 +330,7 @@ local function finish()
   originalTailStarted=run.originalTailStarted,reset=run.reset,resetProof=run.resetProof,lateSourceActions=run.lateSourceActions,
   lateObservedMs=run.resetAt and getTimestampMs()-run.resetAt or 0,waitsObserved=waits,ownedCleanupActions=run.ownedCleanupActions,creationOverflow=run.creationOverflow}
  if config.kind=='mp'then row.replayProof=run.replayProof end
+ if run.mixed then row.bodyEvidence=Body.finish(run.bodyRun,authority,F);row.mixed=true end
  row.actualResources=assert(F.verify({player=getPlayer(),root=state.root,sink=state.sink,case=case(),ids=ids}))
  for k,v in pairs(authority)do if k~='case'then row[k]=v end end
  emit(row)
@@ -324,9 +364,9 @@ Events.OnTick.Add(function()
    if bodyCase(case())then Body=Body or require 'QueueWashingBody';run=Body.start(player,state,ids,enabled)else dispatch(player)end
    phase='running';since=getTimestampMs();idle=0;return
   elseif phase=='running'then
-   if run.body then Body.tick(run)else observe();cancelAfterPickup(player)end
+   if run.body then Body.tick(run)else observe();if run.mixed then Body.observe(run.bodyRun);cancelAfterBody(player)else cancelAfterPickup(player)end end
    if idle>=10 and #queue().queue==0 and not player:hasTimedActions()then
-    assert(not(F.isCancel(case())or case()=='body-cancel')or run.reset,'washing reset was never exercised')
+    assert(not(F.isCancel(case())or case()=='body-cancel'or case()=='mixed-reset-after-body')or run.reset,'washing reset was never exercised')
     if run.resetAt and getTimestampMs()-run.resetAt<3000 then return end
     request('Verify');phase='receipt';return
    end

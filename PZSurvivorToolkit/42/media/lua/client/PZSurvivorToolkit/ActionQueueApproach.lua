@@ -10,6 +10,7 @@ Toolkit.ActionQueueApproach = Approach
 local bindings, installed, attestations = {}, {}, {}
 local walking = setmetatable({}, {__mode='k'})
 local resolving, preparing = 0, 0
+local nativeBatch
 local nativeRoot
 local cursorContract
 local function source(callback)
@@ -236,12 +237,30 @@ local function synchronous(callback,args)
     if not result[1]then error(result[2],0)end
     return unpack(result,2)
 end
+-- A reviewed compound native command replaces prior work once when the queue
+-- is disabled. Each later approach resolves at its own boundary, so a native
+-- clear cannot erase an earlier sibling such as body washing.
+function Approach.runNativeBatch(character, callback, ...)
+    local token=Operations.preparationScope(character)
+    if Toolkit.Settings.actionQueue() or not token or not instanceof(character,'IsoPlayer')
+        or not character:isLocalPlayer() or character:isDead() or isServer() then return callback(...) end
+    if nativeBatch and nativeBatch.character==character and nativeBatch.token==token then return callback(...) end
+    local previous=nativeBatch
+    ISTimedActionQueue.clear(character)
+    nativeBatch={character=character,token=token}
+    local result={n=select('#',...),...}
+    local function pack(...)return{n=select('#',...),...}end
+    result=pack(pcall(callback,unpack(result,1,result.n)))
+    nativeBatch=previous
+    if not result[1]then error(result[2],0)end
+    return unpack(result,2,result.n)
+end
 local function canCapture(character)
-    if resolving>0 or not Toolkit.Settings.actionQueue() or not instanceof(character,'IsoPlayer')
-        or character:isDead() or isServer() then return end
+    if resolving>0 or not instanceof(character,'IsoPlayer') or character:isDead() or isServer() then return end
     local queue=ownedQueue(character)
     if queue and queue:isCurrentActionAddingOtherActions() then return end
-    return Operations.preparationScope(character)
+    local token=Operations.preparationScope(character)
+    if Toolkit.Settings.actionQueue() or nativeBatch and nativeBatch.character==character and nativeBatch.token==token then return token end
 end
 -- skipBuildAction is also used by UI pickers and debug editors. Only their
 -- declared timed-action-producing native create contracts have async semantics.

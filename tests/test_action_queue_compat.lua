@@ -748,6 +748,36 @@ do
   assert(queue.queue[1]==later and #queue.queue==1,'invalidated laundering callback revived source children: '..state)
   sink.getObjectIndex=function()return 1 end
  end
+ -- Ordinary aggregate commands seal the same native clothing effects, not the body action.
+ do
+  reset();local first=garment(28101);local second=garment(28102)
+  local selected={first,second};local data={washYourself=false,regularItems=selected,cleanBandages=false}
+  local pickup=choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{},data,false,nil});local later=tail()
+  assert(producer(pickup)=='compat.wash-clothing','ordinary All clothing pickup retained legacy completion')
+  local sealed=assert(compat.fixtureRegistries[1][pickup].washOrigin)
+  assert(sealed.aggregate==data and sealed.selected==selected and sealed.washYourself==false)
+  pickup:perform()
+  assert(producer(queue.queue[1])=='compat.wash-clothing'and producer(queue.queue[2])=='compat.wash-clothing'
+   and compat.fixtureRegistries[1][queue.queue[1]].washOrigin==sealed and queue.queue[#queue.queue]==later,
+   'aggregate continuation lost exact origin, return or independent tail')
+  operations.invalidate(pickup.toolkitQueueOperation)
+  local size=#queue.queue;pickup.onCompleteFunc(unpack(pickup.onCompleteArgs));assert(#queue.queue==size,'aggregate late callback replayed after cancellation')
+ end
+ for _,change in ipairs({'bandages','extra-data','no-soap','changed-list','named-list','metatable','duplicate','transform'})do
+  reset();local first,second=garment(28103),garment(28104)
+  local data={washYourself=false,regularItems={first,second},cleanBandages=false}
+  local mutate
+  if change=='bandages'then data.cleanBandages=true
+  elseif change=='extra-data'then data.extra=true
+  elseif change=='no-soap'then mutate=function(option)option.args[4]=true end
+  elseif change=='changed-list'then mutate=function()data.regularItems={first,second}end
+  elseif change=='named-list'then data.regularItems.extra=true
+  elseif change=='metatable'then mutate=function()setmetatable(data,{})end
+  elseif change=='duplicate'then data.regularItems[2]=first
+  else second.getItemAfterCleaning=function()return 'Base.Bandage'end end
+  local action=choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{},data,false,nil},mutate)
+  assert(action and producer(action)=='compat.selected-chains','unknown aggregate shape migrated: '..change)
+ end
  -- Each rejected provenance shape still executes its original native/legacy source callback.
  for _,state in ipairs({'foreign-callback','changed-args','named-list','late-metatable','reordered-list','duplicate','mixed','transform','aggregate'})do
   reset();value=garment(28005)
@@ -775,6 +805,70 @@ do
  assert(loadstring(assert(walkSource:match('(function luautils.walkAdjObject.-\nend)')),'@luautils.lua'))()
  local body=choose(WS.WMI_TestBodyWashCallback,{n=3,sink,{},nil})
  assert(body.Type=='ISWashYourself'and producer(body)==nil,'body washing must retain the default native lifecycle, without any legacy or clothing producer')
+ reset();value=garment(28105)
+ local mixed={washYourself=true,regularItems={value},cleanBandages=false}
+ choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{},mixed,false,nil})
+ local bodySeen,pickupSeen=false,false
+ for _,action in ipairs(queue.queue)do
+  if action.Type=='ISWashYourself'then bodySeen=true;assert(producer(action)==nil,'All command replaced native body lifecycle')
+  elseif action.Type=='ISInventoryTransferAction'then pickupSeen=true;assert(producer(action)=='compat.wash-clothing','mixed body/clothing All did not migrate its ordinary clothing branch')end
+ end
+ assert(bodySeen and pickupSeen,'mixed All source did not enqueue both native branches')
+ reset();value=garment(28106);local other=garment(28107)
+ mixed={washYourself=false,regularItems={value,other},cleanBandages=false}
+ choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{},mixed,false,nil},function()mixed.washYourself=true end)
+ local rejectedPickups=0
+ for _,action in ipairs(queue.queue)do
+  if action.Type=='ISInventoryTransferAction'then
+   rejectedPickups=rejectedPickups+1
+   assert(producer(action)=='compat.selected-chains','mutated aggregate body flag kept original seal')
+  end
+ end
+ assert(rejectedPickups==2,'mutated All did not exercise both original clothing pickups')
+ -- Queue-disabled native All replaces prior work once, but must not erase its own body sibling.
+ reset();enabled=false;local prior=tail();local clears=nativeClears
+ value=garment(28108);mixed={washYourself=true,regularItems={value},cleanBandages=false}
+ choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{},mixed,false,nil})
+ local nativeBody,route,pickup
+ for _,action in ipairs(queue.queue)do
+  if action.Type=='ISWashYourself'then nativeBody=action
+  elseif sharedApproach.isAction(action)then route=action
+  elseif action.Type=='ISInventoryTransferAction'then pickup=action end
+ end
+ assert(queue:indexOf(prior)==-1 and nativeClears==clears+1 and queue.queue[1]==nativeBody and route and pickup,
+  'native All must replace old work once and retain body, later approach and clothing')
+ assert(producer(nativeBody)==nil and producer(pickup)==nil,'queue-off All borrowed enabled source contracts')
+ local independent=tail()
+ -- Model the completed body boundary; the second real native route must not clear its existing siblings.
+ queue:removeFromQueue(nativeBody);queue.current=route
+ route:begin();route:start();route:perform()
+ assert(queue.queue[1]==pickup and queue.queue[#queue.queue]==independent and nativeClears==clears+2,
+  'later native clear escaped its preparation boundary and erased clothing or the independent tail')
+ reset();enabled=false
+ operations.run(function()
+  local ok,message=pcall(sharedApproach.runNativeBatch,player,function()error('batch callback failure')end)
+  assert(not ok and tostring(message):find('batch callback failure',1,true),'native batch swallowed callback failure')
+  local before=nativeClears;luautils.walkAdj(player,square)
+  assert(nativeClears==before+1 and #queue.queue==0,'failed native batch leaked deferred preparation to a later callback')
+  sharedApproach.runNativeBatch(player,function()
+   luautils.walkAdj(player,square);local owned=queue.queue[1];local before=nativeClears
+   sharedApproach.runNativeBatch(player,function()luautils.walkAdj(player,square)end)
+   assert(queue.queue[1]==owned and #queue.queue==2 and nativeClears==before,'nested native batch erased an earlier sibling')
+   local remote=setmetatable({isLocalPlayer=function()return false end},{__index=player})
+   local called=false;sharedApproach.runNativeBatch(remote,function()called=true end)
+   assert(called and nativeClears==before and queue.queue[1]==owned,'remote batch replaced local work')
+   local foreign=setmetatable({},{__index=player});local foreignQueue=ISTimedActionQueue.getTimedActionQueue(foreign)
+   luautils.walkAdj(foreign,square)
+   assert(nativeClears==before+1 and #foreignQueue.queue==0 and queue.queue[1]==owned,
+    'foreign actor inherited deferred preparation from the local batch')
+   ISTimedActionQueue.queues[foreign]=nil
+  end)
+  local function packed(...)return{n=select('#',...),...}end
+  local result=packed(sharedApproach.runNativeBatch(player,function()return nil,'native result',nil,4 end))
+  assert(result.n==4 and result[1]==nil and result[2]=='native result'and result[3]==nil and result[4]==4,
+   'native batch changed the original callback return tuple')
+ end)
+ reset()
  ISWashYourself,ISWorldObjectContextMenu.onWashYourself,luautils.walkAdjObject=bodyClass,bodyCallback,walkObject
  reset();value=garment(28007)
  WS.WMI_TestOriginalWashCallback(player,sink,{}, {value},nil,true,nil)

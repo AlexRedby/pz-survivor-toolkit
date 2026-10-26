@@ -48,11 +48,14 @@ function B.cleanup(s,F)
  local obj=assert(F.resolveSink(s.ids.sink));assert(obj==s.sink,'body sink changed');local sq=obj:getSquare();sq:transmitRemoveItemFromSquare(obj)
  if obj:getObjectIndex()>=0 then obj:removeFromWorld();obj:removeFromSquare()end
 end
-function B.prepare(player,case,F)
+function B.prepare(player,case,F,stand)
  if isServer()then assert(require('PZSurvivorToolkit/SourceProof').closure(ISWashYourself.removeMakeup,'WashMakeupSync.lua'),'native Host makeup removal notification fix is not installed')end
  assert(B.isCase(case));dryPreparation();local root=player:getInventory();local s={player=player,root=root,case=case}
  for _,slot in ipairs(slots())do assert(not player:getWornItem(slot),'fresh body fixture already wears makeup')end
- s.sink,s.sinkSpec=F.createSource(player,case)
+ if stand then
+  assert(case=='body-full'and stand.player==player and stand.root==root,'mixed body source identity changed')
+  s.sink,s.sinkSpec=stand.sink,stand.ids.sink
+ else s.sink,s.sinkSpec=F.createSource(player,case)end
  if case=='body-water-limited'then
   local fluid=s.sink:getFluidContainer();local locked=fluid:isInputLocked();fluid:setInputLocked(false)
   local ok,problem=pcall(function()fluid:Empty();fluid:addFluid(Fluid.Water,1)end);fluid:setInputLocked(locked);assert(ok,problem)
@@ -60,7 +63,13 @@ function B.prepare(player,case,F)
  end
  local visual=player:getHumanVisual();assert(BloodBodyPartType.MAX:index()==18,'current native body enum differs')
  for i=0,BloodBodyPartType.MAX:index()-1 do local part=BloodBodyPartType.FromIndex(i);visual:setBlood(part,i==0 and .15 or 0);visual:setDirt(part,i<2 and .10 or 0)end
- local soap=assert(root:AddItem('Base.Soap2'));local book=assert(root:AddItem('Base.BookCarpentry1'));local makeup=assert(root:AddItem('Base.MakeUp_Crow'))
+ local soap,book
+ if stand then
+  soap=assert(root:getItemById(stand.ids.soap.id),'mixed stand soap missing');book=assert(root:getItemById(stand.ids.book),'mixed stand book missing')
+  assert(soap:getID()==stand.ids.soap.id and book:getID()==stand.ids.book and soap:getContainer()==root and soap:getFullType()==stand.ids.soap.kind and soap:getCurrentUses()==stand.ids.soap.uses
+   and book:getContainer()==root and book:getFullType()=='Base.BookCarpentry1','mixed stand root resource identity changed')
+ else soap=assert(root:AddItem('Base.Soap2'));book=assert(root:AddItem('Base.BookCarpentry1'))end
+ local makeup=assert(root:AddItem('Base.MakeUp_Crow'))
  assert(instanceof(makeup,'Clothing')and makeup:getBodyLocation()==ItemBodyLocation.MAKE_UP_EYES,'native Crow script/body slot differs')
  player:setWornItem(ItemBodyLocation.MAKE_UP_EYES,makeup);assert(player:getWornItem(ItemBodyLocation.MAKE_UP_EYES)==makeup)
  player:resetModelNextFrame()
@@ -71,7 +80,8 @@ function B.prepare(player,case,F)
   weather=B.weather(),makeup={id=makeup:getID(),kind=makeup:getFullType(),slot=tostring(ItemBodyLocation.MAKE_UP_EYES)},body=body,book=book:getID(),
   requiredWater=2,requiredSoap=1,expectedDuration=case=='body-water-limited'and 70 or 140,allIds=ids(root)}
  if isServer()then
-  sendAddItemToContainer(root,soap);sendAddItemToContainer(root,book);sendAddItemToContainer(root,makeup)
+  if not stand then sendAddItemToContainer(root,soap);sendAddItemToContainer(root,book)end
+  sendAddItemToContainer(root,makeup)
   sendClothing(player,ItemBodyLocation.MAKE_UP_EYES,makeup);sendHumanVisual(player)
   s.sink:transmitCompleteItemToClients();s.sink:transmitModData();s.sink:sendSyncEntity(nil)
  end

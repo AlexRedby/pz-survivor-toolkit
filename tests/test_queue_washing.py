@@ -103,7 +103,97 @@ def body_evidence(case='body-full', kind='sp', mode='toolkit'):
     return selection, row, prep, receipt
 
 
+def mixed_evidence(case='mixed-all', kind='sp', mode='toolkit'):
+    selection,row,p,receipt=evidence(False,kind,mode)
+    reset=case=='mixed-reset-after-body'
+    _,body,bp,br=body_evidence('body-full',kind,mode)
+    p.update(case=case,weather=bp['weather'],makeup=bp['makeup'],body=bp['body'],requiredWater=2,requiredSoap=1,expectedDuration=140)
+    p['sink']['ownerToken']=case+':client1:1';p['allIds']=sorted(p['allIds']+[40])
+    body['records'][0]['actorId']=p['actorId'];body['originalTailStarted']=not reset
+    row.update(mixed=True,reset=reset,originalTailStarted=not reset,bodyEvidence=body,ownedCleanupActions=0,creationOverflow=False)
+    row['menu'].update(choice='mixed-all',noSoap=False,washYourself=True,cleanBandages=False)
+    row['menu']['soapList']['shape']='java-list'
+    for value in row['records']:
+        if value['kind']=='ISWashClothing':value.update(noSoap=False,duration=187.5)
+    if reset:
+        row['records']=[dict(v,progress=False)for v in row['records']if v['kind']=='ISInventoryTransferAction'and v.get('pickup')]
+        row.update(returnsBeforeRead=True,lateObservedMs=3500,
+            resetProof=dict(method='ISTimedActionQueue.clear',afterPaidBody=True,beforeClothesWash=True,beforeGeneration=1,afterGeneration=2,freshGeneration=2,
+                oldTailRemoved=True,freshIndependent=True,paid=dict(body=br['body'],soapUses=19,waterAmount=13,makeupRootAbsent=True,
+                    garments=[dict(v,rootCount=0,sourceCount=1)for v in p['garments']])))
+        receipt['garments']=[dict(v,rootCount=0,sourceCount=1,totalCount=1)for v in p['garments']]
+    receipt.update(case=case,weather=p['weather'],body=br['body'],makeup=br['makeup'],allIds=[v for v in p['allIds']if v!=40])
+    receipt['soap']['uses']=19 if reset else 17
+    receipt['sink'].update(amount=13 if reset else 3,fluidAmount=13 if reset else 3)
+    row.update({k:copy.deepcopy(v)for k,v in receipt.items()if k!='case'});row['actualResources']=copy.deepcopy(receipt)
+    selection['cases']=[case]
+    return selection,row,p,receipt
+
+
 class WashingTests(unittest.TestCase):
+    def test_mixed_native_body_and_shared_clothes_success_reset_both_modes(self):
+        for case in washing.MIXED_CASES:
+            for kind in ('sp','mp'):
+                for mode in ('native','toolkit'):
+                    with self.subTest(case=case,kind=kind,mode=mode):
+                        d=mixed_evidence(case,kind,mode);washing.validate(d[0]);self.assertEqual([],washing.check_case(*d))
+
+    def test_mixed_oracle_rejects_unpaid_body_extra_cost_late_wash_desync_and_wrong_menu(self):
+        for case in washing.MIXED_CASES:
+            for change in ('body','makeup','soap','water','body-boundary','body-duration','missing-body','unsealed-clothes','no-reader','menu','duplicate',
+                           'dirty-clothes','late-source','client','missing-paid','old-tail','same-generation','unpaid-wash','extra-output'):
+                with self.subTest(case=case,change=change):
+                    d=mixed_evidence(case);row,p,r=d[1:]
+                    if change=='body':r['body']['parts'][0]['blood']=.15;self.sync(d)
+                    elif change=='makeup':r['makeup']['rootCount']=1;self.sync(d)
+                    elif change=='soap':r['soap']['uses']+=1;self.sync(d)
+                    elif change=='water':r['sink']['amount']+=1;self.sync(d)
+                    elif change=='body-boundary':row['bodyEvidence']['records'][0]['sharedFinish']['perform']=0
+                    elif change=='body-duration':row['bodyEvidence']['records'][0]['duration']=1
+                    elif change=='missing-body':row['bodyEvidence']['records']=[]
+                    elif change=='unsealed-clothes':row['records'][0]['behavior']='compat.selected-chains'
+                    elif change=='no-reader':row['tailProgress']=False
+                    elif change=='menu':row['menu']['cleanBandages']=True
+                    elif change=='duplicate':row['menu']['inputIds'][1]=100
+                    elif change=='dirty-clothes':r['garments'][0]['blood']=7.5 if case=='mixed-all'else 0;self.sync(d)
+                    elif change=='late-source':row['lateSourceActions']=1
+                    elif change=='client':row['actualResources']['soap']['uses']+=1
+                    elif change=='extra-output':r['allIds'].append(9999);self.sync(d)
+                    elif case!='mixed-reset-after-body':continue
+                    elif change=='missing-paid':row['resetProof']['paid']=None
+                    elif change=='old-tail':row['originalTailStarted']=True
+                    elif change=='same-generation':row['resetProof']['afterGeneration']=1
+                    else:row['records'].append(dict(kind='ISWashClothing',id=100,progress=True))
+                    self.assertTrue(washing.check_case(*d))
+
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT is required for actual mixed selector')
+    def test_actual_mixed_menu_rejects_changed_body_bandages_foreign_ids_and_args(self):
+        script=r'''
+package.loaded.QueueWashingBodyFixture={};package.loaded.QueueWashingFixture={}
+local M=assert(loadfile(arg[1]))()
+assert(not pcall(M.assertBodyQueued,{records={}}),'mixed All body loss did not fail before effects')
+assert(not pcall(M.assertBodyQueued,{records={{kind='ISWashClothing'}}}),'wrong native action counted as body')
+assert(M.assertBodyQueued({records={{kind='ISWashYourself'}}}))
+function instanceof(item,kind)return item.class==kind end
+local player,sink,soap,source={},{},{},{}
+local function item(id)return{class='Clothing',getID=function()return id end,getFullType=function()return 'Base.Shirt'end,getContainer=function()return source end,getItemAfterCleaning=function()return nil end}end
+local first,second=item(1),item(2);local ids={garments={{id=1,kind='Base.Shirt'},{id=2,kind='Base.Shirt'}}}
+local root={options={}};local data={washYourself=true,cleanBandages=false,regularItems={first,second}}
+local option={target=player,param1=sink,param2={size=function()return 1 end,get=function()return soap end},param3=data,param4=false,param5=root,onSelect=function()end}
+root.options={option};local state={sink=sink,soap=soap,source=source}
+assert(M.selectMenu(root,player,state,ids)==root)
+for _,field in ipairs({'target','param1','param4','param5','param6','notAvailable'})do
+ local old=option[field];option[field]={};assert(M.selectMenu(root,player,state,ids)==nil,'foreign option '..field);option[field]=old
+end
+data.cleanBandages=true;assert(not M.selectMenu(root,player,state,ids));data.cleanBandages=false
+data.washYourself=false;assert(not M.selectMenu(root,player,state,ids));data.washYourself=true
+data.extra=true;assert(not M.selectMenu(root,player,state,ids));data.extra=nil
+data.regularItems={first,first};assert(not M.selectMenu(root,player,state,ids));data.regularItems={first,second}
+first.getItemAfterCleaning=function()return 'Base.Bandage'end;assert(not M.selectMenu(root,player,state,ids))
+'''
+        result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/client/QueueWashingMixed.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
     def test_body_native_full_partial_and_reset_in_sp_host_both_modes(self):
         for case in washing.BODY_CASES:
             for kind in ('sp', 'mp'):
@@ -201,7 +291,7 @@ print('actual body selector passed')
     def test_mixed_selection_checks_all_six_cases_in_one_log(self):
         for kind in ('sp', 'mp'):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
-                root=Path(tmp); cases=list(washing.CASES)
+                root=Path(tmp); cases=list(washing.CLOTHING_CASES+washing.BODY_CASES)
                 context=dict(suite='washing',kind=kind,mode='toolkit',actor='client1')
                 rows=[dict(event='setup',cases=cases,expected=6,queueEnabled=True,nativeDurations=True)]; raw=[]
                 proof=self.sealed_replay(root) if kind=='mp' else None
@@ -383,6 +473,35 @@ assert(B.resolve(player,meta,F));assert(#logged==5,'repeated ready diagnostics')
 '''
         result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/shared/QueueWashingBodyFixture.lua')],input=script,text=True,capture_output=True)
         self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
+    def test_flat_then_two_mixed_cases_share_one_sp_host_log(self):
+        for kind in ('sp','mp'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory()as tmp:
+                root=Path(tmp);cases=['borrowed-single-soap',*washing.MIXED_CASES]
+                context=dict(suite='washing',kind=kind,mode='toolkit',actor='client1')
+                rows=[dict(event='setup',cases=cases,expected=3,queueEnabled=True,nativeDurations=True)];raw=[]
+                proof=dict(self.sealed_replay(root),verified=True)if kind=='mp'else None
+                for case in cases:
+                    _,row,p,r=mixed_evidence(case,kind)if case in washing.MIXED_CASES else evidence(False,kind,single=True)
+                    if proof:row['replayProof']=copy.deepcopy(proof)
+                    rows.append(dict(row,event='case',id=case));raw.extend([('PREPARED',p),('VERIFIED',r)])
+                rows.append(dict(event='complete',cases=cases,expected=3,performed=3,failed=0,skipped=0))
+                text='\n'.join('[QUEUE_CHECK] '+json.dumps(dict(v,**context))for v in rows)+'\n[WASHING_TEST] COMPLETE\n'
+                authority='\n'.join('[WASHING_TEST] '+k+' '+json.dumps(v)for k,v in raw)
+                (root/'client1-launch.log').write_text(text+('\n'+authority if kind=='sp'else''))
+                if kind=='mp':(root/'server-launch.log').write_text(authority)
+                selection=dict(mixed_evidence(kind=kind)[0],cases=cases)
+                self.assertEqual([],washing.verify(root,selection,{})['issues'])
+
+    def test_mixed_reset_endpoint_requires_paid_pickup_or_proven_p4_return(self):
+        d=mixed_evidence('mixed-reset-after-body');row,p,r=d[1:]
+        r['garments'][0].update(rootCount=1,sourceCount=0);self.sync(d)
+        self.assertTrue(washing.check_case(*d),'unpaid root retention was accepted')
+        row['records'][0]['progress']=True
+        row['resetProof']['paid']['garments'][0].update(rootCount=1,sourceCount=0)
+        self.assertEqual([],washing.check_case(*d))
+        r['garments'][0].update(rootCount=0,sourceCount=1);self.sync(d)
+        self.assertTrue(washing.check_case(*d),'unproven post-reset return was accepted')
 
     def sealed_replay(self, root, source=None):
         if source is None:
@@ -870,9 +989,7 @@ print('actual native menu shape/flag selection passed')
 package.loaded['TimedActions/ISWashClothing']={}
 package.loaded.QueueHealthEvents=assert(loadfile(arg[2]))()
 local F=assert(loadfile(arg[1]))()
-local sink
-for i=1,20 do local name,value=debug.getupvalue(F.prepare,i);if not name then break end;if name=='sink'then sink=value end end
-assert(sink,'fixture source helper missing')
+local sink=assert(F.createSource,'fixture source helper missing')
 local entity={name='Base.WaterDispenser'}
 function getScriptManager()return {getGameEntityScript=function(_,name)assert(name==entity.name);return entity end}end
 function getTimestampMs()return 1 end

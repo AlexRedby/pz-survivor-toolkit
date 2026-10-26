@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.276
+
+- Fixed: WashFix All commands for body washing and ordinary clothing no longer discard the body step when clothing preparation requests another approach to the source. This also works with the action queue disabled, where the command still replaces prior work.
+- Reviewed WashFix All commands combining body washing and ordinary clothing now use the common clothing completion boundary. Native body washing, soap and water costs, item returns and paid effects retain their behavior; transforming-item aggregates keep their existing safeguards.
+
 ### 0.1.275
 
 - Fixed: the translucent inventory drag preview stays at its original offset from the cursor while earlier queued transfers remove rows. Applies to native and CleanUI inventory lists, including Shift-selected ranges and expanded stacks.
