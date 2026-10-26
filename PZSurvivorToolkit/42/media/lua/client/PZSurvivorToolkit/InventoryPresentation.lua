@@ -44,9 +44,11 @@ local function render(pane, native, details, class, ...)
     contexts[pane] = previous
     if not ok then error(result) end
     -- Draw last so native badges cannot erase the indicators. No row projection or coordinate remapping.
+    -- One ephemeral context after native refresh/aging; never reused next frame.
+    local researchContext = {}
     for _, icon in ipairs(context.icons) do
         Capacity.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details)
-        Indicators.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details, icon.group)
+        Indicators.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details, icon.group, researchContext)
     end
     -- Wishlist decorates full rows, including mixed stacks and items without an
     -- icon. Keep its row projection separate from individual icon presenters.

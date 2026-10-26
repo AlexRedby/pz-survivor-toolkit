@@ -738,11 +738,13 @@ local hiddenSteps={function() setupHiddenRefresh(true); checkHiddenRefresh() end
 for i=#hiddenSteps,1,-1 do table.insert(steps,1,hiddenSteps[i]) end
 -- Bounded callback profile: aggregate in memory and print only after each window.
 -- Inclusive module timings overlap; do not add them or interpret them as FPS.
+local RenderBenchmark = require "InventoryRenderBenchmark"
 local renderProfile
+local profileDepth = 0
 local profiled = {}
 local function timeCall(label, fn, ...)
     local active = renderProfile
-    if not active then return fn(...) end
+    if not active or profileDepth == 0 then return fn(...) end
     local before = getTimestampMs()
     local result = fn(...)
     local record = active.metrics[label] or {calls=0, ms=0}
@@ -770,7 +772,10 @@ local function startRenderProfile(clean)
         pane.renderdetails = function(self, dragged, ...)
             if renderProfile and self == pane then
                 if not dragged then renderProfile.frames = renderProfile.frames + 1 end
-                return timeCall(dragged and 'dragged' or 'normal', details, self, dragged, ...)
+                profileDepth = profileDepth + 1
+                local result = timeCall(dragged and 'dragged' or 'normal', details, self, dragged, ...)
+                profileDepth = profileDepth - 1
+                return result
             end
             return details(self, dragged, ...)
         end
@@ -795,8 +800,29 @@ local function finishRenderProfile()
     print('[INVENTORY_RENDER_PROFILE] mode=' .. finished.mode .. ' frames=' .. finished.frames
         .. ' units=ms/calls ' .. table.concat(parts, ' '))
 end
+local microStarted = false
+local function microProfile()
+    local benchmark = RenderBenchmark
+    if not microStarted then
+        local realItems, inputs = getPlayer():getInventory():getItems(), {}
+        assert(realItems:size() >= 24, 'native microbenchmark needs 24 real inputs')
+        for index=0,23 do inputs[#inputs+1] = realItems:get(index) end
+        benchmark.start(pane, inputs)
+        microStarted = true
+    end
+    local result = benchmark.step()
+    if not result then return false end
+    local lines = {}
+    for _, sample in ipairs(result.samples) do
+        lines[#lines+1] = '[INVENTORY_MICRO] family=' .. sample.family .. ' series=' .. sample.series
+            .. ' slot=' .. sample.slot .. ' variant=' .. sample.variant .. ' ms=' .. sample.ms
+            .. ' calls=' .. sample.calls .. ' checksum=' .. sample.checksum
+    end
+    -- End-only output, outside the normal render profile windows.
+    print(table.concat(lines, '\n'))
+end
 local profileSteps = {function() startRenderProfile(true) end, finishRenderProfile,
-    function() startRenderProfile(false) end, finishRenderProfile}
+    function() startRenderProfile(false) end, finishRenderProfile, microProfile}
 for i=#profileSteps,1,-1 do table.insert(steps,1,profileSteps[i]) end
 add(function() print('[INVENTORY_SCREEN] COMPLETE'); done=true end)
 Events.OnMainMenuEnter.Add(function() entered=true end)
