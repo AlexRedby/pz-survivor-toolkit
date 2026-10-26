@@ -15,6 +15,8 @@ require "TimedActions/ISRemoveCarBatteryFromChargerAction"
 require "TimedActions/ISTakeCarBatteryChargerAction"
 
 local Toolkit = PZSurvivorToolkit
+local Grooming = require 'PZSurvivorToolkit/ActionQueueGrooming'
+Toolkit.ActionQueueGrooming = Grooming
 local Policy = {}
 Toolkit.ActionQueuePolicy = Policy
 local Operations = Toolkit.ActionQueueOperations
@@ -889,6 +891,7 @@ function Policy.installContracts()
     if ISWashClothing and not ISWashClothing._wmiPatchedReturnContainer then
         registerNative("ISWashClothing", hygieneResources, {"setOverrideHandModels", "setActionAnim"})
     end
+    if Grooming then Grooming.install(Policy, resources) end
 end
 Policy.installContracts()
 if Events.OnGameStart then Events.OnGameStart.Add(Policy.installContracts) end

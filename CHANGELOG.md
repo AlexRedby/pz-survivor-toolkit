@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.286
+
+- Fixed: waiting native haircuts can be cancelled after tool preparation. Borrowed scissors retain their required return and independent queued work continues; native appearance changes and styling-item costs remain unchanged.
+
 ### 0.1.285
 
 - **Fixed:** Cancelled-queue previews validate recovery without constructing actions or repeatedly searching inventories for every saved item. Restore still resolves and validates current state before creating fresh actions.

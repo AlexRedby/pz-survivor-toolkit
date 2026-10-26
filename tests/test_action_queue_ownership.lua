@@ -23,6 +23,7 @@ local cases={
     OwnershipHealth="test_action_queue_health.lua",
     OwnershipLifecycle="test_action_queue_lifecycle.lua",
     OwnershipSettlement="test_action_queue_settlement.lua",
+    OwnershipGrooming="test_action_queue_grooming.lua",
 }
 for flag,name in pairs(cases)do
     if _G[flag]then

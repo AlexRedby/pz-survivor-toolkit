@@ -7,6 +7,9 @@ require = function(name)
     if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
         return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
     end
+    if name == 'PZSurvivorToolkit/ActionQueueGrooming' then
+        return PZSurvivorToolkit.ActionQueueGrooming or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
     if name == 'PZSurvivorToolkit/SourceProof' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
     end
@@ -52,6 +55,7 @@ if NativeQuartermasterLuaRoot then
     reloadQuartermaster()
 end
 load('shared/TimedActions/ISReadABook.lua')
+load('shared/TimedActions/ISCutHair.lua')
 load('shared/Moveables/ISMoveablesAction.lua')
 load('shared/Vehicles/TimedActions/ISRemoveBurntVehicle.lua')
 ISInventoryPage = {}
@@ -2371,3 +2375,81 @@ do
     isClient = previousClient
 end
 print('Admitted cancellation draining: editor off/on, native stop/preparation, sealed MP outcome, exact earned returns, independent tails and revocation passed.')
+
+-- The native character-screen producer may have already borrowed scissors while
+-- its haircut is still unallocated. Cancel only that waiting body and its debt.
+do
+    local function text(path)
+        if NativeReadText then return NativeReadText(path):gsub('\r','') end
+        local file=assert(io.open(path));local source=file:read('*a');file:close();return source:gsub('\r','')
+    end
+    local source=text(NativeActionRoot..'/client/XpSystem/ISUI/ISCharacterScreen.lua')
+    local predicates=assert(source:match('(local function predicateRazor.-)local function predicateDoHairdo'))
+    local body=assert(source:match('(ISCharacterScreen%.onCutHair = function.-)\nISCharacterScreen%.setDisplayedTraits'))
+    local originalWorld,originalEquip,originalDebug=ISWorldObjectContextMenu,ISEquipWeaponAction,getDebug
+    ISCharacterScreen={}
+    assert(loadstring(predicates..'\n'..body))()
+    local world=text(NativeActionRoot..'/client/ISUI/ISWorldObjectContextMenu.lua')
+    ISWorldObjectContextMenu={}
+    assert(loadstring(assert(world:match('(function ISWorldObjectContextMenu%.transferIfNeeded.-)\n%-%- we equip'))))()
+    assert(loadstring(assert(world:match('(ISWorldObjectContextMenu%.equip = function.-)\nISWorldObjectContextMenu%.equip2'))))()
+    ISEquipWeaponAction={new=function(_,actor,item)
+        return preparation(actor,'ISEquipWeaponAction',item)
+    end}
+    luautils={haveToBeTransfered=function(actor,item)return item:getContainer()~=actor:getInventory()end}
+    getDebug=function()return false end
+    getHairStylesInstance=function()return {FindMaleStyle=function(_,name)
+        return {getName=function()return name end,isAttachedHair=function()return name=='Attached'end}
+    end}end
+    local hairStarts=0
+    assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('haircut-waiting-proof',{
+        started=function(action)if action.Type=='ISCutHair'then hairStarts=hairStarts+1 end end
+    }))
+    local function scenario(withTool)
+        local actor=player();actor.getOnlineID=function()return 19 end
+        actor.isFemale=function()return false end;actor.getClothingItem_Head=function()end
+        actor.getPrimaryHandItem=function()end
+        actor.getVisual=function()return {getNonAttachedHair=function()end}end
+        local initial=book(actor);local ending=book(actor)
+        local root=actor:getInventory();root.isExistYet=function()return true end
+        local source=sourceContainer();local scissors
+        if withTool then
+            scissors=borrowed(book(actor).item,source)
+            scissors.getFullType=function()return 'Base.Scissors'end
+            scissors.getType=function()return 'Scissors'end;scissors.isBroken=function()return false end
+            scissors.hasTag=function()return false end
+            source.getItemById=function(_,id)if id==scissors:getID()and scissors:getContainer()==source then return scissors end end
+        end
+        root.getFirstEvalRecurse=function(_,predicate)if scissors and predicate(scissors)then return scissors end end
+        local queue=ISTimedActionQueue.add(initial)
+        operations.run(function()ISCharacterScreen.onCutHair(actor,withTool and 'GreasedBack' or 'Attached',withTool and 300 or 100)end)
+        local cut=assert(queue.queue[#queue.queue]);assert(cut.Type=='ISCutHair'and cut.item==scissors)
+        if scissors then cut.toolkitQueueOperation.toolkitPickups={[scissors]=source}end
+        ISTimedActionQueue.add(ending)
+        return actor,queue,initial,cut,ending,scissors,source
+    end
+    -- The source-bound waiting contract must exist before whole-operation removal.
+    if PZSurvivorToolkit.ActionQueueGrooming then PZSurvivorToolkit.ActionQueuePolicy.installContracts()end
+    for _,withTool in ipairs({true,false})do
+        local actor,queue,initial,cut,ending,scissors,source=scenario(withTool)
+        if withTool then
+            initial.action.done=true;frame(actor);frame(actor)
+            assert(queue.current.Type=='ISInventoryTransferAction'and queue.current.item==scissors and queue.current:isStarted())
+        end
+        assert(not cut.action,'haircut fixture accidentally started its protected body')
+        local accepted,reason=api.cancelOperation(queue,cut)
+        assert(accepted,'waiting native haircut could not be cancelled after preparation: '..tostring(reason))
+        if withTool then
+            local pickup=queue.current;pickup.action.done=true;frame(actor)
+            local cleanup=queue.current
+            assert(cleanup and cleanup.Type=='ISInventoryTransferAction'and cleanup.item==scissors
+                and cleanup.destContainer==source and queue.queue[2]==ending and not cut.action,
+                'cancelled waiting haircut lost its exact borrowed-scissors return')
+            cleanup.action.done=true;frame(actor)
+            assert(queue.current==ending and scissors:getContainer()==source,'haircut return did not precede independent work')
+        else assert(queue.current==initial and queue.queue[2]==ending,'styling cancellation changed the independent queue')end
+        assert(hairStarts==0,'cancelled haircut executed native work')
+    end
+    ISWorldObjectContextMenu,ISEquipWeaponAction,getDebug=originalWorld,originalEquip,originalDebug
+end
+print('Waiting haircut cancellation: native producer, borrowed scissors and no-tool styling preserve exact cleanup and independent tail.')
