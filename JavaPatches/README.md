@@ -25,6 +25,12 @@ Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build a
 
 Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS, workstation crafting and vehicle ownership patches are active.
 
+### Steam launch and the Host launcher
+
+Steam's **Play** button starts the client; choosing **Host** then starts a separate server JVM. The client's JVM arguments, including a ZombieBuddy argument in Steam launch options or the client JSON, are not automatically copied to that server. The client can therefore show **ZombieBuddy ... loaded** while the Host server has no Java patches or vehicle recording support.
+
+The prepared Host launcher explicitly supplies the loader to the child through `JDK_JAVA_OPTIONS`, as well as loading it in the client. Steam must remain running, and you still choose your existing profile in **Host**. If another launch route already loads the matching patches in both processes, it can provide the same result; confirm this with the [server activation checks](#verify-activation). The diagnostic checkboxes control recording after loading; they cannot install the loader into an already running server.
+
 ### Host: save approvals first
 
 1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install both prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407), [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) and [Animated Vehicle Parts Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3802266453) as well as ZombieBuddy so all selected Java mods are available before the first Host launch.
@@ -80,10 +86,13 @@ Version 0.1.10 repairs an occupied vehicle whose physics owner disagrees with it
 
 Install the same updated Java mod on the server and clients, save the changed JAR approval and restart them. The repair needs ZombieBuddy **in the Host child/server process**; check `vehicleOwnership=true` and the server's actual `zombie.vehicles.BaseVehicle` transformation.
 
-**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. After updating the matching Toolkit and Java Patches on clients and Host, use **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics**:
+**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. The two recording controls require Toolkit 0.1.254 or newer and Java Patches 0.1.53 or newer, with matching prepared mods on every side. After the normal update/restart and saved JAR approvals:
 
-- **Record traces on this client** starts or stops this player's recording immediately.
-- **Record traces on the Host server** starts or stops the child server's recording without restarting it. Only the actual Host owner's server connection is authorized. The checkbox waits for a server reply and reports a timeout instead of assuming success. Other players keep their own local recording controls.
+1. The Host owner launches with the [prepared Host launcher](#host-save-approvals-first), or another route verified to load the patches in both processes, and starts the usual Host profile.
+2. Before driving, the Host owner opens **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics**, then enables **Record traces on this client** and **Record traces on the Host server**. Wait for **Recording is active** for both sides. The server checkbox waits for a reply; a timeout means its state is unknown, not that recording is off or confirmed active.
+3. Each other affected player opens the same window and enables **Record traces on this client**. The Host owner controls only their own client and the server; guests enable their own local recording. Only the actual Host owner's connection can control the server.
+4. Close the window and play until the problem occurs. Note the incident time, driver, observers and what each player saw. Then stop both recordings on the Host and local recording on the affected clients.
+5. Copy the complete `server` trace folder from the Host computer and the `client` trace folder from the Host and every affected player. Label each copy by player/side and preserve the incident details with them. The exact paths and rotated files are described below; copy them promptly before rotation removes the incident.
 
 Closing the window keeps both recordings running. There is no time or record-count cutoff. Switches are transient; process restart returns to off unless the optional legacy `-Dpz.vehicle.trace=true` startup flag is still present. No JVM flag is needed for the UI workflow. An older or unavailable Java patch on either side is reported in the window; installing a changed JAR still requires the normal one-time update/restart and approvals.
 
@@ -91,7 +100,7 @@ Traces are UTF-8 files under the current cache/profile, normally `Zomboid/Logs/P
 
 `[VEHICLE_SYNC]` samples contain side, vehicle/local-player/driver/owner IDs, authority, position, towing links, sent/received physics samples and server acceptance. `repair` records the previous authority and the new owner. Samples go only to these rotated files, avoiding an unbounded duplicate in console/DebugLog; console notices report recording starts, stops and I/O failures. Recording flushes samples and closes the stream when stopped. An I/O failure reports `error` without repeated retry spam; correct the underlying file/disk problem and explicitly enable recording again. Sampling retains the once-per-second limit per event/vehicle and up to 256 recent sampling keys, reusing expired slots as vehicles change. It does not change packets or vehicle state.
 
-The native regression command checks the original handoff failure, reconciliation guards, idempotency, towing ownership and disabled/enabled trace bounds, alongside the existing Java patch regressions. The vehicle-recovery candidate was validated before integration with the fluid-name guard, using an isolated macOS B42.21 Host test with two connected clients and a child `GameServer -coop`, with microphone capture disabled. It reproduces the authority loss through a controlled collision/entry/release ordering. With the repair, the guest then drives 25.5 tiles with accepted server physics and matching poses on all three processes. Separate live checks cover towing/untowing and driver/passenger seat handoffs. The affected user save, spontaneous incidence and real WAN loss remain separate verification limits.
+The native regression command checks the original handoff failure, reconciliation guards, idempotency, towing ownership and runtime trace controls, continuous sampling, rotation, Host authorization and I/O recovery, alongside the existing Java patch regressions. The vehicle-recovery candidate was validated before integration with the fluid-name guard, using an isolated macOS B42.21 Host test with two connected clients and a child `GameServer -coop`, with microphone capture disabled. It reproduces the authority loss through a controlled collision/entry/release ordering. With the repair, the guest then drives 25.5 tiles with accepted server physics and matching poses on all three processes. Separate live checks cover towing/untowing and driver/passenger seat handoffs. The affected user save, spontaneous incidence and real WAN loss remain separate verification limits.
 
 ## Verification limits
 
