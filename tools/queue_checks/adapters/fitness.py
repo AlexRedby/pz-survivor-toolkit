@@ -10,6 +10,7 @@ import re
 import shutil
 
 from ..mod_selection import metadata, mod_ids
+from . import fitness_pending
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
          'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'squats-30', 'late-exhaustion', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore', 'multi-storage', 'multi-storage-closed', 'storage-walk-away', 'storage-peer-pickup']
@@ -46,6 +47,18 @@ def validate(selection):
             or selection.get('kind') != 'mp' or selection.get('options', {}).get('fitness_diagnostics') is not True):
         raise ValueError('Fitness receipt delay requires diagnostic Host and 50..1000 integer milliseconds')
     cases = selection.get('cases')
+    toggles = selection.get('options', {}).get('fitness_editor_toggles')
+    if toggles is not None and (type(toggles) is not dict or not toggles
+            or any(case not in RESTORATION_CASES or type(cases) is not list or case not in cases
+                   or variant not in ('off-after-cancel', 'reenable-during-cleanup', 'off-pending-outcome') for case, variant in toggles.items())):
+        raise ValueError('Fitness editor toggles require selected restoration case IDs and an explicit supported variant')
+    pending = {case for case, variant in (toggles or {}).items() if variant == 'off-pending-outcome'}
+    duplicate = selection.get('options', {}).get('fitness_receipt_duplicate')
+    if pending and (pending != set(cases) or not pending <= {'active-cancel-restore', 'placement-cancel-restore'}
+                    or selection.get('kind') != 'mp' or delay != 1000 or duplicate is not True):
+        raise ValueError('Pending outcome toggles require only active/placement Host cases, diagnostic 1000 ms delay and explicit duplicate')
+    if duplicate is not None and (duplicate is not True or not pending):
+        raise ValueError('Receipt duplicate requires explicit pending outcome cases')
     kind = selection.get('kind')
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     languages = selection.get('languages')
@@ -63,6 +76,7 @@ def sources(project, selection):
     return [*sorted(path for path in (root / 'fitness').rglob('*') if path.suffix in ('.lua', '.java')), root / 'health/shared/QueueHealthEvents.lua',
             root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua',
             Path(project) / 'tools/queue_checks/adapters/fitness_storage.py',
+            Path(project) / 'tools/queue_checks/adapters/fitness_pending.py',
             Path(project) / 'tools/queue_checks/adapters/fitness_negative.py']
 
 
@@ -173,6 +187,7 @@ def _exhaustion_without_training(before, after):
 
 
 RESTORATION_CASES = ('active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore')
+ACTIVE_CANCEL_CASES = ('active-cancel', 'active-cancel-restore')
 EARLY_CANCEL_CASES = ('pickup-cancel-restore', 'placement-cancel-restore')
 IMMEDIATE_CASES = ('empty', 'empty-restore', 'active-cancel', 'burpees-30', 'squats-30', 'late-exhaustion', 'multi-storage', 'multi-storage-closed', *RESTORATION_CASES)
 BORROWED_CASES = ('closed-ui-restore', 'empty-restore', *RESTORATION_CASES)
@@ -409,6 +424,203 @@ def _late_exhaustion(command, receipt, mp, native, tail_id, minutes):
     return issues
 
 
+def _editor_case(case, command, prep, selection):
+    variant = selection.get('options', {}).get('fitness_editor_toggles', {}).get(case)
+    if variant is None:
+        return [] if all(key not in command for key in ('editorTransitions', 'editorEnabled', 'editorCancelBoundary', 'editorCleanupBoundary')) else ['Fitness unexpected editor evidence: ' + case]
+    native = selection['mode'] == 'native'
+    transitions = command.get('editorTransitions')
+    expected_count = 0 if native else 2 if variant == 'reenable-during-cleanup' else 1
+    error = ['Fitness editor transition boundary/identity/order differs: ' + case]
+    if (type(transitions) is not list or len(transitions) != expected_count
+            or any(type(entry) is not dict for entry in transitions)
+            or command.get('editorEnabled') is not (not native and expected_count == 2)):
+        return error
+    if native:
+        return [] if all(key not in command for key in ('editorCancelBoundary', 'editorCleanupBoundary', 'editorPendingBoundary')) else error
+    cancel = command.get('editorCancelBoundary')
+    cleanup = command.get('editorCleanupBoundary')
+    fields = {'case', 'boundary', 'at', 'nativeClock', 'actionRef', 'currentRef', 'nativeRef', 'kind', 'itemId', 'itemType',
+              'token', 'generation', 'tailRef', 'tailId', 'tailRetained', 'requestRetained', 'drainingAction', 'requiredStep'}
+    items = prep['items']
+    def witness(value, boundary):
+        return (type(value) is dict and set(value) == fields
+                and _matches(value, dict(case=case, boundary=boundary, tailId=items['tail'], tailRetained=True))
+                and all(isinstance(value.get(key), str) and value[key] for key in ('actionRef', 'currentRef', 'nativeRef', 'token', 'tailRef'))
+                and value['currentRef'] == value['actionRef'] and value['tailRef'] != value['actionRef']
+                and all(_number(value.get(key)) and value[key] >= 0 for key in ('at', 'nativeClock'))
+                and type(value.get('generation')) is int and value['generation'] >= 0
+                and type(value.get('requestRetained')) is bool)
+    cancel_kind = {'active-cancel-restore': ('ISFitnessAction', False, False),
+                   'pickup-cancel-restore': ('ISInventoryTransferAction', items['dumbbell'], 'Base.DumbBell'),
+                   'placement-cancel-restore': ('ISDropWorldItemAction', items['bag'], 'Base.Bag_Schoolbag')}[case]
+    if (not witness(cancel, 'accepted-cancel') or not _matches(cancel, dict(requestRetained=True, drainingAction=True, requiredStep=False,
+            **dict(zip(('kind', 'itemId', 'itemType'), cancel_kind))))):
+        return error
+    if variant == 'off-pending-outcome':
+        return fitness_pending.verify_editor(case, command, prep, selection)
+    witnesses = [cancel]
+    if expected_count == 2:
+        allowed_items = {items['dumbbell']: 'Base.DumbBell', items['bag']: 'Base.Bag_Schoolbag',
+                         items['hammer']: 'Base.Torch', items['screwdriver']: 'Base.Screwdriver'}
+        if (not witness(cleanup, 'cleanup-current') or not _matches(cleanup, dict(drainingAction=True, requiredStep=True, requestRetained=False))
+                or cleanup['actionRef'] == cancel['actionRef'] or cleanup['token'] == cancel['token']
+                or cleanup['tailRef'] != cancel['tailRef'] or cleanup['generation'] != cancel['generation'] + 1
+                or cleanup['at'] <= transitions[0].get('at', float('inf'))
+                or cleanup['nativeClock'] < cancel['nativeClock']
+                or cleanup['kind'] not in ('ISInventoryTransferAction', 'ISUnequipAction', 'ISEquipWeaponAction', 'ISWearClothing', 'ISActivateItem')
+                or type(cleanup['itemId']) is not int or allowed_items.get(cleanup['itemId']) != cleanup['itemType']):
+            return error
+        witnesses.append(cleanup)
+    elif cleanup is not None:
+        return error
+    for i, (transition, boundary) in enumerate(zip(transitions, witnesses)):
+        if (type(transition) is not dict or set(transition) != fields | {'enabled', 'generationBefore', 'generationAfter'}
+                or not _matches(transition, {key: value for key, value in boundary.items() if key not in ('at', 'nativeClock')})
+                or transition.get('enabled') is not bool(i)
+                or not _number(transition.get('at')) or not boundary['at'] <= transition['at'] <= boundary['at'] + 50
+                or not _number(transition.get('nativeClock')) or transition['nativeClock'] != boundary['nativeClock']
+                or any(type(transition.get(key)) is not int for key in ('generationBefore', 'generationAfter'))
+                or transition.get('generationBefore') != boundary['generation']
+                # ModOption:setValue may only publish the value here. Native
+                # begin/tick applies the one editor invalidation before cleanup.
+                or transition.get('generationAfter') not in ((boundary['generation'], boundary['generation'] + 1)
+                                                            if i == 0 else (boundary['generation'],))):
+            return error
+    return []
+
+
+def _settled_case(case, command, prep, selection):
+    requested = selection.get('options', {}).get('fitness_editor_toggles', {}).get(case)
+    rows = command.get('settledLedgers')
+    error = ['Fitness immutable settled cleanup ledger differs: ' + case]
+    if not requested:
+        return error if rows is not None else []
+    if selection['mode'] == 'native':
+        return [] if rows == [] else error
+    roles = ['borrowed-return'] if case == 'pickup-cancel-restore' else ['carrier-recovery', 'borrowed-return']
+    if not isinstance(rows, list) or len(rows) != len(roles) or any(type(row) is not dict for row in rows):
+        return error
+    fields = {'case', 'ordinal', 'boundary', 'source', 'at', 'nativeClock', 'role', 'kind', 'itemId', 'itemType',
+              'actionRef', 'currentRef', 'nativeRef', 'token', 'generation', 'requiredStep', 'drainingAction',
+              'completionState', 'originalState', 'actionState'}
+    items = prep['items']
+    cancel = command.get('editorCancelBoundary', {})
+    tail = command.get('beforeTail', {})
+    previous_at, previous_clock = cancel.get('at'), cancel.get('nativeClock')
+    for ordinal, (row, role) in enumerate(zip(rows, roles), 1):
+        item_id, item_type = (items['bag'], 'Base.Bag_Schoolbag') if role == 'carrier-recovery' else (items['dumbbell'], 'Base.DumbBell')
+        original, action = row.get('originalState'), row.get('actionState')
+        if (set(row) != fields or not _matches(row, dict(case=case, ordinal=ordinal, boundary='Lifecycle.settled',
+                source='Settlement.operationState', role=role, kind='ISInventoryTransferAction', itemId=item_id, itemType=item_type,
+                requiredStep=True, drainingAction=True, completionState='ready'))
+                or not all(isinstance(row.get(key), str) and row[key] for key in ('actionRef', 'currentRef', 'nativeRef', 'token'))
+                or row['actionRef'] != row['currentRef'] or row['actionRef'] == cancel.get('tailRef')
+                or type(row.get('generation')) is not int or row['generation'] != cancel.get('generation', -2) + 1
+                or not all(_number(row.get(key)) for key in ('at', 'nativeClock'))
+                or not _number(previous_at) or row['at'] < previous_at
+                or not _number(previous_clock) or row['nativeClock'] < previous_clock
+                or not _number(tail.get('nativeClock')) or row['nativeClock'] > tail['nativeClock']
+                or not isinstance(original, dict) or not isinstance(action, dict)
+                or original.get('generation') != cancel.get('generation')
+                or action.get('generation') not in (row['generation'] - 1, row['generation'])):
+            return error
+        expected_loan = [dict(id=items['dumbbell'], fullType='Base.DumbBell', state='active' if role == 'carrier-recovery' else 'completed')]
+        if original.get('borrowings') != expected_loan:
+            return error
+        steps = action.get('steps')
+        if not isinstance(steps, list):
+            return error
+        matched = [step for step in steps if isinstance(step, dict) and _matches(step,
+            dict(kind='ISInventoryTransferAction', itemId=item_id, itemType=item_type, state='earned', started=True,
+                 phase='cleanup', plannedTransfer=True)) and (step.get('transferDirection') == 'pickup' if role == 'carrier-recovery'
+                                                            else step.get('transferDirection') is None)]
+        if len(matched) != 1:
+            return error
+        if role == 'carrier-recovery':
+            recovery = command.get('recoverySettlements')
+            if not isinstance(recovery, list) or len(recovery) != 1 or not _same(recovery[0], action):
+                return error
+            starts = command.get('recoveryStarts', [])
+        else:
+            if not _same(command.get('settlement'), original) or command.get('confirmedReturn') is not True:
+                return error
+            starts = command.get('returnStarts', [])
+        if (not isinstance(starts, list) or len(starts) != 1 or not _number(starts[0].get('nativeClock'))
+                or row['nativeClock'] < starts[0]['nativeClock']):
+            return error
+        boundary = command.get('editorCleanupBoundary', {})
+        if boundary.get('kind') == row['kind'] and boundary.get('itemId') == item_id and boundary.get('nativeRef') != row['nativeRef']:
+            return error
+        previous_at, previous_clock = row['at'], row['nativeClock']
+    if len({row['actionRef'] for row in rows}) != len(rows) or len({row['nativeRef'] for row in rows}) != len(rows):
+        return error
+    return []
+
+
+def _settled_logs(text, results, selection):
+    ledgers = [row.get('command', {}).get('settledLedgers', []) for row in results]
+    if any(not isinstance(entries, list) for entries in ledgers):
+        return ['Fitness raw settled ledger evidence differs']
+    expected = [entry for entries in ledgers for entry in entries]
+    found = [json.loads(match[1]) for match in re.finditer(r'\[FITNESS_TEST\] SETTLED_LEDGER\s+([^\n]*)', text)]
+    if found != expected:
+        return ['Fitness raw settled ledger evidence differs']
+    active, emitted = None, set()
+    for line in text.splitlines():
+        if '[FITNESS_TEST] EDITOR_CANCEL ' in line:
+            value = json.loads(line.split('[FITNESS_TEST] EDITOR_CANCEL ', 1)[1])
+            active = value.get('case')
+        elif '[FITNESS_TEST] SETTLED_LEDGER ' in line:
+            value = json.loads(line.split('[FITNESS_TEST] SETTLED_LEDGER ', 1)[1])
+            if value.get('case') != active or active in emitted:
+                return ['Fitness raw settled ledger boundary/publication order differs']
+        elif '[QUEUE_CHECK] ' in line:
+            value = json.loads(line.split('[QUEUE_CHECK] ', 1)[1])
+            if value.get('event') == 'case':
+                emitted.add(value.get('id'));active = None
+    return []
+
+
+def _editor_logs(text, results, selection):
+    # Compare the independent marker stream as well as the final command. Each
+    # transition must follow its own live boundary and precede its published row.
+    expected = []
+    for row in results:
+        command = row.get('command', {})
+        if selection.get('options', {}).get('fitness_editor_toggles', {}).get(row.get('id')) and selection['mode'] == 'toolkit':
+            transitions = command.get('editorTransitions', [])
+            if type(transitions) is not list:
+                return ['Fitness raw editor transition evidence differs']
+            expected.append(('EDITOR_CANCEL', command.get('editorCancelBoundary')))
+            if command.get('editorPendingBoundary') is not None:
+                expected.append(('EDITOR_PENDING', command['editorPendingBoundary']))
+            if transitions:
+                expected.append(('EDITOR_TRANSITION', transitions[0]))
+            if len(transitions) > 1:
+                expected.extend([('EDITOR_CLEANUP', command.get('editorCleanupBoundary')), ('EDITOR_TRANSITION', transitions[1])])
+    actual = [(match[1], json.loads(match[2])) for match in re.finditer(
+        r'\[FITNESS_TEST\] (EDITOR_CANCEL|EDITOR_CLEANUP|EDITOR_PENDING|EDITOR_TRANSITION)\s+([^\n]*)', text)]
+    if actual != expected:
+        return ['Fitness raw editor transition evidence differs']
+    context = None
+    pending = list(actual)
+    for line in text.splitlines():
+        if '[FITNESS_TEST] EDITOR_' in line:
+            marker, value = pending.pop(0)
+            if context is not None and context != value.get('case'):
+                return ['Fitness raw editor transition case order differs']
+            context = value.get('case')
+        if '[QUEUE_CHECK] ' in line:
+            row = json.loads(line.split('[QUEUE_CHECK] ', 1)[1])
+            if row.get('event') == 'case':
+                requested = selection.get('options', {}).get('fitness_editor_toggles', {}).get(row.get('id'))
+                if context != (row.get('id') if requested and selection['mode'] == 'toolkit' else None):
+                    return ['Fitness raw editor transition publication order differs']
+                context = None
+    return [] if context is None else ['Fitness raw editor transition follows final evidence']
+
+
 def _case(case, row, prep, receipt, selection, mutation=None):
     if case in ('storage-walk-away','storage-peer-pickup'):
         from .fitness_negative import verify_negative
@@ -417,19 +629,23 @@ def _case(case, row, prep, receipt, selection, mutation=None):
     native, mp = selection['mode'] == 'native', selection['kind'] == 'mp'
     minutes = (60 if mp else 30) if case == 'late-exhaustion' else 30 if case in ('burpees-30', 'squats-30') else 10
     command = row.get('command', {})
+    native_active_cancel = native and case in ACTIVE_CANCEL_CASES
     items = prep.get('items', {})
     if (not _matches(prep, {'case': case}) or not isinstance(items, dict)
             or set(items) != {'front', 'tail', 'bag', 'hammer', 'screwdriver', 'dumbbell'}
             or any(type(value) is not int for value in items.values()) or len(set(items.values())) != 6
             or not _inventory(prep.get('inventory')) or not _clinical(prep.get('before'))):
         return ['Fitness exact preparation differs: ' + case]
+    issues.extend(_editor_case(case, command, prep, selection))
+    issues.extend(_settled_case(case, command, prep, selection))
+    issues.extend(fitness_pending.verify_case(case, command, prep, selection))
     expected = copy.deepcopy(prep['inventory'])
     if case == 'missing-dumbbell':
         expected['items'] = [item for item in expected['items'] if item['id'] != items['dumbbell']]
     if (not _inventory(receipt.get('inventory')) or not _same(receipt['inventory'], expected)
             or not _same(command.get('clientInventory'), expected)):
         issues.append('Fitness exact inventory/container/hand/worn identities differ: ' + case)
-    if (not _matches(receipt, {'case': case, 'tailRead': not (native and case == 'late-exhaustion'), 'frontRead': case not in IMMEDIATE_CASES,
+    if (not _matches(receipt, {'case': case, 'tailRead': not (native and (case == 'late-exhaustion' or case in ACTIVE_CANCEL_CASES)), 'frontRead': case not in IMMEDIATE_CASES,
                                'currentExerciseCleared': True, 'serverStopSettled': True, 'peerConnected': True,
                                'removed': items['dumbbell'] if case == 'missing-dumbbell' else False})
             or not _same(receipt.get('before'), prep['before']) or not _clinical(receipt.get('clinical'))
@@ -513,8 +729,30 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                        or abs(sample['elapsed'] - max(0, min(minutes, (sample['sampleMS']-sample['startMS'])/60000))) > 1e-6
                        or not isinstance(sample.get('label'), str) or not sample['label'] for sample in progress)):
             issues.append('Fitness visible progress does not match selected native elapsed time: ' + case)
+    if native_active_cancel:
+        witness = command.get('nativeActiveCancel', {})
+        if (not _matches(command, dict(cancelCallback='ISFitnessUI:CANCEL', nativeStopCalls=1, nativeStopReturns=1))
+                or any(type(command.get(key)) is not int for key in ('nativeStopCalls', 'nativeStopReturns'))
+                or not _matches(witness, dict(callback='ISFitnessUI:CANCEL', kind='ISFitnessAction', started=True,
+                                             tailId=items['tail'], tailRetained=True))
+                or not all(isinstance(witness.get(key), str) and witness[key] for key in ('actionRef', 'nativeRef'))
+                or not all(_number(witness.get(key)) and witness[key] >= 0 for key in ('at', 'nativeClock'))
+                or type(witness.get('tailPages')) is not int or type(witness.get('tailTotalPages')) is not int
+                or witness['tailTotalPages'] - witness['tailPages'] != 1
+                or command.get('nativeTailPagesAtFinish') != witness['tailPages']
+                or command.get('beforeTail') is not None or receipt.get('tailStart') is not None
+                or command.get('durationStops') != []):
+            issues.append('Fitness native explicit UI cancellation/tail discard evidence differs: ' + case)
+        # SP shares this clock with its receipt. Host client and authority
+        # clocks are independent; each authoritative partial interval is checked below.
+        if (len(records) != 1 or not _number(witness.get('nativeClock'))
+                or not _number(records[0].get('durationStartMS')) or not _number(records[0].get('durationStopMS'))
+                or not mp and not records[0]['durationStartMS'] <= witness['nativeClock'] <= records[0]['durationStopMS']):
+            issues.append('Fitness native UI cancel was outside its actual partial workout: ' + case)
+    elif 'nativeActiveCancel' in command or 'nativeTailPagesAtFinish' in command:
+        issues.append('Fitness unexpected native active cancellation witness: ' + case)
     stops = command.get('durationStops')
-    if (not isinstance(stops, list) or len(stops) != len(exercises)
+    if (not isinstance(stops, list) or len(stops) != (0 if native_active_cancel else len(exercises))
             or not native and (not isinstance(progress, list) or len(progress) != len(exercises))
             or isinstance(stops, list) and any(not isinstance(stop, dict)
                    or not all(_number(stop.get(key)) for key in ('startMS', 'endMS', 'stopMS'))
@@ -566,7 +804,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                 or case in RESTORATION_CASES and next((item for item in prep['inventory']['items'] if item['id'] == items['front']), {}).get('container') != items['bag']):
             issues.append('Fitness borrowed exact gear/type/activation setup differs: ' + case)
         before_tail = command.get('beforeTail', {})
-        if (before_tail.get('callback') != 'ISBaseTimedAction.begin' or not _inventory(before_tail.get('inventory')) or not _number(before_tail.get('nativeClock'))
+        if not native_active_cancel and (before_tail.get('callback') != 'ISBaseTimedAction.begin' or not _inventory(before_tail.get('inventory')) or not _number(before_tail.get('nativeClock'))
                 or not (isinstance(before_tail.get('activation'), dict) or before_tail.get('activation') == [])
                 or case in RESTORATION_CASES and not _matches(command, dict(cancelCallback='ISFitnessUI:CANCEL' if native else 'ActionQueue.cancelOperation'))):
             issues.append('Fitness independent tail boundary/native cancel callback missing: ' + case)
@@ -620,7 +858,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
                     or not _number(pickup.get('progress')) or not 0 < pickup['progress'] < 1
                     or type(pickup.get('transaction')) is not int or pickup['transaction'] < (1 if mp else 0)):
                 issues.append('Fitness cancellation did not target exact in-flight native pickup: ' + case)
-        if mp:
+        if mp and not native_active_cancel:
             tail_start = receipt.get('tailStart', {})
             if (not _matches(tail_start, dict(id=items['tail'], kind='Base.BookFirstAid1', callback='ISReadABook.serverStart',
                                              workouts=len(exercises), observerActive=False))
@@ -891,7 +1129,8 @@ def verify(root, selection, catalog):
     cases = selection['cases']
     results = [row for row in rows if row['event'] == 'case']
     raw = [(match[1], json.loads(match[2])) for match in re.finditer(r'\[FITNESS_TEST\] (PREPARED|MUTATED|VERIFIED)\s+([^\n]*)', authority)]
-    issues, outcomes = [], []
+    issues, outcomes = [*_editor_logs(text, results, selection), *_settled_logs(text, results, selection),
+                        *fitness_pending.verify_logs(text, results, selection)], []
     if ([row.get('event') for row in rows] != ['setup'] + ['case'] * len(cases) + ['complete']
             or [row.get('id') for row in results] != cases
             or any(not _matches(row, dict(suite='fitness', actor='client1', kind=selection['kind'], mode=selection['mode'])) for row in rows)):
@@ -943,6 +1182,8 @@ def verify(root, selection, catalog):
             sequentialVerified=not problems and case=='sequential', waitingCancelVerified=not problems and case=='pending-cancel' and selection['mode']=='toolkit',
             independentMoveVerified=not problems and case=='pending-reorder' and selection['mode']=='toolkit',
             activeCancelVerified=not problems and case in ('active-cancel', 'active-cancel-restore'), missingItemVerified=not problems and case=='missing-dumbbell',
+            nativeTailCancelledVerified=not problems and selection['mode']=='native' and case in ACTIVE_CANCEL_CASES,
+            independentTailPreservedVerified=not problems and not (selection['mode']=='native' and case in (*ACTIVE_CANCEL_CASES, 'late-exhaustion')),
             restoreVerified=not problems and case in (*BORROWED_CASES, 'multi-storage', 'multi-storage-closed'), receipt=receipt, command=row.get('command'))
         outcomes.append(dict(actor='client1', case=case, status='failed' if problems else 'passed', reason='; '.join(problems), outcome=outcome))
     if len(set(used_ids)) != len(used_ids):

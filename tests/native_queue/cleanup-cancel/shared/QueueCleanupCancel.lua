@@ -1,5 +1,9 @@
 -- All fixture writes occur before baseline; snapshots only read native state.
-local F={cases={'mask-after-removal','p4-after-pickup','p4-keep-return'}}
+local F={cases={'mask-after-removal','p4-after-pickup','p4-keep-return','p4-editor-off','p4-editor-reenabled'}}
+function F.baseCase(id)
+ if id=='p4-editor-off'or id=='p4-editor-reenabled'then return'p4-after-pickup'end
+ return id
+end
 local resolving={}
 local function recurse(container,rows,where)
  local values=container:getItems()
@@ -105,7 +109,7 @@ function F.prepare(player,id)
   assert(ISInventoryPaneContextMenu==nil or ISInventoryPaneContextMenu.getEatingMask(player,false)==state.mask,'fixture mask is not the native eating mask')
   player:getStats():set(CharacterStat.HUNGER,.5)
   ids.maskLocation=tostring(state.mask:getBodyLocation())
- elseif id=='p4-after-pickup'or id=='p4-keep-return'then
+ elseif F.baseCase(id)=='p4-after-pickup'or id=='p4-keep-return'then
   seed('bag','Base.Bag_Schoolbag');state.source=state.bag:getItemContainer();state.source:setExplored(true)
   player:setWornItem(state.bag:canBeEquipped(),state.bag)
   seed('borrowed','Base.BookFirstAid1',state.source);seed('torch','Base.Torch');seed('secondary','Base.Screwdriver')

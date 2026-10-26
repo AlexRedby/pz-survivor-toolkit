@@ -6,14 +6,21 @@ from pathlib import Path
 from .. import report
 from .tv_controls import MODS, _number
 
-CASES = ['mask-after-removal', 'p4-after-pickup', 'p4-keep-return']
+BASE_CASES = ['mask-after-removal', 'p4-after-pickup', 'p4-keep-return']
+ALL_CASES = [*BASE_CASES, 'p4-editor-off', 'p4-editor-reenabled']
+CASES = ALL_CASES
 PREFIX = '[QUEUE_CLEANUP] '
+
+
+def base_case(case):
+    return {'p4-editor-off': 'p4-after-pickup',
+            'p4-editor-reenabled': 'p4-after-pickup'}.get(case, case)
 
 
 def definitions():
     return {'cleanup-cancel': {'status': 'ready', 'clients': 1, 'default_mods': list(MODS),
         'scenario_actions': {'earned-native-cleanup': {'mods': list(MODS),
-            'scope': 'Current full selected pack, disposable macOS SP/menu Host. Real BulkFood/native eat mask removal and native onLiteratureItems borrowed First Aid book pickup/read/allowMissing return. Mask public per-operation cancellation and real Panel programmatic header press/release after confirmed preparation preserve exact cleanup before an independent reader; real expanded-child return press/release keeps the earned borrowed item carried, continues its full native read and prevents late return through native/P4 idle; original P4 hands/activation restore retains native idle-session timing and is required at final idle. Queue-off controls execute unchanged producers to natural native/P4 completion. Exact item/container, worn/hands, food portion/paid borrowed pages, native lifecycle and authority evidence; programmatic native entrypoints and real Panel hit-tested press/release, no physical input.',
+            'scope': 'Current full selected pack, disposable macOS SP/menu Host. Real BulkFood/native eat mask removal and native onLiteratureItems borrowed First Aid book pickup/read/allowMissing return. Mask public per-operation cancellation and real Panel programmatic header press/release after confirmed preparation preserve exact cleanup before an independent reader; real expanded-child return press/release keeps the earned borrowed item carried, continues its full native read and prevents late return through native/P4 idle; original P4 hands/activation restore retains native idle-session timing and is required at final idle. Editor-off variants disable ModOptions immediately after accepted group cancel while cleanup drains; reenabled variant turns it back on while the exact earned return is current. Queue-off controls execute unchanged producers to natural native/P4 completion. Exact item/container, worn/hands, food portion/paid borrowed pages, native lifecycle, editor transitions and authority evidence; programmatic native entrypoints and real Panel hit-tested press/release, no physical input.',
             'checks': {'server-authority': {case: {'authoritative': True, 'cleanupRestored': True, 'tailCompleted': True} for case in CASES},
                        'cancel-active': {case: {'cancelled': True, 'cleanupBeforeTail': True} for case in CASES}},
             'toolkit_only': ['cancel-active']}},
@@ -63,23 +70,74 @@ def complete(selection, role, text):
 
 
 def owned_cleanup_before_tail(snapshot, ids, keep=False):
-    return snapshot.get('maskWorn') is True if ids['case'] == 'mask-after-removal' else snapshot.get('borrowedContainer') == ('root' if keep else 'bag')
+    return snapshot.get('maskWorn') is True if base_case(ids['case']) == BASE_CASES[0] else snapshot.get('borrowedContainer') == ('root' if keep else 'bag')
 
 
 def restored(snapshot, ids, keep=False):
-    if ids['case'] == 'mask-after-removal':
+    if base_case(ids['case']) == BASE_CASES[0]:
         return owned_cleanup_before_tail(snapshot, ids)
     return (owned_cleanup_before_tail(snapshot, ids, keep) and snapshot.get('primary') == ids['items']['torch']
             and snapshot.get('secondary') == ids['items']['secondary'] and snapshot.get('torchActive') is True)
+
+
+def _editor_transition_errors(row, case_id, selection, body, cleanup):
+    errors = []
+    transitions = row.get('editorTransitions')
+    if not isinstance(transitions, list):
+        return ['Missing editor transition evidence list']
+    enabled = selection['mode'] == 'toolkit'
+    expected_enabled = enabled and case_id != 'p4-editor-off'
+    if row.get('editorEnabled') is not expected_enabled:
+        errors.append('Final editor setting differs from the required case state')
+    required = {'case', 'enabled', 'at', 'boundary', 'current', 'actionRef', 'nativeRef',
+                'generationBefore', 'generationAfter', 'tailRetained', 'requestRetained'}
+    expected_count = (1 if case_id == 'p4-editor-off' else 2) if enabled and case_id in ('p4-editor-off', 'p4-editor-reenabled') else 0
+    if len(transitions) != expected_count:
+        errors.append('Editor transition count differs from the requested setting changes')
+        return errors
+    if expected_count == 0:
+        return errors
+    if any(not isinstance(item, dict) or not required.issubset(item) for item in transitions):
+        return errors + ['Editor transition is missing required evidence fields']
+
+    first = transitions[0]
+    if (first.get('case') != case_id or first.get('enabled') is not False
+            or first.get('boundary') != 'accepted-cancel'
+            or first.get('current') != body.get('sequence')
+            or first.get('actionRef') != body.get('actionRef')
+            or first.get('nativeRef') != body.get('nativeRef')
+            or type(first.get('generationBefore')) is not int or first['generationBefore'] < 0
+            or type(first.get('generationAfter')) is not int
+            or first['generationAfter'] not in (first['generationBefore'], first['generationBefore'] + 1)
+            or first.get('tailRetained') is not True or first.get('requestRetained') is not True
+            or not _number(first.get('at')) or first['at'] < row.get('boundary', {}).get('at', float('inf'))):
+        errors.append('Editor-off transition lost the accepted active-read cancellation identity or retained work')
+    if case_id == 'p4-editor-reenabled':
+        second = transitions[1]
+        if (second.get('case') != case_id or second.get('enabled') is not True
+                or second.get('boundary') != 'cleanup-current'
+                or second.get('current') != cleanup.get('sequence')
+                or second.get('actionRef') != cleanup.get('actionRef')
+                or second.get('nativeRef') not in (cleanup.get('nativeRef'), False)
+                or second.get('nativeRef') is False and second.get('started') not in (None, False)
+                or type(second.get('generationBefore')) is not int or second['generationBefore'] < 0
+                or type(second.get('generationAfter')) is not int
+                or second.get('generationAfter') != second.get('generationBefore')
+                or second.get('tailRetained') is not True or second.get('requestRetained') is not False
+                or not _number(second.get('at')) or second['at'] < first.get('at', float('inf'))):
+            errors.append('Editor reenable transition did not target the current exact cleanup return')
+    return errors
 
 
 def check_case(row, case, selection, prepared, baseline, checkpoint, verified, receipts):
     errors = []
     try:
         enabled = selection['mode'] == 'toolkit'
+        case_id = case
+        case = base_case(case)
         keep = enabled and case == 'p4-keep-return'
         ids, b, actual, authority = row['ids'], row['baseline'], row['client'], row['server']
-        if (row.get('status') != 'passed' or row.get('id') != case or ids != prepared or ids.get('case') != case
+        if (row.get('status') != 'passed' or row.get('id') != case_id or ids != prepared or ids.get('case') != case_id
                 or b != baseline or row['authorityBaseline'] != ids['baseline'] or row['checkpoint'] != checkpoint or authority != verified):
             errors.append('Exact raw authority/client evidence differs')
         items = ids['items']
@@ -133,6 +191,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                 errors.append('Retired borrowed native return ran, changed identity or lost its exact replacement')
         else:
             cleanup = cleanup[0]
+        errors.extend(_editor_transition_errors(row, case_id, selection, body, cleanup))
         if retired is not None and (retired.get('started') is not False or retired.get('progress') is not False
                 or any(retired.get(k) is not None for k in ('startedAt', 'performedAt', 'nativeRef'))
                 or retired.get('finishes') != [] or retired.get('receipts') != []
@@ -238,7 +297,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
             errors.append('Kept exact book returned or changed identity at body/tail completion')
         idle = row.get('idleEvidence', {})
         idle_snapshot = idle.get('snapshot', {})
-        if (idle.get('case') != case or idle.get('empty') is not True or not _number(idle.get('since'))
+        if (idle.get('case') != case_id or idle.get('empty') is not True or not _number(idle.get('since'))
                 or not _number(idle.get('at')) or idle['at'] - idle['since'] < 1500
                 or idle['since'] < tail.get('performedAt', float('inf'))
                 or idle_snapshot.get('items') != actual.get('items') or not restored(idle_snapshot, ids, keep)
@@ -256,7 +315,7 @@ def check_case(row, case, selection, prepared, baseline, checkpoint, verified, r
                 if (len(states) != 2 or [s.get('state') for s in states] != ['started', 'completed']
                         or states[0].get('token') != states[1].get('token') or states[0].get('transaction') != states[1].get('transaction')
                         or not isinstance(states[0].get('token'), str) or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', states[0]['token'])
-                        or any(s.get('case') != case or type(s.get('player')) is not int or s['player'] != ids.get('actor')
+                        or any(s.get('case') != case_id or type(s.get('player')) is not int or s['player'] != ids.get('actor')
                                or s.get('actionRef') != record['actionRef'] or not s.get('nativeRef')
                                or s.get('nativeRef') != record.get('nativeRef') or s.get('kind') != record['type'] or s not in receipts for s in states)):
                     errors.append('Exact native equipment started/completed receipt missing')
@@ -283,12 +342,16 @@ def verify(root, selection, catalog):
         if ([r.get('id') for r in rows] != cases or any([r.get('case') for r in rs] != cases for rs in (specs, baselines, checkpoints, verified))):
             issues.append('Missing/duplicate/reordered cleanup case evidence')
         receipts = raw(text, 'NATIVE_STATE')
+        editor_transitions = raw(text, 'EDITOR_TRANSITION')
+        expected_editor_transitions = [transition for row in rows for transition in row.get('editorTransitions', [])]
+        if editor_transitions != expected_editor_transitions:
+            issues.append('Raw editor setting transitions differ from per-case evidence or are missing/duplicated')
         confirmed = raw(authority, 'BASELINE_CONFIRMED')
         if confirmed != [r.get('authorityBaseline') for r in rows] or confirmed != [r.get('baseline') for r in specs]:
             issues.append('Exact current authority baseline acknowledgement missing or changed')
         boundaries, tails = raw(text, 'BOUNDARY'), raw(text, 'TAIL_STARTED')
         settled = raw(text, 'BODY_SETTLED')
-        if settled != [r.get('bodyTerminal') for r in rows if r.get('id') != CASES[0]]:
+        if settled != [r.get('bodyTerminal') for r in rows if base_case(r.get('id')) != BASE_CASES[0]]:
             issues.append('Raw borrowed native body settlement missing, changed or duplicated')
         if (len(boundaries) != len(cases) or [r.get('case') for r in tails] != cases
                 or boundaries != [r.get('boundary') for r in rows] or tails != [r.get('tailSnapshot') for r in rows]):

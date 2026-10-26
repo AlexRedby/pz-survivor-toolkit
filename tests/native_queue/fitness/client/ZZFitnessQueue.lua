@@ -16,6 +16,7 @@ local peerCase,peerBook,peerComplete,actor,stopReached,returnSeen,recoverySeen,r
 local ready,setupSince,preparedInitialized,prepareLogged=false,0,false,nil
 local peersReady,peersReceipt,isolationAuthority,isolationFinalAuthority=false,nil,nil,nil
 local peerSpec,compState,compGranted,compReported,compReady,competitionReady
+local observeSettled,recoveryProofs
 local function negativeCase(id)return id=='storage-walk-away'or id=='storage-peer-pickup'end
 local function negative()return require 'QueueFitnessStorageNegative'end
 local function case()return config.cases[index]end
@@ -112,6 +113,9 @@ assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{start
   recoveryActions[#recoveryActions+1]=action
  end
  if action.Type=='ISReadABook'and action.item==state.items.tail and action.character==getPlayer()then
+  if config.options and config.options.fitness_editor_toggles and config.options.fitness_editor_toggles[case()]=='off-pending-outcome'then
+   assert(not command.receiptFaultTailAt,'pending outcome independent tail began twice');command.receiptFaultTailAt=getTimestampMs()
+  end
   command.beforeTail={inventory=F.inventory(action.character),activation=F.activation(action.character),nativeClock=O.clock(),
    callback='ISBaseTimedAction.begin',storage=F.storage(action.character,state.ids.items.bag)}
  end
@@ -156,13 +160,110 @@ end,finish=function(action,phase,succeeded)
   and action.item and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'and phase=='complete'then
   O.placements[#O.placements+1]=F.placement(action.character,state.ids.items.bag,'ISDropWorldItemAction.complete',succeeded==true)
  end
-end}),'fitness native reader boundary observer unavailable')
+end,settled=function(action)if observeSettled then observeSettled(action)end end}),'fitness native reader boundary observer unavailable')
 local function emit(row)
  row.suite,row.kind,row.mode,row.actor='fitness',config.kind,config.mode,actor;JSON.emit(row)
 end
 local function raw(marker,row)print('[FITNESS_TEST] '..marker..' '..JSON.encode(row))end
 local diagnostics=require('QueueFitnessDiagnostics').install(config,{case=case,player=getPlayer,emit=raw,
  active=function()return actor=='client1'and state~=nil end})
+local function nativeActiveCancel(action)
+ assert(native and action==queue().current and action==queue().queue[1]and action.Type=='ISFitnessAction'
+  and action.action and action:isStarted(),'native UI cancellation lost its actual current workout')
+ local book=state.items.tail
+ command.nativeActiveCancel={callback='ISFitnessUI:CANCEL',at=getTimestampMs(),nativeClock=O.durationClock(),
+  actionRef=tostring(action),nativeRef=tostring(action.action),kind=action.Type,started=true,
+  tailId=state.ids.items.tail,tailRetained=queue():indexOf(tail)~=-1,
+  tailPages=state.player:getAlreadyReadPages(book:getFullType()),tailTotalPages=book:getNumberOfPages()}
+end
+local function editorToggle()
+ return config.options and config.options.fitness_editor_toggles and config.options.fitness_editor_toggles[case()]
+end
+observeSettled=function(action)
+ if native or not command or not state or not editorToggle()or not action
+  or action.character~=state.player or queue().current~=action or queue().queue[1]~=action
+  or action.Type~='ISInventoryTransferAction'or getmetatable(action)~=ISInventoryTransferAction
+  or not action.item or not action.action or not Settlement.requiredStep(action)or not Settlement.drainingAction(action)then return end
+ local role
+ if recoverySeen[action]and action.item:getID()==state.ids.items.bag and action.item:getFullType()=='Base.Bag_Schoolbag'then role='carrier-recovery'
+ elseif returnSeen[action]and action.item:getID()==state.ids.items.dumbbell and action.item:getFullType()=='Base.DumbBell'then role='borrowed-return'end
+ if not role then return end
+ local original,completed=Settlement.operationState(requests[1]),Settlement.operationState(action)
+ if not original or not completed or Settlement.completionState(queue(),action)~='ready'then return end
+ if role=='carrier-recovery'then
+  local earned=0
+  for _,step in ipairs(completed.steps)do
+   if step.plannedTransfer and step.transferDirection=='pickup'and step.kind==action.Type
+    and step.itemId==state.ids.items.bag and step.itemType=='Base.Bag_Schoolbag'
+    and step.phase=='cleanup'and step.started and step.state=='earned'then earned=earned+1 end
+  end
+  if earned~=1 then return end
+  recoveryProofs[action]=completed
+ else
+  if #original.borrowings~=1 or original.borrowings[1].id~=state.ids.items.dumbbell
+   or original.borrowings[1].fullType~='Base.DumbBell'or original.borrowings[1].state~='completed'then return end
+  command.settlement=original;command.confirmedReturn=true
+ end
+ local row={case=case(),ordinal=#command.settledLedgers+1,boundary='Lifecycle.settled',source='Settlement.operationState',
+  at=getTimestampMs(),nativeClock=O.clock(),role=role,kind=action.Type,itemId=action.item:getID(),itemType=action.item:getFullType(),
+  actionRef=tostring(action),currentRef=tostring(queue().current),nativeRef=tostring(action.action),
+  token=tostring(action.toolkitQueueOperation),generation=queue().toolkitOperationGeneration or 0,
+  requiredStep=true,drainingAction=true,completionState='ready',originalState=original,actionState=completed}
+ command.settledLedgers[#command.settledLedgers+1]=row;raw('SETTLED_LEDGER',row)
+end
+local function editorBoundary(action,boundary)
+ local q=queue()
+ assert(q.current==action and q.queue[1]==action,'editor boundary lost exact current action')
+ return {case=case(),boundary=boundary,at=getTimestampMs(),nativeClock=O.clock(),
+  actionRef=tostring(action),currentRef=tostring(q.current),nativeRef=action.action and tostring(action.action)or false,
+  kind=action.Type,itemId=action.item and action.item:getID()or false,itemType=action.item and action.item:getFullType()or false,
+  token=action.toolkitQueueOperation and tostring(action.toolkitQueueOperation)or false,
+  generation=q.toolkitOperationGeneration or 0,tailRef=tostring(tail),tailId=state.ids.items.tail,
+  tailRetained=q:indexOf(tail)~=-1,requestRetained=q.toolkitGroupCancel~=nil,
+  drainingAction=Settlement.drainingAction(action),requiredStep=Settlement.requiredStep(action)}
+end
+local function setEditor(value,witness)
+ local entry=editorBoundary(queue().current,witness.boundary)
+ entry.enabled=value;entry.generationBefore=entry.generation
+ PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(value)
+ entry.generationAfter=queue().toolkitOperationGeneration or 0
+ entry.tailRetained=queue():indexOf(tail)~=-1
+ entry.requestRetained=queue().toolkitGroupCancel~=nil
+ assert(T.Settings.actionQueue()==value and entry.tailRetained,'fitness editor transition lost independent tail')
+ command.editorTransitions[#command.editorTransitions+1]=entry;raw('EDITOR_TRANSITION',entry)
+end
+-- A test-only retained genuine packet defines the pending window; no outcome is invented.
+local function observePendingOutcome()
+ if editorToggle()~='off-pending-outcome'then return end
+ local action,record,nativeAction=diagnostics.pendingFault()
+ if not action then return end
+ assert(action.character==state.player and action.action==nativeAction,'pending receipt lost original native episode')
+ local present=state.player:getCharacterActions():contains(nativeAction)
+ if case()=='active-cancel-restore'and present then return end
+ -- A paid drop is held in Java until its sealed Completed receipt; Done alone cannot remove it.
+ if case()=='placement-cancel-restore'then assert(present,'pending completed placement lost its held native episode')end
+ local q=queue();local retained=q:indexOf(tail)~=-1
+ local unread=state.player:getAlreadyReadPages(state.items.tail:getFullType())<state.items.tail:getNumberOfPages()
+ local sealed=false
+ if not native then
+  assert(command.editorCancelBoundary and q.current==action and q.queue[1]==action,
+   'pending outcome no longer owns the canceled current action')
+  sealed=T.ActionQueueAcknowledgements.capture(action)==record and T.ActionQueueAcknowledgements.state(action,record)=='started'
+  assert(sealed and retained and unread,'pending outcome lost sealed Started receipt or independent unread tail')
+  local boundary=editorBoundary(action,'pending-outcome')
+  command.editorPendingBoundary=boundary;raw('EDITOR_PENDING',boundary);setEditor(false,boundary)
+ end
+ diagnostics.markPending({mode=config.mode,editorEnabled=T.Settings.actionQueue(),sealedStarted=sealed,
+  tailRetained=retained,tailUnread=unread})
+end
+local function editorCleanup(current)
+ if native or editorToggle()~='reenable-during-cleanup'or #command.editorTransitions~=1 then return end
+ if current and queue().current==current and current.action and current:isStarted()
+  and Settlement.requiredStep(current)and Settlement.drainingAction(current)then
+  local witness=editorBoundary(current,'cleanup-current')
+  command.editorCleanupBoundary=witness;raw('EDITOR_CLEANUP',witness);setEditor(true,witness)
+ end
+end
 local function cancel(action,message)
  local accepted,reason=API.cancelOperation(queue(),action)
  if not accepted then
@@ -181,6 +282,12 @@ local function cancel(action,message)
    current=action.Type,preparationCanFinish=policy.preparationCanFinish(action),members=members})
  end
  assert(accepted,message..' ('..tostring(reason)..')')
+ if editorToggle()then
+  local witness=editorBoundary(action,'accepted-cancel')
+  assert(witness.requestRetained and witness.tailRetained,'editor disabled after accepted request was lost')
+  command.editorCancelBoundary=witness;raw('EDITOR_CANCEL',witness)
+  if editorToggle()~='off-pending-outcome'then setEditor(false,witness)end
+ end
 end
 local function run(fn,...)
  if native then return fn(...)end
@@ -326,6 +433,8 @@ local function dispatch()
  command={menuDispatched=true,nativeDurations=true,minutes=minutes(),frontMinutes=immediate(id)and 0 or 12,
   waitingNoExercise=true,waitingNoClinicalEffects=true,activeObserved=false,activeCancelled=false,pendingCancelled=false,
   reordered=false,closedUI=false,startedOrder={},activeAcks={},terminalAcks={},progressSamples={},durationStops={},queueDrained=false}
+ recoveryProofs={}
+ if editorToggle()then command.editorTransitions={};command.settledLedgers={}end
  if multiCase(id)then command.multiStarts={}end
  if negativeCase(id)then command.negativeBefore=negative().snapshot(state.player,state.ids.negativeStorage)end
  if not immediate(id)then front=read(state.items.front)end
@@ -354,6 +463,7 @@ local function dispatch()
 end
 local function observe()
  local player=getPlayer();local current=queue().queue[1]
+ if editorToggle()then editorCleanup(current)end
  if negativeCase(case())then negative().observeWalk(state)end
  if case()=='exhaustion'and command.mutationObserved then player:getStats():set(CharacterStat.ENDURANCE,.01)end
  O.sample(current)
@@ -383,7 +493,9 @@ local function observe()
  end
  if not native and F.borrowedCase(case())then
   command.recoverySettlements={}
-  for _,action in ipairs(recoveryActions)do command.recoverySettlements[#command.recoverySettlements+1]=Settlement.operationState(action)or false end
+  for _,action in ipairs(recoveryActions)do
+   command.recoverySettlements[#command.recoverySettlements+1]=recoveryProofs[action]or Settlement.operationState(action)or false
+  end
   local status=Settlement.operationState(requests[1])
   if status then
    command.settlement=status
@@ -454,9 +566,9 @@ local function observe()
    command.activeSince=command.activeSince or getTimestampMs()
    local repObserved=isClient()and (command.authoritativeReps or 0)>0 or not isClient()and current.repnb>0
    if repObserved and getTimestampMs()-command.activeSince>=3500 and (not isClient()or native or ack[current])and (case()~='active-cancel-restore'or native or command.confirmedPreparation)then
-    if native then ui:onClick(ui.cancel)else cancel(current,'active fitness cancellation rejected')end
+    if native then nativeActiveCancel(current);ui:onClick(ui.cancel)else cancel(current,'active fitness cancellation rejected')end
     command.activeCancelled=true
-    if F.restorationCase(case())then command.cancelCallback=native and 'ISFitnessUI:CANCEL'or 'ActionQueue.cancelOperation' end
+    command.cancelCallback=native and 'ISFitnessUI:CANCEL'or 'ActionQueue.cancelOperation'
    end
   end
  end
@@ -483,14 +595,20 @@ local function finishCase()
  if negativeCase(case())then command.negativeFinal=negative().snapshot(state.player,state.ids.negativeStorage)end
  command.clientCurrentExerciseCleared=not getPlayer():getFitness():getCurrentExe()
  local problem
- if case()=='late-exhaustion'then
+ if native and (case()=='active-cancel'or case()=='active-cancel-restore')then
+  command.nativeTailPagesAtFinish=state.player:getAlreadyReadPages(state.items.tail:getFullType())
+  if receipt.tailRead or command.beforeTail or receipt.tailStart then problem='native-explicit-cancel-retained-tail'end
+ elseif case()=='late-exhaustion'then
   command.tailPagesAtFinish=getPlayer():getAlreadyReadPages(state.items.tail:getFullType())
   if receipt.tailRead~=(not native)then problem='exhaustion-tail-control-differs'end
  elseif not receipt.tailRead then problem='independent-tail-not-preserved'
  end
  if not problem and (not receipt.serverStopSettled or not receipt.currentExerciseCleared)then problem='native-fitness-stop-not-settled'end
+ if editorToggle()then command.editorEnabled=T.Settings.actionQueue()end
+ if editorToggle()=='off-pending-outcome'then command.receiptFault=diagnostics.faultComplete()end
  local published={event='case',id=case(),status=problem and 'failed'or 'passed',reason=problem,command=command,receipt=receipt}
  emit(published)
+ if editorToggle()then PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)end
  if problem then failed=failed+1 end
  if ui then ui:onClick(ui.close);ui=nil end
  if native and isClient()and F.borrowedCase(case())and problem and #receipt.records==0
@@ -551,8 +669,11 @@ Events.OnTick.Add(function()
   end
   if actor=='client2'then peerTick();return end
   assert(getTimestampMs()-since<210000,'native fitness deadline '..phase..' '..tostring(case()))
-  assert(T.Settings.actionQueue()==not native,'fitness queue mode changed')
+  local editorOff=not native and editorToggle()and command and #command.editorTransitions==1
+   and (phase=='running'or phase=='receipt')
+  assert(T.Settings.actionQueue()==(not native and not editorOff),'fitness queue mode changed')
   if diagnostics then diagnostics.poll()end
+  if phase=='running'then observePendingOutcome()end
   idle=empty()and idle+1 or 0
   if phase=='prepare'then
    if idle<10 or getPlayer():tooDarkToRead()then return end

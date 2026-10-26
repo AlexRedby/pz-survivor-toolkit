@@ -1598,7 +1598,7 @@ function Compat.install()
     if transferSourceSafe then
         local previous=ISInventoryTransferAction.checkQueueList
         local function pickupScope(action)
-            return action and sessions[action.character]
+            return action and (Settlement.admittedPickupScope(action) or sessions[action.character])
         end
         local function pickupGuard(action)
             return getmetatable(action) == ISInventoryTransferAction and tidyActionUnchanged and tidyActionUnchanged(action)

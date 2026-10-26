@@ -69,6 +69,46 @@ function D.install(config,context)
   seen[key]=true;count=count+1;row.wallClock=getTimestampMs();context.emit('NATIVE_TRACE',row)
  end
  local function safe(...)pcall(emit,...)end
+ local faultStart,pendingReceipt,faultResult,releasing
+ local function faultCase()
+  return config.options.fitness_editor_toggles and config.options.fitness_editor_toggles[context.case()]=='off-pending-outcome'
+ end
+ local function faultTarget()
+  if context.case()=='active-cancel-restore'then return 'ISFitnessAction','canceled'end
+  if context.case()=='placement-cancel-restore'then return 'ISDropWorldItemAction','completed'end
+ end
+ local function fingerprint(args)
+  return table.concat({tostring(args.protocol),tostring(args.player),tostring(args.transaction),tostring(args.kind),tostring(args.token),tostring(args.state)},'|')
+ end
+ local function observed(saved)
+  return T.ActionQueueAcknowledgements.observe(saved.action,saved.record)or false
+ end
+ local function faultRow(saved,phase,extra,before)
+  local player,queue=active()
+  assert(player==saved.player and queue==saved.queue and context.case()==saved.case,'receipt fault escaped its case/actor')
+  assert(saved.action.action==saved.native and fingerprint(saved.args)==saved.fingerprint,'retained receipt/native identity changed')
+  local previous=before;if previous==nil then previous=observed(saved)end
+  local row={case=saved.case,sequence=#saved.rows+1,phase=phase,at=phase=='retained'and saved.at or getTimestampMs(),deadline=saved.deadline,
+   protocol=saved.args.protocol,player=saved.args.player,transaction=saved.args.transaction,kind=saved.args.kind,token=saved.args.token,state=saved.args.state,
+   actionRef=saved.actionRef,nativeRef=saved.nativeRef,packetRef=saved.packetRef,fingerprint=saved.fingerprint,
+   ackBefore=previous,ackAfter=observed(saved),
+   currentMatches=queue.current==saved.action,headMatches=queue.queue[1]==saved.action,
+   nativeAbsent=not player:getCharacterActions():contains(saved.native)}
+  for key,value in pairs(extra or {})do row[key]=value end
+  saved.rows[#saved.rows+1]=row;context.emit('RECEIPT_FAULT',row)
+ end
+ local function captureFaultStart(module,command,args)
+  if not faultCase()or module~='PZSurvivorToolkitActions'or command~='State'or type(args)~='table'or args.state~='started'then return end
+  local kind=faultTarget();local player,queue=active();local action=queue and queue.current
+  if not player or not action or action~=queue.queue[1]or action.character~=player or not action.action
+   or args.protocol~=1 or args.player~=player:getOnlineID()or args.kind~=kind or action.Type~=kind
+   or action.toolkitNativeTransaction~=args.transaction or action.toolkitNativeKind~=args.kind then return end
+  local record=T.ActionQueueAcknowledgements.capture(action)
+  if not record or record.state~='started'or record.token~=args.token then return end
+  if faultStart and faultStart.case==context.case()then return end
+  faultStart={case=context.case(),player=player,queue=queue,action=action,native=action.action,record=record,
+   protocol=args.protocol,online=args.player,transaction=args.transaction,kind=args.kind,token=args.token}
+ end
  assert(L.registerObserver('fitness-native-diagnostics',{
   started=function(action)safe('Lifecycle.started',action)end,
   begin=function(action,phase)
@@ -78,17 +118,34 @@ function D.install(config,context)
   end,
   finish=function(action,phase,succeeded)safe('Lifecycle.finish.'..phase,action,{succeeded=succeeded==true})end
  }),'fitness diagnostic observer unavailable')
- -- Opt-in packet-order fault: retain one genuine Completed receipt per drop,
- -- then dispatch that same table unchanged. Server effects and native Done run normally.
+ -- Only delivery of a genuine terminal is reordered. Native Done and effects run normally.
  local delay=config.options.fitness_receipt_delay_ms
- local delayed,pendingReceipt,releasing={}
+ local delayed={}
+ if config.options.fitness_receipt_duplicate~=nil then
+  assert(config.options.fitness_receipt_duplicate==true and config.kind=='mp'and delay==1000,
+   'duplicate receipt fault requires explicit Host and 1000 milliseconds')
+ end
  if delay~=nil then
   assert(type(delay)=='number'and delay%1==0 and delay>=50 and delay<=1000 and config.kind=='mp',
    'fitness receipt delay requires Host and 50..1000 integer milliseconds')
   L.delayNativeReceipt=function(module,command,args)
-   if releasing or module~='PZSurvivorToolkitActions'or command~='State'or type(args)~='table'
-    or args.state~='completed'or args.kind~='ISDropWorldItemAction'then return false end
+   if releasing or module~='PZSurvivorToolkitActions'or command~='State'or type(args)~='table'then return false end
    local player,queue=active();local action=queue and queue.current
+   if faultCase()then
+    local kind,terminal=faultTarget();local started=faultStart
+    if not started or started.case~=context.case()or started.player~=player or started.queue~=queue
+     or started.action.action~=started.native or args.state~=terminal or args.kind~=kind
+     or args.protocol~=started.protocol or args.player~=started.online or args.transaction~=started.transaction
+     or args.kind~=started.kind or args.token~=started.token or delayed[args.token]or pendingReceipt then return false end
+    assert(delay==1000 and config.options.fitness_receipt_duplicate==true,'pending fault requires bounded duplicate delivery')
+    local retainedAt=getTimestampMs()
+    local saved={at=retainedAt,case=started.case,player=player,queue=queue,action=started.action,native=started.native,record=started.record,
+     actionRef=tostring(started.action),nativeRef=tostring(started.native),packetRef=tostring(args),
+     module=module,command=command,args=args,deadline=retainedAt+delay,fingerprint=fingerprint(args),rows={}}
+    delayed[args.token]=true;pendingReceipt=saved;faultResult=saved
+    faultRow(saved,'retained');return true
+   end
+   if args.state~='completed'or args.kind~='ISDropWorldItemAction'then return false end
    if not player or not action or action.Type~=args.kind or action.toolkitNativeTransaction~=args.transaction
     or args.player~=player:getOnlineID()or type(args.token)~='string'or delayed[args.token]or pendingReceipt then return false end
    delayed[args.token]=true
@@ -97,11 +154,26 @@ function D.install(config,context)
    return true
   end
   Events.OnTick.Add(function()
-   if not pendingReceipt or getTimestampMs()<pendingReceipt.deadline then return end
-   local saved=pendingReceipt;pendingReceipt=nil;releasing=true
-   safe('Receipt.released',saved.action,{transaction=saved.args.transaction})
-   triggerEvent('OnServerCommand',saved.module,saved.command,saved.args)
-   releasing=false
+   local saved=pendingReceipt
+   if not saved or getTimestampMs()<saved.deadline then return end
+   if saved.rows then
+    assert(saved.observed,'genuine terminal receipt pending window was not observed before deadline')
+    assert(fingerprint(saved.args)==saved.fingerprint,'retained receipt contents changed before dispatch')
+    local before=observed(saved)
+    releasing=true
+    triggerEvent('OnServerCommand',saved.module,saved.command,saved.args)
+    releasing=false
+    if not saved.released then
+     saved.released=true;faultRow(saved,'released',nil,before)
+    else
+     faultRow(saved,'duplicate',nil,before);pendingReceipt=nil
+    end
+   else
+    pendingReceipt=nil;releasing=true
+    safe('Receipt.released',saved.action,{transaction=saved.args.transaction})
+    triggerEvent('OnServerCommand',saved.module,saved.command,saved.args)
+    releasing=false
+   end
   end)
  end
  -- Installed only by the opt-in test JAR. Values observe native manager state;
@@ -145,6 +217,7 @@ function D.install(config,context)
   end
  end
  Events.OnServerCommand.Add(function(module,command,args)
+  captureFaultStart(module,command,args)
   if module~='PZSurvivorToolkitActions'or command~='State'or type(args)~='table'then return end
   pcall(function()
    local player,queue=active();if not player or args.player~=player:getOnlineID()then return end
@@ -155,7 +228,21 @@ function D.install(config,context)
    emit('WIRE_STATE',queue.current or queue.queue[1],value,queue)
   end)
  end)
- return {poll=function()
+ return {pendingFault=function()
+  if pendingReceipt and pendingReceipt.rows and not pendingReceipt.released and not pendingReceipt.observed then
+   assert(getTimestampMs()<pendingReceipt.deadline,'pending receipt window expired before fixture observation')
+   return pendingReceipt.action,pendingReceipt.record,pendingReceipt.native
+  end
+ end,markPending=function(extra)
+  local saved=assert(pendingReceipt,'no genuine retained terminal')
+  assert(saved.rows and not saved.observed and not saved.released and getTimestampMs()<saved.deadline,'terminal pending boundary is no longer available')
+  saved.observed=true;faultRow(saved,'pending',extra)
+ end,faultComplete=function()
+  if not faultCase()then return end
+  local saved=assert(faultResult,'selected receipt fault never retained a genuine terminal')
+  assert(saved.case==context.case()and saved.observed and saved.released and #saved.rows==4 and not pendingReceipt,'selected receipt fault did not finish hold/release/duplicate')
+  return saved.rows
+ end,poll=function()
   pcall(function()
    local player,queue=active();if player then emit('poll',queue.current or queue.queue[1],nil,queue)end
   end)

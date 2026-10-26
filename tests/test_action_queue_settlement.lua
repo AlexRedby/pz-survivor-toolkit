@@ -2259,4 +2259,195 @@ for _, client in ipairs({false, true}) do
     end
 end
 
+-- Closing the optional P4 producer session must not revoke debt captured at
+-- actual cancellation admission. Exercise the real generation-pruning callback,
+-- not a second implementation of its close decision.
+do
+    local path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
+    local source
+    if NativeReadText then source = NativeReadText(path)
+    else local file = assert(io.open(path)); source = file:read('*a'); file:close() end
+    source = source:gsub('\r', '')
+    local body = assert(source:match('function Compat%.prune%(%)\n(.-)\nend\nEvents%.OnTick%.Add%(Compat%.prune%)'),
+        'actual Compat.prune source boundary changed')
+    local prune = assert((loadstring or load)('return function(records,repairedFloors,sessions,Membership,Settlement,ISTimedActionQueue)\n'
+        .. body .. '\nend'))()
+    local function admit(s)
+        local T = PZSurvivorToolkit
+        T.ActionQueuePolicy.editUnchanged = function(q, snapshot) return q == s.queue and snapshot == s.queue end
+        T.ActionQueueOperations.invalidateQueue = function(q)
+            q.toolkitOperationGeneration = (q.toolkitOperationGeneration or 0) + 1
+            for _, action in ipairs(q.queue) do action.toolkitQueueOperation.toolkitCancelled = true end
+        end
+        local request = {action=s.current,token=s.token}
+        assert(s.settlement.admitCancellation(s.queue,request,{allowed=true,first=1,snapshot=s.queue}))
+        s.queue.toolkitGroupCancel,s.token.toolkitCancelled=request,true
+        s.player.queueEnabled=false;s.settlement.invalidateEditor(s.queue)
+        return request
+    end
+    local function revoked(s,context)
+        assert(s.scope.phase=='retired'and not s.settlement.isLive(context)
+            and not s.settlement.context(s.scope),'closed producer regained an optional context')
+        local value=s.item(182,s.source);s.source.items[182]=value
+        local action={Type='ISInventoryTransferAction',character=s.player,toolkitQueueOperation=s.token,
+            item=value,srcContainer=s.source,destContainer=s.root,action={},queueList={{items={value}}}}
+        assert(not s.settlement.remember(s.scope,action,{knownInputs=true,items={[182]=true}})
+            and not s.settlement.preparePickup(s.scope,action),
+            'retired producer admitted new pickup work through the cancellation drain')
+        assert(not s.settlement.owner(s.scope,181,'Base.Test',s.source),
+            'retired producer regained optional pickup ownership')
+    end
+    local function close(s,path,context)
+        if path=='compat-prune'then
+            local sessions={[s.player]=s.scope}
+            local membership={find=function()
+                local queued={};for _,action in ipairs(s.queue.queue)do queued[action]=true end;return queued
+            end}
+            prune({},{},sessions,membership,s.settlement,ISTimedActionQueue)
+            assert(sessions[s.player]==nil,'generation-invalidated P4 session was not pruned')
+        else s.settlement.close(s.scope) end -- disabled producer update closes this same scope
+        revoked(s,context)
+    end
+    for _,client in ipairs({false,true})do
+        for _,path in ipairs({'compat-prune','producer-close'})do
+            for _,timing in ipairs({'before-finish','after-construction','during-return'})do
+                local s=pendingReturnFixture(client)
+                local context=assert(s.settlement.context(s.scope));local request=admit(s)
+                if timing=='before-finish'then close(s,path,context)end
+                assert(s.settlement.finish(s.queue,request,s.discard),path..': admitted cancellation did not settle')
+                local action=s.queue.queue[2]
+                assert(s.counts()==1 and action~=s.tail and action~=s.pendingReturn and action.item==s.members[1]
+                    and action.destContainer==s.source and s.queue.queue[3]==s.tail and s.settlement.requiredStep(action),
+                    path..' '..timing..': closing the producer lost its already-earned exact return')
+                if timing=='after-construction'then close(s,path,context)end
+                s.settlement.completeCancellation(s.queue,s.current)
+                table.remove(s.queue.queue,1);s.queue.current=action;s.queue.toolkitGroupCancel=nil
+                action.action,action.transactionId,action.queueList={},71,{{items={action.item}}}
+                s.settlement.bindCancellation(action)
+                assert(s.settlement.beginPlannedReturn(action,s.guard),path..': retired source rejected its exact admitted cleanup')
+                if timing=='during-return'then close(s,path,context)end
+                -- Re-enabling the editor cannot revive a retired producer or
+                -- let it enqueue another pickup while the debt is still live.
+                s.player.queueEnabled=true;revoked(s,context)
+                s.root.items[181],s.source.items[181],action.item.container=nil,action.item,s.source
+                action.queueList,action.transactionId={},0
+                assert(s.settlement.finishPlannedReturn(action,true)
+                    and s.settlement.completionState(s.queue,action)=='ready',path..': native return failed after producer close')
+                assert(not s.settlement.finishPlannedReturn(action,true)and not s.settlement.finish(s.queue,request,s.discard)
+                    and s.counts()==1,'retired producer replayed a settled return')
+                s.settlement.completeCancellation(s.queue,action)
+                table.remove(s.queue.queue,1);s.queue.current=s.tail
+                assert(s.queue.queue[1]==s.tail and not s.settlement.drainingAction(s.tail)
+                    and s.source.items[181]==s.members[1]and s.root.items[181]==nil,
+                    'exact return did not precede unrelated native tail work')
+                revoked(s,context)
+            end
+        end
+    end
+    for _,mutation in ipairs({'closed-before-admission','reset','dead','queue','native','request','generation'})do
+        local s=pendingReturnFixture(false)
+        local context=assert(s.settlement.context(s.scope))
+        if mutation=='closed-before-admission'then s.settlement.close(s.scope)end
+        local request=admit(s)
+        s.settlement.close(s.scope);revoked(s,context)
+        if mutation=='reset'then s.settlement.resetCancellation(s.queue)
+        elseif mutation=='dead'then s.player.dead=true
+        elseif mutation=='queue'then ISTimedActionQueue.queues[s.player]={}
+        elseif mutation=='native'then s.current.action={}
+        elseif mutation=='request'then s.queue.toolkitGroupCancel={action=s.current,token=s.token}
+        elseif mutation=='generation'then s.queue.toolkitOperationGeneration=2 end
+        s.settlement.finish(s.queue,request,s.discard)
+        assert(s.counts()==0 and not s.settlement.requiredStep(s.pendingReturn),
+            mutation..': a closed or revoked drain acquired new return authority')
+        s.player.queueEnabled=true;revoked(s,context)
+    end
+end
+
+-- The actual Compat observer resolves its admitted pickup even after the
+-- optional producer registry has detached the retired session.
+do
+    local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
+    local source
+    if NativeReadText then source=NativeReadText(path)
+    else local file=assert(io.open(path));source=file:read('*a');file:close()end
+    source=source:gsub('\r','')
+    local lookup=assert(source:match('(local function pickupScope%(action%).-\n        end)'))
+    local finish=assert(source:match('finish = function%(action, succeeded%)\n(                local session = pickupScope%(action%)[^\n]*\n                return session and Settlement.finishPickup%(session, action, succeeded%) or false)\n            end'))
+    local factory=assert(loadstring('local sessions,Settlement=...; '..lookup..'\nreturn function(action,succeeded)\n'..finish..'\nend'))
+    for _,client in ipairs({false,true})do
+        for _,mode in ipairs({'finish','reset','native','unrelated','new-producer'})do
+            local s=pickupFixture(client)
+            assert(s.settlement.beginPickup(s.scope,s.pickup,s.guard))
+            local T=PZSurvivorToolkit
+            T.ActionQueuePolicy.editUnchanged=function()return true end
+            T.ActionQueueOperations.invalidateQueue=function(q)q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1 end
+            local request={action=s.pickup,token=s.token}
+            assert(s.settlement.admitCancellation(s.queue,request,{allowed=true,first=1,snapshot={}}))
+            s.queue.toolkitGroupCancel=request;s.token.toolkitCancelled=true;s.player.queueEnabled=false
+            s.settlement.invalidateEditor(s.queue);s.settlement.close(s.scope)
+            local sessions={}
+            if mode=='new-producer'then
+                s.player.queueEnabled=true
+                sessions[s.player]=s.settlement.deferred(s.player,{})
+            end
+            local callback=factory(sessions,s.settlement)
+            s.movePickup(1);s.pickup.queueList={};s.pickup.transactionId=0
+            if mode=='reset'then s.settlement.resetCancellation(s.queue)
+            elseif mode=='native'then s.pickup.action={}
+            elseif mode=='unrelated'then
+                local foreign={character=s.player,action={},toolkitQueueOperation={}}
+                assert(not s.settlement.admittedPickupScope(foreign),'foreign action borrowed the admitted observer')
+            end
+            local valid=mode=='finish'or mode=='unrelated'or mode=='new-producer'
+            assert((s.settlement.admittedPickupScope(s.pickup)==s.scope)==valid,
+                mode..': retired producer observation escaped its exact admitted native episode')
+            assert((callback(s.pickup,true)==true)==valid,mode..': actual Compat finish lost or invented its exact observer')
+            if valid then
+                assert(s.settlement.cancellationState(s.queue,s.pickup)=='ready',
+                    'a closed producer left its completed native preparation waiting forever')
+                assert(s.settlement.finish(s.queue,request,function(member,completed)
+                    assert(completed and member==s.pickup,'unexpected native work was discarded')
+                end))
+                assert(#s.queue.queue==3 and s.queue.queue[2].item==s.members[1]
+                    and s.queue.queue[2].destContainer==s.source and s.queue.queue[3]==s.tail,
+                    'the exact acknowledged pickup did not earn one return before the independent tail')
+            end
+            assert(s.scope.phase=='retired'and not s.settlement.context(s.scope),
+                'retained observation reopened an optional producer')
+        end
+    end
+end
+
+-- Cleanup can be constructed before editor invalidation and allocated after
+-- it. A second toggle must keep its exact native Started receipt, not grant
+-- arbitrary intermediate generations or a replaced Java episode.
+do
+    local s=pendingReturnFixture(true)
+    PZSurvivorToolkit.ActionQueuePolicy.editUnchanged=function()return true end
+    PZSurvivorToolkit.ActionQueueOperations.invalidateQueue=function(q)
+        q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1
+    end
+    local request={action=s.current,token=s.token}
+    assert(s.settlement.admitCancellation(s.queue,request,{allowed=true,first=1,snapshot={}}))
+    s.queue.toolkitGroupCancel=request;s.token.toolkitCancelled=true;s.player.queueEnabled=false
+    assert(s.settlement.finish(s.queue,request,s.discard))
+    local action=s.queue.queue[2]
+    s.settlement.completeCancellation(s.queue,s.current)
+    table.remove(s.queue.queue,1);s.queue.current=action;s.queue.toolkitGroupCancel=nil
+    s.settlement.invalidateEditor(s.queue)
+    action.action={};s.settlement.bindCancellation(action)
+    action.toolkitNativeTransaction,action.toolkitNativeKind=31,'ISInventoryTransferAction'
+    s.receipt(action,'started');local receipt=assert(s.acknowledgements.capture(action))
+    s.player.queueEnabled=true;s.player.queueEnabled=false;s.settlement.invalidateEditor(s.queue)
+    assert(s.queue.toolkitOperationGeneration==2 and s.settlement.cancellationGeneration(action,1)
+        and s.acknowledgements.state(action,receipt)=='started',
+        'second toggle revoked the cleanup receipt allocated after its first invalidation')
+    assert(not s.settlement.cancellationGeneration(action,3),'cleanup accepted an unobserved generation')
+    s.receipt(action,'completed');assert(s.acknowledgements.state(action,receipt)=='completed')
+    action.action={}
+    assert(not s.settlement.cancellationGeneration(action,1)and not s.acknowledgements.capture(action),
+        'replaced native cleanup reused its old Started receipt')
+end
+
+print('Native cleanup receipt generations: second toggle retains only its allocated native episode; replacement revokes it.')
 print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')

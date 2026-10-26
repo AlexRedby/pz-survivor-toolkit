@@ -1,6 +1,7 @@
 """Falsify native fitness evidence: client completion alone never proves effects."""
 import copy
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -209,6 +210,56 @@ class FitnessAdapterTests(unittest.TestCase):
                     receipt['tailStart']=dict(id=ids['tail'],kind='Base.BookFirstAid1',callback='ISReadABook.serverStart',
                         workouts=len(exercises),observerActive=False,inventory=copy.deepcopy(command['beforeTail']['inventory']),
                         activation=copy.deepcopy(command['beforeTail']['activation']),storage=copy.deepcopy(command['beforeTail']['storage']))
+            if mode=='native' and case in fitness.ACTIVE_CANCEL_CASES:
+                receipt['tailRead']=False;receipt.pop('tailStart',None)
+                command.pop('beforeTail',None)
+                command.update(cancelCallback='ISFitnessUI:CANCEL',durationStops=[],nativeStopCalls=1,nativeStopReturns=1,
+                    nativeTailPagesAtFinish=99,nativeActiveCancel=dict(callback='ISFitnessUI:CANCEL',kind='ISFitnessAction',started=True,
+                        at=1000,nativeClock=100000,actionRef='fitness'+str(n),nativeRef='native-fitness'+str(n),
+                        tailId=ids['tail'],tailRetained=True,tailPages=99,tailTotalPages=100))
+            variant = self.selection.get('options', {}).get('fitness_editor_toggles', {}).get(case)
+            if variant:
+                command.update(editorTransitions=[],editorEnabled=False)
+                if mode=='toolkit':
+                    kind,item,item_type={'active-cancel-restore':('ISFitnessAction',False,False),
+                        'pickup-cancel-restore':('ISInventoryTransferAction',ids['dumbbell'],'Base.DumbBell'),
+                        'placement-cancel-restore':('ISDropWorldItemAction',ids['bag'],'Base.Bag_Schoolbag')}[case]
+                    cancel=dict(case=case,boundary='accepted-cancel',at=20,nativeClock=800000,actionRef='cancel'+str(n),
+                        currentRef='cancel'+str(n),nativeRef='native-cancel'+str(n),kind=kind,itemId=item,itemType=item_type,
+                        token='owner'+str(n),generation=5,tailRef='tail'+str(n),tailId=ids['tail'],tailRetained=True,
+                        requestRetained=True,drainingAction=True,requiredStep=False)
+                    command['editorCancelBoundary']=cancel
+                    command['editorTransitions']=[dict(cancel,enabled=False,generationBefore=5,generationAfter=6)]
+                    if variant=='reenable-during-cleanup':
+                        cleanup=dict(cancel,boundary='cleanup-current',at=30,nativeClock=850000,actionRef='cleanup'+str(n),
+                            currentRef='cleanup'+str(n),nativeRef='native-cleanup'+str(n),kind='ISInventoryTransferAction',
+                            itemId=ids['dumbbell'],itemType='Base.DumbBell',token='cleanup-owner'+str(n),generation=6,
+                            requestRetained=False,drainingAction=True,requiredStep=True)
+                        command['editorCleanupBoundary']=cleanup
+                        command['editorTransitions'].append(dict(cleanup,enabled=True,generationBefore=6,generationAfter=6))
+                        command['editorEnabled']=True
+            if variant:
+                command['settledLedgers']=[]
+                if mode=='toolkit':
+                    command['settlement']['generation']=5
+                    if command['recoverySettlements']:command['recoverySettlements'][0]['generation']=6
+                    roles=['borrowed-return'] if case=='pickup-cancel-restore' else ['carrier-recovery','borrowed-return']
+                    for ordinal,role in enumerate(roles,1):
+                        carrier=role=='carrier-recovery'
+                        original=copy.deepcopy(command['settlement'])
+                        if carrier:original['borrowings'][0]['state']='active'
+                        action_state=copy.deepcopy(command['recoverySettlements'][0]) if carrier else dict(generation=6,phase='cleanup',borrowings=[],
+                            steps=[dict(plannedTransfer=True,kind='ISInventoryTransferAction',itemId=ids['dumbbell'],itemType='Base.DumbBell',
+                                        state='earned',started=True,phase='cleanup')])
+                        command['settledLedgers'].append(dict(case=case,ordinal=ordinal,boundary='Lifecycle.settled',source='Settlement.operationState',
+                            at=40 if carrier else 50,nativeClock=860000 if carrier else 950000,role=role,kind='ISInventoryTransferAction',
+                            itemId=ids['bag'] if carrier else ids['dumbbell'],itemType='Base.Bag_Schoolbag' if carrier else 'Base.DumbBell',
+                            actionRef=role+str(n),currentRef=role+str(n),nativeRef='native-'+role+str(n),token='settled-token-'+role+str(n),
+                            generation=6,requiredStep=True,drainingAction=True,completionState='ready',originalState=original,actionState=action_state))
+                    boundary=command.get('editorCleanupBoundary',{})
+                    if boundary.get('kind')=='ISInventoryTransferAction':
+                        row=next(row for row in command['settledLedgers'] if row['itemId']==boundary['itemId'])
+                        row['nativeRef']=boundary['nativeRef']
             raw.append(('PREPARED', prep))
             if case in ('missing-dumbbell', 'exhaustion'):
                 mutation = dict(case=case, removed=ids['dumbbell'] if case=='missing-dumbbell' else False,
@@ -220,6 +271,428 @@ class FitnessAdapterTests(unittest.TestCase):
         rows = [dict(row, suite='fitness', actor='client1', kind=self.selection['kind'], mode=mode) for row in rows]
         return rows, raw, peers
 
+
+    def test_native_active_ui_cancel_discards_tail_with_partial_effects_and_exact_final_restoration(self):
+        for kind in ('sp','mp'):
+            self.selection.update(mode='native',kind=kind,cases=list(fitness.ACTIVE_CANCEL_CASES),clients=2 if kind=='mp' else 1,
+                languages=['EN','RU'] if kind=='mp' else ['EN'],options={'mp_host':True} if kind=='mp' else {})
+            report=self.verify();self.assertEqual(report['issues'],[])
+            self.assertTrue(all(row['outcome']['nativeTailCancelledVerified'] and not row['outcome']['independentTailPreservedVerified']
+                                for row in report['outcomes']))
+            for case in fitness.ACTIVE_CANCEL_CASES:
+                self.selection['cases']=[case]
+                changes={
+                    'missing witness':lambda c,r:c.pop('nativeActiveCancel'),
+                    'tail survived':lambda c,r:r.update(tailRead=True),
+                    'tail started':lambda c,r:c.update(beforeTail={}),
+                    'authority tail started':lambda c,r:r.update(tailStart={}),
+                    'tail pages consumed':lambda c,r:c.update(nativeTailPagesAtFinish=100),
+                    'tail not originally present':lambda c,r:c['nativeActiveCancel'].update(tailRetained=False),
+                    'wrong tail':lambda c,r:c['nativeActiveCancel'].update(tailId=999),
+                    'wrong callback':lambda c,r:c['nativeActiveCancel'].update(callback='forceComplete'),
+                    'early witness':lambda c,r:c['nativeActiveCancel'].update(nativeClock=-1),
+                    **({'late witness':lambda c,r:c['nativeActiveCancel'].update(nativeClock=100001)} if kind=='sp' else {}),
+                    'missing stop':lambda c,r:c.update(nativeStopCalls=0),
+                    'extra stop':lambda c,r:c.update(nativeStopCalls=2),
+                    'missing stop return':lambda c,r:c.update(nativeStopReturns=0),
+                    'extra stop return':lambda c,r:c.update(nativeStopReturns=2),
+                    'queue not empty':lambda c,r:c.update(queueDrained=False),
+                    'unrestored hands':lambda c,r:r['inventory'].update(primary=999),
+                    'no repetitions':lambda c,r:r['records'][0].update(reps=0),
+                    'full workout':lambda c,r:r['records'][0].update(durationStopMS=600000),
+                    'invented timer stop':lambda c,r:c.update(durationStops=[{}]),
+                }
+                for label,change in changes.items():
+                    evidence=copy.deepcopy(self.evidence());row=evidence[0][1];change(row['command'],row['receipt'])
+                    with self.subTest(kind=kind,case=case,change=label):self.assertTrue(self.verify(evidence)['issues'])
+        self.selection.update(mode='toolkit',kind='sp',clients=1,languages=['EN'],options={},cases=['active-cancel-restore'])
+        evidence=self.evidence();evidence[0][1]['receipt']['tailRead']=False
+        self.assertTrue(self.verify(evidence)['issues'],'Toolkit cancellation must still preserve the independent tail')
+        self.selection.update(mode='native',cases=list(fitness.EARLY_CANCEL_CASES))
+        self.assertEqual(self.verify()['issues'],[])
+        for case in fitness.EARLY_CANCEL_CASES:
+            self.selection['cases']=[case];evidence=self.evidence();evidence[0][1]['receipt']['tailRead']=False
+            with self.subTest(early_case=case):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_source_native_ui_cancel_keeps_callbacks_and_reaches_real_base_queue_reset(self):
+        try:
+            from lupa.lua51 import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for real native callback checks')
+        game=os.environ.get('PZ_GAME')
+        if not game or not (Path(game)/'media/lua/client/ISUI/ISFitnessUI.lua').is_file():
+            self.skipTest('PZ_GAME with current native Lua sources is required')
+        source=(ROOT/'tests/test_action_queue_fitness.lua').read_text()
+        prefix=source[:source.index(' -- B42.21 SyncClockPacket.processClient')]
+        lua=LuaRuntime();lua.globals().ProjectRoot=str(ROOT);lua.globals().NativeActionRoot=str(Path(game)/'media/lua')
+        lua.globals()['print']=lambda *values:None
+        lua.execute(prefix+"""
+            reset();enabled=false;client=false;item('DumbBell')
+            local body,reader=nativeWorkout('bicepscurl',10)
+            local click,stop,baseStop=ISFitnessUI.onClick,ISFitnessAction.stop,ISBaseTimedAction.stop
+            body:update();now=now+3500;body:update()
+            local stops=nativeStops
+            window:onClick({internal='CANCEL'})
+            assert(nativeStops==stops+1,'actual UI CANCEL did not call its captured native forceStop')
+            local timing=assert(fitnessQueue.timing(body))
+            assert(timing.stopMS==nil and timing.activeMS>0 and timing.activeMS<600000,
+                'direct native object stop fabricated a full class-level timer stop')
+            body:stop();activeNative=nil
+            assert(#q.queue==0 and q.current==nil and q.queue[1]~=reader,
+                'actual Base.stop failed to reset the independent native tail')
+            assert(ISFitnessUI.onClick==click and ISFitnessAction.stop==stop and ISBaseTimedAction.stop==baseStop,
+                'native cancellation check replaced the callbacks under test')
+        end
+        """)
+
+    def test_settled_ledger_requires_exact_terminal_dtos_and_before_tail_order(self):
+        for case in fitness.RESTORATION_CASES:
+            self.selection.update(cases=[case],options={'fitness_editor_toggles':{case:'reenable-during-cleanup'}})
+            self.assertEqual(self.verify()['issues'],[])
+            changes={
+                'missing rows':lambda c:c.pop('settledLedgers'),
+                'missing return row':lambda c:c['settledLedgers'].pop(),
+                'fabricated completed flag':lambda c:c['settledLedgers'][-1]['originalState']['borrowings'][0].update(state='active'),
+                'unearned action':lambda c:c['settledLedgers'][-1]['actionState']['steps'][0].update(state='pending'),
+                'wrong item':lambda c:c['settledLedgers'][-1].update(itemId=999),
+                'wrong native':lambda c:c['settledLedgers'][-1].update(nativeRef='foreign-native'),
+                'wrong current':lambda c:c['settledLedgers'][-1].update(currentRef='foreign'),
+                'wrong source':lambda c:c['settledLedgers'][-1].update(source='inventory-inference'),
+                'wrong boundary':lambda c:c['settledLedgers'][-1].update(boundary='Lifecycle.started'),
+                'not ready':lambda c:c['settledLedgers'][-1].update(completionState='waiting'),
+                'not draining':lambda c:c['settledLedgers'][-1].update(drainingAction=False),
+                'not required':lambda c:c['settledLedgers'][-1].update(requiredStep=False),
+                'before cancel':lambda c:c['settledLedgers'][-1].update(at=19),
+                'after tail':lambda c:c['settledLedgers'][-1].update(nativeClock=1000001),
+                'wrong generation':lambda c:c['settledLedgers'][-1].update(generation=7),
+                'duplicate row':lambda c:c['settledLedgers'].append(copy.deepcopy(c['settledLedgers'][-1])),
+            }
+            if case!='pickup-cancel-restore':
+                changes.update({'missing recovery DTO':lambda c:c.update(recoverySettlements=[False]),
+                    'unearned recovery DTO':lambda c:c['settledLedgers'][0]['actionState']['steps'][0].update(state='pending'),
+                    'reversed order':lambda c:c['settledLedgers'].reverse()})
+                # An immutable raw mismatch, rather than a same-item reenable witness,
+                # detects foreign native identities on off-only terminal rows below.
+                changes.pop('wrong native')
+            for label,change in changes.items():
+                evidence=copy.deepcopy(self.evidence());change(evidence[0][1]['command'])
+                with self.subTest(case=case,change=label):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_real_settled_lifecycle_captures_completed_return_and_earned_recovery_before_retirement(self):
+        try:
+            from lupa.lua51 import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for real settled-ledger topology')
+        game=os.environ.get('PZ_GAME')
+        if not game or not (Path(game)/'media/lua/client/ISUI/ISFitnessUI.lua').is_file():
+            self.skipTest('PZ_GAME with current native Lua sources is required')
+        fixture=(ROOT/'tests/test_action_queue_fitness.lua').read_text()
+        prefix=fixture[:fixture.index('-- The admitted cancellation must drain')]
+        start=fixture.index('local function runCurrent(q)')
+        executor=fixture[start:fixture.index('local function expand(',start)].replace('local function runCurrent(q)','local function runSettled(q)',1)
+        # Reuse its native transfer/receipt model, then exercise production
+        # Lifecycle advancement instead of the old fixture's manual removal.
+        executor=executor.replace('action.action=nativeAction()', 'action.action=nativeAction();nativePresent[action.action]=true',1)
+        executor=executor.replace('lifecycle.reset(q) -- The fixture advances only after the modeled native removal.\n    removeCurrent(q);return action',
+            "if not client then assert(lifecycle.begin(action,'complete'));lifecycle.finish(action,'complete',true)end\n"
+            "    assert(lifecycle.deferCompletion(q,action))\n"
+            "    assert(lifecycle.flush(q)=='waiting','native Java removal was not required')\n"
+            "    nativePresent[action.action]=nil\n"
+            "    assert(lifecycle.flush(q)=='completed','paid native transfer did not reach settled observation')\n"
+            "    return action")
+        client=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        start=client.index('local function editorToggle()')
+        collector=client[start:client.index('local function editorBoundary(',start)].replace('local function ','function ')
+        lua=LuaRuntime();lua.globals().ProjectRoot=str(ROOT);lua.globals().NativeActionRoot=str(Path(game)/'media/lua')
+        lua.globals()['print']=lambda *values:None
+        lua.execute(prefix+"\ndo\nlocal nativePresent={}\n"+executor+"""
+            reset()
+            local held=item('Axe',nil,nil,true);local carrier=item('Bag_Schoolbag',nil,'BACK');local prop=item('DumbBell',carrier.inner)
+            player.primary,player.secondary=held,held;player.worn.BACK=carrier
+            local requestAction,owner=request('bicepscurl',10);expand(requestAction,owner);local body=reachExercise(owner)
+            local ending=head();ISTimedActionQueue.add(ending)
+            local optionalScope=settlement.deferred(player,body.toolkitQueueOperation)
+            assert(settlement.remember(optionalScope,body,{knownInputs=true,items={}}))
+            local optionalContext=assert(settlement.context(optionalScope))
+            assert(core.cancelOperation(owner,body));enabled=false;settlement.invalidateEditor(owner);owner.toolkitOperationsInvalid=true
+            player.getCharacterActions=function()return {contains=function(_,a)return nativePresent[a]==true end}end
+            native=false;T=PZSurvivorToolkit;Settlement=settlement
+            config={options={fitness_editor_toggles={['active-cancel-restore']='off-after-cancel'}}}
+            case=function()return 'active-cancel-restore'end;queue=function()return owner end
+            state={player=player,ids={items={bag=carrier:getID(),dumbbell=prop:getID()}}}
+            requests={requestAction};command={settledLedgers={}};recoveryProofs={};returnSeen={};recoverySeen={};rawRows={}
+            O={clock=function()return now end};raw=function(marker,row)assert(marker=='SETTLED_LEDGER');rawRows[#rawRows+1]=row end
+        """+collector+"""
+            local recovery
+            assert(lifecycle.registerObserver('fitness-terminal-proof-regression',{
+                started=function(a)
+                    if a.Type=='ISInventoryTransferAction'and a.item==carrier then recoverySeen[a]=true;recovery=a end
+                    if a.Type=='ISInventoryTransferAction'and a.item==prop then returnSeen[a]=true end
+                end,
+                settled=function(a)
+                    assert(owner.current==a and owner.queue[1]==a and not nativePresent[a.action])
+                    observeSettled(a)
+                end}))
+            owner:onCompleted(body)
+            for _=1,20 do
+                local action=assert(owner.current);if action==ending then break end
+                if action.Type=='ISInventoryTransferAction'then runSettled(owner)else runCurrent(owner)end
+            end
+            assert(owner.current==ending and prop:getContainer()==carrier.inner and player.worn.BACK==carrier)
+            assert(#command.settledLedgers==2 and #rawRows==2 and command.confirmedReturn==true,
+                'real terminal DTOs were not captured before cleanup retirement')
+            assert(command.settledLedgers[1].role=='carrier-recovery'and command.settledLedgers[2].role=='borrowed-return')
+            assert(command.settlement.borrowings[1].state=='completed','completed loan was fabricated from an inventory snapshot')
+            local earned=0
+            for _,step in ipairs(recoveryProofs[recovery].steps)do
+                if step.plannedTransfer and step.transferDirection=='pickup'and step.itemId==carrier:getID()
+                    and step.state=='earned'and step.started then earned=earned+1 end
+            end
+            assert(earned==1,'exact native carrier receipt was not earned before snapshot')
+            assert(settlement.operationState(requestAction)==nil and settlement.operationState(recovery)==nil,
+                'regression did not cross the old live-API retirement boundary')
+            enabled=true;assert(not settlement.isLive(optionalContext),'terminal observation revived stale optional permission')
+            assert(command.settlement.borrowings[1].state=='completed'and recoveryProofs[recovery]~=nil,
+                'immutable value snapshots disappeared with their live capabilities')
+        end
+        """)
+
+    def test_settled_raw_evidence_cannot_be_missing_duplicated_foreign_or_after_publication(self):
+        self.selection.update(cases=list(fitness.RESTORATION_CASES),options={'fitness_editor_toggles':{
+            case:'off-after-cancel' for case in fitness.RESTORATION_CASES}})
+        self.assertEqual(self.verify()['issues'],[])
+        original=(self.root/'client1-launch.log').read_text();lines=original.splitlines()
+        rows=[line for line in lines if '[FITNESS_TEST] SETTLED_LEDGER 'in line]
+        variants=[original.replace(rows[0]+'\n',''),original.replace(rows[0],rows[0]+'\n'+rows[0]),
+            original.replace(rows[0],rows[0].replace('native-carrier-recovery','foreign-native')),
+            '\n'.join([line for line in lines if line not in rows]+rows),
+            original.replace(rows[0],rows[0].replace('Lifecycle.settled','Lifecycle.started'))]
+        for ordinal,text in enumerate(variants):
+            (self.root/'client1-launch.log').write_text(text)
+            with self.subTest(change=ordinal):self.assertTrue(fitness.verify(self.root,self.selection,{})['issues'])
+        self.selection.update(mode='native')
+        evidence=self.evidence();evidence[0][1]['command']['settledLedgers']=[{}]
+        self.assertTrue(self.verify(evidence)['issues'],'native controls cannot borrow Toolkit terminal proof')
+
+    def test_editor_toggle_selection_is_explicit_and_restricted(self):
+        self.selection['cases']=list(fitness.RESTORATION_CASES)
+        self.selection['options']['fitness_editor_toggles']={case:'off-after-cancel' for case in fitness.RESTORATION_CASES}
+        fitness.validate(self.selection)
+        for value in ({}, [], {'empty':'off-after-cancel'}, {'active-cancel-restore':'off'},
+                      {'pickup-cancel-restore':True}, {'absent':'reenable-during-cleanup'}):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                candidate=copy.deepcopy(self.selection);candidate['options']['fitness_editor_toggles']=value
+                fitness.validate(candidate)
+        self.selection['cases']=['active-cancel-restore']
+        with self.assertRaises(ValueError):fitness.validate(self.selection)
+
+    def test_editor_toggle_variants_keep_all_three_existing_case_oracles(self):
+        for mode in ('toolkit','native'):
+            for kind in ('sp','mp'):
+                for variant in ('off-after-cancel','reenable-during-cleanup'):
+                    self.selection.update(mode=mode,kind=kind,cases=list(fitness.RESTORATION_CASES),
+                        clients=2 if kind=='mp' else 1,languages=['EN','RU'] if kind=='mp' else ['EN'],
+                        options=dict(fitness_editor_toggles={case:variant for case in fitness.RESTORATION_CASES},
+                                     **({'mp_host':True} if kind=='mp' else {})))
+                    with self.subTest(mode=mode,kind=kind,variant=variant):
+                        fitness.validate(self.selection)
+                        self.assertEqual(self.verify()['issues'],[])
+
+    def test_editor_toggles_allow_mixed_variants_and_selected_subsets_in_one_session(self):
+        self.selection.update(cases=list(fitness.RESTORATION_CASES),options={'fitness_editor_toggles':{
+            'active-cancel-restore':'off-after-cancel','pickup-cancel-restore':'reenable-during-cleanup',
+            'placement-cancel-restore':'off-after-cancel'}})
+        fitness.validate(self.selection);self.assertEqual(self.verify()['issues'],[])
+        self.selection['options']['fitness_editor_toggles']={'pickup-cancel-restore':'reenable-during-cleanup'}
+        fitness.validate(self.selection);self.assertEqual(self.verify()['issues'],[])
+
+    def test_editor_toggle_rejects_missing_early_foreign_and_lost_cleanup_evidence(self):
+        for case in fitness.RESTORATION_CASES:
+            for variant in ('off-after-cancel','reenable-during-cleanup'):
+                self.selection.update(cases=[case],options={'fitness_editor_toggles':{case:variant}})
+                changes={
+                    'missing transitions':lambda c:c.pop('editorTransitions'),
+                    'missing cancel':lambda c:c.pop('editorCancelBoundary'),
+                    'wrong action':lambda c:c['editorTransitions'][0].update(actionRef='foreign'),
+                    'wrong native':lambda c:c['editorTransitions'][0].update(nativeRef='foreign'),
+                    'wrong token':lambda c:c['editorTransitions'][0].update(token='foreign'),
+                    'not current':lambda c:c['editorCancelBoundary'].update(currentRef='foreign'),
+                    'early toggle':lambda c:c['editorTransitions'][0].update(at=19),
+                    'late toggle':lambda c:c['editorTransitions'][0].update(at=71),
+                    'lost tail':lambda c:c['editorTransitions'][0].update(tailRetained=False),
+                    'lost request':lambda c:c['editorCancelBoundary'].update(requestRetained=False),
+                    'lost drain':lambda c:c['editorCancelBoundary'].update(drainingAction=False),
+                    'wrong cancel item':lambda c:c['editorCancelBoundary'].update(itemId=999),
+                    'generation revoked':lambda c:c['editorTransitions'][0].update(generationAfter=4),
+                    'generation skipped':lambda c:c['editorTransitions'][0].update(generationAfter=7),
+                    'extra transition':lambda c:c['editorTransitions'].append(copy.deepcopy(c['editorTransitions'][0])),
+                    'wrong final setting':lambda c:c.update(editorEnabled=variant!='reenable-during-cleanup'),
+                    'late restoration':lambda c:c['beforeTail']['inventory'].update(primary=False),
+                }
+                if variant=='reenable-during-cleanup':
+                    changes.update({
+                        'missing cleanup':lambda c:c.pop('editorCleanupBoundary'),
+                        'missing reenable':lambda c:c['editorTransitions'].pop(),
+                        'wrong cleanup action':lambda c:c['editorTransitions'][1].update(actionRef='foreign'),
+                        'not required':lambda c:c['editorCleanupBoundary'].update(requiredStep=False),
+                        'not draining':lambda c:c['editorCleanupBoundary'].update(drainingAction=False),
+                        'foreign cleanup item':lambda c:c['editorCleanupBoundary'].update(itemId=999),
+                        'early cleanup':lambda c:c['editorCleanupBoundary'].update(at=20),
+                        'changed generation':lambda c:c['editorTransitions'][1].update(generationAfter=7),
+                        'request retained':lambda c:c['editorCleanupBoundary'].update(requestRetained=True),
+                    })
+                for name,change in changes.items():
+                    evidence=copy.deepcopy(self.evidence());change(evidence[0][1]['command'])
+                    with self.subTest(case=case,variant=variant,change=name):self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_editor_immediate_disable_generation_can_be_unchanged_or_invalidated_once(self):
+        for case in fitness.RESTORATION_CASES:
+            for variant in ('off-after-cancel','reenable-during-cleanup'):
+                self.selection.update(cases=[case],options={'fitness_editor_toggles':{case:variant}})
+                for generation in (5,6):
+                    evidence=self.evidence();command=evidence[0][1]['command']
+                    command['editorTransitions'][0]['generationAfter']=generation
+                    with self.subTest(case=case,variant=variant,generation=generation):
+                        self.assertEqual(self.verify(evidence)['issues'],[])
+                if variant=='reenable-during-cleanup':
+                    for generation in (5,7):
+                        evidence=self.evidence();command=evidence[0][1]['command']
+                        command['editorCleanupBoundary']['generation']=generation
+                        command['editorTransitions'][1].update(generation=generation,generationBefore=generation,generationAfter=generation)
+                        with self.subTest(case=case,cleanup_generation=generation):
+                            self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_lua_editor_toggle_waits_for_accepted_cancel_and_required_current_cleanup(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for editor-toggle boundary checks')
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        lua=LuaRuntime()
+        lua.execute('assert(load(...))',source)
+        lua.execute("""
+            native=false;now=20;clock=800000;case=function()return 'active-cancel-restore'end
+            config={options={fitness_editor_toggles={['active-cancel-restore']='reenable-during-cleanup'}}}
+            command={editorTransitions={}};tail={};state={ids={items={tail=100}}}
+            item={getID=function()return 104 end,getFullType=function()return 'Base.DumbBell'end}
+            action={Type='ISFitnessAction',action={},toolkitQueueOperation={}}
+            current=action;q={current=action,queue={action,tail},toolkitOperationGeneration=5,
+                indexOf=function(self,value)for i,row in ipairs(self.queue)do if row==value then return i end end;return -1 end}
+            queue=function()return q end;getTimestampMs=function()return now end;O={clock=function()return clock end}
+            Settlement={drainingAction=function(a)return a.draining==true end,requiredStep=function(a)return a.required==true end}
+            enabled=true;setCount=0
+            option={setValue=function(self,value)setCount=setCount+1;enabled=value end}
+            PZAPI={ModOptions={getOptions=function()return {getOption=function()return option end}end}}
+            T={Settings={actionQueue=function()return enabled end}}
+            API={cancelOperation=function(queue,a)assert(a==current);q.toolkitGroupCancel={};a.draining=true;return true end}
+            raw=function()end
+        """)
+        start=source.index('local function editorToggle()');end=source.index('local function run(',start)
+        lua.execute(source[start:end].replace('local function ','function '))
+        lua.execute("""
+            editorCleanup(current);assert(setCount==0 and enabled)
+            cancel(action,'rejected');assert(setCount==1 and not enabled and #command.editorTransitions==1)
+            local off=command.editorTransitions[1]
+            assert(off.actionRef==tostring(action)and off.nativeRef==tostring(action.action)
+                and off.token==tostring(action.toolkitQueueOperation)and off.requestRetained and off.tailRetained
+                and off.generationBefore==5 and off.generationAfter==5)
+            cleanup={Type='ISInventoryTransferAction',item=item,action={},toolkitQueueOperation={},draining=true,
+                isStarted=function(self)return self.started==true end}
+            -- The next native begin/tick observes the disabled option and invalidates once.
+            q.toolkitOperationGeneration=6
+            now=30;clock=850000;q.current=cleanup;q.queue={cleanup,tail};q.toolkitGroupCancel=nil
+            editorCleanup(cleanup);assert(setCount==1)
+            cleanup.started=true;editorCleanup(cleanup);assert(setCount==1)
+            cleanup.required=true;q.current=action;editorCleanup(cleanup);assert(setCount==1)
+            q.current=cleanup;editorCleanup(cleanup);assert(setCount==2 and enabled and #command.editorTransitions==2)
+            local on=command.editorTransitions[2]
+            assert(on.drainingAction and on.requiredStep and not on.requestRetained and on.tailRetained
+                and on.generationBefore==6 and on.generationAfter==6 and on.actionRef==tostring(cleanup))
+            editorCleanup(cleanup);assert(setCount==2)
+            native=true;command.editorTransitions={};editorCleanup(cleanup);assert(setCount==2)
+        """)
+
+    def test_lua_editor_reenable_accepts_real_inherited_cleanup_without_root_marker(self):
+        try:
+            from lupa.lua51 import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa is required for the actual settlement cleanup topology')
+        lua=LuaRuntime();lua.globals().ProjectRoot=str(ROOT)
+        settlement_test=(ROOT/'tests/test_action_queue_settlement.lua').read_text()
+        # Reuse the real Settlement fixture, then retain an actual command and
+        # inherit its private proof into a native child through production code.
+        lua.execute(settlement_test[:settlement_test.index('-- Deferred native producers')]+"""
+            s=setup(false);T=PZSurvivorToolkit;Settlement=s.settlement
+            s.current.Type='ISFitnessAction'
+            T.ActionQueuePolicy.inspect=function()return {}end
+            T.ActionQueuePolicy.editUnchanged=function(q,snapshot)return q==s.queue and snapshot==s.queue end
+            T.ActionQueueOperations.invalidateQueue=function(q)
+                q.toolkitOperationGeneration=(q.toolkitOperationGeneration or 0)+1
+                for _,a in ipairs(q.queue)do a.toolkitQueueOperation.toolkitCancelled=true end
+            end
+            parent={Type='ISQueueActionsAction',character=s.player,toolkitQueueOperation=s.token,action={}}
+            s.settlement.register('test-earned-command',{retain=function(a)return a==parent end})
+            s.queue.queue={s.current,parent,s.tail}
+            local request={action=s.current,token=s.token}
+            assert(s.settlement.admitCancellation(s.queue,request,{allowed=true,first=1,snapshot=s.queue}))
+            s.queue.toolkitGroupCancel=request;s.token.toolkitCancelled=true;s.player.queueEnabled=false
+            s.settlement.invalidateEditor(s.queue)
+            assert(s.settlement.finish(s.queue,request,s.discard))
+            assert(s.settlement.isCleanup(parent)and s.settlement.requiredStep(parent))
+            s.settlement.completeCancellation(s.queue,s.current)
+            table.remove(s.queue.queue,1);s.queue.current=parent;s.queue.toolkitGroupCancel=nil
+            s.settlement.bindCancellation(parent)
+            child={Type='ISEquipWeaponAction',character=s.player,toolkitQueueOperation=parent.toolkitQueueOperation,
+                item=s.item(104,s.root),action={},isStarted=function()return true end}
+            assert(s.settlement.inheritCleanup(child,parent))
+            table.insert(s.queue.queue,2,child)
+            s.settlement.completeCancellation(s.queue,parent)
+            table.remove(s.queue.queue,1);s.queue.current=child;s.settlement.bindCancellation(child)
+            assert(not s.settlement.isCleanup(child)and s.settlement.requiredStep(child)and s.settlement.drainingAction(child),
+                'regression must exercise a real inherited child without its root cleanup marker')
+            native=false;tail=s.tail;state={ids={items={tail=100}}};command={editorTransitions={{}}}
+            case=function()return 'active-cancel-restore'end
+            config={options={fitness_editor_toggles={['active-cancel-restore']='reenable-during-cleanup'}}}
+            queue=function()return s.queue end
+            s.queue.indexOf=function(self,value)for i,a in ipairs(self.queue)do if a==value then return i end end;return -1 end
+            O={clock=function()return 1000 end};setCount=0
+            PZAPI={ModOptions={getOptions=function()return {getOption=function()return {
+                setValue=function(self,value)s.player.queueEnabled=value;setCount=setCount+1 end}end}end}}
+            raw=function()end
+        """)
+        source=(ROOT/'tests/native_queue/fitness/client/ZZFitnessQueue.lua').read_text()
+        start=source.index('local function editorToggle()');end=source.index('local function cancel(',start)
+        lua.execute(source[start:end].replace('local function ','function '))
+        lua.execute("""
+            editorCleanup(child)
+            assert(setCount==1 and s.player.queueEnabled and #command.editorTransitions==2,
+                'real inherited native cleanup failed to reenable the requested editor')
+            local witness=command.editorCleanupBoundary
+            assert(witness.requiredStep and witness.drainingAction and witness.actionRef==tostring(child)
+                and witness.nativeRef==tostring(child.action)and witness.tailRetained and not witness.requestRetained)
+            editorCleanup(child);assert(setCount==1,'one cleanup child toggled twice')
+        """)
+
+    def test_editor_raw_logs_must_match_and_precede_the_published_case(self):
+        self.selection.update(cases=['active-cancel-restore'],options={'fitness_editor_toggles':{'active-cancel-restore':'reenable-during-cleanup'}})
+        self.assertEqual(self.verify()['issues'],[])
+        original=(self.root/'client1-launch.log').read_text()
+        lines=original.splitlines();markers=[line for line in lines if '[FITNESS_TEST] EDITOR_'in line]
+        variants=[original.replace(markers[1]+'\n',''), original.replace(markers[1],markers[1]+'\n'+markers[1]),
+                  original.replace(markers[1],markers[1].replace('native-cancel','foreign')),
+                  '\n'.join([line for line in lines if line not in markers]+markers),
+                  original.replace(markers[0]+'\n'+markers[1],markers[1]+'\n'+markers[0])]
+        for n,text in enumerate(variants):
+            (self.root/'client1-launch.log').write_text(text)
+            with self.subTest(variant=n):self.assertTrue(fitness.verify(self.root,self.selection,{})['issues'])
+
+    def test_native_editor_option_never_toggles_and_unrequested_cases_have_no_editor_fields(self):
+        self.selection.update(mode='native',cases=['active-cancel-restore'],options={'fitness_editor_toggles':{'active-cancel-restore':'off-after-cancel'}})
+        evidence=self.evidence();evidence[0][1]['command']['editorEnabled']=True
+        self.assertTrue(self.verify(evidence)['issues'])
+        self.selection.update(mode='toolkit',options={})
+        evidence=self.evidence();evidence[0][1]['command']['editorTransitions']=[]
+        self.assertTrue(self.verify(evidence)['issues'])
 
     def test_borrowed_cancel_requires_native_progress_confirmed_return_and_tail_boundary(self):
         for case in fitness.RESTORATION_CASES:
@@ -387,6 +860,7 @@ class FitnessAdapterTests(unittest.TestCase):
         lua.execute("""
             package.preload['QueueFitnessObservation']=function()return {}end
             case=function()return 'empty-restore'end;minutes=function()return 10 end
+            editorToggle=function()return nil end
             getTimestampMs=function()return 1000 end;getPlayer=function()return {}end
             O={clock=function()return 1000 end,clinical=function()return {}end}
             state={items={front={},tail={}}};enqueues=0;reads=0
@@ -481,8 +955,12 @@ class FitnessAdapterTests(unittest.TestCase):
                     self.assertEqual(command['cancelCallback'],'ISFitnessUI:CANCEL')
                     self.assertEqual(row['receipt']['inventory'],prep['inventory'])
                     self.assertEqual(row['receipt']['activation'],prep['activation'])
-                    self.assertNotEqual(command['beforeTail']['inventory'],prep['inventory'])
-                    self.assertNotEqual(command['beforeTail']['activation'],prep['activation'])
+                    if row['id']=='active-cancel-restore':
+                        self.assertNotIn('beforeTail',command)
+                        self.assertFalse(row['receipt']['tailRead'])
+                    else:
+                        self.assertNotEqual(command['beforeTail']['inventory'],prep['inventory'])
+                        self.assertNotEqual(command['beforeTail']['activation'],prep['activation'])
 
     def test_native_borrowed_controls_reject_unreturned_final_prop_or_wrong_activation(self):
         for case in fitness.RESTORATION_CASES:
@@ -1080,7 +1558,19 @@ class FitnessAdapterTests(unittest.TestCase):
     def verify(self, evidence=None):
         rows, raw, peers = evidence or self.evidence()
         authority = '\n'.join('[FITNESS_TEST] '+marker+' '+json.dumps(value) for marker,value in raw)
-        client = '\n'.join('[QUEUE_CHECK] '+json.dumps(row) for row in rows)+'\n[FITNESS_TEST] COMPLETE\n'
+        client_lines=[]
+        for row in rows:
+            command=row.get('command',{})
+            transitions=command.get('editorTransitions',[])
+            if 'editorCancelBoundary'in command:
+                client_lines.append('[FITNESS_TEST] EDITOR_CANCEL '+json.dumps(command['editorCancelBoundary']))
+                if transitions:client_lines.append('[FITNESS_TEST] EDITOR_TRANSITION '+json.dumps(transitions[0]))
+            if 'editorCleanupBoundary'in command:
+                client_lines.append('[FITNESS_TEST] EDITOR_CLEANUP '+json.dumps(command['editorCleanupBoundary']))
+                if len(transitions)>1:client_lines.append('[FITNESS_TEST] EDITOR_TRANSITION '+json.dumps(transitions[1]))
+            client_lines.extend('[FITNESS_TEST] SETTLED_LEDGER '+json.dumps(entry) for entry in command.get('settledLedgers',[]))
+            client_lines.append('[QUEUE_CHECK] '+json.dumps(row))
+        client = '\n'.join(client_lines)+'\n[FITNESS_TEST] COMPLETE\n'
         if self.selection['kind']=='mp':
             (self.root/'server-launch.log').write_text(authority)
             (self.root/'client2-launch.log').write_text('\n'.join('[QUEUE_CHECK] '+json.dumps(row) for row in peers)+'\n[FITNESS_TEST] COMPLETE\n')

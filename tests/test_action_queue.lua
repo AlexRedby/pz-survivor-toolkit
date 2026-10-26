@@ -2212,7 +2212,7 @@ do
         ISTimedActionQueue.add(ending)
         frame(actor)
         local root = owner.current
-        local receipt
+        local receipt, receiptRecord
         if remote then
             serial = serial + 1
             root.toolkitNativeTransaction, root.toolkitNativeKind = serial, root.Type
@@ -2223,11 +2223,11 @@ do
                 receive('PZSurvivorToolkitActions', 'State', args)
             end
             receipt('started')
-            assert(acknowledgements.capture(root), 'the drain fixture needs a genuine sealed Started receipt')
+            receiptRecord = assert(acknowledgements.capture(root), 'the drain fixture needs a genuine sealed Started receipt')
         end
         return {actor = actor, queue = owner, root = root, body = body, sibling = sibling, tail = ending,
             item = body.item, itemId = body.item:getID(), source = source, originalReturn = originalReturn, token = token, receipt = receipt,
-            fetched = fetched}
+            fetched = fetched, receiptRecord = receiptRecord}
     end
     local function returned(s, label)
         local value = s.queue.current
@@ -2283,6 +2283,16 @@ do
                 frame(s.actor)
             end
             local cleanup = returned(s, label)
+            if s.receipt then
+                local terminal = s.fetched and 'completed' or 'canceled'
+                assert(acknowledgements.observe(s.root, s.receiptRecord) == terminal
+                    and not acknowledgements.capture(s.root), 'settled original action reacquired current receipt rights')
+                s.receipt(terminal); s.receipt(terminal == 'completed' and 'canceled' or 'completed')
+                assert(acknowledgements.observe(s.root, s.receiptRecord) == terminal
+                    and s.queue.current == cleanup and s.queue.queue[2] == s.tail and not s.tail.action
+                    and s.item:getContainer() == s.actor.inventory,
+                    label .. ': duplicate/conflicting terminal replayed effects or advanced required cleanup')
+            end
             if toggle ~= 'enabled' then
                 -- Existing optional producers lose their old generation even
                 -- though this exact admitted edit can finish its obligations.
@@ -2320,6 +2330,11 @@ do
             assert(s.item:getContainer() == s.source and s.queue.current == s.tail and #s.queue.queue == 1
                 and not s.queue.toolkitGroupCancel and not s.queue.toolkitCancel,
                 label .. ': exact native return must finish once before starting the independent tail')
+            if s.receipt then
+                s.receipt('completed'); s.receipt('canceled')
+                assert(s.queue.current == s.tail and #s.queue.queue == 1 and s.item:getContainer() == s.source
+                    and not acknowledgements.capture(s.root), label .. ': stale terminal revived a retired original action')
+            end
             frame(s.actor); s.tail.action.done = true; frame(s.actor)
             assert(#s.queue.queue == 0, label .. ': completed drain retained or replayed native work')
             enabled = true

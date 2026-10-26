@@ -41,6 +41,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 - **Fixed:** Better Containers proximity behavior survives CleanUI interface switches, preserving aggregate selections, shared hover highlights and container-page policies for both interface classes.
 - **Fixed:** Ground highlighting keeps discovery progress while walking, so dense piles and items farther inside the radius do not remain undiscovered until the player stops. Normal and Wishlist highlighting retain the existing per-tick work limits.
+- Development: native lifecycle observers can capture settled receipt/effect snapshots before queue advancement retires required cleanup; failed diagnostics cannot block paid native completion.
+- Fixed: closing a deferred mod session after queue editing is disabled no longer drops a proven borrowed-item return from an already accepted cancellation. Closed sessions still reject new work; already-running transfers retain their exact observation handle, and the earned return can finish before the independent queue tail.
 
 ### 0.1.283
 

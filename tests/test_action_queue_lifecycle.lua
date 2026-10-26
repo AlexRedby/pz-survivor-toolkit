@@ -593,3 +593,54 @@ if NativeActionRoot then
 else
     print('Admitted lifecycle native toggle checks SKIP (requires --game).')
 end
+
+
+-- Terminal observations precede native advancement, never authorize effects,
+-- and cannot advance an episode revoked/reset by an observer.
+do
+    local previousEnabled,previousClient=enabled,client
+    enabled,client=true,false
+    local target,observations=nil,0
+    assert(Lifecycle.registerObserver('fixture.settled-boundary',{settled=function(value)
+        if value~=target then return end
+        observations=observations+1
+        assert(queue.current==value and queue.queue[1]==value and not present[value.action],
+            'settled observation ran after native advancement or before Java removal')
+    end}))
+    queue,action,present=fixture();target=action
+    assert(Lifecycle.begin(action,'perform'));queue:onCompleted(action);Lifecycle.finish(action,'perform',true)
+    assert(Lifecycle.flush(queue)=='waiting'and observations==0)
+    assert(Lifecycle.begin(action,'complete'));Lifecycle.finish(action,'complete',true)
+    assert(Lifecycle.flush(queue)=='waiting'and observations==0)
+    present[action.action]=nil
+    assert(Lifecycle.flush(queue)=='completed'and observations==1 and queue.started==1)
+    assert(Lifecycle.flush(queue)==nil and observations==1,'terminal observer replayed')
+    target=nil
+    local failures=0
+    assert(Lifecycle.registerObserver('fixture.settled-error',{settled=function()
+        failures=failures+1;error('terminal diagnostics unavailable')
+    end}))
+    for _=1,2 do
+        queue,action,present=fixture()
+        assert(Lifecycle.begin(action,'perform'));queue:onCompleted(action);Lifecycle.finish(action,'perform',true)
+        assert(Lifecycle.begin(action,'complete'));Lifecycle.finish(action,'complete',true)
+        present[action.action]=nil
+        assert(Lifecycle.flush(queue)=='completed'and queue.started==1,
+            'failed terminal observer blocked already-paid native advancement')
+    end
+    assert(failures==1,'failed terminal observer was not quarantined')
+    local revoked
+    assert(Lifecycle.registerObserver('fixture.settled-reset',{settled=function(value)
+        if value~=revoked then return end
+        Lifecycle.reset(queue);queue.queue={};queue.current=nil
+    end}))
+    queue,action,present=fixture();revoked=action
+    assert(Lifecycle.begin(action,'perform'));queue:onCompleted(action);Lifecycle.finish(action,'perform',true)
+    assert(Lifecycle.begin(action,'complete'));Lifecycle.finish(action,'complete',true)
+    present[action.action]=nil
+    assert(Lifecycle.flush(queue)=='completed'and queue.started==0 and not queue.current,
+        'terminal observer reset allowed advancement of its old native episode')
+    assert(Lifecycle.flush(queue)==nil)
+    enabled,client=previousEnabled,previousClient
+end
+print('Settled observations: exact native removal/effects before advancement, once-only delivery, failure quarantine and reset revocation passed.')

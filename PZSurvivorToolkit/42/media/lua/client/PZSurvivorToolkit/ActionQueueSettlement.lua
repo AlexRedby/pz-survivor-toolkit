@@ -44,7 +44,8 @@ local function generationMatches(character, queue, generation, action)
     if not state or state.character ~= character then return false end
     local member = state.members[action]
     return state.record.actions[action] ~= nil and generation == state.originalGeneration
-        or member ~= nil and (member.generation == generation or state.originalGeneration == generation)
+        or member ~= nil and (member.generation == generation or member.nativeGeneration == generation
+            or state.originalGeneration == generation)
             and action.toolkitQueueOperation == member.token
 end
 function Settlement.cancellationGeneration(action, generation)
@@ -62,7 +63,9 @@ function Settlement.bindCancellation(action)
     local queue = action and ISTimedActionQueue.queues[action.character]
     local state = queue and cancellation(queue)
     local member = state and state.members[action]
-    if member and not member.native then member.native = action.action end
+    if member and not member.native and action.action then
+        member.native, member.nativeGeneration = action.action, queue.toolkitOperationGeneration or 0
+    end
 end
 function Settlement.resetCancellation(queue) cancellations[queue] = nil end
 function Settlement.completeCancellation(queue, action)
@@ -113,8 +116,15 @@ function Settlement.admitCancellation(queue, request, decision)
         or request.token ~= action.toolkitQueueOperation or type(request.token) ~= "table" or request.token.toolkitCancelled then return false end
     local record = operation(action.character, request.token, true)
     if not record then return false end
+    local scopes = {}
+    local function capture(scope)
+        if scope and scope.phase ~= "retired" and scope.character == action.character
+            and scope.queue == queue and scope.generation == record.generation then scopes[scope] = true end
+    end
+    capture(record.preparationScope)
+    for _, binding in ipairs(record.borrowings) do capture(binding.scope) end
     cancellations[queue] = {character = action.character, action = action, native = action.action,
-        token = request.token, request = request, record = record, list = queue.queue, members = {},
+        token = request.token, request = request, record = record, list = queue.queue, members = {}, scopes = scopes,
         generation = queue.toolkitOperationGeneration or 0, originalGeneration = record.generation}
     return true
 end
@@ -396,6 +406,14 @@ local function deferred(scope)
     return type(scope) == "table" and scope.marker == deferredMarker
 end
 
+-- Closing a producer remains permanent. Only the scopes enrolled while the
+-- cancellation was admitted retain observation of already-earned native debt.
+local function cancellationScope(scope)
+    local state = deferred(scope) and cancellation(scope.queue)
+    return state and state.scopes[scope] == true and scope.character == state.character
+        and scope.generation == state.originalGeneration or false
+end
+
 function Settlement.deferred(character, token)
     local queue = ISTimedActionQueue.getTimedActionQueue(character)
     local scope = {marker = deferredMarker, character = character, token = token, queue = queue,
@@ -588,7 +606,7 @@ end
 
 local function baseReturnValid(proof)
     local action, character, scope, queue = proof.action, proof.character, proof.scope, proof.queue
-    return not proof.invalid and scope.phase ~= "retired" and scope.queue == queue and scope.character == character
+    return not proof.invalid and (scope.phase ~= "retired" or cancellationScope(scope)) and scope.queue == queue and scope.character == character
         and scope.generation == proof.generation and proof.obligation.token == proof.token and action.character == character
         and action.action == proof.native and isClient() == proof.client
         and not character:isDead() and character:getPlayerNum() == proof.player and character:getOnlineID() == proof.online
@@ -685,7 +703,7 @@ function Settlement.beginReturn(action, obligation, guard)
         local seal = type(obligation) == "table" and rawget(obligation, obligationScope)
         local scope, token, direction
         if type(seal) == "function" then scope, token, direction = seal(obligation) end
-        if not scope or obligation.token ~= token or scope.phase == "retired" then return false, "obligation" end
+        if not scope or obligation.token ~= token or scope.phase == "retired" and not cancellationScope(scope) then return false, "obligation" end
         if type(guard) ~= "function" or not guard(action) then return false, "source" end
         local character, queue = action.character, scope.queue
         if character ~= scope.character or queue ~= ISTimedActionQueue.queues[character]
@@ -855,15 +873,11 @@ local function borrowing(scope)
 end
 
 local function borrowingLive(scope)
-    if not deferred(scope) or scope.phase == "retired" or scope.character:isDead()
+    if not deferred(scope) or scope.character:isDead()
         or ISTimedActionQueue.queues[scope.character] ~= scope.queue then return false end
-    if Toolkit.Settings and Toolkit.Settings.actionQueue()
-        and (scope.queue.toolkitOperationGeneration or 0) == scope.generation then return true end
-    local state = cancellation(scope.queue)
-    if not state or scope.generation ~= state.originalGeneration then return false end
-    if state.record.preparationScope == scope then return true end
-    for _, binding in ipairs(state.record.borrowings) do if binding.scope == scope then return true end end
-    return false
+    if cancellationScope(scope) then return true end
+    return scope.phase ~= "retired" and Toolkit.Settings and Toolkit.Settings.actionQueue()
+        and (scope.queue.toolkitOperationGeneration or 0) == scope.generation
 end
 
 -- The exact native pickup proves its original owner without relying on the
@@ -899,7 +913,7 @@ end
 
 function Settlement.preparePickup(scope, action)
     local ledger = borrowing(scope)
-    if not ledger or not borrowingLive(scope) or not action or action.character ~= scope.character
+    if not ledger or scope.phase == "retired" or not borrowingLive(scope) or not action or action.character ~= scope.character
         or not scope.tasks[action.toolkitQueueOperation] or not action.item
         or not action.srcContainer or action.srcContainer == scope.character:getInventory()
         or action.destContainer ~= scope.character:getInventory() or action.item:getContainer() ~= action.srcContainer then return false end
@@ -1162,6 +1176,26 @@ function Settlement.pickupMatches(scope, action)
     local ledger = borrowing(scope)
     local handle = ledger and ledger.handles[action]
     return handle and borrowingLive(scope) and Settlement.returnMatches(action, handle) or false
+end
+
+-- The producer registry may close while an accepted native pickup is still
+-- executing. Reuse only its already-bound observation handle, never a context
+-- that could admit new work or a handle from another native episode.
+function Settlement.admittedPickupScope(action)
+    local queue = action and ISTimedActionQueue.queues[action.character]
+    local state = queue and cancellation(queue)
+    if not state or queue.current ~= action or queue.queue[1] ~= action then return end
+    local found
+    for scope in pairs(state.scopes) do
+        local ledger = borrowing(scope)
+        local proof = ledger and returnProof(ledger.handles[action])
+        if proof and not proof.invalid and not proof.stopped and proof.direction == "pickup"
+            and proof.action == action and proof.native == action.action and proof.queue == queue then
+            if found then return end -- Ambiguous observers cannot select an owner.
+            found = scope
+        end
+    end
+    return found
 end
 
 function Settlement.refreshPickup(scope, action)

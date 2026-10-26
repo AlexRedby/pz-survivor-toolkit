@@ -10,7 +10,7 @@ from queue_checks.adapters import cleanup_cancel as a
 
 
 def evidence(case, mode='toolkit', kind='mp'):
-    enabled = mode == 'toolkit'; mask = case == a.CASES[0]; keep = enabled and case == 'p4-keep-return'
+    enabled = mode == 'toolkit'; semantic = a.base_case(case); mask = semantic == a.BASE_CASES[0]; keep = enabled and semantic == 'p4-keep-return'
     items = dict(book=1, mask=2, food=3) if mask else dict(book=1, bag=2, borrowed=3, torch=4, secondary=5)
     inventory = [dict(id=id, type='Base.' + name, container='bag:2' if name == 'borrowed' else 'root') for name, id in items.items()]
     base = dict(case=case, items=inventory, book=219, primary=False if mask else 4, secondary=False if mask else 5,
@@ -74,10 +74,21 @@ def evidence(case, mode='toolkit', kind='mp'):
                               pressed=True, pressCaptured=True, released=True, gestureCleared=True, feedback=False,
                               x=380, y=80, at=20, bodyCurrent=keep, returnAbsent=keep,
                               bodyRef=body['actionRef'], nativeRef=body['nativeRef'])
+    editor_transitions = []
+    if enabled and case in ('p4-editor-off', 'p4-editor-reenabled'):
+        editor_transitions.append(dict(case=case, enabled=False, at=21, boundary='accepted-cancel',
+                                       current=body['sequence'], actionRef=body['actionRef'], nativeRef=body['nativeRef'],
+                                       generationBefore=4, generationAfter=5 if case == 'p4-editor-reenabled' else 4,
+                                       tailRetained=True, requestRetained=True))
+        if case == 'p4-editor-reenabled':
+            editor_transitions.append(dict(case=case, enabled=True, at=34, boundary='cleanup-current',
+                                           current=cleanup['sequence'], actionRef=cleanup['actionRef'], nativeRef=False,
+                                           generationBefore=6, generationAfter=6, tailRetained=True, requestRetained=False))
     tail_snapshot = copy.deepcopy(final)
     row = dict(event='case', suite='cleanup-cancel', actor='client1', kind=kind, mode=mode, status='passed', id=case, ids=ids,
                baseline=copy.deepcopy(base), authorityBaseline=copy.deepcopy(base), checkpoint=checkpoint, boundary=boundary,
                records=records, idleEvidence=dict(case=case, since=90, at=1590, empty=True, snapshot=copy.deepcopy(final)), bodyTerminal=copy.deepcopy(final) if not mask else False, tailSnapshot=tail_snapshot, client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True,
+               editorTransitions=editor_transitions, editorEnabled=enabled and case != 'p4-editor-off',
                outcome=dict(cleanupRestored=True, tailCompleted=True, authoritative=True, cancelled=enabled,
                             normalNativeControl=not enabled, cleanupBeforeTail=True, originalEquipmentBeforeTail=True))
     selection = dict(suite='cleanup-cancel', cases=a.CASES, kind=kind, mode=mode, languages=['EN'], clients=1, mods=a.MODS,
@@ -95,6 +106,43 @@ class CleanupCancelChecks(unittest.TestCase):
                 for kind in ('sp', 'mp'):
                     row, selection, receipts = evidence(case, mode, kind)
                     with self.subTest(case=case, mode=mode, kind=kind): self.assertEqual([], self.check(row, selection, receipts))
+
+    def test_editor_setting_changes_are_bound_to_cancel_and_current_cleanup(self):
+        self.assertEqual('p4-after-pickup', a.base_case('p4-editor-off'))
+        self.assertEqual('p4-after-pickup', a.base_case('p4-editor-reenabled'))
+        for case, mutations in (
+            ('p4-editor-off', {
+                'missing transition': lambda r: r['editorTransitions'].clear(),
+                'wrong action': lambda r: r['editorTransitions'][0].update(actionRef='foreign'),
+                'wrong current': lambda r: r['editorTransitions'][0].update(current=99),
+                'wrong boundary': lambda r: r['editorTransitions'][0].update(boundary='cleanup-current'),
+                'early transition': lambda r: r['editorTransitions'][0].update(at=19),
+                'lost tail': lambda r: r['editorTransitions'][0].update(tailRetained=False),
+                'lost request': lambda r: r['editorTransitions'][0].update(requestRetained=False),
+                'generation skipped': lambda r: r['editorTransitions'][0].update(generationAfter=6),
+                'editor ended enabled': lambda r: r.update(editorEnabled=True),
+            }),
+            ('p4-editor-reenabled', {
+                'missing reenable': lambda r: r['editorTransitions'].pop(),
+                'wrong cleanup': lambda r: r['editorTransitions'][1].update(actionRef='foreign'),
+                'wrong current': lambda r: r['editorTransitions'][1].update(current=99),
+                'changed generation': lambda r: r['editorTransitions'][1].update(generationAfter=7),
+                'wrong order': lambda r: r['editorTransitions'][1].update(at=20),
+                'request still retained': lambda r: r['editorTransitions'][1].update(requestRetained=True),
+                'lost tail': lambda r: r['editorTransitions'][1].update(tailRetained=False),
+                'wrong native action': lambda r: r['editorTransitions'][1].update(nativeRef='foreign'),
+                'editor ended disabled': lambda r: r.update(editorEnabled=False),
+            }),
+        ):
+            for name, mutate in mutations.items():
+                row, selection, receipts = evidence(case)
+                mutate(row)
+                with self.subTest(case=case, name=name): self.assertTrue(self.check(row, selection, receipts))
+        for case in ('p4-editor-off', 'p4-editor-reenabled'):
+            row, selection, receipts = evidence(case, mode='native')
+            row['editorTransitions'].append(dict(row['editorTransitions']))
+            with self.subTest(case=case, mode='native'):
+                self.assertTrue(self.check(row, selection, receipts))
 
     def test_reject_missing_preparation_effect_and_cleanup_order(self):
         changes = {
@@ -475,16 +523,24 @@ class CleanupCancelChecks(unittest.TestCase):
         for row, _, receipts in rows:
             client += [raw('P4_IDLE', row['idleEvidence']), raw('BASELINE', row['baseline']), raw('BOUNDARY', row['boundary']), raw('TAIL_STARTED', row['tailSnapshot']),
                        *[raw('NATIVE_STATE', r) for r in receipts], event(row)]
+            client += [raw('EDITOR_TRANSITION', transition) for transition in row['editorTransitions']]
             if row['bodyTerminal']: client.append(raw('BODY_SETTLED', row['bodyTerminal']))
             server += [raw('PREPARED', row['ids']), raw('BASELINE_CONFIRMED', row['authorityBaseline']), raw('CHECKPOINT', row['checkpoint']), raw('VERIFY', row['server'])]
         client += [event(completed), raw('COMPLETE', {'cases': a.CASES})]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / 'client1-launch.log').write_text('\n'.join(client)); (root / 'server-launch.log').write_text('\n'.join(server))
             self.assertEqual([], a.verify(root, selection, {})['issues'])
-            for marker in ('BOUNDARY', 'TAIL_STARTED', 'BODY_SETTLED', 'P4_IDLE'):
+            for marker in ('BOUNDARY', 'TAIL_STARTED', 'BODY_SETTLED', 'P4_IDLE', 'EDITOR_TRANSITION'):
                 damaged = [line for line in client if not line.startswith(a.PREFIX + marker + ' ')]
                 (root / 'client1-launch.log').write_text('\n'.join(damaged))
                 self.assertTrue(a.verify(root, selection, {})['issues'], marker)
+            transition_line = next(line for line in client if line.startswith(a.PREFIX + 'EDITOR_TRANSITION '))
+            (root / 'client1-launch.log').write_text('\n'.join([*client, transition_line]))
+            self.assertTrue(a.verify(root, selection, {})['issues'], 'duplicate editor transition')
+            (root / 'client1-launch.log').write_text('\n'.join(
+                line.replace('"enabled": false', '"enabled": true', 1) if line == transition_line else line
+                for line in client))
+            self.assertTrue(a.verify(root, selection, {})['issues'], 'changed editor transition')
             changed_tail = copy.deepcopy(rows[0][0]['tailSnapshot']); changed_tail['primary'] = 999
             damaged = [raw('TAIL_STARTED', changed_tail) if line == raw('TAIL_STARTED', rows[0][0]['tailSnapshot']) else line for line in client]
             (root / 'client1-launch.log').write_text('\n'.join(damaged))
@@ -634,9 +690,11 @@ class CleanupCancelChecks(unittest.TestCase):
 
     def test_canonical_p4_only_subsets_do_not_repeat_mask(self):
         _, selection, _ = evidence('p4-keep-return')
-        for cases in (['p4-after-pickup', 'p4-keep-return'], ['p4-after-pickup'], ['p4-keep-return']):
+        for cases in (['p4-after-pickup', 'p4-keep-return'], ['p4-after-pickup'], ['p4-keep-return'],
+                      ['p4-editor-off', 'p4-editor-reenabled']):
             selection['cases'] = cases; a.validate(selection)
-        for cases in ([], ['p4-keep-return', 'p4-after-pickup'], ['p4-after-pickup'] * 2, ['unknown']):
+        for cases in ([], ['p4-keep-return', 'p4-after-pickup'], ['p4-after-pickup'] * 2,
+                      ['p4-editor-off', 'p4-after-pickup'], ['unknown']):
             selection['cases'] = cases
             with self.subTest(cases=cases), self.assertRaises(ValueError): a.validate(selection)
 
@@ -649,10 +707,11 @@ class CleanupCancelChecks(unittest.TestCase):
         for row, _, receipts in rows:
             client += [raw('BASELINE', row['baseline']), raw('BOUNDARY', row['boundary']), raw('TAIL_STARTED', row['tailSnapshot']),
                        raw('BODY_SETTLED', row['bodyTerminal']), raw('P4_IDLE', row['idleEvidence']),
+                       *[raw('EDITOR_TRANSITION', transition) for transition in row['editorTransitions']],
                        *[raw('NATIVE_STATE', receipt) for receipt in receipts], event(row)]
             server += [raw('PREPARED', row['ids']), raw('BASELINE_CONFIRMED', row['authorityBaseline']),
                        raw('CHECKPOINT', row['checkpoint']), raw('VERIFY', row['server'])]
-        client += [event(dict(event='complete', suite='cleanup-cancel', cases=selection['cases'], performed=2, skipped=0, failed=0)),
+        client += [event(dict(event='complete', suite='cleanup-cancel', cases=selection['cases'], performed=len(selection['cases']), skipped=0, failed=0)),
                    raw('COMPLETE', {'cases': selection['cases']})]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / 'client1-launch.log').write_text('\n'.join(client)); (root / 'server-launch.log').write_text('\n'.join(server))
