@@ -164,3 +164,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Vehicle diagnostics controls
 
 - [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
+
+# Process friction
+
+- [ ] Resolve the Codex cleanup refusal for a chat-created managed worktree: `archive_worktree` rejected `/Users/alexredby/.codex/worktrees/process-friction-rule/pz-survivor-toolkit` with `The task's primary checkout cannot be removed.` after the work was pushed to `main` and the worktree was clean. This blocks the finish-chat cleanup gate. Check checkout classification and the supported cleanup path; completion requires safely archiving the owned temporary worktree without bypassing protections or touching the shared checkout.
