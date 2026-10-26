@@ -113,6 +113,9 @@ assert(T.ActionQueueLifecycle.registerObserver('fitness-independent-tail',{start
   recoveryActions[#recoveryActions+1]=action
  end
  if action.Type=='ISReadABook'and action.item==state.items.tail and action.character==getPlayer()then
+  if config.options and config.options.fitness_editor_toggles and config.options.fitness_editor_toggles[case()]=='off-pending-outcome'then
+   assert(not command.receiptFaultTailAt,'pending outcome independent tail began twice');command.receiptFaultTailAt=getTimestampMs()
+  end
   command.beforeTail={inventory=F.inventory(action.character),activation=F.activation(action.character),nativeClock=O.clock(),
    callback='ISBaseTimedAction.begin',storage=F.storage(action.character,state.ids.items.bag)}
  end
@@ -229,6 +232,30 @@ local function setEditor(value,witness)
  assert(T.Settings.actionQueue()==value and entry.tailRetained,'fitness editor transition lost independent tail')
  command.editorTransitions[#command.editorTransitions+1]=entry;raw('EDITOR_TRANSITION',entry)
 end
+-- A test-only retained genuine packet defines the pending window; no outcome is invented.
+local function observePendingOutcome()
+ if editorToggle()~='off-pending-outcome'then return end
+ local action,record,nativeAction=diagnostics.pendingFault()
+ if not action then return end
+ assert(action.character==state.player and action.action==nativeAction,'pending receipt lost original native episode')
+ local present=state.player:getCharacterActions():contains(nativeAction)
+ if case()=='active-cancel-restore'and present then return end
+ -- A paid drop is held in Java until its sealed Completed receipt; Done alone cannot remove it.
+ if case()=='placement-cancel-restore'then assert(present,'pending completed placement lost its held native episode')end
+ local q=queue();local retained=q:indexOf(tail)~=-1
+ local unread=state.player:getAlreadyReadPages(state.items.tail:getFullType())<state.items.tail:getNumberOfPages()
+ local sealed=false
+ if not native then
+  assert(command.editorCancelBoundary and q.current==action and q.queue[1]==action,
+   'pending outcome no longer owns the canceled current action')
+  sealed=T.ActionQueueAcknowledgements.capture(action)==record and T.ActionQueueAcknowledgements.state(action,record)=='started'
+  assert(sealed and retained and unread,'pending outcome lost sealed Started receipt or independent unread tail')
+  local boundary=editorBoundary(action,'pending-outcome')
+  command.editorPendingBoundary=boundary;raw('EDITOR_PENDING',boundary);setEditor(false,boundary)
+ end
+ diagnostics.markPending({mode=config.mode,editorEnabled=T.Settings.actionQueue(),sealedStarted=sealed,
+  tailRetained=retained,tailUnread=unread})
+end
 local function editorCleanup(current)
  if native or editorToggle()~='reenable-during-cleanup'or #command.editorTransitions~=1 then return end
  if current and queue().current==current and current.action and current:isStarted()
@@ -258,7 +285,8 @@ local function cancel(action,message)
  if editorToggle()then
   local witness=editorBoundary(action,'accepted-cancel')
   assert(witness.requestRetained and witness.tailRetained,'editor disabled after accepted request was lost')
-  command.editorCancelBoundary=witness;raw('EDITOR_CANCEL',witness);setEditor(false,witness)
+  command.editorCancelBoundary=witness;raw('EDITOR_CANCEL',witness)
+  if editorToggle()~='off-pending-outcome'then setEditor(false,witness)end
  end
 end
 local function run(fn,...)
@@ -577,6 +605,7 @@ local function finishCase()
  end
  if not problem and (not receipt.serverStopSettled or not receipt.currentExerciseCleared)then problem='native-fitness-stop-not-settled'end
  if editorToggle()then command.editorEnabled=T.Settings.actionQueue()end
+ if editorToggle()=='off-pending-outcome'then command.receiptFault=diagnostics.faultComplete()end
  local published={event='case',id=case(),status=problem and 'failed'or 'passed',reason=problem,command=command,receipt=receipt}
  emit(published)
  if editorToggle()then PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)end
@@ -644,6 +673,7 @@ Events.OnTick.Add(function()
    and (phase=='running'or phase=='receipt')
   assert(T.Settings.actionQueue()==(not native and not editorOff),'fitness queue mode changed')
   if diagnostics then diagnostics.poll()end
+  if phase=='running'then observePendingOutcome()end
   idle=empty()and idle+1 or 0
   if phase=='prepare'then
    if idle<10 or getPlayer():tooDarkToRead()then return end

@@ -1,7 +1,6 @@
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
-- [ ] Qualify editor disable while an authoritative Host outcome is deliberately pending, with matching queue-on/off controls. Check delayed/duplicate replies, exact once-only effects, required cleanup and independent tail; freeze inputs before launch and repeat only failed or newly affected cases.
 
 # Storage performance stabilization
 

@@ -10,6 +10,7 @@ import re
 import shutil
 
 from ..mod_selection import metadata, mod_ids
+from . import fitness_pending
 
 CASES = ['empty', 'queued', 'sequential', 'pending-cancel', 'pending-reorder', 'active-cancel',
          'missing-dumbbell', 'exhaustion', 'closed-ui-restore', 'burpees-30', 'squats-30', 'late-exhaustion', 'active-cancel-restore', 'pickup-cancel-restore', 'placement-cancel-restore', 'empty-restore', 'multi-storage', 'multi-storage-closed', 'storage-walk-away', 'storage-peer-pickup']
@@ -49,8 +50,15 @@ def validate(selection):
     toggles = selection.get('options', {}).get('fitness_editor_toggles')
     if toggles is not None and (type(toggles) is not dict or not toggles
             or any(case not in RESTORATION_CASES or type(cases) is not list or case not in cases
-                   or variant not in ('off-after-cancel', 'reenable-during-cleanup') for case, variant in toggles.items())):
+                   or variant not in ('off-after-cancel', 'reenable-during-cleanup', 'off-pending-outcome') for case, variant in toggles.items())):
         raise ValueError('Fitness editor toggles require selected restoration case IDs and an explicit supported variant')
+    pending = {case for case, variant in (toggles or {}).items() if variant == 'off-pending-outcome'}
+    duplicate = selection.get('options', {}).get('fitness_receipt_duplicate')
+    if pending and (pending != set(cases) or not pending <= {'active-cancel-restore', 'placement-cancel-restore'}
+                    or selection.get('kind') != 'mp' or delay != 1000 or duplicate is not True):
+        raise ValueError('Pending outcome toggles require only active/placement Host cases, diagnostic 1000 ms delay and explicit duplicate')
+    if duplicate is not None and (duplicate is not True or not pending):
+        raise ValueError('Receipt duplicate requires explicit pending outcome cases')
     kind = selection.get('kind')
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     languages = selection.get('languages')
@@ -68,6 +76,7 @@ def sources(project, selection):
     return [*sorted(path for path in (root / 'fitness').rglob('*') if path.suffix in ('.lua', '.java')), root / 'health/shared/QueueHealthEvents.lua',
             root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua',
             Path(project) / 'tools/queue_checks/adapters/fitness_storage.py',
+            Path(project) / 'tools/queue_checks/adapters/fitness_pending.py',
             Path(project) / 'tools/queue_checks/adapters/fitness_negative.py']
 
 
@@ -428,7 +437,7 @@ def _editor_case(case, command, prep, selection):
             or command.get('editorEnabled') is not (not native and expected_count == 2)):
         return error
     if native:
-        return [] if 'editorCancelBoundary' not in command and 'editorCleanupBoundary' not in command else error
+        return [] if all(key not in command for key in ('editorCancelBoundary', 'editorCleanupBoundary', 'editorPendingBoundary')) else error
     cancel = command.get('editorCancelBoundary')
     cleanup = command.get('editorCleanupBoundary')
     fields = {'case', 'boundary', 'at', 'nativeClock', 'actionRef', 'currentRef', 'nativeRef', 'kind', 'itemId', 'itemType',
@@ -448,6 +457,8 @@ def _editor_case(case, command, prep, selection):
     if (not witness(cancel, 'accepted-cancel') or not _matches(cancel, dict(requestRetained=True, drainingAction=True, requiredStep=False,
             **dict(zip(('kind', 'itemId', 'itemType'), cancel_kind))))):
         return error
+    if variant == 'off-pending-outcome':
+        return fitness_pending.verify_editor(case, command, prep, selection)
     witnesses = [cancel]
     if expected_count == 2:
         allowed_items = {items['dumbbell']: 'Base.DumbBell', items['bag']: 'Base.Bag_Schoolbag',
@@ -582,12 +593,14 @@ def _editor_logs(text, results, selection):
             if type(transitions) is not list:
                 return ['Fitness raw editor transition evidence differs']
             expected.append(('EDITOR_CANCEL', command.get('editorCancelBoundary')))
+            if command.get('editorPendingBoundary') is not None:
+                expected.append(('EDITOR_PENDING', command['editorPendingBoundary']))
             if transitions:
                 expected.append(('EDITOR_TRANSITION', transitions[0]))
             if len(transitions) > 1:
                 expected.extend([('EDITOR_CLEANUP', command.get('editorCleanupBoundary')), ('EDITOR_TRANSITION', transitions[1])])
     actual = [(match[1], json.loads(match[2])) for match in re.finditer(
-        r'\[FITNESS_TEST\] (EDITOR_CANCEL|EDITOR_CLEANUP|EDITOR_TRANSITION)\s+([^\n]*)', text)]
+        r'\[FITNESS_TEST\] (EDITOR_CANCEL|EDITOR_CLEANUP|EDITOR_PENDING|EDITOR_TRANSITION)\s+([^\n]*)', text)]
     if actual != expected:
         return ['Fitness raw editor transition evidence differs']
     context = None
@@ -625,6 +638,7 @@ def _case(case, row, prep, receipt, selection, mutation=None):
         return ['Fitness exact preparation differs: ' + case]
     issues.extend(_editor_case(case, command, prep, selection))
     issues.extend(_settled_case(case, command, prep, selection))
+    issues.extend(fitness_pending.verify_case(case, command, prep, selection))
     expected = copy.deepcopy(prep['inventory'])
     if case == 'missing-dumbbell':
         expected['items'] = [item for item in expected['items'] if item['id'] != items['dumbbell']]
@@ -1115,7 +1129,8 @@ def verify(root, selection, catalog):
     cases = selection['cases']
     results = [row for row in rows if row['event'] == 'case']
     raw = [(match[1], json.loads(match[2])) for match in re.finditer(r'\[FITNESS_TEST\] (PREPARED|MUTATED|VERIFIED)\s+([^\n]*)', authority)]
-    issues, outcomes = [*_editor_logs(text, results, selection), *_settled_logs(text, results, selection)], []
+    issues, outcomes = [*_editor_logs(text, results, selection), *_settled_logs(text, results, selection),
+                        *fitness_pending.verify_logs(text, results, selection)], []
     if ([row.get('event') for row in rows] != ['setup'] + ['case'] * len(cases) + ['complete']
             or [row.get('id') for row in results] != cases
             or any(not _matches(row, dict(suite='fitness', actor='client1', kind=selection['kind'], mode=selection['mode'])) for row in rows)):
