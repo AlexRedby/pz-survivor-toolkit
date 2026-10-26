@@ -3,16 +3,11 @@ package net.alexredby.pztoolkitjavapatches
 import java.lang.reflect.Method
 import java.nio.file.Path
 import java.util.HashMap
-import javax.xml.parsers.DocumentBuilderFactory
-import org.lwjgl.util.vector.Vector3f
-import org.w3c.dom.Element
 import sun.misc.Unsafe
 import zombie.characters.IsoPlayer
 import zombie.core.skinnedmodel.ModelManager
 import zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator
-import zombie.core.skinnedmodel.advancedanimation.Anim2DBlend
 import zombie.core.skinnedmodel.advancedanimation.Anim2DBlendPicker
-import zombie.core.skinnedmodel.advancedanimation.Anim2DBlendTriangle
 import zombie.core.skinnedmodel.advancedanimation.AnimLayer
 import zombie.core.skinnedmodel.advancedanimation.AnimNode
 import zombie.core.skinnedmodel.advancedanimation.AnimState
@@ -22,7 +17,6 @@ import zombie.core.skinnedmodel.advancedanimation.LiveAnimNode
 import zombie.core.skinnedmodel.animation.AnimationClip
 import zombie.core.skinnedmodel.animation.AnimationTrack
 import zombie.core.skinnedmodel.animation.BoneAxis
-import zombie.core.skinnedmodel.animation.Keyframe
 import zombie.core.skinnedmodel.model.ModelMesh
 import zombie.core.skinnedmodel.model.SkinningData
 import zombie.inventory.InventoryItem
@@ -105,78 +99,47 @@ object CartInjuryTest {
     private fun close(actual: Float, expected: Double, message: String) =
         close(actual.toDouble(), expected, message)
 
-    private fun text(element: Element, name: String): String =
-        element.getElementsByTagName(name).item(0).textContent.trim()
-
     private fun read(path: Path): AnimNode {
-        val factory = DocumentBuilderFactory.newInstance()
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-        val root = factory.newDocumentBuilder().parse(path.toFile()).documentElement
-        val node = AnimNode()
-        node.name = text(root, "m_Name")
-        node.deferredBoneName = "Translation_Data"
-        node.deferredBoneAxis = BoneAxis.Y
-        val references = HashMap<String, Anim2DBlend>()
-        val fields = root.getElementsByTagName("m_2DBlends")
-        for (i in 0 until fields.length) {
-            val element = fields.item(i) as Element
-            val blend = Anim2DBlend()
-            blend.animName = text(element, "m_AnimName")
-            blend.posX = text(element, "m_XPos").toFloat()
-            blend.posY = text(element, "m_YPos").toFloat()
-            blend.speedScale = text(element, "m_SpeedScale").toFloat()
-            node.blends2d.add(blend)
-            references[element.getAttribute("referenceID")] = blend
-            clips.computeIfAbsent(blend.animName, ::clip)
+        val node =
+            AnimNode.Parse(path.toString())
+                ?: throw AssertionError("Cannot parse native animation field: $path")
+        val media =
+            Path.of(System.getProperty("pz.test.project"))
+                .resolve("PZSurvivorToolkit/42/media/anims_X/Bob")
+        for (blend in node.blends2d) clips.computeIfAbsent(blend.animName) { name ->
+            val folder = if (name.startsWith("Toolkit_")) media else Path.of("media/anims_X/Bob")
+            importClip(folder.resolve("$name.x"))
         }
-        val triangles = root.getElementsByTagName("m_2DBlendTri")
-        for (i in 0 until triangles.length) {
-            val element = triangles.item(i) as Element
-            val triangle = Anim2DBlendTriangle()
-            triangle.node1 = references[text(element, "node1")]
-            triangle.node2 = references[text(element, "node2")]
-            triangle.node3 = references[text(element, "node3")]
-            check(
-                triangle.node1 != null && triangle.node2 != null && triangle.node3 != null,
-                "broken XML reference $path",
-            )
-            node.blendTris.add(triangle)
-        }
-        node.blend2dPicker = Anim2DBlendPicker()
-        node.blend2dPicker.SetPickTriangles(node.blendTris)
         return node
     }
 
-    private fun clip(name: String): AnimationClip {
-        var x = 0f
-        var y = 1f
-        if (name.contains("Idle")) y = 0f
-        else if (name.contains("Bwd") || name.contains("Backward")) y = -.7f
-        else if (name.contains("Right")) {
-            x = .7f
-            y = 0f
-        } else if (name.contains("Left")) {
-            x = -.7f
-            y = 0f
-        } else if (name.contains("HeavyLimp")) {
-            x = if (name.endsWith("R")) .015f else -.015f
-            y = if (name.endsWith("R")) .35f else .38f
-        } else if (name.contains("RunLightLimp")) {
-            x = if (name.endsWith("R")) .01f else -.01f
-            y = if (name.endsWith("R")) 1.4f else 1.45f
-        } else if (name.contains("LightLimp")) {
-            x = if (name.endsWith("R")) .01f else -.01f
-            y = if (name.endsWith("R")) .7f else .73f
-        } else if (name.contains("Sprint")) y = 2.4f
-        else if (name.contains("Run")) y = 1.7f else if (name.contains("Slow")) y = .25f
-        val start = Keyframe()
-        val end = Keyframe()
-        start.boneName = "Translation_Data"
-        end.boneName = "Translation_Data"
-        start.position = Vector3f()
-        end.position = Vector3f(x, 0f, -y)
-        end.time = 1f
-        return AnimationClip(1f, listOf(start, end), name, true)
+    @Suppress("UNCHECKED_CAST")
+    private fun importClip(path: Path): AnimationClip {
+        check(java.nio.file.Files.isRegularFile(path), "missing native animation source: $path")
+        val params = zombie.core.skinnedmodel.model.jassimp.ProcessedAiSceneParams.create()
+        params.scene =
+            jassimp.Jassimp.importFile(
+                path.toString(),
+                java.util.EnumSet.of(
+                    jassimp.AiPostProcessSteps.MAKE_LEFT_HANDED,
+                    jassimp.AiPostProcessSteps.REMOVE_REDUNDANT_MATERIALS,
+                ),
+            )
+        params.mode = zombie.core.skinnedmodel.model.jassimp.JAssImpImporter.LoadMode.AnimationOnly
+        params.animBonesScaleModifier = 1f
+        params.animBonesRotateModifier = null
+        val skeleton =
+            zombie.core.skinnedmodel.model.jassimp.ImportedSkeleton.process(
+                zombie.core.skinnedmodel.model.jassimp.ImportedSkeletonParams.create(
+                    params,
+                    params.scene.getMeshes()[0],
+                ),
+            )
+        val field = skeleton.javaClass.getDeclaredField("clips")
+        field.isAccessible = true
+        val imported = field.get(skeleton) as Map<String, AnimationClip>
+        check(imported.size == 1, "native source must contain one animation: $path")
+        return imported.values.single()
     }
 
     private fun fixture(type: String, gait: String, injury: Float, remote: Boolean): Fixture {
@@ -295,30 +258,119 @@ object CartInjuryTest {
         return Math.hypot(x, y).toFloat()
     }
 
-    private fun expectedTarget(f: Fixture, y: Float): Float {
-        val fast = f.player.run || f.player.sprint
-        val base = if (f.player.sprint) .96f else 1.04f
-        val reference =
-            if (!fast && y < 0 && f.player.cart!!.getFullType() != "SaucedCarts.ShoppingCart")
-                "Bob_WalkBwdNoAim1Hand"
-            else "Bob_Walk"
-        var healthy = if (fast) 0f else f.player.speed * rootSpeed(mapOf(reference to 1f))
-        if (fast) {
-            val blend =
-                if (f.player.sprint) Math.max(0f, (f.player.speed - .5f) * 2) else f.player.speed
-            healthy =
-                (1 - blend) *
-                    rootSpeed(mapOf((if (f.player.sprint) "Bob_Run" else "Bob_Walk") to 1f)) +
-                    blend *
-                        rootSpeed(mapOf((if (f.player.sprint) "Bob_Sprint" else "Bob_Run") to 1f))
-        }
+    private fun expectedTarget(f: Fixture, x: Float, y: Float): Float {
         val state = if (f.player.sprint) "sprint" else if (f.player.run) "run" else "movement"
-        var nativeRoot =
-            rootSpeed(picked(nativeNodes.getValue(state), f.player.injury, f.player.speed))
-        if (!fast && y < 0)
-            nativeRoot = Math.min(nativeRoot, f.player.speed * rootSpeed(mapOf(reference to 1f)))
+        val native = nativeNodes.getValue(state)
+        val nativeRoot = rootSpeed(picked(native, f.player.injury, f.player.speed))
+        val amount = Math.hypot(x.toDouble(), y.toDouble()).toFloat()
+        val base = native.getSpeedScale(f.player)
+        if (f.player.run || f.player.sprint || y >= 0) return base * nativeRoot * amount
+        // Reverse remains a separately authored maneuver, with its existing slowdown envelope.
+        val reference =
+            if (f.player.cart!!.getFullType() != "SaucedCarts.ShoppingCart") "Bob_WalkBwdNoAim1Hand"
+            else "Bob_Walk"
+        val healthyRadius = Math.max(0f, Math.min(1f, f.player.speed))
+        val radius = CartInjury.walkMagnitude(f.player, healthyRadius)
+        val effort = if (radius > 1e-6f) amount / radius else 0f
+        val healthy = rootSpeed(mapOf(reference to 1f)) * healthyRadius * effort
+        val capped = Math.min(nativeRoot, healthyRadius * rootSpeed(mapOf(reference to 1f)))
         val alpha = CartInjury.amount(f.player.injury)
-        return base * ((1 - alpha) * healthy + alpha * nativeRoot)
+        return base * ((1 - alpha) * healthy + alpha * capped * effort)
+    }
+
+    private fun steadyParity() {
+        for (type in
+            listOf(
+                "SaucedCarts.ShoppingCart",
+                "SaucedWheelbarrow.WheelbarrowWood",
+                "SaucedWheelbarrow.WheelbarrowMetal",
+            )) for (gait in listOf("Walk", "Run", "Sprint")) for (injury in
+            floatArrayOf(-.9f, -.5f, -.15f, -.075f, 0f, .075f, .15f, .5f, .9f)) {
+            val f = fixture(type, gait, injury, false)
+            val state = if (gait == "Walk") "movement" else gait.lowercase()
+            val native = nativeNodes.getValue(state)
+            for (scalar in floatArrayOf(-.1f, 0f, .05f, .2f, .4f, .5f, .8f, 1f)) {
+                f.player.speed = scalar
+                // Native defaultWalk's origin is Bob_WalkSlow, not a stationary clip. Directional
+                // cart intent stays full length; native field weights alone determine speed.
+                val expected =
+                    native.getSpeedScale(f.player) * rootSpeed(picked(native, injury, scalar))
+                apply(f, 0f, 1f)
+                val context = "$type/$gait/$injury/$scalar"
+                close(
+                    CartLegPace.targetSpeed(f.player, 0f, 1f),
+                    expected,
+                    "native gait oracle $context",
+                )
+                val cadence = CartLegPace.scale(f.player, 0f, 1f)
+                close(
+                    speed(f, false) * cadence,
+                    expected,
+                    "steady native/cart extracted-root parity $context",
+                )
+                CartLegPace.applySpeed(f.player, expected, 0f, 1f)
+                close(
+                    speed(f, true),
+                    expected,
+                    "requested native budget changed during cadence application $context",
+                )
+                close(
+                    CartLegPace.targetSpeed(f.player, 0f, 0f),
+                    0f,
+                    "zero intent must not inherit the native slow clip $context",
+                )
+            }
+        }
+        val f = fixture("SaucedCarts.ShoppingCart", "Walk", 0f, false)
+        val native = nativeNodes.getValue("movement")
+        val source = clips.remove("Bob_WalkSlow")!!
+        try {
+            f.player.speed = 0f
+            check(
+                CartLegPace.targetSpeed(f.player, 0f, 1f).isNaN(),
+                "missing native root source claimed a calibrated target",
+            )
+            close(
+                CartLegPace.scale(f.player, 0f, 1f),
+                1.04,
+                "missing native root source poisoned fallback cadence",
+            )
+            close(
+                CartLegPace.targetSpeed(f.player, 0f, 0f),
+                0f,
+                "missing native root source prevented a stop",
+            )
+        } finally {
+            clips["Bob_WalkSlow"] = source
+        }
+        for ((injury, scalar, pace) in
+            listOf(
+                Triple(Float.NaN, .8f, 1.04f),
+                Triple(0f, Float.NaN, 1.04f),
+                Triple(0f, .8f, Float.NaN),
+                Triple(0f, .8f, -1f),
+            )) check(
+            CartLegPace.nativeSpeed(native, injury, scalar, pace, clips::get).isNaN(),
+            "invalid native field source acquired a speed",
+        )
+        check(
+            CartLegPace.nativeSpeed(null, 0f, .8f, 1.04f, clips::get).isNaN(),
+            "absent native field acquired a speed",
+        )
+        check(
+            CartLegPace.nativeSpeed(native, 0f, .8f, 1.04f, null).isNaN(),
+            "absent clip provider acquired a speed",
+        )
+        val state = f.player.animator!!.animSet.states.getValue("movement")
+        state.nodes.remove(native)
+        try {
+            check(
+                CartLegPace.targetSpeed(f.player, 0f, 1f).isNaN(),
+                "missing native gait claimed a calibrated target",
+            )
+        } finally {
+            state.nodes.add(native)
+        }
     }
 
     private fun directions() {
@@ -336,7 +388,9 @@ object CartInjuryTest {
             )
             for (degree in -180..180 step 30) {
                 val radius =
-                    if (gait == "Walk") CartInjury.walkMagnitude(f.player, f.player.speed) else 1f
+                    if (gait == "Walk" && degree !in -90..90)
+                        CartInjury.walkMagnitude(f.player, f.player.speed)
+                    else 1f
                 val x = radius * Math.sin(Math.toRadians(degree.toDouble())).toFloat()
                 val y = radius * Math.cos(Math.toRadians(degree.toDouble())).toFloat()
                 val expected = expected(f, x, y)
@@ -375,7 +429,7 @@ object CartInjuryTest {
                 val target = CartLegPace.targetSpeed(f.player, x, y)
                 close(
                     target,
-                    expectedTarget(f, y),
+                    expectedTarget(f, x, y),
                     "cart target lost native injury/gait speed $type/$gait/$injury/$degree",
                 )
                 CartLegPace.applySpeed(f.player, target, x, y)
@@ -594,7 +648,9 @@ object CartInjuryTest {
         }
         // The healthy reverse budget still uses the native reference clip; the current
         // cart XML uses a separate authored Toolkit_CartPivot_Backward asset.
-        clips.computeIfAbsent("Bob_WalkBwdNoAim1Hand", ::clip)
+        clips.computeIfAbsent("Bob_WalkBwdNoAim1Hand") {
+            importClip(Path.of("media/anims_X/Bob/$it.x"))
+        }
         val model = ModelManager::class.java.getDeclaredField("animModel")
         model.isAccessible = true
         val previous = model.get(ModelManager.instance)
@@ -613,6 +669,7 @@ object CartInjuryTest {
                 )
         applyField.isAccessible = true
         try {
+            steadyParity()
             directions()
             lifecycle()
             readiness()

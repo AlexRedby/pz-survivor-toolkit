@@ -63,6 +63,10 @@ object CartLegPaceTest {
         override fun getAdvancedAnimator(): AdvancedAnimator? = animator
     }
 
+    private fun check(value: Boolean, message: String) {
+        if (!value) throw AssertionError(message)
+    }
+
     private fun nativePelvisBinding() {
         val unsafeField = Unsafe::class.java.getDeclaredField("theUnsafe")
         unsafeField.isAccessible = true
@@ -380,27 +384,6 @@ object CartLegPaceTest {
         node.blend2dPicker = Anim2DBlendPicker()
         node.blend2dPicker.SetPickTriangles(node.blendTris)
         return node
-    }
-
-    private fun blendedSpeed(
-        node: AnimNode,
-        clips: Map<String, AnimationClip>,
-        x: Float,
-        y: Float,
-    ): Float {
-        val pick = node.blend2dPicker.Pick(x, y, Anim2DBlendPicker.PickResults())
-        var dx = 0.0
-        var dy = 0.0
-        for (i in 0 until pick.numNodes) {
-            val blend = if (i == 0) pick.node1 else if (i == 1) pick.node2 else pick.node3
-            val weight = if (i == 0) pick.scale1 else if (i == 1) pick.scale2 else pick.scale3
-            if (weight < 1e-4f) continue
-            val clip = clips[blend.animName] ?: throw NullPointerException()
-            val root = clip.getTotalTranslation("Translation_Data", BoneAxis.Y, Vector2())
-            dx += Math.min(1f, weight) * root.x / clip.getDuration()
-            dy += Math.min(1f, weight) * root.y / clip.getDuration()
-        }
-        return Math.hypot(dx, dy).toFloat()
     }
 
     private fun live(name: String, active: Boolean, clip: AnimationClip): LiveAnimNode {
@@ -806,7 +789,7 @@ object CartLegPaceTest {
                 .4 *
                 walk.getTotalTranslation("Translation_Data", BoneAxis.Y, Vector2()).getLength() /
                 walk.getDuration(),
-            "walking target includes the intent magnitude once",
+            "explicit maneuver amplitude scales a single-clip target once",
         )
         close(CartLegPace.targetSpeed(null, 0f, 0f), 0, "idle needs no calibration")
         if (
@@ -999,7 +982,6 @@ object CartLegPaceTest {
             )
                 throw AssertionError("exact wooden walking node selection or fast gait changed")
         }
-        val node = node()
         val clips =
             mapOf(
                 "idle" to clip("idle", 1, 0, 0, "Translation_Data"),
@@ -1008,16 +990,6 @@ object CartLegPaceTest {
                 "left" to clip("Toolkit_WoodCartPivot_Left", 1, -.75f, 0, "Translation_Data"),
                 "right" to clip("Toolkit_WoodCartPivot_Right", 1, .75f, 0, "Translation_Data"),
             )
-        for (degree in -180..180) {
-            val x = Math.sin(Math.toRadians(degree.toDouble())).toFloat()
-            val y = Math.cos(Math.toRadians(degree.toDouble())).toFloat()
-            val pace = CartLegPace.scale(node, clips["forward"], x, y, 1.04f, clips::get)
-            close(
-                blendedSpeed(node, clips, x, y) * pace,
-                1.04,
-                "larger authored lateral roots preserve the walking budget at $degree",
-            )
-        }
         val current = live("ToolkitWoodCartPivotWalk", true, clips.getValue("right"))
         val outgoing = live("ToolkitWoodCartPivotWalk", false, clips.getValue("left"))
         val nativeWalk = live("ToolkitCartPivotWalk", false, clips.getValue("forward"))
@@ -1131,12 +1103,6 @@ object CartLegPaceTest {
             val x = amount * Math.sin(Math.toRadians(degree.toDouble())).toFloat()
             val y = amount * Math.cos(Math.toRadians(degree.toDouble())).toFloat()
             val expected = 1.04 * .590551 / (2f / 3) * Math.hypot(x.toDouble(), y.toDouble())
-            val pace = CartLegPace.scale(node, back, x, y, 1.04f, clips::get)
-            close(
-                blendedSpeed(node, clips, x, y) * pace,
-                expected,
-                "backward and diagonal budgets keep the native WalkSpeed magnitude once",
-            )
             close(
                 CartLegPace.targetSpeed(
                     node,
@@ -1151,19 +1117,9 @@ object CartLegPaceTest {
             )
         }
         close(
-            CartLegPace.scale(node, back, 0f, 0f, 1.04f, clips::get),
-            1.04,
-            "idle backward pace keeps the existing fallback",
-        )
-        close(
             CartLegPace.targetSpeed(node, back, back, 1f, 0f, 1.04f),
             0,
             "idle backward target is zero",
-        )
-        close(
-            CartLegPace.scale(node, null, 0f, -1f, 1.04f, clips::get),
-            1.04,
-            "missing backward reference keeps the existing pace",
         )
         if (!CartLegPace.targetSpeed(node, null, null, 1f, 1f, 1.04f).isNaN())
             throw AssertionError(
@@ -1405,47 +1361,6 @@ object CartLegPaceTest {
             0,
             "missing head-correction character",
         )
-        for (base in floatArrayOf(1.04f, 1f)) {
-            for (loadPace in floatArrayOf(1f, .8f, .4f)) {
-                close(
-                    CartLegPace.scale(node, forward, 0f, loadPace, base, clips::get),
-                    base,
-                    "forward pace must stay unchanged at $loadPace",
-                )
-                close(
-                    CartLegPace.scale(node, forward, loadPace, 0f, base, clips::get),
-                    base * 2,
-                    "slower lateral clip must retain the existing load slowdown once",
-                )
-                close(
-                    CartLegPace.scale(node, forward, -loadPace, 0f, base, clips::get),
-                    base * 2,
-                    "left strafe compensation",
-                )
-            }
-            close(
-                CartLegPace.scale(node, forward, .4f, .4f, base, clips::get),
-                base * 2 * Math.hypot(.4, .4) / Math.hypot(.4, .8),
-                "diagonal compensation uses the blended vector, not a sum of speeds",
-            )
-            close(
-                CartLegPace.scale(node, forward, 0f, -1f, base, clips::get),
-                2.5,
-                "very slow backward clips must respect the pace ceiling",
-            )
-            close(CartLegPace.scale(node, forward, 0f, 0f, base, clips::get), base, "idle")
-            close(
-                CartLegPace.scale(node, forward, Float.NaN, 0f, base, clips::get),
-                base,
-                "invalid intent",
-            )
-            close(
-                CartLegPace.scale(node, null, 1f, 0f, base, clips::get),
-                base,
-                "missing reference",
-            )
-            close(CartLegPace.scale(null, forward, 1f, 0f, base, clips::get), base, "missing node")
-        }
         // Root translations read from the loaded B42.21 clips by ProbePace.
         val nativeClips =
             mapOf(
@@ -1457,124 +1372,36 @@ object CartLegPaceTest {
             )
         backwardChecks(node, nativeClips)
         reversalChecks(nativeClips.getValue("forward"), nativeClips.getValue("back"))
-        for (amount in floatArrayOf(.44f, .72f, 1f)) for (degree in -180..180) {
-            val x = amount * Math.sin(Math.toRadians(degree.toDouble())).toFloat()
-            val y = amount * Math.cos(Math.toRadians(degree.toDouble())).toFloat()
-            val scale =
-                CartLegPace.scale(node, nativeClips["forward"], x, y, 1.04f, nativeClips::get)
-            val expected = 1.04 * .944882 / (2f / 3) * Math.hypot(x.toDouble(), y.toDouble())
-            val actual = blendedSpeed(node, nativeClips, x, y) * scale
-            if (actual > expected + 1e-5) throw AssertionError("walking budget exceeded at $degree")
-            if (amount <= .72f)
-                close(
-                    actual,
-                    expected,
-                    "cardinal roots retain the measured cart walking budget at $degree",
-                )
-        }
         val walk = nativeClips.getValue("forward")
         val run = clip("run", 2f / 3, 0, 2.094488f, "Translation_Data")
         val sprint = clip("sprint", 2f / 3, 0, 2.755905f, "Translation_Data")
         rampChecks()
         speedChecks(node, walk, run, sprint)
-        val runningClips = HashMap(nativeClips)
-        runningClips["forward"] = run
-        val walkVelocity = .944882 / (2f / 3)
-        val runVelocity = 2.094488 / (2f / 3)
-        var previous = Double.POSITIVE_INFINITY
-        // Native calculateBaseSpeed/calculateWalkSpeed counts the held bag in both hands.
-        for (load in floatArrayOf(0f, 1f)) {
-            val modifier = 1 + 2 * (.70 - 1) * (1 + load / 2)
-            val walking = 1 - Math.abs(1 - modifier) / 2
-            val running = ((walking - .15) * modifier).toFloat()
-            val expected = 1.04 * (walkVelocity * (1 - running) + runVelocity * running)
-            var rate =
-                CartLegPace.runningScale(node, walk, run, running, 0f, 1f, 1.04f, runningClips::get)
-            var actual = (blendedSpeed(node, runningClips, 0f, 1f) * rate).toDouble()
-            close(
-                actual.toFloat(),
-                expected,
-                "wooden running keeps the native walk->run budget at load $load",
-            )
-            if (actual <= 1.04 * walkVelocity * walking)
-                throw AssertionError("running must be faster than walking at load $load")
-            if (actual >= previous) throw AssertionError("cargo must still slow running")
-            previous = actual
-            for (degree in -180..180) {
-                val x = Math.sin(Math.toRadians(degree.toDouble())).toFloat()
-                val y = Math.cos(Math.toRadians(degree.toDouble())).toFloat()
-                rate =
-                    CartLegPace.runningScale(
-                        node,
-                        walk,
-                        run,
-                        running,
-                        x,
-                        y,
-                        1.04f,
-                        runningClips::get,
-                    )
-                actual = (blendedSpeed(node, runningClips, x, y) * rate).toDouble()
-                if (actual > expected + 1e-5)
-                    throw AssertionError("running direction exceeded native budget")
-                if (y > .8) close(actual.toFloat(), expected, "forward turns retain running speed")
-            }
-        }
-        close(
-            CartLegPace.runningScale(node, walk, run, 0f, 0f, 1f, 1.04f, runningClips::get),
-            1.04 * walkVelocity / runVelocity,
-            "zero run scalar blends to walking, not idle",
-        )
-        close(
-            CartLegPace.runningScale(node, walk, run, -1f, 0f, 1f, 1.04f, runningClips::get),
-            1.04 * walkVelocity / runVelocity,
-            "negative native scalar clamps to walking",
-        )
-        close(
-            CartLegPace.runningScale(node, walk, run, 2f, 0f, 1f, 1.04f, runningClips::get),
-            1.04,
-            "native scalar clamps to full running",
-        )
-        runningClips["forward"] = sprint
-        close(
-            CartLegPace.runningScale(node, run, sprint, 0f, 0f, 1f, .96f, runningClips::get),
-            .96 * 2.094488 / 2.755905,
-            "low sprint scalar keeps native running floor",
-        )
-        close(
-            CartLegPace.runningScale(node, run, sprint, 1f, 0f, 1f, .96f, runningClips::get),
-            .96,
-            "full native sprint pace",
-        )
-        close(
-            CartLegPace.runningScale(node, run, sprint, Float.NaN, 0f, 1f, .96f, runningClips::get),
-            .96,
-            "invalid native speed",
-        )
-        close(
-            CartLegPace.runningScale(node, null, sprint, 1f, 0f, 1f, .96f, runningClips::get),
-            .96,
-            "missing slow gait",
-        )
         clips.remove("right")
-        close(CartLegPace.scale(node, forward, 1f, 0f, 1.04f, clips::get), 1.04, "missing clip")
+        check(
+            CartLegPace.nativeSpeed(node, 1f, 0f, 1.04f, clips::get).isNaN(),
+            "missing selected native clip acquired a speed",
+        )
         for (invalid in
             listOf(
                 clip("zero duration", 0, 1, 0, "Translation_Data"),
                 clip("invalid translation", 1, Float.NaN, 0, "Translation_Data"),
                 clip("missing root", 1, 1, 0, "OtherBone"),
-                clip("no movement", 1, 0, 0, "Translation_Data"),
             )) {
             clips["right"] = invalid
-            close(CartLegPace.scale(node, forward, 1f, 0f, 1.04f, clips::get), 1.04, invalid.name)
-            close(
-                CartLegPace.scale(node, forward, 1f, 0f, 1.04f, clips::get),
-                1.04,
-                "cached ${invalid.name}",
-            )
+            repeat(2) {
+                check(
+                    CartLegPace.nativeSpeed(node, 1f, 0f, 1.04f, clips::get).isNaN(),
+                    "invalid native root source acquired a speed: ${invalid.name}",
+                )
+            }
         }
-        close(forward.getKeyframe(1).position.z, -2, "shared root frames stay unchanged")
-        close(forward.getDuration(), 1, "shared clip duration stays unchanged")
+        clips["right"] = clip("no movement", 1, 0, 0, "Translation_Data")
+        close(
+            CartLegPace.nativeSpeed(node, 1f, 0f, 1.04f, clips::get),
+            0,
+            "valid stationary native clip must remain distinguishable from missing calibration",
+        )
         close(CartLegPace.scale(null, 1f, 0f), 1.04, "missing player")
         println(
             "CART_LEG_PACE_PASS (native picker, root velocity, outgoing cadence/reversal, Sprint ramp, load, FPS, invalid clips)",

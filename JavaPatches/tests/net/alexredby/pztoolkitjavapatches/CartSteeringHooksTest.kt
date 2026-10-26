@@ -556,7 +556,7 @@ object CartSteeringHooksTest {
         brakeAnimation(player)
         CartSteeringHooks.heading(player)
         val clips = HashMap<String, AnimationClip>()
-        for (name in arrayOf("Bob_Idle", "Bob_Walk", "Bob_Run")) {
+        for (name in arrayOf("Bob_Idle", "Bob_WalkSlow", "Bob_Walk", "Bob_Run")) {
             val start = Keyframe()
             val end = Keyframe()
             start.boneName = "Translation_Data"
@@ -588,6 +588,7 @@ object CartSteeringHooksTest {
         animator.animSet = AnimationSet()
         val run = AnimState()
         run.nodes.add(node)
+        run.nodes.add(AnimNode.Parse("media/AnimSets/player/run/defaultRun.xml"))
         animator.animSet.states["run"] = run
         val mesh = unsafe.allocateInstance(ModelMesh::class.java) as ModelMesh
         mesh.skinningData =
@@ -661,6 +662,7 @@ object CartSteeringHooksTest {
             walkNode.blend2dPicker = node.blend2dPicker
             val movement = AnimState()
             movement.nodes.add(walkNode)
+            movement.nodes.add(AnimNode.Parse("media/AnimSets/player/movement/defaultWalk.xml"))
             animator.animSet.states["movement"] = movement
             val outgoing = AnimNode()
             outgoing.name = "ToolkitCartPivotSprint"
@@ -719,7 +721,7 @@ object CartSteeringHooksTest {
                 }
                 check(
                     field(state, "brace").getDouble(state) == 0.0 &&
-                        Math.abs(player.stepY - (if (fast) 1.0 else .8)) < 1e-5,
+                        Math.abs(player.stepY - 1.0) < 1e-5,
                     "clear travel must leave bracing and recover a full stride",
                 )
             }
@@ -1975,11 +1977,11 @@ object CartSteeringHooksTest {
         node: AnimNode,
         clips: Map<String, AnimationClip>,
     ) {
-        player.walkSpeed = .56f
         player.run = false
         player.sprint = false
         player.moving = true
-        for (fps in intArrayOf(30, 60, 144)) {
+        for (walkSpeed in floatArrayOf(0f, .05f, .56f)) for (fps in intArrayOf(30, 60, 144)) {
+            player.walkSpeed = walkSpeed
             GameTime.getInstance().fpsMultiplier = 60f / fps
             val dt = GameTime.getInstance().getRealworldSecondsSinceLastUpdate().toDouble()
             CartSteeringHooks.reset(player)
@@ -1998,8 +2000,8 @@ object CartSteeringHooksTest {
                 CartSteeringHooks.heading(player)
                 val requested = field(state, "requested").get(state) as CartSteeringMath.Step
                 val length = Math.hypot(requested.x(), requested.y())
-                val rawX = (player.walkSpeed * requested.y() / length).toFloat()
-                val rawY = (player.walkSpeed * requested.x() / length).toFloat()
+                val rawX = (requested.y() / length).toFloat()
+                val rawY = (requested.x() / length).toFloat()
                 val desired = CartLegPace.targetSpeed(player, rawX, rawY)
                 check(
                     desired.isFinite() && desired > 0,
@@ -2036,8 +2038,8 @@ object CartSteeringHooksTest {
             var requested = field(state, "requested").get(state) as CartSteeringMath.Step
             var length = Math.hypot(requested.x(), requested.y())
             check(
-                Math.abs(player.stepX - player.walkSpeed * requested.y() / length) < 1e-7 &&
-                    Math.abs(player.stepY - player.walkSpeed * requested.x() / length) < 1e-7,
+                Math.abs(player.stepX - requested.y() / length) < 1e-7 &&
+                    Math.abs(player.stepY - requested.x() / length) < 1e-7,
                 "Run/Walk boundary must reset the visual field: $fps",
             )
             // An outgoing fast pose must not disable continuity inside the current Walk gait.
@@ -2062,7 +2064,7 @@ object CartSteeringHooksTest {
                     requested = field(state, "requested").get(state) as CartSteeringMath.Step
                     length = Math.hypot(requested.x(), requested.y())
                     check(
-                        Math.abs(player.stepX - player.walkSpeed * requested.y() / length) > .001f,
+                        Math.abs(player.stepX - requested.y() / length) > .001f,
                         "outgoing fast-pose weights must not interrupt the current gait filter: $fps/$weight",
                     )
                 }
@@ -2091,6 +2093,8 @@ object CartSteeringHooksTest {
             )
             val animState = AnimState()
             animState.nodes.add(node)
+            val nativeName = if (mode == "run") "defaultRun" else "defaultSprint"
+            animState.nodes.add(AnimNode.Parse("media/AnimSets/player/$mode/$nativeName.xml"))
             player.animator!!.animSet.states[mode] = animState
             nodes.add(node)
             for (blend in node.blends2d) if (!clips.containsKey(blend.animName)) {
@@ -2099,10 +2103,10 @@ object CartSteeringHooksTest {
                     else java.nio.file.Path.of("media/anims_X/Bob")
                 clips[blend.animName] = importClip(folder.resolve(blend.animName + ".x"))
             }
-            val nativeName = if (mode == "run") "Bob_Run" else "Bob_Sprint"
-            if (!clips.containsKey(nativeName))
-                clips[nativeName] =
-                    importClip(java.nio.file.Path.of("media/anims_X/Bob/$nativeName.x"))
+            val nativeClip = if (mode == "run") "Bob_Run" else "Bob_Sprint"
+            if (!clips.containsKey(nativeClip))
+                clips[nativeClip] =
+                    importClip(java.nio.file.Path.of("media/anims_X/Bob/$nativeClip.x"))
         }
         player.walkSpeed = .8f
         player.moving = true
@@ -2978,11 +2982,8 @@ object CartSteeringHooksTest {
             player.actualY = 0f
             CartSteeringHooks.heading(player)
             check(
-                Math.abs(
-                    Math.hypot(player.stepX.toDouble(), player.stepY.toDouble()) -
-                        if (gait == 0) .25 else 1.0,
-                ) < 1e-6,
-                "native run speed was incorrectly reused as an idle blend: gait=$gait",
+                Math.abs(Math.hypot(player.stepX.toDouble(), player.stepY.toDouble()) - 1.0) < 1e-6,
+                "native gait speed must stay independent of the forward stride radius: gait=$gait",
             )
             CartSteeringHooks.reset(player)
             player.actualX = 0f

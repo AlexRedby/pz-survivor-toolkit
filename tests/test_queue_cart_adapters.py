@@ -85,6 +85,43 @@ class CartAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'cart_entry_contact_repro'):
             carts.validate(self.selection)
 
+    def test_speed_parity_stage_uses_native_input_without_graphics_probes_or_meshes(self):
+        self.selection['cases'] = ['speed-parity']
+        self.options.pop('mesh_fbx')
+        self.options.update(cart_variant='shopping-cart', cart_scenes=['female-full-right-heavy'])
+        with patch.object(carts.importlib, 'import_module', side_effect=AssertionError('No geometry dependency')):
+            compiler = self.stage()
+        self.assertEqual(compiler.call_count, 1)
+        self.assertEqual(self.runtime['fixture']['attach']['client1'], [])
+        text = (self.output / 'client1/Lua/cart-runtime.lua').read_text()
+        self.assertIn("cartType=", text)
+        self.assertIn('cartLabNativePoseHeading', text)
+        self.assertIn("statsControl='neutral-each-tick'", text)
+        self.assertIn(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-speed-parity.lua', carts.sources(ROOT, self.selection))
+        self.assertEqual(len(carts.scene_names('speed-parity')), 20)
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if lua:
+            subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(self.output / 'client1/Lua/cart-runtime.lua')) + '))'], check=True, capture_output=True)
+
+    def test_speed_parity_verification_preserves_selected_native_scope_without_video_or_mesh_claims(self):
+        from test_cart_speed_parity import capture
+        self.selection['cases'] = ['speed-parity']
+        self.options['cart_scenes'] = ['male-empty-left-mild']
+        text = capture(self.options['cart_scenes'])
+        (self.output/'client1-launch.log').write_text(text)
+        with patch.object(carts, '_videos', side_effect=AssertionError('Measurement has no video')):
+            result = carts.verify(self.output, self.selection, {})
+        self.assertEqual(result['issues'], [])
+        outcome = result['outcomes'][0]['outcome']
+        self.assertTrue(outcome['speedParityVerified'])
+        self.assertTrue(outcome['partialCoverage'])
+        self.assertFalse(outcome['geometryVerified'])
+        self.assertEqual(outcome['fullSceneCount'], 20)
+        (self.output/'client1-launch.log').write_text(capture(self.options['cart_scenes'], candidate_ratio=1.1))
+        result = carts.verify(self.output, self.selection, {})
+        self.assertTrue(result['issues'])
+        self.assertFalse(result['evidence']['speedParity']['speedParityVerified'])
+
     def test_entry_sex_and_load_options_require_the_scoped_reproducer(self):
         self.selection['cases']=['approach'];self.options.update(cart_entry_contact_repro=True,cart_scenes=['container-equip'])
         for female in (False,True):
@@ -1394,7 +1431,7 @@ print('STARTUP_REJOIN_GUARD_PASS')
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'injury', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'showcase', 'native-e'])
+                         ['sprint', 'reverse', 'injury', 'speed-parity', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'showcase', 'native-e'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('approach', 7), ('interruption-fast', 14), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case

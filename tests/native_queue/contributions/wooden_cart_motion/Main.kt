@@ -519,6 +519,35 @@ object Main {
     }
 
     @JvmStatic
+    @LuaMethod(name = "cartLabNativePoseHeading", global = true)
+    fun nativePoseHeading(angle: Double) {
+        check(captureUIWorld()) { "Disposable single-player CartTestArea required" }
+        require(angle.isFinite()) { "finite heading required" }
+        val player = IsoPlayer.getInstance()
+        val x = Math.cos(angle).toFloat()
+        val y = Math.sin(angle).toFloat()
+        player.setTargetAndCurrentDirection(x, y)
+        player.getAnimationPlayer().setTargetAndCurrentDirection(x, y)
+    }
+
+    @JvmStatic
+    @LuaMethod(name = "cartLabSteeringActive", global = true)
+    fun steeringActive() = steeringState(IsoPlayer.getInstance()) != null
+
+    @JvmStatic
+    @LuaMethod(name = "cartLabNativeHeldModels", global = true)
+    fun nativeHeldModels(): String {
+        val player = IsoPlayer.getInstance()
+        return (player.primaryHandModel?.model?.name ?: "none") + "|" +
+            (player.secondaryHandModel?.model?.name ?: "none")
+    }
+
+    @JvmStatic
+    @LuaMethod(name = "cartLabScriptRunSpeedModifier", global = true)
+    fun scriptRunSpeedModifier(item: InventoryItem): Float =
+        checkNotNull(item.getScriptItem()) { "Fixture cart ScriptItem required" }.runSpeedModifier
+
+    @JvmStatic
     @LuaMethod(name = "cartLabPoseHeading", global = true)
     fun poseHeading(angle: Double) {
         require(angle.isFinite()) { "finite heading required" }

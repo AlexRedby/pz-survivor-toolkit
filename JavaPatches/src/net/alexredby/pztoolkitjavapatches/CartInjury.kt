@@ -59,11 +59,8 @@ object CartInjury {
         }
 
     @JvmStatic
-    fun blend(player: IsoPlayer?, cart: AnimNode?): Blend? {
-        if (player == null || cart == null || !Main.CART_INJURY_SUPPORTED) return null
-        val injury = player.getVariableFloat("WalkInjury", 0f)
-        val amount = amount(injury)
-        if (amount == 0f) return null
+    fun nativeNode(player: IsoPlayer?, cart: AnimNode?): AnimNode? {
+        if (player == null || cart == null) return null
         val forward = forward(cart.name) ?: return null
         val stateName =
             if (forward == "Toolkit_CartPivot_Walk") "movement"
@@ -74,7 +71,17 @@ object CartInjury {
         val nativeName =
             if (stateName == "movement") "defaultWalk"
             else if (stateName == "run") "defaultRun" else "defaultSprint"
-        val nativeNode = state.nodes.firstOrNull { nativeName == it.name } ?: return null
+        return state.nodes.firstOrNull { nativeName == it.name }
+    }
+
+    @JvmStatic
+    fun blend(player: IsoPlayer?, cart: AnimNode?): Blend? {
+        if (player == null || cart == null || !Main.CART_INJURY_SUPPORTED) return null
+        val injury = player.getVariableFloat("WalkInjury", 0f)
+        val amount = amount(injury)
+        if (amount == 0f) return null
+        val forward = forward(cart.name) ?: return null
+        val nativeNode = nativeNode(player, cart) ?: return null
         if (
             nativeNode.blend2dPicker == null ||
                 nativeNode.blendTris == null ||

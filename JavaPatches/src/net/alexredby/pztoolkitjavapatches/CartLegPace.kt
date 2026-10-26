@@ -104,6 +104,29 @@ object CartLegPace {
         if (amount < 1e-6) return 0f
         val node = pivotNode(player) ?: return Float.NaN
         val owner = player ?: throw NullPointerException()
+        // Backing retains its authored slower stride and the existing injury envelope.
+        if (!owner.isRunning() && !owner.isSprinting() && stepY < 0)
+            return maneuverSpeed(owner, stepX, stepY)
+        val native = CartInjury.nativeNode(owner, node) ?: return Float.NaN
+        val speed =
+            nativeSpeed(
+                native,
+                owner.getVariableFloat("WalkInjury", 0f),
+                owner.getVariableFloat("WalkSpeed", 0f),
+                native.getSpeedScale(owner),
+                ::clip,
+            )
+        return speed * amount.toFloat()
+    }
+
+    /** Stationary turns and reverse travel retain their calibrated maneuver budget. */
+    @JvmStatic
+    fun maneuverSpeed(player: IsoPlayer?, stepX: Float, stepY: Float): Float {
+        val amount = Math.hypot(stepX.toDouble(), stepY.toDouble())
+        if (!amount.isFinite()) return Float.NaN
+        if (amount < 1e-6) return 0f
+        val node = pivotNode(player) ?: return Float.NaN
+        val owner = player ?: throw NullPointerException()
         val sprint = owner.isSprinting()
         val run = owner.isRunning()
         val cart = owner.getPrimaryHandItem()
@@ -145,6 +168,20 @@ object CartLegPace {
                     )
         }
         return healthy * (1 - injury.amount) + nativeSpeed * effort * injury.amount
+    }
+
+    /** Sample the actual native field, including the moving origin of defaultWalk. */
+    @JvmStatic
+    fun nativeSpeed(
+        node: AnimNode?,
+        injury: Float,
+        speed: Float,
+        pace: Float,
+        clips: Function<String?, AnimationClip?>?,
+    ): Float {
+        if (!pace.isFinite() || pace < 0) return Float.NaN
+        val root = fieldVelocity(node, injury, speed, clips, null) ?: return Float.NaN
+        return (pace * Math.hypot(root.x, root.y)).toFloat()
     }
 
     @JvmStatic
@@ -525,46 +562,18 @@ object CartLegPace {
         return Math.min(1.0, weight).toFloat()
     }
 
-    /** Walk magnitude includes slowdown; running uses the native Walk->Run speed blend. */
+    /** Directional authored clips spend the same root budget as the native gait field. */
     @JvmStatic
     fun scale(player: IsoPlayer?, stepX: Float, stepY: Float): Float {
         val sprint = player != null && player.isSprinting()
-        val run = player != null && player.isRunning()
         val base = if (sprint) .96f else 1.04f
         if (player == null) return base
         val node = pivotNode(player) ?: return base
         val injury = CartInjury.blend(player, node)
-        if (injury != null) {
-            val desired = targetSpeed(player, stepX, stepY)
-            val current = blendedSpeed(node, stepX, stepY, ::clip, injury)
-            return if (desired.isFinite() && current > 1e-6f) Math.min(2.5f, desired / current)
-            else base
-        }
-        val mode = if (sprint) "Sprint" else if (run) "Run" else "Walk"
-        if (sprint || run) {
-            var speed = player.getVariableFloat("WalkSpeed", 0f)
-            // Native defaultSprint blends Run->Sprint only above WalkSpeed=.5.
-            if (sprint) speed = Math.max(0f, (speed - .5f) * 2)
-            return runningScale(
-                node,
-                clip(if (sprint) "Bob_Run" else "Bob_Walk"),
-                clip("Bob_$mode"),
-                speed,
-                stepX,
-                stepY,
-                base,
-                ::clip,
-            )
-        }
-        val cart = player.getPrimaryHandItem()
-        return scale(
-            node,
-            clip(walkingReference(if (cart == null) null else cart.getFullType(), false, stepY)),
-            stepX,
-            stepY,
-            base,
-            ::clip,
-        )
+        val desired = targetSpeed(player, stepX, stepY)
+        val current = blendedSpeed(node, stepX, stepY, ::clip, injury)
+        return if (desired.isFinite() && current > 1e-6f) Math.min(2.5f, desired / current)
+        else base
     }
 
     private fun clip(name: String?): AnimationClip? =
@@ -574,71 +583,6 @@ object CartLegPace {
             // ModelManager has no animation mesh while loading or leaving a world.
             null
         }
-
-    @JvmStatic
-    fun scale(
-        node: AnimNode?,
-        forward: AnimationClip?,
-        stepX: Float,
-        stepY: Float,
-        base: Float,
-        clips: Function<String?, AnimationClip?>?,
-    ): Float {
-        val amount = Math.hypot(stepX.toDouble(), stepY.toDouble())
-        if (
-            !amount.isFinite() ||
-                amount < 1e-6 ||
-                node == null ||
-                forward == null ||
-                node.blend2dPicker == null ||
-                node.blendTris == null ||
-                node.blendTris.isEmpty()
-        )
-            return base
-        val reference =
-            velocity(forward, node.getDeferredBoneName(), node.getDeferredBoneAxis()) ?: return base
-        return compensate(
-            node,
-            Math.hypot(reference.x, reference.y) * amount,
-            stepX,
-            stepY,
-            base,
-            clips,
-        )
-    }
-
-    @JvmStatic
-    fun runningScale(
-        node: AnimNode?,
-        slow: AnimationClip?,
-        fast: AnimationClip?,
-        speed: Float,
-        stepX: Float,
-        stepY: Float,
-        base: Float,
-        clips: Function<String?, AnimationClip?>?,
-    ): Float {
-        if (node == null || slow == null || fast == null || !speed.isFinite()) return base
-        val low = velocity(slow, node.getDeferredBoneName(), node.getDeferredBoneAxis())
-        val high = velocity(fast, node.getDeferredBoneName(), node.getDeferredBoneAxis())
-        if (low == null || high == null) return base
-        val blend = Math.max(0f, Math.min(1f, speed)).toDouble()
-        val desired = Math.hypot(low.x, low.y) * (1 - blend) + Math.hypot(high.x, high.y) * blend
-        return compensate(node, desired, stepX, stepY, base, clips)
-    }
-
-    private fun compensate(
-        node: AnimNode,
-        desired: Double,
-        stepX: Float,
-        stepY: Float,
-        base: Float,
-        clips: Function<String?, AnimationClip?>?,
-    ): Float {
-        val current = blendedSpeed(node, stepX, stepY, clips)
-        if (!(current > 1e-6) || !(desired > 0)) return base
-        return Math.min(2.5, base * desired / current).toFloat()
-    }
 
     private fun blendedSpeed(
         node: AnimNode?,
@@ -655,35 +599,46 @@ object CartLegPace {
         clips: Function<String?, AnimationClip?>?,
         injury: CartInjury.Blend?,
     ): Float {
+        if (Math.hypot(stepX.toDouble(), stepY.toDouble()) < 1e-6) return Float.NaN
+        val root = fieldVelocity(node, stepX, stepY, clips, injury) ?: return Float.NaN
+        return Math.hypot(root.x, root.y).toFloat()
+    }
+
+    private fun fieldVelocity(
+        node: AnimNode?,
+        stepX: Float,
+        stepY: Float,
+        clips: Function<String?, AnimationClip?>?,
+        injury: CartInjury.Blend?,
+    ): Velocity? {
         if (
             node == null ||
                 !stepX.isFinite() ||
                 !stepY.isFinite() ||
-                Math.hypot(stepX.toDouble(), stepY.toDouble()) < 1e-6 ||
+                clips == null ||
                 node.blend2dPicker == null ||
                 node.blendTris == null ||
                 node.blendTris.isEmpty()
         )
-            return Float.NaN
+            return null
         node.blend2dPicker.Pick(stepX, stepY, picks)
-        if (picks.numNodes < 1 || picks.numNodes > 3) return Float.NaN
+        if (picks.numNodes < 1 || picks.numNodes > 3) return null
         var x = 0.0
         var y = 0.0
         for (i in 0 until picks.numNodes) {
             val blend = if (i == 0) picks.node1 else if (i == 1) picks.node2 else picks.node3
             var weight = if (i == 0) picks.scale1 else if (i == 1) picks.scale2 else picks.scale3
-            if (!weight.isFinite()) return Float.NaN
+            if (!weight.isFinite()) return null
             // Match AnimLayer.applyBlendField's cutoff, including edge rounding.
             weight = if (weight < 1e-4f) 0f else Math.min(1f, weight)
             if (weight == 0f) continue
-            if (blend == null) return Float.NaN
-            val clip =
-                (clips ?: throw NullPointerException()).apply(blend.animName) ?: return Float.NaN
+            if (blend == null) return null
+            val clip = clips.apply(blend.animName) ?: return null
             val velocity =
                 velocity(clip, node.getDeferredBoneName(), node.getDeferredBoneAxis())
-                    ?: return Float.NaN
+                    ?: return null
             if (injury != null && injury.forward == blend.animName) {
-                val nativeVelocity = injuryVelocity(node, injury, clips) ?: return Float.NaN
+                val nativeVelocity = injuryVelocity(node, injury, clips) ?: return null
                 x += weight * (velocity.x * (1 - injury.amount) + nativeVelocity.x * injury.amount)
                 y += weight * (velocity.y * (1 - injury.amount) + nativeVelocity.y * injury.amount)
             } else {
@@ -691,7 +646,7 @@ object CartLegPace {
                 y += weight * velocity.y
             }
         }
-        return Math.hypot(x, y).toFloat()
+        return Velocity(node.getDeferredBoneName(), node.getDeferredBoneAxis(), x, y)
     }
 
     @JvmStatic

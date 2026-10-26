@@ -1382,9 +1382,12 @@ internal object CartSteeringHooks {
         } else {
             val cos = Math.cos(state.heading)
             val sin = Math.sin(state.heading)
-            // Run/Sprint WalkSpeed blends two moving gaits; it is not an idle weight.
+            // Native WalkSpeed blends two moving clips too. Keep the forward stride at full
+            // radius, even at WalkSpeed=0; cadence alone spends the native gait's root budget.
+            // Reverse retains its separate authored slowdown and injury envelope.
+            val localY = actualX * cos + actualY * sin
             val pace =
-                if (player.isRunning() || player.isSprinting()) 1.0
+                if (player.isRunning() || player.isSprinting() || localY >= 0) 1.0
                 else
                     CartInjury.walkMagnitude(
                             player,
@@ -1408,7 +1411,8 @@ internal object CartSteeringHooks {
                     state.stationaryRoot && CartShopping.item(state.cart) ||
                     CartInjury.blend(player, CartLegPace.pivotNode(player)) != null
             )
-                CartLegPace.targetSpeed(player, stepX, stepY)
+                if (state.stationaryRoot) CartLegPace.maneuverSpeed(player, stepX, stepY)
+                else CartLegPace.targetSpeed(player, stepX, stepY)
             else Float.NaN
         // Keep the requested native speed above independent of the visual picker direction.
         // Publish that same effective field to the native animator, cadence solve and Host peers.

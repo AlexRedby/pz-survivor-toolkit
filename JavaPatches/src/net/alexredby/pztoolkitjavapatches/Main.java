@@ -402,6 +402,16 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.characters.IsoGameCharacter", methodName="calcRunSpeedModByBag", warmUp=true, strictMatch=true)
+    public static class CartBagSpeed {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.IsoGameCharacter character,
+                @Patch.Argument(0) zombie.inventory.types.InventoryContainer bag,
+                @Patch.Return(readOnly=false) float result) {
+            result = CartSpeedParity.bagPenalty(character, bag, result);
+        }
+    }
+
     @Patch(className="zombie.characters.IsoGameCharacter", methodName="postUpdateAnimating", warmUp=true)
     public static class CartHeading {
         @Patch.OnEnter

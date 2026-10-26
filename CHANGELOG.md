@@ -1231,6 +1231,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.63
+
+- Match steady forward cart walking, running and sprinting to native no-cart movement at the same effective carried weight and injury. Remove the extra held-cart container penalty while Toolkit controls the cart, preserve native gait eligibility, and retain cart acceleration, braking and cautious reverse behavior.
+
 ### 0.1.62
 
 - Blend native injury clips into cart locomotion with matching movement budgets. Keep both wheelbarrow hands reachable through injured poses with bounded, model-specific upper-torso correction; preserve native hip/leg animation and outgoing gait fades.

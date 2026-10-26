@@ -173,6 +173,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.AlarmClockChecks': 'ALARM_CLOCK_CH
           'net.alexredby.javapatchfixture.CartBootstrapCheck': 'CART_BOOTSTRAP_PASS'}
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryTest'] = 'CART_INJURY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryGripTest'] = 'CART_INJURY_GRIP_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.CartSpeedParityTest'] = 'CART_SPEED_PARITY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartLegClearancePaletteTest'] = 'CART_LEG_CLEARANCE_PALETTE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartLegClearanceTest'] = 'CART_LEG_CLEARANCE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartAnimationBlendTest'] = 'CART_ANIMATION_BLEND_PASS'
@@ -328,7 +329,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.62',
+    'version': '0.1.63',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

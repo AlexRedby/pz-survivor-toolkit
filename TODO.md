@@ -1,6 +1,6 @@
-# Injured cart full-pack compatibility
+# Cart motion full-pack compatibility
 
-- [ ] Repeat injured-cart locomotion and healing checks in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.
+- [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.
 
 # Sandwich ingredient consumption on a joining client
 

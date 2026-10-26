@@ -22,6 +22,7 @@ MP = 'wooden_cart_multiplayer'
 MP_CASES = ('owner_observer_motion', 'lease_lifecycle')
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
             'injury': ('scenario-injury.lua', 16),
+            'speed-parity': ('scenario-speed-parity.lua', 20),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stop-timing': ('scenario-stop.lua', 4),
             'pivot': ('scenario-pivot.lua', 8), 'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
@@ -63,8 +64,8 @@ VARIANTS = {'shopping-cart': 'SaucedCarts.ShoppingCart',
             'wooden-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowWood',
             'metal-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowMetal'}
 METAL_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast',
-                  'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary', 'injury'}
-SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel', 'injury'}
+                  'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary', 'injury', 'speed-parity'}
+SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel', 'injury', 'speed-parity'}
 SHOPPING_MODELS = {'ShoppingCartModel', 'ShoppingCartPartialModel', 'ShoppingCartFullModel',
                    'ShoppingCartFlashlightModel', 'ShoppingCartFlashlightPartialModel', 'ShoppingCartFlashlightFullModel'}
 ACTION_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'repeat', 'hotkey'}
@@ -85,6 +86,9 @@ CONTROL_POSES = {'forward-0': 0, 'forward-angle': 2.1, 'left-held': 0, 'right-he
 
 
 def scene_names(case):
+    if case == 'speed-parity':
+        return [f'{sex}-{load}-{injury}' for sex in ('male', 'female') for load in ('empty', 'full')
+                for injury in ('healthy', 'left-mild', 'left-heavy', 'right-mild', 'right-heavy')]
     if case == 'injury':
         return [f'{sex}-{load}-{side}-{severity}' for sex in ('male', 'female')
                 for load in ('empty', 'full') for side in ('left', 'right') for severity in ('mild', 'heavy')]
@@ -372,7 +376,7 @@ def validate(selection):
         supported = METAL_SP_CASES if variant == 'metal-wheelbarrow' else SHOPPING_SP_CASES
         if selection['cases'][0] not in supported:
             raise ValueError('SP ' + variant + ' cart_variant supports only: ' + ', '.join(sorted(supported)))
-    if suite == SP and variant == 'shopping-cart':
+    if suite == SP and variant == 'shopping-cart' and selection['cases'] != ['speed-parity']:
         meshes = options.get('cart_mesh_fbx')
         if not isinstance(meshes, dict) or not meshes or any(model not in SHOPPING_MODELS for model in meshes):
             raise ValueError('shopping-cart requires cart_mesh_fbx mapping exact shopping model names to FBX sources')
@@ -392,7 +396,7 @@ def validate(selection):
             raise ValueError('Explicit candidate options.mod_sources.' + identifier + ' is required')
     for key in ('patch_jar', 'ffmpeg', 'ffprobe'):
         _path(selection, key, executable=key != 'patch_jar')
-    if suite == SP and selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e'):
+    if suite == SP and selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e', 'speed-parity'):
         _path(selection, 'mesh_fbx')
         try:
             importlib.import_module('numpy')
@@ -409,9 +413,9 @@ def sources(project, selection):
                   and path.suffix in ('.py', '.lua', '.java', '.kt', '.json', '.md', '.mf')]
     if selection['suite'] == SP:
         paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua']
-        if selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e'):
+        if selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e', 'speed-parity'):
             paths.append(_path(selection, 'mesh_fbx'))
-        if selection.get('options', {}).get('cart_variant') == 'shopping-cart':
+        if selection.get('options', {}).get('cart_variant') == 'shopping-cart' and selection['cases'] != ['speed-parity']:
             paths += [Path(value) for value in selection['options']['cart_mesh_fbx'].values()]
     if selection['suite'] == MP:
         paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
@@ -459,7 +463,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     sp, mp = _intake(project, SP), _intake(project, MP)
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
     lifecycle = selection['suite'] == MP and selection['cases'] == ['lease_lifecycle']
-    simple = lifecycle or selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'showcase', 'native-e')
+    simple = lifecycle or selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'showcase', 'native-e', 'speed-parity')
     controls = selection['suite'] == SP and selection['cases'] == ['controls']
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
@@ -1328,6 +1332,22 @@ def verify(root, selection, catalog):
                  'reason':'Native guest death/respawn/menu rejoin and exact stale-admission checks; animation equivalence is separate',
                  'outcome':{'animationEquivalencePass':False,'evidenceComplete':True,'nativeLifecycleVerified':True}}
                 for role in roles]}
+        if selection['suite'] == SP and selection['cases'] == ['speed-parity']:
+            variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
+            report = _load(intake / 'analyze-speed-parity.py').analyze(
+                texts['client1'], selected_scenes(selection), variant)
+            _write(analysis / 'speed-parity.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(speedParity=report, analysis=str(analysis), evidenceComplete=True,
+                            selectedScenes=selected_scenes(selection), fullSceneCount=20)
+            if not report['speedParityVerified']:
+                raise ValueError('Native equal-encumbrance speed parity failed: ' + str(report['failures']))
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'speed-parity', 'status': 'captured',
+                 'reason': 'Independent native bare/cart cruise speed, real foot injury and equal effective encumbrance/stats verified; acceleration and braking reported separately',
+                 'outcome': {'animationEquivalencePass': False, 'geometryVerified': False,
+                             'evidenceComplete': True, 'speedParityVerified': True,
+                             'partialCoverage': debug, 'selectedScenes': selected_scenes(selection),
+                             'fullSceneCount': 20}}]}
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
         if selection['suite'] == SP and selection['cases'] == ['injury']:
             variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
