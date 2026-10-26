@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import zipfile
 from check_optimizer_compatibility import prepare_overlay
 
 
@@ -15,7 +16,8 @@ def sources(project, selection):
         return []
     root = Path(project)
     return [Path(archive), root / 'tests/optimizer_trial/candidate-manifest.json',
-            root / 'tools/optimizer_profile.py', root / 'tools/check_optimizer_compatibility.py']
+            root / 'tools/optimizer_profile.py', root / 'tools/check_optimizer_compatibility.py',
+            root / 'tests/native_queue/support/viewport/Main.java']
 
 
 def stage(project, output, game, jdk, selection, runtime):
@@ -30,11 +32,28 @@ def stage(project, output, game, jdk, selection, runtime):
     scratch = output / 'optimizer-inputs'
     scratch.mkdir()
     overlay = prepare_overlay(manifest, archive, game, scratch)
+    probe = scratch / 'viewport-classes'
+    probe.mkdir()
+    subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
+        os.pathsep.join(str(game / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar')),
+        '-d', str(probe), str(root / 'tests/native_queue/support/viewport/Main.java')],
+        check=True, capture_output=True, text=True, timeout=60)
+    runtime.setdefault('fixture', {}).setdefault('mods', []).append('NativeViewportProbe')
     props = {'pz.optimizerTrial.profile': manifest['profile']['id'],
              **{'pzopt.' + key: value for key, value in manifest['profile']['properties'].items()}}
     assignments = '\n'.join('System.setProperty(' + json.dumps(key) + ', ' + json.dumps(value) + ');'
                             for key, value in props.items())
     for role, settings in runtime['roles'].items():
+        helper = Path(settings['cache']) / 'mods/NativeViewportProbe'
+        (helper / 'common').mkdir(parents=True)
+        jar = helper / '42/media/java/NativeViewportProbe.jar'
+        jar.parent.mkdir(parents=True)
+        with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as bundle:
+            for source in sorted(probe.rglob('*.class')):
+                bundle.write(source, source.relative_to(probe).as_posix())
+        (helper / '42/mod.info').write_text('name=Disposable native viewport observation\nid=NativeViewportProbe\n'
+            'versionMin=42.21\nrequire=\\ZombieBuddy\njavaPkgName=net.alexredby.nativeviewport\n'
+            'javaJarFile=media/java/NativeViewportProbe.jar\n')
         if not role.startswith('client'):
             continue
         classes = Path(settings['cache']) / 'classes'
