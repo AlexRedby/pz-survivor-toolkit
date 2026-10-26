@@ -438,6 +438,11 @@ local function callbacksSafe(action)
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, action.toolkitTransferGuard.original)))
 end
 local function nativeMatches(action, snapshot, observingCleanup)
+    local binding = snapshot.binding
+    if binding then
+        return binding.guard() and binding.applies(action)
+            and nativeMatches(action, binding.variant, observingCleanup)
+    end
     if getmetatable(action) ~= snapshot.class or action.Type ~= snapshot.class.Type or not callbacksSafe(action) then return false end
     if snapshot.startHelperGuard and not snapshot.startHelperGuard() then return false end
     if snapshot.class == ISInventoryTransferAction then
@@ -507,9 +512,10 @@ local function registerNative(name, inspector, helpers, applies)
 end
 Policy.registerNative = registerNative
 
-function Policy.nativeUnequipVariant(previous, replacement, guard)
+local function unequipVariant(previous, replacement, guard)
     local snapshot = snapshots[ISUnequipAction]
-    if not snapshot or type(guard) ~= "function" or not guard() then return end
+    if not snapshot or type(previous) ~= "table" or type(replacement) ~= "table"
+        or type(guard) ~= "function" or not guard() then return end
     local variant = {class = snapshot.class, methods = {}, helpers = snapshot.helpers}
     for name, method in pairs(snapshot.methods) do variant.methods[name] = method end
     for _, name in ipairs({"new", "complete"}) do
@@ -517,7 +523,28 @@ function Policy.nativeUnequipVariant(previous, replacement, guard)
             or type(replacement[name]) ~= "function" then return end
         variant.methods[name] = replacement[name]
     end
+    return variant, snapshot
+end
+function Policy.nativeUnequipVariant(previous, replacement, guard)
+    local variant = unequipVariant(previous, replacement, guard)
+    if not variant then return end
     return function(action) return guard() and nativeMatches(action, variant) end
+end
+-- One canonical preparation binding for an audited delegate branch. Family
+-- contracts still own instance wrappers and required cleanup; cart branches fail
+-- applies and can never fall back to the pre-wrapper native snapshot.
+function Policy.adoptNativeUnequipVariant(previous, replacement, guard, applies)
+    if type(applies) ~= "function" then return false end
+    local variant, snapshot = unequipVariant(previous, replacement, guard)
+    if not variant then return false end
+    local binding = snapshot.binding
+    if binding then
+        return binding.guard == guard and binding.applies == applies
+            and binding.variant.methods.new == variant.methods.new
+            and binding.variant.methods.complete == variant.methods.complete
+    end
+    snapshot.binding = {variant = variant, guard = guard, applies = applies}
+    return true
 end
 
 function Policy.adoptTransferHooks(previous, replacement, guard)
@@ -874,7 +901,11 @@ function Policy.installContracts()
     for _, name in ipairs({"ISEquipWeaponAction", "ISEquipHeavyItem", "ISUnequipAction"}) do
         registerNative(name, function(action)
             local result = itemResources(action)
-            if result then result.hands = action.character; result.cancelWaiting, result.preparation = false, true end
+            if result then
+                result.hands = action.character; result.cancelWaiting, result.preparation = false, true
+                local snapshot = snapshots[getmetatable(action)]
+                if snapshot and snapshot.binding then result.preparationFinish = true end
+            end
             return result
         end)
     end

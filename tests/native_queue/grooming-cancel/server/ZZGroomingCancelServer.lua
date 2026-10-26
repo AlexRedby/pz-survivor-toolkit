@@ -27,9 +27,7 @@ Events.OnClientCommand.Add(function(module,name,player,args)
    assert(not player:hasTimedActions()and player:getCharacterActions():isEmpty(),'authority native action queue not idle')
    local final=F.snapshot(state)
    assert(F.restored(state,final)and final.tailPages==state.ids.tailTotal,'authority grooming items/equipment/reader not restored')
-   local expected=config.mode=='native'and state.ids.targetStyle or baseline.appearance.model
-   assert(final.appearance.model==expected and F.same(final.appearance.color,baseline.appearance.color),'authority grooming appearance differs')
-   if state.gel then assert(final.gel.uses==(config.mode=='native'and 19 or 20),'authority styling gel cost differs')end
+   assert(F.effectsMatch(state,final,baseline,config.mode=='native'),'authority grooming appearance/fluid/gel differs')
    local receipt={baseline=baseline,checkpoint=checkpoint,final=final,bodyCompletes=false,bodyRecords={},
     completeCountProof='unavailable-remote-callback',
     completeCountLimit='NetTimedAction.perform directly invokes complete; server callback invocation count unavailable without replacement'}

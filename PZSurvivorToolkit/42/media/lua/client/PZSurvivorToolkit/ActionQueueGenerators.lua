@@ -419,7 +419,7 @@ function Generators.install()
             return saved and action.character == saved.character and action.item == saved.item
                 and action.toolkitQueueOperation == saved.token and saved.token ~= nil
                 and unchanged("ISTakeGenerator", action.character) and type(unequipMatches) == "function"
-                and unequipMatches(action)
+                and unequipMatches(action) and not Policy.matchesNative(action)
         end, inspect = function(action)
             return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true}, targets = {},
                 hands = action.character, preparation = true, preparationFinish = true, cancelWaiting = false, interrupt = "finish-step"}
