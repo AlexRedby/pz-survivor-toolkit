@@ -239,14 +239,44 @@ enqueueRead=function(character,record)
         or not pageBook(item,character,record.active) or not nativeClass(probe("read",character,item),"read") then return end
     ISTimedActionQueue.add(ISReadABook:new(character,item))
 end
-local function plan(records,character)
+-- Mirror getItemById's item-before-descendants traversal. The first recursive
+-- match can hide a later direct child, so a flat direct-item map is insufficient.
+-- Each projection owns its index; no inventory identity survives into Restore.
+local function inventoryIndex(container,requested,remaining)
+    local first,visiting={},{}
+    local function visit(current)
+        if visiting[current] then error("cyclic inventory") end
+        visiting[current]=true
+        local values=current:getItems()
+        for index=0,values:size()-1 do
+            local item=values:get(index)
+            local id=item:getID()
+            if requested[id] and first[id]==nil then
+                first[id]=item;remaining=remaining-1
+            end
+            if remaining==0 then break end
+            if instanceof(item,"InventoryContainer") then
+                local nested=item:getItemContainer()
+                if nested then visit(nested) end
+            end
+            -- Later duplicates cannot change any first match already found.
+            if remaining==0 then break end
+        end
+        visiting[current]=nil
+    end
+    visit(container)
+    return first
+end
+local function project(records,character,construct)
     if not array(records) or not localPlayer(character) then return nil,"unavailable" end
     local root=character:getInventory()
     if not instanceof(root,"ItemContainer") then return nil,"unavailable" end
-    local containers,items,locations,devices,loads,incoming={root},{},{},{},{},{}
+    local containers,containerSet,items,locations,devices,loads,incoming={root},{[root]=true},{},{},{},{},{}
+    local requested,requestedCount={},0
     local function container(value)
         if not instanceof(value,"ItemContainer") or not value:isExistYet() then return false end
-        for _,existing in ipairs(containers) do if existing==value then return true end end
+        if containerSet[value] then return true end
+        containerSet[value]=true
         containers[#containers+1]=value
         return true
     end
@@ -254,24 +284,29 @@ local function plan(records,character)
         if not plainRecord(record,character) then return nil,"unavailable" end
         if record.itemId~=nil then
             if not integer(record.itemId) or type(record.itemType)~="string" or not container(record.container) then return nil,"unavailable" end
+            if not requested[record.itemId] then
+                requested[record.itemId]=true;requestedCount=requestedCount+1
+            end
         end
         if record.kind=="transfer" and (not container(record.source) or not container(record.destination)) then return nil,"unavailable" end
     end
-    -- Native MP pickup can replace an item object. Resolve its exact ID/type,
+    -- Native MP pickup can replace an item object. Resolve each distinct ID once,
     -- requiring one direct-root witness among the captured endpoints/current inventory.
-    for _,record in ipairs(records) do
-        if record.itemId~=nil then
-            local item,location
-            for _,candidate in ipairs(containers) do
-                local found=candidate:getItemById(record.itemId)
-                if found and found:getContainer()==candidate then
-                    if item and item~=found then return nil,"unavailable" end
-                    item,location=found,candidate
+    if requestedCount>0 then
+        for _,candidate in ipairs(containers) do
+            for id,found in pairs(inventoryIndex(candidate,requested,requestedCount)) do
+                if found:getContainer()==candidate then
+                    if items[id] and items[id]~=found then return nil,"unavailable" end
+                    items[id],locations[id]=found,candidate
                 end
             end
-            if not item or item:getID()~=record.itemId or item:getFullType()~=record.itemType or item:getIsCraftingConsumed() then return nil,"unavailable" end
-            if items[record.itemId] and items[record.itemId]~=item then return nil,"unavailable" end
-            items[record.itemId],locations[record.itemId]=item,location
+        end
+    end
+    for _,record in ipairs(records) do
+        if record.itemId~=nil then
+            local item=items[record.itemId]
+            if not item or item:getID()~=record.itemId or item:getFullType()~=record.itemType
+                or item:getIsCraftingConsumed() then return nil,"unavailable" end
         end
     end
     local function deviceState(record)
@@ -317,20 +352,29 @@ local function plan(records,character)
             if not pinned("media/lua/client/TimedActions/ISQueueActionsAction.lua",687313299)
                 or not Proof.closure(ISQueueActionsAction.new,"ISQueueActionsAction.lua")
                 or not Proof.closure(base.new,"ISBaseTimedAction.lua") then return nil,"unsupported" end
-            action=Toolkit.ActionQueueOperations.command(character,enqueueRead,copy(record))
-            if not Toolkit.ActionQueueOperations.isCommand(action) then return nil,"unsupported" end
+            local operations=Toolkit.ActionQueueOperations
+            if not operations.commandConstructionTrusted() then return nil,"unsupported" end
+            if construct then
+                action=operations.command(character,enqueueRead,copy(record))
+                if not operations.isCommand(action) then return nil,"unsupported" end
+            end
         elseif record.kind=="approach" then
             local approach=Toolkit.ActionQueueApproach
-            action=approach and approach.rebuild(character,record.approach)
-            if not action then return nil,"unavailable"end
+            if not approach or not approach.validate(character,record.approach) then return nil,"unavailable"end
+            if construct then
+                action=approach.rebuild(character,record.approach)
+                if not action then return nil,"unavailable"end
+            end
         elseif record.kind=="walk" then
             local square=record.square
             if not instanceof(square,"IsoGridSquare") or not integer(record.x) or not integer(record.y) or not integer(record.z)
                 or square:getX()~=record.x or square:getY()~=record.y or square:getZ()~=record.z
                 or getCell():getGridSquare(record.x,record.y,record.z)~=square or character:getVehicle() then return nil,"unavailable" end
             if not nativeClass(probe("walk",character),"walk") then return nil,"unsupported" end
-            action=ISWalkToTimedAction:new(character,square)
-            if not nativeClass(action,"walk") then return nil,"unsupported" end
+            if construct then
+                action=ISWalkToTimedAction:new(character,square)
+                if not nativeClass(action,"walk") then return nil,"unsupported" end
+            end
         elseif record.kind=="radio" then
             local state=deviceState(record)
             if not state or not modes[record.mode] then return nil,"unavailable" end
@@ -362,8 +406,10 @@ local function plan(records,character)
             local candidate=setmetatable({character=character,mode=mode,device=record.device,deviceData=record.data,
                 secondaryItem=value,stopOnWalk=false,stopOnRun=true,ignoreHandsWounds=true},ISRadioAction)
             if not radioTrusted(candidate) then return nil,"unsupported" end
-            action=ISRadioAction:new(mode,character,record.device,value)
-            if not radioTrusted(action) then return nil,"unsupported" end
+            if construct then
+                action=ISRadioAction:new(mode,character,record.device,value)
+                if not radioTrusted(action) then return nil,"unsupported" end
+            end
         elseif record.kind=="media" then
             local state=deviceState(record)
             if not state or not instanceof(record.device,"IsoTelevision") or record.square:getDeviceData()~=record.data
@@ -386,8 +432,10 @@ local function plan(records,character)
             local candidate=setmetatable({character=character,isRemove=record.remove,secondaryItem=tape,parameter=record.square,
                 deviceData=record.data,maxTime=30,stopOnWalk=false,stopOnRun=true,ignoreHandsWounds=true},ISDeviceMediaAction)
             if not mediaTrusted(candidate) then return nil,"unsupported" end
-            action=ISDeviceMediaAction:new(character,record.remove,tape,record.square)
-            if not mediaTrusted(action) then return nil,"unsupported" end
+            if construct then
+                action=ISDeviceMediaAction:new(character,record.remove,tape,record.square)
+                if not mediaTrusted(action) then return nil,"unsupported" end
+            end
         elseif record.kind=="transfer" then
             local item=items[record.itemId]
             if locations[record.itemId]~=record.source or record.source==record.destination or record.source:getContainingItem()
@@ -399,19 +447,26 @@ local function plan(records,character)
             if not transferTrusted(candidate) then return nil,"unsupported" end
             -- Recompute native duration from current state. A derived maxTime from
             -- the canceled instance is not an explicit user-selected time override.
-            action=ISInventoryTransferAction:new(character,item,record.source,record.destination)
-            action.allowMissingItems=record.allowMissing
-            if not transferTrusted(action) then return nil,"unsupported" end
+            if construct then
+                action=ISInventoryTransferAction:new(character,item,record.source,record.destination)
+                action.allowMissingItems=record.allowMissing
+                if not transferTrusted(action) then return nil,"unsupported" end
+            end
             if not record.source:isRemoveItemAllowed(item) or not record.destination:isItemAllowed(item)
                 or not fits(record.destination,item) then return nil,"unavailable" end
             locations[record.itemId]=record.destination
         else return nil,"unsupported" end
-        actions[#actions+1]=action
+        if construct then actions[#actions+1]=action end
     end
-    return actions
+    return construct and actions or true
+end
+function Recovery.validate(records,character)
+    local ok,valid,reason=pcall(project,records,character,false)
+    if ok then return valid,reason end
+    return nil,"unavailable"
 end
 function Recovery.plan(records,character)
-    local ok,actions,reason=pcall(plan,records,character)
+    local ok,actions,reason=pcall(project,records,character,true)
     if ok then return actions,reason end
     return nil,"unavailable"
 end

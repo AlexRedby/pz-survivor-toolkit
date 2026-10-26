@@ -10,6 +10,7 @@ from .tv_controls import MODS, _close, _duration, _ids, _number
 CASES = ('movement-cancel', 'clear-queue')
 PREFIX = '[QUEUE_RECOVERY] '
 ORIGINAL = ['front', 'volume', 'tail']
+PHYSICAL = ['front', 'approach', 'volume', 'tail']
 STARTS = ['prefix', 'front', 'restoredFront', 'restoredVolume', 'restoredTail']
 
 
@@ -98,6 +99,35 @@ def _snapshot(value, spec, phase, baseline=None):
     return True
 
 
+def _steps(value, spec, tokens, enabled, restored=False):
+    if (not isinstance(tokens, list) or len(tokens) != 3
+            or any(type(token) is not int for token in tokens)):
+        return False
+    expected = []
+    target = {key: spec['tv'][key] for key in ('x', 'y', 'z')}
+    for name in PHYSICAL if enabled else ORIGINAL:
+        group = 0 if name == 'front' else 2 if name == 'tail' else 1
+        kind = ('ISQueueActionsAction' if name == 'approach' or restored and name in ('front', 'tail')
+                else 'ISRadioAction' if name == 'volume' else 'ISReadABook')
+        expected.append(dict(name=name, type=kind, token=tokens[group],
+                             approach=dict(owned=True, helper='walkAdj', target=target) if name == 'approach' else False))
+    if not isinstance(value, list) or len(value) != len(expected):
+        return False
+    for step in value:
+        if (not isinstance(step, dict) or set(step) != {'name', 'type', 'token', 'approach'}
+                or type(step['token']) is not int):
+            return False
+        proof = step['approach']
+        if step['name'] == 'approach':
+            if (not isinstance(proof, dict) or proof.get('owned') is not True
+                    or not isinstance(proof.get('target'), dict)
+                    or any(type(coordinate) is not int for coordinate in proof['target'].values())):
+                return False
+        elif proof is not False:
+            return False
+    return value == expected
+
+
 def check_case(row, case, selection, prepared, authority_baseline, verified, acks):
     errors = []
     spec = row.get('ids')
@@ -128,9 +158,25 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
         for key in ('rootIds', 'carriedIds'):
             if any(row[name][key] != row['input'][key] for name in ('baseline', 'authorityBaseline', 'client', 'server')):
                 errors.append('Exact item conservation differs')
+    wishlist = row.get('wishlist', {})
+    try:
+        for name in ('empty', 'collapsed'):
+            sample = wishlist[name]
+            if (not _number(sample['elapsedMs']) or not 1500 <= sample['elapsedMs'] < 10000
+                    or type(sample['draws']) is not int or sample['draws'] < 10
+                    or any(type(sample[key]) is not int or sample[key] != 0
+                           for key in ('carriedCalls', 'rowClears', 'selectorClears'))):
+                raise ValueError()
+        expanded = wishlist['expanded']
+        if (expanded['amount'] != 7 or type(expanded['carried']) is not int or expanded['carried'] < 1
+                or expanded['firstDrawFresh'] is not True
+                or any(wishlist[key] is not True for key in ('reopened', 'removed', 'restored'))):
+            raise ValueError()
+    except (KeyError, ValueError, TypeError):
+        errors.append('Wishlist native idle/expand/cleanup workload evidence differs')
     cancellation, recovery = row.get('cancellation', {}), row.get('recovery', {})
     entrypoint = 'IsoGameCharacter.StopAllActionQueueWalking' if case == 'movement-cancel' else 'ISTimedActionQueue.clear'
-    if (cancellation.get('entrypoint') != entrypoint or cancellation.get('initialQueue') != ORIGINAL
+    if (cancellation.get('entrypoint') != entrypoint or cancellation.get('initialQueue') != (PHYSICAL if enabled else ORIGINAL)
             or cancellation.get('drained') is not True or cancellation.get('movementStopped') is not True
             or type(cancellation.get('nativeCount')) is not int or cancellation['nativeCount'] != 1
             or not _snapshot(cancellation.get('before'), spec, 'baseline')):
@@ -139,7 +185,15 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
     if (len(old) != 3 or any(type(r.get('id')) is not int or r.get('cancelled') is not True for r in old)
             or len({r.get('id') for r in old}) != 3):
         errors.append('Original operation tokens were not distinctly cancelled')
+    if not _steps(cancellation.get('steps'), spec, [r.get('id') for r in old], enabled):
+        errors.append('Original physical actions or exact preparation operation differ')
     if enabled:
+        workload = recovery.get('previewWorkload', {})
+        if (not _number(workload.get('elapsedMs')) or not 1500 <= workload['elapsedMs'] < 10000
+                or type(workload.get('previews')) is not int or workload['previews'] < 4
+                or (type(workload.get('plans')) is not int or workload['plans'] != 0)
+                or workload.get('nativeUI') is not True):
+            errors.append('Idle recovery UI reconstructed actions or lacks native observations')
         tokens = recovery.get('tokens')
         if (type(recovery.get('id')) is not int or recovery['id'] < 1 or recovery.get('count') != 3
                 or type(recovery.get('count')) is not int or type(recovery.get('skipped')) is not int or recovery['skipped'] != 0
@@ -148,7 +202,8 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
                 or not isinstance(tokens, list) or not all(type(token) is int for token in tokens)):
             errors.append('Missing one-shot public recovery evidence')
         if (not isinstance(tokens, list) or len(tokens) != 3 or len(set(tokens)) != 3
-                or set(tokens) & {r.get('id') for r in old} or row.get('restoredQueue') != ORIGINAL):
+                or set(tokens) & {r.get('id') for r in old} or row.get('restoredQueue') != PHYSICAL
+                or not _steps(recovery.get('steps'), spec, tokens, True, restored=True)):
             errors.append('Recovery reused tokens or changed remainder order')
     elif (recovery.get('available') is not False or recovery.get('restored') is not False or recovery.get('historyAbsent') is not True
           or row.get('restoredQueue') != []):
@@ -238,4 +293,5 @@ def verify(root, selection, catalog):
         issues.append('Recovery verifier ' + type(error).__name__ + ': ' + str(error))
     return dict(issues=issues, outcomes=outcomes, evidence={'limits': [
         'Programmatic native movement-stop/full-clear entrypoints; no physical keyboard/mouse or rendering claim.',
+        'Idle recovery preview observes natural UI callbacks without replacing action lifecycles; Wishlist uses public requests, native collapse/title-hover callbacks and first-post-draw freshness. Operation counts are not CPU/FPS timing or large-inventory native stress; no second-player revocation coverage is implied.',
         'Fresh one-client selected-pack macOS SP/menu Host, adjacent powered TV, root skill books only.']})

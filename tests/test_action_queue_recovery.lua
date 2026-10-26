@@ -15,7 +15,7 @@ player.isDead=function()return dead end
 player.hasTimedActions=function()return next(natives)~=nil end
 player.getCharacterActions=function()return {contains=function(_,value)return natives[value]==true end}end
 PZSurvivorToolkit.Settings.actionQueue=function()return enabled end
-local captures,plans,starts=0,0,0
+local captures,plans,validations,starts=0,0,0,0
 local class=ISBaseTimedAction:derive('FixtureRecoveryAction')
 function class:begin()
  starts=starts+1
@@ -33,6 +33,10 @@ local adapters={capture=function(a,active)
  captures=captures+1
  if a.unsupported then return nil,'unsupported' end
  return {label=a.label,kind=a.Type,active=active}
+end,validate=function(records,actor)
+ validations=validations+1
+ if blocked then return nil,'item_missing' end
+ return true
 end,plan=function(records,actor)
  plans=plans+1
  if blocked then return nil,'item_missing' end
@@ -71,7 +75,12 @@ do
  reset(q);local saved=infoCount(3)
  assert(oldToken.toolkitCancelled and recovery.preview(player).blocked=='settling')
  drain();moving=true;assert(recovery.preview(player).blocked=='moving');moving=false
- local before=starts;assert(recovery.preview(player).available and starts==before,'preview never begins native actions')
+ local before,beforePlans=starts,plans
+ for _=1,8 do assert(recovery.preview(player).available)end
+ assert(starts==before and plans==beforePlans,'preview validates without constructing or beginning actions')
+ blocked=true
+ assert(not recovery.restore(player,saved.id),'Restore validates current state after a successful preview')
+ assert(recovery.info(player).id==saved.id);blocked=false
  assert(recovery.restore(player,saved.id))
  assert(q.queue[1]~=read and q.queue[1].label=='partly read' and #q.queue==3)
  assert(q.queue[1].toolkitQueueOperation~=oldToken and not q.queue[1].toolkitQueueOperation.toolkitCancelled)
@@ -160,5 +169,5 @@ do
  recovery.capture({character={class='IsoGameCharacter'},queue={a}})
  assert(not recovery.info({class='IsoGameCharacter'}))
 end
-assert(captures>0 and plans>0)
+assert(captures>0 and plans>0 and validations>0)
 print('Queue recovery: pre-wipe capture, completed-prefix exclusion, one-shot fresh tokens, grouping, settlement, stale resources/history and lifecycle guards passed.')

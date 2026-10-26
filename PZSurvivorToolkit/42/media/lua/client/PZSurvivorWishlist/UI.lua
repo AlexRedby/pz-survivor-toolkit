@@ -119,6 +119,13 @@ local function selectedRow(list)
     return list.items[list.selected] and list.items[list.selected].item
 end
 
+local function selectedEntry(window)
+    local row = selectedRow(window.list)
+    local list = W.Client.getList(window.playerNum, window.listId)
+    local value = row and list and list.entries[row.fullType]
+    if value then return row, list, value end
+end
+
 function Window:initialise()
     ISCollapsableWindow.initialise(self)
     local top = self:titleBarHeight() + 10
@@ -142,23 +149,36 @@ function Window:initialise()
 end
 
 function Window:refresh()
-    local state = W.Client.state(self.playerNum)
-    local now = getTimestampMs()
-    if now < self.nextRefresh and self.generation == state.generation then return end
-    self.nextRefresh, self.generation = now + 750, state.generation
-    local selected, scroll = selectedRow(self.list), self.list:getYScroll()
-    self.selector:clear()
-    for _, list in ipairs(state.lists) do
-        local label = list.owner == state.username and text("Personal") or text("SharedBy", list.owner)
-        self.selector:addOptionWithData(label, list.id)
-        if list.id == state.selectedId then self.selector.selected = #self.selector.options end
+    if self.isCollapsed then
+        self.refreshDeferred = true
+        return
     end
+    local state = W.Client.state(self.playerNum)
     local list = W.Client.selected(self.playerNum)
+    local now = getTimestampMs()
+    local changed = self.generation ~= state.generation
+    if not changed and not self.refreshDeferred and (not self.hasEntries or now < self.nextRefresh) then return end
+    self.nextRefresh, self.generation = now + 750, state.generation
+    self.listId = list and list.id
+    self.refreshDeferred = nil
+    local selected, scroll = selectedRow(self.list), self.list:getYScroll()
+    if changed then
+        self.selector:clear()
+        for _, candidate in ipairs(state.lists) do
+            local label = candidate.owner == state.username and text("Personal") or text("SharedBy", candidate.owner)
+            self.selector:addOptionWithData(label, candidate.id)
+            if candidate.id == state.selectedId then self.selector.selected = #self.selector.options end
+        end
+    end
     self.list:clear()
     self.list.selected = 0
+    self.hasEntries = false
     if list then
-        local rows, counts = {}, W.Client.carried(self.playerNum)
+        local rows, counts = {}
         for fullType, value in pairs(list.entries) do
+            -- Count only when a visible row needs the result. Empty refreshes
+            -- never traverse inventory, including on authoritative generations.
+            counts = counts or W.Client.carried(self.playerNum)
             local name, script = UI.itemName(value.vehicleTypes and value.vehicleTypes[1] or fullType)
             if value.vehicleTypes then
                 local class = getText("IGUI_VehicleType_" .. value.vehicleClass)
@@ -169,6 +189,7 @@ function Window:refresh()
                 detail = text("Carried", W.Client.carriedCount(counts, fullType, value)) .. "  |  "
                     .. (value.vehicleTypes and text("VehicleVariants") or fullType) }
         end
+        self.hasEntries = #rows > 0
         table.sort(rows, function(a, b)
             if a.done ~= b.done then return not a.done end
             if a.name ~= b.name then return a.name < b.name end
@@ -184,9 +205,17 @@ function Window:refresh()
     self.addButton:setEnable(list ~= nil)
 end
 
+function Window:uncollapse()
+    local collapsed = self.isCollapsed
+    ISCollapsableWindow.uncollapse(self)
+    -- Native hover expansion can happen without a collapsed prerender in between.
+    if collapsed and not self.isCollapsed then self.refreshDeferred = true end
+end
+
 function Window:prerender()
     self:refresh()
     ISCollapsableWindow.prerender(self)
+    if self.isCollapsed then return end
     local row = selectedRow(self.list)
     self.amountButton:setEnable(row ~= nil)
     self.doneButton:setEnable(row ~= nil)
@@ -217,21 +246,25 @@ function Window:share()
 end
 
 function Window:done()
-    local row = selectedRow(self.list)
-    if row then W.Client.edit(self.playerNum, "done", { fullType = row.fullType, done = not row.done }) end
+    local row, list, value = selectedEntry(self)
+    if row and value.done == row.done then
+        W.Client.edit(self.playerNum, "done", { listId = list.id, fullType = row.fullType, done = not row.done })
+    end
 end
 
 function Window:remove()
-    local row = selectedRow(self.list)
-    if row then W.Client.edit(self.playerNum, "remove", { fullType = row.fullType }) end
+    local row, list = selectedEntry(self)
+    if row then W.Client.edit(self.playerNum, "remove", { listId = list.id, fullType = row.fullType }) end
 end
 
 function Window:amount()
-    local row, list = selectedRow(self.list), W.Client.selected(self.playerNum)
-    if not row or not list then return end
-    local dialog = ISTextBox:new(0, 0, 340, 180, text("AmountPrompt"), tostring(row.amount), self,
+    local row, list, value = selectedEntry(self)
+    if not row then return end
+    local dialog = ISTextBox:new(0, 0, 340, 180, text("AmountPrompt"), tostring(value.amount), self,
         function(target, clicked)
             if clicked.internal == "OK" then
+                local current = W.Client.getList(target.playerNum, list.id)
+                if not current or not current.entries[row.fullType] then return end
                 W.Client.edit(target.playerNum, "set", { listId = list.id, fullType = row.fullType,
                     amount = tonumber(clicked.parent.entry:getInternalText()) })
             end
@@ -425,6 +458,7 @@ function UI.open(playerNum)
         window = show(setupWindow(Window, 600, 470, text("Title"), playerNum))
         UI.windows[playerNum] = window
     else
+        window.refreshDeferred = true
         window:addToUIManager()
         window:setVisible(true)
         window:bringToTop()

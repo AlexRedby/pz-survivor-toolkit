@@ -6,6 +6,8 @@ local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit
 local R=T.ActionQueueRecovery
+local WishlistGate=require 'RecoveryWishlistUI'
+local wishlistGate,wishlistReceipt,previewWatch,previewWorkload
 local native=config.mode=='native'
 local started,ready,done=false,false,false
 local phase,index,since='prepare',1,0
@@ -25,7 +27,14 @@ local function raw(event,value)print('[QUEUE_RECOVERY] '..event..' '..JSON.encod
 local function emit(row)row.suite,row.kind,row.mode,row.actor='queue-recovery',config.kind,config.mode,'client1';JSON.emit(row)end
 local function fail(error)
  if done then return end
- emit({event='case',id=case(),status='failed',reason=tostring(error),phase=phase,ids=ids,commands=commands,order=order})
+ local pending={}
+ for _,action in ipairs(queue().queue)do
+  pending[#pending+1]={type=action.Type,itemId=action.item and action.item:getID()or false,
+   mode=action.mode or false,value=type(action.secondaryItem)=='number'and action.secondaryItem or false,
+   current=action==queue().current,token=tokenId(action.toolkitQueueOperation)}
+ end
+ emit({event='case',id=case(),status='failed',reason=tostring(error),phase=phase,ids=ids,commands=commands,order=order,
+  pending=pending,wishlist=wishlistReceipt})
  print('[QUEUE_TEST] FAIL queue-recovery '..tostring(error));done=true
 end
 local function request(command)
@@ -130,27 +139,98 @@ local function volume(value)
  return action
 end
 local function read(item)local action=ISReadABook:new(getPlayer(),item);ISTimedActionQueue.add(action);return action end
+local function ownedApproach(action)
+ local owner=T.ActionQueueApproach
+ if not owner or not owner.isAction(action)or not owner.capture(action)then return false end
+ local request=action.toolkitQueueCommand.snapshot
+ return request.binding.owner==luautils and request.binding.name=='walkAdj'and request.args.n==3
+  and request.args[1]==getPlayer()and request.args[2]==state.tv:getSquare()and request.args[3]==true
+end
 local function queueNames()
  local names={}
  for _,a in ipairs(queue().queue)do
   local id=a.item and a.item:getID()or a.toolkitQueueCommand and a.toolkitQueueCommand.snapshot.itemId
-  names[#names+1]=id==ids.front.id and'front'or id==ids.tail.id and'tail'or a.Type=='ISRadioAction'and a.secondaryItem==.25 and'volume'or a.Type
+  names[#names+1]=id==ids.front.id and'front'or id==ids.tail.id and'tail'or ownedApproach(a)and'approach'or a.Type=='ISRadioAction'and a.secondaryItem==.25 and'volume'or a.Type
  end
  return names
 end
 local function same(a,b)if #a~=#b then return false end;for i,v in ipairs(a)do if b[i]~=v then return false end end;return true end
+-- Physical preparation is part of the volume operation, not an independent
+-- cancellation intent. Pin its exact native helper and contiguous membership.
+local function queueEvidence(restored)
+ local names=queueNames()
+ local expected=native and{'front','volume','tail'}or{'front','approach','volume','tail'}
+ assert(same(names,expected),'unexpected remainder '..JSON.encode(names))
+ local steps,tokens,seen={},{},{}
+ local previous
+ for index,action in ipairs(queue().queue)do
+  local name=names[index];local token=assert(action.toolkitQueueOperation)
+  if token~=previous then
+   assert(not seen[token],'interleaved recovery operation')
+   tokens[#tokens+1]=token;seen[token]=true;previous=token
+  end
+  if restored then
+   assert(not token.toolkitCancelled,'restored operation is cancelled')
+   for _,old in ipairs(oldTokens)do assert(token~=old,'recovery reused cancelled token')end
+  end
+  local proof=false
+  if name=='approach'then
+   assert(ownedApproach(action),'foreign volume preparation')
+   local following=queue().queue[index+1]
+   assert(following and names[index+1]=='volume'and following.toolkitQueueOperation==token,'volume lost its preparation operation')
+   local square=action.toolkitQueueCommand.snapshot.args[2]
+   proof={owned=true,helper='walkAdj',target={x=square:getX(),y=square:getY(),z=square:getZ()}}
+  elseif name=='volume'then
+   assert(action.Type=='ISRadioAction'and action.device==state.tv and action.deviceData==state.data and action.mode=='SetVolume'and action.secondaryItem==.25)
+   if not native then assert(queue().queue[index-1].toolkitQueueOperation==token,'volume preparation token differs')end
+  elseif restored then
+   local record=action.toolkitQueueCommand and action.toolkitQueueCommand.snapshot
+   assert(T.ActionQueueOperations.isCommand(action)and record.kind=='read'and record.character==getPlayer()
+    and record.itemId==ids[name].id,'foreign deferred read')
+  else assert(action==oldActions[name=='front'and 1 or 3]and action.Type=='ISReadABook','original native read differs')end
+  steps[#steps+1]={name=name,type=action.Type,token=tokenId(token),approach=proof}
+ end
+ assert(#tokens==3,'remainder must retain three operations')
+ for index,name in ipairs(names)do
+  local group=name=='front'and 1 or name=='tail'and 3 or 2
+  assert(queue().queue[index].toolkitQueueOperation==tokens[group],'remainder operation order differs')
+ end
+ return names,steps,tokens
+end
 local function cancel()
  oldActions={state.frontAction,volume(.25),read(state.tail)};oldNatives={};oldTokens={}
- assert(same(queueNames(),{'front','volume','tail'}),'unexpected original remainder')
+ local names,steps,tokens=queueEvidence(false);oldTokens=tokens
  for _,a in ipairs(oldActions)do
   if a.action then oldNatives[#oldNatives+1]=a.action end
-  oldTokens[#oldTokens+1]=a.toolkitQueueOperation
  end
  local before=F.snapshot(state);assert(before.books.front.pages>ids.front.initial and before.books.front.pages<ids.front.pages)
- cancelled={entrypoint=case()=='movement-cancel'and'IsoGameCharacter.StopAllActionQueueWalking'or'ISTimedActionQueue.clear',before=before,initialQueue=queueNames()}
+ cancelled={entrypoint=case()=='movement-cancel'and'IsoGameCharacter.StopAllActionQueueWalking'or'ISTimedActionQueue.clear',before=before,initialQueue=names,steps=steps}
  if case()=='movement-cancel'then getPlayer():StopAllActionQueueWalking()else ISTimedActionQueue.clear(getPlayer())end
  for _,a in ipairs(oldActions)do tracks[a].cancelled=true end
  phase='draining'
+end
+local function startPreviewWatch()
+ local A=T.ActionQueueRecoveryAdapters
+ previewWatch={since=now(),previews=0,plans=0,before=JSON.encode(F.snapshot(state)),
+  preview=R.preview,plan=A.plan}
+ local watch=previewWatch
+ R.preview=function(...)watch.previews=watch.previews+1;return watch.preview(...)end
+ A.plan=function(...)watch.plans=watch.plans+1;return watch.plan(...)end
+ phase='preview-workload'
+end
+local function finishPreviewWatch()
+ local watch=previewWatch
+ assert(empty()and JSON.encode(F.snapshot(state))==watch.before,'idle recovery preview mutated state')
+ assert(watch.previews>=4 and watch.plans==0,'native UI preview reconstructed actions')
+ local live=false;local windows=UIManager.getUI()
+ for i=0,windows:size()-1 do
+  local element=windows:get(i);local view=element and element.getTable and element:getTable()
+  if type(view)=='table'and getmetatable(view)==T.ActionQueuePanel and view.queue==queue()and view:getIsVisible()then live=true end
+ end
+ assert(live,'recovery preview did not have a visible native queue panel')
+ R.preview,T.ActionQueueRecoveryAdapters.plan=watch.preview,watch.plan
+ previewWorkload={elapsedMs=now()-watch.since,previews=watch.previews,plans=watch.plans,nativeUI=true}
+ previewWatch=nil
 end
 local function restore()
  local player=getPlayer();assert(empty()and not player:isPlayerMoving()and not player:pressedMovement(false))
@@ -167,17 +247,13 @@ local function restore()
  assert(info.count==3 and info.skipped==0 and preview.available==true,'remainder unavailable '..JSON.encode(preview))
  assert(not R.restore(player,info.id-1),'stale recovery ID accepted')
  local before=JSON.encode(F.snapshot(state));R.preview(player);assert(JSON.encode(F.snapshot(state))==before,'preview mutated world/pages')
- restoration={id=info.id,count=info.count,skipped=info.skipped,available=preview.available,restored=false,historyAbsent=false,duplicateRejected=false,previewPure=true}
+ restoration={id=info.id,count=info.count,skipped=info.skipped,available=preview.available,restored=false,historyAbsent=false,duplicateRejected=false,previewPure=true,previewWorkload=previewWorkload}
  assert(R.restore(player,info.id),'public recovery failed');restoration.restored=true
  restoration.duplicateRejected=not R.restore(player,info.id);restoration.historyAbsent=not R.info(player)
  assert(restoration.duplicateRejected and restoration.historyAbsent)
- restoredQueue=queueNames();assert(same(restoredQueue,{'front','volume','tail'}),'restored order differs')
- local seen={};restoration.tokens={}
- for _,a in ipairs(queue().queue)do
-  local token=assert(a.toolkitQueueOperation);assert(not token.toolkitCancelled and not seen[token]);seen[token]=true
-  for _,old in ipairs(oldTokens)do assert(old~=token,'recovery reused cancelled token')end
-  restoration.tokens[#restoration.tokens+1]=tokenId(token)
- end
+ local steps,tokens
+ restoredQueue,steps,tokens=queueEvidence(true);restoration.steps=steps;restoration.tokens={}
+ for _,token in ipairs(tokens)do restoration.tokens[#restoration.tokens+1]=tokenId(token)end
  phase='running'
 end
 local function finish()
@@ -185,12 +261,17 @@ local function finish()
  local expected=native and{'prefix','front'}or{'prefix','front','restoredFront','restoredVolume','restoredTail'}
  assert(same(order,expected),'actual native starts differ '..JSON.encode(order))
  emit({event='case',id=case(),status='passed',ids=ids,input=state.input,baseline=state.baseline,authorityBaseline=baselineReceipt,
-  client=client,server=receipt,commands=commands,order=order,cancellation=cancelled,recovery=restoration,restoredQueue=restoredQueue or{},queueIdle=true,settleMilliseconds=now()-quiet})
+  client=client,server=receipt,commands=commands,order=order,cancellation=cancelled,recovery=restoration,wishlist=wishlistReceipt,restoredQueue=restoredQueue or{},queueIdle=true,settleMilliseconds=now()-quiet})
  index=index+1
  if not case()then emit({event='complete',cases=config.cases,performed=2,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
  state,authority,ids,baselineReceipt,receipt,tracks,commands,order,panel,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
- cancelled,restoration,oldActions,oldNatives,oldTokens,restoredQueue=nil,nil,nil,nil,nil,nil;phase='prepare';since=now()
+ cancelled,restoration,oldActions,oldNatives,oldTokens,restoredQueue=nil,nil,nil,nil,nil,nil
+ wishlistGate,wishlistReceipt,previewWorkload=nil,nil,nil;phase='prepare';since=now()
 end
+Events.OnPostUIDraw.Add(function()
+ if not wishlistGate or done then return end
+ local ok,error=pcall(function()wishlistGate:draw()end);if not ok then fail(error)end
+end)
 Events.OnGameStart.Add(function()started=true;since=now()end)
 Events.OnTick.Add(function()
  if not started or done then return end
@@ -211,13 +292,17 @@ Events.OnTick.Add(function()
    state=F.resolve(player,ids);if not state or player:tooDarkToRead()or not F.approach(state)then return end
    tracks,commands,order={},{},{};state.input=F.snapshot(state)
    panel=RWMMergedTV:new(-1000,-1000,300,100);panel:initialise();panel:instantiate();assert(panel:readFromObject(player,state.tv,state.data,'IsoObject'))
-   volume(.4);phase='prefix'
+   wishlistGate=WishlistGate.new();phase='wishlist-ui'
+  elseif phase=='wishlist-ui'then
+   wishlistReceipt=wishlistGate:tick()
+   if wishlistReceipt then wishlistGate=nil;volume(.4);phase='prefix'end
   elseif phase=='prefix'and empty()and receipts()then assert(math.abs(state.data:getDeviceVolume()-.4)<.0001);state.frontAction=read(state.front);phase='front'
   elseif phase=='front'and tracks[state.frontAction].progress then cancel()
   elseif phase=='draining'and empty()and not player:isPlayerMoving()and not player:pressedMovement(false)then
    if not F.baseline(state)then return end
    phase='authorityBaseline';request('Baseline')
-  elseif phase=='authorityBaseline'and baselineReceipt then restore()
+  elseif phase=='authorityBaseline'and baselineReceipt then if native then restore()else startPreviewWatch()end
+  elseif phase=='preview-workload'and now()-previewWatch.since>=1700 then finishPreviewWatch();restore()
   elseif phase=='running'and empty()then
    if not F.verify(state)or not receipts()then quiet=nil;return end
    quiet=quiet or now();if now()-quiet>=1000 then phase='verified';request('Verify')end

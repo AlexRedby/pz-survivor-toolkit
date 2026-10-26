@@ -43,7 +43,7 @@ local function setup(changed,binding,loadQueue,lightSwitch)
     CharacterTrait={DEXTROUS=1,ALL_THUMBS=2,ILLITERATE=3,FAST_READER=4,SLOW_READER=5}
     ItemTag={FAST_READ='fastread'};ItemBodyLocation={EYES=1}
     SkillBook={Woodwork={perk=1,maxMultiplier1=3}}
-    local state={writes=0,items={},nextId=0,squares={}}
+    local state={writes=0,items={},nextId=0,squares={},itemVisits=0,lookups=0}
     f.player.class='IsoPlayer';f.player.getVehicle=function(self)return self.vehicle end
     f.player.hasTrait=function()return false end;f.player.isWearingAwkwardGloves=function()return false end
     f.player.isEquipped=function()return false end;f.player.isSitting=function()return false end
@@ -54,7 +54,7 @@ local function setup(changed,binding,loadQueue,lightSwitch)
     local originalInstanceof=instanceof
     instanceof=function(value,kind)
         return originalInstanceof(value,kind)or type(value)=='table'and
-            (kind=='InventoryItem'and(value.class=='Literature'or value.class=='ComboItem')
+            (kind=='InventoryItem'and(value.class=='Literature'or value.class=='ComboItem'or value.class=='InventoryContainer')
                 or kind=='IsoGameCharacter'and value.class=='IsoPlayer')
     end
     getClassSimpleName=function(value)return value.class end
@@ -78,10 +78,21 @@ local function setup(changed,binding,loadQueue,lightSwitch)
         c.getCapacityWeight=function(self)return self.load end;c.getEffectiveCapacity=function(self)return self.capacity end
         c.getMaxWeight=function(self)return self.capacity end
         c.contains=function(self,item)return item.container==self end
-        c.getItemById=function(self,id)for _,item in ipairs(state.items)do if item.id==id and item.container==self then return item end end end
+        c.getItemById=function(self,id)
+            state.lookups=state.lookups+1
+            local values=self:getItems()
+            for index=0,values:size()-1 do
+                local value=values:get(index)
+                if value.id==id then return value end
+                if value.class=='InventoryContainer'and value.nested then
+                    local found=value.nested:getItemById(id)
+                    if found then return found end
+                end
+            end
+        end
         c.getItems=function(self)
             local values={};for _,item in ipairs(state.items)do if item.container==self then values[#values+1]=item end end
-            return {size=function()return #values end,get=function(_,i)return values[i+1]end}
+            return {size=function()return #values end,get=function(_,i)state.itemVisits=state.itemVisits+1;return values[i+1]end}
         end
         c.isRemoveItemAllowed=function()return true end;c.isItemAllowed=function()return true end
         c.getSourceGrid=function()return world and origin or nil end
@@ -154,6 +165,13 @@ local function setup(changed,binding,loadQueue,lightSwitch)
     local installed=media.install()
     if changed~='ISBaseTimedAction.lua'and changed~='reader'then assert(installed,'actual media sources must install')end
     local recovery=f.project('ActionQueueRecoveryAdapters')
+    local actualPlan=recovery.plan
+    recovery.plan=function(records,character)
+        local valid=recovery.validate(records,character)
+        local actions,reason=actualPlan(records,character)
+        assert((valid~=nil)==(actions~=nil),'validation and construction project the same live dependencies')
+        return actions,reason
+    end
     local function radioAction(mode,value,target)return ISRadioAction:new(mode,f.player,target,value)end
     local function mediaAction(tape,target,remove)return ISDeviceMediaAction:new(f.player,remove==true,tape,target:getSquare())end
     local function book(where)
@@ -162,13 +180,92 @@ local function setup(changed,binding,loadQueue,lightSwitch)
         return action,b
     end
     return {f=f,recovery=recovery,operations=operations,state=state,root=root,world=world,item=item,tv=tv,square=square,
-        radio=radioAction,media=mediaAction,book=book,itemAdapters=itemAdapters}
+        radio=radioAction,media=mediaAction,book=book,itemAdapters=itemAdapters,container=container}
 end
 local function capture(s,action,active)
     local record,reason=s.recovery.capture(action,active)
     assert(record,reason or 'capture failed')
     assert(record.action==nil and record.toolkitQueueOperation==nil and record.receipt==nil)
     return record
+end
+
+-- Preview scans the live inventory once, independent of the number of records,
+-- and never allocates discarded deferred command actions.
+do
+    local s=setup()
+    for _=1,4800 do s.item('Base.Nails')end
+    local records={}
+    for _=1,500 do records[#records+1]=capture(s,s.book())end
+    local command,constructor=s.operations.command,ISQueueActionsAction.new
+    local constructed=0
+    -- A passive call hook preserves the factory identity required by validation.
+    local trace=debug and debug.sethook and debug.getinfo
+    if trace then
+        debug.sethook(function(event)
+            if event=='call'then
+                local callback=debug.getinfo(2,'f').func
+                if callback==command or callback==constructor then constructed=constructed+1 end
+            end
+        end,'c')
+    end
+    local writes=s.state.writes
+    s.state.itemVisits,s.state.lookups=0,0
+    for _=1,8 do assert(s.recovery.validate(records,s.f.player))end
+    if trace then debug.sethook()else print('Recovery constructor call trace SKIP (debug hooks unavailable).')end
+    assert(constructed==0 and s.state.writes==writes,'validation has no constructor or saved-page effects')
+    assert(s.state.lookups==0 and s.state.itemVisits==8*#s.state.items,
+        'preview work scales with inventory size rather than records times inventory size')
+    local action=s.book();local record=capture(s,action)
+    assert(s.recovery.validate({record},s.f.player))
+    action.item.container=nil
+    assert(not s.recovery.plan({record},s.f.player),'fresh construction cannot reuse preview item identities')
+end
+
+-- A small history keeps native early termination: unrelated suffixes are not
+-- scanned once every distinct requested ID has its first recursive match.
+do
+    local s=setup();local record=capture(s,s.book())
+    for _=1,4800 do s.item('Base.Nails')end
+    s.state.itemVisits,s.state.lookups=0,0
+    for _=1,8 do assert(s.recovery.validate({record},s.f.player))end
+    assert(s.state.itemVisits==8 and s.state.lookups==0,'one first-item read visits only that item per preview')
+    s.state.itemVisits=0
+    assert(s.recovery.validate({record,record},s.f.player)and s.state.itemVisits==1,
+        'early termination counts distinct requested IDs rather than records')
+    local missingAction,missingItem=s.book();local missing=capture(s,missingAction)
+    missingItem.container=nil
+    s.state.itemVisits=0
+    assert(not s.recovery.validate({record,missing},s.f.player)and s.state.itemVisits==4801,
+        'an absent requested ID requires the complete candidate traversal despite an earlier match')
+    assert(not s.recovery.plan({record,missing},s.f.player),'fresh construction retains missing-ID rejection')
+end
+
+-- Native recursive first-match order and direct-root witnesses remain authoritative.
+do
+    local s=setup()
+    local nested=s.container()
+    local bag=s.item('Base.Bag');bag.class='InventoryContainer';bag.nested=nested
+    bag.getItemContainer=function(self)return self.nested end
+    local hidden=s.item('Base.BookCarpentry1',nested)
+    local action,direct=s.book();local record=capture(s,action)
+    hidden.id=direct.id
+    assert(not s.recovery.validate({record},s.f.player),'an earlier nested ID hides a later direct root witness')
+    assert(not s.recovery.plan({record},s.f.player))
+    assert(table.remove(s.state.items,1)==bag);s.state.items[#s.state.items+1]=bag
+    assert(s.recovery.validate({record},s.f.player)and s.recovery.plan({record},s.f.player),
+        'a direct item encountered before the duplicate nested ID remains the native first match')
+    hidden.id=-1
+    assert(s.recovery.validate({record},s.f.player))
+    local conflict=s.item(direct.kind,s.world);conflict.id=direct.id
+    local pickup=capture(s,ISInventoryTransferAction:new(s.f.player,conflict,s.world,s.root))
+    assert(not s.recovery.validate({record,pickup},s.f.player),'different objects with one ID across endpoints conflict')
+    -- Replacement after capture is supported, but its type and direct location
+    -- must be reproven on every invocation rather than cached from the preview.
+    direct.container=nil
+    local replacement=s.item(record.itemType);replacement.class='Literature';replacement.id=record.itemId
+    assert(s.recovery.validate({record},s.f.player)and s.recovery.plan({record},s.f.player))
+    replacement.kind='Base.Other'
+    assert(not s.recovery.validate({record},s.f.player)and not s.recovery.plan({record},s.f.player))
 end
 
 -- Planning and recapturing a recovered read are pure; its actual constructor is delayed.
@@ -209,6 +306,8 @@ do
     local planned=assert(s.recovery.plan(records,s.f.player))
     assert(#planned==6 and data.on==false and data.volume==0.5 and data.channel==200 and s.state.writes==0)
     assert(planned[2].secondaryItem==0.25 and planned[6].secondaryItem==false and planned[1].maxTime==30)
+    s.state.itemVisits=0
+    assert(s.recovery.validate(records,s.f.player)and s.state.itemVisits==0,'device-only projection does not inspect unrelated inventory')
     assert(not s.recovery.plan({records[2]},s.f.player),'a pending setter cannot assume the TV is on')
     data.on=true
     assert(not s.recovery.plan({records[4]},s.f.player),'unmute requires projected zero volume')
@@ -317,11 +416,23 @@ do
     assert(s.state.writes==writes,'production hooks do not make a read preview effectful')
 end
 
+-- The live shared command factory must retain the construction authority used
+-- by validation. A later foreign factory cannot run during preview or Restore.
+for _,variant in ipairs({'missing','foreign'})do
+    local s=setup();local action=s.book();local record=capture(s,action)
+    local calls=0
+    if variant=='missing'then s.operations.command=nil
+    else s.operations.command=function()calls=calls+1;return {}end end
+    assert(not s.recovery.validate({record},s.f.player),'changed command factory revokes validation')
+    assert(not s.recovery.plan({record},s.f.player)and calls==0,'changed command factory is rejected before invocation')
+end
+
 -- A locally replaced command lifecycle must not escape the deferred-read guard.
 do
     local s=setup();local action=s.book();local record=capture(s,action)
     local writes=s.state.writes
     ISQueueActionsAction.isValid=function()s.state.writes=s.state.writes+1;error('foreign command validity must not execute')end
+    assert(not s.recovery.validate({record},s.f.player),'validation retains the canonical command lifecycle proof')
     assert(not s.recovery.plan({record},s.f.player),'canonical command lifecycle is required after command construction')
     assert(s.state.writes==writes)
 end

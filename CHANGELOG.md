@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.285
+
+- **Fixed:** Cancelled-queue previews validate recovery without constructing actions or repeatedly searching inventories for every saved item. Restore still resolves and validates current state before creating fresh actions.
+- **Fixed:** Empty and collapsed Wishlist windows avoid unused inventory counts and row rebuilds, refresh on expansion and reopening, and keep row actions bound to their displayed accessible list.
+
 ### 0.1.284
 
 - **Fixed:** Better Containers proximity behavior survives CleanUI interface switches, preserving aggregate selections, shared hover highlights and container-page policies for both interface classes.

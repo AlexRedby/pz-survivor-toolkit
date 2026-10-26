@@ -185,10 +185,21 @@ function Operations.command(character, callback, snapshot, options)
         snapshot = snapshot, ready = options and options.ready}
     return action
 end
+local commandFactory = Operations.command
 
 function Operations.adoptCommandLifecycle(name, previous, replacement)
     if commandMethods[name] ~= previous then return false end
     commandMethods[name] = replacement
+    return true
+end
+
+-- Validation can prove the command constructor's resulting lifecycle without
+-- allocating a native action. start/waitToStart are installed by command().
+function Operations.commandConstructionTrusted()
+    if ISQueueActionsAction ~= commandClass or Operations.command ~= commandFactory then return false end
+    for _, name in ipairs(commandLifecycle) do
+        if name ~= "start" and name ~= "waitToStart" and commandClass[name] ~= commandMethods[name] then return false end
+    end
     return true
 end
 

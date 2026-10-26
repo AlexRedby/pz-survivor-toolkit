@@ -38,14 +38,25 @@ class RecoveryAdapterTests(unittest.TestCase):
                 ack=dict(kind='ISRadioAction',transaction=i+1,token=f'{i+1:08x}-1234-1234-1234-123456789abc',state='completed');row['ack']=ack
                 acks.extend(dict(case=case,name=name,**{k:ack[k]for k in ('kind','transaction','token')},state=state)for state in ('started','completed'))
             commands.append(row)
+        def physical_steps(tokens,restored=False):
+            names=['front','approach','volume','tail'] if mode=='toolkit' else ['front','volume','tail']
+            return [dict(name=name,
+                         type='ISQueueActionsAction' if name=='approach' or restored and name in ('front','tail') else 'ISRadioAction' if name=='volume' else 'ISReadABook',
+                         token=tokens[0 if name=='front' else 2 if name=='tail' else 1],
+                         approach=dict(owned=True,helper='walkAdj',target=dict(x=9,y=20,z=0)) if name=='approach' else False)
+                    for name in names]
         baseline,final=snapshot('baseline'),snapshot('final')
         recovery=dict(available=mode=='toolkit',restored=mode=='toolkit',historyAbsent=True,duplicateRejected=True)
-        if mode=='toolkit':recovery.update(id=1,count=3,skipped=0,tokens=[5,6,7],previewPure=True)
+        if mode=='toolkit':recovery.update(id=1,count=3,skipped=0,tokens=[5,6,7],steps=physical_steps([5,6,7],True),previewPure=True,
+            previewWorkload=dict(elapsedMs=1700,previews=6,plans=0,nativeUI=True))
+        idle=dict(elapsedMs=1700,draws=30,carriedCalls=0,rowClears=0,selectorClears=0)
+        wishlist=dict(empty=copy.deepcopy(idle),collapsed=copy.deepcopy(idle),
+                      expanded=dict(amount=7,carried=1,firstDrawFresh=True),reopened=True,removed=True,restored=True)
         row=dict(suite='queue-recovery',event='case',id=case,actor='client1',kind=kind,mode=mode,status='passed',ids=copy.deepcopy(spec),
                  input=snapshot('input'),baseline=copy.deepcopy(baseline),authorityBaseline=copy.deepcopy(baseline),client=copy.deepcopy(final),server=copy.deepcopy(final),
                  commands=commands,order=list(a.STARTS if mode=='toolkit'else a.STARTS[:2]),
-                 cancellation=dict(entrypoint='IsoGameCharacter.StopAllActionQueueWalking'if case=='movement-cancel'else'ISTimedActionQueue.clear',before=copy.deepcopy(baseline),initialQueue=list(a.ORIGINAL),drained=True,movementStopped=True,nativeCount=1,oldTokens=[dict(id=i,cancelled=True)for i in (2,3,4)]),
-                 recovery=recovery,restoredQueue=list(a.ORIGINAL)if mode=='toolkit'else[],queueIdle=True,settleMilliseconds=1000)
+                 cancellation=dict(entrypoint='IsoGameCharacter.StopAllActionQueueWalking'if case=='movement-cancel'else'ISTimedActionQueue.clear',before=copy.deepcopy(baseline),initialQueue=['front','approach','volume','tail']if mode=='toolkit'else list(a.ORIGINAL),steps=physical_steps([2,3,4]),drained=True,movementStopped=True,nativeCount=1,oldTokens=[dict(id=i,cancelled=True)for i in (2,3,4)]),
+                 recovery=recovery,wishlist=wishlist,restoredQueue=['front','approach','volume','tail']if mode=='toolkit'else[],queueIdle=True,settleMilliseconds=1000)
         return row,spec,baseline,final,acks
 
     def check(self,evidence,selection=None):
@@ -71,6 +82,20 @@ class RecoveryAdapterTests(unittest.TestCase):
             'prefix token reused':lambda r:r['recovery'].update(tokens=[1,6,7]),
             'duplicate new token':lambda r:r['recovery'].update(tokens=[5,5,7]),
             'wrong pending order':lambda r:r.update(restoredQueue=['front','tail','volume']),
+            'original preparation missing':lambda r:r['cancellation']['steps'].pop(1),
+            'original preparation reordered':lambda r:r['cancellation']['steps'].reverse(),
+            'original preparation foreign helper':lambda r:r['cancellation']['steps'][1]['approach'].update(helper='walkToObject'),
+            'original preparation foreign target':lambda r:r['cancellation']['steps'][1]['approach']['target'].update(x=8),
+            'original preparation unowned':lambda r:r['cancellation']['steps'][1]['approach'].update(owned=False),
+            'original preparation wrong token':lambda r:r['cancellation']['steps'][1].update(token=2),
+            'restored preparation missing':lambda r:r['recovery']['steps'].pop(1),
+            'restored preparation reordered':lambda r:r['recovery']['steps'].reverse(),
+            'restored preparation wrong token':lambda r:r['recovery']['steps'][1].update(token=5),
+            'restored volume split token':lambda r:r['recovery']['steps'][2].update(token=7),
+            'restored hidden command':lambda r:r['recovery']['steps'].insert(2,copy.deepcopy(r['recovery']['steps'][1])),
+            'restored token coerced':lambda r:r['recovery']['steps'][1].update(token=6.0),
+            'restored ownership coerced':lambda r:r['recovery']['steps'][1]['approach'].update(owned=1),
+            'restored native read bypassed':lambda r:r['recovery']['steps'][0].update(type='ISReadABook'),
             'new native action old token':lambda r:r['commands'][4].update(token=2),
             'prefix replayed':lambda r:r['order'].insert(2,'prefix'),
             'missing restored tail':lambda r:r['commands'].pop(),
@@ -83,6 +108,14 @@ class RecoveryAdapterTests(unittest.TestCase):
             'restore repeated':lambda r:r['recovery'].update(duplicateRejected=False),
             'history retained':lambda r:r['recovery'].update(historyAbsent=False),
             'preview changed state':lambda r:r['recovery'].update(previewPure=False),
+            'preview still plans':lambda r:r['recovery']['previewWorkload'].update(plans=1),
+            'preview not observed':lambda r:r['recovery']['previewWorkload'].update(previews=0),
+            'empty wishlist scans':lambda r:r['wishlist']['empty'].update(carriedCalls=1),
+            'collapsed wishlist rebuilds':lambda r:r['wishlist']['collapsed'].update(rowClears=1),
+            'collapsed selector rebuilds':lambda r:r['wishlist']['collapsed'].update(selectorClears=1),
+            'wishlist stale expansion':lambda r:r['wishlist']['expanded'].update(firstDrawFresh=False),
+            'wishlist request missing':lambda r:r['wishlist']['expanded'].update(amount=1),
+            'wishlist cleanup missing':lambda r:r['wishlist'].update(restored=False),
             'old java not drained':lambda r:r['cancellation'].update(drained=False),
             'movement ongoing':lambda r:r['cancellation'].update(movementStopped=False),
             'no active native':lambda r:r['cancellation'].update(nativeCount=0),

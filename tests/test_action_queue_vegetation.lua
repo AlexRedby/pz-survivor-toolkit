@@ -777,12 +777,14 @@ local intendedExclusion = recoveryExcluded[1]
 operations.run(function() assert(luautils.walkAdj(player, recoverySquare, false, recoveryExcluded)) end)
 local capturedCommand = assert(q.queue[2])
 local handle = assert(approach.capture(capturedCommand), 'pending direct native approach must capture recoverable intent')
-assert(not approach.rebuild({}, handle) and not approach.rebuild(player, {}), 'recovery seals must belong to the original actor')
+assert(not approach.validate({}, handle) and not approach.validate(player, {})
+    and not approach.rebuild({}, handle) and not approach.rebuild(player, {}), 'recovery seals must belong to the original actor')
+assert(approach.validate(player, handle), 'pending approach validates without reconstructing its command')
 -- Preview must reject foreign constructors before invoking them. Checking the
 -- constructed action afterward cannot undo a constructor's side effects.
-for _, variant in ipairs({'queue-new', 'base-new', 'queue-class', 'base-class', 'command-factory'}) do
+for _, variant in ipairs({'queue-new', 'base-new', 'queue-class', 'base-class', 'command-factory', 'queue-valid'}) do
     local queueClass, baseClass = ISQueueActionsAction, ISBaseTimedAction
-    local queueNew, baseNew = queueClass.new, baseClass.new
+    local queueNew, baseNew, queueValid = queueClass.new, baseClass.new, queueClass.isValid
     local commandFactory = operations.command
     local calls = 0
     local function foreignQueueNew(...)
@@ -795,15 +797,18 @@ for _, variant in ipairs({'queue-new', 'base-new', 'queue-class', 'base-class', 
     elseif variant == 'base-new' then baseClass.new = foreignBaseNew
     elseif variant == 'queue-class' then ISQueueActionsAction = setmetatable({new = foreignQueueNew}, {__index = queueClass})
     elseif variant == 'base-class' then ISBaseTimedAction = setmetatable({new = foreignBaseNew}, {__index = baseClass})
+    elseif variant == 'queue-valid' then queueClass.isValid = function() calls = calls + 1; return true end
     else operations.command = function(...) calls = calls + 1; return commandFactory(...) end end
     local captured = approach.capture(capturedCommand)
+    assert(not approach.validate(player, handle), variant .. ': validation must reject changed constructor/lifecycle authority')
     local ok, candidate = pcall(approach.rebuild, player, handle)
     ISQueueActionsAction, ISBaseTimedAction = queueClass, baseClass
-    queueClass.new, baseClass.new = queueNew, baseNew
+    queueClass.new, baseClass.new, queueClass.isValid = queueNew, baseNew, queueValid
     operations.command = commandFactory
     assert(ok and candidate == nil and calls == 0,
         variant .. ': recovery must refuse changed class/constructor before executing foreign code; calls=' .. calls)
     assert(captured == nil, variant .. ': changed constructor authority must block pending-intent capture')
+    assert(approach.validate(player, handle), variant .. ': restored authority must validate again')
     local restored = assert(approach.rebuild(player, handle), variant .. ': restoring constructors must permit a fresh rebuild')
     assert(restored ~= capturedCommand and restored.action == nil and restored.toolkitQueueOperation == nil)
 end
@@ -814,10 +819,10 @@ assert(recovered ~= capturedCommand and recovered.action == nil and recovered.to
     'recovery must construct a fresh unstarted command without a canceled operation token')
 local helperCallback = luautils.walkAdj
 luautils.walkAdj = function(...) return helperCallback(...) end
-assert(not approach.rebuild(player, handle), 'changed route callbacks must revoke recovery intent')
+assert(not approach.validate(player, handle) and not approach.rebuild(player, handle), 'changed route callbacks must revoke recovery intent')
 luautils.walkAdj = helperCallback
 squares[key(recoverySquare.x, recoverySquare.y, recoverySquare.z)] = nil
-assert(not approach.rebuild(player, handle), 'recovery must reject unloaded target squares')
+assert(not approach.validate(player, handle) and not approach.rebuild(player, handle), 'recovery must reject unloaded target squares')
 squares[key(recoverySquare.x, recoverySquare.y, recoverySquare.z)] = recoverySquare
 reset()
 operations.run(function() ISTimedActionQueue.add(recovered) end)

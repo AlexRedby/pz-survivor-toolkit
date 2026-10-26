@@ -89,7 +89,7 @@ function Recovery.info(player)
  if count+skipped==0 then histories[player]=nil;return end
  return {id=saved.id,count=count,skipped=skipped,reason=reason}
 end
-local function candidate(player,expected)
+local function candidate(player,expected,construct)
  local info=Recovery.info(player)
  if not info or expected and info.id~=expected then return nil,'history_changed',info end
  local saved=histories[player]
@@ -112,6 +112,11 @@ local function candidate(player,expected)
    for _,record in ipairs(entry.records)do records[#records+1]=record end
   end
  end
+ if not construct then
+  local valid,reason=Adapters.validate(records,player)
+  if not valid then return nil,reason or 'state_changed',info end
+  return true,nil,info
+ end
  local actions,reason=Adapters.plan(records,player)
  if not actions then return nil,reason or 'state_changed',info end
  if #actions~=#records then return nil,'unsupported',info end
@@ -126,7 +131,7 @@ function Recovery.preview(player)
  info.available=plan~=nil;info.blocked=reason;return info
 end
 function Recovery.restore(player,expected)
- local plan,reason=candidate(player,expected)
+ local plan,reason=candidate(player,expected,true)
  if not plan then return false,reason end
  -- No retry may replay an action if native allocation or a later add fails.
  -- Consume before invoking the existing executor, which retains all effects.

@@ -440,12 +440,21 @@ function Approach.capture(action)
     handle[recoveryMarker]=function(candidate)if candidate==handle then return frozen,owner end end
     return handle
 end
-function Approach.rebuild(character,handle)
-    if not constructionUnchanged()or type(handle)~='table'or getmetatable(handle)then return end
+local function recoveryRequest(character,handle)
+    if not constructionUnchanged()or not Operations.commandConstructionTrusted()
+        or type(handle)~='table'or getmetatable(handle)then return end
     local seal=rawget(handle,recoveryMarker)
     if type(seal)~='function'then return end
     local request,owner=seal(handle)
     if owner~=character or not live(request)or not available(request)then return end
+    return request
+end
+function Approach.validate(character,handle)
+    return recoveryRequest(character,handle)~=nil
+end
+function Approach.rebuild(character,handle)
+    local request=recoveryRequest(character,handle)
+    if not request then return end
     local action=commandFactory(character,resolve,requestCopy(request))
     if not Operations.isCommand(action)then return end
     action.toolkitQueueApproach=true
