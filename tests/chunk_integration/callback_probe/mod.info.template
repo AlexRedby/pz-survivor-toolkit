@@ -1,0 +1,9 @@
+name=Test-only Chunk Callback Probe
+id=PZChunkCallbackProbe
+version=0.0.1
+versionMin=42.21
+versionMax=42.21
+require=\ZombieBuddy
+javaJarFile=media/java/PZChunkCallbackProbe.jar
+javaPkgName=toolkit.chunkprobe
+ZBVersionMin=2.3.4
