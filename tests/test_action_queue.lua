@@ -1134,8 +1134,15 @@ do
     assert(counts.previewCancel==2,'external changes receive a bounded hint refresh without queue invalidation')
     local targetAction=target.item
     targetAction.onCancelFunc=function() error('stale preview must not authorize this callback') end
+    previewClock=previewClock+250;draw(view)
+    assert(target.tooltip:find('queue_edit_unknown',1,true) and target.tooltip:find('queue_blocked_by',1,true),
+        'hover must identify the missing callback integration and exact blocking action')
     viewList:onMouseDown(x,y)
     assert(not viewList.pressedOperation,'mouse-down rechecks live callbacks after an allowed preview')
+    assert(viewList.cancelFeedback.text:find('queue_edit_unknown',1,true)
+        and viewList.cancelFeedback.text:find('queue_blocked_by',1,true)
+        and not viewList.cancelFeedback.snapshot and not viewList.cancelFeedback.blocker,
+        'rejected press retains explanation text without retaining decision authority')
     targetAction.onCancelFunc=nil
     viewList:onMouseDown(x,y);assert(viewList.pressedOperation)
     targetAction.onCancelFunc=function() error('changed callback must not execute') end
@@ -1143,8 +1150,10 @@ do
     counts={};viewList:onMouseUp(x,y)
     assert(#viewQueue.queue==remaining and counts.evaluateCancel==1,
         'mouse-up uses authoritative evaluation again after a previously permitted press')
-    assert(viewList.cancelFeedback and viewList.cancelFeedback.text=='UI_PZSurvivorToolkit_queue_operation_dependent',
+    assert(viewList.cancelFeedback and viewList.cancelFeedback.text:find('UI_PZSurvivorToolkit_queue_edit_unknown',1,true),
         'a formerly allowed but rejected release must retain the actual localized reason')
+    assert(viewList.cancelFeedback.text:find('queue_blocked_by',1,true),
+        'release rejection must retain the exact blocker from the authoritative decision')
     targetAction.onCancelFunc=nil
     draw(view)
     assert(target.tooltip:find(viewList.cancelFeedback.text,1,true),'release rejection must remain visible on the same row')

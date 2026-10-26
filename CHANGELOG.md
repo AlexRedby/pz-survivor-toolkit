@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.288
+
+- Improved: queue move/cancel explanations distinguish required finishing steps, unreviewed action handlers and work that is still adding its next steps. Tooltips and rejected cancellation clicks identify the blocking action; existing item/state/capacity evidence and edit permissions are preserved.
+
 ### 0.1.287
 
 - Fixed: waiting beard trimming and hair/beard dye actions can be cancelled without losing borrowed-item cleanup or independent queued work. Native shaving colours and dye fluid costs remain unchanged; active edits retain their resource protections.

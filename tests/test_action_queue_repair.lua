@@ -117,7 +117,9 @@ for _, invalid in ipairs({'fixing-index', 'fixer-index', 'fixer-name', 'global-n
         end)
         assert(not checked.inputs and not checked.contract.dynamicInputs and not checked.contract.knownInputs,
             invalid .. ' keeps stale or malformed native repair selections protected')
-        assert(not checked.cancel.allowed and checked.cancel.reason == 'operation_dependent')
+        assert(not checked.cancel.allowed and checked.cancel.reason == 'edit_unknown' and checked.cancel.blocker == rejected)
+        assert(policy.cancelOperationReason(redrawQueue, reading) == 'operation_dependent',
+            'unknown repair metadata changes explanation, never raw cancellation permission')
         assert(not checked.move.allowed and checked.move.reason == 'move_craft_inputs')
     end
     fixer.getFixerName, globalFixer.getFixerName = fixerName, globalName

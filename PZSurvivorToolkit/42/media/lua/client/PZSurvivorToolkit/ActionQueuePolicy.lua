@@ -42,6 +42,25 @@ local nativeDropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOf
 local transferItemGuard
 local inspect
 local ordinaryTransfer
+-- Record evidence only at an existing rejecting gate. Raw reason APIs and their
+-- tuple layout stay compatible; public decisions can explain the same denial.
+local function clearDenial(context)
+    context.denialGate, context.denialReason, context.denialBlocker = nil, nil, nil
+end
+local function deny(context, gate, reason, blocker)
+    context.denialGate, context.denialReason, context.denialBlocker = gate, reason, blocker
+    return gate
+end
+local function unknownDenial(context, gate, action)
+    local facts = context.contracts[action]
+    return deny(context, gate, (action._isAddingActions or (facts and facts.inFlight))
+        and "edit_in_flight" or "edit_unknown", action)
+end
+local function protectedDenial(context, gate, action)
+    local facts = context.contracts[action]
+    if facts and facts.requiredCleanup then return deny(context, gate, "edit_required_cleanup", action) end
+    return gate
+end
 local pendingReturnReason, pendingReturnGuard
 local function pendingReturnTarget(queue, action)
     return action.Type == "ISInventoryTransferAction" and action.allowMissingItems == true
@@ -116,24 +135,29 @@ end
 
 function Policy.cancelReason(queue, action, context)
     context = context or {contracts = {}, items = {}}
+    clearDenial(context)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
     if craft(action) then return Policy.cancelOperationReason(queue, action, context) end
     if appliance(action) then return Policy.cancelOperationReason(queue, action, context) end
     local contract = inspect and inspect(action, context)
-    if contract and contract.cancelOperation == false then return "dependent" end
+    if contract and contract.cancelOperation == false then return protectedDenial(context, "dependent", action) end
     if pendingReturnTarget(queue, action) then return pendingReturnReason(queue, action, context) end
     if action.Type == "ISQueueActionsAction" then
-        if not deferredWorld(action) and not (contract and contract.deferred) then return "dependent" end
+        if not deferredWorld(action) and not (contract and contract.deferred) then return unknownDenial(context, "dependent", action) end
         return Policy.cancelOperationReason(queue, action, context)
     end
     local auditedCallbacks = contract and contract.callbacksSafe
     if action._isAddingActions or (action.onStartFunc and not craft(action) and not auditedCallbacks)
         or ((action.onCompleteFunc or action.onCancelFunc) and not resumableWorld(action) and not craft(action) and not auditedCallbacks)
-        or action.retriggerLastAction or action.toolkitQueueLinked then return "dependent" end
+        or action.retriggerLastAction or action.toolkitQueueLinked then
+        if action._isAddingActions or not action.toolkitQueueLinked then return unknownDenial(context, "dependent", action) end
+        return "dependent"
+    end
     if not stoppable(action, context) and contract and contract.cancelWaiting then return Policy.cancelOperationReason(queue, action, context) end
     if not stoppable(action, context) and not independentBulk(action, context) then
+        if not contract then return unknownDenial(context, "dependent", action) end
         return "dependent"
     end
     if independentBulk(action, context) then
@@ -988,7 +1012,7 @@ inspect = function(action, context)
     local cached = context and context.contracts[action]
     if cached then return unpack(cached, 1, 3) end
     if action._isAddingActions or (Operations.isContinuationPending and Operations.isContinuationPending(action.toolkitQueueOperation)) then
-        if context then context.contracts[action] = {} end
+        if context then context.contracts[action] = {inFlight = true} end
         return
     end
     local result = {Definitions.inspect(action)}
@@ -998,6 +1022,7 @@ inspect = function(action, context)
         for key, value in pairs(result[1]) do contract[key] = value end
         contract.cancelOperation, contract.cancelWaiting = false, false
         result[1] = contract
+        result.requiredCleanup = true
     end
     if context then context.contracts[action] = result end
     return unpack(result, 1, 3)
@@ -1485,13 +1510,16 @@ end
 function Policy.cancelOperationReason(queue, action, context)
     context = context or {contracts = {}, items = {}}
     context.editFallback = nil
+    clearDenial(context)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
     local first, last = Operations.bounds(queue, action)
     if not first then return "operation_dependent" end
     local token = action.toolkitQueueOperation
-    if Operations.isContinuationPending and Operations.isContinuationPending(token) then return "operation_dependent" end
+    if Operations.isContinuationPending and Operations.isContinuationPending(token) then
+        return deny(context, "operation_dependent", "edit_in_flight", action)
+    end
     local active = first == 1 and queue.current == queue.queue[1]
     if type(token) == "table" and token.toolkitStarted and not active then return "operation_active" end
     local main, output, inputs, scrapOnly = false, false, {}, true
@@ -1508,19 +1536,24 @@ function Policy.cancelOperationReason(queue, action, context)
         pendingRemovalOnly = pendingRemovalOnly and member.forceCancel == nativeForceCancel
             and not member.onCancelFunc and not auditedCraft
         local contract = inspect(member, context)
-        if contract and contract.cancelOperation == false then return "operation_dependent", nil, nil, member end
+        if contract and contract.cancelOperation == false then return protectedDenial(context, "operation_dependent", member), nil, nil, member end
         local auditedCallbacks = contract and contract.callbacksSafe
         if member._isAddingActions or ((member.onStartFunc or member.onCancelFunc) and not auditedCraft and not resumableWorld(member) and not auditedCallbacks) or member.retriggerLastAction
             or (member.onCompleteFunc and member.onCompleteFunc ~= member.toolkitQueueSafeOnComplete
                 and not auditedCraft and not resumableWorld(member) and not auditedCallbacks)
-            or (member.forceCancel ~= nativeForceCancel and not (contract and contract.forceCancel == member.forceCancel)) then return "operation_dependent" end
+            or (member.forceCancel ~= nativeForceCancel and not (contract and contract.forceCancel == member.forceCancel)) then
+            return unknownDenial(context, "operation_dependent", member)
+        end
         local plannedCraft, world = craftPlan(member), deferredWorld(member)
         if member.Type == "ISQueueActionsAction" and not plannedCraft and not world and not (contract and contract.deferred) then
-            return "operation_dependent"
+            return unknownDenial(context, "operation_dependent", member)
         end
         local supported = stoppable(member, context) or independentBulk(member, context) or world or plannedCraft or appliance(member)
             or (contract and contract.cancelWaiting)
-        if not supported and not (contract and contract.preparation) then return "operation_dependent" end
+        if not supported and not (contract and contract.preparation) then
+            if not contract then return unknownDenial(context, "operation_dependent", member) end
+            return "operation_dependent"
+        end
         main = main or supported
         if supported then
             scrapOnly = scrapOnly and ((world and member.toolkitWorldDismantle)
@@ -1555,7 +1588,9 @@ function Policy.cancelOperationReason(queue, action, context)
     local groupItems = plainGroupItems(queue, first, last, context)
     for i, other in ipairs(queue.queue) do
         if i > last or (i < first and not pendingRemovalOnly) then
-            if other._isAddingActions or not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
+            if other._isAddingActions or not knownCraftInputs(other, context) then
+                return unknownDenial(context, "operation_dependent", other), nil, nil, other
+            end
             for item in pairs(operationItems(other, context)) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
@@ -1609,7 +1644,10 @@ local function demoteReading(queue, first, last, targetFirst, targetLast, after,
     for i = first, last do
         local member = queue.queue[i]
         if (member ~= current and member.action) or member._isAddingActions
-            or not knownCraftInputs(member, context) then return "move_dependent" end
+            or not knownCraftInputs(member, context) then
+            if not (member ~= current and member.action) then return unknownDenial(context, "move_dependent", member) end
+            return "move_dependent"
+        end
     end
     if targetFirst == first then return nil, first, first, last end
     local rangeFirst, rangeLast = last + 1, after and targetLast or targetFirst - 1
@@ -1620,6 +1658,9 @@ local function demoteReading(queue, first, last, targetFirst, targetLast, after,
         local opFirst, opLast = Operations.bounds(queue, member)
         if not opFirst or opFirst < rangeFirst or opLast > rangeLast or member.action
             or member._isAddingActions or (not knownCraftInputs(member, context) and not repairInputs(member)) then
+            if opFirst and opFirst >= rangeFirst and opLast <= rangeLast and not member.action then
+                return unknownDenial(context, "move_dependent", member), nil, nil, nil, nil, member
+            end
             return "move_dependent", nil, nil, nil, nil, member
         end
         if member.Type == "ISReadABook" and member.item:getFullType() == current.item:getFullType() then
@@ -1636,6 +1677,7 @@ end
 function Policy.moveReason(queue, action, target, after, context)
     context = context or {contracts = {}, items = {}}
     context.editFallback = nil
+    clearDenial(context)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 or queue:indexOf(target or action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
@@ -1648,9 +1690,9 @@ function Policy.moveReason(queue, action, target, after, context)
     for i = first, last do
         local member = queue.queue[i]
         if member.action or member == queue.current or i == 1 then return "move_active" end
-        if member._isAddingActions then return "move_dependent" end
+        if member._isAddingActions then return deny(context, "move_dependent", "edit_in_flight", member) end
         if not knownCraftInputs(member, context) and not repairInputs(member) then
-            return craft(member) and "move_craft_inputs" or "move_dependent"
+            return craft(member) and "move_craft_inputs" or unknownDenial(context, "move_dependent", member)
         end
     end
     if first == targetFirst then return nil, first, first, last end
@@ -1677,9 +1719,9 @@ function Policy.moveReason(queue, action, target, after, context)
     for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
         if i < first or i > last then
             local crossed = queue.queue[i]
-            if crossed._isAddingActions then return "move_dependent", nil, nil, nil, nil, crossed end
+            if crossed._isAddingActions then return deny(context, "move_dependent", "edit_in_flight", crossed), nil, nil, nil, nil, crossed end
             if not knownCraftInputs(crossed, context) and not repairInputs(crossed) then
-                return craft(crossed) and "move_craft_inputs" or "move_dependent", nil, nil, nil, nil, crossed
+                return craft(crossed) and "move_craft_inputs" or unknownDenial(context, "move_dependent", crossed), nil, nil, nil, nil, crossed
             end
         end
     end
@@ -1698,9 +1740,9 @@ function Policy.moveReason(queue, action, target, after, context)
     for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
         if i < first or i > last then
             local crossed = queue.queue[i]
-            if crossed._isAddingActions then return "move_dependent", nil, nil, nil, nil, crossed end
+            if crossed._isAddingActions then return deny(context, "move_dependent", "edit_in_flight", crossed), nil, nil, nil, nil, crossed end
             if not knownCraftInputs(crossed, context) and not repairInputs(crossed) then
-                return craft(crossed) and "move_craft_inputs" or "move_dependent", nil, nil, nil, nil, crossed
+                return craft(crossed) and "move_craft_inputs" or unknownDenial(context, "move_dependent", crossed), nil, nil, nil, nil, crossed
             end
             if mayShareGroupResource(groupItems, crossed, context) then
                 for j = first, last do
@@ -1772,8 +1814,11 @@ local resourceDenials = {move_shared_item = true, move_craft_inputs = true, move
     operation_shared_item = true, operation_dependent = true, container_capacity = true}
 local function editDenial(reason, blocker, resource, context)
     local edit = context.editFallback
-    if resourceDenials[reason] and edit and edit.reason then
+    if reason and resourceDenials[reason] and edit and edit.reason then
         return edit.reason, edit.blocker or blocker, edit.resource or resource
+    end
+    if reason and context.denialGate == reason and context.denialReason then
+        return context.denialReason, context.denialBlocker or blocker, resource
     end
     return reason, blocker, resource
 end
