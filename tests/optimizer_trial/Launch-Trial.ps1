@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Optimized', 'Control')][string]$Mode = 'Optimized',
-    [ValidateSet('SinglePlayer','Multiplayer')][string]$Session = 'Multiplayer',
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$Session = 'SinglePlayer',
     [string]$GameDir,
     [string]$WorkshopRoot,
     [string]$JdkDir,
@@ -641,6 +641,7 @@ function Invoke-OptimizerTrial {
         if ($CheckOnly) { Write-Host 'Setup checks only; game startup and activation have not been verified.'; return }
         if (-not (Get-Process steam -ErrorAction SilentlyContinue)) { throw 'Start Steam and sign in first.' }
         if ($Session -eq 'Multiplayer') { Write-Host 'MULTIPLAYER: open Host or Join from the game menu. No starter world, teleport or vehicle spawn. Restart the game before each connection/recording.' }
+        elseif (-not $Menu) { Write-Host 'SINGLE PLAYER: one game process; creating a fresh test world with a ready car. Run Control and Optimized sequentially, closing the game between runs.' }
         $lua = Join-Path $cache 'Lua'
         [IO.Directory]::CreateDirectory($lua) | Out-Null
         $run = ''
@@ -666,9 +667,9 @@ function Invoke-OptimizerTrial {
             Save-TrialPlan $plan $log
             Write-Host "Game java.exe PID: $($process.Id)"
             $readyAnnounced = $false; $failureAnnounced = $false
-            if ($Menu) { Write-Host 'Join or host from the game menu. Automatic recording is disabled.' }
+            if ($Menu) { Write-Host 'MENU: automatic world creation and recording are disabled.' }
             elseif ($Mode -eq 'Optimized') { Write-Host 'Wait for READY, then press Ctrl+Shift+F8 IN THE GAME. Exit normally after DIAGNOSTICS DONE.' }
-            else { $plan.Activation = 'ControlPending'; Save-TrialPlan $plan $log; Write-Host 'CONTROL: candidate disabled. Join the selected Host or load the test world, then wait for full-pack READY.' }
+            else { $plan.Activation = 'ControlPending'; Save-TrialPlan $plan $log; Write-Host 'CONTROL: candidate disabled. Wait for the test world and full-pack READY.' }
             while ($true) {
                 $exited = $process.WaitForExit(1000)
                 # Stop reading full logs after READY so the launcher adds no polling I/O during capture.
@@ -684,7 +685,7 @@ function Invoke-OptimizerTrial {
                         $readyAnnounced = $true; $plan.Activation = 'Ready'
                         Save-TrialPlan $plan $log
                         if ($Mode -eq 'Optimized') { Write-Host "READY: full pack + bounded render/chunk profile + cache/preloads verified; $($state.HandedOff)/$($state.ActionGroups) action groups accounted for. Client and optimizer ready." }
-                        else { Write-Host 'READY CONTROL: full current-main modpack activation verified. Client ready.' }
+                        else { Write-Host 'READY CONTROL: full pinned candidate modpack activation verified. Client ready.' }
                         if (-not $Menu -and -not $exited) {
                             $plan.Diagnostics = Invoke-TrialDiagnostics $process $plan $jfrTools -FrameClient $frameClient -SkipWpr:$SkipWpr
                             Save-TrialPlan $plan $log
@@ -705,7 +706,7 @@ function Invoke-OptimizerTrial {
             } else {
                 if (-not $plan.Readiness.Ready) {
                     $plan.Activation = 'Incomplete'; Save-TrialPlan $plan $log
-                    throw "INCOMPLETE Control trial; full current-main modpack activation was not verified. Logs: $($sessionLogs.Directory)"
+                    throw "INCOMPLETE Control trial; full pinned candidate modpack activation was not verified. Logs: $($sessionLogs.Directory)"
                 }
                 $plan.Activation = 'ControlVerified'; Save-TrialPlan $plan $log
             }

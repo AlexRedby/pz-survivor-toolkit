@@ -47,7 +47,9 @@ local function countLoaded(player, initial)
     end end
 end
 local function sample(player, now)
-    assert(player and not player:isDead() and player:getCurrentSquare(), "Player/current square missing")
+    assert(player, "Player missing")
+    assert(not player:isDead(), "Player died during functional observation")
+    assert(player:getCurrentSquare(), "Player current square missing")
     assert(finite(player:getX()) and finite(player:getY()) and finite(player:getZ()), "Nonfinite player position")
     assert(math.floor(player:getZ()) == 0, "Unexpected player level")
     assert(vehicle and vehicle == PZDrivingBenchClient.vehicle and vehicle:getSqlId() == sqlId
