@@ -83,7 +83,7 @@ public final class SurfaceCandidateCheck {
                 report("hole-state=" + state, hole);
             }
         }
-        if (nativeMode) return;
+        if (nativeMode || (args.length > 1 && args[1].equals("--correctness-only"))) return;
         ThreadMXBean bean = (ThreadMXBean)ManagementFactory.getThreadMXBean();
         if (!bean.isThreadAllocatedMemorySupported()) throw new AssertionError("Thread allocation unavailable");
         bean.setThreadAllocatedMemoryEnabled(true);
