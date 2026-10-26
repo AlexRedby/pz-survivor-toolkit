@@ -13,13 +13,13 @@ local function badge(pane, texture, x, y, size, color)
     if not texture then return end
     pane:drawTextureScaled(texture, x, y, size, size, 1, color[1], color[2], color[3])
 end
-function Indicators.drawIcon(pane, item, x, y, width, height, details, group)
+function Indicators.drawIcon(pane, item, x, y, width, height, details, group, researchContext)
     -- Like the original indicators, decorate details rows, not drag previews or the icon grid.
     if not details then return end
     local size = math.min(12, width / 2, height / 2)
     local visibleY = y + pane:getYScroll()
     if size < 4 or visibleY < pane.headerHgt or visibleY + size > pane.height then return end
-    local research = Research.shouldShow(pane, item)
+    local research = Research.shouldShow(pane, item, researchContext)
     local state = Options.enabled() and Planting.describe(getSpecificPlayer(pane.player or 0), item, Options.preferBest())
     -- Native rendering already excludes hidden and dragged rows. Only the group
     -- icon gets a type-pin marker; physical children keep their normal badges.

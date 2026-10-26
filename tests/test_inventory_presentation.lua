@@ -96,8 +96,9 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     modules['PZSurvivorToolkit/InventoryRetention']={
         draw=function(pane) assert(#pane.items==#pane.rows);retentionDraws=retentionDraws+1 end,
         invalidate=function() retentionInvalidations=retentionInvalidations+1 end}
-    modules['PZSurvivorToolkit/InventoryIndicators']={drawIcon=function(_,item,x,y,w,h,details,group)
-        indicatorDraws[#indicatorDraws+1]={item=item,group=group,details=details}
+    modules['PZSurvivorToolkit/InventoryIndicators']={drawIcon=function(_,item,x,y,w,h,details,group,researchContext)
+        assert(type(researchContext)=="table", "render context missing")
+        indicatorDraws[#indicatorDraws+1]={item=item,group=group,details=details,context=researchContext}
     end}
     modules['PZSurvivorToolkit/InventoryPlantingTooltip']={install=function() end}
     modules['PZSurvivorToolkit/InventoryDetails']={draw=function(_,_,_,_,_,_,layout) lastLayout=layout; return handleDetails end}
@@ -149,15 +150,21 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         for _,rect in ipairs(rects) do if rect[4]==4 then values[#values+1]=rect end end
         return values
     end
+    local previousRenderContext
     for _,enhanced in ipairs({true,false,true,false}) do
         toggle(enhanced)
         presenter.install() -- repeated callbacks must not add another layer
         setmetatable(pane,{__index=ISInventoryPane})
         rects={}
         local before=nativeCalls
+        local beforeIcons=#indicatorDraws
         local retainedBefore=retentionDraws
         local freshnessBefore=freshnessDraws
         assert(pane:renderdetails(false)=='rendered' and nativeCalls==before+1)
+        local renderContext=indicatorDraws[beforeIcons+1].context
+        assert(renderContext~=previousRenderContext, 'research context survived a render/mode switch')
+        for i=beforeIcons+1,#indicatorDraws do assert(indicatorDraws[i].context==renderContext) end
+        previousRenderContext=renderContext
         assert(retentionDraws==retainedBefore+1, 'retention markers missing or duplicated across UI class changes')
         assert(freshnessDraws==freshnessBefore+1,'freshness missing or duplicated across UI class changes')
         local bars=backgrounds()

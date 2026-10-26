@@ -123,10 +123,26 @@ class AuxiliaryAdapterTests(unittest.TestCase):
                 text += '[INVENTORY_SCREEN] DRAW ' + scene + ' details=once bag=icons magazine=icons button=1 nativeTypes=true\n'
             text += '[INVENTORY_SCREEN] SHOT ' + scene + '\n'
             (screenshots / name).write_bytes(adapter.PNG)
+        for mode in ('clean', 'vanilla'):
+            metrics = ' '.join(name + '=1/240' for name in ('normal', 'dragged', 'InventoryCapacity',
+                'InventoryIndicators', 'InventoryResearch', 'InventoryPlanting', 'InventoryRetention'))
+            text += '[INVENTORY_RENDER_PROFILE] mode=' + mode + ' frames=240 units=ms/calls ' + metrics + '\n'
+        for family, variants in (('research', ('direct','context','context','direct')),
+                                 ('flat', ('records','flat','flat','records')),
+                                 ('soa', ('records','soa','soa','records'))):
+            for series in range(1,7):
+                for slot, variant in enumerate(variants,1):
+                    text += f'[INVENTORY_MICRO] family={family} series={series} slot={slot} variant={variant} ms=1 calls=24000 checksum=7\n'
         text += '[INVENTORY_SCREEN] COMPLETE\n'
         console = self.cache / 'console.txt'
         console.write_text(text)
         self.assertFalse(adapter.verify(self.output, self.selection, {})['issues'])
+        console.write_text(text.replace('mode=clean', 'mode=vanilla'))
+        self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+        console.write_text(text.replace('normal=1/240', 'normal=1/0'))
+        self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+        console.write_text(text.replace('calls=24000', 'calls=1', 1))
+        self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
         console.write_text(text.replace('tail=4', 'tail=0'))
         self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
         for marker in manifest['assertion_markers']:
