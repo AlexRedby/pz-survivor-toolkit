@@ -166,6 +166,4 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Resolve the Codex cleanup refusal for a chat-created managed worktree: `archive_worktree` rejected `<owned-worktree>` with `The task's primary checkout cannot be removed.` after the work was pushed to `main` and the worktree was clean. This blocks the finish-chat cleanup gate. Check checkout classification and the supported cleanup path; completion requires safely archiving the owned temporary worktree without bypassing protections or touching the shared checkout.
-
 - [ ] Restore the cumulative-memory MCP connection: `memory.remember` reports `Memory MCP is from an older release; reconnect the server`, while the installed CLI fallback works. Align or reconnect the MCP runtime, then confirm a normal note write and capture completion without the fallback; preserve the existing memory store.
