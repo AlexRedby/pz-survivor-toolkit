@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.273
+
+- Reviewed WashFix clothing pickup, inventory-retry, washing and return chains now use the common action-completion boundary. Native resource costs, cancellation/reset ownership and ordinary item returns retain their behavior; body washing, mixed commands and transforming bandage recipes keep their existing handling.
+- Clothing-only WashFix chains now retain queue integration after the reviewed late SaucedCarts transfer hook. Unknown transfer replacements and other washing branches retain their existing safeguards.
+
 ### 0.1.272
 
 - Fixed: Project Cook permits the first ingredient when starting a new dish from a food base with inherited ingredients, including filled bread slices. Its first-addition step still allows only one new selection; native eligibility, portions, recipe limits, hunger and nutrition stay unchanged.

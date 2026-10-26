@@ -1,7 +1,7 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.272
+modversion=0.1.273
 category=features
 incompatible=PZSurvivorWishlist,Quartermaster,ContainerCapacityIndicator,BravoItemDetails,HasResearch,SeedSeasonIndicator,organizedCategories_core,MedicineMoodlesB42,TakeAnyAmount,TVRadioReinventedFix4220
 icon=icon.png

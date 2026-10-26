@@ -3,7 +3,7 @@ from collections import Counter
 from importlib import import_module
 
 MODULES = {'vehicle-inventory': 'vehicle_inventory', 'vehicle-diagnostics': 'vehicle_diagnostics', 'vehicle-pose': 'vehicle_pose', 'vehicle-lights': 'vehicle_lights', 'vehicle-doors': 'vehicle_doors', 'fitness': 'fitness', 'vehicle-wishlist': 'vehicle_wishlist', 'pinned-items': 'pinned_items', 'startup': 'startup', 'basement-hall': 'basement_hall', 'fire': 'fire', 'engine': 'engine', 'engine-peers': 'engine', 'craft': 'craft', 'equipment': 'equipment', 'animal-fixes': 'animal_fixes', 'crafting-plans': 'craft_wishlist', 'shared-wishlist': 'craft_wishlist',
-           'craft-ui': 'craft_ui', 'fluid': 'fluid', 'food': 'food', 'inventory-grab': 'inventory_grab', 'inventory-transfer': 'inventory_transfer', 'forge': 'forge',
+           'craft-ui': 'craft_ui', 'washing': 'washing', 'fluid': 'fluid', 'food': 'food', 'inventory-grab': 'inventory_grab', 'inventory-transfer': 'inventory_transfer', 'forge': 'forge',
            'container-configuration': 'container_configuration', 'warehouse-manifest': 'warehouse_manifest',
            'item-retention': 'item_retention', 'torch-refill': 'torch_refill', 'custom-tags': 'custom_tags',
            'classification-baseline': 'classification_baseline',

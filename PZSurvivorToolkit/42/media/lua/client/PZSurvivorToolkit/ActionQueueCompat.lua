@@ -29,6 +29,7 @@ local reviewedTransferPerform, transferPerformGuard
 local containerHelpersUnchanged
 local washWalkHelper
 local tidyClassUnchanged, tidyActionUnchanged, tidyUnequipVariant
+local reviewedTransferClassUnchanged
 local tidyFloorPage, tidyFloorGetter
 local tidyFloorValid
 -- Queued actions only; prune explicitly because Kahlua ignores weak-key modes.
@@ -195,8 +196,10 @@ local function classUnchanged(class, methods)
     return true
 end
 
-local function sourceClassUnchanged(id, class, methods)
-    return classUnchanged(class, methods) or id == "P4TidyUpMeister" and (class == ISInventoryTransferAction or class == ISUnequipAction)
+local function sourceClassUnchanged(id, class, methods, clothingTransfer)
+    return classUnchanged(class, methods) or id == "WashFix" and clothingTransfer == true and class == ISInventoryTransferAction
+        and reviewedTransferClassUnchanged and reviewedTransferClassUnchanged(class, class, methods)
+        or id == "P4TidyUpMeister" and (class == ISInventoryTransferAction or class == ISUnequipAction)
         and tidyClassUnchanged and tidyClassUnchanged(class, class, methods)
 end
 
@@ -629,7 +632,7 @@ local function sourceMatches(action, record, observedItem)
     record = record or records[action]
     if not record or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
         or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
-        or not sourceClassUnchanged(record.id, record.class, record.baseline) or not ownerUnchanged(record.id)
+        or not sourceClassUnchanged(record.id, record.class, record.baseline, record.washOrigin ~= nil) or not ownerUnchanged(record.id)
         or (record.owner and not instanceUnchanged(record.owner, PJCK_EvoPanel))
         or (record.class == ISInventoryTransferAction and containerHelpersUnchanged and not containerHelpersUnchanged()) then return false end
     local policy = Toolkit.ActionQueuePolicy
@@ -693,6 +696,64 @@ local function tidyRestoreContext(context, action)
     return result
 end
 
+-- Only this reviewed menu invocation can issue a clothing-laundering capability.
+-- Other WashFix entries (body, mixed All, bandages) retain their existing producer.
+local washClothingCapability = {}
+local function clothingMenuOrigin(callback, character, sink, args)
+    if not Proof.closure(callback, "WMI_WashingSubmenus.lua") or not instanceof(character, "IsoGameCharacter")
+        or not instanceof(sink, "IsoObject") or args.n ~= 6 or args[1] ~= sink or args[4] ~= nil
+        or type(args[5]) ~= "boolean" or type(args[3]) ~= "table" or getmetatable(args[3]) then return end
+    local selected, count, inputs = args[3], 0, {}
+    for key, item in pairs(selected) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or key > #selected
+            or not instanceof(item, "Clothing") or not item.getItemAfterCleaning then return end
+        local after = item:getItemAfterCleaning()
+        if after ~= nil and after ~= "" then return end
+        local id, fullType, container = item:getID(), item:getFullType(), item:getContainer()
+        if inputs[id] or not container then return end
+        inputs[id] = {item = item, fullType = fullType, source = container, position = key}
+        count = count + 1
+    end
+    if count == 0 or count ~= #selected then return end
+    return {capability = washClothingCapability, character = character, sink = sink,
+        root = character:getInventory(), inputs = inputs, arguments = args, transfers = {}}
+end
+local function clothingMenuMatches(origin, args)
+    if not origin or args.n < 6 or args.n > 11 or args[1] ~= origin.character
+        or origin.character:getInventory() ~= origin.root or getmetatable(origin.arguments[3]) then return false end
+    for i = 1, origin.arguments.n do if args[i + 1] ~= origin.arguments[i] then return false end end
+    -- Native ISContextMenu invokes all ten parameter slots, including trailing nils.
+    for i = origin.arguments.n + 2, args.n do if args[i] ~= nil then return false end end
+    local count = 0
+    for key, item in pairs(origin.arguments[3]) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or key > #origin.arguments[3]
+            or not instanceof(item, "Clothing") or not item.getItemAfterCleaning then return false end
+        local expected, after = origin.inputs[item:getID()], item:getItemAfterCleaning()
+        if not expected or expected.item ~= item or expected.position ~= key or expected.fullType ~= item:getFullType()
+            or expected.source ~= item:getContainer() or after ~= nil and after ~= "" then return false end
+        count = count + 1
+    end
+    local expected = 0; for _ in pairs(origin.inputs) do expected = expected + 1 end
+    return count == expected
+end
+local function clothingSourceAction(origin, action, class)
+    if not origin or origin.capability ~= washClothingCapability or action.character ~= origin.character
+        or action.character:getInventory() ~= origin.root then return false end
+    if class.Type == "WMI_WaitForInvUpdate" then return origin.transfers[action.wmiTransferAction] == true end
+    if class ~= ISInventoryTransferAction and class ~= ISWashClothing then return false end
+    local item = action.item
+    if not instanceof(item, "Clothing") or not item.getItemAfterCleaning then return false end
+    local expected, after = origin.inputs[item:getID()], item:getItemAfterCleaning()
+    if not expected or item:getFullType() ~= expected.fullType or after ~= nil and after ~= "" then return false end
+    if class == ISWashClothing then
+        return action.sink == origin.sink and action.wmiReturnContainer == nil and action.wmiWaterOverride == nil
+    end
+    local pickup = action.srcContainer == expected.source and action.destContainer == origin.root
+    local returning = action.srcContainer == origin.root and action.destContainer == expected.source
+    if not pickup and not returning then return false end
+    return true
+end
+
 local scoped, rememberTidy
 local function adopt(action)
     local context = sourceScope
@@ -702,7 +763,8 @@ local function adopt(action)
     if Operations.isCommand and Operations.isCommand(action) then return end
     local class = getmetatable(action)
     local baseline = classes[context.id] and classes[context.id][class]
-    if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
+    local clothing = baseline and context.id == "WashFix" and clothingSourceAction(context.washOrigin, action, class)
+    if not baseline or not sourceClassUnchanged(context.id, class, baseline, clothing) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
     local clothingLocation, clothingDisplaced
     if context.id == "P4TidyUpMeister" then clothingLocation, clothingDisplaced = clothingRestore(action, class) end
@@ -734,6 +796,12 @@ local function adopt(action)
         stopOnWalk = action.stopOnWalk, stopOnRun = action.stopOnRun,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction),
         settlement = context.settlement, obligation = Settlement.obligation(context)}
+    if clothing then
+        record.washOrigin = context.washOrigin
+        if class == ISInventoryTransferAction and action.destContainer == context.washOrigin.root then
+            context.washOrigin.transfers[action] = true
+        end
+    end
     records[action] = record
     if context.id == "Project_Cook" and class == ISAddItemInRecipe then context.lastApply = action end
     if class == ISQueueActionsAction then
@@ -869,9 +937,11 @@ scoped = function(context, callback, ...)
         ISContextMenu.addOption = function(menu, label, target, callback, ...)
             if callback then
                 local original, sink = callback, select(1, ...)
+                local origin = clothingMenuOrigin(original, target, sink, pack(...))
                 callback = function(...)
                     return Operations.run(function(...)
                         local context = {id = "WashFix", target = instanceof(sink, "IsoObject") and sink or nil}
+                        if clothingMenuMatches(origin, pack(...)) then context.washOrigin = origin end
                         return scoped(context, original, ...)
                     end, ...)
                 end
@@ -1587,11 +1657,22 @@ function Compat.install()
         end
     end
     installCookFirstAddition()
+    local carts=ready.SaucedCartsTransfers and Toolkit.ActionQueueCarts
+    local transfer=carts and carts.isTransferConstructor
+    -- These late bindings are already verified by the Carts adapter. Share only
+    -- that exact native-transfer proof; every other class/helper/callback stays pinned.
+    reviewedTransferClassUnchanged = function(target, class, methods)
+        if class~=ISInventoryTransferAction or not carts or Toolkit.ActionQueueCarts~=carts
+            or carts.isTransferConstructor~=transfer or not transfer(methods.new) or not transfer(class.new) then return false end
+        local allowed={new=true,perform=true,transferItem=true}
+        for name in pairs(allowed)do if target[name]~=class[name]then return false end end
+        for name,method in pairs(methods)do if not allowed[name]and target[name]~=method then return false end end
+        for _,name in ipairs(lifecycle)do if not allowed[name]and target[name]~=methods[name]then return false end end
+        return true
+    end
     if ready.P4TidyUpMeister then
         local owner=P4TidyUpMeister
         local actionPolicy,wornPolicy=owner.registerActionPolicy,owner.registerWornItemReplacement
-        local carts=ready.SaucedCartsTransfers and Toolkit.ActionQueueCarts
-        local transfer=carts and carts.isTransferConstructor
         local unequip=carts and carts.isUnequipConstructor
         local nonCart=carts and carts.isNonCartUnequip
         local nonCartItem=carts and carts.isNonCartItem
@@ -1610,8 +1691,8 @@ function Compat.install()
             if not carts or Toolkit.ActionQueueCarts~=carts or carts.isTransferConstructor~=transfer
                 or carts.isUnequipConstructor~=unequip or carts.isNonCartUnequip~=nonCart then return false end
             local allowed
-            if class==ISInventoryTransferAction and transfer(methods.new) and transfer(class.new) then
-                allowed={new=true,perform=true,transferItem=true}
+            if class==ISInventoryTransferAction then
+                return reviewedTransferClassUnchanged(target,class,methods)
             elseif class==ISUnequipAction and unequip(methods.new) and unequip(class.new) then
                 if target~=class and not nonCart(target) then return false end
                 allowed={new=true,complete=true}
@@ -1779,13 +1860,27 @@ local function tidyEquipment(action)
         and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip or record.tidyClothingWear or record.tidyClothingUnequip or record.tidyHotbarUnequip)
 end
 local function matchesTidyEquipment(action) return tidyEquipment(action) and matches(action) end
-local function matchesSelectedChain(action) return not tidyTransfer(action) and not tidyEquipment(action) and matches(action) end
+local function washClothing(action)
+    local record = records[action]
+    return record and record.id == "WashFix" and record.washOrigin
+        and record.washOrigin.capability == washClothingCapability
+end
+local function matchesWashClothing(action) return washClothing(action) and matches(action) end
+local function matchesSelectedChain(action)
+    return not tidyTransfer(action) and not tidyEquipment(action) and not washClothing(action) and matches(action)
+end
 local function acceptsChild(parent, child)
     return matches(child) and child.toolkitQueueOperation == parent.toolkitQueueOperation
 end
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains",
     {types = behaviorTypes, matches = matchesSelectedChain, inspect = inspect})
 Operations.registerProducer("compat.selected-chains", matchesSelectedChain, acceptsChild)
+Toolkit.ActionQueueDefinitions.registerBehavior("compat.wash-clothing",
+    {types = {"ISInventoryTransferAction", "ISWashClothing", "WMI_WaitForInvUpdate"}, matches = matchesWashClothing, inspect = inspect})
+Operations.registerProducer("compat.wash-clothing", matchesWashClothing, function(parent, child)
+    return matchesWashClothing(parent) and matchesWashClothing(child)
+        and records[parent].washOrigin == records[child].washOrigin and acceptsChild(parent, child)
+end, true)
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-transfers",
     {types = {"ISInventoryTransferAction"}, matches = matchesTidyTransfer, inspect = inspect})
 Operations.registerProducer("compat.tidy-transfers", matchesTidyTransfer, acceptsChild, true)

@@ -1,3 +1,9 @@
+# WashFix shared completion migration
+
+- [ ] Prove and isolate the reviewed clothing-menu producer, including its pickup/retry/wash/same-ID return chain, from bandage transformations and direct server returns. Keep unknown callbacks and unsupported branches on the legacy path.
+- [ ] Move only that proven subset to the existing shared lifecycle and Settlement cleanup, preserving native SP/Host effects, exact once-only continuation/returns and cancellation/reset boundaries. Require focused regressions for shared boundary use, late/duplicate callbacks, unavailable resources and fallback without shared native completion.
+- [ ] Add a reusable common-runner washing fixture with actual menu callbacks, native durations and authoritative water/soap/clothing/return receipts. Qualify affected SP/menu-Host cases with the full selected pack and matching queue-disabled controls; audit logs, version/changelog against current main, push, then remove only completed gates.
+
 # Cart motion full-pack compatibility
 
 - [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.
@@ -175,3 +181,5 @@ For each migrated family, add an independent positive example and a dangerous ex
 - [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
 
 - [ ] Add a reusable continuity diagnostic for native cart captures. Grip and motion checks accepted a 54-degree torso route-switch snap; diagnosing it required an external replay helper for `injury-torso-poses.jsonl`. The captured adjacent-frame JVM regression protects that failure. Complete when the normal diagnostic workflow reports correction rotation separately from native pose changes, with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without inventing a general visual-quality PASS.
+
+- [ ] Add isolated output selection to `JavaPatches/build.py`: the available 0.1.62 artifact failed `require_current_patch_jar` against current sources, while the builder writes only to `ROOT/build`. Preparing a fresh task candidate without overwriting an existing potentially shared build requires a separate source copy. Provide an explicit output directory with the same source-manifest validation and atomic promotion; do not weaken the stale-artifact guard.

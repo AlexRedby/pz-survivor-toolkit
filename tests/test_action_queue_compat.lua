@@ -45,7 +45,7 @@ end})
 for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do _G[name] = {instance = function() return {} end} end
 instanceof = function(value, kind)
-    return type(value) == 'table' and (value.class == kind or (kind == 'Clothing' and value.class == 'AlarmClockClothing') or (kind == 'InventoryItem' and value.item == true))
+    return type(value) == 'table' and (value.class == kind or (kind == 'IsoGameCharacter' and value.class == 'IsoPlayer') or (kind == 'Clothing' and value.class == 'AlarmClockClothing') or (kind == 'InventoryItem' and value.item == true))
 end
 getClassSimpleName=function(value)return value.class end
 ComponentType={Attributes={},Script={}}
@@ -352,9 +352,9 @@ require = function(module)
     local source = read(NativeWishlistWorkshopRoot .. '/' .. paths[id] .. '/media/lua/' .. branch .. module .. '.lua')
     -- Fixture exports expose private state only; the executed action/callback bodies remain upstream.
     if module == 'ISUI/WMI_WashingSubmenus' then
-        source = source .. '\nWS.WMI_BuildWashMenu = function(menu, items, character, sink) return menu:addOption("Wash", character, onWashClothing3, sink, {}, items, nil, true) end\n'
+        source = source .. '\nWS.WMI_BuildWashMenu = function(menu, items, character, sink) return menu:addOption("Wash", character, onWashClothing3, sink, {}, items, nil, true, nil) end\nWS.WMI_TestOriginalWashCallback=onWashClothing3\nWS.WMI_TestAggregateWashCallback=WMI_OnWashAll\nWS.WMI_TestBodyWashCallback=_onWashYourselfAndClose\n'
     elseif module == 'P4TidyUpMeister' then source = source .. '\nTidyFixture = P4TidyUpMeister\n' end
-    local result = assert(loadstring(source, (module == 'Project_Cook/PJCK_Config' or module:match('^Project_Cook/EvolvedRecipePanel/')) and '@'..module..'.lua' or module))()
+    local result = assert(loadstring(source, (module == 'Project_Cook/PJCK_Config' or module:match('^Project_Cook/EvolvedRecipePanel/') or module == 'ISUI/WMI_WashingSubmenus') and '@'..module..'.lua' or module))()
     if module == 'Project_Cook/EvolvedRecipePanel/PJCK_InputPanel' then projectCookUiOriginal.canAddItem=PJCK_InputPanel.canAddItem end
     loaded[module] = result or true; return result
 end
@@ -644,7 +644,7 @@ do
 end
 local function wash(value)
     menu.options = {}; WS.WMI_BuildWashMenu(menu, {value}, player, sink)
-    local option = menu.options[1]; option.callback(option.target, unpack(option.args))
+    local option = menu.options[1]; option.callback(option.target, unpack(option.args,1,10))
     -- Deep source cases begin at the transfer boundary. Execute a genuine head
     -- approach when it is ready; keep deferred preparation behind other work.
     local approach=queue.queue[1]
@@ -690,6 +690,111 @@ assert(queue.queue[1]~=front and nativeClears==frontClears+1 and luautils.walkAd
 reset()
 local bag = {class = 'ItemContainer', getParent = function() end, getType=function() return 'none' end, getContainingItem=function() end}
 local dirty = item(bag, 1)
+-- Only an exact reviewed laundering menu selection owns the migrated producer.
+do
+ local beforeConsumed=consumed
+ local function garment(id,container)
+  local value=item(container or bag,id);value.class='Clothing';return value
+ end
+ local function producer(action)return select(2,definitions.inspect(action))end
+ local function choose(callback,args,mutate)
+  menu.options={}
+  compat.fixtureScoped({id='WashFix'},function()
+   menu:addOption('Wash fixture',player,callback,unpack(args,1,args.n))
+  end)
+  local option=menu.options[1]
+  if mutate then mutate(option)end
+  option.callback(option.target,unpack(option.args,1,10))
+  local approach=queue.queue[1]
+  if sharedApproach.isAction(approach)then approach:begin();approach:start();approach:perform()end
+  return queue.queue[1]
+ end
+ reset()
+ local value=garment(28001);local pickup=wash(value);local later=tail()
+ assert(producer(pickup)=='compat.wash-clothing','reviewed clothing pickup must select shared completion producer')
+ local origin=assert(compat.fixtureRegistries[1][pickup].washOrigin)
+ pickup:perform()
+ local laundering,returning=queue.queue[1],queue.queue[2]
+ assert(producer(laundering)=='compat.wash-clothing'and producer(returning)=='compat.wash-clothing'
+  and compat.fixtureRegistries[1][laundering].washOrigin==origin and compat.fixtureRegistries[1][returning].washOrigin==origin,
+  'clothing source continuation lost its sealed origin or same-task return')
+ assert(queue.queue[3]==later,'fallback completion reordered independent tail')
+ laundering:perform();laundering:complete();returning:perform()
+ assert(value.container==bag and queue.queue[1]==later,'shared producer fallback without a Java lifecycle lost native return')
+ reset();value=garment(28002);pickup=wash(value);pickup.fixtureDelay=true;later=tail();pickup:perform()
+ local retry=queue.queue[1]
+ assert(producer(retry)=='compat.wash-clothing','private inventory wait lost laundering origin')
+ retry:perform();local nextRetry=queue.queue[1]
+ assert(producer(nextRetry)=='compat.wash-clothing'and nextRetry~=retry,'recursive raw wait insertion lost laundering origin')
+ value.container=inventory;inventory.values={value};nextRetry:perform()
+ assert(producer(queue.queue[1])=='compat.wash-clothing'and producer(queue.queue[2])=='compat.wash-clothing'
+  and queue.queue[3]==later,'retry did not preserve its native wash/return/tail ordering')
+ local size=#queue.queue;retry.onCompleteFunc(unpack(retry.onCompleteArgs));nextRetry.onCompleteFunc(unpack(nextRetry.onCompleteArgs))
+ assert(#queue.queue==size,'late duplicate inventory waits replayed the source')
+ reset();value=garment(28003);pickup=wash(value);later=tail()
+ queue.queue,queue.current={later},later;value.container=inventory;compat.prune()
+ assert(not compat.fixtureRegistries[1][pickup],'fixture did not prune completed parent')
+ pickup.onCompleteFunc(unpack(pickup.onCompleteArgs))
+ assert(producer(queue.queue[1])=='compat.wash-clothing'and queue.queue[3]==later,'pruned asynchronous parent lost its sealed origin')
+ pickup.onCompleteFunc(unpack(pickup.onCompleteArgs));assert(#queue.queue==3,'late asynchronous callback applied twice')
+ for _,state in ipairs({'cancel','generation','dead','disabled','lost-sink'})do
+  reset();value=garment(28004);pickup=wash(value);later=tail()
+  if state=='cancel'then operations.invalidate(pickup.toolkitQueueOperation)
+  elseif state=='generation'then operations.invalidateQueue(queue)
+  elseif state=='dead'then dead=true
+  elseif state=='disabled'then enabled=false
+  else sink.getObjectIndex=function()return -1 end end
+  pickup:perform()
+  assert(queue.queue[1]==later and #queue.queue==1,'invalidated laundering callback revived source children: '..state)
+  sink.getObjectIndex=function()return 1 end
+ end
+ -- Each rejected provenance shape still executes its original native/legacy source callback.
+ for _,state in ipairs({'foreign-callback','changed-args','named-list','late-metatable','reordered-list','duplicate','mixed','transform','aggregate'})do
+  reset();value=garment(28005)
+  local callback=WS.WMI_TestOriginalWashCallback
+  local args={n=6,sink,{}, {value},nil,true,nil}
+  local mutate
+  if state=='foreign-callback'then local native=callback;callback=function(...)return native(...)end
+  elseif state=='changed-args'then mutate=function(option)option.args[5]=false end
+  elseif state=='named-list'then args[3].extra='foreign metadata'
+  elseif state=='late-metatable'then mutate=function(option)setmetatable(option.args[3],{})end
+  elseif state=='reordered-list'then
+   args[3][2]=garment(28009);mutate=function(option)local v=option.args[3];v[1],v[2]=v[2],v[1]end
+  elseif state=='duplicate'then args[3][2]=value
+  elseif state=='mixed'then args[3][2]=item(bag,28006)
+  elseif state=='transform'then value.getItemAfterCleaning=function()return 'Base.Bandage'end
+  elseif state=='aggregate'then callback=WS.WMI_TestAggregateWashCallback;args={n=5,sink,{}, {regularItems={value}},true,nil}end
+  local action=choose(callback,args,mutate)
+  assert(action and producer(action)=='compat.selected-chains','unsupported laundering provenance migrated: '..state)
+ end
+ reset()
+ local bodyClass,bodyCallback,walkObject=ISWashYourself,ISWorldObjectContextMenu.onWashYourself,luautils.walkAdjObject
+ nativeClass('ISWashYourself')
+ local worldSource=read(NativeActionRoot..'/client/ISUI/ISWorldObjectContextMenu.lua')
+ assert(loadstring(assert(worldSource:match('(ISWorldObjectContextMenu.onWashYourself = function.-\nend)')),'@ISWorldObjectContextMenu.lua'))()
+ assert(loadstring(assert(walkSource:match('(function luautils.walkAdjObject.-\nend)')),'@luautils.lua'))()
+ local body=choose(WS.WMI_TestBodyWashCallback,{n=3,sink,{},nil})
+ assert(body.Type=='ISWashYourself'and producer(body)~='compat.wash-clothing','body washing borrowed clothing provenance')
+ ISWashYourself,ISWorldObjectContextMenu.onWashYourself,luautils.walkAdjObject=bodyClass,bodyCallback,walkObject
+ reset();value=garment(28007)
+ WS.WMI_TestOriginalWashCallback(player,sink,{}, {value},nil,true,nil)
+ local approach=queue.queue[1]
+ if sharedApproach.isAction(approach)then approach:begin();approach:start();approach:perform()end
+ assert(producer(queue.queue[1])~='compat.wash-clothing','direct source invocation forged a menu capability')
+ reset()
+ local dirtyBandage=item(bag,28008);dirtyBandage.getFullType=function()return 'Base.BandageDirty'end
+ dirtyBandage.getItemAfterCleaning=function()return 'Base.Bandage'end
+ local allTypes=inventory.getAllTypeRecurse
+ inventory.getAllTypeRecurse=function(_,kind)return list(kind=='Base.BandageDirty'and{dirtyBandage}or{})end
+ assert(WMI_Clean.queueAllDirtyItems(player,sink,true,nil),'actual legacy bandage aggregate did not queue')
+ inventory.getAllTypeRecurse=allTypes
+ approach=queue.queue[1]
+ if sharedApproach.isAction(approach)then approach:begin();approach:start();approach:perform()end
+ assert(producer(queue.queue[1])=='compat.selected-chains','transformed/direct-server bandage path migrated with clothing')
+ reset();consumed=beforeConsumed
+ print('PASS sealed Wash clothing menu origin, raw retries, late/pruned continuation, duplicate/invalidation and legacy subset boundaries')
+end
+
 do
     local function count(registry) local n=0; for _ in pairs(registry) do n=n+1 end; return n end
     local records, sessions = unpack(compat.fixtureRegistries)
@@ -3349,6 +3454,54 @@ do
     assert(select(2,definitions.inspect(transfer))=='compat.selected-chains',
         'unmigrated Wash transfer escaped its existing completion producer')
 end
+-- Shared native completion owns reviewed laundering effects and child order; fallback stays available.
+do
+ local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+ local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
+ local callbacks=0
+ queue.onCompleted=function(self,action)
+  if lifecycle.current(player)==action then
+   assert(not operations.deferCompletion(self,action),'Wash clothing acquired the legacy completion scope inside shared lifecycle')
+   callbacks=callbacks+1
+  end
+  return completed(self,action)
+ end
+ local function boundary(action,mp)
+  local removed=false;action.action={};queue.current=action
+  player.getCharacterActions=function()return list(removed and{}or{action.action})end
+  assert(lifecycle.begin(action,'perform'))
+  action:perform();lifecycle.finish(action,'perform',true)
+  assert(queue.current==action and lifecycle.flush(queue)=='waiting','Wash advanced before its native removal/complete')
+  if not mp then
+   assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+   assert(lifecycle.flush(queue)=='waiting','SP Wash ignored native removal')
+  end
+  removed=true
+  assert(lifecycle.flush(queue)=='completed'and lifecycle.flush(queue)==nil,'Wash completion did not advance exactly once')
+ end
+ for _,mp in ipairs({false,true})do
+  reset();isClient=function()return mp end
+  local value=item(bag,28100);value.class='Clothing'
+  local pickup=wash(value);local later=tail();local before=consumed
+  assert(select(2,definitions.inspect(pickup))=='compat.wash-clothing','real garment selected the legacy producer')
+  boundary(pickup,mp)
+  local laundering,returning=queue.queue[1],queue.queue[2]
+  assert(laundering.Type=='ISWashClothing'and returning.Type=='ISInventoryTransferAction'and queue.queue[3]==later,
+   'native pickup continuation lost wash/return/independent tail order')
+  boundary(laundering,mp)
+  if mp then laundering:complete()end -- authoritative completion is separately delivered in MP
+  assert(consumed==before+1,'laundering did not call its original native completion once')
+  boundary(returning,mp)
+  assert(value.container==bag and queue.queue[1]==later,'native same-ID return or independent tail was lost')
+  pickup.onCompleteFunc(unpack(pickup.onCompleteArgs))
+  assert(#queue.queue==1 and consumed==before+1,'late native pickup completion replayed washing')
+ end
+ assert(callbacks==6,'shared laundering fixture missed a native pickup/wash/return path')
+ queue.onCompleted,player.getCharacterActions,isClient=completed,actions,client
+ reset()
+ print('PASS Wash clothing shared native SP/MP boundary, original once-only effect and same-ID return before independent tail')
+end
+
 -- Observe native stop before the original delegate clears the queue. An
 -- observer failure cannot suppress/repeat that delegate or its native reset.
 do
@@ -3388,6 +3541,72 @@ do
     queue.resetQueue=resetQueue
     reset()
 end
+-- A real reviewed late constructor install must not silently turn laundering back into untracked native work.
+do
+ local saved={owner=SaucedCarts,client=isClient,events=Events,carts=PZSurvivorToolkit.ActionQueueCarts,
+  new=ISInventoryTransferAction.new,perform=ISInventoryTransferAction.perform,transferItem=ISInventoryTransferAction.transferItem,
+  start=ISInventoryTransferAction.start,latest=lateCartProof.latest,enabled=lateCartProof.enabled,
+  checker=lateCartProof.isTransferConstructor,consumed=consumed}
+ local hooks={}
+ Events=setmetatable({},{__index=function(owner,name)local event={Add=function(callback)hooks[#hooks+1]=callback end};rawset(owner,name,event);return event end})
+ SaucedCarts={safeIsCart=function()return false end,log=function()end,debug=function()end,error=function(message)error(message)end}
+ isClient=function()return false end
+ local source=read(NativeWishlistWorkshopRoot..'/3651954650/mods/SaucedCarts/42/media/lua/shared/SaucedCarts/CartTransferInterceptor.lua')
+ assert(loadstring(source,'@SaucedCarts/CartTransferInterceptor.lua'))()
+ local installed=ISInventoryTransferAction.new
+ assert(installed~=saved.new and SaucedCarts.CartTransferInterceptor.isInstalled()
+  and getFilenameOfClosure(installed):match('CartTransferInterceptor%.lua$'),'actual upstream late transfer constructor did not install')
+ Events=saved.events
+ local approved={new=installed,perform=saved.perform,transferItem=saved.transferItem}
+ lateCartProof.constructors[saved.new],lateCartProof.constructors[installed]=true,true
+ local function install()
+  PZSurvivorToolkit.ActionQueueCarts=lateCartProof;lateCartProof.enabled=true;lateCartProof.isTransferConstructor=saved.checker
+  lateCartProof.latest=approved
+  ISInventoryTransferAction.new,ISInventoryTransferAction.perform,ISInventoryTransferAction.transferItem=installed,saved.perform,saved.transferItem
+  ISInventoryTransferAction.start=saved.start
+ end
+ for _,mode in ipairs({'enabled','disabled','revoked','foreign-new','foreign-perform','foreign-start','foreign-api','foreign-owner'})do
+  install();reset()
+  if mode=='disabled'then enabled=false
+  elseif mode=='revoked'then lateCartProof.enabled=false
+  elseif mode=='foreign-new'then ISInventoryTransferAction.new=function(...)return installed(...)end
+  elseif mode=='foreign-perform'then ISInventoryTransferAction.perform=function(...)return saved.perform(...)end
+  elseif mode=='foreign-start'then ISInventoryTransferAction.start=function()end
+  elseif mode=='foreign-api'then lateCartProof.isTransferConstructor=function()return true end
+  elseif mode=='foreign-owner'then PZSurvivorToolkit.ActionQueueCarts={isTransfer=saved.carts.isTransfer,isReturn=saved.carts.isReturn}end
+  local value=item(bag,28201);value.class='Clothing'
+  local pickup=wash(value);local later=tail()
+  if mode=='enabled'then
+   assert(select(2,definitions.inspect(pickup))=='compat.wash-clothing','real approved late constructor lost Wash pickup adoption')
+   pickup:perform()
+   local laundering,returning=queue.queue[1],queue.queue[2]
+   assert(select(2,definitions.inspect(laundering))=='compat.wash-clothing'
+    and select(2,definitions.inspect(returning))=='compat.wash-clothing'and queue.queue[3]==later,
+    'real late constructor lost audited wash/return callback propagation')
+   laundering:perform();laundering:complete();returning:perform()
+   assert(value.container==bag and queue.queue[1]==later,'approved late install changed original native return or tail')
+  else
+   assert(select(2,definitions.inspect(pickup))~='compat.wash-clothing','unknown late binding gained laundering permission: '..mode)
+   if mode=='disabled'then
+    pickup:perform();local laundering,returning=queue.queue[1],queue.queue[2]
+    laundering:perform();laundering:complete();returning:perform()
+    assert(value.container==bag and queue.queue[1]==later,'disabled late-install fallback lost native effects/return')
+   end
+  end
+ end
+ install();reset()
+ local value=item(bag,28202);value.class='Clothing';local pickup=wash(value);local later=tail()
+ assert(definitions.inspect(pickup),'positive late-install proof missing before helper mutation')
+ ISInventoryTransferAction.start=function()end
+ assert(not definitions.inspect(pickup),'late foreign helper retained existing Wash proof')
+ pickup:perform();assert(queue.queue[1]==later,'invalidated late binding revived an audited continuation')
+ ISInventoryTransferAction.new,ISInventoryTransferAction.perform,ISInventoryTransferAction.transferItem,ISInventoryTransferAction.start=saved.new,saved.perform,saved.transferItem,saved.start
+ lateCartProof.latest,lateCartProof.enabled,lateCartProof.isTransferConstructor=saved.latest,saved.enabled,saved.checker
+ PZSurvivorToolkit.ActionQueueCarts,SaucedCarts,isClient,Events=saved.carts,saved.owner,saved.client,saved.events
+ consumed=saved.consumed;reset()
+ print('PASS actual reviewed late transfer installer retains Wash adoption/native fallback and rejects unknown bindings')
+end
+
 -- The actual P4 source may restore ordinary items after approved hooks changed the shared transfer class.
 do
     local methods={new=ISInventoryTransferAction.new,perform=ISInventoryTransferAction.perform,
