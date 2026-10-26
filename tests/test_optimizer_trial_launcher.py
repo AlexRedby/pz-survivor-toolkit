@@ -241,9 +241,77 @@ $b=New-TrialPlan {ps(self.base / 'Game')} {ps(self.base / 'Trial Profile')} Cont
         self.assertEqual(result, "10.0.22631")
         self.assertTrue(self.powershell("function Get-CimInstance { throw 'probe unavailable' }; $rejected=$false; try { Get-TrialWindowsVersion | Out-Null } catch { $rejected=$true }; $rejected | ConvertTo-Json"))
 
+    def test_multiplayer_plan_and_readiness_require_post_connection_lifecycle(self):
+        path = self.config()
+        base = self.readiness_text().replace('mode=singleplayer', 'mode=multiplayer')
+        result = self.powershell(f"""
+$c=Read-TrialLaunchConfig {ps(path)}
+$profile=(Read-TrialManifest {ps(ROOT / 'tests/optimizer_trial/candidate-manifest.json')}).profile
+$candidate=[pscustomobject]@{{Profile=$profile;Overlay='C:\\Trial Path\\overlay';Zip='C:\\Trial Path\\official.zip'}}
+$p=New-TrialPlan {ps(self.base / 'Game')} {ps(self.base / 'Trial Profile')} Optimized $c $candidate -SessionType Multiplayer
+$early=Get-TrialReadiness {ps(base)} -SessionType Multiplayer
+$ready=Get-TrialReadiness ({ps(base)}+"`n[OptimizerTrial] bridge ready mode=multiplayer client=true server=false session=1`n[OptimizerTrial] animal drain invoked mode=multiplayer client=true server=false") -SessionType Multiplayer
+@{{Plan=$p;Early=$early;Ready=$ready}} | ConvertTo-Json -Depth 8
+""")
+        self.assertEqual(result['Plan']['Session'], 'Multiplayer')
+        self.assertIn('-Dpz.optimizerTrial.mode=multiplayer', result['Plan']['VmArgs'])
+        self.assertIn('-Dpz.optimizerTrial.overlay=C:\\Trial Path\\overlay', result['Plan']['VmArgs'])
+        self.assertFalse(result['Early']['Ready'])
+        self.assertTrue(result['Ready']['Ready'])
+
+    def test_live_and_final_readiness_share_exact_multiplayer_context_and_failures(self):
+        revision = 'a' * 40
+        context = 'PZDrivingBench-OptimizerTrial-MP-' + 'b' * 32
+        pack = f'[OptimizerTrial] pack active revision={revision} count=68\n[PZToolkitJavaPatches] Experimental B42.21 patch:'
+        control = pack + '\n[OptimizerTrial] bridge inactive: explicit opt-in absent'
+        optimized = pack + '\n' + self.readiness_text().replace('mode=singleplayer', 'mode=multiplayer') + (
+            '\n[OptimizerTrial] bridge ready mode=multiplayer client=true server=false session=1'
+            '\n[OptimizerTrial] animal drain invoked mode=multiplayer client=true server=false')
+        context_line = '\n[OptimizerTrial] multiplayer context ready world=' + context
+        cases = []
+        for mode, text in (('Optimized', optimized), ('Control', control)):
+            cases.extend([
+                (mode, text + context_line, False, True, False),
+                (mode, text, False, False, False),
+                (mode, text + context_line + 'stale', False, False, False),
+                (mode, text + context_line, True, False, True),
+                (mode, text + context_line + '\n[PZDrivingBench] FAIL timeout', False, False, True),
+                (mode, text + context_line + '\n[OptimizerTrial] drive telemetry disabled error=fixture', False, False, True),
+                (mode, text + context_line + '\n[OptimizerTrial] telemetry flush failed reason=Disconnect error=fixture', False, False, True),
+                (mode, text + context_line + '\n[OptimizerTrial] prewarm disabled: native lifecycle changed', False, False, True),
+            ])
+        cases.append(('Control', pack + context_line, False, False, False))
+        calls = ',\n'.join(
+            '(Get-TrialRunReadiness ' + ps(text) + ' ' + mode + ' ' + ps(revision)
+            + ' 68 Multiplayer -ContextId ' + ps(context) + ' -PreviousFailure $' + str(prior).lower() + ')'
+            for mode, text, prior, _, _ in cases)
+        result = self.powershell('@(' + calls + ') | ConvertTo-Json -Depth 5')
+        for state, (_, _, _, ready, failed) in zip(result, cases):
+            self.assertEqual(state['Ready'], ready, state)
+            self.assertEqual(state['Failed'], failed, state)
+
+    def test_final_classification_uses_live_readiness_helper_with_prior_failure(self):
+        source = LAUNCHER.read_text()
+        self.assertEqual(source.count('= Get-TrialRunReadiness '), 2)
+        self.assertEqual(source.count('-PreviousFailure $failureAnnounced'), 2)
+        final = source[source.index('$plan.JavaExitCode = $process.ExitCode'):]
+        self.assertNotIn('$plan.Readiness = Get-TrialReadiness ', final)
+        self.assertNotIn('$plan.Readiness = Get-TrialPackActivation ', final)
+
+    def test_launch_log_local_does_not_shadow_session_parameter(self):
+        # PowerShell identifiers are case-insensitive: $session used to replace
+        # the requested $Session mode with a log descriptor after launching Java.
+        result = self.powershell(f"""
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile({ps(LAUNCHER)},[ref]$tokens,[ref]$errors)
+$writes=@($ast.FindAll({{param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -ieq 'Session'}}, $true))
+$writes.Count | ConvertTo-Json
+""")
+        self.assertEqual(result, 0)
+
     def readiness_text(self):
         return "\n".join([
-            "[OptimizerTrial] prewarm armed; awaiting OnGameBoot; SP trial only",
+            "[OptimizerTrial] prewarm armed; awaiting OnGameBoot; mode=singleplayer",
             "[OptimizerTrial] official cache and preload active",
             "[OptimizerTrial] tile batch used starts=10 merged=20 stamped=30",
             "[OptimizerTrial] bake scheduler used frames=1 grants=10",

@@ -1,4 +1,5 @@
 """One guarded native game lifecycle; only processes created here are stopped."""
+from optimizer_profile import client_classpath
 import os
 from pathlib import Path
 import re
@@ -199,7 +200,7 @@ def run(root, resource_wait=300):
                     raise ValueError("Server VOIP must be disabled")
                 arguments = ["-cp", "projectzomboid.jar", "zombie.network.GameServer", "-servername", runtime["server_name"], "-adminpassword", "smoke-local-only"]
             else:
-                arguments = ["-XstartOnFirstThread", "-cp", str(config["classes"]) + os.pathsep + "projectzomboid.jar", "ToolkitSmokeLauncher"]
+                arguments = ["-XstartOnFirstThread", "-cp", client_classpath(config), "ToolkitSmokeLauncher"]
             window_args = (glfw_args + window_manager.arguments(cache, config["classes"])) if role != "server" else []
             command = base + window_args + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if hosted and role == 'client1':

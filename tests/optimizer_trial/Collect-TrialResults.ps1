@@ -50,7 +50,7 @@ function Get-TrialBufferedGameContext($Run, $Diagnostic) {
             $path=Assert-TrialResultPath (Join-Path $Run.Directory $name)
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
             $text=[IO.File]::ReadAllText($path)
-            $begins=@([regex]::Matches($text,'(?m)\[OptimizerTrial\] drive telemetry flush begin format=2 world=([A-Za-z0-9-]+) samples=(\d+) dropped=(\d+) reason=(MainMenu|PostSaveExit)[\t ]*\r?$'))
+            $begins=@([regex]::Matches($text,'(?m)\[OptimizerTrial\] drive telemetry flush begin format=2 world=([A-Za-z0-9-]+) samples=(\d+) dropped=(\d+) reason=(MainMenu|PostSaveExit|Disconnect|WorldExit)[\t ]*\r?$'))
             if ($begins.Count) { $summary.file=$name; break }
         }
         if (-not $begins.Count) { return $summary }
@@ -58,6 +58,8 @@ function Get-TrialBufferedGameContext($Run, $Diagnostic) {
         # world or initial-menu output cannot satisfy the receipt's unique ID.
         $begin=$begins[-1]
         if ($begin.Groups[1].Value -cne $world) { throw 'GameContextWorldMismatch' }
+        if ($begin.Groups[4].Value -cin @('Disconnect','WorldExit') -and
+            $world -cnotmatch '^PZDrivingBench-OptimizerTrial-MP-[A-Fa-f0-9]{32}$') { throw 'InvalidMultiplayerGameContextIdentity' }
         $summary.samples=[int]$begin.Groups[2].Value; $summary.dropped=[long]$begin.Groups[3].Value
         if ($summary.samples -lt 1 -or $summary.samples -gt 1800) { throw 'InvalidGameContextSampleCount' }
         $tail=$text.Substring($begin.Index+$begin.Length)
