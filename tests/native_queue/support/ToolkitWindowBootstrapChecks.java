@@ -1,4 +1,6 @@
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.ClassTransform;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.classfile.instruction.InvokeInstruction;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,10 +46,100 @@ public final class ToolkitWindowBootstrapChecks {
         }
     }
 
+    private static void ownedCreationSizeChecks() throws Exception {
+        var routed = ToolkitWindowBootstrap.class.getDeclaredField("routedWindow");
+        var sizes = ToolkitWindowBootstrap.class.getDeclaredField("creationSizes");
+        routed.setAccessible(true);
+        sizes.setAccessible(true);
+        long previous = routed.getLong(null);
+        @SuppressWarnings("unchecked")
+        var requests = (Map<Long, int[]>)sizes.get(null);
+        if (!requests.isEmpty()) throw new AssertionError("Size checks must run before native creation");
+        try {
+            requests.put(123L, new int[] {1600, 900});
+            requests.put(999L, new int[] {1052, 900});
+            routed.setLong(null, 0L);
+            if (ToolkitWindowBootstrap.routedCreationSize(123L) != null) throw new AssertionError("Unacknowledged creation accepted");
+            routed.setLong(null, 123L);
+            if (ToolkitWindowBootstrap.routedCreationSize(999L) != null) throw new AssertionError("Foreign handle accepted");
+            if (ToolkitWindowBootstrap.routedCreationSize(0L) != null) throw new AssertionError("Zero handle accepted");
+            if (!Arrays.equals(new int[] {1600, 900}, ToolkitWindowBootstrap.routedCreationSize(123L))) {
+                throw new AssertionError("Prepared creation size was replaced by an observed smaller size");
+            }
+            ToolkitWindowBootstrap.routedCreationSize(123L)[0] = 576;
+            if (ToolkitWindowBootstrap.routedCreationSize(123L)[0] != 1600) throw new AssertionError("Mutable size request escaped");
+            requests.remove(123L);
+            if (ToolkitWindowBootstrap.routedCreationSize(123L) != null) throw new AssertionError("Unknown creation accepted");
+        } finally {
+            requests.clear();
+            routed.setLong(null, previous);
+        }
+    }
+
+    private static void presentationChecks() {
+        var pins = Map.of("hdr", "false", "hdrAuto", "false", "macPresent", "off", "macGlCore", "false",
+            "macNativeFullscreen", "false", "borderlessFullscreen", "off");
+        var previous = new HashMap<String, String>();
+        for (var key : pins.keySet()) previous.put(key, System.getProperty("pzopt." + key));
+        try {
+            pins.forEach((key, value) -> System.setProperty("pzopt." + key, value));
+            ToolkitWindowBootstrap.requireOptimizedPresentation();
+            for (var entry : pins.entrySet()) {
+                for (var invalid : new String[] {"true", "auto", ""}) {
+                    System.setProperty("pzopt." + entry.getKey(), invalid);
+                    try {
+                        ToolkitWindowBootstrap.requireOptimizedPresentation();
+                        throw new AssertionError("Unsafe presentation accepted: " + entry.getKey() + "=" + invalid);
+                    } catch (IllegalStateException expected) {
+                        if (!expected.getMessage().contains("pzopt." + entry.getKey())) throw expected;
+                    }
+                }
+                System.clearProperty("pzopt." + entry.getKey());
+                try {
+                    ToolkitWindowBootstrap.requireOptimizedPresentation();
+                    throw new AssertionError("Unpinned presentation accepted: " + entry.getKey());
+                } catch (IllegalStateException expected) {
+                    if (!expected.getMessage().contains("pzopt." + entry.getKey())) throw expected;
+                }
+                System.setProperty("pzopt." + entry.getKey(), entry.getValue());
+            }
+        } finally {
+            previous.forEach((key, value) -> {
+                if (value == null) System.clearProperty("pzopt." + key);
+                else System.setProperty("pzopt." + key, value);
+            });
+        }
+    }
+
+    private static void changedLifecycleChecks(byte[] original, Map<String, Integer> expected) throws Exception {
+        byte[] changed = ClassFile.of().transformClass(ClassFile.of().parse(original),
+            ClassTransform.transformingMethodBodies((builder, element) -> {
+                if (element instanceof InvokeInstruction call
+                        && call.owner().asInternalName().equals("org/lwjgl/glfw/GLFW")
+                        && call.name().stringValue().equals("glfwFocusWindow")) builder.pop2();
+                else builder.with(element);
+            }));
+        // Exercise the structural check independently of the earlier exact-hash rejection.
+        // Production reaches this private helper only after a known fingerprint match.
+        var transform = ToolkitWindowBootstrap.class.getDeclaredMethod("transformDisplay", byte[].class, Map.class);
+        transform.setAccessible(true);
+        try {
+            transform.invoke(null, changed, expected);
+            throw new AssertionError("Changed GLFW lifecycle count accepted");
+        } catch (InvocationTargetException failure) {
+            if (!(failure.getCause() instanceof IllegalStateException expectedFailure)
+                    || !expectedFailure.getMessage().contains("Unexpected Display lifecycle")) throw failure;
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         if (!System.getProperty("os.name").startsWith("Mac")
                 || System.getProperty("toolkit.test.windowGate") == null) {
             throw new IllegalStateException("Checks require macOS and toolkit.test.windowGate");
+        }
+        if (Arrays.asList(args).contains("--reject-create-monitor")) {
+            ToolkitWindowBootstrap.glfwCreateWindow(320, 240, "must-not-exist", 1L, 0L);
+            throw new AssertionError("Fullscreen creation returned instead of halting before native GLFW");
         }
         if (Arrays.asList(args).contains("--without-agent")) {
             try {
@@ -74,9 +166,10 @@ public final class ToolkitWindowBootstrapChecks {
                 }
             }));
         }
-        var expected = Map.of("glfwDefaultWindowHints", 1, "glfwShowWindow", 2,
-            "glfwFocusWindow", 1, "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2,
-            "glfwPollEvents", 1);
+        boolean official = Arrays.asList(args).contains("--official");
+        var expected = Map.of("glfwDefaultWindowHints", 1, "glfwCreateWindow", official ? 2 : 1,
+            "glfwShowWindow", 2, "glfwFocusWindow", 1, "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1,
+            "glfwDestroyWindow", official ? 3 : 2, "glfwPollEvents", 1);
         if (!calls.equals(expected)) throw new AssertionError("Unexpected hooks: " + calls);
         byte[] changed = original.clone();
         changed[changed.length - 1] ^= 1;
@@ -94,7 +187,10 @@ public final class ToolkitWindowBootstrapChecks {
         try (var stream = ClassLoader.getSystemResourceAsStream("org/lwjglx/opengl/Display.class")) {
             if (!Arrays.equals(original, stream.readAllBytes())) throw new AssertionError("Class resource changed");
         }
+        changedLifecycleChecks(original, expected);
+        presentationChecks();
+        ownedCreationSizeChecks();
         visibilityChecks();
-        System.out.println("PASS exact hooks, verifier, unknown fingerprint rejection, agent definition, original resource preserved, fail-closed visibility tokens; GLFW not initialized");
+        System.out.println("PASS exact hooks, verifier, unknown fingerprint and lifecycle-count rejection, agent definition, original resource preserved, fail-closed visibility tokens, pinned optimizer presentation, exact owned creation geometry; GLFW not initialized");
     }
 }

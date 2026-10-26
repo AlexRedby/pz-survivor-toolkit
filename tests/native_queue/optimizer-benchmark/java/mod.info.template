@@ -1,0 +1,10 @@
+name=Disposable Driving Performance Probe
+id=PZDrivingPerfProbe
+version=0.0.1
+versionMin=42.21
+versionMax=42.21
+require=\ZombieBuddy
+javaJarFile=media/java/PZDrivingPerfProbe.jar
+javaPkgName=net.alexredby.drivingperf
+ZBVersionMin=2.3.4
+description=Test-only owner-gated driving controls and swap-completion timing.
