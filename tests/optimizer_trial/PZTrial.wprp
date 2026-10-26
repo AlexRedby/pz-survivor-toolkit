@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Limited file capture: sampled CPU + readying stacks; CSwitch/DPC/ISR/IO
+     events have no stacks. No general diagnostic providers.
+     Schema: https://learn.microsoft.com/windows-hardware/test/wpt/3-profile-definitions
+     Keywords/stacks: https://learn.microsoft.com/windows-hardware/test/wpt/systemprovider
+     Graphics settings: Microsoft's MF_TRACE.WPRP (DxgKrnl, DXGI, Dwm-Core):
+     https://github.com/microsoft/media-foundation/blob/master/performanceTracing/MF_TRACE.WPRP
+     Configured buffers total 32 MiB (ETW may adjust), NOT a file limit. Worker retains duration
+     and 2 GiB temporary-file watchdogs. Volume, overhead and usable OpenGL
+     presentation events still require Windows validation. -->
+<WindowsPerformanceRecorder Version="1.0" Author="PZ Survivor Toolkit">
+  <Profiles>
+    <SystemCollector Id="SystemCollector" Name="NT Kernel Logger">
+      <BufferSize Value="128"/>
+      <Buffers Value="128"/>
+    </SystemCollector>
+    <EventCollector Id="GraphicsCollector" Name="PZTrial Graphics">
+      <BufferSize Value="128"/>
+      <Buffers Value="128"/>
+    </EventCollector>
+    <SystemProvider Id="Scheduling">
+      <Keywords>
+        <Keyword Value="CpuConfig"/>
+        <Keyword Value="ProcessThread"/>
+        <Keyword Value="Loader"/>
+        <Keyword Value="CSwitch"/>
+        <Keyword Value="ReadyThread"/>
+        <Keyword Value="SampledProfile"/>
+        <Keyword Value="DPC"/>
+        <Keyword Value="Interrupt"/>
+        <Keyword Value="DiskIO"/>
+        <Keyword Value="HardFaults"/>
+      </Keywords>
+      <Stacks>
+        <Stack Value="SampledProfile"/>
+        <Stack Value="ReadyThread"/>
+      </Stacks>
+    </SystemProvider>
+    <EventProvider Id="DxgKrnl" Name="Microsoft-Windows-DxgKrnl" Level="5" NonPagedMemory="true" Stack="false">
+      <Keywords><Keyword Value="0x300277"/></Keywords>
+      <CaptureStateOnStart><Keyword Value="0x2090BFFF"/></CaptureStateOnStart>
+      <CaptureStateOnSave><Keyword Value="0x90BFFF"/></CaptureStateOnSave>
+    </EventProvider>
+    <!-- PresentMon's generated ETW descriptors: DXGI Events=0x2; Dwm-Core
+         Composition=0x1 (Win10), Scheduling=0x80 (Win11).
+         https://github.com/GameTechDev/PresentMon/tree/main/PresentData/ETW -->
+    <EventProvider Id="DXGI" Name="Microsoft-Windows-DXGI" Stack="false">
+      <Keywords><Keyword Value="0x2"/></Keywords>
+    </EventProvider>
+    <EventProvider Id="DwmCore" Name="9e9bba3c-2e38-40cb-99f4-9e8281425164" Level="5" Stack="false">
+      <Keywords><Keyword Value="0x81"/></Keywords>
+    </EventProvider>
+    <Profile Id="PZTrial.Light.Memory" Name="PZTrial" Description="CPU scheduling and graphics without high-volume event stacks" DetailLevel="Light" LoggingMode="Memory">
+      <Collectors>
+        <SystemCollectorId Value="SystemCollector"><SystemProviderId Value="Scheduling"/></SystemCollectorId>
+        <EventCollectorId Value="GraphicsCollector">
+          <EventProviders><EventProviderId Value="DxgKrnl"/><EventProviderId Value="DXGI"/><EventProviderId Value="DwmCore"/></EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+    <Profile Id="PZTrial.Light.File" Name="PZTrial" Description="CPU scheduling and graphics without high-volume event stacks" DetailLevel="Light" LoggingMode="File">
+      <Collectors>
+        <SystemCollectorId Value="SystemCollector"><SystemProviderId Value="Scheduling"/></SystemCollectorId>
+        <EventCollectorId Value="GraphicsCollector">
+          <EventProviders><EventProviderId Value="DxgKrnl"/><EventProviderId Value="DXGI"/><EventProviderId Value="DwmCore"/></EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

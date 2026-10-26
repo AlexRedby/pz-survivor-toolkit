@@ -18,7 +18,7 @@ PACKAGE = 'PZDrivingOptimizerTrial'
 BRIDGE = 'PZDrivingOptimizerBridge'
 LAUNCHERS = ('Launch-Trial.ps1', 'Start-optimized.cmd', 'Start-control.cmd', 'Check-setup.cmd',
              'candidate-manifest.json', 'README.txt', 'verification.txt', 'Pack.ps1',
-             'TrialDiagnostics.ps1', 'TrialTelemetry.ps1', 'TrialReadiness.ps1', 'TrialWpr.ps1', 'TrialWprWorker.ps1', 'TrialDownload.ps1', 'TrialNvidia.ps1', 'TrialHotkey.ps1', 'TrialCapFrameX.ps1', 'Collect-TrialResults.ps1', 'Collect-results.cmd')
+             'TrialDiagnostics.ps1', 'TrialTelemetry.ps1', 'TrialReadiness.ps1', 'TrialWpr.ps1', 'TrialWprWorker.ps1', 'PZTrial.wprp', 'TrialDownload.ps1', 'TrialNvidia.ps1', 'TrialHotkey.ps1', 'TrialCapFrameX.ps1', 'Collect-TrialResults.ps1', 'Collect-results.cmd')
 
 
 def regular(path: Path) -> None:
@@ -306,12 +306,14 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         pack = include_pack(stage, pack_source, revision, game, jdk, kotlin_home, root, java_identity, provenance)
         receipt = {'format': 1, 'scope': 'experimental one-PC sequential single-player comparison with shared multiplayer-compatible optimizations; explicit multiplayer mode; one world session per process',
                    'default_session': 'SinglePlayer',
-                   'diagnostics_format': 3, 'diagnostics_revision': '3.1',
+                   'diagnostics_format': 3, 'diagnostics_revision': '3.2',
                    'source_only_upstream': True, **provenance, 'selected_mod_count': len(pack['mod_ids']),
                    'repository_versions': {id: row['version'] for id, row in pack['repository_mods'].items()},
                    'bridge_jar_sha256': hashlib.sha256(
                        (bridge / f'42/media/java/{BRIDGE}.jar').read_bytes()).hexdigest(),
                    'dashboard_sha256': hashlib.sha256((stage / 'mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua').read_bytes()).hexdigest()}
+        receipt['wpr_profile'] = {'file': 'PZTrial.wprp', 'selector': 'PZTrial.light',
+            'sha256': hashlib.sha256((stage / 'PZTrial.wprp').read_bytes()).hexdigest()}
         candidate = stage / 'candidate-manifest.json'
         receipt['candidate_manifest_sha256'] = hashlib.sha256(candidate.read_bytes()).hexdigest()
         candidate_data = json.loads(candidate.read_text(encoding='utf-8'))
