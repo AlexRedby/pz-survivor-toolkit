@@ -68,6 +68,14 @@ def evidence(cancel=False, kind='sp', mode='toolkit', single=False):
 
 
 class WashingTests(unittest.TestCase):
+    def sealed_replay(self, root, source=None):
+        if source is None:
+            source = (ROOT / 'PZSurvivorToolkit/42' / washing.REPLAY_PATH).read_text()
+        for role in ('client1', 'server'):
+            target = root / role / 'mods/PZSurvivorToolkit/42' / washing.REPLAY_PATH
+            target.parent.mkdir(parents=True, exist_ok=True);target.write_text(source)
+        return washing.replay_source(root / 'client1')
+
     def sync(self, data):
         _, row, _, receipt = data
         row.update({k: copy.deepcopy(v) for k, v in receipt.items() if k != 'case'})
@@ -117,6 +125,39 @@ class WashingTests(unittest.TestCase):
                        {'mods': list(washing.craft.MODS)}, {'kind': 'mp', 'options': {}}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 washing.validate(dict(selection, **change))
+
+    def test_mp_replay_metadata_pins_reviewed_body_but_derives_line_from_sealed_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp);proof = self.sealed_replay(root)
+            selection = evidence(kind='mp')[0]
+            runtime = {'roles': {name: {'cache': str(root / name)} for name in ('client1', 'server')}}
+            with patch.object(washing.craft, 'stage_common'):
+                washing.stage(ROOT, root, None, None, selection, {}, runtime)
+            helper = root / 'client1/mods/ActionQueueTest/42/media/lua/shared/QueueWashingReplayProof.lua'
+            self.assertEqual(helper.read_text(), (root / 'server/mods/ActionQueueTest/42/media/lua/shared/QueueWashingReplayProof.lua').read_text())
+            self.assertIn('replayLine=' + str(proof['replayLine']), helper.read_text())
+            self.assertEqual(washing.REPLAY_BODY_SHA256, proof['helperSha256'])
+            source = (ROOT / 'PZSurvivorToolkit/42' / washing.REPLAY_PATH).read_text()
+            shifted = self.sealed_replay(root, '-- unrelated insertion above helper\n' + source)
+            self.assertEqual(proof['replayLine'] + 1, shifted['replayLine'])
+            self.assertNotEqual(proof['checksum'], shifted['checksum'])
+            self.assertEqual(proof['helperSha256'], shifted['helperSha256'])
+            for body in (source.replace('local planned, transfers, incoming = {}, {}, {}', 'local planned, transfers, incoming = {}, {}, {} -- changed body'),
+                         source + '\n    for _, action in ipairs(planned) do add(action) end\n'):
+                with self.assertRaises(ValueError): self.sealed_replay(root, body)
+            # SP neither derives nor requires replay metadata.
+            with patch.object(washing.craft, 'stage_common'), patch.object(washing, 'replay_source', side_effect=AssertionError('SP proof evaluated')):
+                washing.stage(ROOT, root, None, None, evidence()[0], {}, {})
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for native source checksum parity')
+    def test_mp_generated_checksum_matches_actual_native_sourceproof(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp);proof = self.sealed_replay(root)
+            source = root / 'client1/mods/PZSurvivorToolkit/42' / washing.REPLAY_PATH
+            script = "local P=assert(loadfile(arg[1]))();local f=assert(io.open(arg[2],'rb'));print(P.checksum({readLine=function()local s=f:read('*l');return s and s:gsub('\\r$','')end},true));f:close()"
+            result = subprocess.run([shutil.which('luajit'), '-', str(ROOT / 'PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'), str(source)], input=script, text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertEqual(proof['checksum'], int(result.stdout.strip()))
 
     def test_menu_family_progress_and_shared_migration_cannot_be_claimed_by_queue_idle(self):
         for change in ('menu', 'aggregate', 'bag', 'methods', 'family', 'proof', 'progress', 'root',
@@ -191,7 +232,14 @@ class WashingTests(unittest.TestCase):
     def test_actual_reset_observer_preserves_queue_add_and_records_only_native_creation_provenance(self):
         script = r'''
 for _,name in ipairs({'PZSurvivorToolkit/ActionQueuePanel','TimedActions/ISReadABook','ISUI/WMI_WashingSubmenus'})do package.loaded[name]={}end
-package.loaded.QueueTestSelection={mode='toolkit',cases={'cancel-after-pickup'}}
+local testKind=arg[3]or 'sp'
+package.loaded.QueueTestSelection={mode='toolkit',kind=testKind,cases={'cancel-after-pickup'}}
+local replay={mod='PZSurvivorToolkit',path='media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua',checksum=123,
+ replayLine=1100,frameSuffix='/mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua',verified=true}
+if testKind=='mp'then
+ package.loaded.QueueWashingReplayProof=replay
+ package.loaded['PZSurvivorToolkit/SourceProof']={matches=function()error('dispatch is not exercised by this creation observer test')end}
+end
 package.loaded.QueueHealthEvents=assert(loadfile(arg[2]))();package.loaded.QueueWashingFixture={}
 Events={};for _,name in ipairs({'OnServerCommand','OnGameStart','OnPlayerUpdate','OnTick'})do Events[name]={Add=function()end}end
 local ctor=function()end;ISInventoryTransferAction={new=ctor}
@@ -210,6 +258,7 @@ local bag={getID=function()return 10 end,getFullType=function()return 'Base.Bag_
 local root={contains=function()return true end};local source={getContainingItem=function()return bag end}
 local item={getID=function()return 100 end,getFullType=function()return 'Base.Tshirt_DefaultTEXTURE_TINT'end,getContainer=function()return root end}
 local run={resetting=true,allowed={[100]=true},creations={},creationCount=0,creationOverflow=false}
+if testKind=='mp'then run.replayProof=replay end
 set(ISTimedActionQueue.add,'run',run);set(set(ISTimedActionQueue.add,'creationTrace'),'state',{root=root,source=source})
 local frames={{file='client/P4TidyUpMeister.lua',line=895},{file='client/P4TidyUpMeister.lua',line=839},{file='client/ZZWashing.lua',line=42}}
 function getCurrentCoroutine()return 'native-coroutine'end
@@ -236,13 +285,26 @@ frames={{file='client/ISUI/WMI_WashingSubmenus.lua',line=341}}
 local child={Type='ISInventoryTransferAction',item=item,character=actor,srcContainer=root,destContainer=source,onCompleteFunc=function()end}
 ISTimedActionQueue.add(child);assert(not run.creations[child].p4RestoreSite and not run.creations[child].noCallbacks)
 assert(run.creationCount==6 and not run.creationOverflow)
+if testKind=='mp'then
+ frames={{file='/sealed/client1'..replay.frameSuffix,line=replay.replayLine}}
+ local function observeReplay()
+  local a={Type='ISInventoryTransferAction',item=item,character=actor,srcContainer=root,destContainer=source}
+  ISTimedActionQueue.add(a);return assert(run.creations[a])
+ end
+ local recorded=observeReplay();assert(recorded.compatReplaySite and not recorded.p4RestoreSite and recorded.replayProof==replay)
+ frames[1].line=replay.replayLine-1;assert(not observeReplay().compatReplaySite)
+ frames[1].line=replay.replayLine;frames[1].file='/unowned/ActionQueueCompat.lua';assert(not observeReplay().compatReplaySite)
+ frames[1].file='/sealed/client1'..replay.frameSuffix;replay.verified=false;assert(not observeReplay().compatReplaySite)
+ assert(run.creationCount==10 and not run.creationOverflow)
+end
 print('actual native reset creation observer preserves delegation and provenance')
 '''
-        result = subprocess.run([shutil.which('luajit'), '-', str(ROOT / 'tests/native_queue/washing/client/ZZWashing.lua'),
-                                 str(ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua')],
-                                input=script, text=True, capture_output=True)
-        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn('actual native reset creation observer preserves delegation and provenance', result.stdout)
+        for kind in ('sp', 'mp'):
+            result = subprocess.run([shutil.which('luajit'), '-', str(ROOT / 'tests/native_queue/washing/client/ZZWashing.lua'),
+                                     str(ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua'), kind],
+                                    input=script, text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn('actual native reset creation observer preserves delegation and provenance', result.stdout)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for actual menu selection check')
     def test_actual_selector_preserves_aggregate_no_soap_and_selects_individual_soap(self):
@@ -394,6 +456,33 @@ print('actual native menu shape/flag selection passed')
                 else: d[3]['garments'][0].update(rootCount=1,sourceCount=0);self.sync(d)
                 self.assertTrue(washing.check_case(*d))
 
+    def test_mp_cleanup_requires_exact_live_and_independently_sealed_replay_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proof = self.sealed_replay(Path(tmp))
+            for mode in ('native', 'toolkit'):
+                d = self.restored(mode=mode, kind='mp')
+                trace = d[1]['records'][-1]['creation']
+                d[1]['replayProof'] = dict(proof, verified=True)
+                trace.update(p4RestoreSite=False, compatReplaySite=True, replayProof=dict(proof, verified=True),
+                             frames=[dict(file='/sealed/client1' + proof['frameSuffix'], line=proof['replayLine'])])
+                self.assertEqual([], washing.check_case(*d, proof))
+                for change in ('no-sealed-proof', 'stale-row', 'stale-trace', 'unverified', 'wrong-line', 'wrong-file',
+                               'fallback', 'p4-unverified', 'callback', 'sp', 'primary-family'):
+                    bad = copy.deepcopy(d);r = bad[1]['records'][-1];trace = r['creation'];expected = proof
+                    if change == 'no-sealed-proof': expected = None
+                    elif change == 'stale-row': bad[1]['replayProof']['checksum'] += 1
+                    elif change == 'stale-trace': trace['replayProof']['checksum'] += 1
+                    elif change == 'unverified': trace['replayProof']['verified'] = False
+                    elif change == 'wrong-line': trace['frames'][0]['line'] += 1
+                    elif change == 'wrong-file': trace['frames'][0]['file'] = '/unknown/ActionQueueCompat.lua'
+                    elif change == 'fallback': trace['frames'][0]['line'] -= 65
+                    elif change == 'p4-unverified': trace['p4SourceVerified'] = False
+                    elif change == 'callback': trace['noCallbacks'] = False
+                    elif change == 'sp': bad[0]['kind'] = 'sp'
+                    elif mode == 'toolkit': bad[1]['records'][1].update(behavior=None, sourceProof=False)
+                    else: bad[1]['records'][1].update(behavior=washing.BEHAVIOR, sourceProof=True)
+                    with self.subTest(mode=mode, change=change): self.assertTrue(washing.check_case(*bad, expected))
+
     def test_malformed_envelopes_fail_without_verifier_crashes(self):
         for index, value in ((1, None), (2, None), (3, [])):
             d = list(evidence());d[index] = value
@@ -409,7 +498,9 @@ print('actual native menu shape/flag selection passed')
         context = dict(suite='washing', kind=kind, mode=mode, actor='client1')
         rows = [dict(event='setup', cases=washing.CASES, expected=len(data), queueEnabled=mode == 'toolkit', nativeDurations=True)]
         raw = []
+        replay = dict(self.sealed_replay(root), verified=True) if kind == 'mp' else None
         for _, row, prep, receipt in data:
+            if kind == 'mp': row['replayProof'] = replay
             rows.append(dict(row, event='case', id=prep['case']))
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
         rows.append(dict(event='complete', cases=washing.CASES, expected=len(data), performed=len(data), failed=0, skipped=0))
@@ -426,8 +517,8 @@ print('actual native menu shape/flag selection passed')
                 for mode in ('toolkit', 'native'):
                     selection = self.logs(root, kind, mode)
                     self.assertEqual([], washing.verify(root, selection, {})['issues'])
-                    for change in ('failure', 'duplicate', 'missing', 'server-echo'):
-                        if change == 'server-echo' and kind == 'sp': continue
+                    for change in ('failure', 'duplicate', 'missing', 'server-echo', 'source-body', 'source-different', 'live-proof'):
+                        if change in ('server-echo', 'source-body', 'source-different', 'live-proof') and kind == 'sp': continue
                         with self.subTest(kind=kind, mode=mode, change=change):
                             self.logs(root, kind, mode)
                             path = root / ('server-launch.log' if kind == 'mp' else 'client1-launch.log')
@@ -435,9 +526,17 @@ print('actual native menu shape/flag selection passed')
                             if change == 'failure': text += '\n[QUEUE_TEST] FAIL late washing callback'
                             elif change == 'duplicate': text += '\n' + next(line for line in text.splitlines() if '] VERIFIED ' in line)
                             elif change == 'missing': text = '\n'.join(line for line in text.splitlines() if '] PREPARED ' not in line)
-                            else:
+                            elif change == 'server-echo':
                                 (root / 'client1-launch.log').write_text((root / 'client1-launch.log').read_text() + '\n' + text)
                                 text = ''
+                            elif change in ('source-body', 'source-different'):
+                                source = root / 'server/mods/PZSurvivorToolkit/42' / washing.REPLAY_PATH
+                                original = source.read_text()
+                                source.write_text(original.replace('local planned, transfers, incoming = {}, {}, {}', 'local planned, transfers, incoming = {}, {}, {} -- changed body')
+                                                  if change == 'source-body' else '-- unrelated offset\n' + original)
+                            else:
+                                actor = root / 'client1-launch.log'
+                                actor.write_text(actor.read_text().replace('"verified": true', '"verified": false'))
                             path.write_text(text)
                             self.assertTrue(washing.verify(root, selection, {})['issues'])
         self.assertFalse(washing.complete({}, 'server', '[WASHING_TEST] COMPLETE'))

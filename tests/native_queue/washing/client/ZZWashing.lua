@@ -4,6 +4,11 @@ require 'ISUI/WMI_WashingSubmenus'
 local F=require 'QueueWashingFixture'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
+local replayMetadata,replaySourceProof
+if config.kind=='mp'then
+ replayMetadata=require 'QueueWashingReplayProof'
+ replaySourceProof=require 'PZSurvivorToolkit/SourceProof'
+end
 local T=PZSurvivorToolkit
 local enabled=config.mode=='toolkit'
 local phase,step,since,idle='prepare',1,0,0
@@ -50,6 +55,16 @@ local function creationTrace(action)
    if frame.file:match('([^/]+)$')=='P4TidyUpMeister.lua'and frame.line==839 then restoreFile=frame.file
    elseif restoreFile and frame.file==restoreFile and frame.line==895 then r.p4RestoreSite=true;break end
   end
+  if config.kind=='mp'then
+   r.replayProof=run.replayProof;r.compatReplaySite=false
+   if r.replayProof and r.replayProof.verified then
+    for _,frame in ipairs(r.frames)do
+     if frame.file:sub(-#r.replayProof.frameSuffix)==r.replayProof.frameSuffix and frame.line==r.replayProof.replayLine then
+      r.compatReplaySite=true;break
+     end
+    end
+   end
+  end
  end
  return r
 end
@@ -65,7 +80,8 @@ ISTimedActionQueue.add=function(action,...)
  return add(action,...)
 end
 local function ownedRestore(trace)
- return trace and trace.stackAvailable and trace.p4RestoreSite and trace.p4SourceVerified and trace.actorMatches and trace.fromRoot and trace.toDeclaredBag
+ local site=trace and(trace.p4RestoreSite or config.kind=='mp'and trace.compatReplaySite and trace.replayProof and trace.replayProof.verified)
+ return trace and trace.stackAvailable and site and trace.p4SourceVerified and trace.actorMatches and trace.fromRoot and trace.toDeclaredBag
   and trace.destinationBagId==ids.bagId and trace.destinationBagType==ids.bagType and trace.rootPresent and trace.noCallbacks
 end
 local function remember(action)
@@ -207,6 +223,11 @@ local function dispatch(player)
  run={seen={},records={},allowed={},creations={},creationCount=0,creationOverflow=false,ownedCleanupActions=0,
   localDeferrals=0,lateSourceActions=0,tailProgress=false,returnsBeforeRead=false,
   originalTailStarted=false,reset=false}
+ if config.kind=='mp'then
+  run.replayProof={};for k,v in pairs(replayMetadata)do run.replayProof[k]=v end
+  run.replayProof.verified=replaySourceProof.matches(replayMetadata.path,replayMetadata.checksum,replayMetadata.mod,true)
+  assert(run.replayProof.verified,'staged washing MP replay source no longer matches selected Toolkit')
+ end
  for _,meta in ipairs(ids.garments)do run.allowed[meta.id]=true end
  local menu=ISContextMenu.get(player:getPlayerNum(),20,20)
  WS.WMI_BuildWashMenu(menu,{state.sink},player,state.sink,menu)
@@ -255,6 +276,7 @@ local function finish()
   localDeferrals=run.localDeferrals,tailProgress=run.tailProgress,returnsBeforeRead=run.returnsBeforeRead,
   originalTailStarted=run.originalTailStarted,reset=run.reset,resetProof=run.resetProof,lateSourceActions=run.lateSourceActions,
   lateObservedMs=run.resetAt and getTimestampMs()-run.resetAt or 0,waitsObserved=waits,ownedCleanupActions=run.ownedCleanupActions,creationOverflow=run.creationOverflow}
+ if config.kind=='mp'then row.replayProof=run.replayProof end
  row.actualResources=assert(F.verify({player=getPlayer(),root=state.root,sink=state.sink,case=case(),ids=ids}))
  for k,v in pairs(authority)do if k~='case'then row[k]=v end end
  emit(row)

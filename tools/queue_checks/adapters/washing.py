@@ -1,15 +1,50 @@
 """Real WashFix flat clothing menus, finite resources and native reset isolation."""
+import hashlib
 import json
 import math
 from pathlib import Path
 import re
 
 from . import craft
+from ..mod_selection import selected_mod_version
 
 CASES = ['borrowed-batch', 'borrowed-single-soap', 'cancel-after-pickup']
 MODS = craft.MODS + ['WashFix']
 GARMENTS = ['Base.Tshirt_DefaultTEXTURE_TINT', 'Base.Shirt_FormalWhite']
 BEHAVIOR = 'compat.wash-clothing'
+REPLAY_PATH = 'media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
+REPLAY_BODY_SHA256 = '23bf70f5078a5f6f9fbe0aca3a4348255caf14582a080e3a7f91fca733bba30a'
+
+
+def replay_source(cache):
+    """Derive only the reviewed final replay loop from the sealed selected Toolkit."""
+    mod = Path(cache) / 'mods/PZSurvivorToolkit'
+    source = selected_mod_version(mod) / REPLAY_PATH
+    text = source.read_text(encoding='utf-8')
+    begin = 'local function repairTidyFloor(character, callback, ...)\n'
+    end = '\nlocal function installTidyFloorValidation()'
+    loop = '    for _, action in ipairs(planned) do add(action) end'
+    if text.count(begin) != 1 or text.count(end) != 1 or text.count(loop) != 1:
+        raise ValueError('Washing MP replay source is not the unique reviewed helper')
+    start, finish = text.index(begin), text.index(end)
+    site = text.index(loop)
+    if not start < site < finish:
+        raise ValueError('Washing MP replay loop left the reviewed helper')
+    body_sha256 = hashlib.sha256(text[start:finish].encode('utf-8')).hexdigest()
+    if body_sha256 != REPLAY_BODY_SHA256:
+        raise ValueError('Washing MP replay helper differs from its reviewed body')
+    # Match SourceProof's Java readLine + UTF-16 code-unit Adler checksum.
+    lines = text.split('\n')
+    if lines[-1] == '': lines.pop()
+    data = ''.join(line + '\n' for line in lines).encode('utf-16-le')
+    value, total = 1, 0
+    for i in range(0, len(data), 2):
+        value = (value + data[i] + data[i + 1] * 256) % 65521
+        total = (total + value) % 65521
+    return dict(mod='PZSurvivorToolkit', path=REPLAY_PATH, checksum=total * 65536 + value,
+                helperSha256=body_sha256,
+                replayLine=text[:site].count('\n') + 1,
+                frameSuffix='/mods/PZSurvivorToolkit/' + source.relative_to(mod).as_posix())
 
 
 def definitions():
@@ -39,6 +74,16 @@ def sources(project, selection):
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     craft.stage_common(project, output, game, jdk, selection, locations, runtime)
+    if selection['kind'] == 'mp':
+        proofs = []
+        for role in runtime['roles'].values():
+            proof = replay_source(role['cache']);proofs.append(proof)
+            target = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua/shared/QueueWashingReplayProof.lua'
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('return {' + ','.join(k + '=' + (json.dumps(v) if isinstance(v, str) else str(v))
+                                                   for k, v in proof.items()) + '}\n', encoding='utf-8')
+        if not proofs or any(v != proofs[0] for v in proofs):
+            raise ValueError('Washing MP replay source differs across sealed roles')
 
 
 def complete(selection, role, text):
@@ -63,6 +108,12 @@ def same(a, b):
 
 def matches(value, expected):
     return isinstance(value, dict) and all(k in value and same(value[k], v) for k, v in expected.items())
+
+
+def replay_matches(value, expected):
+    # Source hashes and code lines require exact integers, never resource tolerances.
+    return (type(value) is dict and set(value) == set(expected)
+            and all(type(value[k]) is type(v) and value[k] == v for k, v in expected.items()))
 
 
 def ids(values):
@@ -110,7 +161,7 @@ def prepared(value, case):
             and set([value['bagId'], value['book'], soap['id'], *[v['id'] for v in garments]]) <= set(value['allIds']))
 
 
-def p4_restoration(record, prep, reset):
+def p4_restoration(record, prep, reset, replay_proof=None):
     """One native same-item return from the pinned P4 reequip add site, not a WMI continuation."""
     if not isinstance(reset, dict) or not isinstance(record, dict):
         return False
@@ -124,17 +175,20 @@ def p4_restoration(record, prep, reset):
             and record.get('behavior') in ('native.ISInventoryTransferAction', 'compat.tidy-transfers')
             and matches(trace, dict(itemId=original['id'], itemKind=original['kind'], actorMatches=True, fromRoot=True, toDeclaredBag=True,
                     destinationBagId=prep['bagId'], destinationBagType=prep['bagType'], rootPresent=True, noCallbacks=True,
-                    p4SourceVerified=True, p4RestoreSite=True, stackAvailable=True, onStart='nil', onComplete='nil', onCancel='nil'))
+                    p4SourceVerified=True, stackAvailable=True, onStart='nil', onComplete='nil', onCancel='nil'))
             and type(trace.get('generation')) is int and type(reset.get('beforeGeneration')) is int
             and trace['generation'] >= reset['beforeGeneration'] and number(trace.get('at')) and trace['at'] >= 0
             and type(frames) is list and 0 < len(frames) <= 32
             and all(isinstance(f, dict) and isinstance(f.get('file'), str) and type(f.get('line')) is int for f in frames)
-            and any(f['file'].replace('\\', '/').rsplit('/', 1)[-1] == 'P4TidyUpMeister.lua' and f['line'] == 839
+            and (trace.get('p4RestoreSite') is True and any(f['file'].replace('\\', '/').rsplit('/', 1)[-1] == 'P4TidyUpMeister.lua' and f['line'] == 839
                     and any(g['file'].replace('\\', '/') == f['file'].replace('\\', '/') and g['line'] == 895 for g in frames[i + 1:])
-                    for i, f in enumerate(frames)))
+                    for i, f in enumerate(frames))
+                 or replay_proof is not None and trace.get('compatReplaySite') is True
+                    and replay_matches(trace.get('replayProof'), dict(replay_proof, verified=True))
+                    and any(f['file'].replace('\\', '/').endswith(replay_proof['frameSuffix']) and f['line'] == replay_proof['replayLine'] for f in frames)))
 
 
-def check_case(selection, row, prep, receipt):
+def check_case(selection, row, prep, receipt, replay_proof=None):
     if not isinstance(prep, dict) or not prepared(prep, prep.get('case')):
         return ['Washing native preparation/identity/resource envelope differs']
     if not isinstance(row, dict) or not isinstance(receipt, dict):
@@ -148,7 +202,9 @@ def check_case(selection, row, prep, receipt):
     if type(records) is not list or not all(isinstance(v, dict) for v in records):
         return ['Native washing action observations missing']
     cleanup = [v for v in records if v.get('postReset') is True]
-    approved_cleanup = [v for v in cleanup if p4_restoration(v, prep, row.get('resetProof'))
+    live_replay = (replay_proof if selection['kind'] == 'mp'
+                   and replay_matches(row.get('replayProof'), dict(replay_proof or {}, verified=True)) else None)
+    approved_cleanup = [v for v in cleanup if p4_restoration(v, prep, row.get('resetProof'), live_replay)
                         and (enabled or v.get('behavior') == 'native.ISInventoryTransferAction')]
     if (any(v.get('revivedAfterReset') for v in records) or len(approved_cleanup) != len(cleanup)
             or not cancel and cleanup or len(approved_cleanup) > 1
@@ -282,6 +338,14 @@ def check_case(selection, row, prep, receipt):
 def verify(root, selection, catalog):
     from ..report import events
     root, issues = Path(root), []
+    replay_proof = None
+    if selection['kind'] == 'mp':
+        try:
+            replay_proof = replay_source(root / 'client1')
+            if replay_source(root / 'server') != replay_proof:
+                issues.append('Washing MP replay source differs between sealed actor/server')
+        except (OSError, ValueError) as error:
+            issues.append('Washing sealed MP replay source invalid: ' + str(error))
     text = (root / 'client1-launch.log').read_text(errors='replace')
     authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
     records, raw = events(text), []
@@ -313,14 +377,18 @@ def verify(root, selection, catalog):
         row = next((v for v in rows if v.get('id') == case), {})
         prep = next((v for k, v in raw if k == 'PREPARED' and v.get('case') == case), {})
         receipt = next((v for k, v in raw if k == 'VERIFIED' and v.get('case') == case), {})
-        failures = check_case(selection, row, prep, receipt)
+        failures = check_case(selection, row, prep, receipt, replay_proof)
+        if selection['kind'] == 'mp' and (replay_proof is None or not replay_matches(row.get('replayProof'), dict(replay_proof, verified=True))):
+            failures.append('Live MP replay source does not match independently sealed source: ' + case)
         issues.extend(failures)
         outcomes.append(dict(actor='client1', case=case, status='failed' if failures else 'passed',
                              reason='; '.join(failures), outcome=row))
     if issues:
         for row in outcomes: row.update(status='failed', reason='; '.join(issues))
-    return dict(issues=issues, outcomes=outcomes, evidence={'limits': [
+    evidence = {'limits': [
         'Ordinary non-transforming Clothing from a genuinely worn bag through the public WashFix flat menu; finite native sink, soap and same-ID endpoints.',
         'waitsObserved counts only naturally observed one-tick inventory waits; zero does not establish delayed-replication coverage.',
         'The real bag aggregate retains WashFix noSoap=true even with soap present; it cleans without consuming soap at native no-soap cost. The individual completed case independently covers actual soap consumption.',
-        'Native clear after paid pickup/current wash cancels the old tail; a fresh independent reader must survive. One exact same-ID native P4 restoration is allowed only with its pinned creation site, original bag, no callbacks and unchanged resources; late WashFix continuations fail. No expanded edit permissions, body, aggregate-All or bandage transformations.']})
+        'Native clear after paid pickup/current wash cancels the old tail; a fresh independent reader must survive. One exact same-ID native P4 restoration is allowed only with its pinned creation site or source-verified MP final replay loop, original bag, no callbacks and unchanged resources; late WashFix continuations fail. No expanded edit permissions, body, aggregate-All or bandage transformations.']}
+    if selection['kind'] == 'mp': evidence['replaySource'] = replay_proof
+    return dict(issues=issues, outcomes=outcomes, evidence=evidence)
