@@ -6,6 +6,21 @@ anything, fetch dependencies, rewrite the profile, or redistribute runtime class
 Its temporary classpath is deleted after completion. JVM logs and measurements go
 only to the requested output directory.
 
+Use `--correctness-only` for a short qualification without CPU or allocation
+benchmarks. It runs the false and true branches once each, compares the native
+baseline, and returns before allocation-counter setup, warmup or measurement loops:
+
+```sh
+python3 tests/chunk_integration/run_surface_candidate.py \
+  --game "$PZ_GAME" --jdk "$JAVA_HOME" \
+  --release "$PZOPT_RELEASE" --manifest "$PZOPT_MANIFEST" \
+  --output "$PZ_SURFACE_CORRECTNESS_RESULTS" --correctness-only
+```
+
+The result records the exact snapshotted Java source digest and input digests;
+`rows` and `summary` are empty in this mode. `--forks` does not multiply correctness
+runs, and `--batch-compilation` is a separate workflow.
+
 `PZOPT_MANIFEST` must point to the sealed `tests/optimizer_trial/candidate-manifest.json`
 supplied by the parent optimizer integration track. This check does not generate
 that manifest. Its full canonical digest is pinned in `run_surface_candidate.py`.

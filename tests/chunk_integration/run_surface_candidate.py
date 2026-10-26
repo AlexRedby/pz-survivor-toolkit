@@ -29,7 +29,10 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--forks", type=int, default=3)
     parser.add_argument("--batch-compilation", action="store_true", help="Synchronize compilation to check warmed tiered behavior")
+    parser.add_argument("--correctness-only", action="store_true", help="Run false/true/native vectors once, without warmup or measurements")
     args = parser.parse_args()
+    if args.correctness_only and args.batch_compilation:
+        parser.error("--correctness-only and --batch-compilation are separate workflows")
     for name in ("game", "jdk", "release", "manifest", "output"):
         setattr(args, name, getattr(args, name).resolve())
     manifest = json.loads(args.manifest.read_text())
@@ -85,8 +88,9 @@ def main():
         subprocess.run([str(javac), "-cp", native_cp, "-d", str(compiled), str(snapshot)], check=True)
         common_vectors = None
         official_vectors = None
-        for mode, flags in (("tiered", []), ("c1", ["-XX:TieredStopAtLevel=1"])):
-            for fork in range(args.forks):
+        modes = (("correctness", []),) if args.correctness_only else (("tiered", []), ("c1", ["-XX:TieredStopAtLevel=1"]))
+        for mode, flags in modes:
+            for fork in range(1 if args.correctness_only else args.forks):
                 for candidate in ((False, True) if fork % 2 == 0 else (True, False)):
                     tag = f"{mode}-{fork}-{str(candidate).lower()}"
                     cp = os.pathsep.join((str(compiled), str(overlay), native_cp))
@@ -95,6 +99,8 @@ def main():
                                "-Xlog:jit+compilation=debug:file=" + str(args.output / (tag + "-jit.log")),
                                f"-Dpzopt.propertySurfaceNoAlloc={str(candidate).lower()}",
                                "-Duser.home=" + str(root / "home"), "-cp", cp, "SurfaceCandidateCheck", "false"]
+                    if args.correctness_only:
+                        command.append("--correctness-only")
                     result = subprocess.run(command, cwd=root, text=True, capture_output=True)
                     (args.output / (tag + ".log")).write_text(result.stdout + result.stderr)
                     if result.returncode:
@@ -110,6 +116,8 @@ def main():
                             _, kind, access, round_, ns, allocated = line.split()
                             rows.append(dict(mode=mode, fork=fork, candidate=candidate, kind=kind, access=access,
                                              round=int(round_), ns=float(ns), allocated=float(allocated)))
+                    if args.correctness_only and rows:
+                        raise SystemExit("Correctness-only run unexpectedly produced measurements")
         # Native baseline validates normal values and public mutation/cache outcomes independently.
         cp = os.pathsep.join((str(compiled), native_cp))
         result = subprocess.run([str(java), "-Duser.home=" + str(root / "home"), "-cp", cp,
@@ -119,7 +127,7 @@ def main():
         if result.returncode or native_vectors != common_vectors:
             raise SystemExit("Native correctness baseline mismatch; see native.log")
     summary = []
-    for mode in ("tiered", "c1"):
+    for mode in (() if args.correctness_only else ("tiered", "c1")):
         for kind in ("empty", "surface", "mixed", "irrelevant64"):
             for access in ("cold", "set", "cached"):
                 entry = dict(mode=mode, kind=kind, access=access)
@@ -135,6 +143,7 @@ def main():
                   baseline_properties_sha256=digest(manifest["profile"]["properties"]),
                   profile_id=manifest["profile"]["id"], property_delta={"propertySurfaceNoAlloc": ["false", "true"]},
                   batch_compilation=args.batch_compilation,
+                  correctness_only=args.correctness_only,
                   correctness_vectors=len(official_vectors), native_vectors=len(common_vectors),
                   java_version=subprocess.run([str(java), "-version"], text=True, capture_output=True).stderr,
                   platform=__import__("platform").platform(), rows=rows, summary=summary)
