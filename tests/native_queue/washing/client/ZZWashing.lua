@@ -2,10 +2,13 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'TimedActions/ISReadABook'
 require 'ISUI/WMI_WashingSubmenus'
 local F=require 'QueueWashingFixture'
+local function bodyCase(name)return name=='body-full'or name=='body-water-limited'or name=='body-cancel'end
+local Body
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local replayMetadata,replaySourceProof
-if config.kind=='mp'then
+local needsReplay=false;for _,name in ipairs(config.cases)do if not bodyCase(name)then needsReplay=true end end
+if config.kind=='mp'and needsReplay then
  replayMetadata=require 'QueueWashingReplayProof'
  replaySourceProof=require 'PZSurvivorToolkit/SourceProof'
 end
@@ -70,7 +73,7 @@ local function creationTrace(action)
 end
 local add=ISTimedActionQueue.add
 ISTimedActionQueue.add=function(action,...)
- if run and(run.reset or run.resetting)and action.Type=='ISInventoryTransferAction'and action.item and run.allowed[action.item:getID()]then
+ if run and not run.body and(run.reset or run.resetting)and action.Type=='ISInventoryTransferAction'and action.item and run.allowed[action.item:getID()]then
   if run.creationCount<16 then
    run.creationCount=run.creationCount+1
    local ok,value=pcall(creationTrace,action)
@@ -85,7 +88,7 @@ local function ownedRestore(trace)
   and trace.destinationBagId==ids.bagId and trace.destinationBagType==ids.bagType and trace.rootPresent and trace.noCallbacks
 end
 local function remember(action)
- if not run or run.seen[action]then return end
+ if not run or run.body or run.seen[action]then return end
  local item=action.item or action.Type=='WMI_WaitForInvUpdate'and action.wmiTransferAction and action.wmiTransferAction.item
  if not item or not run.allowed[item:getID()]then return end
  if action.Type~='ISWashClothing'and action.Type~='ISInventoryTransferAction'and action.Type~='WMI_WaitForInvUpdate'then return end
@@ -264,7 +267,18 @@ local function cancelAfterPickup(player)
  local freshToken=run.freshTail.toolkitQueueOperation
  run.resetProof.freshIndependent=not enabled or type(freshToken)=='table'and freshToken~=oldToken and freshToken~=oldTailToken
 end
+local function advance()
+ if step==#config.cases then
+  emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=0,skipped=0})
+  print('[WASHING_TEST] COMPLETE');done=true;return
+ end
+ previousAuthority=authorityState;previousBag=state.bag
+ if previousBag then ISInventoryPaneContextMenu.onUnEquip({previousBag},getPlayer():getPlayerNum())end
+ step=step+1;phase=previousBag and 'unequip'or 'prepare';since=getTimestampMs();idle=0
+ ids,state,authorityState,authority,run=nil,nil,nil,nil,nil
+end
 local function finish()
+ if run.body then emit(Body.finish(run,authority,F));advance();return end
  observe();local unchanged=true;local waits=0
  for action,entry in pairs(run.seen)do
   if entry.row.kind=='WMI_WaitForInvUpdate'then waits=waits+1 end
@@ -280,13 +294,7 @@ local function finish()
  row.actualResources=assert(F.verify({player=getPlayer(),root=state.root,sink=state.sink,case=case(),ids=ids}))
  for k,v in pairs(authority)do if k~='case'then row[k]=v end end
  emit(row)
- if step==#config.cases then
-  emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=0,skipped=0})
-  print('[WASHING_TEST] COMPLETE');done=true;return
- end
- previousAuthority=authorityState;previousBag=state.bag;ISInventoryPaneContextMenu.onUnEquip({previousBag},getPlayer():getPlayerNum())
- step=step+1;phase='unequip';since=getTimestampMs();idle=0
- ids,state,authorityState,authority,run=nil,nil,nil,nil,nil
+ advance()
 end
 Events.OnGameStart.Add(function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
@@ -309,14 +317,16 @@ Events.OnTick.Add(function()
    request('Prepare');phase='ready';return
   elseif phase=='ready'then
    if not ids then return end;state=state or F.resolve(player,ids);if not state then return end
-   ISInventoryPaneContextMenu.onWearItems({state.bag},player:getPlayerNum());phase='equip';return
+   if not bodyCase(case())then ISInventoryPaneContextMenu.onWearItems({state.bag},player:getPlayerNum())end
+   phase='equip';return
   elseif phase=='equip'then
    if idle<10 or #queue().queue>0 or player:hasTimedActions()then return end
-   dispatch(player);phase='running';since=getTimestampMs();idle=0;return
+   if bodyCase(case())then Body=Body or require 'QueueWashingBody';run=Body.start(player,state,ids,enabled)else dispatch(player)end
+   phase='running';since=getTimestampMs();idle=0;return
   elseif phase=='running'then
-   observe();cancelAfterPickup(player)
+   if run.body then Body.tick(run)else observe();cancelAfterPickup(player)end
    if idle>=10 and #queue().queue==0 and not player:hasTimedActions()then
-    assert(not F.isCancel(case())or run.reset,'washing reset was never exercised')
+    assert(not(F.isCancel(case())or case()=='body-cancel')or run.reset,'washing reset was never exercised')
     if run.resetAt and getTimestampMs()-run.resetAt<3000 then return end
     request('Verify');phase='receipt';return
    end

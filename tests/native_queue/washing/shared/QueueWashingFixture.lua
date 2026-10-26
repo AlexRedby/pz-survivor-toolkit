@@ -1,5 +1,7 @@
 require 'TimedActions/ISWashClothing'
 local JSON=require 'QueueHealthEvents'
+local function bodyCase(case)return case=='body-full'or case=='body-water-limited'or case=='body-cancel'end
+local function bodyFixture()return require 'QueueWashingBodyFixture'end
 local F={bagType='Base.Bag_ALICEpack_Army',sinkSprite='location_business_office_generic_01_49',sinkEntity='Base.WaterDispenser'}
 local function array(a)local r={};for i=0,a:size()-1 do r[#r+1]=a:get(i)end;return r end
 local function all(c,r)r=r or {};for _,v in ipairs(array(c:getItems()))do r[#r+1]=v;if instanceof(v,'InventoryContainer')then all(v:getItemContainer(),r)end end;return r end
@@ -93,17 +95,30 @@ local function sink(player,case)
  assert(sq:getBuilding()==player:getBuilding(),'washing source public washing menu building identity differs')
  return obj,spec
 end
+F.createSource=sink
 local function cleanup(s)
+ if bodyCase(s.case)then return bodyFixture().cleanup(s,F)end
  assert(s.verified and s.player:getInventory()==s.root,'previous washing fixture was not verified')
  local bag=assert(s.root:getItemById(s.ids.bagId));assert(bag:getContainer()==s.root and bag:getFullType()==s.ids.bagType
   and count(s.root,bag:getID())==1 and not s.player:isEquipped(bag),'previous washing bag changed or remains equipped')
+ local receipt=assert(s.verifiedReceipt,'previous washing receipt missing')
+ assert(receipt.case==s.case and receipt.actorId==s.player:getOnlineID()and receipt.bagId==s.ids.bagId
+  and receipt.bagType==s.ids.bagType and receipt.bagRootCount==1 and #receipt.garments==#s.ids.garments,'previous washing receipt identity changed')
+ local verified={};for _,value in ipairs(receipt.garments)do
+  assert(not verified[value.id]and value.totalCount==1 and(value.rootCount==1 and value.sourceCount==0 or value.rootCount==0 and value.sourceCount==1),'previous garment receipt endpoint invalid')
+  verified[value.id]=value
+ end
  local allowed={};for _,meta in ipairs(s.ids.garments)do allowed[meta.id]=meta.kind end
  for _,item in ipairs(all(bag:getItemContainer()))do
   assert(allowed[item:getID()]==item:getFullType(),'foreign contents in previous washing bag')
  end
  for _,meta in ipairs(s.ids.garments)do
   local item=assert(s.root:getItemById(meta.id));assert(count(s.root,meta.id)==1 and item:getFullType()==meta.kind,'previous garment identity changed')
-  assert(item:getContainer()==(F.isCancel(s.case)and s.root or bag:getItemContainer()),'previous garment left verified endpoint')
+  local value=assert(verified[meta.id],'previous garment absent from receipt')
+  assert(value.kind==meta.kind and item:getContainer()==(value.rootCount==1 and s.root or bag:getItemContainer()),'previous garment left verified endpoint')
+ end
+ for _,meta in ipairs(s.ids.garments)do
+  local item=assert(s.root:getItemById(meta.id))
   if item:getContainer()==s.root then s.root:Remove(item);if isServer()then sendRemoveItemFromContainer(s.root,item)end end
  end
  for _,id in ipairs({s.ids.bagId,s.ids.soap.id,s.ids.book})do
@@ -115,6 +130,7 @@ local function cleanup(s)
  if obj:getObjectIndex()>=0 then obj:removeFromWorld();obj:removeFromSquare()end
 end
 function F.prepare(player,case,previous)
+ if bodyCase(case)then if previous then cleanup(previous)end;return bodyFixture().prepare(player,case,F)end
  assert(case=='borrowed-batch'or case=='borrowed-single-soap'or F.isCancel(case),'unknown washing case')
  if previous then cleanup(previous)end
  local root=player:getInventory();local s={player=player,root=root,case=case}
@@ -143,6 +159,7 @@ function F.prepare(player,case,previous)
  return s
 end
 function F.resolve(player,ids)
+ if bodyCase(ids.case)then return bodyFixture().resolve(player,ids,F)end
  local root=player:getInventory();local bag=root:getItemById(ids.bagId);local soap=root:getItemById(ids.soap.id);local book=root:getItemById(ids.book);local obj=F.resolveSink(ids.sink)
  if not obj or not bag or bag:getFullType()~=ids.bagType or bag:getContainer()~=root or not soap or not book
   or soap:getContainer()~=root or soap:getCurrentUses()~=ids.soap.uses or math.abs(obj:getFluidAmount()-ids.sink.amount)>.00001
@@ -156,6 +173,7 @@ function F.resolve(player,ids)
  return {root=root,bag=bag,source=source,soap=soap,book=book,sink=obj}
 end
 function F.verify(s)
+ if bodyCase(s.case)then return bodyFixture().verify(s,F)end
  local ids,root=s.ids,s.root;local bag=root:getItemById(ids.bagId);local soap=root:getItemById(ids.soap.id);local book=root:getItemById(ids.book)
  if not bag or bag:getContainer()~=root or not soap or soap:getContainer()~=root or not book or book:getContainer()~=root
   or F.resolveSink(ids.sink)~=s.sink then return nil,'washing owned root resources absent'end
@@ -170,6 +188,6 @@ function F.verify(s)
   r.garments[#r.garments+1]=v
  end
  if not r.tailRead then return nil,'independent washing reader incomplete'end
- s.verified=true;return r
+ s.verified=true;s.verifiedReceipt=r;return r
 end
 return F

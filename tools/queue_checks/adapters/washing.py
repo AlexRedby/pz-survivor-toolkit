@@ -8,7 +8,9 @@ import re
 from . import craft
 from ..mod_selection import selected_mod_version
 
-CASES = ['borrowed-batch', 'borrowed-single-soap', 'cancel-after-pickup']
+CLOTHING_CASES = ['borrowed-batch', 'borrowed-single-soap', 'cancel-after-pickup']
+BODY_CASES = ['body-full', 'body-water-limited', 'body-cancel']
+CASES = CLOTHING_CASES + BODY_CASES
 MODS = craft.MODS + ['WashFix']
 GARMENTS = ['Base.Tshirt_DefaultTEXTURE_TINT', 'Base.Shirt_FormalWhite']
 BEHAVIOR = 'compat.wash-clothing'
@@ -66,7 +68,7 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [Path(craft.__file__), *sorted((root / 'washing').rglob('*.lua')),
+    return [Path(__file__), Path(craft.__file__), *sorted((root / 'washing').rglob('*.lua')),
             *sorted((root / 'craft/scripts').rglob('*.txt')), root / 'health/shared/QueueHealthEvents.lua',
             *sorted((root / 'startup').rglob('*.lua'))]
 
@@ -74,7 +76,7 @@ def sources(project, selection):
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     craft.stage_common(project, output, game, jdk, selection, locations, runtime)
-    if selection['kind'] == 'mp':
+    if selection['kind'] == 'mp' and any(case in CLOTHING_CASES for case in selection['cases']):
         proofs = []
         for role in runtime['roles'].values():
             proof = replay_source(role['cache']);proofs.append(proof)
@@ -188,7 +190,97 @@ def p4_restoration(record, prep, reset, replay_proof=None):
                     and any(f['file'].replace('\\', '/').endswith(replay_proof['frameSuffix']) and f['line'] == replay_proof['replayLine'] for f in frames)))
 
 
+def body_snapshot(value):
+    if not isinstance(value, dict) or not ids(value.get('makeupIds')):
+        return False
+    parts = value.get('parts')
+    return (type(parts) is list and len(parts) == 18 and all(isinstance(p, dict) and type(p.get('index')) is int
+            and p['index'] == i and all(number(p.get(k)) and 0 <= p[k] <= 1 for k in ('blood', 'dirt'))
+            for i, p in enumerate(parts)))
+
+
+def body_prepared(p, case):
+    if not isinstance(p, dict) or case not in BODY_CASES or p.get('case') != case:
+        return False
+    sink, soap, makeup, body = (p.get(k) for k in ('sink', 'soap', 'makeup', 'body'))
+    if not body_snapshot(body): return False
+    return (type(p.get('actorId')) is int and type(p.get('book')) is int
+            and isinstance(sink, dict) and all(type(sink.get(k)) is int for k in ('x', 'y', 'z', 'objectIndex'))
+            and sink['objectIndex'] >= 0 and matches(sink, dict(sprite='location_business_office_generic_01_49', entity='Base.WaterDispenser',
+                capacity=15, amount=1 if case == 'body-water-limited' else 15, moved=True, usesExternalWaterSource=False, canBeWaterPiped=True, inputLocked=True))
+            and isinstance(sink.get('ownerToken'), str) and sink['ownerToken'].startswith(case + ':')
+            and isinstance(soap, dict) and type(soap.get('id')) is int and soap.get('kind') == 'Base.Soap2'
+            and type(soap.get('uses')) is int and soap['uses'] > 1
+            and isinstance(makeup, dict) and type(makeup.get('id')) is int and makeup.get('kind') == 'Base.MakeUp_Crow'
+            and isinstance(makeup.get('slot'), str) and makeup['slot'] == 'base:makeup_eyes'
+            and matches(p.get('weather'), dict(precipitation=0, rain=0, snow=0, rainAlwaysClean=False))
+            and body['makeupIds'] == [makeup['id']]
+            and body['parts'][0]['blood'] > 0 and body['parts'][0]['dirt'] > 0
+            and body['parts'][1]['blood'] == 0 and body['parts'][1]['dirt'] > 0
+            and all(v['blood'] == v['dirt'] == 0 for v in body['parts'][2:])
+            and matches(p, dict(requiredWater=2, requiredSoap=1, expectedDuration=70 if case == 'body-water-limited' else 140))
+            and ids(p.get('allIds')) and p['allIds'] == sorted(p['allIds'])
+            and ids([p['book'], soap['id'], makeup['id']]) and set([p['book'], soap['id'], makeup['id']]) <= set(p['allIds']))
+
+
+def check_body_case(selection, row, p, receipt):
+    if not isinstance(p, dict) or not body_prepared(p, p.get('case')):
+        return ['Body native preparation/identity/seed differs']
+    if not isinstance(row, dict) or not isinstance(receipt, dict): return ['Body actor/server evidence is not an object']
+    cancel, enabled = p['case'] == 'body-cancel', selection['mode'] == 'toolkit'
+    charged = 0 if cancel else 1 if p['case'] == 'body-water-limited' else 2
+    issues = []
+    def fail(reason): issues.append(reason + ': ' + p['case'])
+    soap_list = dict(shape='java-list', count=1, ownOnly=True, items=[p['soap']])
+    if (not matches(row, dict(status='passed', sourceMethodsUnchanged=True, nativeSourceVerified=True, localDeferrals=0,
+            tailProgress=True, tailIndependent=True, originalTailStarted=not cancel, reset=cancel, lateSourceActions=0))
+            or not matches(row.get('menu'), dict(method='WS.WMI_BuildWashMenu+ISContextMenu.onMouseUp', choice='yourself', exactArguments=True,
+                actorMatches=True, sinkMatches=True, closeContextMatches=True, soapList=soap_list))
+            or not isinstance(row.get('menu', {}).get('callback'), str)):
+        fail('Real native Yourself menu/progress/reset evidence differs')
+    expected_parts = [dict(v, blood=0, dirt=0) if i < charged else dict(v) for i, v in enumerate(p['body']['parts'])]
+    remaining_ids = p['allIds'] if cancel else [v for v in p['allIds'] if v != p['makeup']['id']]
+    water = p['sink']['amount'] - charged
+    if (not matches(receipt, dict(case=p['case'], actorId=p['actorId'], bookId=p['book'], tailRead=True, allIds=remaining_ids,
+            weather=p['weather'], body=dict(parts=expected_parts, makeupIds=[p['makeup']['id']] if cancel else []),
+            soap=dict(p['soap'], uses=p['soap']['uses'] - int(not cancel), rootCount=1, totalCount=1),
+            makeup=dict(p['makeup'], rootCount=int(cancel), totalCount=int(cancel), worn=cancel),
+            sink=dict(source=p['sink'], amount=water, fluidAmount=water, pureWater=water > 0,
+                moved=True, usesExternalWaterSource=False, canBeWaterPiped=True, inputLocked=True)))
+            or not matches(row, {k: v for k, v in receipt.items() if k != 'case'}) or not same(row.get('actualResources'), receipt)):
+        fail('Authoritative body/soap/water/makeup/identity cost or client view differs')
+    records = row.get('records')
+    if type(records) is not list or len(records) != 1 or not isinstance(records[0], dict):
+        return issues + ['Exactly one original native body action required']
+    record = records[0]
+    if (not matches(record, dict(kind='ISWashYourself', actorId=p['actorId'], duration=p['expectedDuration'], progress=True,
+            behavior='native.ISWashYourself', sourceProof=True, methodsUnchanged=True, sinkMatches=True,
+            soaps=soap_list, requiredWater=2, requiredSoap=1)) or record.get('failedBoundary')):
+        fail('Original native body class, actor, soap selection, duration or progress differs')
+    begin, finish, shared = record.get('begin'), record.get('finish'), record.get('sharedFinish')
+    for values in (begin, finish, shared):
+        if not isinstance(values, dict) or set(values) != {'perform', 'complete', 'stop'} or not all(type(v) is int and 0 <= v <= 1 for v in values.values()):
+            return issues + ['Body native boundary envelope missing or repeated']
+    if not same(begin, finish): fail('Body native boundary did not finish once')
+    if cancel:
+        if begin['perform'] or begin['complete'] or any(shared.values()): fail('Canceled body action completed or claimed a shared effect')
+        reset = row.get('resetProof')
+        if (not matches(reset, dict(method='ISTimedActionQueue.clear', oldTailRemoved=True, freshIndependent=True))
+                or not number(reset.get('progress')) or not 0 < reset['progress'] < .25
+                or not all(type(reset.get(k)) is int for k in ('beforeGeneration', 'afterGeneration', 'freshGeneration'))
+                or reset['afterGeneration'] <= reset['beforeGeneration'] or reset['freshGeneration'] != reset['afterGeneration']
+                or not number(row.get('lateObservedMs')) or row['lateObservedMs'] < 3000):
+            fail('Body reset/fresh reader/late-callback observation differs')
+    else:
+        phases = dict(perform=1, complete=int(selection['kind'] == 'sp'), stop=0)
+        if not same(begin, phases) or not same(shared, {k: int(enabled) * v for k, v in phases.items()}):
+            fail('Body bypassed common native lifecycle or entered legacy completion scope')
+    return issues
+
+
 def check_case(selection, row, prep, receipt, replay_proof=None):
+    if isinstance(prep, dict) and prep.get("case") in BODY_CASES:
+        return check_body_case(selection, row, prep, receipt)
     if not isinstance(prep, dict) or not prepared(prep, prep.get('case')):
         return ['Washing native preparation/identity/resource envelope differs']
     if not isinstance(row, dict) or not isinstance(receipt, dict):
@@ -339,7 +431,7 @@ def verify(root, selection, catalog):
     from ..report import events
     root, issues = Path(root), []
     replay_proof = None
-    if selection['kind'] == 'mp':
+    if selection['kind'] == 'mp' and any(case in CLOTHING_CASES for case in selection['cases']):
         try:
             replay_proof = replay_source(root / 'client1')
             if replay_source(root / 'server') != replay_proof:
@@ -378,7 +470,7 @@ def verify(root, selection, catalog):
         prep = next((v for k, v in raw if k == 'PREPARED' and v.get('case') == case), {})
         receipt = next((v for k, v in raw if k == 'VERIFIED' and v.get('case') == case), {})
         failures = check_case(selection, row, prep, receipt, replay_proof)
-        if selection['kind'] == 'mp' and (replay_proof is None or not replay_matches(row.get('replayProof'), dict(replay_proof, verified=True))):
+        if case in CLOTHING_CASES and selection['kind'] == 'mp' and (replay_proof is None or not replay_matches(row.get('replayProof'), dict(replay_proof, verified=True))):
             failures.append('Live MP replay source does not match independently sealed source: ' + case)
         issues.extend(failures)
         outcomes.append(dict(actor='client1', case=case, status='failed' if failures else 'passed',
@@ -389,6 +481,6 @@ def verify(root, selection, catalog):
         'Ordinary non-transforming Clothing from a genuinely worn bag through the public WashFix flat menu; finite native sink, soap and same-ID endpoints.',
         'waitsObserved counts only naturally observed one-tick inventory waits; zero does not establish delayed-replication coverage.',
         'The real bag aggregate retains WashFix noSoap=true even with soap present; it cleans without consuming soap at native no-soap cost. The individual completed case independently covers actual soap consumption.',
-        'Native clear after paid pickup/current wash cancels the old tail; a fresh independent reader must survive. One exact same-ID native P4 restoration is allowed only with its pinned creation site or source-verified MP final replay loop, original bag, no callbacks and unchanged resources; late WashFix continuations fail. No expanded edit permissions, body, aggregate-All or bandage transformations.']}
+        'Native clear after paid pickup/current wash cancels the old tail; a fresh independent reader must survive. One exact same-ID native P4 restoration is allowed only with its pinned creation site or source-verified MP final replay loop, original bag, no callbacks and unchanged resources; late WashFix continuations fail. No expanded edit permissions, aggregate-All or bandage transformations. Separate body cases use existing native.ISWashYourself through the real Yourself menu with enum-ordered dirty parts, one worn Crow makeup item and partial-water/native-reset controls.']}
     if selection['kind'] == 'mp': evidence['replaySource'] = replay_proof
     return dict(issues=issues, outcomes=outcomes, evidence=evidence)

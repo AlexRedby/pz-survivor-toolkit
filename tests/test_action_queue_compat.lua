@@ -774,7 +774,7 @@ do
  assert(loadstring(assert(worldSource:match('(ISWorldObjectContextMenu.onWashYourself = function.-\nend)')),'@ISWorldObjectContextMenu.lua'))()
  assert(loadstring(assert(walkSource:match('(function luautils.walkAdjObject.-\nend)')),'@luautils.lua'))()
  local body=choose(WS.WMI_TestBodyWashCallback,{n=3,sink,{},nil})
- assert(body.Type=='ISWashYourself'and producer(body)~='compat.wash-clothing','body washing borrowed clothing provenance')
+ assert(body.Type=='ISWashYourself'and producer(body)==nil,'body washing must retain the default native lifecycle, without any legacy or clothing producer')
  ISWashYourself,ISWorldObjectContextMenu.onWashYourself,luautils.walkAdjObject=bodyClass,bodyCallback,walkObject
  reset();value=garment(28007)
  WS.WMI_TestOriginalWashCallback(player,sink,{}, {value},nil,true,nil)

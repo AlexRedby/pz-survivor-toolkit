@@ -67,7 +67,323 @@ def evidence(cancel=False, kind='sp', mode='toolkit', single=False):
     return selection, row, prep, receipt
 
 
+def body_evidence(case='body-full', kind='sp', mode='toolkit'):
+    cancel = case == 'body-cancel'
+    selection = dict(suite='washing', cases=[case], kind=kind, mode=mode, clients=1, languages=['EN'],
+                     mods=list(washing.MODS), options={'mp_host': True} if kind == 'mp' else {})
+    sink = dict(x=1, y=2, z=0, objectIndex=1, sprite='location_business_office_generic_01_49', entity='Base.WaterDispenser',
+                ownerToken=case + ':client1:1', amount=1 if case == 'body-water-limited' else 15, capacity=15,
+                moved=True, usesExternalWaterSource=False, canBeWaterPiped=True, inputLocked=True)
+    parts = [dict(index=i, blood=.1490196 if i == 0 else 0, dirt=.0980392 if i < 2 else 0) for i in range(18)]
+    prep = dict(case=case, actorId=0, sink=sink, soap=dict(id=30, kind='Base.Soap2', uses=20),
+                weather=dict(precipitation=0,rain=0,snow=0,rainAlwaysClean=False),
+                makeup=dict(id=40, kind='Base.MakeUp_Crow', slot='base:makeup_eyes'), body=dict(parts=parts, makeupIds=[40]),
+                book=20, requiredWater=2, requiredSoap=1, expectedDuration=70 if case == 'body-water-limited' else 140, allIds=[20, 30, 40, 999])
+    washed = 0 if cancel else 1 if case == 'body-water-limited' else 2
+    water = sink['amount'] - washed
+    receipt = dict(weather=copy.deepcopy(prep['weather']),case=case, actorId=0, bookId=20, tailRead=True, allIds=copy.deepcopy(prep['allIds']) if cancel else [20, 30, 999],
+                   body=dict(parts=[dict(p, blood=0, dirt=0) if p['index'] < washed else copy.deepcopy(p) for p in parts], makeupIds=[40] if cancel else []),
+                   soap=dict(prep['soap'], uses=20 - int(not cancel), rootCount=1, totalCount=1),
+                   makeup=dict(prep['makeup'], rootCount=int(cancel), totalCount=int(cancel), worn=cancel),
+                   sink=dict(source=sink, amount=water, fluidAmount=water, pureWater=water > 0, moved=True,
+                             usesExternalWaterSource=False, canBeWaterPiped=True, inputLocked=True))
+    phases = dict(perform=int(not cancel), complete=int(not cancel and kind == 'sp'), stop=0)
+    soap_list = dict(shape='java-list', count=1, ownOnly=True, items=[prep['soap']])
+    row = dict(status='passed', sourceMethodsUnchanged=True, nativeSourceVerified=True, localDeferrals=0, tailProgress=True,
+               tailIndependent=True, originalTailStarted=not cancel, reset=cancel, lateSourceActions=0, lateObservedMs=3500 if cancel else 0,
+               menu=dict(method='WS.WMI_BuildWashMenu+ISContextMenu.onMouseUp', choice='yourself', exactArguments=True,
+                         actorMatches=True, sinkMatches=True, closeContextMatches=True, soapList=soap_list, callback='closure native'),
+               records=[dict(kind='ISWashYourself', actorId=0, duration=prep['expectedDuration'], progress=True,
+                             behavior='native.ISWashYourself', sourceProof=True, methodsUnchanged=True, sinkMatches=True,
+                             soaps=soap_list, requiredWater=2, requiredSoap=1, begin=phases, finish=copy.deepcopy(phases),
+                             sharedFinish={k: v * int(mode == 'toolkit') for k, v in phases.items()})], actualResources=copy.deepcopy(receipt))
+    if cancel: row['resetProof'] = dict(method='ISTimedActionQueue.clear', progress=.1, beforeGeneration=0, afterGeneration=2,
+                                      freshGeneration=2, oldTailRemoved=True, freshIndependent=True)
+    row.update({k: copy.deepcopy(v) for k, v in receipt.items() if k != 'case'})
+    return selection, row, prep, receipt
+
+
 class WashingTests(unittest.TestCase):
+    def test_body_native_full_partial_and_reset_in_sp_host_both_modes(self):
+        for case in washing.BODY_CASES:
+            for kind in ('sp', 'mp'):
+                for mode in ('native', 'toolkit'):
+                    with self.subTest(case=case, kind=kind, mode=mode):
+                        d = body_evidence(case, kind, mode)
+                        washing.validate(d[0])
+                        self.assertEqual([], washing.check_case(*d))
+
+    def test_body_cost_makeup_partial_and_authority_falsifications_fail(self):
+        for case in washing.BODY_CASES:
+            for change in ('water', 'soap', 'makeup-root', 'makeup-slot', 'body', 'ids', 'client', 'duration', 'progress',
+                           'legacy', 'behavior', 'proof', 'repeated', 'shared', 'all-menu', 'other-context', 'weather', 'late-body'):
+                with self.subTest(case=case, change=change):
+                    d = body_evidence(case);row, prep, receipt = d[1:]
+                    if change == 'water': receipt['sink']['amount'] += 1
+                    elif change == 'soap': receipt['soap']['uses'] += 1
+                    elif change == 'makeup-root': receipt['makeup']['totalCount'] = 1 - receipt['makeup']['totalCount']
+                    elif change == 'makeup-slot': receipt['body']['makeupIds'] = [] if case == 'body-cancel' else [40]
+                    elif change == 'body': receipt['body']['parts'][1]['dirt'] = 0 if case != 'body-full' else .0980392
+                    elif change == 'ids': receipt['allIds'].append(12345)
+                    elif change == 'client': row['actualResources']['soap']['uses'] += 1
+                    elif change == 'duration': row['records'][0]['duration'] = 1
+                    elif change == 'progress': row['records'][0]['progress'] = False
+                    elif change == 'legacy': row['localDeferrals'] = 1
+                    elif change == 'behavior': row['records'][0]['behavior'] = 'compat.selected-chains'
+                    elif change == 'proof': row['records'][0]['sourceProof'] = False
+                    elif change == 'repeated': row['records'][0]['begin']['perform'] = 2
+                    elif change == 'shared': row['records'][0]['sharedFinish']['perform'] = int(case == 'body-cancel')
+                    elif change == 'all-menu': row['menu']['choice'] = 'all'
+                    elif change == 'other-context': row['menu']['closeContextMatches'] = False
+                    elif change == 'weather': receipt['weather']['rain'] = .3;self.sync(d)
+                    else: row['lateSourceActions'] = 1
+                    if change in ('water', 'soap', 'makeup-root', 'makeup-slot', 'body', 'ids'):
+                        self.sync(d)
+                    self.assertTrue(washing.check_case(*d))
+        for change in ('no-reset', 'old-tail', 'late-progress', 'same-generation', 'short-watch'):
+            d = body_evidence('body-cancel');r=d[1]
+            if change == 'no-reset': r['reset'] = False
+            elif change == 'old-tail': r['originalTailStarted'] = True
+            elif change == 'late-progress': r['resetProof']['progress'] = .5
+            elif change == 'same-generation': r['resetProof']['afterGeneration'] = 0
+            else: r['lateObservedMs'] = 0
+            with self.subTest(change=change): self.assertTrue(washing.check_case(*d))
+
+    def test_body_logs_require_own_server_authority_without_clothing_replay(self):
+        for kind in ('sp', 'mp'):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp);cases = list(washing.BODY_CASES)
+                context=dict(suite='washing',kind=kind,mode='toolkit',actor='client1')
+                rows=[dict(event='setup',cases=cases,expected=3,queueEnabled=True,nativeDurations=True)];raw=[]
+                for case in cases:
+                    _,row,prep,receipt=body_evidence(case,kind)
+                    rows.append(dict(row,event='case',id=case));raw += [('PREPARED',prep),('VERIFIED',receipt)]
+                rows.append(dict(event='complete',cases=cases,expected=3,performed=3,failed=0,skipped=0))
+                text='\n'.join('[QUEUE_CHECK] '+json.dumps(dict(v,**context))for v in rows)+'\n[WASHING_TEST] COMPLETE\n'
+                authority='\n'.join('[WASHING_TEST] '+k+' '+json.dumps(v)for k,v in raw)
+                actor=root/'client1-launch.log';actor.write_text(text+('\n'+authority if kind=='sp'else''))
+                if kind=='mp':(root/'server-launch.log').write_text(authority)
+                selection=dict(body_evidence(kind=kind)[0],cases=cases)
+                self.assertEqual([],washing.verify(root,selection,{})['issues'])
+                actor.write_text(actor.read_text()+'\n[QUEUE_TEST] FAIL late body error')
+                result=washing.verify(root,selection,{})
+                self.assertTrue(result['issues']);self.assertTrue(all(v['status']=='failed'for v in result['outcomes']))
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for actual body selector')
+    def test_actual_body_menu_selector_rejects_all_foreign_disabled_and_ambiguous_options(self):
+        script = r'''
+package.loaded['TimedActions/ISWashYourself']={}
+package.loaded.QueueWashingBodyFixture={};package.loaded.QueueHealthEvents={}
+PZSurvivorToolkit={ActionQueueLifecycle={registerObserver=function()return true end},ActionQueueOperations={deferCompletion=function()return false end}}
+local M=assert(loadfile(arg[1]))()
+local player,sink,soap={},{},{}
+local list={size=function()return 1 end,get=function(_,i)assert(i==0);return soap end}
+local root={options={}};local menu={options={}}
+function root:getSubMenu()return menu end
+local body={target=player,param1=sink,param2=list,param3=root,onSelect=function()end}
+local all={target=player,param1=sink,param2=list,param3={washYourself=true},param4=false,onSelect=function()end}
+menu.options={all,body};root.options={{subOption=1}}
+local selected,index,option=M.selectMenu(root,player,sink,soap)
+assert(selected==menu and index==2 and option==body)
+for _,key in ipairs({'target','param1','param2','param3','param4','param5','param6','onSelect','notAvailable','isDisabled'})do
+ local old=body[key]
+ if key=='notAvailable'or key=='isDisabled'then body[key]=true
+ elseif key=='onSelect'then body[key]=nil else body[key]={}end
+ assert(M.selectMenu(root,player,sink,soap)==nil,'accepted foreign body option '..key)
+ body[key]=old
+end
+menu.options={body,body};assert(not pcall(M.selectMenu,root,player,sink,soap),'accepted duplicate body selection')
+print('actual body selector passed')
+'''
+        result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/client/QueueWashingBody.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
+    def test_mixed_selection_checks_all_six_cases_in_one_log(self):
+        for kind in ('sp', 'mp'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); cases=list(washing.CASES)
+                context=dict(suite='washing',kind=kind,mode='toolkit',actor='client1')
+                rows=[dict(event='setup',cases=cases,expected=6,queueEnabled=True,nativeDurations=True)]; raw=[]
+                proof=self.sealed_replay(root) if kind=='mp' else None
+                if proof: proof=dict(proof,verified=True)
+                for case in cases:
+                    d=body_evidence(case,kind) if case in washing.BODY_CASES else evidence(case=='cancel-after-pickup',kind,single=case=='borrowed-single-soap')
+                    _,row,prep,receipt=d
+                    if proof and case in washing.CLOTHING_CASES: row['replayProof']=copy.deepcopy(proof)
+                    rows.append(dict(row,event='case',id=case));raw += [('PREPARED',prep),('VERIFIED',receipt)]
+                rows.append(dict(event='complete',cases=cases,expected=6,performed=6,failed=0,skipped=0))
+                text='\n'.join('[QUEUE_CHECK] '+json.dumps(dict(v,**context))for v in rows)+'\n[WASHING_TEST] COMPLETE\n'
+                authority='\n'.join('[WASHING_TEST] '+k+' '+json.dumps(v)for k,v in raw)
+                (root/'client1-launch.log').write_text(text+('\n'+authority if kind=='sp'else''))
+                if kind=='mp':(root/'server-launch.log').write_text(authority)
+                selection=dict(body_evidence(kind=kind)[0],cases=cases)
+                runtime={'roles':{'client1':{'cache':str(root/'client1')},'server':{'cache':str(root/'server')}}} if kind=='mp' else {}
+                washing.validate(selection)
+                self.assertEqual([],washing.verify(root,selection,runtime)['issues'])
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for actual body lifecycle bridge')
+    def test_body_observer_requests_native_scope_off_without_granting_shared_ownership(self):
+        script = r'''
+for _,name in ipairs({'TimedActions/ISQueueActionsAction','PZSurvivorToolkit/ActionQueueOperations','TimedActions/ISWashYourself','QueueWashingBodyFixture','QueueHealthEvents'})do package.loaded[name]={}end
+ISQueueActionsAction={start=function()end}
+PZSurvivorToolkit={Settings={actionQueue=function()return false end},ActionQueueOperations={deferCompletion=function()return false end,adoptCommandLifecycle=function()end}}
+ISTimedActionQueue={queues={}}
+local L=assert(loadfile(arg[1]))();assert(loadfile(arg[2]))()
+local function up(fn,key,value)
+ for i=1,100 do local name,current=debug.getupvalue(fn,i);if not name then break end
+  if name==key then if value~=nil then debug.setupvalue(fn,i,value)end;return current end
+ end;error('missing upvalue '..key)
+end
+local observers=up(up(L.begin,'observe'),'observers');assert(#observers==1)
+local actor={};local action={Type='ISWashYourself',character=actor,action={}}
+local q={character=actor,current=action,queue={action}};ISTimedActionQueue.queues[actor]=q
+local phases={perform=0,complete=0,stop=0}
+local entry={row={begin=phases}}
+up(observers[1].begin,'active',{player=actor,seen={[action]=entry}})
+assert(L.begin(action,'perform')==true,'queue-off observer did not request native bridge scope')
+assert(phases.perform==1 and L.current(actor)==nil,'observation granted queue-off shared ownership')
+assert(L.begin({Type='ISWashClothing',character=actor},'perform')==false,'foreign action requested body scope')
+assert(L.begin({Type='ISWashYourself',character={}},'perform')==false,'foreign actor requested body scope')
+assert(L.begin(action,'unknown')==false,'unknown phase requested body scope')
+print('actual body bridge scope passed')
+'''
+        result=subprocess.run([shutil.which('luajit'),'-',
+            str(ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'),
+            str(ROOT/'tests/native_queue/washing/client/QueueWashingBody.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for actual fixture cleanup')
+    def test_actual_cleanup_requires_verified_same_id_endpoint_after_native_cancel(self):
+        script = r'''
+package.loaded['TimedActions/ISWashClothing']={};package.loaded.QueueHealthEvents={}
+local F=assert(loadfile(arg[1]))()
+local cleanup
+for i=1,30 do local name,value=debug.getupvalue(F.prepare,i);if not name then break end;if name=='cleanup'then cleanup=value end end
+assert(cleanup,'actual cleanup missing')
+local function list(values)return{size=function()return #values end,get=function(_,i)return values[i+1]end}end
+function instanceof(item,name)return name=='InventoryContainer'and item.bag==true end
+function isServer()return false end
+Fluid={Water={}}
+local part={index=function()return 0 end}
+BloodClothingType={getCoveredParts=function()return list({part})end}
+local function container()
+ local c={values={}}
+ function c:getItems()return list(self.values)end
+ function c:getItemById(id)
+  for _,v in ipairs(self.values)do if v:getID()==id then return v end;if v.bag then local found=v:getItemContainer():getItemById(id);if found then return found end end end
+ end
+ function c:Remove(item)for i,v in ipairs(self.values)do if v==item then table.remove(self.values,i);item.container=nil;return end end;error('removing absent item')end
+ return c
+end
+local function item(c,id,kind)
+ local v={container=c,id=id,kind=kind}
+ function v:getID()return self.id end;function v:getFullType()return self.kind end;function v:getContainer()return self.container end
+ c.values[#c.values+1]=v;return v
+end
+local function fixture(endpoint)
+ local root,source=container(),container()
+ local bag=item(root,10,'Base.Bag_ALICEpack_Army');bag.bag=true;function bag:getItemContainer()return source end
+ local garment=item(endpoint=='root'and root or source,100,'Base.Tshirt_DefaultTEXTURE_TINT')
+ function garment:getBloodClothingType()return{}end;function garment:getBloodLevel()return 7.5 end;function garment:getDirtiness()return 5 end
+ function garment:getWetness()return 0 end;function garment:getItemAfterCleaning()return nil end
+ function garment:getBlood()return .15 end;function garment:getDirt()return .10 end
+ local soap=item(root,30,'Base.Soap2');function soap:getCurrentUses()return 20 end
+ local book=item(root,20,'Base.BookCarpentry1');function book:getAlreadyReadPages()return 220 end;function book:getNumberOfPages()return 220 end
+ local actor={getInventory=function()return root end,getOnlineID=function()return 1 end,isEquipped=function()return false end}
+ local fluid={getAmount=function()return 15 end,isPureFluid=function()return true end,isInputLocked=function()return true end}
+ local square={transmitRemoveItemFromSquare=function(self,obj)self.removed=obj end}
+ local sink={getFluidAmount=function()return 15 end,getFluidContainer=function()return fluid end,isMovedThumpable=function()return true end,
+  getUsesExternalWaterSource=function()return false end,getModData=function()return{canBeWaterPiped=true}end,
+  getSquare=function()return square end,getObjectIndex=function()return -1 end}
+ F.resolveSink=function(spec)assert(spec=='owned-source');return sink end
+ local state={player=actor,root=root,sink=sink,case='cancel-after-pickup',ids={bagId=10,bagType=bag:getFullType(),soap={id=30},book=20,sink='owned-source',
+  garments={{id=100,kind=garment:getFullType()}}}}
+ return state,garment,root,source,square,sink
+end
+for _,endpoint in ipairs({'bag','root'})do
+ local state,garment,root,source,square,sink=fixture(endpoint)
+ local receipt=assert(F.verify(state))
+ assert(receipt.garments[1].rootCount==(endpoint=='root'and 1 or 0))
+ cleanup(state);assert(state.verifiedReceipt==receipt)
+ assert(#root.values==0 and square.removed==sink,'verified endpoint cleanup failed '..endpoint)
+end
+for _,mutation in ipairs({'endpoint','type','duplicate','missing-receipt','invalid-receipt','foreign-bag-item'})do
+ local state,garment,root,source=fixture('bag');assert(F.verify(state))
+ if mutation=='endpoint'then source:Remove(garment);root.values[#root.values+1]=garment;garment.container=root
+ elseif mutation=='type'then garment.kind='Base.Shirt_FormalWhite'
+ elseif mutation=='duplicate'then source.values[#source.values+1]=garment
+ elseif mutation=='missing-receipt'then state.verifiedReceipt=nil
+ elseif mutation=='invalid-receipt'then state.verifiedReceipt.garments[1].rootCount=1
+ else item(source,777,'Base.Soap2')end
+ assert(not pcall(cleanup,state),'cleanup accepted changed/unverified endpoint '..mutation)
+ assert(root:getItemById(10),'failed endpoint preflight already removed bag')
+end
+print('actual verified receipt cleanup passed')
+'''
+        result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/shared/QueueWashingFixture.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for actual readiness predicates')
+    def test_actual_body_readiness_names_alias_parts_weather_and_bounds_diagnostics(self):
+        script = r'''
+package.loaded['TimedActions/ISWashYourself']={}
+local logged,last={},nil;package.loaded.QueueHealthEvents={encode=function(value)last=value;return 'json'end};print=function()logged[#logged+1]=last end
+local B=assert(loadfile(arg[1]))()
+ItemBodyLocation={MAKE_UP_FULL_FACE='full',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
+BloodBodyPartType={MAX={index=function()return 18 end},FromIndex=function(i)return i end}
+SandboxVars={RainCleansBlood={AlwaysClean=false}};local rain=0
+getClimateManager=function()return{getPrecipitationIntensity=function()return rain end,getRainIntensity=function()return rain end,getSnowIntensity=function()return 0 end}end
+function instanceof()return false end
+local client,server=false,false;function isClient()return client end;function isServer()return server end
+local values={};local root={}
+function root:getItems()return{size=function()return #values end,get=function(_,i)return values[i+1]end}end
+function root:getItemById(id)for _,v in ipairs(values)do if v:getID()==id then return v end end end
+local function item(id,kind)
+ return{getID=function()return id end,getFullType=function()return kind end,getContainer=function()return root end,getCurrentUses=function()return 20 end}
+end
+local soap,book,makeup=item(30,'Base.Soap2'),item(20,'Base.BookCarpentry1'),item(40,'Base.MakeUp_Crow');values={soap,book,makeup}
+local worn=makeup;local dirty=true;local visual={getBlood=function(_,i)return dirty and i==0 and .15 or 0 end,getDirt=function(_,i)return i<2 and .10 or 0 end}
+local player={getInventory=function()return root end,getOnlineID=function()return 0 end,getHumanVisual=function()return visual end,
+ getWornItem=function(_,slot)if slot=='eyes'then return worn end end}
+local amount=15;local sink={getFluidAmount=function()return amount end}
+local F={resolveSink=function()return sink end}
+local meta={case='body-full',actorId=0,soap={id=30,kind='Base.Soap2',uses=20},book=20,makeup={id=40,kind='Base.MakeUp_Crow',slot='eyes'},sink={amount=15},body=B.snapshot(player),weather=B.weather()}
+assert(B.preparationStatus(player,meta,F).ready)
+worn=item(40,'Base.MakeUp_Crow')
+local status=B.preparationStatus(player,meta,F)
+assert(not status.ready and not status.predicates.makeupIdentity and not status.actual.makeupSameReference and status.predicates.wornIds and status.predicates.parts)
+assert(status.actual.makeup.id==status.actual.wornMakeup.id and status.actual.makeupCount==1)
+local alias=worn;alias.getContainer=function()return nil end
+assert(not B.makeupIdentity(player,meta),'SP accepted visual alias')
+client=true;assert(B.makeupIdentity(player,meta),'client rejected native unattached visual')
+assert(B.preparationStatus(player,meta,F).ready,'client alias blocked readiness')
+book.getAlreadyReadPages=function()return 220 end;book.getNumberOfPages=function()return 220 end
+Fluid={Water={}};sink.getFluidContainer=function()return{getAmount=function()return amount end,isPureFluid=function()return true end,isInputLocked=function()return true end}end
+sink.isMovedThumpable=function()return true end;sink.getUsesExternalWaterSource=function()return false end;sink.getModData=function()return{canBeWaterPiped=true}end
+local receipt=assert(B.verify({player=player,root=root,ids=meta,case=meta.case,sink=sink},F))
+assert(receipt.makeup.worn and receipt.makeup.rootCount==1 and receipt.makeup.totalCount==1,'client receipt lost native visual identity')
+server=true;assert(not B.makeupIdentity(player,meta),'server accepted visual alias');server=false
+for _,bad in ipairs({item(41,'Base.MakeUp_Crow'),item(40,'Base.MakeUp_Skull'),item(40,'Base.MakeUp_Crow')})do
+ worn=bad;assert(not B.makeupIdentity(player,meta),'accepted wrong/attached worn identity')
+end
+local attached=item(40,'Base.MakeUp_Crow');attached.getContainer=function()return{}end;worn=attached;assert(not B.makeupIdentity(player,meta),'accepted foreign attached visual')
+worn=alias;values[#values+1]=makeup;assert(not B.makeupIdentity(player,meta),'accepted duplicate root ID');values[#values]=nil
+values[#values]=nil;assert(not B.makeupIdentity(player,meta),'accepted missing root');values[#values+1]=makeup
+local oldSlot=meta.makeup.slot;meta.makeup.slot='lips';assert(not B.makeupIdentity(player,meta),'accepted wrong slot');meta.makeup.slot=oldSlot
+assert(player:getWornItem('eyes')==alias and root:getItemById(40)==makeup,'identity observation rebound native objects')
+client=false;worn=item(40,'Base.MakeUp_Crow')
+dirty=false;assert(not B.preparationStatus(player,meta,F).predicates.parts);dirty=true
+rain=.5;assert(not B.preparationStatus(player,meta,F).predicates.dry);rain=0
+amount=0;assert(not B.preparationStatus(player,meta,F).predicates.sinkAmount);amount=15
+local now=0;function getTimestampMs()return now end
+for _,time in ipairs({0,200,1000,5000,15000,16000})do now=time;assert(not B.resolve(player,meta,F))end
+assert(#logged==4,'readiness diagnostics were not bounded')
+worn=makeup;assert(B.resolve(player,meta,F));assert(#logged==5 and logged[5].ready)
+assert(B.resolve(player,meta,F));assert(#logged==5,'repeated ready diagnostics')
+'''
+        result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/shared/QueueWashingBodyFixture.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
     def sealed_replay(self, root, source=None):
         if source is None:
             source = (ROOT / 'PZSurvivorToolkit/42' / washing.REPLAY_PATH).read_text()
@@ -494,16 +810,16 @@ print('actual native menu shape/flag selection passed')
 
     def logs(self, root, kind, mode):
         data = [evidence(cancel, kind, mode, single=single) for cancel, single in ((False, False), (False, True), (True, False))]
-        selection = dict(data[0][0], cases=list(washing.CASES))
+        selection = dict(data[0][0], cases=list(washing.CLOTHING_CASES))
         context = dict(suite='washing', kind=kind, mode=mode, actor='client1')
-        rows = [dict(event='setup', cases=washing.CASES, expected=len(data), queueEnabled=mode == 'toolkit', nativeDurations=True)]
+        rows = [dict(event='setup', cases=washing.CLOTHING_CASES, expected=len(data), queueEnabled=mode == 'toolkit', nativeDurations=True)]
         raw = []
         replay = dict(self.sealed_replay(root), verified=True) if kind == 'mp' else None
         for _, row, prep, receipt in data:
             if kind == 'mp': row['replayProof'] = replay
             rows.append(dict(row, event='case', id=prep['case']))
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
-        rows.append(dict(event='complete', cases=washing.CASES, expected=len(data), performed=len(data), failed=0, skipped=0))
+        rows.append(dict(event='complete', cases=washing.CLOTHING_CASES, expected=len(data), performed=len(data), failed=0, skipped=0))
         text = '\n'.join('[QUEUE_CHECK] ' + json.dumps(dict(row, **context)) for row in rows) + '\n[WASHING_TEST] COMPLETE\n'
         authority = '\n'.join('[WASHING_TEST] ' + key + ' ' + json.dumps(value) for key, value in raw)
         (root / 'client1-launch.log').write_text(text + ('\n' + authority if kind == 'sp' else ''))

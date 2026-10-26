@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.274
+
+- Fixed: washing off makeup in Host now synchronizes its removal from the player inventory. Native washing costs, partial cleaning and interruption behavior are preserved with the action queue enabled or disabled.
+
 ### 0.1.273
 
 - Reviewed WashFix clothing pickup, inventory-retry, washing and return chains now use the common action-completion boundary. Native resource costs, cancellation/reset ownership and ordinary item returns retain their behavior; body washing, mixed commands and transforming bandage recipes keep their existing handling.
