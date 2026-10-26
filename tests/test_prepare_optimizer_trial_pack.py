@@ -1,4 +1,4 @@
-"""Pin package inputs to the chosen main commit, independent of the checkout."""
+"""Pin package inputs and candidate provenance independently of dirty checkout files."""
 import hashlib
 import json
 from pathlib import Path
@@ -11,8 +11,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.prepare_optimizer_trial import (BRIDGE, build_bridge, bridge_resources,
-                                           record_java_source, snapshot_java_source, snapshot_pack)
+from tools.prepare_optimizer_trial import (BRIDGE, LAUNCHERS, build_bridge, bridge_resources,
+                                           prepare, record_java_source, snapshot_java_source, snapshot_pack)
 
 
 class MainPackSnapshot(unittest.TestCase):
@@ -49,6 +49,69 @@ class MainPackSnapshot(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 snapshot_pack(ROOT, dest, 'nonexistent-trial-pack-reference')
             self.assertFalse(dest.exists())
+
+
+class LocalCandidatePackage(unittest.TestCase):
+    def test_package_records_local_candidate_and_distinct_profile_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp).resolve()
+            repo = base / 'repo'
+            repo.mkdir()
+            def write(name, text):
+                path = repo / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
+            git('init', '-q')
+            git('config', 'user.email', 'fixture@example.invalid')
+            git('config', 'user.name', 'Fixture')
+            write('PZSurvivorToolkit/42/mod.info', 'id=PZSurvivorToolkit\nmodversion=0.1.284\n')
+            write('SurvivorQoL-selected.ini', 'Mods=PZSurvivorToolkit;PZToolkitJavaPatches\nWorkshopItems=123;456\n')
+            write('JavaPatches/build.py', "from pathlib import Path\np=Path(__file__).parent/'build/PZToolkitJavaPatches/42/mod.info'\np.parent.mkdir(parents=True)\np.write_text('id=PZToolkitJavaPatches\\nmodversion=0.1.65\\n')\n")
+            git('add', '.')
+            git('commit', '-qm', 'Fixture base')
+            main = git('rev-parse', 'HEAD')
+            git('update-ref', 'refs/remotes/origin/main', main)
+            write('PZSurvivorToolkit/42/mod.info', 'id=PZSurvivorToolkit\nmodversion=0.1.285\n')
+            git('commit', '-qam', 'Fixture local candidate')
+            candidate = git('rev-parse', 'HEAD')
+            # An uncommitted product edit cannot silently become the identified candidate.
+            write('PZSurvivorToolkit/42/mod.info', 'id=PZSurvivorToolkit\nmodversion=0.1.999\n')
+            for name in LAUNCHERS:
+                write('tests/optimizer_trial/' + name, 'fixture')
+            profile_revision = 'c' * 40
+            write('tests/optimizer_trial/candidate-manifest.json', json.dumps({
+                'format': 2, 'toolkit_source_revision': profile_revision, 'profile': {'id': 'measured-profile'}}))
+            for name in ('PZOptimizerTrialPack.lua', 'PZOptimizerTrialTelemetry.lua'):
+                write('tests/optimizer_trial/' + name, '-- fixture')
+            for name in ('Launch.ps1', 'Record-JFR.ps1', 'Record-JFR.cmd', 'mods/PZDrivingBench/42/mod.info'):
+                write('tests/driving_benchmark/' + name, 'fixture')
+            def fixture_bridge(destination, *args):
+                mod = destination / BRIDGE
+                for name in (f'42/media/java/{BRIDGE}.jar', '42/media/lua/client/PZOptimizerTrialDashboard.lua'):
+                    path = mod / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b'fixture bridge')
+                return mod
+            with mock.patch('tools.prepare_optimizer_trial.build_bridge', side_effect=fixture_bridge):
+                output, archive = prepare(base / 'package', base / 'game', base / 'jdk', root=repo)
+            pack = json.loads((output / 'pack-manifest.json').read_text())
+            receipt = json.loads((output / 'build-receipt.json').read_text())
+            for proof in (pack, receipt):
+                self.assertEqual('local-candidate', proof['source_kind'])
+                self.assertEqual(candidate, proof['source_revision'])
+                self.assertEqual(candidate, proof['main_revision'])
+                self.assertEqual(main, proof['base_revision'])
+                self.assertEqual(main, proof['base_ref_revision'])
+            self.assertNotEqual(main, candidate)
+            self.assertEqual('0.1.285', pack['repository_mods']['PZSurvivorToolkit']['version'])
+            self.assertEqual(profile_revision, receipt['optimizer_candidate']['profile_source_revision'])
+            self.assertNotEqual(profile_revision, receipt['source_revision'])
+            expected = output / 'mods' / BRIDGE / '42/media/lua/client/PZOptimizerTrialExpectedMods.lua'
+            self.assertIn('revision=' + json.dumps(candidate), expected.read_text())
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertEqual(receipt, json.loads(bundle.read('PZDrivingOptimizerTrial/build-receipt.json')))
 
 
 class ExplicitJavaSource(unittest.TestCase):
