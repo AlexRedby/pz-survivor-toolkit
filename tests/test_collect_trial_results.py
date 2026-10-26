@@ -267,6 +267,45 @@ class TrialResultsTests(unittest.TestCase):
         self.assertIn("Missing sensor-coverage.json", summary["issues"])
         self.assertFalse(summary["wpr"]["verified"])
 
+    def test_wpr_failed_save_retains_separate_cleanup_and_profile_evidence_without_etl(self):
+        run, wrapper, directory = self.extended_fixture("Control", status="Incomplete")
+        self.extended_fixture("Optimized")
+        wrapper["receipt"].update(reason="OwnedSessionSaveFailed", saveFailure="OwnedSessionSaveFailed",
+                                  cleanupState="Absent", profileState="Absent",
+                                  profileSha256="a" * 64, observedTempBytes=2147483648)
+        (run / "wpr-capture.json").write_text(json.dumps(wrapper))
+        (directory / "wpr-status.json").write_text(json.dumps(wrapper["receipt"]))
+        (directory / "drive.etl").unlink()
+        (self.root / "PZTrial.wprp").write_text("fixture profile")
+        temp = directory / "temp"
+        temp.mkdir()
+        (temp / "owned.etl").write_bytes(b"partial")
+        (temp / "foreign.etl").symlink_to(self.control)
+        result = self.collect()
+        summary = result["Summary"]["runs"][0]
+        self.assertEqual("Incomplete", summary["status"])
+        self.assertFalse(summary["wpr"]["verified"])
+        self.assertIsNone(summary["wpr"]["file"])
+        self.assertEqual(["temp/owned.etl"], [row["relativePath"] for row in summary["wpr"]["temporaryFiles"]])
+        self.assertFalse(summary["wpr"]["temporaryFiles"][0]["included"])
+        for field in ("reason", "saveFailure", "cleanupState", "profileState", "profileSha256", "observedTempBytes"):
+            self.assertEqual(wrapper["receipt"][field], summary["wpr"][field])
+        with zipfile.ZipFile(result["Path"]) as archive:
+            self.assertEqual(b"fixture profile", archive.read("PZTrial.wprp"))
+
+    def test_completed_wpr_rejects_conflicting_profile_receipts(self):
+        run, wrapper, directory = self.extended_fixture("Control")
+        self.extended_fixture("Optimized")
+        wrapper["receipt"]["profileSha256"] = "a" * 64
+        (run / "wpr-capture.json").write_text(json.dumps(wrapper))
+        saved = dict(wrapper["receipt"], profileSha256="b" * 64)
+        (directory / "wpr-status.json").write_text(json.dumps(saved))
+        result = self.collect()
+        summary = result["Summary"]["runs"][0]
+        self.assertEqual("Incomplete", summary["status"])
+        self.assertFalse(summary["wpr"]["verified"])
+        self.assertTrue(any("WPR wrapper/status mismatch: profileSha256" in issue for issue in summary["issues"]))
+
     def test_owned_partial_wpr_is_preserved_explicitly_unverified(self):
         run, wrapper, directory = self.extended_fixture("Control", status="Incomplete")
         self.extended_fixture("Optimized")

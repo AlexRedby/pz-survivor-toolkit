@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 SCRIPTS = Path(__file__).resolve().parent / 'optimizer_trial'
 PWSH = shutil.which('pwsh')
@@ -46,6 +47,22 @@ WPR_19041_GENERAL_HELP = (
 )
 
 
+class WprProfileTests(unittest.TestCase):
+    def test_profile_retains_diagnostic_events_with_only_cpu_and_readying_stacks(self):
+        root = ET.parse(SCRIPTS / 'PZTrial.wprp').getroot()
+        keywords = {node.attrib['Value'] for node in root.findall('./Profiles/SystemProvider/Keywords/Keyword')}
+        self.assertTrue({'CSwitch', 'ReadyThread', 'SampledProfile', 'DPC', 'Interrupt',
+                         'DiskIO', 'HardFaults', 'ProcessThread', 'Loader'} <= keywords)
+        self.assertEqual({node.attrib['Value'] for node in root.findall('./Profiles/SystemProvider/Stacks/Stack')},
+                         {'SampledProfile', 'ReadyThread'})
+        providers = root.findall('./Profiles/EventProvider')
+        self.assertEqual(len(providers), 3)
+        self.assertTrue(all(node.attrib['Stack'] == 'false' for node in providers))
+        self.assertEqual({node.attrib['LoggingMode'] for node in root.findall('./Profiles/Profile')}, {'File', 'Memory'})
+        self.assertEqual(sum(int(node.find('BufferSize').attrib['Value']) * int(node.find('Buffers').attrib['Value'])
+                             for node in root.findall('./Profiles/SystemCollector') + root.findall('./Profiles/EventCollector')), 32768)
+
+
 @unittest.skipUnless(PWSH, 'PowerShell unavailable')
 class WprProtocolTests(unittest.TestCase):
     def setUp(self):
@@ -70,17 +87,24 @@ class WprProtocolTests(unittest.TestCase):
 $global:mode=''' + "'" + mode + "'" + r'''
 $run=Join-Path $env:PZ_WPR_ROOT ('a'*32); if (Test-Path $run) { Remove-Item $run -Recurse -Force }; [IO.Directory]::CreateDirectory($run) | Out-Null
 $id='a'*32
-$c=[ordered]@{format=1;captureId=$id;targetPid=123;processStartUtc='2026-10-26T12:00:00.0000000Z';expectedExecutable='java.exe';parentPid=456;parentStartUtc='2026-10-26T12:00:00.0000000Z';parentExecutable='powershell.exe';captureSeconds=30;prepareSeconds=900;maximumTempBytes=2147483648}
+$c=[ordered]@{profileSha256=(Get-TrialWprProfile).Sha256;format=1;captureId=$id;targetPid=123;processStartUtc='2026-10-26T12:00:00.0000000Z';expectedExecutable='java.exe';parentPid=456;parentStartUtc='2026-10-26T12:00:00.0000000Z';parentExecutable='powershell.exe';captureSeconds=30;prepareSeconds=900;maximumTempBytes=2147483648}
 Write-TrialWprJson (Join-Path $run 'control.json') $c
 $hash=(Get-FileHash (Join-Path $run 'control.json')).Hash
-$s=[ordered]@{format=1;captureId=$id;instanceName=('PZTrial_'+$id);targetPid=123;processStartUtc=$c.processStartUtc;status='Requested';reason=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');startRequestedUtc=$null;startedUtc=$null;stopRequestedUtc=$null;stoppedUtc=$null;helperPid=$null;helperStartUtc=$null;profiles=@('GeneralProfile','GPU');loggingMode='File';traceFile='drive.etl';traceBytes=$null;traceSha256=$null;headerValidated=$false}
+$s=[ordered]@{format=1;captureId=$id;instanceName=('PZTrial_'+$id);targetPid=123;processStartUtc=$c.processStartUtc;status='Requested';reason=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');startRequestedUtc=$null;startedUtc=$null;stopRequestedUtc=$null;stoppedUtc=$null;helperPid=$null;helperStartUtc=$null;profiles=@('PZTrial.light');loggingMode='File';traceFile='drive.etl';traceBytes=$null;traceSha256=$null;headerValidated=$false}
 Write-TrialWprJson (Join-Path $run 'wpr-status.json') $s
 Write-TrialWprJson (Join-Path $run 'start.request.json') @{captureId=$id;action='start';targetPid=123;requestedUtc=[DateTime]::UtcNow.ToString('o')}
-$global:commands=@()
+$global:commands=@(); $global:collectorQueries=@()
 function Get-TrialWprTool { 'fake-wpr' }
 function Test-TrialWprElevated { $global:mode -ne 'not-elevated' }
 function Test-TrialWprIdentity { param($ProcessId,$Executable,$StartUtc); return ($global:mode -ne 'parent-exit' -or $global:commands.Count -lt 3) }
 function Get-TrialWprTempBytes { param($Root); if ($global:mode -eq 'size') { return 2147483648 }; return 0 }
+function Get-TrialWprCollectorQueryCode {
+ param($Name)
+ $global:collectorQueries+=@($Name)
+ if ($global:mode -eq 'cleanup-active' -and $Name.EndsWith('Graphics')) { return 0 }
+ if ($global:mode -eq 'cleanup-unknown') { return 5 }
+ return 4201
+}
 function Test-TrialWprTrace { param($Path); $global:mode -ne 'invalid-trace' }
 function Invoke-TrialWprCommand {
  param($Tool,$Arguments,$TimeoutSeconds)
@@ -106,26 +130,40 @@ function Invoke-TrialWprCommand {
    }
   }
   '-profiledetails' {
-   $output='CSwitch ReadyThread SampledProfile DPC Interrupt DiskIO HardFaults'
+   $output='CSwitch ReadyThread SampledProfile DPC Interrupt DiskIO HardFaults Microsoft-Windows-DxgKrnl Microsoft-Windows-DXGI 9e9bba3c-2e38-40cb-99f4-9e8281425164'
    if ($global:mode -eq 'coverage') { $output='SampledProfile' }
    if ($global:mode -eq 'coverage-substring') { $output='NoCSwitch ReadyThread SampledProfile DPC Interrupt DiskIO HardFaults' }
+   if ($global:mode -eq 'graphics-guids') { $output='CSwitch ReadyThread SampledProfile DPC Interrupt DiskIO HardFaults {802EC45A-1E99-4B83-9920-87C98277BA9D} {CA11C036-0102-4A2D-A6AD-F03CFED5D3C9} Microsoft-Windows-Dwm-Core' }
+   if ($global:mode -eq 'graphics-coverage') { $output='CSwitch ReadyThread SampledProfile DPC Interrupt DiskIO HardFaults' }
+   if ($global:mode -eq 'profile-command-failure') { $code=$null }
    if ($global:mode -eq 'profile-failure') { $code=1 }
    if ($global:mode -eq 'profile-timeout') { $timed=$true }
   }
   '-start' {
    if ($global:mode -eq 'start-failure') { $code=1 }
-   if ($global:mode -eq 'start-timeout') { $code=$null; $timed=$true }
+   if ($global:mode -in @('start-timeout','start-timeout-cleanup')) { $code=$null; $timed=$true }
    if ($global:mode -notin @('parent-exit','tamper','size')) { Write-TrialWprJson (Join-Path $run 'stop.request.json') @{captureId=$id;action='stop';targetPid=123;requestedUtc=[DateTime]::UtcNow.ToString('o')} }
    if ($global:mode -eq 'tamper') { [IO.File]::AppendAllText((Join-Path $run 'control.json'),' ') }
   }
-  '-status' { $output='Events Lost : 7' }
-  '-stop' { [IO.File]::WriteAllBytes((Join-Path $run 'drive.etl'),[byte[]]::new(1024)); if ($global:mode -eq 'stop-failure') { $code=1 } }
+  '-status' {
+   $output="Nom collecteur : WPR_initiated_PZTrial_$($id)_System`nNom collecteur : WPR_initiated_PZTrial_$($id)_Graphics`nEvents Lost : 7"
+   if ($global:mode -eq 'no-collector-names') { $output='Events Lost : 7' }
+   if ($global:mode -eq 'status-failure') { $code=1 }
+   if ($global:mode -eq 'status-timeout') { $code=$null; $timed=$true }
+   if ($global:mode -eq 'status-command-failure') { $code=$null; $output='CommandFailed' }
+   if ($global:mode -in @('profile-absent','observed-error') -and @($global:commands | Where-Object { $_[0] -eq '-cancel' }).Count -gt 0) { $code=-984076288; $output='Aucun profil actif' }
+  }
+  '-cancel' {
+   if ($global:mode -in @('observed-error','profile-absent','no-collector-names','status-failure','status-timeout','status-command-failure','start-timeout-cleanup')) { $code=-984076288; $output='There are no trace profiles running.' }
+   if ($global:mode -eq 'unrelated-cancel-error') { $code=5; $output='There are no trace profiles running.' }
+  }
+  '-stop' { [IO.File]::WriteAllBytes((Join-Path $run 'drive.etl'),[byte[]]::new(1024)); if ($global:mode -in @('stop-failure','observed-error','profile-absent','cleanup-active','cleanup-unknown','no-collector-names','status-failure','status-timeout','status-command-failure','unrelated-cancel-error','start-timeout-cleanup')) { $code=-2147417850; $output='Cannot change thread mode after it is set. Error code: 0x80010106' } }
  }
  [pscustomobject]@{exitCode=$code;timedOut=$timed;output=$output;elapsedMs=1}
 }
 ''' + setup + r'''
 $null=Invoke-TrialWprWorker $run $hash
-@{receipt=(Read-TrialWprJson (Join-Path $run 'wpr-status.json'));commands=$global:commands} | ConvertTo-Json -Depth 14 -Compress
+@{receipt=(Read-TrialWprJson (Join-Path $run 'wpr-status.json'));commands=$global:commands;collectorQueries=$global:collectorQueries} | ConvertTo-Json -Depth 14 -Compress
 ''')
 
     def test_success_records_only_owned_named_instance_and_verifiable_receipt(self):
@@ -137,18 +175,19 @@ $null=Invoke-TrialWprWorker $run $hash
         self.assertTrue(receipt['headerValidated'])
         for field in ('requestedUtc', 'startRequestedUtc', 'startedUtc', 'stopRequestedUtc', 'stoppedUtc'):
             self.assertIsNotNone(receipt[field])
-        self.assertEqual(receipt['profiles'], ['GeneralProfile', 'GPU'])
+        self.assertEqual(receipt['profiles'], ['PZTrial.light'])
         for command in result['commands']:
             if command[0] in ('-start', '-status', '-stop', '-cancel'):
                 self.assertEqual(command[-2:], ['-instancename', receipt['instanceName']])
         self.assertIn('-filemode', result['commands'][2])
         self.assertIsNone(receipt['lostEvents'])
-        self.assertEqual(receipt['evidence'][-2]['result']['output'], 'Events Lost : 7')
+        self.assertIn('Events Lost : 7', receipt['evidence'][-2]['result']['output'])
 
     def test_unsupported_instance_or_coverage_never_starts_or_controls_session(self):
         for mode, reason in (('unsupported', 'NamedInstancesUnsupported'), ('coverage', 'RequiredProfileCoverageUnavailable'),
                              ('coverage-substring', 'RequiredProfileCoverageUnavailable'), ('profile-failure', 'ProfilesUnavailable'),
-                             ('profile-timeout', 'ProfilesUnavailable'), ('not-elevated', 'HelperNotElevated')):
+                             ('profile-timeout', 'ProfilesUnavailable'), ('profile-command-failure', 'ProfilesUnavailable'),
+                             ('graphics-coverage', 'RequiredGraphicsCoverageUnavailable'), ('not-elevated', 'HelperNotElevated')):
             result = self.worker(mode=mode)
             self.assertEqual(result['receipt']['status'], 'Unavailable')
             self.assertEqual(result['receipt']['reason'], reason)
@@ -160,7 +199,7 @@ $null=Invoke-TrialWprWorker $run $hash
         result = self.worker(mode='help-19041')
         self.assertEqual(result['receipt']['status'], 'Complete')
         self.assertEqual(result['commands'][:3], [
-            ['-help', 'advanced'], ['-help'], ['-profiledetails', 'GeneralProfile+GPU', '-filemode']])
+            ['-help', 'advanced'], ['-help'], ['-profiledetails', str(SCRIPTS / 'PZTrial.wprp') + '!PZTrial.light', '-filemode']])
         first, fallback = result['receipt']['evidence'][:2]
         self.assertEqual(first['result']['exitCode'], -983562750)
         self.assertEqual(first['result']['output'], WPR_19041_GENERAL_HELP)
@@ -173,6 +212,18 @@ $null=Invoke-TrialWprWorker $run $hash
         result = self.worker(mode='help-advanced-missing')
         self.assertEqual(result['receipt']['status'], 'Complete')
         self.assertEqual(result['commands'][1], ['-help'])
+
+    def test_profile_graphics_coverage_accepts_guids_or_resolved_friendly_names(self):
+        self.assertEqual(self.worker(mode='graphics-guids')['receipt']['status'], 'Complete')
+
+    def test_truncated_status_never_supplies_owned_collector_identities(self):
+        result = self.run_ps(r"""
+. (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWprWorker.ps1')
+$id='PZTrial_'+('a'*32)
+$r=@{exitCode=0;timedOut=$false;outputTruncated=$true;output=('Collecteur : WPR_initiated_'+$id+'_System')}
+@{names=@(Get-TrialWprOwnedCollectors $r $id)}|ConvertTo-Json -Compress
+""")
+        self.assertEqual(result, {'names': []})
 
     def test_failed_timed_out_or_non_declaration_help_never_controls_sessions(self):
         for mode in ('help-general-failure', 'help-timeout', 'help-command-failure',
@@ -187,7 +238,7 @@ $null=Invoke-TrialWprWorker $run $hash
         result = self.worker(mode='localized-help')
         self.assertEqual(result['receipt']['status'], 'Complete')
         self.assertEqual(result['commands'][:2], [
-            ['-help', 'advanced'], ['-profiledetails', 'GeneralProfile+GPU', '-filemode']])
+            ['-help', 'advanced'], ['-profiledetails', str(SCRIPTS / 'PZTrial.wprp') + '!PZTrial.light', '-filemode']])
 
     def test_failed_or_timed_out_start_attempt_still_saves_only_owned_instance(self):
         for mode in ('start-failure', 'start-timeout'):
@@ -203,8 +254,98 @@ $null=Invoke-TrialWprWorker $run $hash
         self.assertIsNone(receipt['traceBytes'])
         self.assertIsNone(receipt['traceSha256'])
         self.assertFalse(receipt['headerValidated'])
-        cleanup = self.worker(mode='stop-failure')['commands'][-1]
+        cleanup = next(c for c in self.worker(mode='stop-failure')['commands'] if c[0] == '-cancel')
         self.assertEqual(cleanup, ['-cancel', '-instancename', receipt['instanceName']])
+
+    def test_observed_com_save_error_is_preserved_when_owned_collectors_are_absent(self):
+        result = self.worker(mode='observed-error')
+        receipt = result['receipt']
+        self.assertEqual(receipt['status'], 'Incomplete')
+        self.assertEqual(receipt['reason'], 'OwnedSessionSaveFailed')
+        self.assertEqual(receipt['saveFailure'], 'OwnedSessionSaveFailed')
+        self.assertEqual(receipt['cleanupState'], 'Absent')
+        self.assertEqual(receipt['profileState'], 'Absent')
+        evidence = {entry['stage']: entry['result'] for entry in receipt['evidence']}
+        self.assertEqual(evidence['Stop']['exitCode'], -2147417850)
+        self.assertEqual(evidence['OwnedSessionCleanup']['exitCode'], -984076288)
+        self.assertTrue(result['collectorQueries'])
+        self.assertTrue(all(name.startswith('WPR_initiated_' + receipt['instanceName'] + '_')
+                            for name in result['collectorQueries']))
+        self.assertIn(['-status', 'collectors', '-details', '-instancename', receipt['instanceName']], result['commands'])
+        self.assertFalse(receipt['headerValidated'])
+
+    def test_profile_absence_and_cleanup_state_are_separate_from_save_failure(self):
+        for mode, cleanup in (('profile-absent', 'Absent'), ('cleanup-active', 'Active'),
+                              ('cleanup-unknown', 'Unknown'), ('no-collector-names', 'Unknown'),
+                              ('status-failure', 'Unknown'), ('status-timeout', 'Unknown'),
+                              ('status-command-failure', 'Unknown')):
+            with self.subTest(mode=mode):
+                result = self.worker(mode=mode)
+                self.assertEqual(result['receipt']['reason'], 'OwnedSessionSaveFailed')
+                self.assertEqual(result['receipt']['cleanupState'], cleanup)
+                if mode == 'profile-absent':
+                    self.assertEqual(result['receipt']['profileState'], 'Absent')
+                if mode in ('no-collector-names', 'status-failure', 'status-timeout', 'status-command-failure'):
+                    self.assertFalse(result['collectorQueries'])
+
+    def test_start_timeout_with_failed_save_still_cleans_only_verified_owned_collectors(self):
+        result = self.worker(mode='start-timeout-cleanup')
+        receipt = result['receipt']
+        self.assertEqual(receipt['status'], 'Incomplete')
+        self.assertIsNone(receipt['startedUtc'])
+        self.assertFalse(receipt['headerValidated'])
+        self.assertEqual(receipt['cleanupState'], 'Absent')
+        self.assertTrue(result['collectorQueries'])
+        for command in result['commands']:
+            if command[0] in ('-start', '-stop', '-cancel', '-status'):
+                self.assertEqual(command[-2:], ['-instancename', receipt['instanceName']])
+
+    def test_changed_profile_hash_prevents_start(self):
+        for setup in (
+            "$c.profileSha256='b'*64; Write-TrialWprJson (Join-Path $run 'control.json') $c; $hash=(Get-FileHash (Join-Path $run 'control.json')).Hash",
+            r"""$global:profileReads=0; $global:realProfile=Get-TrialWprProfile
+function Get-TrialWprProfile { $global:profileReads++; $p=$global:realProfile | Select-Object *; if ($global:profileReads -gt 1) { $p.Sha256='b'*64 }; return $p }""",
+        ):
+            result = self.worker(setup)
+            self.assertEqual(result['receipt']['reason'], 'ProfileIdentityChanged')
+            self.assertEqual(result['receipt']['status'], 'Unavailable')
+            self.assertFalse(any(c[0] in ('-start', '-stop', '-cancel', '-status') for c in result['commands']))
+
+    def test_native_owned_collector_query_interop_compiles_without_invoking_etw(self):
+        result = self.run_ps(r"""
+. (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWprWorker.ps1')
+$definition=(Get-Command Get-TrialWprCollectorQueryCode).ScriptBlock.ToString()
+$source=[regex]::Match($definition,"(?s)@'(.*?)'@").Groups[1].Value
+Add-Type -TypeDefinition $source -ErrorAction Stop
+@{compiled=($null -ne ('PZTrialEtw.Collector' -as [type]));query=($null -ne [PZTrialEtw.Collector].GetMethod('Query'))}|ConvertTo-Json -Compress
+""")
+        self.assertEqual(result, {'compiled': True, 'query': True})
+
+    def test_no_profile_hresult_does_not_parse_localized_or_unrelated_error_prose(self):
+        result = self.run_ps(r"""
+. (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWprWorker.ps1')
+@{localized=(Test-TrialWprNoProfiles @{exitCode=-984076288;timedOut=$false;output='Aucun profil'});
+ unrelated=(Test-TrialWprNoProfiles @{exitCode=5;timedOut=$false;output='There are no trace profiles running.'});
+ unknown=(Test-TrialWprNoProfiles @{exitCode=$null;timedOut=$false;output='There are no trace profiles running.'});
+ timeout=(Test-TrialWprNoProfiles @{exitCode=-984076288;timedOut=$true;output=''})} | ConvertTo-Json -Compress
+""")
+        self.assertEqual(result, {'localized': True, 'unrelated': False, 'unknown': False, 'timeout': False})
+
+    def test_collector_identity_parser_rejects_other_instances_and_malformed_names(self):
+        result = self.run_ps(r"""
+. (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWprWorker.ps1')
+$id='PZTrial_'+('a'*32)
+$text="Collecteur : WPR_initiated_$($id)_System`nCollecteur : WPR_initiated_PZTrial_$('b'*32)_Graphics`nError : prefix WPR_initiated_$($id)_Other`nCollecteur : WPR_initiated_$($id)_Bad:Name`nCollecteur : WPR_initiated_$($id)_$('X'*129)"
+$r=@{exitCode=0;timedOut=$false;output=$text}
+$names=@(Get-TrialWprOwnedCollectors $r $id)
+$r.exitCode=5; $failed=@(Get-TrialWprOwnedCollectors $r $id)
+$global:queries=0
+function Get-TrialWprCollectorQueryCode { $global:queries++; return 4201 }
+$invalid=Get-TrialWprCollectorState @('unrelated logger') $id
+@{names=$names;failed=$failed;invalid=$invalid.state;queries=$global:queries}|ConvertTo-Json -Compress
+""")
+        self.assertEqual(result, {'names': ['WPR_initiated_PZTrial_' + 'a'*32 + '_System'],
+                                  'failed': [], 'invalid': 'Unknown', 'queries': 0})
 
     def test_invalid_trace_never_claims_hash_or_complete(self):
         receipt = self.worker(mode='invalid-trace')['receipt']
@@ -295,10 +436,22 @@ Invoke-TrialWprCommand (Join-Path $env:PZ_WPR_ROOT 'fake-wpr') @('-help','advanc
         self.assertLess(result['elapsedMs'], 2500)
 
 
+    def test_command_output_cap_marks_truncation_instead_of_trusting_partial_names(self):
+        executable = self.root / 'fake-wpr'
+        executable.write_text('#!/bin/sh\n/usr/bin/yes x | /usr/bin/head -c 20000\n')
+        executable.chmod(0o700)
+        result = self.run_ps(r"""
+. (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWprWorker.ps1')
+$r=Invoke-TrialWprCommand (Join-Path $env:PZ_WPR_ROOT 'fake-wpr') @('-status')
+@{length=$r.output.Length;truncated=$r.outputTruncated;code=$r.exitCode}|ConvertTo-Json -Compress
+""")
+        self.assertEqual(result, {'length': 8192, 'truncated': True, 'code': 0})
+
     def test_size_watchdog_saves_trace_but_reports_partial(self):
         receipt = self.worker(mode='size')['receipt']
         self.assertEqual(receipt['status'], 'Incomplete')
         self.assertEqual(receipt['stopCause'], 'SizeWatchdog')
+        self.assertEqual(receipt['observedTempBytes'], 2147483648)
         self.assertTrue(receipt['headerValidated'])
 
     def test_live_process_identity_rejects_wrong_path_and_reused_pid_time(self):

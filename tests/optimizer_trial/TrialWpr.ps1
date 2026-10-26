@@ -47,6 +47,12 @@ function Get-TrialWprTool {
     if (Test-Path -LiteralPath $tool -PathType Leaf) { return [IO.Path]::GetFullPath($tool) }
     return $null
 }
+function Get-TrialWprProfile {
+    $path=Join-Path $PSScriptRoot 'PZTrial.wprp'
+    Assert-TrialWprPath $path
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'WPR profile asset missing.' }
+    return [pscustomobject]@{Path=$path;Selector=($path+'!PZTrial.light');Sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+}
 function Get-TrialWprStatus($Context) {
     if (-not $Context.Worker) { return $Context.Status }
     try {
@@ -90,8 +96,8 @@ function Initialize-TrialWprCapture([string]$Directory,$Process,$Plan) {
     $status=[pscustomobject][ordered]@{format=1;captureId=$captureId;instanceName=('PZTrial_'+$captureId);targetPid=$Process.Id;
         processStartUtc=$Plan.ProcessStartUtc;status='Requested';reason=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');
         startRequestedUtc=$null;startedUtc=$null;stopRequestedUtc=$null;stoppedUtc=$null;helperPid=$null;helperStartUtc=$null;
-        profiles=@('GeneralProfile','GPU');loggingMode='File';traceFile='drive.etl';traceBytes=$null;traceSha256=$null;headerValidated=$false;
-        limitations='System-wide ETW with file-writing overhead. No heap/allocation profile. Lost-event evidence remains raw/localized; zero loss is not inferred.'}
+        profiles=@('PZTrial.light');loggingMode='File';traceFile='drive.etl';traceBytes=$null;traceSha256=$null;headerValidated=$false;
+        limitations='System-wide ETW with file-writing overhead. Sampled CPU/ReadyThread stacks only; no CSwitch/IO/graphics stacks or heap/allocation profile. Lower volume is a candidate, not a measured overhead claim. Lost-event evidence remains raw/localized; zero loss is not inferred.'}
     $context=[pscustomobject]@{Directory=$run;CaptureId=$captureId;InstanceName=$status.instanceName;TargetPid=$Process.Id;
         ProcessStartUtc=$Plan.ProcessStartUtc;ExpectedExecutable=$Plan.Java;TargetProcess=$Process;StatusPath=(Join-Path $run 'wpr-status.json');
         Status=$status;LocalFailure=$null;Worker=$null;WorkerStartUtc=$null;StartSent=$false;StopSent=$false}
@@ -103,7 +109,8 @@ function Initialize-TrialWprCapture([string]$Directory,$Process,$Plan) {
         $seconds=180
         if ($Plan.PSObject.Properties['WprDurationSeconds']) { $seconds=[int]$Plan.WprDurationSeconds }
         $seconds=[Math]::Max(30,[Math]::Min(240,$seconds))
-        $control=[ordered]@{format=1;captureId=$captureId;targetPid=$Process.Id;processStartUtc=$Plan.ProcessStartUtc;expectedExecutable=[IO.Path]::GetFullPath($Plan.Java);
+        $profile=Get-TrialWprProfile
+        $control=[ordered]@{profileSha256=$profile.Sha256;format=1;captureId=$captureId;targetPid=$Process.Id;processStartUtc=$Plan.ProcessStartUtc;expectedExecutable=[IO.Path]::GetFullPath($Plan.Java);
             parentPid=$PID;parentStartUtc=$parent.StartTime.ToUniversalTime().ToString('o');parentExecutable=$parent.Path;
             captureSeconds=$seconds;prepareSeconds=900;maximumTempBytes=2147483648}
         $controlPath=Join-Path $run 'control.json'

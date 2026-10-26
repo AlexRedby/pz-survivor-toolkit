@@ -290,8 +290,37 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
     [IO.File]::Copy($Source, $Destination, $false)
 }
 
+function Get-TrialWprTempInventory([string]$Directory) {
+    # Metadata only. Raw temporary traces can be multi-gigabyte, incomplete and
+    # still changing; never mistake this inventory for a usable/captured ETL.
+    $entries=@(); $issues=@(); $visited=0
+    $root=Join-Path $Directory 'temp'
+    try {
+        $null=Assert-TrialResultPath $root
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) { return [pscustomobject]@{files=@();issues=@()} }
+        $queue=New-Object 'Collections.Generic.Queue[string]'
+        $queue.Enqueue($root)
+        while ($queue.Count -gt 0 -and $visited -lt 256) {
+            $folder=$queue.Dequeue()
+            foreach ($item in @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction Stop | Select-Object -First (257-$visited))) {
+                $visited++
+                if ($visited -gt 256) { $issues+='WPR temporary inventory entry limit reached'; break }
+                try {
+                    $path=Assert-TrialResultPath $item.FullName
+                    if ($item.PSIsContainer) { $queue.Enqueue($path); continue }
+                    if ($item.Extension -ine '.etl') { continue }
+                    $relative='temp/'+$path.Substring($root.Length+1).Replace('\','/')
+                    $entries+=@([pscustomobject]@{relativePath=$relative;bytes=$item.Length;included=$false;verification='Unverified temporary ETL; retained only in the original run folder'})
+                } catch { $issues+='Unsafe/unreadable WPR temporary entry omitted' }
+            }
+        }
+        if ($queue.Count -gt 0) { $issues+='WPR temporary inventory traversal incomplete' }
+    } catch { $issues+='WPR temporary inventory unavailable' }
+    return [pscustomobject]@{files=@($entries);issues=@($issues)}
+}
+
 function Get-TrialWprResult($Run, $Capture) {
-    $result=[pscustomobject]@{status='Unknown'; directory=$null; statusPath=$null; path=$null; sha256=$null; bytes=$null; verified=$false; captureCoverage='Unknown'; issues=@()}
+    $result=[pscustomobject]@{status='Unknown'; directory=$null; statusPath=$null; path=$null; sha256=$null; bytes=$null; verified=$false; captureCoverage='Unknown'; reason=$null; saveFailure=$null; cleanupState='Unknown'; profileState='Unknown'; profileSha256=$null; observedTempBytes=$null; temporaryFiles=@(); issues=@()}
     $wrapperPath=Join-Path $Run.Directory 'wpr-capture.json'
     if (-not (Test-Path -LiteralPath $wrapperPath -PathType Leaf)) { $result.issues += 'Missing wpr-capture.json'; return $result }
     try {
@@ -321,8 +350,16 @@ function Get-TrialWprResult($Run, $Capture) {
         }
         $result.directory=$relative
         $result.status=[string](Get-TrialResultProperty $receipt 'status')
+        foreach ($field in @('reason','saveFailure','cleanupState','profileState','profileSha256','observedTempBytes')) {
+            $value=Get-TrialResultProperty $receipt $field
+            if ($null -ne $value) { $result.$field=$value }
+        }
         if ($saved) { $result.statusPath=$statusPath } else { $result.issues += 'Missing WPR wpr-status.json' }
         if ($result.status -notin @('Complete','Unavailable','Incomplete')) { $result.issues += 'WPR did not reach a final status' }
+        if ($result.status -ne 'Complete') {
+            $temporary=Get-TrialWprTempInventory $directory
+            $result.temporaryFiles=@($temporary.files); $result.issues+=@($temporary.issues)
+        }
         $path=Assert-TrialResultPath (Join-Path $directory 'drive.etl')
         if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path -Force).Length -le 0) {
             $result.issues += 'Missing/empty WPR drive.etl'; return $result
@@ -337,7 +374,7 @@ function Get-TrialWprResult($Run, $Capture) {
                 -not (Get-TrialResultProperty $receipt 'stoppedUtc')) { throw 'Invalid completed WPR header/hash/bytes/stop receipt' }
             $null=ConvertTo-TrialResultUtc (Get-TrialResultProperty $receipt 'stoppedUtc')
             if (-not $saved) { throw 'Completed WPR lacks its saved status receipt' }
-            foreach ($field in @('status','traceFile','traceSha256','traceBytes','headerValidated','startedUtc','stopRequestedUtc','stoppedUtc')) {
+            foreach ($field in @('status','traceFile','traceSha256','traceBytes','headerValidated','startedUtc','stopRequestedUtc','stoppedUtc','profileSha256','cleanupState','profileState')) {
                 if ((Get-TrialResultProperty $saved $field) -cne (Get-TrialResultProperty $receipt $field)) { throw ('WPR wrapper/status mismatch: '+$field) }
             }
             $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -486,7 +523,7 @@ function New-TrialResultsBundle {
                     $comparisonWarnings += ($mode+' saved target settings are mismatched/unknown; inspect capture-readiness.json and the between-run settings comparison. No specific FPS limit is required. Live gameplay settings are not proven.')
                 }
             }
-            $wprSummary=[pscustomobject]@{status='NotRequested'; receiptFile=$null; statusFile=$null; file=$null; sha256=$null; bytes=$null; verified=$false; verification='Header receipt, file bytes and SHA256 integrity only; captureCoverage is checked separately.'; captureCoverage='Unknown'; unverifiedFiles=@()}
+            $wprSummary=[pscustomobject]@{status='NotRequested'; receiptFile=$null; statusFile=$null; file=$null; sha256=$null; bytes=$null; verified=$false; verification='Header receipt, file bytes and SHA256 integrity only; captureCoverage is checked separately.'; captureCoverage='Unknown'; reason=$null; saveFailure=$null; cleanupState='Unknown'; profileState='Unknown'; profileSha256=$null; observedTempBytes=$null; temporaryFiles=@(); unverifiedFiles=@()}
             if ($diagnosticVersion -ge 3 -or (Test-Path -LiteralPath (Join-Path $run.Directory 'wpr-capture.json') -PathType Leaf)) {
                 if ($diagnosticVersion -ge 3) {
                     if ((Get-TrialResultProperty $diagnostic 'extendedStatus') -cne 'Complete') { $issues += 'Extended diagnostics did not complete' }
@@ -496,6 +533,8 @@ function New-TrialResultsBundle {
                 $issues += @($wpr.issues)
                 $wprSummary.status=$wpr.status
                 $wprSummary.captureCoverage=$wpr.captureCoverage
+                $wprSummary.temporaryFiles=@($wpr.temporaryFiles)
+                foreach ($field in @('reason','saveFailure','cleanupState','profileState','profileSha256','observedTempBytes')) { $wprSummary.$field=$wpr.$field }
                 $wprSummary.receiptFile=$artifactReferences['wpr-capture.json']
                 if ($wpr.statusPath) {
                     $relative='Runs/'+$mode+'/'+$wpr.directory+'/wpr-status.json'
@@ -588,6 +627,9 @@ function New-TrialResultsBundle {
             if (Test-Path -LiteralPath $source -PathType Leaf) { Copy-TrialResultFile $source (Join-Path $stage $name) }
             else { $missingPackage += $name }
         }
+        # Optional for legacy packages; the receipt records the profile hash actually used.
+        $profileSource=Join-Path $root 'PZTrial.wprp'
+        if (Test-Path -LiteralPath $profileSource -PathType Leaf) { Copy-TrialResultFile $profileSource (Join-Path $stage 'PZTrial.wprp') }
         $status = 'Complete'
         if ($missingPackage.Count -or @($runSummaries | Where-Object { $_.status -ne 'Complete' }).Count) { $status = 'Incomplete' }
         $summary = [pscustomobject]@{ format = 1; createdUtc = [DateTime]::UtcNow.ToString('o'); status = $status; runs = $runSummaries; missingPackageFiles = @($missingPackage); settingsComparison=$settingsComparison; comparisonWarnings=@($comparisonWarnings); captureAlignment = 'CapFrameX assignments and saved options are recorded per run; live settings, capture timing and gameplay/route equivalence require analysis. WPR uses file mode with recording overhead; zero lost events are not inferred.' }

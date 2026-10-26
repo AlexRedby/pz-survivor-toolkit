@@ -115,10 +115,15 @@ class LocalCandidatePackage(unittest.TestCase):
             self.assertEqual(hashlib.sha256(shipped_dashboard.read_bytes()).hexdigest(), receipt['dashboard_sha256'])
             self.assertEqual(profile_revision, receipt['optimizer_candidate']['profile_source_revision'])
             self.assertNotEqual(profile_revision, receipt['source_revision'])
+            self.assertEqual('3.2', receipt['diagnostics_revision'])
+            self.assertEqual(hashlib.sha256((output / 'PZTrial.wprp').read_bytes()).hexdigest(),
+                             receipt['wpr_profile']['sha256'])
             expected = output / 'mods' / BRIDGE / '42/media/lua/client/PZOptimizerTrialExpectedMods.lua'
             self.assertIn('revision=' + json.dumps(candidate), expected.read_text())
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(receipt, json.loads(bundle.read('PZDrivingOptimizerTrial/build-receipt.json')))
+                self.assertEqual((output / 'PZTrial.wprp').read_bytes(),
+                                 bundle.read('PZDrivingOptimizerTrial/PZTrial.wprp'))
 
 
 class ExplicitJavaSource(unittest.TestCase):
