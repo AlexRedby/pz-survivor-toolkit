@@ -634,7 +634,11 @@ local function rowsHave(rows,item)
     return false
 end
 local function setupHiddenRefresh(clean)
-    CleanUI_setCleanInventoryUIEnabled(clean)
+    -- Preserve the first native instance: an unchanged setter still fires
+    -- CleanUI toggle callbacks and would mask cold-start installation failures.
+    local previous=CleanUI_isCleanInventoryUIEnabled()
+    print('[INVENTORY_SCREEN] HIDDEN_MODE requested='..(clean and 'clean' or 'vanilla')..' previous='..tostring(previous)..' fixtureToggle='..tostring(previous~=clean))
+    if previous ~= clean then CleanUI_setCleanInventoryUIEnabled(clean) end
     local loot=getPlayerLoot(0)
     local target=loot.inventoryPane
     local proximity=require 'BetterContainers/Proximity'

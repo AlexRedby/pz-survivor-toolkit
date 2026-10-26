@@ -299,10 +299,10 @@ function Media.install()
  local trusted=Proof.matches('media/lua/shared/TimedActions/ISDeviceMediaAction.lua',553760800,nil,true)
   and Proof.matches('media/lua/shared/TimedActions/ISDeviceBatteryAction.lua',1917423720,nil,true)
   and Proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
- local methods,binding={}
+ local methods,ownMethods,binding={},{}
  for name,callback in pairs(class)do
   if type(callback)=='function'then
-   methods[name]=callback
+   methods[name],ownMethods[name]=callback,true
    if name~='derive'then
     local approved=false
     if name=='isValid'and from(callback,'TVMediaAction.lua')
@@ -318,7 +318,7 @@ function Media.install()
  end
  for _,name in ipairs(lifecycle)do
   local callback=class[name];methods[name]=callback or false
-  if callback and not rawget(class,name)then
+  if callback and not ownMethods[name]then
    trusted=trusted and (from(callback,'ISBaseTimedAction.lua')
     or (name=='begin'or name=='stop')and from(callback,'ActionQueue.lua'))
   end

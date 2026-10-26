@@ -57,9 +57,13 @@ local function nativeClass(action, kind)
         end
     end
     if not Proof.closure(base.new,"ISBaseTimedAction.lua") then return false end
+    -- Kahlua rawget searches ancestors; only this own-field pass proves
+    -- child ownership and distinguishes inherited lifecycle callbacks.
+    local methods={}
+    for name,callback in pairs(class) do if type(callback)=="function" then methods[name]=callback end end
     local seen = {}
     for _, name in ipairs(own[kind]) do
-        local callback=rawget(class,name)
+        local callback=methods[name]
         if type(callback)~="function" or seen[callback] or action[name]~=callback then return false end
         seen[callback]=true
         if not Proof.closure(callback,files[kind]) then
@@ -76,13 +80,13 @@ local function nativeClass(action, kind)
             if not allowed or not policy or not policy.matchesNative(action) then return false end
         end
     end
-    for name,callback in pairs(class) do
-        if type(callback)=="function" and name~="derive" and not seen[callback] then return false end
+    for name,callback in pairs(methods) do
+        if name~="derive" and not seen[callback] then return false end
     end
     for _,name in ipairs(lifecycle) do
         local callback=class[name]
         if action[name]~=callback then return false end
-        if callback and not rawget(class,name) and not Proof.closure(callback,"ISBaseTimedAction.lua") then
+        if callback and not methods[name] and not Proof.closure(callback,"ISBaseTimedAction.lua") then
             local policy=Toolkit.ActionQueuePolicy
             if (name~="begin" and name~="stop") or not Proof.closure(callback,"ActionQueue.lua")
                 or not policy or not policy.matchesNative(action) then return false end

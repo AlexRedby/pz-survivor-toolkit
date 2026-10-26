@@ -1,3 +1,8 @@
+# Storage performance stabilization
+
+- [ ] Compare frame times and Lua workload beside dense storage on the current build, with own inventory open/loot closed and both windows closed; retain visible-loot and highlight/Wishlist controls. The Kahlua regression and current 45-mod native hidden/reopen checks establish the refresh fix, not an FPS improvement. Do not reuse old 52-mod/Organized Categories measurements as current-build evidence.
+- [ ] Qualify storage movement and related inventory interactions in isolated macOS SP/menu Host with the complete current 67-mod selection after the 22 unavailable sources are resolved; the available 45-mod native run is reduced coverage.
+
 # Cart motion full-pack compatibility
 
 - [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.

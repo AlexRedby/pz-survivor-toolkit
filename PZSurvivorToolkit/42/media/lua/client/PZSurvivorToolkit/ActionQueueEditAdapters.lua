@@ -4,10 +4,10 @@ local Adapters = {}
 PZSurvivorToolkit.ActionQueueEditAdapters = Adapters
 
 local class, base = ISRadioAction, ISBaseTimedAction
-local methods = {}
+local methods, ownMethods = {}, {}
 local lifecycle = {"new", "begin", "create", "adjustMaxTime", "isValid", "isValidStart", "waitToStart", "start", "update",
     "stop", "perform", "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceComplete", "forceStop", "forceCancel", "invoke"}
-for name, callback in pairs(class) do if type(callback) == "function" then methods[name] = callback end end
+for name, callback in pairs(class) do if type(callback) == "function" then methods[name], ownMethods[name] = callback, true end end
 for _, name in ipairs(lifecycle) do methods[name] = class[name] or false end
 local basePerform = base.perform
 local modes = {SetVolume = true, MuteMicrophone = true, SetChannel = true,
@@ -50,7 +50,7 @@ local function trusted(action)
     end
     for name, callback in pairs(methods) do
         if (action[name] or false) ~= callback then return false end
-        if callback and not rawget(class, name)
+        if callback and not ownMethods[name]
             and not Proof.closure(callback, "ISBaseTimedAction.lua")
             and not (adoptedBase[name] == callback and Proof.closure(callback, "ActionQueue.lua")) then return false end
     end

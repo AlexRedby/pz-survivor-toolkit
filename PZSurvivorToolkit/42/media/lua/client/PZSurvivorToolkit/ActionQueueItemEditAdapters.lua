@@ -54,9 +54,9 @@ if emptyEnabled then
     requiredOwn[fluidUtil]={"validateContainer","doWalkTo","getContainerOwner","getTransferActionTimePerLiter",
         "getMinTransferActionTime","getLuaFluidContainer"}
 end
-local function ownsRequired(owner,methods)
+local function ownsRequired(owner,own,methods)
     for _,name in ipairs(requiredOwn[owner]) do
-        local callback=rawget(owner,name)
+        local callback=own[name]
         if type(callback)~="function" or methods and callback~=methods[name] then return false end
     end
     return true
@@ -72,7 +72,7 @@ local function unique(methods)
     return true
 end
 for name,callback in pairs(base) do if type(callback)=="function" then baseMethods[name]=callback end end
-baselineSafe=ownsRequired(base) and unique(baseMethods)
+baselineSafe=ownsRequired(base,baseMethods) and unique(baseMethods)
 local files = {[transfer] = "ISInventoryTransferAction.lua", [lowlevel] = "ISTransferAction.lua", [drink] = "ISDrinkFluidAction.lua", [eat] = "ISEatFoodAction.lua"}
 if emptyEnabled then
     files[empty],files[fluidWrapper],files[fluidUtil]="ISFluidEmptyAction.lua","ISFluidContainer.lua","ISFluidUtil.lua"
@@ -82,7 +82,7 @@ local allowed = {[transfer] = {new=true,isValid=true,start=true,perform=true,sto
 for owner in pairs(files) do
     local methods,own = {},{}
     for name, callback in pairs(owner) do if type(callback) == "function" then methods[name],own[name] = callback,true end end
-    ownerSafe[owner]=ownsRequired(owner) and unique(methods)
+    ownerSafe[owner]=ownsRequired(owner,methods) and unique(methods)
     ownMethods[owner]=own
     if owner==transfer or owner==drink or owner==eat or owner==empty then for _, name in ipairs(lifecycle) do methods[name] = owner[name] or false end end
     snapshots[owner], approved[owner], guards[owner] = methods, {}, {}
@@ -163,7 +163,11 @@ local function unchanged(owner,action)
         or ISDrinkFluidAction~=drink or ISEatFoodAction~=eat then return false end
     if owner==empty and (not emptyEnabled or ISFluidEmptyAction~=empty or ISFluidContainer~=fluidWrapper
         or ISFluidUtil~=fluidUtil) then return false end
-    if not ownsRequired(base,baseMethods) then return false end
+    -- Kahlua rawget follows metatables. Enumerate own callbacks once per
+    -- current owner, never once for every required lifecycle method.
+    local currentBase={}
+    for name,callback in pairs(base) do if type(callback)=="function" then currentBase[name]=callback end end
+    if not ownsRequired(base,currentBase,baseMethods) then return false end
     local policy=Toolkit.ActionQueuePolicy
     if not policy or type(policy.matchesNative)~="function" or not policy.matchesNative(action) then return false end
     for name,callback in pairs(baseMethods) do
@@ -171,8 +175,16 @@ local function unchanged(owner,action)
             and not (baseHooks[name]==callback and Proof.closure(callback,"ActionQueue.lua")) then return false end
     end
     for _, candidate in ipairs(owner==transfer and {transfer,lowlevel} or owner==empty and {empty,fluidWrapper,fluidUtil} or {owner}) do
-        if not ownerSafe[candidate] or not ownsRequired(candidate,snapshots[candidate]) then return false end
+        if not ownerSafe[candidate] then return false end
         for _,guard in ipairs(guards[candidate]) do if not guarded(guard) then return false end end
+        local currentOwn={}
+        for name,callback in pairs(candidate) do
+            if type(callback)=="function" then
+                if snapshots[candidate][name]~=callback then return false end
+                currentOwn[name]=callback
+            end
+        end
+        if not ownsRequired(candidate,currentOwn,snapshots[candidate]) then return false end
         for name,callback in pairs(snapshots[candidate]) do
             if (candidate[name] or false)~=callback or name~="derive" and not origin(candidate,name,callback) then return false end
             if candidate==owner and (action[name] or false)~=callback then
@@ -180,7 +192,6 @@ local function unchanged(owner,action)
                 if name~="stop" or not bulk or not bulk.isGuardedTransfer or not bulk.isGuardedTransfer(action,callback) then return false end
             end
         end
-        for name,callback in pairs(candidate) do if type(callback)=="function" and snapshots[candidate][name]~=callback then return false end end
     end
     for name,callback in pairs(action) do
         if type(callback)=="function" and snapshots[owner][name]~=callback then

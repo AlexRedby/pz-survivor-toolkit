@@ -48,7 +48,7 @@ local childSources = {ISApplyBandage = 2803499221, ISDisinfect = 3741707122, ISS
 
 local function captureChild(name)
     local class = _G[name]
-    if not class or class.Type ~= name or type(rawget(class, "new")) ~= "function" then return end
+    if not class or class.Type ~= name then return end
     local snapshot = {class = class, methods = {}, base = {}}
     for key, value in pairs(class) do
         if type(value) == "function" then
@@ -56,6 +56,8 @@ local function captureChild(name)
             snapshot.methods[key] = value
         end
     end
+    -- The constructor must belong to this child, not resolve through its base.
+    if type(snapshot.methods.new) ~= "function" then return end
     for key, value in pairs(ISBaseTimedAction) do
         if type(value) == "function" then
             if not snapshot.methods[key] and class[key] ~= value then return end

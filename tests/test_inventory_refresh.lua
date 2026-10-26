@@ -1,4 +1,14 @@
 -- Source-backed movement scheduling + real BC aggregation; UI/world are doubles.
+-- B42.21 Kahlua rawget follows the table's metatable (KahluaTableImpl.rawget),
+-- unlike standard Lua 5.1. Use the engine lookup contract with native-style
+-- direct class metatables so an inherited refresh cannot look like an override.
+local luaRawget = rawget
+rawget = function(owner, key)
+    local value = luaRawget(owner, key)
+    if value ~= nil then return value end
+    local class = getmetatable(owner)
+    if class then return rawget(class, key) end
+end
 table.wipe=table.wipe or function(t)for key in pairs(t)do t[key]=nil end end
 local client=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'
 local function method(source,name)
@@ -214,6 +224,13 @@ local function run(source,label,bcSource)
     page.inventoryPane=setmetatable({mode='details',selected={},items={},
         refreshContainer=function()custom=custom+1 end},Pane)
     page:refreshBackpacks();assert(custom==1)
+    -- Even an own callback identical to the inherited one belongs to that
+    -- instance's owner; comparing resolved callback identity cannot prove absence.
+    page.inventoryPane=setmetatable({mode='details',selected={},items={},
+        refreshContainer=Pane.refreshContainer},Pane)
+    before=stats.rows
+    page:refreshBackpacks()
+    assert(stats.rows==before+1,'a genuine own callback must retain its immediate path')
     -- Failed discovery does not acknowledge a pose or leak a suppression scope.
     page.inventoryPane=setmetatable({mode='details',selected={},items={}},Pane)
     local oldSquare=page.lastSquare
@@ -426,7 +443,11 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
     end
     local bc=assert(loadstring(NativeBCProximitySource));setfenv(bc,env);proximity=bc()
     local body=assert(method(CleanUIInventoryPageSource,'refreshBackpacks'),'missing full CleanUI refreshBackpacks')
-    local full=assert(loadstring('local sqsContainers,sqsVehicles={},{}\n'..body));setfenv(full,env);full()
+    -- Keep upstream lexical helpers (including B42.21 container-title lookup)
+    -- in the same chunk as the extracted discovery body.
+    local preamble=assert(CleanUIInventoryPageSource:match('^(.-)\nISInventoryPage%s*=%s*ISPanel:derive'),
+        'missing CleanUI page class boundary')
+    local full=assert(loadstring(preamble..'\nlocal sqsContainers,sqsVehicles={},{}\n'..body));setfenv(full,env);full()
     local owner=assert(loadfile(client..'PZSurvivorToolkit/InventoryRefresh.lua'));setfenv(owner,env)
     local R=owner();R.install()
     local aggregate=proximity.GetItemContainer(0)

@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.278
+
+- **Fixed:** The hidden loot window now skips unused row, count and tooltip work during nearby-container discovery in B42.21. Kahlua's inherited `rawget` lookup had prevented the existing optimization from attaching. Live contents, explicit refreshes, selected items and reopening retain their existing behavior.
+- **Fixed:** Inventory tag drawing and generator completion restore inherited callbacks without pinning them to an instance. Queue editing/recovery now distinguishes genuinely owned action methods from inherited replacements when validating supported actions.
+
 ### 0.1.277
 
 - Fixed: reviewed WashFix All commands keep their body, clothing and bandage steps together when the action queue is disabled. Transformation completion retains its existing edit protection and native resource costs.

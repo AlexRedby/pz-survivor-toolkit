@@ -26,6 +26,7 @@ NATIVE_TAG_TESTS = (
 # An explicit request must not silently skip its required source checks. Other
 # source-dependent tests retain their own optional-input SKIP/fallback behavior.
 REQUIRED_INPUTS = {
+    "test_kahlua_own_fields.lua": ("native_action_root", "--game or --native-action-root"),
     "test_wash_water_rule.lua": ("native_action_root", "--game or --native-action-root, and --wishlist-workshop-root"),
     "test_wash_makeup_sync.lua": ("native_action_root", "--game or --native-action-root"),
     "test_torch_refill.lua": ("native_action_root", "--game or --native-action-root"),

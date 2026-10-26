@@ -53,12 +53,16 @@ end
 local function gatePane(page, state)
     local pane = page.inventoryPane
     if not pane or type(pane) ~= "table" then return false end
-    if state.pane == pane and rawget(pane, "refreshContainer") == state.gate then return true end
+    if state.pane == pane and pane.refreshContainer == state.gate then return true end
     -- Instance overrides belong to their owner. Supported panes inherit their
     -- refresh chain; resolve that chain at call time so later installers survive.
     local class = getmetatable(pane)
-    if rawget(pane, "refreshContainer") ~= nil or type(class) ~= "table"
-        or type(class.refreshContainer) ~= "function" then return false end
+    if type(class) ~= "table" or type(class.refreshContainer) ~= "function" then return false end
+    -- Kahlua rawget also searches the metatable. Enumerate own fields only
+    -- when attaching a gate; the retained gate takes the constant-time path above.
+    for name in pairs(pane) do
+        if name == "refreshContainer" then return false end
+    end
     if state.pane ~= pane then state.rowsPending = false end
     state.pane = pane
     state.gate = function(self, ...)
