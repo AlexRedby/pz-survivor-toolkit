@@ -16,6 +16,9 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.lwjgl.glfw.GLFW;
+import org.lwjglx.opengl.Display;
+import zombie.core.Core;
+import zombie.core.opengl.RenderThread;
 
 /** Fixture-only agent. The installed game and its class resources stay unchanged. */
 public final class ToolkitWindowBootstrap {
@@ -39,9 +42,67 @@ public final class ToolkitWindowBootstrap {
     private static boolean agentInstalled;
     private static volatile boolean displayTransformed;
     private static volatile boolean optimizedDisplay;
+    private static Thread glfwOwnerThread;
     private static long routedWindow;
     private static long pendingVisibleWindow;
     private static final Map<Long, int[]> creationSizes = new ConcurrentHashMap<>();
+
+    /** Measure after context creation, on the GLFW/render owner. No getters or sizes are changed. */
+    public static int[] observeViewport(int expectedWidth, int expectedHeight) throws Exception {
+        if (!enabled() || !agentInstalled || !displayTransformed) {
+            throw new IllegalStateException("Viewport observation requires owned native window isolation");
+        }
+        try (var stream = ToolkitWindowBootstrap.class.getClassLoader().getResourceAsStream("zombie/core/Core.class")) {
+            if (stream == null || !sha256(stream.readAllBytes()).equals(
+                    "8f5c69740c8bf2181123a831ab68d1dfb047453687cca6dc62c77816d76ab360")) {
+                throw new IllegalStateException("Unsupported Core viewport contract");
+            }
+        }
+        final int[][] result = new int[1][];
+        RenderThread.invokeOnRenderContext(() -> {
+            if (Thread.currentThread() != glfwOwnerThread) {
+                throw new IllegalStateException("Viewport observation is not on the GLFW owner thread");
+            }
+            long window = Display.getWindow();
+            if (window == 0 || window != routedWindow || routedCreationSize(window) == null
+                    || GLFW.glfwGetCurrentContext() != window || GLFW.glfwGetWindowMonitor(window) != 0) {
+                throw new IllegalStateException("Viewport observation requires the routed windowed handle");
+            }
+            int[] width = new int[1], height = new int[1], fw = new int[1], fh = new int[1];
+            GLFW.glfwGetWindowSize(window, width, height);
+            GLFW.glfwGetFramebufferSize(window, fw, fh);
+            int[] values = {width[0], height[0], fw[0], fh[0], Display.getWidth(), Display.getHeight(),
+                Core.getInstance().getScreenWidth(), Core.getInstance().getScreenHeight()};
+            GLFW.glfwGetWindowSize(window, width, height);
+            GLFW.glfwGetFramebufferSize(window, fw, fh);
+            if (window != Display.getWindow() || values[0] != width[0] || values[1] != height[0]
+                    || values[2] != fw[0] || values[3] != fh[0]) {
+                throw new IllegalStateException("Window changed during viewport observation");
+            }
+            System.out.println("[QUEUE_TEST] WINDOW_VIEWPORT pid=" + ProcessHandle.current().pid() + " glfw=" + window
+                + " contract=" + (optimizedDisplay ? "framebuffer" : "logical")
+                + " display_sha256=" + (optimizedDisplay ? DISPLAY_XD3I_SHA256 : DISPLAY_NATIVE_SHA256)
+                + " window=" + values[0] + "x" + values[1] + " framebuffer=" + values[2] + "x" + values[3]
+                + " display=" + values[4] + "x" + values[5] + " core=" + values[6] + "x" + values[7]);
+            validateViewport(optimizedDisplay, expectedWidth, expectedHeight, values);
+            result[0] = values;
+        });
+        if (result[0] == null) throw new IllegalStateException("Viewport observation did not complete");
+        return result[0];
+    }
+
+    static void validateViewport(boolean framebufferContract, int expectedWidth, int expectedHeight, int[] values) {
+        if (expectedWidth <= 0 || expectedHeight <= 0 || values.length != 8
+                || java.util.Arrays.stream(values).anyMatch(value -> value <= 0)
+                || values[0] != expectedWidth || values[1] != expectedHeight) {
+            throw new IllegalStateException("Actual logical window differs from prepared viewport");
+        }
+        int offset = framebufferContract ? 2 : 0;
+        if (values[4] != values[offset] || values[5] != values[offset + 1]
+                || values[6] != values[4] || values[7] != values[5]) {
+            throw new IllegalStateException("Display/Core differ from their observed viewport contract");
+        }
+    }
 
     private static String sha256(byte[] bytes) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -111,6 +172,7 @@ public final class ToolkitWindowBootstrap {
     public static void beforeGlfwInit() throws Exception {
         if (!enabled()) return;
         if (!agentInstalled) throw new IllegalStateException("Native window isolation agent is missing");
+        glfwOwnerThread = Thread.currentThread();
         var gate = gatePath();
         if (Files.exists(gate, LinkOption.NOFOLLOW_LINKS)
                 || Files.exists(visibleGatePath(), LinkOption.NOFOLLOW_LINKS)) {

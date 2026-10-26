@@ -76,6 +76,69 @@ public final class ToolkitWindowBootstrapChecks {
         }
     }
 
+    private static void viewportChecks() {
+        // Native Display exposes logical dimensions even on a larger framebuffer.
+        ToolkitWindowBootstrap.validateViewport(false, 1600, 900,
+            new int[] {1600, 900, 3200, 1800, 1600, 900, 1600, 900});
+        // Reviewed optimizer Display exposes the actual framebuffer dimensions.
+        ToolkitWindowBootstrap.validateViewport(true, 1600, 900,
+            new int[] {1600, 900, 3200, 1800, 3200, 1800, 3200, 1800});
+        for (boolean framebufferContract : new boolean[] {false, true}) {
+            ToolkitWindowBootstrap.validateViewport(framebufferContract, 1600, 900,
+                new int[] {1600, 900, 1600, 900, 1600, 900, 1600, 900});
+            // Acceptance follows observed sizes; it must not assume a scale of two.
+            int effectiveWidth = framebufferContract ? 2400 : 1600;
+            int effectiveHeight = framebufferContract ? 1350 : 900;
+            ToolkitWindowBootstrap.validateViewport(framebufferContract, 1600, 900,
+                new int[] {1600, 900, 2400, 1350,
+                    effectiveWidth, effectiveHeight, effectiveWidth, effectiveHeight});
+            int[] valid = framebufferContract
+                ? new int[] {1600, 900, 3200, 1800, 3200, 1800, 3200, 1800}
+                : new int[] {1600, 900, 3200, 1800, 1600, 900, 1600, 900};
+            for (int index = 0; index < valid.length; index++) {
+                for (int invalid : new int[] {0, -1}) {
+                    int[] changed = valid.clone();
+                    changed[index] = invalid;
+                    rejectViewport(framebufferContract, 1600, 900, changed);
+                }
+            }
+            for (int index : new int[] {0, 1, 4, 5, 6, 7}) {
+                int[] changed = valid.clone();
+                changed[index]++;
+                rejectViewport(framebufferContract, 1600, 900, changed);
+            }
+            for (int invalid : new int[] {0, -1}) {
+                rejectViewport(framebufferContract, invalid, 900, valid);
+                rejectViewport(framebufferContract, 1600, invalid, valid);
+            }
+            for (int length : new int[] {0, 7, 9}) {
+                rejectViewport(framebufferContract, 1600, 900, Arrays.copyOf(valid, length));
+            }
+        }
+        // A doubled cached Core value cannot stand in for a fresh 1x framebuffer.
+        rejectViewport(true, 1600, 900,
+            new int[] {1600, 900, 1600, 900, 3200, 1800, 3200, 1800});
+        rejectViewport(true, 1600, 900,
+            new int[] {1600, 900, 3200, 1800, 1600, 900, 1600, 900});
+        rejectViewport(false, 1600, 900,
+            new int[] {1600, 900, 3200, 1800, 3200, 1800, 3200, 1800});
+        for (int index : new int[] {2, 3}) {
+            int[] changed = {1600, 900, 3200, 1800, 3200, 1800, 3200, 1800};
+            changed[index]++;
+            rejectViewport(true, 1600, 900, changed);
+        }
+    }
+
+    private static void rejectViewport(boolean framebufferContract, int expectedWidth,
+            int expectedHeight, int[] values) {
+        try {
+            ToolkitWindowBootstrap.validateViewport(framebufferContract, expectedWidth, expectedHeight, values);
+            throw new AssertionError("Invalid viewport accepted: " + Arrays.toString(values));
+        } catch (IllegalStateException expected) {
+            // Invalid or incoherent dimensions must fail without initializing GLFW.
+        }
+    }
+
     private static void presentationChecks() {
         var pins = Map.of("hdr", "false", "hdrAuto", "false", "macPresent", "off", "macGlCore", "false",
             "macNativeFullscreen", "false", "borderlessFullscreen", "off");
@@ -188,9 +251,10 @@ public final class ToolkitWindowBootstrapChecks {
             if (!Arrays.equals(original, stream.readAllBytes())) throw new AssertionError("Class resource changed");
         }
         changedLifecycleChecks(original, expected);
+        viewportChecks();
         presentationChecks();
         ownedCreationSizeChecks();
         visibilityChecks();
-        System.out.println("PASS exact hooks, verifier, unknown fingerprint and lifecycle-count rejection, agent definition, original resource preserved, fail-closed visibility tokens, pinned optimizer presentation, exact owned creation geometry; GLFW not initialized");
+        System.out.println("PASS exact hooks, verifier, unknown fingerprint and lifecycle-count rejection, agent definition, original resource preserved, fail-closed visibility tokens, pinned optimizer presentation, exact owned creation geometry, observed viewport contracts; GLFW not initialized");
     }
 }

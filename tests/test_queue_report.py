@@ -14,6 +14,41 @@ from queue_checks import report
 
 
 class ViewportEvidenceTests(unittest.TestCase):
+    def test_optimizer_requires_measured_owned_logical_and_framebuffer_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = {'suite': 'health', 'kind': 'sp', 'window_size': [1600, 900],
+                         'options': {'optimizer_archive': '/explicit/reviewed.zip'}}
+            (root / 'execution.json').write_text(json.dumps({'processes': {'client1': {'pid': 123}}}))
+            path = root / 'client1-launch.log'
+            sha = 'da78691b554a0341827f841abc73a34b776ecf0fde845b15703cb855a8847d57'
+            prefix = '[QUEUE_TEST] WINDOW_ROUTED pid=123 glfw=456 mode=aerospace\n'
+            size = '[QUEUE_TEST] WINDOW_SIZE width=3200 height=1800\n'
+            receipt = ('[QUEUE_TEST] WINDOW_VIEWPORT pid=123 glfw=456 contract=framebuffer '
+                       f'display_sha256={sha} window=1600x900 framebuffer=3200x1800 '
+                       'display=3200x1800 core=3200x1800\n')
+            path.write_text(prefix + size + receipt)
+            result = report.window_size_evidence(root, selection)
+            self.assertFalse(result['issues'])
+            self.assertEqual(result['observed']['client1'], [3200, 1800])
+            self.assertEqual(result['geometry']['client1'][0]['logical'], [1600, 900])
+            # No scale factor is assumed: only actual measured relationships matter.
+            path.write_text((prefix + size + receipt).replace('3200', '2400').replace('1800', '1350'))
+            self.assertFalse(report.window_size_evidence(root, selection)['issues'])
+            for changed in ('', receipt + receipt, receipt.replace('pid=123', 'pid=999'),
+                            receipt.replace('glfw=456', 'glfw=999'), receipt.replace('window=1600', 'window=800'),
+                            receipt.replace('framebuffer=3200x1800', 'framebuffer=1600x900'),
+                            receipt.replace('display=3200', 'display=1600'), receipt.replace('core=3200', 'core=1600'),
+                            receipt.replace(sha, '0'*64), receipt.replace('contract=framebuffer', 'contract=logical')):
+                with self.subTest(receipt=changed):
+                    path.write_text(prefix + size + changed)
+                    self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+            path.write_text(size + receipt)
+            self.assertTrue(report.window_size_evidence(root, selection)['issues'], 'unrouted observation accepted')
+            path.write_text(prefix + size + receipt)
+            (root / 'execution.json').unlink()
+            self.assertTrue(report.window_size_evidence(root, selection)['issues'], 'missing process proof accepted')
+
     def test_all_clients_need_one_matching_startup_size(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
