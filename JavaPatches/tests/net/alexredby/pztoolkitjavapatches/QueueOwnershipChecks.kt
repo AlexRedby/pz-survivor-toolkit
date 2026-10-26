@@ -155,7 +155,7 @@ object QueueOwnershipChecks {
                 )
         val variants = listOf(
             null, "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth",
+            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle",
         )
         val failures = mutableListOf<String>()
         for (variant in variants) {
@@ -170,7 +170,7 @@ object QueueOwnershipChecks {
             }
         }
         check(failures.isEmpty()) { "Ownership variants failed: ${failures.joinToString()}" }
-        println("QUEUE_OWNERSHIP_CHECKS_PASS (8 fresh native Kahlua environments)")
+        println("QUEUE_OWNERSHIP_CHECKS_PASS (${variants.size} fresh native Kahlua environments)")
         kotlin.system.exitProcess(0)
     }
 }

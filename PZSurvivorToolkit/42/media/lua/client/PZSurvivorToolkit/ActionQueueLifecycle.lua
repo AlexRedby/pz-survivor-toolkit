@@ -6,6 +6,7 @@ local Lifecycle = {}
 Toolkit.ActionQueueLifecycle = Lifecycle
 
 local pending = setmetatable({}, {__mode = "k"})
+local phaseEntries = {} -- Live native callback frames only; removed by their matching finish.
 local finishStepCancellations = {} -- At most one current capability per queue; explicitly revoked below.
 local observers, observerIds = {}, {}
 local guardedStops, stopScope = {}, nil
@@ -291,43 +292,65 @@ function Lifecycle.takeStopCleanup(queue, action)
     end
 end
 
+-- Settings authorize a new episode, not the completion of callbacks already
+-- admitted. Reset, ownership, native identity and generation still revoke it.
+local function episodeOwned(queue, state)
+    local action = state.action
+    return owned(queue, action) and action.action == state.native
+        and (queue.toolkitOperationGeneration or 0) == state.generation
+        and not (action.character.isDead and action.character:isDead())
+end
+
 -- Called by the supported native LuaTimedActionNew boundary, never by individual action adapters.
 function Lifecycle.begin(action, phase)
     if phase ~= "perform" and phase ~= "complete" then return false end
     local observing = observe("begin", action, phase)
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and intent.begin(action,phase) then observing = true end
-    if not enabled(action) then return observing==true end
     local queue = action and ISTimedActionQueue.queues[action.character]
-    if not owned(queue, action) or not action.action then return observing==true end
-    local state = pending[queue]
-    if state and state.action ~= action then pending[queue] = nil; state = nil end
-    if not state then
-        if phase ~= "perform" then return observing==true end
-        state = {action = action, native = action.action, depth = 0, needsComplete = not isClient()}
+    local state = queue and owned(queue, action) and pending[queue]
+    if state and (state.action ~= action or not episodeOwned(queue, state)) then pending[queue] = nil; state = nil end
+    if not state and phase == "perform" and enabled(action) and owned(queue, action) and action.action
+        and not (action.character.isDead and action.character:isDead()) then
+        state = {action = action, native = action.action, generation = queue.toolkitOperationGeneration or 0,
+            depth = 0, needsComplete = not isClient()}
         pending[queue] = state
     end
-    state.depth = state.depth + 1
+    if state then state.depth = state.depth + 1 end
+    if not state and not observing then return false end
+    -- A reset/restart can nest another episode on the same Lua table. Its
+    -- callback must never receive the older episode's finish or failure.
+    local entries = phaseEntries[action] or {}
+    entries[#entries + 1] = {phase = phase, queue = queue, state = state}
+    phaseEntries[action] = entries
     return true
 end
 
 function Lifecycle.finish(action, phase, succeeded)
+    local entries = action and phaseEntries[action]
+    local entry = entries and entries[#entries]
+    if entry and entry.phase == phase then
+        table.remove(entries)
+        if #entries == 0 then phaseEntries[action] = nil end
+    else entry = nil end
     observe("finish", action, phase, succeeded)
     local intent=Toolkit.ActionQueueTidyIntent
     if intent then intent.finish(action,phase,succeeded) end
     local queue = action and ISTimedActionQueue.queues[action.character]
     local seal = queue and finishStepCancellations[queue]
     if seal and seal.action == action then finishStepCancellations[queue] = nil end
-    local state = queue and pending[queue]
-    if not state or state.action ~= action then return end
-    state.depth = math.max(0, state.depth - 1)
+    local state = entry and entry.state
+    queue = entry and entry.queue
+    if not state or pending[queue] ~= state then return end
+    if not episodeOwned(queue, state) then pending[queue] = nil; return end
+    state.depth = state.depth - 1
     state[phase] = true
     if not succeeded then state.failed = true end
 end
 
 function Lifecycle.deferCompletion(queue, action)
     local state = pending[queue]
-    if state and state.action == action and owned(queue, action) then
+    if state and state.action == action and episodeOwned(queue, state) then
         state.requested = true
         return true
     end
@@ -337,7 +360,7 @@ end
 -- Recovery must not infer unfinished work from a row awaiting native removal.
 function Lifecycle.completionEntered(queue, action)
     local state = pending[queue]
-    return state ~= nil and state.action == action
+    return state ~= nil and state.action == action and episodeOwned(queue, state)
 end
 
 function Lifecycle.reset(queue)
@@ -349,14 +372,14 @@ end
 function Lifecycle.current(character)
     local queue = ISTimedActionQueue.queues[character]
     local state = queue and pending[queue]
-    if state and state.depth > 0 and owned(queue, state.action) then return state.action end
+    if state and state.depth > 0 and episodeOwned(queue, state) then return state.action end
 end
 
 -- A native callback has finished, but its owned Lua continuation has not advanced.
 -- UI cancellation may still revoke this work after Java removes its action.
 function Lifecycle.deferredAction(queue)
     local state = queue and pending[queue]
-    if state and owned(queue, state.action) and enabled(state.action)
+    if state and episodeOwned(queue, state) and enabled(state.action)
         and not state.failed and state.requested and state.depth == 0 and state.perform
         and (not state.needsComplete or state.complete)
         and not queue.character:getCharacterActions():contains(state.native) then return state.action end
@@ -367,9 +390,13 @@ function Lifecycle.flush(queue)
     local state = pending[queue]
     if not state then return end
     local action = state.action
-    if not owned(queue, action) or not enabled(action) then
+    if not owned(queue, action) then
         pending[queue] = nil
         return
+    end
+    if not episodeOwned(queue, state) then
+        pending[queue] = nil
+        return "failed", action
     end
     if state.depth > 0 or not state.perform or state.needsComplete and not state.complete
         or queue.character:getCharacterActions():contains(state.native) then return "waiting", action end
@@ -382,7 +409,13 @@ function Lifecycle.flush(queue)
     local mediaState
     if media and media.tracks(action) then mediaState=media.continuationState(action)
     else mediaState=reading and reading.mediaCompletionState and reading.mediaCompletionState(queue, action) end
-    if mediaState == "waiting" then return "waiting", action end
+    if mediaState == "waiting" then
+        -- Legacy reading replication waits belong to the optional editor.
+        -- Native phase draining does not authorize a disabled asynchronous wait;
+        -- standalone tracked media retains its separate disabled-mode contract.
+        if not enabled(action) then pending[queue] = nil; return end
+        return "waiting", action
+    end
     local settlement = Toolkit.ActionQueueSettlement
     local cancellation = settlement and settlement.completionState(queue, action)
     if cancellation == "waiting" then return "waiting", action end

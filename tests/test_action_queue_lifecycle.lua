@@ -10,7 +10,7 @@ local Lifecycle = assert(loadfile(root .. "/PZSurvivorToolkit/42/media/lua/clien
 
 local function fixture()
     local present = {}
-    local character = {getCharacterActions = function() return {contains = function(_, action) return present[action] end} end}
+    local character = {isDead = function(self)return self.dead==true end, getCharacterActions = function() return {contains = function(_, action) return present[action] end} end}
     local action = {character = character, action = {}}
     present[action.action] = true
     local queue = {character = character, current = action, queue = {action}, started = 0}
@@ -174,6 +174,7 @@ do
     for _,name in ipairs({'getPlayerNum','getOnlineID','isDead','isAsleep','isLocalPlayer','pressedCancelAction','isPlayerMoving',
         'pressedMovement','isRunning','isSprinting','isAiming'})do methods[name]=actor[name]end
     local function read(path)
+        if NativeReadText then return NativeReadText(path)end
         local file=assert(io.open(path));local text=file:read('*a');file:close();return text
     end
     local queueSource=read(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua')
@@ -339,6 +340,7 @@ do
     function policy.record()end
     toolkit.ActionQueuePolicy=policy
     local function read(path)
+        if NativeReadText then return NativeReadText(path)end
         local file=assert(io.open(path));local text=file:read('*a');file:close();return text
     end
     local cancelSource=assert(read(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua')
@@ -460,3 +462,134 @@ assert(Lifecycle.flush(queue) == nil and queue.started == 0)
 queue, action, present = fixture()
 assert(not Lifecycle.begin(action, 'perform'), 'unobserved queue-off work must retain the native boundary')
 enabled = true
+
+
+-- Turning off the editor cannot discard a native completion already admitted
+-- while it was on. It does not grant disabled work a new completion owner.
+do
+    local function paid(when)
+        enabled,client=true,false
+        local q,a,exists=fixture()
+        assert(Lifecycle.begin(a,'perform'))
+        q:onCompleted(a)
+        if when=='during-perform'then enabled=false end
+        Lifecycle.finish(a,'perform',true)
+        if when=='after-perform'then enabled=false end
+        assert(Lifecycle.begin(a,'complete'),'admitted SP complete lost its matching phase after disabling')
+        Lifecycle.finish(a,'complete',true)
+        if when=='after-complete'then enabled=false end
+        assert(not Lifecycle.begin({character=a.character,action={}},'perform'),'foreign callback acquired the disabled queue')
+        exists[a.action]=nil
+        assert(Lifecycle.deferredAction(q)==nil,'disabled editor acquired deferred edit rights')
+        assert(Lifecycle.flush(q)=='completed'and q.started==1,'disabling discarded an already-paid completion')
+        assert(Lifecycle.flush(q)==nil and q.started==1,'paid completion replayed')
+    end
+    for _,when in ipairs({'during-perform','after-perform','after-complete'})do paid(when)end
+    enabled=false
+    local q,a=fixture()
+    assert(not Lifecycle.begin(a,'perform')and not Lifecycle.deferCompletion(q,a),'fresh disabled work acquired an episode')
+    q:onCompleted(a)
+    assert(q.started==1 and Lifecycle.flush(q)==nil,'fresh disabled work lost native advancement')
+    enabled=true
+end
+
+-- A native/reset boundary during a callback revokes that exact episode. Even
+-- a nested new episode on the same Lua table cannot consume the old finish.
+do
+    enabled,client=true,true
+    for _,change in ipairs({'native','generation','reset','death'})do
+        local q,a,exists=fixture()
+        a.character.isDead=function(self)return self.dead==true end
+        assert(Lifecycle.begin(a,'perform'));q:onCompleted(a)
+        enabled=false
+        if change=='native'then a.action={}
+        elseif change=='generation'then q.toolkitOperationGeneration=1
+        elseif change=='reset'then Lifecycle.reset(q)
+        else a.character.dead=true end
+        assert(not Lifecycle.completionEntered(q,a),change..' transferred completion classification')
+        Lifecycle.finish(a,'perform',true)
+        exists[a.action]=nil
+        assert(Lifecycle.flush(q)~='completed'and q.started==0,change..' transferred an old episode')
+        assert(not Lifecycle.deferCompletion(q,a),change..' retained an old completion owner')
+        Lifecycle.reset(q);enabled=true
+    end
+    local q,a,exists=fixture()
+    assert(Lifecycle.begin(a,'perform'));q:onCompleted(a)
+    enabled=false;Lifecycle.reset(q);a.action={};exists[a.action]=true
+    assert(not Lifecycle.begin(a,'complete'),'reset transferred SP complete into a disabled new native action')
+    enabled=true
+    assert(Lifecycle.begin(a,'perform'));q:onCompleted(a)
+    -- Complete the nested replacement before the failed old callback returns.
+    Lifecycle.finish(a,'perform',true)
+    Lifecycle.finish(a,'perform',false)
+    exists[a.action]=nil
+    assert(Lifecycle.flush(q)=='completed'and q.started==1,'old failure poisoned the independent new episode')
+    Lifecycle.reset(q)
+end
+
+-- Exercise the unchanged native Base.perform/onCompleted/tick algorithms and
+-- current Toolkit wrappers. Java removal and paid effects are explicit doubles.
+if NativeActionRoot then
+    local f=assert(loadfile(root..'/tests/support/action_queue_native.lua'))()
+    local settings,remote=true,false
+    isClient=function()return remote end
+    PZSurvivorToolkit.Settings.actionQueue=function()return settings end
+    ISLogSystem={logAction=function()end}
+    DebugType={Action={warn=function()end}}
+    local toolkit=PZSurvivorToolkit
+    local lifecycle=f.project('ActionQueueLifecycle')
+    local function read(path)
+        if NativeReadText then return NativeReadText(path)end
+        local file=assert(io.open(path));local source=file:read('*a');file:close();return source
+    end
+    local source=read(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua')
+    local update=assert(source:match('(local function updateOperationState%(queue%).-Queue.updateOperationState = updateOperationState)'))
+    local completed=assert(source:match('(local completed = ISTimedActionQueue.onCompleted.-\nend)\n\nfunction Queue.move'))
+    local tick=assert(source:match('(local tick = ISTimedActionQueue.tick.-\nend)\n\nQueue.label'))
+    assert(loadstring('local Toolkit=...;local Queue,Operations,Policy={},{},{skipUnavailableHygiene=function()end};local Batch;'
+        ..'local function live(q)return not q.character:isDead()end;local function processPriority()end;'
+        ..'local function clearStop()end;local function craft()return false end;'
+        ..update..'\n'..completed..'\n'..tick))(toolkit)
+    for _,mode in ipairs({'sp','host'})do
+        for _,when in ipairs(mode=='sp'and {'control','disabled-start','during-perform','after-perform','after-complete'}or {'control','disabled-start','during-perform','after-perform'})do
+            settings,remote=when~='disabled-start',mode=='host'
+            local player=f.player;player.present={};player.setIsFarming=function()end
+            player.getCharacterActions=function()return {contains=function(_,native)return player.present[native]end}end
+            local parent=f.action(ISBaseTimedAction,{maxTime=1,Type='PaidParent'})
+            local tail=f.action(ISBaseTimedAction,{maxTime=1,Type='IndependentTail'})
+            local effects,starts,cancels=0,0,0
+            tail.begin=function(self)
+                starts=starts+1;self.action={isStarted=function()return true end,hasStalled=function()return false end}
+                player.present[self.action]=true
+            end
+            tail.forceCancel=function()cancels=cancels+1 end
+            parent.action={isStarted=function()return true end};player.present[parent.action]=true
+            parent.perform=function(self)
+                effects=effects+1
+                if when=='during-perform'then settings=false end
+                ISBaseTimedAction.perform(self)
+            end
+            parent.complete=function()effects=effects+10;return true end
+            local q=f.queue(parent,tail)
+            local admitted=lifecycle.begin(parent,'perform')
+            assert(admitted==(when~='disabled-start'),'fresh disabled native callback acquired an episode')
+            parent:perform();if admitted then lifecycle.finish(parent,'perform',true)end
+            assert(when=='disabled-start'and q.current==tail and starts==1 or q.current==parent and starts==0,
+                'native paid callback did not follow its admitted/native path')
+            if when=='after-perform'then settings=false end
+            if mode=='sp'then
+                local paired=lifecycle.begin(parent,'complete')
+                assert(paired==(when~='disabled-start'),'native complete did not follow its admitted/native path')
+                parent:complete();if paired then lifecycle.finish(parent,'complete',true)end
+            end
+            if when=='after-complete'then settings=false end
+            player.present[parent.action]=nil
+            q:tick();q:tick()
+            assert(effects==(mode=='sp'and 11 or 1)and starts==1 and cancels==0 and #q.queue==1 and q.current==tail,
+                mode..' '..when..': disabling lost/replayed paid effects or discarded the independent native tail')
+        end
+    end
+    print('Admitted lifecycle toggle checks passed with native perform/onCompleted/tick (SP and Host callback topology).')
+else
+    print('Admitted lifecycle native toggle checks SKIP (requires --game).')
+end

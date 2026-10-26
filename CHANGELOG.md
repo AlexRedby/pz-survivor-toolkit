@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.280
+
+- Fixed: disabling the action queue during an admitted native completion no longer drops its independent pending tail. The matching phases finish once; fresh disabled actions retain native handling, while resets and replaced native episodes revoke stale callbacks. Existing asynchronous media cancellation rules remain unchanged.
+
 ### 0.1.279
 
 - Fixed: shared callback and instance-field ownership checks now use Kahlua's actual own-field semantics in queued approach and fluid-completion guards, medical validation and temporary callback restoration. Inherited fields cannot masquerade as required owned state; native costs and effects are unchanged.
