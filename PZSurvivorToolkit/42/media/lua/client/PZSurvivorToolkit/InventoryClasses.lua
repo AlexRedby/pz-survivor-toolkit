@@ -7,6 +7,12 @@ function InventoryClasses.panes(install, cleanFirst)
     if cleanFirst then install(ISInventoryPane, ISInventoryPane ~= CleanUI_Vanilla_ISInventoryPane) end
 end
 
+function InventoryClasses.pages(install)
+    install(ISInventoryPage)
+    install(CleanUI_Clean_ISInventoryPage)
+    install(CleanUI_Vanilla_ISInventoryPage)
+end
+
 function InventoryClasses.onToggle(callback)
     if type(CleanUI_RegisterInventoryUiToggleCallback) == "function" then
         CleanUI_RegisterInventoryUiToggleCallback(callback)

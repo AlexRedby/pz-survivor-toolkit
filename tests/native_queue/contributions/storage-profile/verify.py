@@ -185,22 +185,43 @@ def verify(root,text):
     guards=receipts('SELECTION')
     if [gate.get('mode') for gate in guards]!=['clean','vanilla']:raise ValueError('Missing nonempty native selection checks')
     for gate in guards:
+        number(gate.get('nativeUpdates'),1,True)
         before=presentation(gate.get('before'));hidden=presentation(gate.get('hidden'));after=presentation(gate.get('after'));physical(gate.get('physical'))
         if before['count']<1 or not before['anchor'] or gate.get('preserved') is not True:raise ValueError('Selection check has no real physical selection/anchor')
         if gate['hidden']['pending'] or gate['after']['pending'] or any(value['signature']!=before['signature'] or value['anchor']!=before['anchor'] for value in (hidden,after)):
             raise ValueError('Selected hidden refresh lost live input/anchor')
-    if receipts('RESTORED')!=[{'wrappers':True,'cratesRemoved':12,'groundRemoved':200,'features':True,'phases':len(expected)}]:
+    fairness=receipts('FAIRNESS')
+    if [gate.get('control') for gate in fairness]!=['normal-only','wishlist-only']:
+        raise ValueError('Missing native moving-ground discovery controls')
+    for gate in fairness:
+        if any(gate.get(key)!=3000 for key in ('objects','eligible','outlinedDuringMovement')):
+            raise ValueError('Moving native pile was not completely discovered')
+        if gate.get('nativeActions')!=12 or gate.get('reached')!=12 or gate.get('teleports')!=0:
+            raise ValueError('Native fairness route did not complete')
+        if gate.get('disabledBefore') is not True or gate.get('observationalTiming') is not False:
+            raise ValueError('Fairness control/timing boundary changed')
+        number(gate.get('distance'),40);number(gate.get('tileChanges'),40,True)
+        number(gate.get('movementTicks'),100,True);number(gate.get('samples'),10,True)
+        number(gate.get('maxTileGapTicks'),1,True)
+        if not 12000<=number(gate.get('elapsedMs'))<90000:raise ValueError('Invalid fairness duration')
+        features=gate.get('features',{})
+        normal=gate['control']=='normal-only'
+        if any(features.get(key) is not value for key,value in (('normal',normal),('ground',not normal),('wanted',not normal))):
+            raise ValueError('Native fairness public feature control differs')
+        number(features.get('radius'),3)
+    if receipts('RESTORED')!=[{'wrappers':True,'cratesRemoved':12,'groundRemoved':200,'fairnessRemoved':3000,'features':True,'phases':len(expected)}]:
         raise ValueError('Owned objects/settings/list/helpers were not restored')
-    events=re.findall(r'\[STORAGE_PROFILE\] (SETUP|STARTUP|PHASE|REOPEN|GROUND|SELECTION|RESTORED|COMPLETE)\b',text)
-    if events!=['SETUP','STARTUP']+['PHASE','REOPEN']*16+['GROUND']+['PHASE','REOPEN']*5+['SELECTION','SELECTION','RESTORED','COMPLETE']:
+    events=re.findall(r'\[STORAGE_PROFILE\] (SETUP|STARTUP|PHASE|REOPEN|GROUND|SELECTION|FAIRNESS|RESTORED|COMPLETE)\b',text)
+    if events!=['SETUP','STARTUP']+['PHASE','REOPEN']*16+['GROUND']+['PHASE','REOPEN']*5+['SELECTION','SELECTION','FAIRNESS','FAIRNESS','RESTORED','COMPLETE']:
         raise ValueError('Profile lifecycle reordered')
-    return {'phases':rows,'startup':startup[0],'reopening':reopens,'selection':guards,'limits':[
+    return {'phases':rows,'startup':startup[0],'reopening':reopens,'selection':guards,'fairness':fairness,'limits':[
         'Actual native walking in a disposable SP sparse/dense corridor; not a user-save stutter reproduction or performance pass.',
         'OnTick and OnPreUIDraw wall-callback intervals are not GPU timing or FPS. Timings have 1 ms resolution.',
         'Discovery body is passive native begin/end timing and excludes outer tails; callback times are inclusive and must not be summed.',
-        'Native builder counts use the reviewed refreshContainerCount modulo 10001. No page/pane method is replaced; builder CPU is not isolated.',
+        'Native builder counts use the reviewed refreshContainerCount modulo 10001. Timed phases preserve page/pane refresh method identity; builder CPU is not isolated. The later selection guard temporarily observes pane.update.',
         'Visible header counts are checked against native recursive inventory counts; collapsed reopening uses native pin/update without setVisible, then checks actual owned-crate capacity tooltips in CleanUI.',
+        'Selection checks observe a natural pane update before the following draw. Moving-ground controls sample 3000 native objects during real walking for normal and Wishlist-only discovery; this correctness instrumentation is not a CPU/FPS measurement or proof that an old scanner would fail at the observed native walking cadence.',
         'Item setup and two-second warmups are excluded. Public highlighter state is read per tick; owned native outline flags are sampled at most once per second during controls.',
-        'Ground control world is fixed at 200 distinct native objects. Public settings and Wishlist requests are used and restored; no per-item mocks.',
+        'Timed ground controls use 200 distinct native objects; the later correctness-only movement controls add a separate 3000-object pile. Public settings and Wishlist requests are used and restored; no per-item mocks.',
         'Fixed sandbox starting month/day/time and viewport; weather and random actor appearance are not overridden and per-phase conditions are recorded.',
         'Programmatic UI setup and SP movement do not establish physical input, Host walking, Windows or all gameplay coverage.']}

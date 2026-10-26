@@ -75,6 +75,28 @@ class LuaRunner(unittest.TestCase):
         self.invoke("--test", name)
         self.assertEqual(self.executions, [(name, {"ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root})])
 
+    def test_bc_class_check_requires_both_integrations_and_binds_actual_hooks(self):
+        clean = self.root / 'clean/media/lua/client'
+        bc = self.root / 'bc/media/lua/client/BetterContainers'
+        for base, names in ((clean, ('ISUI/ISInventoryPane.lua', 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua')),
+                            (bc, ('Categorize/CategoryFilters.lua', 'Proximity/Proximity_ISInventoryPane.lua',
+                                  'Proximity/Proximity_ISInventoryPage.lua'))):
+            for name in names:
+                path = base / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name)
+        arguments = ['--cleanui-inventory-pane', str(clean / 'ISUI/ISInventoryPane.lua'),
+                     '--bc-filter-source', str(bc / 'Categorize/CategoryFilters.lua')]
+        for missing in ([], arguments[:2], arguments[2:]):
+            with self.assertRaises(SystemExit):
+                self.invoke('--test', 'test_bc_inventory_classes', *missing)
+        self.invoke('--test', 'test_bc_inventory_classes', *arguments)
+        self.assertEqual(len(self.executions), 1)
+        bound = self.executions[0][1]
+        self.assertEqual(bound['CleanUIVanillaInventoryPaneSource'], 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua')
+        self.assertEqual(bound['NativeBCProximityPaneSource'], 'Proximity/Proximity_ISInventoryPane.lua')
+        self.assertEqual(bound['NativeBCProximityPageSource'], 'Proximity/Proximity_ISInventoryPage.lua')
+
     def test_default_keeps_all_checks_and_reconnect_variants(self):
         self.invoke()
         names = [name for name, _ in self.executions]

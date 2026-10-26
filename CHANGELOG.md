@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.284
+
+- **Fixed:** Better Containers proximity behavior survives CleanUI interface switches, preserving aggregate selections, shared hover highlights and container-page policies for both interface classes.
+- **Fixed:** Ground highlighting keeps discovery progress while walking, so dense piles and items farther inside the radius do not remain undiscovered until the player stops. Normal and Wishlist highlighting retain the existing per-tick work limits.
+
 ### 0.1.283
 
 - **Fixed:** Collapsed loot windows defer unused item rows and container tooltips while keeping header counts and nearby contents current. Hover, pin and drag expansion restore fresh rows before input or drawing; active selections and marquee gestures retain immediate updates.

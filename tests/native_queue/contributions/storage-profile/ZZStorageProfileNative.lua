@@ -7,6 +7,8 @@ assert(selection.cases[1]=='walk','bounded walking profile required')
 local Client=require 'PZSurvivorWishlist/Client'
 local Proximity = require 'BetterContainers/Proximity'
 local Options = require 'BetterContainers/_Options'
+local Fairness = require 'StorageFairnessNative'
+local fairness
 local entered, starting, started, done = false, false, false, false
 local stage, since = 'setup', 0
 local objects, containers, restores = {}, {}, {}
@@ -74,6 +76,18 @@ local function observe(owner,key,label,inputs)
     end
     restores[#restores+1]={owner=owner,key=key,raw=raw,wrapper=wrapper}
     owner[key]=wrapper
+end
+local function observeGuardUpdate(pane)
+    local native=assert(pane.update)
+    local raw
+    for key,value in pairs(pane)do if key=='update'then raw=value;break end end
+    local wrapper=function(self,...)
+        local values=pack(native(self,...))
+        if guard and self==pane then guard.nativeUpdates=guard.nativeUpdates+1 end
+        return unpack(values,1,values.n)
+    end
+    restores[#restores+1]={owner=pane,key='update',raw=raw,wrapper=wrapper}
+    pane.update=wrapper
 end
 local function paneInput(pane)
     local inv=pane.inventory
@@ -401,11 +415,12 @@ local function distribution(values)
 end
 local function cleanup()
     restoreFeatures()
+    local fairnessRemoved=fairness and fairness:cleanup() or 0
     for _,item in ipairs(groundItems) do
         local object=assert(item:getWorldItem());object:getSquare():transmitRemoveItemFromSquare(object)
     end
     for _,object in ipairs(objects) do object:getSquare():RemoveTileObject(object) end
-    log('RESTORED',{wrappers=true,cratesRemoved=12,groundRemoved=#groundItems,features=true,phases=phaseNumber})
+    log('RESTORED',{wrappers=true,cratesRemoved=12,groundRemoved=#groundItems,fairnessRemoved=fairnessRemoved,features=true,phases=phaseNumber})
     log('COMPLETE');done=true;since=now()
 end
 local function nextPhase()
@@ -560,7 +575,7 @@ Events.OnPostUIDraw.Add(function()
             end
             assert(selected,'expanded native child required for selection guard')
             pane:restoreSelection({[selected]='item'});pane.firstSelect=index
-            guard={item=selected,before=presentationState(),mode=modes[guardIndex]}
+            guard={item=selected,before=presentationState(),mode=modes[guardIndex],nativeUpdates=0}
             assert(guard.before.selection.count>0 and guard.before.selection.anchor~='','nonempty native selection/anchor required')
             loot:setVisible(false)
             -- This is an ordinary explicit discovery request outside timing.
@@ -568,15 +583,19 @@ Events.OnPostUIDraw.Add(function()
             loot:refreshBackpacks()
             guard.hidden=presentationState()
             assert(not guard.hidden.pending,'selected hidden rows were deferred')
-            showLoot();stage='guard-check-draw';since=now()
-        elseif stage=='guard-check-draw' then
+            showLoot();observeGuardUpdate(pane);stage='guard-check-draw';since=now()
+        elseif stage=='guard-check-draw' and guard.nativeUpdates>0 then
             local refs=exactRows()
             local after=presentationState()
             assert(after.selection.signature==guard.before.selection.signature and after.selection.anchor==guard.before.selection.anchor,'selection guard lost native selection or Shift anchor')
             assert(not after.pending,'selection guard left pending presentation')
-            log('SELECTION',{mode=guard.mode,before=guard.before,hidden=guard.hidden,after=after,physical=refs,preserved=true})
+            log('SELECTION',{mode=guard.mode,before=guard.before,hidden=guard.hidden,after=after,physical=refs,preserved=true,nativeUpdates=guard.nativeUpdates})
+            restore()
             guardIndex=guardIndex+1
-            if guardIndex>#modes then cleanup() else stage='guard-configure';since=now() end
+            if guardIndex>#modes then
+                own:setVisible(false);loot:collapse();loot:collapseNow();loot:setVisible(false)
+                fairness=Fairness.new(origin,setFeatures,features,log);stage='fairness'
+            else stage='guard-configure';since=now() end
         end
     end)
     if not ok then failure(problem) end
@@ -587,6 +606,7 @@ Events.OnTick.Add(function()
     if done then if now()-since>3000 then getCore():quitToDesktop() end;return end
     local ok,problem=pcall(function()
         if stage=='measure' then measure()
+        elseif stage=='fairness' then if fairness:tick()then cleanup()end
         elseif stage=='fill' then fill()
         elseif stage=='fill-ground' then fillGround()
         elseif stage=='reopen-draw' or stage=='reopen-pin-wait' or stage=='startup-draw' or stage=='guard-select-draw' or stage=='guard-check-draw' then

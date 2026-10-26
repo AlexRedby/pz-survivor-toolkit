@@ -18,4 +18,5 @@ def prepare(toolkit_source, output):
     client.mkdir(parents=True)
     fixture=manifest['fixture']
     (client / fixture).write_bytes((HERE / fixture).read_bytes())
+    (client / 'StorageFairnessNative.lua').write_bytes((HERE / 'StorageFairnessNative.lua').read_bytes())
     (output / '42/mod.info').write_text('name=Native storage profile fixture\nid=StorageProfileNative\nversionMin=42.21\n')

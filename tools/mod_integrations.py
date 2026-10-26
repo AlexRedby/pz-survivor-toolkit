@@ -47,6 +47,7 @@ INTEGRATIONS = {
     },
     'CleanUI': {
         'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/PZSurvivorToolkit/InventoryFilter.lua',
+                   'client/PZSurvivorToolkit/BCInventoryCompatibility.lua',
                    'client/PZSurvivorToolkit/InventorySearch.lua',
                    'client/PZSurvivorToolkit/InventoryLayout.lua', 'client/PZSurvivorToolkit/InventoryInteraction.lua',
                    'client/PZSurvivorToolkit/InventoryTags.lua',
@@ -66,6 +67,8 @@ INTEGRATIONS = {
             'test_container_configuration_menus.lua': CLEAN_PAGES,
             'test_smart_deposit.lua': CLEAN_PAGES,
             'test_inventory_refresh.lua': CLEAN_PAGES,
+            'test_bc_inventory_classes.lua': (CLEAN_PANE, Source('CleanUIVanillaInventoryPaneSource',
+                                                               'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua')),
         },
         'game_inputs': {
             **{test: ('native_inventory_pane',) for test in ('test_inventory_tags.lua', 'test_inventory_filter.lua',
@@ -110,6 +113,7 @@ INTEGRATIONS = {
     },
     'EURY_CONTAINERS': {
         'owners': ['client/000ToolkitBCCompatibility.lua', 'client/000ToolkitBCSmartDepositCompatibility.lua',
+                   'client/000ToolkitBCInventoryCompatibility.lua', 'client/PZSurvivorToolkit/BCInventoryCompatibility.lua',
                    'client/PZSurvivorToolkit/ContainerConfigurationMenus.lua'],
         'option': 'bc_filter_source', 'root': 'media/lua/client/BetterContainers',
         'argument': 'Categorize/CategoryFilters.lua',
@@ -122,6 +126,8 @@ INTEGRATIONS = {
                   'test_smart_deposit.lua': (Source('NativeBCSmartDepositSource', 'Proximity/Proximity_SmartDeposit.lua'),),
                   'test_inventory_refresh.lua': (Source('NativeBCProximitySource', 'Proximity.lua'),
                                                  Source('NativeBCProximityPaneSource', 'Proximity/Proximity_ISInventoryPane.lua')),
+                  'test_bc_inventory_classes.lua': (Source('NativeBCProximityPaneSource', 'Proximity/Proximity_ISInventoryPane.lua'),
+                                                    Source('NativeBCProximityPageSource', 'Proximity/Proximity_ISInventoryPage.lua')),
                   'test_container_configuration_menus.lua': (Source('NativeBCPageCustomizerSource',
                                                                     'Customize/Customize_ISInventoryPage.lua'),)},
         'game_inputs': {test: ('native_action_root',) for test in ('test_smart_deposit.lua',

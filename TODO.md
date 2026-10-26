@@ -3,12 +3,6 @@
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
 - [ ] Prepare consolidated compatible SP/menu-Host queue-on/off scenarios for changed gameplay effects or lifecycle behavior, including editor disable during an admitted stop, preparation, pending server outcome and grounded fitness restoration. Freeze the tested inputs before launch, gather all safe independent failures in a session, and repeat only failed or newly affected cases; offline/source qualification alone is not live gameplay coverage.
 
-# Storage performance stabilization
-
-- [ ] Fix Better Containers aggregate selection after CleanUI switches to vanilla: the native pane update removes physical items whose real container differs from the aggregate; BC's singleton pane installer covers only the initial class. The actual-source reproduction is `.codex/investigations/collapsed-storage-20261026/bc-vanilla-selection-repro.py`; the full-67-mod baseline failure is `/tmp/pz-collapse-base/client1/console.txt`. Design class-aware integration preserving each class's native fallback and all upstream hooks; do not repair lost selection after the fact or temporarily swap globals/reset upstream installation guards. Audit the related page installer before choosing the shared integration point.
-  - [ ] Cover both aggregate types and UI classes, repeated toggles, ordinary inventories and removed physical items with actual-source regressions.
-  - [ ] Make the native selection guard wait for an observed natural pane update before checking the following draw. The current next-draw-only guard can pass before vanilla prunes selection; preserve exact item/anchor/raw-reference checks and qualify the fix with the locked full pack.
-
 # Cart motion full-pack compatibility
 
 - [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack using explicit locked sources.
@@ -172,7 +166,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Inventory infrastructure proposals
 
-- [ ] Remove the discarded details-selection mapping at the known native/CleanUI restore boundary after agreeing the integration: InventoryFilter invokes upstream restore, then InventoryRows wipes its result and maps the final rows again. Retain external mod hooks, final row ordering and unknown/icon-mode fallback; prove render-capped expanded stacks and selection/Shift-anchor correctness before removing the first pass.
+- [ ] Keep the discarded details-selection mapping deferred per the prior decision; revisit only after native profiling shows material cost or a requested change requires this boundary. InventoryFilter still calls the upstream all-item mapper before replacing/clearing its result. The actual-source probe `.codex/investigations/stabilization-audit-20261026/selection_restore_audit.py` confirms 288,060 lookups for 60 empty-selection restores of 4,800 items, but adds no in-game latency evidence. If revisited, replace only verified mapper leaves while preserving external ordering/filter hooks, synchronous intermediate restores, unknown/icon-mode fallback and render-capped selection/Shift-anchor correctness.
 
 # Warehouse client workload
 

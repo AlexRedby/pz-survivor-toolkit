@@ -75,8 +75,13 @@ def receipts(data=None):
             'header':{'count':6,'expected':6,'weight':1},'tooltips':{'fresh':True,'checked':3 if row['mode']=='clean' else 0}}))
     for mode in ('clean','vanilla'):
         result.append(('SELECTION',{'mode':mode,'preserved':True,'before':state(True),'hidden':state(True),'after':state(True),
-                                    'physical':{'raw':2400,'rows':2400,'exact':True}}))
-    result.append(('RESTORED',{'wrappers':True,'cratesRemoved':12,'groundRemoved':200,'features':True,'phases':21}))
+                                    'physical':{'raw':2400,'rows':2400,'exact':True},'nativeUpdates':1}))
+    for normal,name in ((True,'normal-only'),(False,'wishlist-only')):
+        result.append(('FAIRNESS',{'control':name,'objects':3000,'eligible':3000,'outlinedDuringMovement':3000,
+            'nativeActions':12,'reached':12,'distance':48,'tileChanges':48,'movementTicks':1500,
+            'maxTileGapTicks':40,'samples':150,'elapsedMs':30000,'teleports':0,'disabledBefore':True,'observationalTiming':False,
+            'features':{'normal':normal,'ground':not normal,'wanted':not normal,'radius':15}}))
+    result.append(('RESTORED',{'wrappers':True,'cratesRemoved':12,'groundRemoved':200,'fairnessRemoved':3000,'features':True,'phases':21}))
     result.append(('COMPLETE',None))
     return result
 
@@ -98,6 +103,7 @@ class StorageProfileTests(unittest.TestCase):
             auxiliary.stage(ROOT,root,root/'game',root/'jdk',selection,{'PZSurvivorToolkit':ROOT/'PZSurvivorToolkit'},runtime)
             helper=cache/'mods/StorageProfileNative/42/media/lua/client/ZZStorageProfileNative.lua'
             self.assertEqual(helper.read_bytes(),(INTAKE/helper.name).read_bytes())
+            self.assertEqual((helper.parent/'StorageFairnessNative.lua').read_bytes(),(INTAKE/'StorageFairnessNative.lua').read_bytes())
             self.assertIn(INTAKE/'verify.py',auxiliary.sources(ROOT,selection))
             self.assertEqual(runtime['fixture']['failure_markers'],['[STORAGE_PROFILE] FAIL'])
             (cache/'console.txt').write_text(text(receipts()))
@@ -134,11 +140,11 @@ class StorageProfileTests(unittest.TestCase):
         for mutate in (lambda r:r[1][1].update(untoggled=False),
                        lambda r:r[3][1].update(newId=r[3][1]['oldId']),
                        lambda r:r[3][1]['physical'].update(rows=5),
-                       lambda r:r[-4][1]['hidden']['selection'].update(signature='lost'),
+                       lambda r:next(row for kind,row in r if kind=='SELECTION')['hidden']['selection'].update(signature='lost'),
                        lambda r:r[-2][1].update(features=False)):
             broken=copy.deepcopy(good);mutate(broken)
             with self.assertRaises(ValueError):V.verify(Path('/unused'),text(broken))
-        for missing in ('GROUND','STARTUP','REOPEN','SELECTION','RESTORED','COMPLETE'):
+        for missing in ('GROUND','STARTUP','REOPEN','SELECTION','FAIRNESS','RESTORED','COMPLETE'):
             broken=copy.deepcopy(good)
             index=next(i for i,row in enumerate(broken) if row[0]==missing);broken.pop(index)
             with self.subTest(missing=missing),self.assertRaises(ValueError):V.verify(Path('/unused'),text(broken))
@@ -161,6 +167,13 @@ class StorageProfileTests(unittest.TestCase):
                        lambda r:r[7][1]['header'].update(count=0),
                        lambda r:r[7][1]['tooltips'].update(checked=0)):
             broken=receipts();mutate(broken)
+            with self.assertRaises(ValueError):V.verify(Path('/unused'),text(broken))
+
+    def test_selection_requires_update_and_fairness_requires_complete_moving_discovery(self):
+        for kind,key,value in (('SELECTION','nativeUpdates',0),('FAIRNESS','outlinedDuringMovement',1536),
+                               ('FAIRNESS','eligible',2999),('FAIRNESS','tileChanges',0),('FAIRNESS','teleports',1)):
+            broken=receipts()
+            next(row for name,row in broken if name==kind)[key]=value
             with self.assertRaises(ValueError):V.verify(Path('/unused'),text(broken))
 
 
