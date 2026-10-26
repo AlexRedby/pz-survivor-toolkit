@@ -1596,7 +1596,6 @@ The older README associates medicine indicators with this label, but no separate
 ### 0.1.64
 
 - Ignore unnamed model scripts during cart transition and grounding rendering, preventing render-thread null-pointer exceptions while preserving processing of valid cart models later in the slot.
-- Added an explicit experimental compatibility profile for the reviewed xD3I B42.21 render/FBO and bounded chunk trial. Admission requires the exact reviewed class bytes, complete pinned optimizer configuration and build resources. Native compatibility guards remain unchanged when the profile is absent; unknown bytes and configurations stay unsupported. Full-mod and Host validation remain required before gameplay adoption.
 
 ### 0.1.63
 
