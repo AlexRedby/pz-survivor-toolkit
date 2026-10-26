@@ -229,7 +229,7 @@ isClient = function() return client end
 ModData = {getOrCreate = function() error("Private wishlist must never enter globally requestable ModData") end}
 local world, files, paths, writeFailure, readFailure = "/Saves/Sandbox/sp-test", {}, {}, nil, false
 local directories, bootstrapFailure, opened, closed, bootstrapOpens = {}, nil, 0, 0, 0
-cacheFileExists = function(path) return directories[path] == true end
+cacheFileExists = function(path) return directories[path] == true or files[path] ~= nil end
 getCurrentSaveName = function() return world end
 getFileReader = function(path, create)
     assert(create == true)
@@ -271,7 +271,7 @@ getFileWriter = function(path, create, append)
         writes = writes + 1
         if writeFailure == "throw" and writes > 1 then error("disk write failed") end
         if writeFailure ~= "silent" then files[path] = files[path] .. text end
-    end, close = function() end}
+    end, close = function() if writeFailure == "close" then error("write close failed") end end}
 end
 Faction = {getPlayerFaction = function(username)
     local name = factions[username]
@@ -331,8 +331,11 @@ check("legacy version-one journal is read and upgraded without losing exact wish
     local previousWorld = world
     world = "/Saves/Sandbox/legacy-wishlist"
     local p = player("")
-    assert(not Service.snapshot(p).error)
-    files[paths[#paths]] = "PZSW\t1\t7\nL\tlocal\t2\t\nE\tBase.Hammer\t3\t0\nE\tBase.Nails\t1\t1\nEND\t7\t268429812\n"
+    local Identity = require "PZSurvivorWishlist/StorageIdentity"
+    local prefix = Identity.legacyPrefix(world)
+    directories[prefix] = true
+    local original = "PZSW\t1\t7\nL\tlocal\t2\t\nE\tBase.Hammer\t3\t0\nE\tBase.Nails\t1\t1\nEND\t7\t268429812\n"
+    files[prefix .. "a.txt"], files[prefix .. "b.txt"] = original, "incomplete peer\n"
     modules['PZSurvivorWishlist/Service'] = nil
     Service = require "PZSurvivorWishlist/Service"
     local list = Service.snapshot(p).lists[1]
@@ -340,7 +343,8 @@ check("legacy version-one journal is read and upgraded without losing exact wish
     assert(list.entries['Base.Nails'].done and not list.entries['Base.Hammer'].vehicleTypes)
     assert(not Service.request(p, {action = "set", listId = "local", revision = 2,
         fullType = "Base.Hammer", amount = 4}).error)
-    assert(files[paths[#paths]]:find("PZSW\t2\t8\n", 1, true) == 1)
+    assert(files[paths[#paths]]:find("PZSW\t3\t9\nI\t" .. Identity.encode(world) .. "\n", 1, true) == 1)
+    assert(files[prefix .. "a.txt"] == original and files[prefix .. "b.txt"] == "incomplete peer\n")
     modules['PZSurvivorWishlist/Service'] = nil
     Service = require "PZSurvivorWishlist/Service"
     list = Service.snapshot(p).lists[1]
@@ -369,10 +373,11 @@ check("vehicle rules survive private journal reload alongside legacy exact entri
     assert(not entries['vehicle:Base.OldTire2'] and entries['Base.Hammer'].amount==2, "removed groups stay removed after reload")
     world = previousWorld
 end)
-check("save identities isolate worlds and split long paths into safe components", function()
+check("save identities isolate worlds with a bounded complete path", function()
     local p = player("")
     world = "/Saves/Sandbox/" .. string.rep("longworld", 40)
     assert(Service.snapshot(p).lists[1].revision == 0)
+    assert(#paths[#paths] < 100, "identity expands the total storage path")
     world = "/Saves/Sandbox/sp-test"
     assert(Service.snapshot(p).lists[1].entries['Base.Hammer'].done)
 end)
@@ -381,12 +386,12 @@ check("unknown journal version is retained and read failures block writes", func
     world = "/Saves/Sandbox/version-test"
     assert(not Service.snapshot(p).error)
     local path = paths[#paths]
-    files[path] = "PZSW\t3\t1\n"
+    files[path] = "PZSW\t4\t1\n"
     modules['PZSurvivorWishlist/Service'] = nil
     Service = require "PZSurvivorWishlist/Service"
     local count = #paths
     assert(Service.request(p, {action = "sync"}).error == "storage_version")
-    assert(#paths == count and files[path] == "PZSW\t3\t1\n")
+    assert(#paths == count and files[path] == "PZSW\t4\t1\n")
     world, readFailure = "/Saves/Sandbox/read-failure", true
     assert(Service.snapshot(p).error == "storage_read" and #paths == count)
     readFailure = false
@@ -447,6 +452,123 @@ check("nonempty invalid slots block initialization while empty slots remain unin
     assert(files[path] == "not a wishlist snapshot\n")
     files[path] = ""
     assert(Service.snapshot(p).lists[1].revision == 0)
+end)
+
+check("bounded slots bind exact identities and refuse a foreign opposite slot", function()
+    local Identity = require "PZSurvivorWishlist/StorageIdentity"
+    world = "/Saves/Sandbox/bound-identity"
+    assert(not Service.snapshot(player("")).error)
+    local prefix = Identity.prefix(world)
+    local original = files[prefix .. "a.txt"]
+    files[prefix .. "b.txt"] = original
+    files[prefix .. "a.txt"] = "PZSW\t3\t2\nI\t" .. Identity.encode(world .. "-foreign") .. "\n"
+    local count = #paths
+    resets[#resets]()
+    assert(Service.snapshot(player("")).error == "storage_invalid")
+    assert(#paths == count and files[prefix .. "b.txt"] == original)
+    files[prefix .. "a.txt"] = "PZSW\t3\tinvalid\nI\t" .. Identity.encode(world .. "-foreign") .. "\n"
+    assert(Service.snapshot(player("")).error == "storage_invalid" and #paths == count)
+    files[prefix .. "a.txt"] = ""
+    local originalPrefix = Identity.prefix
+    Identity.prefix = function() return prefix end -- deterministic bucket collision, full binding must reject it
+    world = world .. "-collision"
+    assert(Service.snapshot(player("")).error == "storage_invalid" and #paths == count)
+    Identity.prefix = originalPrefix
+end)
+check("nonempty new corruption cannot resurrect a valid legacy store", function()
+    local Identity = require "PZSurvivorWishlist/StorageIdentity"
+    world = "/Saves/Sandbox/no-stale-fallback"
+    assert(not Service.snapshot(player("")).error)
+    local prefix, legacy = Identity.prefix(world), Identity.legacyPrefix(world)
+    local old = "PZSW\t1\t7\nL\tlocal\t2\t\nE\tBase.Hammer\t3\t0\nE\tBase.Nails\t1\t1\nEND\t7\t268429812\n"
+    directories[legacy], files[legacy .. "a.txt"] = true, old
+    files[prefix .. "a.txt"] = "torn new data\n"
+    resets[#resets]()
+    local count = #paths
+    assert(Service.snapshot(player("")).error == "storage_invalid")
+    assert(#paths == count and files[legacy .. "a.txt"] == old)
+end)
+check("legacy corruption and explicit existence failures never initialize a replacement", function()
+    local Identity = require "PZSurvivorWishlist/StorageIdentity"
+    world = "/Saves/Sandbox/bad-legacy"
+    local prefix = Identity.legacyPrefix(world)
+    directories[prefix], files[prefix .. "a.txt"] = true, "corrupt legacy\n"
+    local count = #paths
+    assert(Service.snapshot(player("")).error == "storage_invalid" and #paths == count)
+    local original = cacheFileExists
+    cacheFileExists = function(path) if path:find("/v3/", 1, true) then return original(path) end; error("metadata denied") end
+    world = "/Saves/Sandbox/metadata-error"
+    assert(Service.snapshot(player("")).error == "storage_read" and #paths == count)
+    cacheFileExists = original
+end)
+check("writer close failure retains previous memory and legacy migration bytes", function()
+    world = "/Saves/Sandbox/write-close"
+    local p = player("")
+    assert(not Service.snapshot(p).error)
+    writeFailure = "close"
+    local payload, changed = Service.request(p, {action="add",listId="local",revision=0,fullType="Base.Hammer",amount=9})
+    assert(not changed and payload.error == "storage_write" and payload.lists[1].revision == 0)
+    writeFailure = nil
+    assert(Service.snapshot(p).lists[1].revision == 0)
+    local Identity = require "PZSurvivorWishlist/StorageIdentity"
+    world = "/Saves/Sandbox/migration-write-close"
+    local prefix = Identity.legacyPrefix(world)
+    local old = "PZSW\t1\t7\nL\tlocal\t2\t\nE\tBase.Hammer\t3\t0\nE\tBase.Nails\t1\t1\nEND\t7\t268429812\n"
+    directories[prefix], files[prefix .. "a.txt"] = true, old
+    writeFailure = "close"
+    assert(Service.snapshot(p).error == "storage_write" and files[prefix .. "a.txt"] == old)
+    writeFailure = nil
+    assert(Service.snapshot(p).lists[1].entries['Base.Hammer'].amount == 3)
+end)
+check("new readback failures keep the acknowledged memory and previous complete slot", function()
+    world = "/Saves/Sandbox/readback-failures"
+    local p, Identity = player(""), require "PZSurvivorWishlist/StorageIdentity"
+    assert(not Service.snapshot(p).error)
+    local before = files[Identity.prefix(world) .. "a.txt"]
+    for _, fault in ipairs({"nil", "read", "close"}) do
+        readFailure = fault
+        local payload, changed = Service.request(p, {action="add",listId="local",revision=0,fullType="Base.Nails",amount=3})
+        assert(not changed and payload.error == "storage_write" and payload.lists[1].revision == 0)
+        readFailure = false
+        assert(Service.snapshot(p).lists[1].revision == 0)
+        assert(files[Identity.prefix(world) .. "a.txt"] == before)
+    end
+end)
+check("legacy v2 migration chooses newest complete slot and retains version or I/O errors", function()
+    local Identity = require "PZSurvivorWishlist/StorageIdentity"
+    local function journal(version, generation)
+        local lines = {"PZSW\t" .. version .. "\t" .. generation, "L\tlocal\t2\t", "E\tBase.Hammer\t3\t0"}
+        local hash = 0
+        for _, line in ipairs(lines) do
+            for index = 1, #line do hash = (hash * 33 + string.byte(line,index)) % 2147483647 end
+            hash = (hash * 33 + 10) % 2147483647
+        end
+        return table.concat(lines,"\n") .. "\nEND\t" .. generation .. "\t" .. hash .. "\n"
+    end
+    world = "/Saves/Sandbox/legacy-v2"
+    local legacy = Identity.legacyPrefix(world)
+    local older, newer = journal(1, 6), journal(2, 9)
+    directories[legacy], files[legacy.."a.txt"], files[legacy.."b.txt"] = true, older, newer
+    assert(Service.snapshot(player("")).lists[1].entries['Base.Hammer'].amount == 3)
+    assert(files[Identity.prefix(world).."a.txt"]:find("PZSW\t3\t10\n",1,true)==1)
+    assert(files[legacy.."a.txt"]==older and files[legacy.."b.txt"]==newer)
+    world = "/Saves/Sandbox/legacy-future-peer"
+    legacy = Identity.legacyPrefix(world)
+    directories[legacy], files[legacy.."a.txt"], files[legacy.."b.txt"] = true, older, "PZSW\t4\t11\n"
+    local count = #paths
+    assert(Service.snapshot(player("")).error=="storage_version" and #paths==count)
+    world = "/Saves/Sandbox/legacy-read-error"
+    legacy = Identity.legacyPrefix(world)
+    directories[legacy], files[legacy.."a.txt"] = true, newer
+    local originalReader = getFileReader
+    getFileReader = function(path, create)
+        if path:find(legacy, 1, true)==1 then error("legacy read denied") end
+        return originalReader(path, create)
+    end
+    assert(Service.snapshot(player("")).error=="storage_read" and #paths==count)
+    getFileReader = originalReader
+    assert(files[legacy.."a.txt"]==newer)
+    assert(not Service.snapshot(player("")).error, "failed legacy read was cached as empty")
 end)
 local function probeSnapshots(fn)
     local model = modules['PZSurvivorWishlist/Model']

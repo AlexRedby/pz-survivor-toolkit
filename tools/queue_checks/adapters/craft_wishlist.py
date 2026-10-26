@@ -118,7 +118,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         name = json.loads((seed / "runtime.json").read_text())["server_name"]
         if runtime["server_name"] != name:
             raise ValueError("Wishlist reload must preserve the seed server name")
-        prefix = _store_prefix(seed / "server", name)
+        prefix = _seed_store_prefix(seed / "server", name)
         slots = {}
         for source in state:
             if source.is_file():
@@ -132,7 +132,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
         from ..native import _lua
-        config = {"world": str(Path(output) / "server/Saves/Multiplayer" / name), "slots": slots}
+        config = {"world": str(Path(output) / "server/Saves/Multiplayer" / name),
+                  "sourceWorld": str(seed / "server/Saves/Multiplayer" / name), "slots": slots}
         # Kahlua truncates raw non-ASCII literals before decoding their saved bytes as UTF-8.
         input_lua = "".join(char if ord(char) < 128 else "".join(f"\\{byte:03d}" for byte in char.encode("utf-8"))
                             for char in _lua(config))
@@ -141,7 +142,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             shutil.copy2(Path(project) / "tests/native_queue/support/QueueWishlistRestore.lua", helper)
             (helper / "WishlistSeedRestore.lua").write_text(
                 "local Restore=require 'QueueWishlistRestore'\nlocal input=" + input_lua +
-                "\nWishlistSeedRestore=function() Restore(input.world,input.slots) end\n", encoding="utf-8")
+                "\nWishlistSeedRestore=function() Restore(input.world,input.slots,input.sourceWorld) end\n", encoding="utf-8")
     runtime["fixture"] = {"mods": [HELPERS[selection["suite"]]], "server_ready": server_ready(selection),
                           "sandbox": server_settings(selection), "client_launch_stagger_seconds": 8,
                           "session_cases": ordered_cases(selection),
@@ -355,13 +356,38 @@ def _verify_session(root, selection, catalog):
                          "visual_review": "Screenshots must be inspected separately; callback success does not certify pixels."}}
 
 
-def _store_prefix(cache, name):
+def _world_units(cache, name):
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", ".."):
         raise ValueError("Invalid wishlist seed server name")
-    # Kahlua string.byte returns Java UTF-16 code units, not UTF-8 bytes.
     raw = str(cache / "Saves/Multiplayer" / name).encode("utf-16-be")
-    encoded = "".join(f"{int.from_bytes(raw[i:i+2], 'big'):04x}" for i in range(0, len(raw), 2))
-    return cache / "Lua/PZSurvivorWishlist" / Path(*[encoded[i:i+80] for i in range(0, len(encoded), 80)])
+    units = [int.from_bytes(raw[i:i + 2], "big") for i in range(0, len(raw), 2)]
+    if not 0 < len(units) <= 512:
+        raise ValueError("Wishlist save identity exceeds supported length")
+    return units
+
+
+def _store_prefix(cache, name):
+    # Match StorageIdentity on Java UTF-16 units, not Python code points or UTF-8 bytes.
+    units, first, second = _world_units(cache, name), 0, 1
+    for unit in units:
+        first = (first * 33 + unit) % 2147483647
+        second = (second * 65599 + unit) % 2147483629
+    return cache / "Lua/PZSurvivorWishlist/v3" / f"{len(units)}-{first}-{second}"
+
+
+def _legacy_store_prefix(cache, name):
+    encoded = "".join(f"{unit:04x}" for unit in _world_units(cache, name))
+    return cache / "Lua/PZSurvivorWishlist" / Path(*[encoded[i:i + 80] for i in range(0, len(encoded), 80)])
+
+
+def _seed_store_prefix(cache, name):
+    modern = _store_prefix(cache, name)
+    # A nonempty modern namespace cannot silently fall back to a stale legacy journal.
+    for slot in ("a", "b"):
+        path = modern / (slot + ".txt")
+        if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_size > 0)):
+            return modern
+    return _legacy_store_prefix(cache, name)
 
 
 def _seed(selection):
@@ -431,7 +457,7 @@ def _seed(selection):
     if not any(path.is_relative_to(root / "server/Saves") for path in state):
         raise ValueError("Wishlist seed has no persisted server world")
     cache = root / "server"
-    prefix = _store_prefix(cache, runtime.get("server_name"))
+    prefix = _seed_store_prefix(cache, runtime.get("server_name"))
     if any(path.is_symlink() for path in (prefix, *prefix.parents) if path.is_relative_to(cache)):
         raise ValueError("Wishlist seed store cannot contain symlinks")
     slots = []

@@ -1,4 +1,5 @@
 local Model = require "PZSurvivorWishlist/Model"
+local Identity = require "PZSurvivorWishlist/StorageIdentity"
 local Service = {}
 PZSurvivorWishlist.Service = Service
 local saveKey, context
@@ -28,16 +29,25 @@ local function columns(line)
     for value in (line .. "\t"):gmatch("(.-)\t") do values[#values + 1] = value end
     return values
 end
-local function parse(reader)
+local function parse(reader, identity)
     local header = reader:readLine()
     if header == nil then return {missing = true} end
     if #header > 128 then return {error = "storage_invalid"} end
     local values = columns(header)
     if values[1] ~= "PZSW" or #values ~= 3 then return {error = "storage_invalid"} end
-    if values[2] ~= "1" and values[2] ~= "2" then return {error = "storage_version"} end
+    if values[2] ~= "1" and values[2] ~= "2" and values[2] ~= "3" then return {error = "storage_version"} end
+    if identity and values[2] ~= "3" then return {error = "storage_invalid"} end
     local generation = tonumber(values[3])
-    if not generation or generation < 1 or generation > 2147483646 or generation ~= math.floor(generation) then return {error = "storage_invalid"} end
     local store, list, lines, hash = {version = 1, lists = {}}, nil, 0, checksum(0, header)
+    if values[2] == "3" then
+        local bound = reader:readLine()
+        if not bound or #bound > 2050 then return {error = "storage_invalid"} end
+        local encoded = bound:match("^I\t([0-9a-f]+)$")
+        if not encoded or #encoded > 2048 or #encoded % 4 ~= 0 then return {error = "storage_invalid"} end
+        if encoded ~= identity then return {error = "storage_identity"} end
+        hash = checksum(hash, bound)
+    end
+    if not generation or generation < 1 or generation > 2147483646 or generation ~= math.floor(generation) then return {error = "storage_invalid"} end
     while true do
         local line = reader:readLine()
         if not line or #line > 4608 then return {error = "storage_invalid"} end
@@ -70,12 +80,12 @@ local function parse(reader)
         end
     end
 end
-local function read(path)
+local function read(path, identity)
     local reader
     local ok, value = pcall(function()
         -- Create only missing empty slots; nil then means an I/O failure, never an empty store.
         reader = getFileReader(path, true)
-        return reader and parse(reader) or {error = "storage_read"}
+        return reader and parse(reader, identity) or {error = "storage_read"}
     end)
     if reader then
         local closed = pcall(function() reader:close() end)
@@ -83,35 +93,61 @@ local function read(path)
     end
     return ok and value or {error = "storage_read"}
 end
+local function slots(prefix, identity)
+    local a, b = read(prefix .. "a.txt", identity), read(prefix .. "b.txt", identity)
+    -- A foreign identity must never be hidden by a valid opposite slot.
+    if a.error == "storage_identity" or b.error == "storage_identity" then return nil, nil, "storage_invalid" end
+    if a.error == "storage_version" or b.error == "storage_version" then return nil, nil, "storage_version" end
+    if a.error == "storage_read" or b.error == "storage_read" then return nil, nil, "storage_read" end
+    if a.store and (not b.store or a.generation >= b.generation) then return a, "a" end
+    if b.store then return b, "b" end
+    if not a.missing or not b.missing then return nil, nil, "storage_invalid" end
+end
+local function prepare(prefix)
+    -- Append-only bootstrap creates missing parents without truncating either slot.
+    local writer
+    local ok = pcall(function()
+        if cacheFileExists(prefix) then return end
+        writer = getFileWriter(prefix .. "a.txt", true, true)
+        if not writer then error("Cannot create wishlist directory") end
+        writer:close()
+        writer = nil
+    end)
+    if writer then pcall(function() writer:close() end) end
+    return ok
+end
+local write
 local function loadContext()
     local world = getCurrentSaveName()
-    if type(world) ~= "string" or #world == 0 or #world > 512 then return {error = "storage_unavailable"} end
+    if not Identity.valid(world) then return {error = "storage_unavailable"} end
     if saveKey == world and context then return context end
-    -- Vanilla file APIs write under Lua cache. Chunk the encoded save path to keep filename components short.
-    local encoded = world:gsub(".", function(char) return string.format("%04x", string.byte(char)) end)
-    local parts = {"PZSurvivorWishlist"}
-    for i = 1, #encoded, 80 do parts[#parts + 1] = encoded:sub(i, i + 79) end
-    local prefix = table.concat(parts, "/") .. "/"
-    local ready = pcall(function()
-        if cacheFileExists(prefix) then return end
-        -- Native readers cannot mkdir; append-only open creates parents without truncating any slot.
-        local bootstrap = getFileWriter(prefix .. "a.txt", true, true)
-        if not bootstrap then error("Cannot create wishlist directory") end
-        bootstrap:close()
-    end)
-    if not ready then return {error = "storage_read"} end
-    local a, b = read(prefix .. "a.txt"), read(prefix .. "b.txt")
-    if a.error == "storage_version" or b.error == "storage_version" then return {error = "storage_version"} end
-    if a.error == "storage_read" or b.error == "storage_read" then return {error = "storage_read"} end
-    local chosen, slot
-    if a.store and (not b.store or a.generation >= b.generation) then chosen, slot = a, "a"
-    elseif b.store then chosen, slot = b, "b"
-    elseif not a.missing or not b.missing then return {error = "storage_invalid"} end
-    context = {identity = {}, prefix = prefix, store = chosen and chosen.store or {}, generation = chosen and chosen.generation or 0, slot = slot}
-    saveKey = world
+    local prefix, identity = Identity.prefix(world), Identity.encode(world)
+    if not prepare(prefix) then return {error = "storage_read"} end
+    local chosen, slot, error = slots(prefix, identity)
+    if error then return {error = error} end
+    local loaded = {identity = {}, binding = identity, prefix = prefix, store = chosen and chosen.store or {},
+        generation = chosen and chosen.generation or 0, slot = slot}
+    if not chosen then
+        local legacy = Identity.legacyPrefix(world)
+        local ok, exists = pcall(function()
+            -- Native cacheFileExists already resolves under cache/Lua, just like the reader.
+            return cacheFileExists(legacy .. "a.txt") or cacheFileExists(legacy .. "b.txt")
+        end)
+        if not ok then return {error = "storage_read"} end
+        if exists then
+            local old, _, oldError = slots(legacy)
+            if oldError then return {error = oldError} end
+            if old then
+                loaded.generation = old.generation
+                local migrated = write(loaded, old.store)
+                if migrated then return {error = migrated} end
+            end
+        end
+    end
+    context, saveKey = loaded, world
     return context
 end
-local function write(ctx, store)
+write = function(ctx, store)
     if ctx.generation >= 2147483646 then return "limit" end
     local generation = ctx.generation + 1
     local slot = ctx.slot == "a" and "b" or "a"
@@ -124,7 +160,8 @@ local function write(ctx, store)
             hash = checksum(hash or 0, value)
             writer:write(value .. "\n")
         end
-        line("PZSW\t2\t" .. generation)
+        line("PZSW\t3\t" .. generation)
+        line("I\t" .. ctx.binding)
         for id, list in pairs(store.lists) do
             line("L\t" .. id .. "\t" .. list.revision .. "\t" .. (list.faction or ""))
             for username in pairs(list.members) do line("M\t" .. username) end
@@ -141,7 +178,7 @@ local function write(ctx, store)
     if writer then pcall(function() writer:close() end) end
     if not ok then return "storage_write" end
     -- PrintWriter can swallow I/O errors; verify the new slot before acknowledging or replacing memory.
-    local saved = read(path)
+    local saved = read(path, ctx.binding)
     if not saved.store or saved.generation ~= generation or saved.hash ~= hash then return "storage_write" end
     ctx.store, ctx.generation, ctx.slot = store, generation, slot
 end

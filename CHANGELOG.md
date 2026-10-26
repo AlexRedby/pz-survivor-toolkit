@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.282
+
+- **Fixed:** Wishlist storage uses bounded directory names, so long save paths no longer prevent lists from loading. Each journal verifies the full save identity; existing lists migrate with readback verification and their original files are retained.
+
 ### 0.1.281
 
 - Fixed: disabling the queue editor after an accepted operation cancellation no longer discards the borrowed-item return or independent queued actions. The exact native step, server outcome and required cleanup finish once, including grounded fitness equipment; reset, replaced actions and unrelated asynchronous commands retain their existing cancellation protections.

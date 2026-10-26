@@ -5,12 +5,11 @@
 
 # Storage performance stabilization
 
-- [ ] Compare frame times and Lua workload beside dense storage on the current build, with own inventory open/loot closed and both windows closed; retain visible-loot and highlight/Wishlist controls. The Kahlua regression and current 45-mod native hidden/reopen checks establish the refresh fix, not an FPS improvement. Do not reuse old 52-mod/Organized Categories measurements as current-build evidence.
-- [ ] Qualify storage movement and related inventory interactions in isolated macOS SP/menu Host with the complete current 67-mod selection after the 22 unavailable sources are resolved; the available 45-mod native run is reduced coverage.
+- [ ] Investigate collapsed loot rows as the next measured candidate: the 0.1.278 dense run retains 30 builds/about 1.8 s discovery work when collapsed, while fully hidden rows have zero builds/about 0.31 s. Preserve visible title counts and tooltips; first verify which collapsed UI consumers need live rows before extending deferral.
 
 # Cart motion full-pack compatibility
 
-- [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.
+- [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack using explicit locked sources.
 
 # Sandwich ingredient consumption on a joining client
 
@@ -18,7 +17,7 @@
 
 # Welding torch refill
 
-- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host after local `damnlib` and `92jeepYJ` sources are available. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
+- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host using the complete locked 67-mod sources. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
 
 # Legacy Host launchers
 
@@ -42,7 +41,7 @@
 
 # Retained-item full-pack compatibility
 
-- [ ] Repeat the scenario with the full 55-mod selection after its 10 unavailable Workshop sources are installed: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, NepHighBeams, ReverseDriveLights, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges.
+- [ ] Repeat the retained-item scenario with the complete current 67-mod selection using explicit locked sources; the earlier reduced-pack checks do not establish full-pack conservation.
 
 # Vehicle entry and exit roof clipping
 
@@ -167,7 +166,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Full-pack follow-up checks
 
-- [ ] Once the eight missing selected mods are locally available, run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete 55-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended, CustomLightSwitch and NicksTurnOffFridges. The bounded checks used the 45 available Mod IDs.
+- [ ] Run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete current 67-Mod-ID pack and explicit locked sources. The earlier bounded checks used 45 Mod IDs.
 
 # Inventory infrastructure proposals
 
@@ -176,7 +175,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Warehouse client workload
 
 - [ ] Run the corrected `inventory-presentation/scenes` native hidden-loot/reopen stages in CleanUI and vanilla when an awake macOS display is available. Require live raw stock, deferred hidden rows/count/tooltips, fresh reopen and a clean runtime audit; keep the runner's default desktop policy.
-- [ ] Check warehouse movement with the full selected mod set in disposable macOS SP/Host profiles, including another player's container edits, crafting inputs and quick transfers with loot hidden. Measure frame times separately before claiming that the user's stutters are resolved.
+- [ ] Extend the full 67-mod SP warehouse walking capture to native menu Host, including another player's container edits, crafting inputs and quick transfers with loot hidden. Existing SP walking and Host transfer/Grab checks do not establish concurrent-player behavior or the user-save stutter cause; keep GPU/FPS claims separate from Lua wall time and UI callback cadence.
 
 # Vehicle diagnostics controls
 
@@ -184,7 +183,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Restore the cumulative-memory MCP connection: `memory.remember` reports `Memory MCP is from an older release; reconnect the server`, while the installed CLI fallback works. Align or reconnect the MCP runtime, then confirm a normal note write and capture completion without the fallback; preserve the existing memory store.
+- [ ] Qualify the bare game-JVM Kahlua model/server harness before using it as a full-suite gate: the storage segment passes, but the complete `test_wishlist_model.lua` run fails the departed-player weak-reference/GC assertion (`/tmp/pz-wishlist-v3-kahlua/model.log`). Distinguish harness lifetime/GC behavior from a product leak; preserve the passing normal LuaJIT suite and native SP/Host evidence.
 
 - [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
 

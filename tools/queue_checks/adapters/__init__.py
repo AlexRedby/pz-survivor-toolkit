@@ -8,6 +8,7 @@ MODULES = {'vehicle-inventory': 'vehicle_inventory', 'vehicle-diagnostics': 'veh
            'item-retention': 'item_retention', 'torch-refill': 'torch_refill', 'custom-tags': 'custom_tags',
            'classification-baseline': 'classification_baseline',
            'smart-deposit': 'auxiliary',
+           'storage-profile': 'auxiliary',
            'inventory-tooltips': 'auxiliary',
            'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'inventory-presentation': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'quartermaster-transfers': 'quartermaster', 'quartermaster-distribution': 'quartermaster_distribution', 'quartermaster-crafting': 'quartermaster_crafting', 'animal-trailer': 'auxiliary',
            'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts',

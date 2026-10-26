@@ -623,11 +623,13 @@ print('PASS grouped Wishlist generated Lua and single bootstrap')
     def test_native_restore_roundtrip_and_fail_closed_guards(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
         self.assertIsNotNone(lua, "Lua interpreter required for the retained native restore helper")
-        code = r'''local restore = dofile(arg[1])
+        code = r'''require=function() return dofile(arg[2]) end
+local restore = dofile(arg[1])
 local files, current, server, client = {}, '/fixture/world', true, false
 isServer=function() return server end
 isClient=function() return client end
 getCurrentSaveName=function() return current end
+cacheFileExists=function(path) return files[path]~=nil end
 getFileWriter=function(path)
   return {write=function(_, text) files[path]=text end, close=function() end}
 end
@@ -653,14 +655,83 @@ getFileWriter=function() return nil end
 assert(not pcall(restore,current,{a=text}))
 print('PASS native restore roundtrip and guards')
 '''
-        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueWishlistRestore.lua")],
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueWishlistRestore.lua"),
+                                 str(ROOT / "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorWishlist/StorageIdentity.lua")],
                                 input=code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-    def test_store_prefix_matches_kahlua_utf16_units_and_path_chunks(self):
+    def test_native_restore_rebinds_v3_and_preserves_a_corrupt_peer(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        self.assertIsNotNone(lua)
+        code = r'''require=function() return dofile(arg[2]) end
+local Identity=require('PZSurvivorWishlist/StorageIdentity')
+local restore=dofile(arg[1])
+local source,world='/fixture/old','/fixture/new'
+local files={}
+isServer=function()return true end;isClient=function()return false end
+getCurrentSaveName=function()return world end
+cacheFileExists=function(path)return files[path]~=nil end
+getFileWriter=function(path)return{write=function(_,value)files[path]=value end,close=function()end}end
+getFileReader=function(path)
+ local value,pos=files[path],1;if value==nil then return end
+ return{close=function()end,readLine=function()
+  if pos>#value then return end
+  local finish=value:find('\n',pos,true)
+  local line=value:sub(pos,finish and finish-1 or #value);pos=finish and finish+1 or #value+1;return line
+ end}
+end
+local function checksum(hash,line)
+ for i=1,#line do hash=(hash*33+string.byte(line,i))%2147483647 end
+ return(hash*33+10)%2147483647
+end
+local header='PZSW\t3\t7'
+local bound='I\t'..Identity.encode(source)
+local body='L\tlocal\t2\t'
+local hash=checksum(checksum(checksum(0,header),bound),body)
+local complete=header..'\n'..bound..'\n'..body..'\nEND\t7\t'..hash..'\n'
+local torn=header..'\n'..bound..'\ninterrupted\n'
+restore(world,{a=complete,b=torn},source)
+local prefix=Identity.prefix(world)
+local expected=checksum(checksum(checksum(0,header),'I\t'..Identity.encode(world)),body)
+assert(files[prefix..'a.txt']==header..'\nI\t'..Identity.encode(world)..'\n'..body..'\nEND\t7\t'..expected..'\n')
+assert(files[prefix..'b.txt']==header..'\nI\t'..Identity.encode(world)..'\ninterrupted\n')
+for _,corrupt in ipairs({header..'\n', 'garbage peer\n', 'truncated peer', header..'\nI\tbroken\n'}) do
+ files={};restore(world,{a=complete,b=corrupt},source)
+ assert(files[prefix..'b.txt']==corrupt, 'corrupt peer was repaired')
+ assert(files[prefix..'a.txt']:find('I\t'..Identity.encode(world)..'\n',1,true))
+end
+local eof=complete:sub(1,-2)
+local reboundEOF=header..'\nI\t'..Identity.encode(world)..'\n'..body..'\nEND\t7\t'..expected
+for _,slots in ipairs({{a=eof},{a=eof,b=complete},{a=eof,b=eof}}) do
+ files={};restore(world,slots,source)
+ assert(files[prefix..'a.txt']==reboundEOF, 'unterminated END checksum was not rebound')
+ if slots.b then
+  assert(files[prefix..'b.txt']==reboundEOF..(slots.b==complete and '\n' or ''), 'peer END checksum or EOF changed')
+ end
+end
+files={};restore(world,{a=complete,b=header..'\n'..bound..'\n'..body..'\nEND\t7\twrong'},source)
+assert(files[prefix..'b.txt']==header..'\nI\t'..Identity.encode(world)..'\n'..body..'\nEND\t7\twrong', 'invalid END was repaired')
+files={};restore(world,{a=complete,b=''},source)
+assert(files[prefix..'a.txt'] and not files[prefix..'b.txt'])
+
+files={};assert(not pcall(restore,world,{a=complete},'/wrong/source'))
+assert(not pcall(restore,world,{a=complete,b='PZSW\t1\t2\n'},source))
+for _ in pairs(files)do error('failed validation wrote a file')end
+print('PASS exact v3 restore rebind, checksum and corrupt peer')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueWishlistRestore.lua"),
+                                 str(ROOT / "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorWishlist/StorageIdentity.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_store_prefix_bounds_path_and_legacy_retains_kahlua_utf16_units(self):
         cache = Path("/fixture/мир-😀/server")
         prefix = adapter._store_prefix(cache, "queue-smoke")
-        chunks = prefix.relative_to(cache / "Lua/PZSurvivorWishlist").parts
+        self.assertEqual(prefix.parent, cache / "Lua/PZSurvivorWishlist/v3")
+        self.assertLess(len(str(prefix.relative_to(cache))), 80)
+        self.assertNotEqual(prefix, adapter._store_prefix(cache, "queue-other"))
+        legacy = adapter._legacy_store_prefix(cache, "queue-smoke")
+        chunks = legacy.relative_to(cache / "Lua/PZSurvivorWishlist").parts
         self.assertTrue(all(len(part) == 80 for part in chunks[:-1]))
         raw = bytes.fromhex("".join(chunks))
         self.assertEqual(str(cache / "Saves/Multiplayer/queue-smoke"), raw.decode("utf-16-be"))
@@ -668,13 +739,27 @@ print('PASS native restore roundtrip and guards')
             with self.assertRaises(ValueError):
                 adapter._store_prefix(cache, name)
 
+    def test_seed_namespace_uses_nonempty_new_data_before_legacy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            modern = adapter._store_prefix(cache, "queue-smoke")
+            legacy = adapter._legacy_store_prefix(cache, "queue-smoke")
+            modern.mkdir(parents=True)
+            legacy.mkdir(parents=True)
+            (legacy / "a.txt").write_text("legacy data")
+            for slot in ("a", "b"):
+                (modern / (slot + ".txt")).write_text("")
+            self.assertEqual(legacy, adapter._seed_store_prefix(cache, "queue-smoke"))
+            (modern / "b.txt").write_text("corrupt new data")
+            self.assertEqual(modern, adapter._seed_store_prefix(cache, "queue-smoke"))
+
     def test_generated_restore_preserves_unicode_world_and_slot_as_utf8_bytes(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
         self.assertIsNotNone(lua, "Lua interpreter required for generated restore string roundtrip")
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()
             seed, output = base / "seed", base / "мир-😀"
-            prefix = adapter._store_prefix(seed / "server", "queue-smoke")
+            prefix = adapter._legacy_store_prefix(seed / "server", "queue-smoke")
             prefix.mkdir(parents=True)
             slot = prefix / "a.txt"
             text = 'PZSW\t1\t19\nL\tигрок-😀\t14\t\nE\tBase.Hammer\t7\t0\nEND\t19\t123\n'
@@ -720,12 +805,12 @@ io.write(world, '\0', slots.a)
             forbidden = seed / "server/Lua/unrelated.txt"
             forbidden.parent.mkdir(parents=True)
             forbidden.write_text("do not copy")
-            prefix = adapter._store_prefix(seed / "server", "queue-smoke")
+            prefix = adapter._legacy_store_prefix(seed / "server", "queue-smoke")
             prefix.mkdir(parents=True)
             slots = [prefix / (name + ".txt") for name in ("a", "b")]
             for index, slot in enumerate(slots):
                 slot.write_text("PZSW\t1\t" + str(index + 19) + "\nEND\tfixture\n")
-            foreign = adapter._store_prefix(seed / "server", "unrelated-world") / "a.txt"
+            foreign = adapter._legacy_store_prefix(seed / "server", "unrelated-world") / "a.txt"
             foreign.parent.mkdir(parents=True)
             foreign.write_text("do not restore another world")
             value = dict(selection("shared-wishlist", "reload"), options={"seed_run": str(seed)})
