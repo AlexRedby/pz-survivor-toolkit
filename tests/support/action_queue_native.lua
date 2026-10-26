@@ -68,7 +68,11 @@ project=function(name)
             return savedRequire(module)
         end
     end
-    local result=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'))()
+    local root=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/'
+    local path=root..'client/PZSurvivorToolkit/'..name..'.lua'
+    local file=io.open(path,'r')
+    if file then file:close()else path=root..'shared/PZSurvivorToolkit/'..name..'.lua'end
+    local result=assert(loadfile(path))()
     require=savedRequire
     return result
 end

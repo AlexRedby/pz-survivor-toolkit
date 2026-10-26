@@ -8,7 +8,7 @@ function M.selectMenu(root,player,state,ids)
   for i,value in ipairs(menu.options)do
    local data=value.param3;local exact=value.target==player and value.param1==state.sink and value.param4==false and value.param5==root
     and value.param6==nil and type(value.onSelect)=='function'and not value.notAvailable and not value.isDisabled
-    and type(data)=='table'and not getmetatable(data)and data.washYourself==true and data.cleanBandages==false
+    and type(data)=='table'and not getmetatable(data)and data.washYourself==true and data.cleanBandages==(ids.bandage~=nil)
    if exact then
     local keys=0;for key in pairs(data)do if key~='washYourself'and key~='regularItems'and key~='cleanBandages'then exact=false end;keys=keys+1 end
     local items=data.regularItems;exact=exact and keys==3 and type(items)=='table'and not getmetatable(items)and #items==#ids.garments
@@ -48,6 +48,7 @@ function M.paidBody(player,state,ids)
   local value=F.snapshot(item);value.rootCount=item:getContainer()==state.root and 1 or 0;value.sourceCount=item:getContainer()==state.source and 1 or 0
   garments[#garments+1]=value
  end
- return{body=snapshot,soapUses=uses,waterAmount=amount,makeupRootAbsent=true,garments=garments}
+ local bandage;if ids.bandage then bandage=require('QueueWashingBandageFixture').paidInput(player,ids);if not bandage then return end end
+ return{body=snapshot,soapUses=uses,waterAmount=amount,makeupRootAbsent=true,garments=garments,bandage=bandage}
 end
 return M

@@ -400,7 +400,7 @@ compatSource,proofSeams=compatSource:gsub('local carts=ready%.SaucedCartsTransfe
     'local carts=Toolkit.ActionQueueCarts')
 assert(proofSeams==1,'late-hook fixture must replace only the Carts proof capture')
 local compat = assert(loadstring((compatSource:gsub('\nreturn Compat',
-    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nCompat.fixtureFloorRepairs = repairedFloors\nCompat.fixtureScoped = scoped\nreturn Compat'))))()
+    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nCompat.fixtureFloorRepairs = repairedFloors\nCompat.fixtureScoped = scoped\nCompat.fixtureLoadSource = loadSource\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
 for name, available in pairs({WS=WS~=nil, NEQ_Dresser=NEQ_Dresser~=nil, TidyFixture=TidyFixture~=nil,
@@ -642,6 +642,30 @@ do
     getModFileReader=reader
     assert(compat.verifySources('EURY_CONTAINERS'),'exact current Better Containers sources remain approved')
 end
+-- Temporary source interception must preserve ownership under Kahlua's rawget.
+do
+ local base,savedRequire,savedRawget=ISBaseTimedAction,require,rawget
+ local function own(owner,key)for name,value in pairs(owner)do if name==key then return value end end end
+ local owned,meta=own(base,'derive'),getmetatable(base);local inherited=base.derive
+ local parent={derive=inherited};parent.__index=parent
+ base.derive=nil;setmetatable(base,parent)
+ rawget=function(owner,key)
+  local value=own(owner,key);if value~=nil then return value end
+  local ancestor=getmetatable(owner);if ancestor then return rawget(ancestor,key)end
+ end
+ assert(rawget(base,'derive')==inherited and own(base,'derive')==nil,'fixture missing native inherited rawget behavior')
+ for _,fails in ipairs({false,true})do
+  require=function(module)
+   assert(module=='fixture/source-loader')
+   ISBaseTimedAction:derive('FixtureChild')
+   if fails then error('fixture source failure')end
+   return{}
+  end
+  assert(compat.fixtureLoadSource('FixtureSource','fixture/source-loader')==not fails)
+  assert(own(base,'derive')==nil and base.derive==inherited,'source load changed ownership of inherited derive')
+ end
+ require,rawget=savedRequire,savedRawget;setmetatable(base,meta);base.derive=owned
+end
 local function wash(value)
     menu.options = {}; WS.WMI_BuildWashMenu(menu, {value}, player, sink)
     local option = menu.options[1]; option.callback(option.target, unpack(option.args,1,10))
@@ -825,6 +849,51 @@ do
   end
  end
  assert(rejectedPickups==2,'mutated All did not exercise both original clothing pickups')
+ -- Preparation admission does not grant transformation lifecycle rights.
+ for _,queueEnabled in ipairs({false,true})do
+  reset();enabled=queueEnabled;local first=garment(28201)
+  local bandage=item(bag,28202);bandage.getFullType=function()return 'Base.BandageDirty'end
+  bandage.getItemAfterCleaning=function()return 'Base.Bandage'end
+  local recurse=inventory.getAllTypeRecurse
+  inventory.getAllTypeRecurse=function(_,kind)return list(kind=='Base.BandageDirty'and{bandage}or{})end
+  local data={washYourself=true,regularItems={first},cleanBandages=true};local clears=nativeClears
+  choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{},data,false,nil})
+  inventory.getAllTypeRecurse=recurse
+  local bodies,pickups=0,0
+  for _,action in ipairs(queue.queue)do
+   if action.Type=='ISWashYourself'then bodies=bodies+1
+   elseif action.Type=='ISInventoryTransferAction'then
+    pickups=pickups+1;assert(producer(action)~='compat.wash-clothing','bandage aggregate borrowed ordinary-clothing lifecycle rights')
+   end
+  end
+  assert(bodies==1 and pickups==2,'bandage All preparation discarded body/clothing/bandage siblings')
+  if not queueEnabled then assert(nativeClears==clears+1,'native bandage All replaced prior work more than once')end
+ end
+ reset();enabled=false;local kept=tail();local clears=nativeClears
+ local dirtyCloth=item(bag,28204);dirtyCloth.getFullType=function()return 'Base.BandageDirty'end
+ dirtyCloth.getItemAfterCleaning=function()return 'Base.Bandage'end
+ local recurse=inventory.getAllTypeRecurse
+ inventory.getAllTypeRecurse=function(_,kind)return list(kind=='Base.BandageDirty'and{dirtyCloth}or{})end
+ choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{}, {washYourself=true,regularItems={},cleanBandages=true},false,nil})
+ inventory.getAllTypeRecurse=recurse
+ assert(queue.queue[1]==kept and nativeClears==clears,'body/bandage-only All invented replacement despite native keep-actions routes')
+ reset();enabled=false;local containerItem=item(inventory,28205);containerItem.class='InventoryContainer'
+ choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{}, {washYourself=true,regularItems={containerItem},cleanBandages=false},false,nil})
+ local bodyCount,containerCount=0,0
+ for _,action in ipairs(queue.queue)do
+  if action.Type=='ISWashYourself'then bodyCount=bodyCount+1
+  elseif action.Type=='ISWashClothing'then containerCount=containerCount+1;assert(producer(action)~='compat.wash-clothing','generic All borrowed clothing rights')end
+ end
+ assert(bodyCount==1 and containerCount==1,'generic washable All discarded its native body sibling')
+ reset();enabled=false;value=garment(28203)
+ mixed={washYourself=true,regularItems={value},cleanBandages=false}
+ choose(WS.WMI_TestAggregateWashCallback,{n=5,sink,{},mixed,false,nil},function()value.container=inventory end)
+ local bodies,washes=0,0
+ for _,action in ipairs(queue.queue)do
+  if action.Type=='ISWashYourself'then bodies=bodies+1
+  elseif action.Type=='ISWashClothing'then washes=washes+1;assert(producer(action)~='compat.wash-clothing','changed container kept an old completion claim')end
+ end
+ assert(bodies==1 and washes==1,'a changed native input container incorrectly disabled safe batch preparation')
  -- Queue-disabled native All replaces prior work once, but must not erase its own body sibling.
  reset();enabled=false;local prior=tail();local clears=nativeClears
  value=garment(28108);mixed={washYourself=true,regularItems={value},cleanBandages=false}

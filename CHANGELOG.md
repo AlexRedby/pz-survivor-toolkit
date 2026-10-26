@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.277
+
+- Fixed: reviewed WashFix All commands keep their body, clothing and bandage steps together when the action queue is disabled. Transformation completion retains its existing edit protection and native resource costs.
+- Fixed: a failed reviewed WashFix completion restores its temporary water rule before propagating the original error, without repeating item or resource effects.
+
 ### 0.1.276
 
 - Fixed: WashFix All commands for body washing and ordinary clothing no longer discard the body step when clothing preparation requests another approach to the source. This also works with the action queue disabled, where the command still replaces prior work.

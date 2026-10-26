@@ -1,6 +1,8 @@
 require 'TimedActions/ISWashClothing'
 local JSON=require 'QueueHealthEvents'
-local function mixedCase(case)return case=='mixed-all'or case=='mixed-reset-after-body'end
+local function bandageCase(case)return case=='bandage-all'or case=='bandage-reset-after-body'end
+local function bandageFixture()return require 'QueueWashingBandageFixture'end
+local function mixedCase(case)return case=='mixed-all'or case=='mixed-reset-after-body'or bandageCase(case)end
 local function bodyCase(case)return case=='body-full'or case=='body-water-limited'or case=='body-cancel'end
 local function bodyFixture()return require 'QueueWashingBodyFixture'end
 local F={bagType='Base.Bag_ALICEpack_Army',sinkSprite='location_business_office_generic_01_49',sinkEntity='Base.WaterDispenser'}
@@ -111,7 +113,9 @@ local function cleanup(s)
   assert(not verified[value.id]and value.totalCount==1 and(value.rootCount==1 and value.sourceCount==0 or value.rootCount==0 and value.sourceCount==1),'previous garment receipt endpoint invalid')
   verified[value.id]=value
  end
+ local bandageId,bandageKind;if bandageCase(s.case)then bandageId,bandageKind=bandageFixture().cleanup(s)end
  local allowed={};for _,meta in ipairs(s.ids.garments)do allowed[meta.id]=meta.kind end
+ if bandageId then allowed[bandageId]=bandageKind end
  for _,item in ipairs(all(bag:getItemContainer()))do
   assert(allowed[item:getID()]==item:getFullType(),'foreign contents in previous washing bag')
  end
@@ -124,6 +128,7 @@ local function cleanup(s)
   local item=assert(s.root:getItemById(meta.id))
   if item:getContainer()==s.root then s.root:Remove(item);if isServer()then sendRemoveItemFromContainer(s.root,item)end end
  end
+ if bandageId then bandageFixture().removeRoot(s,bandageId)end
  for _,id in ipairs({s.ids.bagId,s.ids.soap.id,s.ids.book})do
   local item=assert(s.root:getItemById(id));assert(item:getContainer()==s.root and not s.player:isEquipped(item),'previous root item changed')
   s.root:Remove(item);if isServer()then sendRemoveItemFromContainer(s.root,item)end
@@ -197,17 +202,20 @@ local basePrepare,baseResolve,baseVerify=F.prepare,F.resolve,F.verify
 function F.prepare(player,case,previous)
  if not mixedCase(case)then return basePrepare(player,case,previous)end
  if previous then cleanup(previous)end
- local s=basePrepare(player,'borrowed-batch');local clothing=s.ids
+ if bandageCase(case)then local bound,reason=require('PZSurvivorToolkit/WashWaterRule').matchesComplete(ISWashClothing.complete);assert(bound,'reviewed bandage water rule cleanup is not installed: '..tostring(reason))end
+ local s=basePrepare(player,bandageCase(case)and 'borrowed-single-soap'or 'borrowed-batch');local clothing=s.ids
+ if bandageCase(case)then clothing.bandage=bandageFixture().seed(s)end
  local token=case..':'..player:getUsername()..':'..getTimestampMs();s.sink:getModData().QueueWashingOwner=token;clothing.sink.ownerToken=token
  local body=bodyFixture().prepare(player,'body-full',F,s)
- s.ids=body.ids;s.case=case;s.ids.case=case;s.ids.bagId=clothing.bagId;s.ids.bagType=clothing.bagType;s.ids.garments=clothing.garments
+ s.ids=body.ids;s.case=case;s.ids.case=case;s.ids.bagId=clothing.bagId;s.ids.bagType=clothing.bagType;s.ids.garments=clothing.garments;s.ids.bandage=clothing.bandage
  local water,soap=s.ids.requiredWater,s.ids.requiredSoap;for _,item in ipairs(s.ids.garments)do water=water+item.requiredWater;soap=soap+item.requiredSoap end
+ if s.ids.bandage then water=water+s.ids.bandage.waterOverride end
  assert(s.sink:getFluidAmount()>=water and s.ids.soap.uses>=soap,'mixed native aggregate resource budget insufficient')
  return s
 end
 function F.resolve(player,ids)
  if not mixedCase(ids.case)then return baseResolve(player,ids)end
- local s=baseResolve(player,ids);if not s or not bodyFixture().resolve(player,ids,F)then return end
+ local s=baseResolve(player,ids);if not s or not bodyFixture().resolve(player,ids,F)or ids.bandage and not bandageFixture().resolve(player,ids)then return end
  s.player,s.case,s.ids=player,ids.case,ids;return s
 end
 function F.verify(s)
@@ -215,6 +223,7 @@ function F.verify(s)
  local clothing,reason=baseVerify(s);if not clothing then return nil,reason end
  local body,problem=bodyFixture().verify(s,F);if not body then return nil,problem end
  for k,v in pairs(body)do clothing[k]=v end
+ if s.ids.bandage then clothing.bandage=bandageFixture().snapshot(s.player,s.ids)end
  s.verifiedReceipt=clothing;return clothing
 end
 return F

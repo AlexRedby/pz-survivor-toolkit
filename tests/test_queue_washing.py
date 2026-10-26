@@ -130,7 +130,108 @@ def mixed_evidence(case='mixed-all', kind='sp', mode='toolkit'):
     return selection,row,p,receipt
 
 
+def bandage_evidence(case='bandage-all', kind='sp', mode='toolkit', legacy=True):
+    reset=case=='bandage-reset-after-body'
+    selection,row,p,r=mixed_evidence('mixed-reset-after-body'if reset else'mixed-all',kind,mode)
+    p['case']=case;p['sink']['ownerToken']=case+':client1:1';p['garments']=p['garments'][:1]
+    p['allIds']=sorted([v for v in p['allIds']if v!=101]+[50])
+    baseline=[dict(id=999,kind='Base.Bandage',favorite=False,blood=0,rootCount=1,sourceCount=0,totalCount=1)]
+    p['bandage']=dict(id=50,kind='Base.BandageDirty',afterType='Base.Bandage',favorite=True,blood=0,waterOverride=4,baselineClean=baseline)
+    r['case']=case;r['garments']=r['garments'][:1]
+    r['bandage']=dict(input=dict(id=50,kind='Base.BandageDirty'if reset else False,favorite=reset,blood=0 if reset else False,
+                                     rootCount=0,sourceCount=int(reset),totalCount=int(reset)),baselineClean=copy.deepcopy(baseline),
+                       created=[]if reset else[dict(id=60,kind='Base.Bandage',favorite=True,blood=0,rootCount=0,sourceCount=1,totalCount=1)])
+    r['allIds']=sorted([v for v in p['allIds']if v not in ((40,)if reset else(40,50))]+([]if reset else[60]))
+    r['sink'].update(amount=13 if reset else 4,fluidAmount=13 if reset else 4);r['soap']['uses']=19 if reset else 18
+    row['menu'].update(requested=1,inputIds=[100],cleanBandages=True,bandageInputIds=[50],bandageWater=4)
+    row.update(bandageMode=True,newBandageTransfers=0)
+    row['records']=[v for v in row['records']if v['id']==100]
+    zero=dict(perform=0,complete=0,stop=0)
+    pickup=dict(kind='ISInventoryTransferAction',id=50,duration=50,progress=not reset,postReset=False,pickup=True,returned=False,
+                sourceProof=False,reviewedNativeFallback=True,reviewedBandagePickup=True,privateDeferrals=0,legacyBegin=0,legacyFinish=0,
+                methodsUnchanged=True,begin=copy.deepcopy(zero),finish=copy.deepcopy(zero),transactionDuration=50,
+                fallbackFacts=dict(classMatches=True,constructorMatches=True,classCompleteNil=True,instanceCompleteNil=True,approvedConstructor=True))
+    row['records'].insert(1,pickup)
+    if not reset:row['records'].append(dict(kind='ISWashClothing',id=50,duration=100,progress=True,postReset=False,inputRoot=True,
+        bloodAmount=0,dirtAmount=0,noSoap=False,afterType='Base.Bandage',favorite=True,waterOverride=4,returnContainerMatches=True,
+        methodsUnchanged=True,begin=copy.deepcopy(zero),finish=copy.deepcopy(zero)))
+    for value in row['records']:
+        if value is pickup:continue
+        adopted=mode=='toolkit'and legacy
+        value.update(behavior='compat.selected-chains'if adopted else None,sourceProof=adopted,reviewedNativeFallback=not adopted,
+                     privateDeferrals=int(adopted and not reset),legacyBegin=int(adopted and not reset),legacyFinish=int(adopted and not reset),
+                     begin=copy.deepcopy(zero),finish=copy.deepcopy(zero))
+    for value in row['records']:
+        if value['kind']=='ISInventoryTransferAction'and value.get('reviewedNativeFallback'):value['fallbackFacts']=dict(classMatches=True,constructorMatches=True,classCompleteNil=True,instanceCompleteNil=True,approvedConstructor=True)
+    row['localDeferrals']=sum(v['privateDeferrals']for v in row['records'])
+    if reset:
+        row['resetProof']['beforeBandageWash']=True;row['resetProof']['paid']['garments']=row['resetProof']['paid']['garments'][:1]
+        row['resetProof']['paid']['bandage']=copy.deepcopy(r['bandage'])
+    selection['cases']=[case]
+    row.update({k:copy.deepcopy(v)for k,v in r.items()if k!='case'});row['actualResources']=copy.deepcopy(r)
+    return selection,row,p,r
+
+
 class WashingTests(unittest.TestCase):
+    def test_native_bandage_all_exact_new_id_and_reset_sp_host_on_off(self):
+        for case in washing.BANDAGE_CASES:
+            for kind in ('sp','mp'):
+                for mode in ('native','toolkit'):
+                    for legacy in (False,True):
+                        with self.subTest(case=case,kind=kind,mode=mode,legacy=legacy):
+                            d=bandage_evidence(case,kind,mode,legacy);washing.validate(d[0]);self.assertEqual([],washing.check_case(*d))
+
+    def test_bandage_oracle_rejects_wrong_output_duplicate_ghost_favorite_cost_and_legacy_claims(self):
+        for case in washing.BANDAGE_CASES:
+            for change in ('old-id','favorite','extra-clean','baseline','client','new-timed-return','wrong-menu','water-rule','water','soap',
+                           'unknown-binding','missing-nil-proof','nonmatching-class','unapproved-constructor','legacy-deferral','duplicate-perform','missing-bandage-wash','reset-paid','output-id','output-root'):
+                with self.subTest(case=case,change=change):
+                    d=bandage_evidence(case);row,p,r=d[1:]
+                    if change=='old-id':r['bandage']['input']['totalCount']=1-int(case=='bandage-reset-after-body');self.sync(d)
+                    elif change=='favorite':
+                        value=r['bandage']['input']if case.endswith('body')else r['bandage']['created'][0]
+                        value['favorite']=False if case.endswith('body')else False;self.sync(d)
+                    elif change=='extra-clean':r['bandage']['created'].append(dict(id=61,kind='Base.Bandage',favorite=True,blood=0,rootCount=0,sourceCount=1,totalCount=1));self.sync(d)
+                    elif change=='baseline':r['bandage']['baselineClean'][0]['favorite']=True;self.sync(d)
+                    elif change=='client':row['actualResources']['bandage']['input']['id']=777
+                    elif change=='new-timed-return':row['newBandageTransfers']=1
+                    elif change=='wrong-menu':row['menu']['cleanBandages']=False
+                    elif change=='water-rule':row['menu']['bandageWater']=1
+                    elif change=='water':r['sink']['amount']+=1;self.sync(d)
+                    elif change=='soap':r['soap']['uses']-=1;self.sync(d)
+                    elif change=='unknown-binding':row['records'][1]['reviewedNativeFallback']=False
+                    elif change=='missing-nil-proof':row['records'][1]['fallbackFacts'].pop('instanceCompleteNil')
+                    elif change=='nonmatching-class':row['records'][1]['fallbackFacts']['classMatches']=False
+                    elif change=='unapproved-constructor':row['records'][1]['fallbackFacts']['approvedConstructor']=False
+                    elif change=='legacy-deferral':row['records'][0]['privateDeferrals']=2
+                    elif change=='duplicate-perform':row['records'][0]['legacyBegin']=2
+                    elif case=='bandage-reset-after-body':
+                        if change=='reset-paid':row['resetProof']['paid']['bandage']['input']['favorite']=False
+                        else:continue
+                    elif change=='missing-bandage-wash':row['records'].pop()
+                    elif change=='output-id':r['bandage']['created'][0]['id']=999;self.sync(d)
+                    elif change=='output-root':r['bandage']['created'][0].update(rootCount=1,sourceCount=0);self.sync(d)
+                    else:continue
+                    self.assertTrue(washing.check_case(*d))
+
+    def test_bandage_pair_keeps_real_authority_and_legacy_completion_evidence_in_one_log(self):
+        for kind in ('sp','mp'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory()as tmp:
+                root=Path(tmp);cases=list(washing.BANDAGE_CASES);context=dict(suite='washing',kind=kind,mode='toolkit',actor='client1')
+                rows=[dict(event='setup',cases=cases,expected=2,queueEnabled=True,nativeDurations=True)];raw=[]
+                proof=dict(self.sealed_replay(root),verified=True)if kind=='mp'else None
+                for case in cases:
+                    _,row,p,r=bandage_evidence(case,kind)
+                    if proof:row['replayProof']=copy.deepcopy(proof)
+                    rows.append(dict(row,event='case',id=case));raw.extend([('PREPARED',p),('VERIFIED',r)])
+                rows.append(dict(event='complete',cases=cases,expected=2,performed=2,failed=0,skipped=0))
+                text='\n'.join('[QUEUE_CHECK] '+json.dumps(dict(v,**context))for v in rows)+'\n[WASHING_TEST] COMPLETE\n'
+                authority='\n'.join('[WASHING_TEST] '+k+' '+json.dumps(v)for k,v in raw)
+                (root/'client1-launch.log').write_text(text+('\n'+authority if kind=='sp'else''))
+                if kind=='mp':(root/'server-launch.log').write_text(authority)
+                selection=dict(bandage_evidence(kind=kind)[0],cases=cases)
+                self.assertEqual([],washing.verify(root,selection,{})['issues'])
+
     def test_mixed_native_body_and_shared_clothes_success_reset_both_modes(self):
         for case in washing.MIXED_CASES:
             for kind in ('sp','mp'):
@@ -189,6 +290,8 @@ data.cleanBandages=true;assert(not M.selectMenu(root,player,state,ids));data.cle
 data.washYourself=false;assert(not M.selectMenu(root,player,state,ids));data.washYourself=true
 data.extra=true;assert(not M.selectMenu(root,player,state,ids));data.extra=nil
 data.regularItems={first,first};assert(not M.selectMenu(root,player,state,ids));data.regularItems={first,second}
+ids.bandage={id=50};data.cleanBandages=true;assert(M.selectMenu(root,player,state,ids)==root)
+data.cleanBandages=false;assert(not M.selectMenu(root,player,state,ids));data.cleanBandages=true
 first.getItemAfterCleaning=function()return 'Base.Bandage'end;assert(not M.selectMenu(root,player,state,ids))
 '''
         result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/client/QueueWashingMixed.lua')],input=script,text=True,capture_output=True)
@@ -502,6 +605,73 @@ assert(B.resolve(player,meta,F));assert(#logged==5,'repeated ready diagnostics')
         self.assertEqual([],washing.check_case(*d))
         r['garments'][0].update(rootCount=0,sourceCount=1);self.sync(d)
         self.assertTrue(washing.check_case(*d),'unproven post-reset return was accepted')
+
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT is required for actual bandage source guard')
+    def test_actual_bandage_fallback_guard_requires_known_exact_bindings_and_water_rule_api(self):
+        script=r'''
+local files={};local function fn(file)local f=function()end;files[f]=file;return f end
+getFilenameOfClosure=function(f)return files[f]end
+package.loaded['PZSurvivorToolkit/SourceProof']={closure=function(f,name)return files[f]==name end}
+local complete=fn('WashWaterRule.lua');local trusted=true
+package.loaded['PZSurvivorToolkit/WashWaterRule']={matchesComplete=function(f)return trusted and f==complete end}
+PZSurvivorToolkit={ActionQueueCarts={status=function()return true end},ActionQueueCompat={verifySources=function()return true end}}
+local M=assert(loadfile(arg[1]))()
+ISWashClothing={new=fn('WMI_PatchWashClothing.lua'),start=fn('ISWashClothing.lua'),perform=fn('ISWashClothing.lua'),complete=complete,
+ stop=fn('ISWashClothing.lua'),isValid=fn('WMI_PatchWashClothing.lua'),getDuration=fn('ISWashClothing.lua')};ISWashClothing.__index=ISWashClothing
+local wash=setmetatable({Type='ISWashClothing'},ISWashClothing)
+assert(M.reviewedFallback(wash));trusted=false;assert(not M.reviewedFallback(wash),'filename alone admitted unverified water cleanup');trusted=true
+wash.perform=fn('ISWashClothing.lua');assert(not M.reviewedFallback(wash),'foreign instance lifecycle accepted');wash.perform=nil
+wash.onCompleteFunc=fn('unknown.lua');assert(not M.reviewedFallback(wash));wash.onCompleteFunc=nil
+ISInventoryTransferAction={new=fn('CartTransferInterceptor.lua'),start=fn('ISInventoryTransferAction.lua'),perform=fn('VisualUpdateQueue.lua'),
+ stop=fn('ISInventoryTransferAction.lua'),isValid=fn('ISInventoryTransferAction.lua'),getDuration=fn('ISBaseTimedAction.lua')};ISInventoryTransferAction.__index=ISInventoryTransferAction
+local approved=ISInventoryTransferAction.new;PZSurvivorToolkit.ActionQueueCarts.isTransferConstructor=function(f)return f==approved end
+local transfer=setmetatable({Type='ISInventoryTransferAction',item={getFullType=function()return'Base.BandageDirty'end},wmiFullType='Base.BandageDirty',
+ start=fn('WMI_CleanBandagesContext.lua'),onCompleteFunc=fn('WMI_CleanBandagesContext.lua')},ISInventoryTransferAction)
+local accepted,origins,facts=M.reviewedFallback(transfer);assert(accepted and facts.classCompleteNil and facts.instanceCompleteNil and facts.approvedConstructor)
+ISInventoryTransferAction.complete=fn('ISBaseTimedAction.lua');assert(not M.reviewedFallback(transfer),'invented non-native complete accepted');ISInventoryTransferAction.complete=nil
+approved=fn('TransferRestrictions.lua');ISInventoryTransferAction.new=approved;ISInventoryTransferAction.isValid=fn('Nested.lua');assert(M.reviewedFallback(transfer),'known Restrictions/Nested bindings rejected')
+ISInventoryTransferAction.new=fn('TransferRestrictions.lua');assert(not M.reviewedFallback(transfer),'unapproved same-source constructor accepted');ISInventoryTransferAction.new=approved
+transfer.wmiFullType='Base.Bandage';assert(not M.reviewedFallback(transfer));transfer.wmiFullType='Base.BandageDirty'
+local owner=ISInventoryTransferAction;ISInventoryTransferAction=nil;assert(not M.reviewedFallback(transfer),'missing class accepted');ISInventoryTransferAction=owner
+PZSurvivorToolkit.ActionQueueCarts.status=function()return false end;assert(not M.reviewedFallback(transfer),'changed late Carts bindings accepted')
+'''
+        result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/client/QueueWashingBandage.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'),'LuaJIT is required for actual bandage snapshot cleanup')
+    def test_actual_bandage_snapshot_cleanup_requires_verified_new_id_favorite_and_endpoint(self):
+        script=r'''
+local M=assert(loadfile(arg[1]))()
+function instanceof(value,name)return name=='InventoryContainer'and value.bag==true end
+local function list(v)return{size=function()return#v end,get=function(_,i)return v[i+1]end}end
+local function container()
+ local c={values={}};function c:getItems()return list(self.values)end
+ function c:getItemById(id)for _,v in ipairs(self.values)do if v.id==id then return v end;if v.bag then local found=v.source:getItemById(id);if found then return found end end end end
+ return c
+end
+local function item(c,id,kind)
+ local v={id=id,kind=kind,container=c,favorite=true};function v:getID()return self.id end;function v:getFullType()return self.kind end
+ function v:getContainer()return self.container end;function v:isFavorite()return self.favorite end;function v:getBloodLevel()return 0 end
+ c.values[#c.values+1]=v;return v
+end
+local function fixture(full)
+ local root,source=container(),container();local bag=item(root,1,'Base.Bag');bag.bag=true;bag.source=source;function bag:getItemContainer()return source end
+ local value=item(source,full and 20 or 10,full and'Base.Bandage'or'Base.BandageDirty')
+ local actor={getInventory=function()return root end}
+ local ids={bagId=1,bandage={id=10,kind='Base.BandageDirty',afterType='Base.Bandage',favorite=true,blood=0,baselineClean={}}}
+ local state={root=root,player=actor,ids=ids,case=full and'bandage-all'or'bandage-reset-after-body'}
+ state.verifiedReceipt={bandage=M.snapshot(actor,ids)};return state,value,root,source
+end
+for _,full in ipairs({false,true})do
+ local state,value,root,source=fixture(full);local id=M.cleanup(state);assert(id==value.id)
+ value.favorite=false;assert(not pcall(M.cleanup,state),'mutated favorite cleanup accepted');value.favorite=true
+ value.container=root;assert(not pcall(M.cleanup,state),'changed endpoint cleanup accepted');value.container=source
+ if full then item(source,21,'Base.Bandage');assert(not pcall(M.cleanup,state),'ambiguous new output accepted')end
+end
+local state=fixture(false);state.verifiedReceipt=nil;assert(not pcall(M.cleanup,state),'unverified bandage cleanup accepted')
+'''
+        result=subprocess.run([shutil.which('luajit'),'-',str(ROOT/'tests/native_queue/washing/shared/QueueWashingBandageFixture.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
 
     def sealed_replay(self, root, source=None):
         if source is None:

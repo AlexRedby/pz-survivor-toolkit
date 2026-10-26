@@ -8,6 +8,9 @@ local Operations = Toolkit.ActionQueueOperations
 local expandCommand = Operations.expandCommand
 local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
 local TidyIntent = require "PZSurvivorToolkit/ActionQueueTidyIntent"
+local WashWaterRule = require "PZSurvivorToolkit/WashWaterRule"
+local washWaterMatches = WashWaterRule and WashWaterRule.matchesComplete
+local washWaterComplete
 local Compat = {}
 Toolkit.ActionQueueCompat = Compat
 local records = {}
@@ -197,6 +200,8 @@ local function classUnchanged(class, methods)
 end
 
 local function sourceClassUnchanged(id, class, methods, clothingTransfer)
+    if id == "WashFix" and class == ISWashClothing and washWaterComplete and methods.complete == washWaterComplete
+        and (WashWaterRule.matchesComplete ~= washWaterMatches or not washWaterMatches(methods.complete)) then return false end
     return classUnchanged(class, methods) or id == "WashFix" and clothingTransfer == true and class == ISInventoryTransferAction
         and reviewedTransferClassUnchanged and reviewedTransferClassUnchanged(class, class, methods)
         or id == "P4TidyUpMeister" and (class == ISInventoryTransferAction or class == ISUnequipAction)
@@ -696,20 +701,20 @@ local function tidyRestoreContext(context, action)
     return result
 end
 
--- Sealed flat and ordinary aggregate menus issue the same clothing capability.
--- Body washing keeps its native lifecycle; transforming/bandage aggregates remain legacy.
-local washClothingCapability = {}
+-- Source-sealed compound preparation is independent of completion/edit capabilities.
+-- Only ordinary clothing commands migrate completion; other All branches stay legacy.
+local washClothingCapability, washBatchCapability = {}, {}
 local function clothingMenuSelection(args)
     if args.n == 6 and args[4] == nil and type(args[5]) == "boolean" then
         return args[3]
     end
     local data = args[3]
     if args.n ~= 5 or type(args[4]) ~= "boolean" or type(data) ~= "table" or getmetatable(data)
-        or type(data.washYourself) ~= "boolean" or data.cleanBandages ~= false then return end
+        or type(data.washYourself) ~= "boolean" or type(data.cleanBandages) ~= "boolean" then return end
     for key in pairs(data) do
         if key ~= "washYourself" and key ~= "regularItems" and key ~= "cleanBandages" then return end
     end
-    if type(data.regularItems) ~= "table" or #data.regularItems + (data.washYourself and 1 or 0) < 2 then return end
+    if type(data.regularItems) ~= "table" or not data.cleanBandages and #data.regularItems + (data.washYourself and 1 or 0) < 2 then return end
     return data.regularItems, data
 end
 local function clothingMenuOrigin(callback, character, sink, args)
@@ -717,23 +722,27 @@ local function clothingMenuOrigin(callback, character, sink, args)
         or not instanceof(sink, "IsoObject") or args[1] ~= sink then return end
     local selected, aggregate = clothingMenuSelection(args)
     if type(selected) ~= "table" or getmetatable(selected) then return end
-    local count, inputs = 0, {}
+    local count, inputs, ordinary = 0, {}, not aggregate or not aggregate.cleanBandages
     for key, item in pairs(selected) do
         if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or key > #selected
-            or not instanceof(item, "Clothing") or not item.getItemAfterCleaning then return end
+            or not instanceof(item, "InventoryItem") or not item.getItemAfterCleaning then return end
         local after = item:getItemAfterCleaning()
-        if after ~= nil and after ~= "" then return end
+        local clothing = instanceof(item, "Clothing") and (after == nil or after == "")
+        if not aggregate and not clothing then return end
+        if not clothing then ordinary = false end
         local id, fullType, container = item:getID(), item:getFullType(), item:getContainer()
         if inputs[id] or not container then return end
-        inputs[id] = {item = item, fullType = fullType, source = container, position = key}
+        inputs[id] = {item = item, fullType = fullType, source = container, position = key, afterType = after}
         count = count + 1
     end
     if count == 0 or count ~= #selected then return end
-    return {capability = washClothingCapability, character = character, sink = sink,
+    -- No regular items means every native approach keeps prior work; do not declare replacement.
+    return {capability = ordinary and washClothingCapability or washBatchCapability, character = character, sink = sink,
         root = character:getInventory(), inputs = inputs, arguments = args, selected = selected,
-        aggregate = aggregate, washYourself = aggregate and aggregate.washYourself, transfers = {}}
+        aggregate = aggregate, washYourself = aggregate and aggregate.washYourself,
+        cleanBandages = aggregate and aggregate.cleanBandages, transfers = {}}
 end
-local function clothingMenuMatches(origin, args)
+local function clothingMenuMatches(origin, args, preparationOnly)
     if not origin or args.n < origin.arguments.n + 1 or args.n > 11 or args[1] ~= origin.character
         or origin.character:getInventory() ~= origin.root then return false end
     for i = 1, origin.arguments.n do if args[i + 1] ~= origin.arguments[i] then return false end end
@@ -741,14 +750,14 @@ local function clothingMenuMatches(origin, args)
     for i = origin.arguments.n + 2, args.n do if args[i] ~= nil then return false end end
     local selected, aggregate = clothingMenuSelection(origin.arguments)
     if selected ~= origin.selected or aggregate ~= origin.aggregate or getmetatable(selected)
-        or aggregate and aggregate.washYourself ~= origin.washYourself then return false end
+        or aggregate and (aggregate.washYourself ~= origin.washYourself or aggregate.cleanBandages ~= origin.cleanBandages) then return false end
     local count = 0
     for key, item in pairs(selected) do
         if type(key) ~= "number" or key < 1 or key % 1 ~= 0 or key > #selected
-            or not instanceof(item, "Clothing") or not item.getItemAfterCleaning then return false end
+            or not instanceof(item, "InventoryItem") or not item.getItemAfterCleaning then return false end
         local expected, after = origin.inputs[item:getID()], item:getItemAfterCleaning()
         if not expected or expected.item ~= item or expected.position ~= key or expected.fullType ~= item:getFullType()
-            or expected.source ~= item:getContainer() or after ~= nil and after ~= "" then return false end
+            or not preparationOnly and (expected.source ~= item:getContainer() or after ~= expected.afterType) then return false end
         count = count + 1
     end
     local expected = 0; for _ in pairs(origin.inputs) do expected = expected + 1 end
@@ -961,8 +970,8 @@ scoped = function(context, callback, ...)
                 callback = function(...)
                     return Operations.run(function(...)
                         local context = {id = "WashFix", target = instanceof(sink, "IsoObject") and sink or nil}
-                        if ownerUnchanged("WashFix") and clothingMenuMatches(origin, pack(...)) then
-                            context.washOrigin = origin
+                        if ownerUnchanged("WashFix") and clothingMenuMatches(origin, pack(...), true) then
+                            if origin.capability == washClothingCapability and clothingMenuMatches(origin, pack(...)) then context.washOrigin = origin end
                             local approach = Toolkit.ActionQueueApproach
                             if origin.aggregate and approach and approach.runNativeBatch then
                                 return approach.runNativeBatch(origin.character, scoped, context, original, ...)
@@ -1180,9 +1189,13 @@ end
 
 local function loadSource(id, module, eventName)
     local event = eventName and Events[eventName]
-    local eventAdd, derive = event and event.Add, ISBaseTimedAction.derive
+    local deriveOwner = ISBaseTimedAction
+    local eventAdd, derive = event and event.Add, deriveOwner.derive
+    -- PZ Kahlua rawget also follows the metatable; pairs identifies true ownership.
+    local ownDerive
+    for name, callback in pairs(deriveOwner) do if name == "derive" then ownDerive = callback; break end end
     local privateWait, sequenceWait
-    ISBaseTimedAction.derive = function(class, name)
+    deriveOwner.derive = function(class, name)
         local result = derive(class, name)
         if id == "WashFix" and name == "WMI_WaitForInvUpdate" then privateWait = result end
         if id == "Project_Cook" and name == "PJCK_SequenceWaitAction" then sequenceWait = result end
@@ -1222,7 +1235,7 @@ local function loadSource(id, module, eventName)
         end
     end
     local results = pack(pcall(require, module))
-    ISBaseTimedAction.derive = derive
+    deriveOwner.derive = ownDerive
     if event then event.Add = eventAdd end
     if not results[1] then return false end
     if privateWait then
@@ -1669,6 +1682,8 @@ function Compat.install()
         Settlement.observePlannedReturns()
     end
     if ready.P4TidyUpMeister then installTidyFloorValidation() end
+    if ready.WashFix and WashWaterRule and WashWaterRule.install() and washWaterMatches
+        and washWaterMatches(ISWashClothing.complete) then washWaterComplete = ISWashClothing.complete end
     for id, sourceClasses in pairs(classes) do
         if ready[id] then
             for _, name in ipairs(names) do

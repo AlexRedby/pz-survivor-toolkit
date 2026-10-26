@@ -41,6 +41,7 @@ class BuildEntryPoint(unittest.TestCase):
         self.assertEqual(result.exception.code, 0)
         self.assertIn('--test-timeout', output.getvalue())
         self.assertIn('MediaChecks', output.getvalue())
+        self.assertIn('PZ_TEST_WORKSHOP', output.getvalue())
         run.assert_not_called()
 
     def test_registered_checks_have_unique_cli_names_and_existing_source_files(self):
@@ -144,10 +145,12 @@ class BuildChecks(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), 'MEDIA_CHECKS_PASS')
 
     def test_default_and_group_selection_remain_compatible(self):
-        ordinary = [name for name in build.CHECKS if not name.endswith('.VideoChecks')]
+        workshop = 'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks'
+        grouped = [name for name in build.CHECKS if name != workshop]
+        ordinary = [name for name in grouped if not name.endswith('.VideoChecks')]
         video = 'net.alexredby.pztoolkitjavapatches.VideoChecks'
         for flags, selected in [((), []), (('--check',), ordinary), (('--check-video',), [video]),
-                                (('--check', '--check-video'), list(build.CHECKS))]:
+                                (('--check', '--check-video'), grouped)]:
             with self.subTest(flags=flags):
                 self.run_build(*flags)
                 expected = [name for name in selected
@@ -160,6 +163,11 @@ class BuildChecks(unittest.TestCase):
                     self.assertEqual([arg for arg in compilations[0] if arg.endswith('.java')], sources)
                 else:
                     self.assertEqual(compilations, [])
+
+    def test_workshop_source_check_remains_explicitly_selectable(self):
+        self.run_build('--check', '--test', 'WashWaterRuleChecks')
+        self.assertEqual([call.args[0][-1] for call in self.java_calls()],
+                         ['net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks'])
 
     def test_cart_selection_retains_markers_and_isolates_cold_bootstrap(self):
         self.run_build('--test', 'CartTransitionMathTest', '--test', 'CartBootstrapCheck')

@@ -11,7 +11,8 @@ from ..mod_selection import selected_mod_version
 CLOTHING_CASES = ['borrowed-batch', 'borrowed-single-soap', 'cancel-after-pickup']
 BODY_CASES = ['body-full', 'body-water-limited', 'body-cancel']
 MIXED_CASES = ['mixed-all', 'mixed-reset-after-body']
-CASES = CLOTHING_CASES + BODY_CASES + MIXED_CASES
+BANDAGE_CASES = ['bandage-all', 'bandage-reset-after-body']
+CASES = CLOTHING_CASES + BODY_CASES + MIXED_CASES + BANDAGE_CASES
 MODS = craft.MODS + ['WashFix']
 GARMENTS = ['Base.Tshirt_DefaultTEXTURE_TINT', 'Base.Shirt_FormalWhite']
 BEHAVIOR = 'compat.wash-clothing'
@@ -77,7 +78,7 @@ def sources(project, selection):
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     craft.stage_common(project, output, game, jdk, selection, locations, runtime)
-    if selection['kind'] == 'mp' and any(case in CLOTHING_CASES + MIXED_CASES for case in selection['cases']):
+    if selection['kind'] == 'mp' and any(case in CLOTHING_CASES + MIXED_CASES + BANDAGE_CASES for case in selection['cases']):
         proofs = []
         for role in runtime['roles'].values():
             proof = replay_source(role['cache']);proofs.append(proof)
@@ -201,7 +202,7 @@ def body_snapshot(value):
 
 
 def body_prepared(p, case):
-    if not isinstance(p, dict) or case not in BODY_CASES + MIXED_CASES or p.get('case') != case:
+    if not isinstance(p, dict) or case not in BODY_CASES + MIXED_CASES + BANDAGE_CASES or p.get('case') != case:
         return False
     sink, soap, makeup, body = (p.get(k) for k in ('sink', 'soap', 'makeup', 'body'))
     if not body_snapshot(body): return False
@@ -279,26 +280,66 @@ def check_body_case(selection, row, p, receipt):
     return issues
 
 
+def bandage_snapshot(value, kind=None):
+    return (isinstance(value, dict) and type(value.get('id')) is int
+            and (value.get('kind') == kind if kind else value.get('kind') in ('Base.BandageDirty', 'Base.Bandage', False))
+            and type(value.get('favorite')) is bool
+            and (value.get('blood') is False or number(value.get('blood')) and 0 <= value['blood'] <= 100)
+            and all(type(value.get(k)) is int and value[k] in (0, 1) for k in ('rootCount', 'sourceCount', 'totalCount'))
+            and value['rootCount'] + value['sourceCount'] <= value['totalCount'])
+
+
+def bandage_prepared(p):
+    spec = p.get('bandage')
+    return (isinstance(spec, dict) and type(spec.get('id')) is int and spec.get('kind') == 'Base.BandageDirty'
+            and spec.get('afterType') == 'Base.Bandage' and spec.get('favorite') is True
+            and number(spec.get('blood')) and 0 <= spec['blood'] <= 100
+            and number(spec.get('waterOverride')) and .5 <= spec['waterOverride'] <= 10
+            and type(spec.get('baselineClean')) is list and all(bandage_snapshot(v, 'Base.Bandage') and v['totalCount'] == 1 for v in spec['baselineClean'])
+            and ids([p['book'], p['bagId'], p['soap']['id'], p['makeup']['id'], spec['id'], *[v['id'] for v in p['garments']], *[v['id'] for v in spec['baselineClean']]])
+            and spec['id'] in p['allIds'] and all(v['id'] in p['allIds'] for v in spec['baselineClean']))
+
+
+def bandage_result(p, value, reset):
+    if (not isinstance(value, dict) or not same(value.get('baselineClean'), p['bandage']['baselineClean'])
+            or not bandage_snapshot(value.get('input')) or type(value.get('created')) is not list): return None
+    spec, source = p['bandage'], value['input']
+    if source['id'] != spec['id']: return None
+    if reset:
+        if (value['created'] or not matches(source, dict(kind=spec['kind'], favorite=True, blood=spec['blood'], totalCount=1))
+                or source['rootCount'] + source['sourceCount'] != 1): return None
+        return [v for v in p['allIds'] if v != p['makeup']['id']]
+    if not matches(source, dict(kind=False, favorite=False, blood=False, rootCount=0, sourceCount=0, totalCount=0)) or len(value['created']) != 1: return None
+    result = value['created'][0]
+    if (not bandage_snapshot(result, spec['afterType']) or result['id'] in p['allIds']
+            or not matches(result, dict(favorite=True, blood=0, rootCount=0, sourceCount=1, totalCount=1))): return None
+    return sorted([v for v in p['allIds'] if v not in (p['makeup']['id'], spec['id'])] + [result['id']])
+
+
 def check_mixed_case(selection, row, p, receipt, replay_proof):
     if not prepared(p, p.get('case')) or not body_prepared(p, p.get('case')):
         return ['Mixed washing preparation differs']
     if not isinstance(row, dict) or not isinstance(receipt, dict): return ['Mixed evidence is not an object']
-    reset, enabled = p['case'] == 'mixed-reset-after-body', selection['mode'] == 'toolkit'
+    is_bandage = p['case'] in BANDAGE_CASES
+    if is_bandage and not bandage_prepared(p): return ['Native bandage preparation/source identity differs']
+    reset, enabled = p['case'] in ('mixed-reset-after-body', 'bandage-reset-after-body'), selection['mode'] == 'toolkit'
+    final_ids = bandage_result(p, receipt.get('bandage'), reset) if is_bandage else [v for v in p['allIds'] if v != p['makeup']['id']]
+    if final_ids is None: return ['Native old/new bandage identity/favorite/direct endpoint differs']
     issues=[]
     def fail(reason): issues.append(reason + ': ' + p['case'])
-    if (not matches(row, dict(status='passed',mixed=True,sourceMethodsUnchanged=True,localDeferrals=0,tailProgress=True,tailIndependent=True,
+    if (not matches(row, dict(status='passed',mixed=True,sourceMethodsUnchanged=True,tailProgress=True,tailIndependent=True,
             lateSourceActions=0,reset=reset,originalTailStarted=not reset,creationOverflow=False))
             or not matches(row.get('menu'),dict(method='WS.WMI_BuildWashMenu+ISContextMenu.onMouseUp',choice='mixed-all',exactArguments=True,
-                noSoap=False,requested=2,bagWorn=True,washYourself=True,cleanBandages=False,soapId=p['soap']['id'],soapUses=p['soap']['uses']))):
+                noSoap=False,requested=len(p['garments']),bagWorn=True,washYourself=True,cleanBandages=is_bandage,soapId=p['soap']['id'],soapUses=p['soap']['uses']))):
         fail('Real mixed All dispatch or independent tail differs')
     menu=row.get('menu',{}); inputs=menu.get('inputIds')
     if not ids(inputs) or sorted(inputs)!=sorted(v['id']for v in p['garments']): fail('Mixed All selected foreign/duplicate clothing')
     if not matches(menu.get('soapList'),dict(shape='java-list',count=1,ownOnly=True,items=[p['soap']])): fail('Mixed actual native soap list differs')
     clean_parts=[dict(v,blood=0,dirt=0)for v in p['body']['parts']]
     soap_used=1+(0 if reset else sum(v['requiredSoap']for v in p['garments']))
-    water_used=2+(0 if reset else sum(v['requiredWater']for v in p['garments']))
+    water_used=2+(0 if reset else sum(v['requiredWater']for v in p['garments'])+(p['bandage']['waterOverride'] if is_bandage else 0))
     if (not matches(receipt,dict(case=p['case'],actorId=p['actorId'],bagId=p['bagId'],bagType=p['bagType'],bagRootCount=1,
-            bookId=p['book'],tailRead=True,allIds=[v for v in p['allIds']if v!=p['makeup']['id']],weather=p['weather'],
+            bookId=p['book'],tailRead=True,allIds=final_ids,weather=p['weather'],
             body=dict(parts=clean_parts,makeupIds=[]),makeup=dict(p['makeup'],rootCount=0,totalCount=0,worn=False),
             soap=dict(p['soap'],uses=p['soap']['uses']-soap_used,rootCount=1,totalCount=1),
             sink=dict(source=p['sink'],amount=p['sink']['amount']-water_used,fluidAmount=p['sink']['amount']-water_used,pureWater=True,
@@ -306,7 +347,7 @@ def check_mixed_case(selection, row, p, receipt, replay_proof):
             or not matches(row,{k:v for k,v in receipt.items()if k!='case'})):
         fail('Mixed authoritative body/clothing costs, makeup or IDs differ')
     garments=receipt.get('garments'); local=row.get('actualResources')
-    if type(garments)is not list or len(garments)!=2 or not all(clothing(v)for v in garments): return issues+['Mixed clothing receipts missing']
+    if type(garments)is not list or len(garments)!=len(p['garments']) or not all(clothing(v)for v in garments): return issues+['Mixed clothing receipts missing']
     for actual,before in zip(garments,p['garments']):
         if not matches(actual,dict(id=before['id'],kind=before['kind'],totalCount=1)) or type(actual.get('rootCount'))is not int or actual.get('rootCount')not in (0,1) or actual.get('sourceCount')!=1-actual['rootCount']:
             fail('Mixed exact garment endpoint differs')
@@ -319,7 +360,7 @@ def check_mixed_case(selection, row, p, receipt, replay_proof):
         for key,value in receipt.items():
             if key!='garments'and not same(local.get(key),value): fail('Mixed client/server resource desync')
         observed=local.get('garments')
-        if type(observed)is not list or len(observed)!=2 or not all(clothing(v)for v in observed): fail('Mixed client garment view missing')
+        if type(observed)is not list or len(observed)!=len(p['garments']) or not all(clothing(v)for v in observed): fail('Mixed client garment view missing')
         elif any(not matches(a,{k:v for k,v in b.items()if k!='wetness'})for a,b in zip(observed,garments)): fail('Mixed client/server garment desync')
     body=row.get('bodyEvidence',{}); records=body.get('records')if isinstance(body,dict)else None
     phases=dict(perform=1,complete=int(selection['kind']=='sp'),stop=0)
@@ -332,27 +373,52 @@ def check_mixed_case(selection, row, p, receipt, replay_proof):
         fail('Mixed body did not pay through the unchanged common native lifecycle')
     records=row.get('records')
     if type(records)is not list or not all(isinstance(v,dict)for v in records): return issues+['Mixed clothing action records absent']
-    before_by_id={v['id']:v for v in p['garments']};cleanups=[v for v in records if v.get('postReset')is True]
-    approved=[v for v in cleanups if p4_restoration(v,p,row.get('resetProof'),replay_proof)and(enabled or v.get('behavior')=='native.ISInventoryTransferAction')]
+    before_by_id={v['id']:v for v in p['garments']}
+    if is_bandage: before_by_id[p['bandage']['id']]=dict(p['bandage'],dirt=0)
+    cleanups=[v for v in records if v.get('postReset')is True]
+    approved=[v for v in cleanups if p4_restoration(v,dict(p,garments=list(before_by_id.values())),row.get('resetProof'),replay_proof)and(enabled or v.get('behavior')=='native.ISInventoryTransferAction')]
     if len(approved)!=len(cleanups)or len(approved)>1 or type(row.get('ownedCleanupActions'))is not int or row.get('ownedCleanupActions')!=len(approved)or (cleanups and not reset): fail('Mixed reset created unproven late cleanup')
     washes=[v for v in records if v.get('kind')=='ISWashClothing']
-    if not reset and [v.get('id')for v in washes]!=inputs: fail('Mixed native washes missing/duplicated/reordered')
+    if not reset and [v.get('id')for v in washes]!=(inputs+[p['bandage']['id']]if is_bandage else inputs): fail('Mixed native washes missing/duplicated/reordered')
     for value in records:
         original=before_by_id.get(value.get('id'));kind=value.get('kind');owned=value in approved
         if original is None or kind not in ('ISWashClothing','ISInventoryTransferAction','WMI_WaitForInvUpdate')or value.get('revivedAfterReset')or value.get('methodsUnchanged')is not True: fail('Mixed foreign/revived/changed action');continue
         begin=value.get('begin'); finish=value.get('finish')
         if not isinstance(begin,dict)or set(begin)!={'perform','complete','stop'}or not all(type(n)is int and 0<=n<=1 for n in begin.values())or not same(begin,finish)or value.get('failedBoundary'): fail('Mixed native clothing lifecycle repeated/incomplete')
-        if enabled and not owned:
+        if enabled and not owned and is_bandage:
+            legacy=matches(value,dict(behavior='compat.selected-chains',sourceProof=True))
+            fallback=value.get('behavior')is None and value.get('sourceProof')is False and value.get('reviewedNativeFallback')is True
+            if fallback and kind=='ISInventoryTransferAction': fallback=matches(value.get('fallbackFacts'),dict(classMatches=True,constructorMatches=True,classCompleteNil=True,instanceCompleteNil=True,approvedConstructor=True))
+            native=kind=='ISInventoryTransferAction'and matches(value,dict(behavior='native.ISInventoryTransferAction',sourceProof=True))
+            if not (legacy or fallback or native): fail('Bandage aggregate unknown legacy/native source binding')
+            expected_perform=(value.get('legacyBegin')if legacy and reset and kind!='ISWashClothing'else int(legacy and not reset and value.get('progress')is True))
+            if type(expected_perform)is not int or expected_perform not in (0,1): fail('Bandage repeated legacy boundary')
+            if not matches(value,dict(legacyBegin=expected_perform,legacyFinish=expected_perform,privateDeferrals=expected_perform)):
+                fail('Bandage legacy perform/private deferral differs')
+        elif enabled and not owned:
             if not matches(value,dict(behavior=BEHAVIOR,sourceProof=True)): fail('Mixed clothes lack sealed shared producer')
         elif not owned and not(value.get('behavior')is None and value.get('sourceProof')is False or kind=='ISInventoryTransferAction'and matches(value,dict(behavior='native.ISInventoryTransferAction',sourceProof=True))): fail('Mixed queue-off ownership differs')
-        if (not enabled or owned)and not same(begin,dict(perform=0,complete=0,stop=0)): fail('Mixed native cleanup claimed shared lifecycle')
+        if (not enabled or owned or is_bandage)and not same(begin,dict(perform=0,complete=0,stop=0)): fail('Mixed native cleanup claimed shared lifecycle')
         if kind=='ISWashClothing':
             duration=max(100,min(500,(original['blood']+original['dirt'])*15))
             if not matches(value,dict(noSoap=False,bloodAmount=original['blood'],dirtAmount=original['dirt']))or not number(value.get('duration'))or value['duration']<duration: fail('Mixed native washing timing/profile differs')
             if reset:
                 if value.get('progress')or any(begin.values()): fail('Mixed reset allowed unpaid clothes wash')
-            elif not matches(value,dict(progress=True,inputRoot=True))or not same(begin,dict(perform=int(enabled),complete=int(enabled and selection['kind']=='sp'),stop=0)): fail('Mixed clothes bypassed paid shared lifecycle')
+            elif not matches(value,dict(progress=True,inputRoot=True))or not same(begin,dict(perform=int(enabled and not is_bandage),complete=int(enabled and not is_bandage and selection['kind']=='sp'),stop=0)): fail('Mixed clothes bypassed paid shared lifecycle')
         if kind=='ISInventoryTransferAction'and value.get('progress')and selection['kind']=='mp'and(not number(value.get('transactionDuration'))or value['transactionDuration']<=1): fail('Mixed native transfer cost absent')
+    if is_bandage:
+        if not matches(row,dict(bandageMode=True,newBandageTransfers=0)) or not matches(menu,dict(bandageInputIds=[p['bandage']['id']],bandageWater=p['bandage']['waterOverride'])):
+            fail('Bandage All selection or forbidden synthetic timed return differs')
+        if type(row.get('localDeferrals'))is not int or row['localDeferrals']!=sum(v.get('privateDeferrals',0)for v in records): fail('Bandage private deferrals not tied to exact actions')
+        for value in records:
+            if type(value.get('privateDeferrals'))is not int or value['privateDeferrals']not in (0,1): fail('Bandage repeated/unbound private deferral')
+            if not enabled and (value.get('privateDeferrals')or value.get('legacyBegin')or value.get('legacyFinish')): fail('Queue-off bandage claimed legacy boundary')
+            if value.get('kind')=='ISWashClothing'and value.get('id')==p['bandage']['id'] and not matches(value,dict(afterType=p['bandage']['afterType'],favorite=True,waterOverride=p['bandage']['waterOverride'],returnContainerMatches=True)):
+                fail('Native transforming wash lost favorite/water/return-container identity')
+        transfers=[v for v in records if v.get('kind')=='ISInventoryTransferAction'and v.get('id')==p['bandage']['id']and not v.get('postReset')]
+        if not reset and (len(transfers)!=1 or not matches(transfers[0],dict(pickup=True,returned=False,progress=True,reviewedBandagePickup=True))): fail('Bandage exact native pickup/direct return path differs')
+        if reset and (not matches(row.get('resetProof'),dict(beforeBandageWash=True)) or bandage_result(p,row.get('resetProof',{}).get('paid',{}).get('bandage'),True)is None): fail('Reset lacked unconsumed favorite bandage proof')
+    elif row.get('localDeferrals')!=0: fail('Shared mixed clothing entered private completion scope')
     if row.get('waitsObserved')!=sum(v.get('kind')=='WMI_WaitForInvUpdate'for v in records): fail('Mixed natural wait count differs')
     if not reset:
         if row.get('returnsBeforeRead')is not True: fail('Mixed returns did not precede independent reader')
@@ -369,7 +435,7 @@ def check_mixed_case(selection, row, p, receipt, replay_proof):
             fail('Mixed reset lacked actual paid body proof/fresh generation')
         if isinstance(paid,dict):
             paid_garments=paid.get('garments')
-            if type(paid_garments)is not list or len(paid_garments)!=2 or any(not matches(a,{k:v[k]for k in ('id','kind','blood','dirt','parts')})for a,v in zip(paid_garments,p['garments'])): fail('Mixed reset preceded dirty clothing proof')
+            if type(paid_garments)is not list or len(paid_garments)!=len(p['garments']) or any(not matches(a,{k:v[k]for k in ('id','kind','blood','dirt','parts')})for a,v in zip(paid_garments,p['garments'])): fail('Mixed reset preceded dirty clothing proof')
             else:
                 for paid_item,actual in zip(paid_garments,garments):
                     if type(paid_item.get('rootCount'))is not int or paid_item['rootCount']not in (0,1)or paid_item.get('sourceCount')!=1-paid_item['rootCount']:
@@ -382,7 +448,7 @@ def check_mixed_case(selection, row, p, receipt, replay_proof):
 
 
 def check_case(selection, row, prep, receipt, replay_proof=None):
-    if isinstance(prep, dict) and prep.get('case') in MIXED_CASES:
+    if isinstance(prep, dict) and prep.get('case') in MIXED_CASES + BANDAGE_CASES:
         return check_mixed_case(selection, row, prep, receipt, replay_proof)
     if isinstance(prep, dict) and prep.get("case") in BODY_CASES:
         return check_body_case(selection, row, prep, receipt)
@@ -536,7 +602,7 @@ def verify(root, selection, catalog):
     from ..report import events
     root, issues = Path(root), []
     replay_proof = None
-    if selection['kind'] == 'mp' and any(case in CLOTHING_CASES + MIXED_CASES for case in selection['cases']):
+    if selection['kind'] == 'mp' and any(case in CLOTHING_CASES + MIXED_CASES + BANDAGE_CASES for case in selection['cases']):
         try:
             replay_proof = replay_source(root / 'client1')
             if replay_source(root / 'server') != replay_proof:
@@ -575,7 +641,7 @@ def verify(root, selection, catalog):
         prep = next((v for k, v in raw if k == 'PREPARED' and v.get('case') == case), {})
         receipt = next((v for k, v in raw if k == 'VERIFIED' and v.get('case') == case), {})
         failures = check_case(selection, row, prep, receipt, replay_proof)
-        if case in CLOTHING_CASES + MIXED_CASES and selection['kind'] == 'mp' and (replay_proof is None or not replay_matches(row.get('replayProof'), dict(replay_proof, verified=True))):
+        if case in CLOTHING_CASES + MIXED_CASES + BANDAGE_CASES and selection['kind'] == 'mp' and (replay_proof is None or not replay_matches(row.get('replayProof'), dict(replay_proof, verified=True))):
             failures.append('Live MP replay source does not match independently sealed source: ' + case)
         issues.extend(failures)
         outcomes.append(dict(actor='client1', case=case, status='failed' if failures else 'passed',

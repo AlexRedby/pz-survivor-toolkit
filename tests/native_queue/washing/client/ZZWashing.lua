@@ -4,7 +4,8 @@ require 'ISUI/WMI_WashingSubmenus'
 local F=require 'QueueWashingFixture'
 local function bodyCase(name)return name=='body-full'or name=='body-water-limited'or name=='body-cancel'end
 local Body,Mixed
-local function mixedCase(name)return name=='mixed-all'or name=='mixed-reset-after-body'end
+local function bandageCase(name)return name=='bandage-all'or name=='bandage-reset-after-body'end
+local function mixedCase(name)return name=='mixed-all'or name=='mixed-reset-after-body'or bandageCase(name)end
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local replayMetadata,replaySourceProof
@@ -72,8 +73,15 @@ local function creationTrace(action)
  end
  return r
 end
+local function observeCleanTransfer(action)
+ if not run or not run.bandage or action.Type~='ISInventoryTransferAction'or not action.item or action.character~=getPlayer()then return end
+ local item=action.item;if item:getFullType()~=ids.bandage.afterType then return end
+ for _,known in ipairs(ids.bandage.baselineClean)do if known.id==item:getID()then return end end
+ if not run.cleanTransfers[action]then run.cleanTransfers[action]=true;run.newBandageTransfers=run.newBandageTransfers+1 end
+end
 local add=ISTimedActionQueue.add
 ISTimedActionQueue.add=function(action,...)
+ observeCleanTransfer(action)
  if run and not run.body and(run.reset or run.resetting)and action.Type=='ISInventoryTransferAction'and action.item and run.allowed[action.item:getID()]then
   if run.creationCount<16 then
    run.creationCount=run.creationCount+1
@@ -89,20 +97,24 @@ local function ownedRestore(trace)
   and trace.destinationBagId==ids.bagId and trace.destinationBagType==ids.bagType and trace.rootPresent and trace.noCallbacks
 end
 local function remember(action)
+ observeCleanTransfer(action)
  if not run or run.body or run.seen[action]then return end
  local item=action.item or action.Type=='WMI_WaitForInvUpdate'and action.wmiTransferAction and action.wmiTransferAction.item
  if not item or not run.allowed[item:getID()]then return end
  if action.Type~='ISWashClothing'and action.Type~='ISInventoryTransferAction'and action.Type~='WMI_WaitForInvUpdate'then return end
  local contract,id=T.ActionQueueDefinitions.inspect(action)
  local r={kind=action.Type,id=item:getID(),duration=action:getDuration(),progress=false,behavior=id,postReset=run.reset or run.resetting or false,
-  sourceProof=contract~=nil,begin={perform=0,complete=0,stop=0},finish={perform=0,complete=0,stop=0}}
+  sourceProof=contract~=nil,privateDeferrals=0,legacyBegin=0,legacyFinish=0,begin={perform=0,complete=0,stop=0},finish={perform=0,complete=0,stop=0}}
  if action.Type=='ISInventoryTransferAction'then
   r.pickup=action.destContainer==state.root;r.returned=action.srcContainer==state.root
   r.sourceType=action.srcContainer:getType();r.destinationType=action.destContainer:getType()
+  if ids.bandage and item:getID()==ids.bandage.id then r.reviewedBandagePickup=require('PZSurvivorToolkit/SourceProof').closure(action.start,'WMI_CleanBandagesContext.lua')and action.srcContainer==state.source and action.destContainer==state.root end
  elseif action.Type=='ISWashClothing'then
   r.inputRoot=action.item:getContainer()==state.root and state.root:contains(action.item)
   r.bloodAmount=action.bloodAmount;r.dirtAmount=action.dirtAmount;r.noSoap=action.noSoap
+  if ids.bandage and item:getID()==ids.bandage.id then r.afterType=item:getItemAfterCleaning();r.favorite=item:isFavorite();r.waterOverride=action.wmiWaterOverride;r.returnContainerMatches=action.wmiReturnContainer==state.source end
  end
+ if ids.bandage and not contract then r.reviewedNativeFallback,r.fallbackOrigins,r.fallbackFacts=require('QueueWashingBandage').reviewedFallback(action)end
  local saved={};for _,name in ipairs(methods)do saved[name]=action[name]end
  run.seen[action]={row=r,methods=saved};run.records[#run.records+1]=r
  if r.postReset then
@@ -114,6 +126,7 @@ assert(T.ActionQueueLifecycle.registerObserver('native-washing-fixture',{
  begin=function(action,nativePhase)
   if not enabled then return end
   remember(action);local entry=run and run.seen[action]
+  if entry and run.bandage and entry.row.behavior=='compat.selected-chains'and nativePhase=='perform'then entry.row.legacyBegin=entry.row.legacyBegin+1 end
   if entry and entry.row.sourceProof and entry.row.behavior=='compat.wash-clothing'and entry.row.begin[nativePhase]~=nil then
    entry.row.begin[nativePhase]=entry.row.begin[nativePhase]+1
   end
@@ -121,6 +134,7 @@ assert(T.ActionQueueLifecycle.registerObserver('native-washing-fixture',{
  finish=function(action,nativePhase,succeeded)
   if not enabled then return end
   local entry=run and run.seen[action]
+  if entry and run.bandage and entry.row.behavior=='compat.selected-chains'and nativePhase=='perform'then entry.row.legacyFinish=entry.row.legacyFinish+1;if succeeded~=true then entry.row.failedBoundary=true end end
   if entry and entry.row.sourceProof and entry.row.behavior=='compat.wash-clothing'and entry.row.finish[nativePhase]~=nil then
    entry.row.finish[nativePhase]=entry.row.finish[nativePhase]+1
    if succeeded~=true then entry.row.failedBoundary=true end
@@ -130,7 +144,7 @@ assert(T.ActionQueueLifecycle.registerObserver('native-washing-fixture',{
 local localDefer=T.ActionQueueOperations.deferCompletion
 T.ActionQueueOperations.deferCompletion=function(q,action)
  local result=localDefer(q,action)
- if result and run and run.seen[action]then run.localDeferrals=run.localDeferrals+1 end
+ if result and run and run.seen[action]then run.localDeferrals=run.localDeferrals+1;local row=run.seen[action].row;row.privateDeferrals=(row.privateDeferrals or 0)+1 end
  return result
 end
 local function observe()
@@ -233,10 +247,13 @@ local function dispatch(player)
   assert(run.replayProof.verified,'staged washing MP replay source no longer matches selected Toolkit')
  end
  for _,meta in ipairs(ids.garments)do run.allowed[meta.id]=true end
+ if ids.bandage then run.allowed[ids.bandage.id]=true end
  if mixedCase(case())then
-  run.mixed=true;Body=Body or require 'QueueWashingBody';Mixed=Mixed or require 'QueueWashingMixed'
+  run.mixed=true;run.bandage=ids.bandage~=nil;run.cleanTransfers={};run.newBandageTransfers=0;Body=Body or require 'QueueWashingBody';Mixed=Mixed or require 'QueueWashingMixed'
   assert(T.ActionQueueCompat.verifySources('WashFix')and T.ActionQueueCompat.verifySources('P4TidyUpMeister'),'mixed selected mod source differs')
   assert(require('PZSurvivorToolkit/SourceProof').matches('media/lua/shared/TimedActions/ISWashYourself.lua',1510864116,nil,true),'mixed native body source differs')
+  if run.bandage then assert(require('PZSurvivorToolkit/SourceProof').matches('media/lua/shared/TimedActions/ISWashClothing.lua',4034905648,nil,true),'native transformation source differs')end
+  if run.bandage then local bound,reason=require('PZSurvivorToolkit/WashWaterRule').matchesComplete(ISWashClothing.complete);assert(bound,'client reviewed bandage water rule cleanup is not installed: '..tostring(reason))end
   run.bodyRun=Body.track(player,state,ids,enabled)
  end
  local menu=ISContextMenu.get(player:getPlayerNum(),20,20)
@@ -252,6 +269,10 @@ local function dispatch(player)
   exactArguments=true,noSoap=selectedNoSoap,requested=#ids.garments,bagWorn=true,inputIds={},soapId=state.soap:getID(),soapUses=state.soap:getCurrentUses(),soapList=soaps,
   choice=run.mixed and 'mixed-all'or F.noSoap(case())and 'bag-aggregate'or 'bag-individual'}
  if run.mixed then run.menu.washYourself=option.param3.washYourself;run.menu.cleanBandages=option.param3.cleanBandages end
+ if run.bandage then
+  local dirty=WMI_Clean.getAllDirtyItems(player);assert(#dirty==1 and dirty[1]:getID()==ids.bandage.id and dirty[1]:getFullType()==ids.bandage.kind,'real All bandage collection differs')
+  run.menu.bandageInputIds={dirty[1]:getID()};run.menu.bandageWater=WMI_Clean.getWaterPerItem();assert(run.menu.bandageWater==ids.bandage.waterOverride,'authority/client bandage water config differs')
+ end
  for _,item in ipairs(run.mixed and option.param3.regularItems or option.param3)do run.menu.inputIds[#run.menu.inputIds+1]=item:getID()end
  selected:setVisible(true);selected.mouseOver=index;selected:onMouseUp(0,0)
  observe();if run.mixed then Body.observe(run.bodyRun);Mixed.assertBodyQueued(run.bodyRun)end;run.originalTail=readTail(player)
@@ -282,7 +303,7 @@ local function cancelAfterPickup(player)
  run.resetProof.freshIndependent=not enabled or type(freshToken)=='table'and freshToken~=oldToken and freshToken~=oldTailToken
 end
 local function cancelAfterBody(player)
- if case()~='mixed-reset-after-body'or run.reset then return end
+ if case()~='mixed-reset-after-body'and case()~='bandage-reset-after-body'or run.reset then return end
  Body.observe(run.bodyRun)
  local finished=false
  for action,entry in pairs(run.bodyRun.seen)do
@@ -297,6 +318,7 @@ local function cancelAfterBody(player)
  run.resetting=true;ISTimedActionQueue.clear(player);run.resetting=false;run.reset=true;run.resetAt=getTimestampMs()
  run.resetProof={method='ISTimedActionQueue.clear',afterPaidBody=true,beforeClothesWash=true,paid=paid,
   beforeGeneration=generation,afterGeneration=queue().toolkitOperationGeneration or 0,oldTailRemoved=queue():indexOf(run.originalTail)==-1}
+ if run.bandage then run.resetProof.beforeBandageWash=true end
  assert(run.resetProof.oldTailRemoved,'mixed clear retained old reader')
  run.freshTail=readTail(player);run.bodyRun.freshTail=run.freshTail;run.resetProof.freshGeneration=queue().toolkitOperationGeneration or 0
  local fresh=run.freshTail.toolkitQueueOperation
@@ -331,6 +353,7 @@ local function finish()
   lateObservedMs=run.resetAt and getTimestampMs()-run.resetAt or 0,waitsObserved=waits,ownedCleanupActions=run.ownedCleanupActions,creationOverflow=run.creationOverflow}
  if config.kind=='mp'then row.replayProof=run.replayProof end
  if run.mixed then row.bodyEvidence=Body.finish(run.bodyRun,authority,F);row.mixed=true end
+ if run.bandage then row.bandageMode=true;row.newBandageTransfers=run.newBandageTransfers end
  row.actualResources=assert(F.verify({player=getPlayer(),root=state.root,sink=state.sink,case=case(),ids=ids}))
  for k,v in pairs(authority)do if k~='case'then row[k]=v end end
  emit(row)
@@ -366,7 +389,7 @@ Events.OnTick.Add(function()
   elseif phase=='running'then
    if run.body then Body.tick(run)else observe();if run.mixed then Body.observe(run.bodyRun);cancelAfterBody(player)else cancelAfterPickup(player)end end
    if idle>=10 and #queue().queue==0 and not player:hasTimedActions()then
-    assert(not(F.isCancel(case())or case()=='body-cancel'or case()=='mixed-reset-after-body')or run.reset,'washing reset was never exercised')
+    assert(not(F.isCancel(case())or case()=='body-cancel'or case()=='mixed-reset-after-body'or case()=='bandage-reset-after-body')or run.reset,'washing reset was never exercised')
     if run.resetAt and getTimestampMs()-run.resetAt<3000 then return end
     request('Verify');phase='receipt';return
    end

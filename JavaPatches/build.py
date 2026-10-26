@@ -117,6 +117,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.AlarmClockChecks': 'ALARM_CLOCK_CH
           'net.alexredby.pztoolkitjavapatches.UITextFitChecks': 'UI_TEXT_FIT_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ManifestModelChecks': 'MANIFEST_MODEL_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.DrinkFluidCompletionChecks': 'DRINK_FLUID_COMPLETION_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks': 'WASH_WATER_RULE_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueMembershipChecks': 'QUEUE_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.InventoryMembershipChecks': 'INVENTORY_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ContextMenuDuplicateChecks': 'CONTEXT_MENU_DUPLICATE_CHECKS_PASS',
@@ -189,6 +190,8 @@ CHECKS['net.alexredby.pztoolkitjavapatches.VehicleStepPoseTest'] = 'VEHICLE_STEP
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleTransitionRenderTest'] = 'VEHICLE_TRANSITION_RENDER_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
 CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR_PATH_CHECKS_PASS'
+# Workshop-dependent checks require an explicit --test; --check keeps its game-only inputs.
+EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks'}
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
 
 def positive_timeout(value):
@@ -353,13 +356,14 @@ def main(argv=None):
     parser.add_argument('--kotlin-home', type=Path, help=f'Kotlin {KOTLIN_VERSION} compiler distribution (or KOTLIN_HOME / kotlinc on PATH)')
     parser.add_argument('--check', action='store_true', help='Run original-engine versus woven-patch regression')
     parser.add_argument('--check-video', action='store_true', help='Run headless video timeline/FFmpeg regression (PZ_TEST_FFMPEG selects executable)')
-    parser.add_argument('--test', action='append', choices=TEST_NAMES, default=[], metavar='NAME', help='Run only selected regressions; repeat for multiple. Names: ' + ', '.join(TEST_NAMES))
+    parser.add_argument('--test', action='append', choices=TEST_NAMES, default=[], metavar='NAME', help='Run only selected regressions; repeat for multiple. WashWaterRuleChecks requires PZ_TEST_WORKSHOP with the Workshop content root. Names: ' + ', '.join(TEST_NAMES))
     parser.add_argument('--test-timeout', type=positive_timeout, default=120, metavar='SECONDS', help='Timeout for each Java regression invocation (default: 120 seconds)')
     args = parser.parse_args(argv)
     if args.test:
         selected = [TEST_NAMES[name] for name in args.test]
     else:
-        selected = [name for name in CHECKS if (args.check_video if name.endswith('.VideoChecks') else args.check)]
+        selected = [name for name in CHECKS if name not in EXPLICIT_ONLY_CHECKS
+                    and (args.check_video if name.endswith('.VideoChecks') else args.check)]
     if args.game is None:
         parser.error('Pass --game with the folder containing projectzomboid.jar and ZombieBuddy.jar')
     args.game = args.game.resolve()
