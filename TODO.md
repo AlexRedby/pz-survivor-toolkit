@@ -2,6 +2,10 @@
 
 - [ ] Repeat injured-cart locomotion and healing checks in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.
 
+# Sandwich ingredient consumption on a joining client
+
+- [ ] Reproduce the reported Project Cook “+” then Cook ingredient-consumption issue with the original bread add-ins and sandwich toppings, which are not yet identified. Compare actual raw hunger/nutrition deductions and the joining-client, host and server container states. If reproduced, fix the demonstrated shared cause while preserving native portions, completed costs and unrelated actions; require a failing regression and full-pack Host qualification with the queue enabled and disabled.
+
 # Welding torch refill
 
 - [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host after local `damnlib` and `92jeepYJ` sources are available. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
@@ -166,7 +170,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Resolve the Codex cleanup refusal for a chat-created managed worktree: `archive_worktree` rejected the chat's managed checkout with `The task's primary checkout cannot be removed.` after the work was pushed to `main` and the worktree was clean. This blocks the finish-chat cleanup gate. Check checkout classification and the supported cleanup path; completion requires safely archiving the owned temporary worktree without bypassing protections or touching the shared checkout.
+- [ ] Restore the cumulative-memory MCP connection: `memory.remember` reports `Memory MCP is from an older release; reconnect the server`, while the installed CLI fallback works. Align or reconnect the MCP runtime, then confirm a normal note write and capture completion without the fallback; preserve the existing memory store.
 
 - [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
 

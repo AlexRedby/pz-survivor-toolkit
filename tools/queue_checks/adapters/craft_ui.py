@@ -3,6 +3,7 @@ import json
 import math
 from pathlib import Path
 import re
+from importlib import import_module
 
 from . import craft
 
@@ -14,7 +15,8 @@ FAILURE_CASES = CANCEL_CASES + POOL_CASES
 EVOLVED_CASE = 'cook-evolved-return'
 WATER_CASES = ['cook-water-soup', 'cook-water-stew', 'cook-water-soup-world', 'cook-water-stew-beans', 'cook-water-stew-floor-plus']
 EVOLVED_CASES = WATER_CASES + [EVOLVED_CASE]
-CASES = SUCCESS_CASES + FAILURE_CASES + EVOLVED_CASES
+JOINED_CASES = ['cook-sandwich-plain-joined', 'cook-sandwich-enriched-joined']
+CASES = SUCCESS_CASES + FAILURE_CASES + EVOLVED_CASES + JOINED_CASES
 COUNTS = {case: 1 if case.startswith('context') else 2 for case in CASES}
 OWNERS = {case: ('context' if case.startswith('context') else 'ISWidgetHandCraftControl' if case.startswith('vanilla-')
                  else 'NC_CraftActionPanel' if case.startswith('neat-') else 'PJCK_CraftActionPanel') for case in CASES}
@@ -152,23 +154,37 @@ def _evolved_case(selection, row, prep, receipt):
 def definitions():
     return {'craft-ui': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
                          'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
-                                    'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']}
+                                    'kinds': ['mp'] if case in JOINED_CASES else ['sp', 'mp'],
+                                    'languages': ['EN', 'RU'] if case in JOINED_CASES else ['EN'],
+                                    'modes': ['native', 'toolkit'],
+                                    **({'clients': 2, 'actor': 'client2'} if case in JOINED_CASES else {})}
                                    for case in CASES]}}
 
 
 def validate(selection):
     cases = selection.get('cases')
+    options = selection.get('options', {})
+    joined = type(cases) is list and any(case in JOINED_CASES for case in cases)
     if (type(cases) is not list or not cases or cases != [case for case in CASES if case in cases]
             or selection.get('kind') not in ('sp', 'mp') or selection.get('mode') not in ('native', 'toolkit')
-            or selection.get('languages') != ['EN'] or type(selection.get('clients', 1)) is not int
-            or selection.get('clients', 1) != 1 or not set(MODS) <= set(selection.get('mods', []))
-            or selection.get('options', {}).get('world_template')):
+            or type(selection.get('clients', 1)) is not int
+            or not set(MODS) <= set(selection.get('mods', [])) or type(options) is not dict
+            or options.get('world_template')):
         raise ValueError('Craft UI requires ordered registered cases, fresh SP/MP, one EN client and all craft UI mods')
+    if joined:
+        if (not set(cases) <= set(JOINED_CASES) or selection.get('kind') != 'mp'
+                or selection.get('clients') != 2 or selection.get('languages') != ['EN', 'RU']
+                or selection.get('actor') != 'client2' or options.get('mp_host') is not True):
+            raise ValueError('Joined sandwich cases require two-client menu Host, EN/RU and actor client2')
+    elif (selection.get('clients', 1) != 1 or selection.get('languages') != ['EN']
+          or selection.get('actor', 'client1') != 'client1'):
+        raise ValueError('Existing craft UI cases require one EN client and actor client1')
 
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [Path(__file__).with_name('craft.py'),Path(__file__).with_name('craft_ui_water.py'),
+            *([Path(__file__).with_name('craft_ui_sandwich.py')] if any(case in JOINED_CASES for case in selection.get('cases', [])) else []),
             *sorted((root / 'craft-ui').rglob('*.lua')),
             *sorted((root / 'craft/scripts').rglob('*.txt')),
             root / 'health/shared/QueueHealthEvents.lua', *sorted((root / 'startup').rglob('*.lua'))]
@@ -177,9 +193,15 @@ def sources(project, selection):
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     craft.stage_common(project, output, game, jdk, selection, locations, runtime)
+    if selection.get('actor') == 'client2':
+        runtime['fixture']['client_launch_stagger_seconds'] = 8
 
 
 def complete(selection, role, text):
+    if selection.get('actor') == 'client2':
+        return (role in ('client1', 'client2')
+                and len(re.findall(r'\[CRAFT_UI_TEST\] COMPLETE(?:\s|$)', text)) == 1
+                and len(re.findall(r'\[CRAFT_UI_TEST\] COMPLETE actor=' + role + r'(?:\s|$)', text)) == 1)
     return role == 'client1' and len(re.findall(r'\[CRAFT_UI_TEST\] COMPLETE(?:\s|$)', text)) == 1
 
 
@@ -385,6 +407,9 @@ def _outcomes(text):
 
 
 def verify(root, selection, catalog):
+    if any(case in JOINED_CASES for case in selection['cases']):
+        validate(selection)
+        return import_module('.craft_ui_sandwich', __package__).verify(root, selection, catalog)
     from ..report import events
     root, issues = Path(root), []
     logs = {}
