@@ -71,7 +71,7 @@ local function childMatches(kind, action)
     local name = childNames[kind]
     local snapshot = children[name]
     if not snapshot or _G[name] ~= snapshot.class or snapshot.class.Type ~= name then return false end
-    for key, value in pairs(snapshot.methods) do if rawget(snapshot.class, key) ~= value then return false end end
+    for key, value in pairs(snapshot.methods) do if Proof.own(snapshot.class, key) ~= value then return false end end
     for key, value in pairs(snapshot.base) do
         if ISBaseTimedAction[key] ~= value or not snapshot.methods[key] and snapshot.class[key] ~= value then return false end
     end
@@ -192,7 +192,7 @@ local function handlerContract(action)
     end
     -- Native leaf handlers call parent methods explicitly, even when a leaf shadows the same name.
     for class, methods in pairs(snapshot.prototypes) do
-        for name, method in pairs(methods) do if rawget(class, name) ~= method then return end end
+        for name, method in pairs(methods) do if Proof.own(class, name) ~= method then return end end
     end
     if doctor ~= action.character then return end
     if not snapshot.mini then

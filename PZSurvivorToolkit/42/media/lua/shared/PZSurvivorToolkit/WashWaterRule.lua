@@ -6,11 +6,8 @@ local matches, closure = Proof.matches, Proof.closure
 local owner, methods, replacement
 local nativeBase, nativeObject, nativeNew, nativeDerive
 local lastInstallReason = "not-installed"
-local function ownMember(value, key)
-    -- PZ's Kahlua rawget also searches metatables. pairs iterates only the
-    -- table's delegate, so it distinguishes owned members from inherited ones.
-    for name, member in pairs(value) do if name == key then return member end end
-end
+local ownMember = Proof.own
+
 local function named(prefix, name)
     return prefix .. (type(name) == "string" and name:sub(1, 64) or type(name))
 end
@@ -49,7 +46,7 @@ local function unchanged()
     if not owner then return false, lastInstallReason end
     if ISWashClothing ~= owner then return false, "class-identity-changed" end
     if owner._wmiPatchedReturnContainer ~= true then return false, "wmi-marker-changed" end
-    if Proof.matches ~= matches or Proof.closure ~= closure then return false, "proof-api-changed" end
+    if Proof.matches ~= matches or Proof.closure ~= closure or Proof.own ~= ownMember then return false, "proof-api-changed" end
     local valid, reason = hierarchy(owner, nativeBase, nativeObject, nativeNew, nativeDerive)
     if not valid then return false, reason end
     for name, callback in pairs(methods) do
@@ -71,7 +68,7 @@ end
 
 function Rule.install()
     if owner then return unchanged() end
-    if Proof.matches ~= matches or Proof.closure ~= closure then return refused("proof-api-changed") end
+    if Proof.matches ~= matches or Proof.closure ~= closure or Proof.own ~= ownMember then return refused("proof-api-changed") end
     if not getActivatedMods or not getActivatedMods():contains("WashFix") then return refused("mod-inactive") end
     if not matches("media/lua/shared/ISBaseObject.lua", 3350606722, nil, true) then return refused("source:ISBaseObject.lua") end
     if not matches("media/lua/shared/TimedActions/ISBaseTimedAction.lua", 3104185167, nil, true) then return refused("source:ISBaseTimedAction.lua") end

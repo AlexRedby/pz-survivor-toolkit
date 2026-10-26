@@ -74,7 +74,10 @@ local function fixture(options)
     env.require = function(module)
         if loaded[module] then return loaded[module] end
         if module == 'PZSurvivorToolkit/SourceProof' then return proof
-        elseif module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+        elseif module == 'PZSurvivorToolkit/QuartermasterCraftContainers'
+            or module == 'PZSurvivorToolkit/ActionQueueSettlement'
+            or module == 'PZSurvivorToolkit/ActionQueueTidyIntent'
+            or module == 'PZSurvivorToolkit/ActionQueueMembership' then
             loaded[module] = run(read(base .. module .. '.lua'), base .. module .. '.lua', env)
             return loaded[module]
         elseif module == 'PZSurvivorToolkit/ActionQueueCompat' then
@@ -92,6 +95,10 @@ local function fixture(options)
         local path = 'shared/TimedActions/' .. name .. '.lua'
         run(read(NativeActionRoot .. '/' .. path), path, env)
     end
+    -- Compat installs its transfer observers even when only BGI is active.
+    env.ISInventoryPage = {}
+    local transferPath = 'client/TimedActions/ISInventoryTransferAction.lua'
+    run(read(NativeActionRoot .. '/' .. transferPath), transferPath, env)
     local contextPath = 'client/ISUI/ISWorldObjectContextMenu.lua'
     local source = read(NativeActionRoot .. '/' .. contextPath)
     local producer = assert(source:match('(ISWorldObjectContextMenu.onActivateGenerator = function%(.-\nend)'))

@@ -145,8 +145,9 @@ class BuildChecks(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), 'MEDIA_CHECKS_PASS')
 
     def test_default_and_group_selection_remain_compatible(self):
-        workshop = 'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks'
-        grouped = [name for name in build.CHECKS if name != workshop]
+        workshop = {'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
+                    'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
+        grouped = [name for name in build.CHECKS if name not in workshop]
         ordinary = [name for name in grouped if not name.endswith('.VideoChecks')]
         video = 'net.alexredby.pztoolkitjavapatches.VideoChecks'
         for flags, selected in [((), []), (('--check',), ordinary), (('--check-video',), [video]),
@@ -165,9 +166,11 @@ class BuildChecks(unittest.TestCase):
                     self.assertEqual(compilations, [])
 
     def test_workshop_source_check_remains_explicitly_selectable(self):
-        self.run_build('--check', '--test', 'WashWaterRuleChecks')
-        self.assertEqual([call.args[0][-1] for call in self.java_calls()],
-                         ['net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks'])
+        for name in ('WashWaterRuleChecks', 'QueueOwnershipChecks'):
+            with self.subTest(name=name):
+                self.run_build('--check', '--test', name)
+                self.assertEqual([call.args[0][-1] for call in self.java_calls()],
+                                 ['net.alexredby.pztoolkitjavapatches.' + name])
 
     def test_cart_selection_retains_markers_and_isolates_cold_bootstrap(self):
         self.run_build('--test', 'CartTransitionMathTest', '--test', 'CartBootstrapCheck')

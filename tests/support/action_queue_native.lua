@@ -33,6 +33,13 @@ require = function(module)
     end
 end
 local function derive(self, name)
+    if NativeKahluaTableLookup then
+        -- Match ISBaseObject.derive: only the parent gets __index here.
+        -- Native new assigns the child's own __index on first construction.
+        local class = {Type=name, SuperType=self}
+        self.__index=self
+        return setmetatable(class,self)
+    end
     local class = {Type=name, derive=derive}; class.__index=class
     return setmetatable(class,{__index=self})
 end
@@ -70,8 +77,10 @@ project=function(name)
     end
     local root=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/'
     local path=root..'client/PZSurvivorToolkit/'..name..'.lua'
-    local file=io.open(path,'r')
-    if file then file:close()else path=root..'shared/PZSurvivorToolkit/'..name..'.lua'end
+    local exists
+    if NativeFileExists then exists=NativeFileExists(path)
+    else local file=io.open(path,'r');exists=file~=nil;if file then file:close()end end
+    if not exists then path=root..'shared/PZSurvivorToolkit/'..name..'.lua'end
     local result=assert(loadfile(path))()
     require=savedRequire
     return result
@@ -98,6 +107,8 @@ local function action(class,fields)
     return value
 end
 local function queue(...)
+    -- This fixture constructs directly; mirror the native queue constructor.
+    if NativeKahluaTableLookup then ISTimedActionQueue.__index=ISTimedActionQueue end
     local values={...};local q=setmetatable({character=player,queue=values,current=values[1]},ISTimedActionQueue)
     ISTimedActionQueue.queues[player]=q;return q
 end

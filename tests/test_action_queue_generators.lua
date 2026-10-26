@@ -1,4 +1,5 @@
 if not NativeActionRoot then print('Generator native contracts SKIP.'); return end
+local function firstKey(values)for key in pairs(values)do return key end;return nil end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
 local craftContainers
 local supportRequire = require
@@ -310,6 +311,7 @@ assert(q.current == repair and g.condition == 92 and #inv.items == 2
     and stoppedSounds == soundsBefore + 1 and removedScraps == removalsBefore and repairXp == xpBefore,
     'native SP perform stops sound before complete owns scrap, condition and XP')
 assert(q.onCompleted == ISTimedActionQueue.onCompleted, 'temporary advancement interception restores the inherited queue method')
+for name in pairs(q)do assert(name~='onCompleted','temporary generator callback left an owned inherited alias')end
 assert(repair:complete() and g.condition == 96 and #q.queue == 2 and q.queue[1].Type == 'ISFixGenerator')
 adapter.prune(); assert(not adapter.fixtureRegistries[2][repair] and not adapter.fixtureRegistries[3][repair], 'completed repair must release its continuation guards')
 local second = q.queue[1]; assert(second.toolkitQueueOperation == repair.toolkitQueueOperation and q.queue[2] == ending)
@@ -820,7 +822,7 @@ do
     inv.items={scrap1,scrap2,bookTail.item};g.condition=92
     local parent=ISFixGenerator:new(p,g);parent.toolkitQueueOperation={}
     local currentQueue=f.queue(parent,bookTail);parent:begin();adapter.prune()
-    assert(next(adapter.fixtureRegistries[3])==nil,'native-boundary regression requires an empty fallback registry')
+    assert(firstKey(adapter.fixtureRegistries[3])==nil,'native-boundary regression requires an empty fallback registry')
     local stopSound,sharedPerforms=p.stopOrTriggerSound,0
     p.stopOrTriggerSound=function(...)
         local active=currentQueue.current
@@ -837,7 +839,7 @@ do
         local condition,removals,xp=g.condition,removedScraps,repairXp
         assert(lifecycle.begin(repairing,'perform') and lifecycle.current(p)==repairing)
         repairing:perform()
-        assert(next(adapter.fixtureRegistries[3])==nil,
+        assert(firstKey(adapter.fixtureRegistries[3])==nil,
             'active common lifecycle must bypass the generator pendingPerform fallback')
         lifecycle.finish(repairing,'perform',true)
         assert(lifecycle.current(p)==nil and currentQueue.current==repairing
@@ -849,7 +851,7 @@ do
         lifecycle.finish(repairing,'complete',true)
         assert(g.condition==condition+4 and removedScraps==removals+1 and repairXp==xp+5 and currentQueue.current==repairing,
             'native completion must apply one effect while retaining its parent')
-        assert(currentQueue.queue[#currentQueue.queue]==bookTail and next(adapter.fixtureRegistries[3])==nil,
+        assert(currentQueue.queue[#currentQueue.queue]==bookTail and firstKey(adapter.fixtureRegistries[3])==nil,
             'native completion changed the independent tail or reactivated the fallback')
         if iteration==1 then
             local child=currentQueue.queue[2]
@@ -879,7 +881,7 @@ do
         and child.toolkitQueueOperation==parent.toolkitQueueOperation and currentQueue.queue[3]==bookTail,
         'Host native repair continuation lost its contract or independent tail')
     assert(g.condition==condition and removedScraps==removals and repairXp==xp
-        and next(adapter.fixtureRegistries[3])==nil,'Host client applied server effects or used SP fallback')
+        and firstKey(adapter.fixtureRegistries[3])==nil,'Host client applied server effects or used SP fallback')
     assert(lifecycle.flush(currentQueue)=='waiting','Host client advanced before native removal')
     parent.action.fixtureStopped=true
     assert(lifecycle.flush(currentQueue)=='completed' and currentQueue.current==child

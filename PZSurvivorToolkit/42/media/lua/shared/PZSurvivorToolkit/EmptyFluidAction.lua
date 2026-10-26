@@ -8,7 +8,7 @@ local API = {}
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 PZSurvivorToolkit.EmptyFluidAction = API
 local empty, wrapper, util, base = ISFluidEmptyAction, ISFluidContainer, ISFluidUtil, ISBaseTimedAction
-local matches, closure = Proof.matches, Proof.closure
+local matches, closure, ownedField = Proof.matches, Proof.closure, Proof.own
 local markerKey, token = "toolkitEmptyFluidEvidence", {}
 local required = {
     {empty,"ISFluidEmptyAction.lua",{"isValid","update","serverStart","animEvent","getDuration","updateEmpty","start","stop","perform","complete","new"}},
@@ -21,7 +21,7 @@ local function method(value,name) return value and type(value[name])=="function"
 local function snapshot(owner,filename,names)
     if type(owner)~="table" then return false end
     local methods,seen={},{}
-    for _,name in ipairs(names) do if type(rawget(owner,name))~="function" then return false end end
+    for _,name in ipairs(names) do if type(ownedField(owner,name))~="function" then return false end end
     for name,callback in pairs(owner) do
         if type(callback)=="function" and name~="derive" then
             if seen[callback] or not closure(callback,filename) then return false end
@@ -43,18 +43,18 @@ if supported then
 end
 local nativeValid=supported and snapshots[empty].isValid
 local nativeUpdate=supported and snapshots[empty].updateEmpty
-local baseDelta=supported and rawget(base,"getJobDelta")
+local baseDelta=supported and ownedField(base,"getJobDelta")
 local valid,update
 local function live()
     if not supported or ISFluidEmptyAction~=empty or ISFluidContainer~=wrapper or ISFluidUtil~=util
-        or ISBaseTimedAction~=base or Proof.matches~=matches or Proof.closure~=closure
-        or rawget(empty,"__index")~=empty or rawget(wrapper,"__index")~=wrapper
-        or rawget(base,"getJobDelta")~=baseDelta or not closure(baseDelta,"ISBaseTimedAction.lua") then return false end
+        or ISBaseTimedAction~=base or Proof.matches~=matches or Proof.closure~=closure or Proof.own~=ownedField
+        or ownedField(empty,"__index")~=empty or ownedField(wrapper,"__index")~=wrapper
+        or ownedField(base,"getJobDelta")~=baseDelta or not closure(baseDelta,"ISBaseTimedAction.lua") then return false end
     for _,entry in ipairs(required) do
         local owner,filename=entry[1],entry[2]
         for name,callback in pairs(snapshots[owner]) do
             local expected=owner==empty and (name=="isValid" and valid or name=="updateEmpty" and update) or callback
-            if rawget(owner,name)~=expected or not closure(callback,filename) then return false end
+            if ownedField(owner,name)~=expected or not closure(callback,filename) then return false end
         end
         for name,callback in pairs(owner) do
             if type(callback)=="function" and name~="derive" and not snapshots[owner][name] then return false end
@@ -91,16 +91,16 @@ local function context(action)
     for name,callback in pairs(action) do
         if type(callback)=="function" and not snapshots[empty][name] then return end
     end
-    local box=rawget(action,"container")
+    local box=ownedField(action,"container")
     -- Check dispatch before any inherited lookup; never call a foreign wrapper getter.
     if type(box)~="table" or getmetatable(box)~=wrapper then return end
     for name,callback in pairs(snapshots[wrapper]) do if box[name]~=callback then return end end
     for _,callback in pairs(box) do if type(callback)=="function" then return end end
     if box.Type~=wrapper.Type or box.isFluidResource~=false or box.fluidResource~=nil
         or box.isInventoryItem~=true or box.isoPanel~=false then return end
-    local fluid=rawget(box,"fluidContainer")
+    local fluid=ownedField(box,"fluidContainer")
     if not instanceof(fluid,"FluidContainer") or action.containerObject~=fluid then return end
-    local item,player=fluid:getOwner(),rawget(action,"character")
+    local item,player=fluid:getOwner(),ownedField(action,"character")
     if not instanceof(item,"ComboItem") or type(getClassSimpleName)~="function" or getClassSimpleName(item)~="ComboItem"
         or not instanceof(player,"IsoPlayer") or item:getFluidContainer()~=fluid or item:getWorldItem()
         or item:getIsCraftingConsumed() or player:isEquipped(item) or item:getEquipParent() or item:getAttachedSlot()>=0 then return end
@@ -123,7 +123,7 @@ local function cleanWater(fluid)
     return finite(thirst) and thirst<=0
 end
 local function active(action,state)
-    local native=rawget(action,"action")
+    local native=ownedField(action,"action")
     if not instanceof(native,"LuaTimedActionNew") or not method(native,"getTable") or native:getTable()~=action
         or not native:isStarted() or not state.player:getCharacterActions():contains(native) then return end
     local delta=native:getJobDelta()
@@ -139,7 +139,7 @@ local function record(action,state,native,delta,client)
     rawset(action,markerKey,state)
 end
 update=function(action,delta)
-    local previous=type(action)=="table" and rawget(action,markerKey)
+    local previous=type(action)=="table" and ownedField(action,markerKey)
     local before=context(action)
     local native,progress
     if before and not isClient() and not isServer() and finite(delta) and delta>=0 and delta<=1
@@ -172,7 +172,7 @@ valid=function(action)
         if isClient() and not isServer() and native and cleanWater(state.fluid) then record(action,state,native,delta,true) end
         return result
     end
-    local evidence=type(action)=="table" and rawget(action,markerKey)
+    local evidence=type(action)=="table" and ownedField(action,markerKey)
     if not native or not evidence or evidence.token~=token or evidence.native~=native or not same(evidence,state)
         or delta<evidence.delta or evidence.client~=(isClient() and not isServer())
         or not state.fluid:isEmpty() or state.fluid:getAmount()~=0 then clear(action);return result end

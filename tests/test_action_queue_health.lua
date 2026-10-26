@@ -1,9 +1,20 @@
 if not NativeActionRoot then print('Health queue native contracts SKIP.');return end
+local function readText(path)
+    if NativeReadText then return NativeReadText(path):gsub('\r','') end
+    local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
+end
+local function textReader(path)
+    local text,position=readText(path),1
+    return {close=function()end,readLine=function()
+        if position>#text then return nil end
+        local boundary=text:find('\n',position,true)or #text+1
+        local line=text:sub(position,boundary-1);position=boundary+1;return line
+    end}
+end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/ISBaseObject.lua')
 ISHealthPanel={}
-local file=assert(io.open(NativeActionRoot..'/client/XpSystem/ISUI/ISHealthPanel.lua'))
-local source=file:read('*a'):gsub('\r','');file:close()
+local source=readText(NativeActionRoot..'/client/XpSystem/ISUI/ISHealthPanel.lua')
 local first=assert(source:find('HealthPanelAction = ISBaseTimedAction:derive',1,true))
 local last=assert(source:find('ISHealthPanel.ReceiveMedicalCheckRequest',first,true))
 local nativeHandlers
@@ -18,10 +29,9 @@ local function loadPanel()
     end
 end
 loadPanel()
-getFilenameOfClosure=function(callback) return debug.getinfo(callback,'S').source:gsub('^@','') end
+getFilenameOfClosure=NativeFilenameOfClosure or function(callback) return debug.getinfo(callback,'S').source:gsub('^@','') end
 getGameFilesInput=function(path)
-    local reader=assert(io.open(NativeActionRoot..'/'..path:gsub('^media/lua/','')))
-    return {readLine=function() local line=reader:read('*l');return line and line:gsub('\r$','') end,close=function()reader:close()end}
+    return textReader(NativeActionRoot..'/'..path:gsub('^media/lua/',''))
 end
 local nativeReader = getGameFilesInput
 isClient=function()return false end
@@ -42,15 +52,14 @@ local function loadChildren()
     for _,name in ipairs({'ISApplyBandage','ISDisinfect','ISStitch','ISSplint','ISRemoveGlass','ISRemoveBullet','ISCleanBurn',
         'ISComfreyCataplasm','ISGarlicCataplasm','ISPlantainCataplasm'}) do
         local path=NativeActionRoot..'/shared/TimedActions/'..name..'.lua'
-        local reader=assert(io.open(path));local text=reader:read('*a');reader:close()
+        local text=readText(path)
         assert(loadstring(text,'@'..path))()
     end
 end
 loadChildren()
 local inventoryContextOverride
 local function loadContainers()
-    local reader=assert(io.open(inventoryContextOverride or NativeActionRoot..'/client/ISUI/ISInventoryPaneContextMenu.lua'))
-    local text=reader:read('*a'):gsub('\r','');reader:close()
+    local text=readText(inventoryContextOverride or NativeActionRoot..'/client/ISUI/ISInventoryPaneContextMenu.lua')
     local first=assert(text:find('ISInventoryPaneContextMenu.getContainers = function',1,true))
     local last=assert(text:find('ISInventoryPaneContextMenu.addFixerSubOption',first,true))
     assert(loadstring(text:sub(first,last-1),'@media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'))()
@@ -67,7 +76,7 @@ local function loadContainers()
         assert(loadstring(prefix..text:sub(from,to-1),'@media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'))()
     end
     for _,path in ipairs({'client/TimedActions/ISInventoryTransferAction.lua','shared/luautils.lua','shared/TimedActions/ISInventoryTransferUtil.lua'}) do
-        local reader=assert(io.open(NativeActionRoot..'/'..path));local value=reader:read('*a');reader:close()
+        local value=readText(NativeActionRoot..'/'..path)
         assert(loadstring(value,'@media/lua/'..path))()
     end
     ArrayList={new=function()
@@ -1026,8 +1035,7 @@ if NativeWishlistWorkshopRoot then
     inventoryContextOverride=NativeWishlistWorkshopRoot..'/3437629766/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'
     local function cleanReader(path)
         if path=='media/lua/client/ISUI/ISInventoryPaneContextMenu.lua' then
-            local reader=assert(io.open(inventoryContextOverride))
-            return {readLine=function()local line=reader:read('*l');return line and line:gsub('\r$','')end,close=function()reader:close()end}
+            return textReader(inventoryContextOverride)
         end
         return nativeReader(path)
     end
@@ -1059,7 +1067,7 @@ end
 
 if NativeWishlistWorkshopRoot then
     local path=NativeWishlistWorkshopRoot..'/3710913197/mods/MiniHealthPlus/42.20/media/lua/client/MiniHealthPlus/MiniHealthTreatments.lua'
-    local reader=assert(io.open(path));local miniSource=reader:read('*a');reader:close()
+    local miniSource=readText(path)
     local miniRoot=NativeWishlistWorkshopRoot..'/3710913197/mods/MiniHealthPlus/42.20/'
     local function loadMini()
         SandboxVars={MHP={EnableReplaceBandage=true}}
@@ -1070,8 +1078,7 @@ if NativeWishlistWorkshopRoot then
     end
     getModFileReader=function(id,file)
         assert(id=='MiniHealthPlus')
-        local file=assert(io.open(miniRoot..file))
-        return {readLine=function()return file:read('*l')end,close=function()file:close()end}
+        return textReader(miniRoot..file)
     end
     adapter=freshHealth(nil,true);policy=PZSurvivorToolkit.ActionQueuePolicy
     local treatment=loadMini()
@@ -1188,7 +1195,10 @@ if NativeWishlistWorkshopRoot then
         end
         local scans, nativeIpairs = 0, ipairs
         ipairs=function(values)
-            if values==q.queue and debug.getinfo(2,'S').source:find('ActionQueueHealth.lua',1,true) then scans=scans+1 end
+            if values==q.queue then
+                local source=NativeCallerSource and NativeCallerSource(2)or debug.getinfo(2,'S').source
+                if source:find('ActionQueueHealth.lua',1,true)then scans=scans+1 end
+            end
             return nativeIpairs(values)
         end
         local ok, failure=pcall(pending.perform,pending)

@@ -102,7 +102,7 @@ local function origin(owner,name,callback)
         and Proof.closure(callback,"EmptyFluidAction.lua") then
         return type(emptyRepairAuthorizes)=="function" and EmptyRepair.authorizes==emptyRepairAuthorizes
             and Proof.closure(emptyRepairAuthorizes,"EmptyFluidAction.lua")
-            and pinned("media/lua/shared/PZSurvivorToolkit/EmptyFluidAction.lua",590637907,"PZSurvivorToolkit")
+            and pinned("media/lua/shared/PZSurvivorToolkit/EmptyFluidAction.lua",1033539181,"PZSurvivorToolkit")
             and guarded(function()return emptyRepairAuthorizes(owner,name,callback)end)
     end
     if owner==drink and (name=="isValid" or name=="updateEat")
@@ -134,7 +134,7 @@ function Adapters.adoptMethods(owner,previous,replacement,guard)
     local count=0
     for name, callback in pairs(replacement) do
         if not allowed[owner][name] or type(callback)~="function" or snapshots[owner][name]~=previous[name]
-            or rawget(owner,name)~=callback or not origin(owner,name,previous[name]) then return false end
+            or Proof.own(owner,name)~=callback or not origin(owner,name,previous[name]) then return false end
         count=count+1
     end
     for name in pairs(previous) do if replacement[name]==nil then return false end end
@@ -149,7 +149,7 @@ function Adapters.adoptMethods(owner,previous,replacement,guard)
     return true
 end
 function Adapters.adoptBase(name,previous,replacement)
-    if (name~="begin" and name~="stop") or ISBaseTimedAction~=base or rawget(base,name)~=replacement
+    if (name~="begin" and name~="stop") or ISBaseTimedAction~=base or Proof.own(base,name)~=replacement
         or baseMethods[name]~=previous
         or not Proof.closure(previous,"ISBaseTimedAction.lua") or not Proof.closure(replacement,"ActionQueue.lua") then return false end
     for _,owner in ipairs({transfer,drink,eat,empty}) do
@@ -492,12 +492,12 @@ function Adapters.emptyFluid(action)
     -- Native self-pruning can abort the whole tail. A complete local effect
     -- requires the owned active-empty completion repair, even before it starts.
     if not emptyEnabled or type(emptyRepairAuthorizes)~="function" or EmptyRepair.authorizes~=emptyRepairAuthorizes
-        or rawget(empty,"__index")~=empty or rawget(fluidWrapper,"__index")~=fluidWrapper
+        or Proof.own(empty,"__index")~=empty or Proof.own(fluidWrapper,"__index")~=fluidWrapper
         or not guarded(function()return emptyRepairAuthorizes(empty,"isValid",empty.isValid)
             and emptyRepairAuthorizes(empty,"updateEmpty",empty.updateEmpty)end)
         or not pending(action,empty) then return end
     local wrapper=action.container
-    if type(wrapper)~="table" or getmetatable(wrapper)~=fluidWrapper or rawget(fluidWrapper,"__index")~=fluidWrapper
+    if type(wrapper)~="table" or getmetatable(wrapper)~=fluidWrapper or Proof.own(fluidWrapper,"__index")~=fluidWrapper
         or wrapper.Type~=fluidWrapper.Type
         or wrapper.isFluidResource~=false or wrapper.fluidResource~=nil
         or wrapper.isInventoryItem~=true or wrapper.isoPanel~=false then return end

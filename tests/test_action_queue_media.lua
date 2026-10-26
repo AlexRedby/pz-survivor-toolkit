@@ -48,6 +48,7 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
  if foreignCallback=='delegate'then ISDeviceMediaAction.isValid=function()error('foreign delegate must never execute')end end
  if wrapped then assert(loadstring(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/TVMediaAction.lua'),'@PZSurvivorToolkit/TVMediaAction.lua'))()end
  if foreignCallback==true then ISDeviceMediaAction.complete=function()error('foreign preinstalled callback')end end
+ if foreignCallback=='base'then ISBaseTimedAction.update=function()error('foreign inherited helper must not run')end end
  local originalInstance=instanceof
  instanceof=function(value,kind)
   return originalInstance(value,kind)or type(value)=='table'and
@@ -481,6 +482,7 @@ assert(not setup(false,'helper').installed,'changed native device resolver sourc
 assert(not setup(false,'base').installed,'changed inherited native lifecycle source cannot inherit adapter permission')
 assert(not setup(true,'toolkit').installed,'changed owned validity wrapper source cannot inherit permission')
 assert(not setup(false,nil,true).installed,'foreign preinstalled complete cannot be blessed by source files')
+assert(not setup(false,nil,'base').installed,'foreign inherited media helper cannot acquire native completion ownership')
 assert(not setup(true,nil,'delegate').installed,'owned wrapper cannot bless a foreign captured validity delegate')
 print('Media actual-source callbacks, exact VHS/TV resources, native effects, cancellation and fail-closed guards passed.')
 

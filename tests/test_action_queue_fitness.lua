@@ -1277,6 +1277,8 @@ if SaucedCartsSource then
  local function source(text,path)return assert(loadstring(text,'@'..path))()end
  local originalStartAdd=Events.OnGameStart.Add
  local originalModReader=getModFileReader
+ local originalCompat=PZSurvivorToolkit.ActionQueueCompat
+ local originalCarts,originalSaucedCarts=PZSurvivorToolkit.ActionQueueCarts,SaucedCarts
  for _,mode in ipairs({'normal','pickup-cancel','active-cancel','changed-source','preinstalled'})do
   reset()
   native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
@@ -1368,9 +1370,13 @@ if SaucedCartsSource then
    local function rejected(message)
     player.primary,player.secondary=nil,nil
     player.worn.BACK=nil -- Fallback is checked without executing a deliberately replaced constructor.
-    local rejectedAction=request('squats',10)
+    local rejectedAction,_,rejectedWindow=request('squats',10)
     player.worn.BACK=bag
     assert(not fitnessQueue.isManaged(rejectedAction)and rejectedAction.Type=='ISWaitWhileGettingUp',message)
+    -- Each mutation is an independent native fallback. Finish its UI episode
+    -- so the repeated-OK preparation guard cannot block the next scenario.
+    fitness:setCurrentExercise(nil)
+    rejectedWindow:update()
    end
    for _,name in ipairs({'new','isValid','complete'})do
     local callback=ISDropWorldItemAction[name];ISDropWorldItemAction[name]=function()end
@@ -1414,7 +1420,17 @@ if SaucedCartsSource then
   ISTimedActionQueue.add=nativeAdd
  end
  Events.OnGameStart.Add=originalStartAdd;getModFileReader=originalModReader
- native('shared/TimedActions/ISDropWorldItemAction.lua');native('shared/TimedActions/ISUnequipAction.lua');f.project('FitnessEquipment')
+ PZSurvivorToolkit.ActionQueueCompat=originalCompat
+ PZSurvivorToolkit.ActionQueueCarts,SaucedCarts=originalCarts,originalSaucedCarts
+ -- Later timer scenarios need fresh native owners and proofs, without the
+ -- intentionally unapproved/preinstalled cart wrappers from the final case.
+ native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+ native('shared/TimedActions/ISDropWorldItemAction.lua');native('shared/TimedActions/ISUnequipAction.lua')
+ f.project('FitnessEquipment');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+ fitnessQueue=f.project('ActionQueueFitness');installFoodWearContract()
+ equipmentTick=assert(tickCallbacks[#tickCallbacks-1],'fresh native fitness cleanup callback missing')
+ fitnessPrune=assert(tickCallbacks[#tickCallbacks],'fresh fitness record pruning callback missing')
+ fitnessMenuReset=assert(menuCallbacks[#menuCallbacks],'fresh fitness menu cleanup callback missing')
  print('PASS actual late SaucedCarts equipment/drop wrappers preserve normal and cancelled borrowing with guarded admission')
 end
 

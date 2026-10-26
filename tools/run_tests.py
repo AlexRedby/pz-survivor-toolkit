@@ -4,6 +4,9 @@
 import argparse
 import json
 import locale
+import re
+import sys
+import time
 from pathlib import Path
 
 try:
@@ -48,6 +51,15 @@ def discover_tests(root):
     """Top-level test_*.lua files are runnable without a second registration."""
     return sorted({path.name for path in (root / "tests").glob("test_*.lua") if path.is_file()}
                   | set(NATIVE_TAG_TESTS))
+
+
+def grouped_tests(name, available):
+    if name == "action-queue":
+        shared_guards = {test for test in available
+                         if test.startswith("test_wash_") or test in (
+                             "test_empty_fluid_action.lua", "test_source_proof.lua")}
+        return {test for test in available if test.startswith("test_action_queue")} | shared_guards
+    return set()
 
 
 def configure_game_sources(args):
@@ -156,14 +168,87 @@ def test_variants(name, args):
     if name == "test_action_queue_fire.lua" and args.native_action_root and args.wishlist_workshop_root:
         flags += ["FireTestBCPreinstalled", "FireTestBCForeignPredecessor", "FireTestQMBeforeBC",
                   "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
+    if name == "test_action_queue_ownership.lua" and args.native_action_root:
+        flags += ["OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
+                  "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth"]
     return flags
+
+
+class _Tee:
+    """Capture Lua print output while preserving the runner's normal stdout."""
+    def __init__(self, target):
+        self.target = target
+        self.parts = []
+
+    def write(self, value):
+        self.parts.append(value)
+        return self.target.write(value)
+
+    def flush(self):
+        return self.target.flush()
+
+
+def _run_variant(name, flag, args, LuaRuntime):
+    started = time.perf_counter()
+    try:
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        configure_test_sources(lua, name, args)
+        if flag:
+            lua.globals()[flag] = True
+    except Exception as error:
+        if not args.keep_going:
+            raise
+        return {"test": name, "variant": flag or "default", "status": "failed",
+                "elapsed_seconds": round(time.perf_counter() - started, 6),
+                "error": str(error) or type(error).__name__, "skip_reasons": []}
+    try:
+        captured = _Tee(sys.stdout)
+        if hasattr(lua, "eval"):
+            to_string = lua.eval("tostring")
+            def lua_print(*values):
+                captured.write("\t".join(to_string(value) for value in values) + "\n")
+            lua.globals()["print"] = lua_print
+        lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
+        output = "".join(captured.parts)
+        partial = [line.strip() for line in output.splitlines()
+                   if re.search(r"(?<![A-Za-z0-9_])SKIP(?:PED)?(?![A-Za-z0-9_])", line)
+                   or re.search(r"\b(?:checks?|tests?|contracts?) skipped\s*\(", line)]
+        return {"test": name, "variant": flag or "default",
+                "status": "partial" if partial else "passed",
+                "elapsed_seconds": round(time.perf_counter() - started, 6),
+                "error": None, "partial_reasons": partial}
+    except Exception as error:
+        result = {"test": name, "variant": flag or "default", "status": "failed",
+                  "elapsed_seconds": round(time.perf_counter() - started, 6),
+                  "error": str(error) or type(error).__name__, "skip_reasons": []}
+        if not args.keep_going:
+            error._lua_runner_result = result
+            raise
+        return result
+
+
+def _write_report(path, results):
+    counts = {status: sum(result["status"] == status for result in results)
+              for status in ("passed", "partial", "failed", "skipped")}
+    report = {"status": "failed" if counts["failed"] else "partial" if counts["partial"] or counts["skipped"] else "passed",
+              "counts": {**counts, "total": len(results)}, "results": results,
+              "scope": "Offline Lua assertions; this report does not establish live gameplay or exhaustive branch coverage.",
+              "limitations": (["Some checks completed with partial coverage because optional source checks reported SKIP."]
+                              if counts["partial"] else []) +
+                             (["Skipped results indicate optional source checks did not run; this report does not claim full source coverage."]
+                              if counts["skipped"] else [])}
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test", action="append", default=[], metavar="NAME",
                         help="run only this test relative to tests/ (optional .lua suffix); repeatable")
+    parser.add_argument("--group", action="append", default=[], choices=("action-queue",),
+                        help="run a named related test group; checks still require --game and selected mod source inputs where declared")
     parser.add_argument("--list", action="store_true", help="list available test names without running checks")
+    parser.add_argument("--keep-going", action="store_true", help="continue after an offline Lua test or variant fails")
+    parser.add_argument("--report", type=Path, metavar="PATH", help="write per-test JSON results to PATH")
     parser.add_argument('--integration', action='append', default=[], choices=mod_integrations.INTEGRATIONS,
                         help='run this integration against its locked upstream sources; repeatable')
     parser.add_argument('--list-integrations', action='store_true', help='show upstream inputs, Toolkit owners and focused checks')
@@ -199,6 +284,8 @@ def main() -> None:
     args = parser.parse_args()
     available = discover_tests(ROOT)
     requested = {name if name.endswith(".lua") else name + ".lua" for name in args.test}
+    for group in args.group:
+        requested.update(grouped_tests(group, available))
 
     def validate_selection():
         unknown = requested - set(available)
@@ -207,7 +294,7 @@ def main() -> None:
 
     validate_selection()
     if args.list:
-        print("\n".join(available))
+        print("\n".join(sorted(requested) if args.group else available))
         return
     if args.list_integrations:
         print(json.dumps(mod_integrations.describe(), indent=2))
@@ -239,17 +326,34 @@ def main() -> None:
         for path in sorted((ROOT / "PZSurvivorToolkit").rglob("*.lua")):
             syntax.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
         print("All mod files compile as Lua 5.1.", flush=True)
+    results = []
     for name in available:
         if requested and name not in requested:
             continue
         if name in DEFAULT_NATIVE_ONLY and not args.native_action_root:
+            results.append({"test": name, "variant": "default", "status": "skipped",
+                            "elapsed_seconds": 0, "error": None,
+                            "skip_reasons": ["optional native source checks unavailable; pass --native-action-root"]})
             continue
         for flag in test_variants(name, args):
-            lua = LuaRuntime(unpack_returned_tuples=True)
-            configure_test_sources(lua, name, args)
-            if flag:
-                lua.globals()[flag] = True
-            lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
+            try:
+                result = _run_variant(name, flag, args, LuaRuntime)
+            except Exception as error:
+                result = getattr(error, "_lua_runner_result", None)
+                if result is not None and args.report:
+                    _write_report(args.report, results + [result])
+                raise
+            results.append(result)
+            if result["status"] == "failed":
+                print(f"FAILED {result['test']} [{result['variant']}]: {result['error']}", file=sys.stderr)
+            if result["status"] == "failed" and not args.keep_going:
+                if args.report:
+                    _write_report(args.report, results)
+                raise SystemExit(1)
+    if args.report:
+        _write_report(args.report, results)
+    if any(result["status"] == "failed" for result in results):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

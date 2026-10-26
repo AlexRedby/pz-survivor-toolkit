@@ -74,7 +74,9 @@ require=function(module)
         path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ItemRetentionUI' or module=='PZSurvivorToolkit/InventoryClasses'then
         path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
-    elseif module=='PZSurvivorToolkit/QuartermasterCraftContainers'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
+    elseif module=='PZSurvivorToolkit/QuartermasterCraftContainers'
+        or module=='PZSurvivorToolkit/ActionQueueSettlement'
+        or module=='PZSurvivorToolkit/ActionQueueMembership'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ActionQueueTidyIntent'then
         intent=assert(loadstring(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'),'@ActionQueueTidyIntent.lua'))()
         local install=intent.install

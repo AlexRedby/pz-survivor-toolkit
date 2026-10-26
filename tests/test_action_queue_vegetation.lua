@@ -14,8 +14,9 @@ local function native(path) assert(loadstring(read(path), '@' .. NativeActionRoo
 local function nativeFunction(path, pattern)
     assert(loadstring(assert(read(path):match(pattern)), '@' .. NativeActionRoot .. '/' .. path))()
 end
-getFilenameOfClosure = function(callback) return debug.getinfo(callback, 'S').source:gsub('^@', '') end
+getFilenameOfClosure = NativeFilenameOfClosure or function(callback) return debug.getinfo(callback, 'S').source:gsub('^@', '') end
 require = function(module)
+    if module == 'PZSurvivorToolkit/SourceProof' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/InventoryClasses' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua')
     end
@@ -837,7 +838,7 @@ print('Vegetation native contracts: bush/grass/vines and subclass FIFO, future w
 -- Reuse the established policy fixture rather than weakening the production
 -- edit guards in the producer harness above. Pending preparation must remain
 -- transparent to whole-operation edits while protecting its dependent body.
-getFilenameOfClosure = function(callback)
+getFilenameOfClosure = NativeFilenameOfClosure or function(callback)
     local filename = debug.getinfo(callback, 'S').source:gsub('^@', '')
     if filename:match('^client/') or filename:match('^shared/') or filename:match('^server/') then
         return NativeActionRoot .. '/' .. filename

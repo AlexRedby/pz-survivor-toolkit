@@ -369,11 +369,7 @@ function Generators.install()
             if not isClient() and not isServer() and Toolkit.Settings.actionQueue() and action.toolkitQueueOperation
                 and not (Toolkit.ActionQueueLifecycle and Toolkit.ActionQueueLifecycle.current(action.character) == action)
                 and queue and queue.current == action and queue.queue[1] == action and classUnchanged("ISFixGenerator") then
-                local completed, ownCompleted = queue.onCompleted, nil
-                -- Preserve an own override; Kahlua rawget also returns inherited callbacks.
-                for name, callback in pairs(queue) do
-                    if name == "onCompleted" then ownCompleted = callback; break end
-                end
+                local completed, ownCompleted = queue.onCompleted, Proof.own(queue, "onCompleted")
                 -- SP performs before complete; defer only advancement so native addAfter still has its parent.
                 queue.onCompleted = function(current, finished)
                     if finished == action then pendingPerform[action] = queue; return end

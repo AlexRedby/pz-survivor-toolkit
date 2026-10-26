@@ -1191,9 +1191,7 @@ local function loadSource(id, module, eventName)
     local event = eventName and Events[eventName]
     local deriveOwner = ISBaseTimedAction
     local eventAdd, derive = event and event.Add, deriveOwner.derive
-    -- PZ Kahlua rawget also follows the metatable; pairs identifies true ownership.
-    local ownDerive
-    for name, callback in pairs(deriveOwner) do if name == "derive" then ownDerive = callback; break end end
+    local ownDerive = Proof.own(deriveOwner, "derive")
     local privateWait, sequenceWait
     deriveOwner.derive = function(class, name)
         local result = derive(class, name)

@@ -1,3 +1,13 @@
+# Batch action-queue audit and shared fixes
+
+- [ ] Add an opt-in keep-going result report to the existing offline Lua runner so one failed action family cannot hide the remaining failures. Preserve default invocation, isolated runtimes, required-input failures and explicit skipped checks.
+- [ ] Run the available action-queue source checks together against the current native and selected mod sources without launching the game; record every failure and missing-input/coverage gap separately.
+- [ ] Correct demonstrated Kahlua ownership failures through a shared owned-field query: foreign inherited radio/media callbacks can bypass provenance checks, deleted native transfer methods can inherit a base fallback and still acquire an edit contract, and generator callback restoration can leave an owned inherited alias. Gate: existing behavior vectors under native-style inheritance and Kahlua lookup plus focused native-Kahlua CPU qualification; no game launch.
+- [ ] Repair source-proven offline fixture drift in generator overlay, grab compatibility and fitness fallback preparation; keep the separately tracked cart-return failure distinct from new regressions and retain missing source checks explicitly.
+- [ ] Audit shared class/instance ownership, completion, dependency and recovery boundaries; group demonstrated failures by cause and fix shared mechanisms with failing regressions before extending individual families. Do not replace protective barriers with guessed contracts.
+- [ ] Prepare one consolidated affected-scenario qualification packet, reusing existing fixtures and queue-on/off SP/Host controls. No game launches during this audit; retain exact effects, authoritative costs and log auditing for the later runtime gate.
+- [ ] Deliver the verified offline tooling/fixes against current main with the appropriate component versions, keeping any unrun gameplay gates explicit.
+
 # Storage performance stabilization
 
 - [ ] Compare frame times and Lua workload beside dense storage on the current build, with own inventory open/loot closed and both windows closed; retain visible-loot and highlight/Wishlist controls. The Kahlua regression and current 45-mod native hidden/reopen checks establish the refresh fix, not an FPS improvement. Do not reuse old 52-mod/Organized Categories measurements as current-build evidence.

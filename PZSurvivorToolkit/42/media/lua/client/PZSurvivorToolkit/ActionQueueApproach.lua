@@ -1,5 +1,6 @@
 -- Native approach is preparation, not a request to replace the player's queue.
 -- Resolve the complete routing entrypoint at its turn, including native fallbacks.
+local Proof = require "PZSurvivorToolkit/SourceProof"
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
 local commandClass,baseClass=ISQueueActionsAction,ISBaseTimedAction
@@ -288,7 +289,7 @@ cursorContract=function(cursor)
 end
 local function bind(owner,name,spec)
     if not owner or installed[owner]and installed[owner][name] then return end
-    local callback=rawget(owner,name)
+    local callback=Proof.own(owner,name)
     if not native(callback)then return end
     local binding={owner=owner,name=name,callback=callback,spec=spec}
     local wrapper

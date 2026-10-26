@@ -147,7 +147,8 @@ Events.OnGameStart.Add=function(callback) starts[#starts+1]=callback end
 local restrictionPath=clientRoot..'/Restrictions/TransferRestrictions.lua'
 local visualPath=clientRoot..'/CartState/VisualUpdateQueue.lua'
 require=function(module)
-    if module=='PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua')
+    if module=='PZSurvivorToolkit/SourceProof' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua')
+    elseif module=='PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua')
     elseif module=='SaucedCarts/Restrictions/TransferRestrictions' then
         local hook=assert(read(restrictionPath):match('(local function initTransferActionHook%(%).-\nend)'))
         Events.OnGameStart.Add(source('local transferActionHookInitialized=false\n'..hook..'\nreturn initTransferActionHook',restrictionPath))
