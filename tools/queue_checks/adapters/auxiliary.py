@@ -30,7 +30,7 @@ def definitions():
         ('item-tags', ['scenes'], 'sp', ['RU'], ITEM_MODS),
         ('inventory-presentation', ['scenes'], 'sp', ['EN'], INVENTORY_MODS),
         ('smart-deposit', ['partial'], 'sp', ['EN'], INVENTORY_MODS),
-        ('storage-profile', ['walk'], 'sp', ['EN'], INVENTORY_MODS),
+        ('storage-profile', ['walk', 'inventory-work'], 'sp', ['EN'], INVENTORY_MODS),
         ('inventory-tooltips', ['scenes'], 'sp', ['EN'], INVENTORY_MODS + ['VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO']),
         ('animal-trailer', list(ANIMAL_CASES), 'mp', ['EN'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
     ):
@@ -42,7 +42,8 @@ def definitions():
     result['inventory-presentation']['window_size'] = [1280, 900]
     result['smart-deposit']['window_size'] = [1280, 900]
     result['storage-profile']['window_size'] = [1280, 900]
-    result['storage-profile']['cases'][0]['capability'] = 'capture'
+    for case in result['storage-profile']['cases']:
+        case['capability'] = 'capture'
     result['inventory-tooltips']['window_size'] = [1280, 900]
     return result
 
@@ -156,7 +157,11 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         fixture['mods'] = [identifier]
         fixture['failure_markers'] = [manifest['failure_marker']]
         for cache in caches:
-            _load(intake / 'prepare.py').prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
+            prepare = _load(intake / 'prepare.py').prepare
+            if suite == 'storage-profile':
+                prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, case=selection['cases'][0])
+            else:
+                prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
     elif suite == 'item-tags':
         fixture['mods'] = ['QuartermasterScreens']
         prepare = _load(intake / 'prepare.py')
@@ -306,7 +311,8 @@ def verify(root, selection, catalog):
         if suite == 'video-recording':
             evidence['clips'] = _load(intake / 'verify.py').verify(root / 'client1', _path(selection, 'ffmpeg', True), _path(selection, 'ffprobe', True))
         elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
-            evidence.update(_load(intake / 'verify.py').verify(root, text))
+            verifier = 'inventory_work_verify.py' if suite == 'storage-profile' and selection['cases'] == ['inventory-work'] else 'verify.py'
+            evidence.update(_load(intake / verifier).verify(root, text))
         elif suite == 'item-tags':
             manifest = json.loads((intake / 'manifest.json').read_text())
             if '[QM_SCREEN] FAIL' in text or 'KahluaException' in text:

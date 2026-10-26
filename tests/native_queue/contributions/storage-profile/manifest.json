@@ -26,7 +26,8 @@
   "completion_marker": "[STORAGE_PROFILE] COMPLETE",
   "failure_marker": "[STORAGE_PROFILE] FAIL",
   "cases": [
-    "walk"
+    "walk",
+    "inventory-work"
   ],
   "feature_controls": [
     "off-empty",

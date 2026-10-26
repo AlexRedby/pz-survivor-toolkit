@@ -5,7 +5,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
-def prepare(toolkit_source, output):
+def prepare(toolkit_source, output, case='walk'):
     if not (Path(toolkit_source) / '42/mod.info').is_file():
         raise ValueError('Missing explicit Toolkit source')
     manifest = json.loads((HERE / 'manifest.json').read_text())
@@ -16,7 +16,10 @@ def prepare(toolkit_source, output):
             (output / layer / 'media' / name).mkdir(parents=True)
     client = output / '42/media/lua/client'
     client.mkdir(parents=True)
-    fixture=manifest['fixture']
+    if case not in manifest['cases']:
+        raise ValueError('Unsupported storage profile case')
+    fixture=manifest['fixture'] if case == 'walk' else 'ZZInventoryWorkProfile.lua'
     (client / fixture).write_bytes((HERE / fixture).read_bytes())
-    (client / 'StorageFairnessNative.lua').write_bytes((HERE / 'StorageFairnessNative.lua').read_bytes())
+    helper='StorageFairnessNative.lua' if case == 'walk' else 'ReceiptLookupNative.lua'
+    (client / helper).write_bytes((HERE / helper).read_bytes())
     (output / '42/mod.info').write_text('name=Native storage profile fixture\nid=StorageProfileNative\nversionMin=42.21\n')
