@@ -1,7 +1,6 @@
-# Injured cart main integration
+# Injured cart full-pack compatibility
 
-- [ ] Finish the targeted heavy-metal SP and owner/observer Host checks with the final candidate.
-- [ ] Recheck latest main, publish with a normal fast-forward push, and verify the remote revision.
+- [ ] Repeat injured-cart locomotion and healing checks in isolated macOS SP/menu Host with the complete selected mod pack after the missing Workshop sources are available.
 
 # Welding torch refill
 
@@ -167,4 +166,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Resolve the Codex cleanup refusal for a chat-created managed worktree: `archive_worktree` rejected `/Users/alexredby/.codex/worktrees/process-friction-rule/pz-survivor-toolkit` with `The task's primary checkout cannot be removed.` after the work was pushed to `main` and the worktree was clean. This blocks the finish-chat cleanup gate. Check checkout classification and the supported cleanup path; completion requires safely archiving the owned temporary worktree without bypassing protections or touching the shared checkout.
+- [ ] Resolve the Codex cleanup refusal for a chat-created managed worktree: `archive_worktree` rejected the chat's managed checkout with `The task's primary checkout cannot be removed.` after the work was pushed to `main` and the worktree was clean. This blocks the finish-chat cleanup gate. Check checkout classification and the supported cleanup path; completion requires safely archiving the owned temporary worktree without bypassing protections or touching the shared checkout.
+
+- [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
+
+- [ ] Add a reusable continuity diagnostic for native cart captures. Grip and motion checks accepted a 54-degree torso route-switch snap; diagnosing it required an external replay helper for `injury-torso-poses.jsonl`. The captured adjacent-frame JVM regression protects that failure. Complete when the normal diagnostic workflow reports correction rotation separately from native pose changes, with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without inventing a general visual-quality PASS.
