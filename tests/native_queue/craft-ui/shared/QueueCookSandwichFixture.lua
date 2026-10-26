@@ -157,8 +157,8 @@ function F.observerSnapshot(p,ids,stage)
  table.sort(r.items,function(a,b)return a.id<b.id end);return r
 end
 function F.checkpoint(s,stage,args)
- assert(stage=='BreadAdded'or stage=='Baked'or stage=='Sliced','unknown sandwich checkpoint')
- local r={case=s.case,stage=stage,breadInputs={},sandwichInputs={},slices=outputs(s,'Base.BreadSlices')};local bread=exact(s,s.base.id);r.bread=F.snapshot(bread)
+ assert(stage=='BreadAdded'or stage=='Baked'or stage=='Sliced'or stage=='FirstSandwich','unknown sandwich checkpoint')
+ local r={case=s.case,stage=stage,breadInputs={},sandwichInputs={},slices=outputs(s,'Base.BreadSlices'),sandwiches=outputs(s,'Base.Sandwich')};local bread=exact(s,s.base.id);r.bread=F.snapshot(bread)
  if s.ovenObject then
   local obj=assert(resolveGenerator(s.generator),'owned native generator disappeared')
   assert(obj==s.generatorObject and obj:isActivated()and obj:getFuel()>0 and obj:getCondition()>0
@@ -167,7 +167,8 @@ function F.checkpoint(s,stage,args)
  end
  for _,m in ipairs(s.breadInputs)do r.breadInputs[#r.breadInputs+1]=resource(s,m)end
  for _,m in ipairs(s.sandwichInputs)do r.sandwichInputs[#r.sandwichInputs+1]=resource(s,m)end
- if stage=='BreadAdded'then assert(bread and not bread:isCooked()and bread:getExtraItems()and bread:getExtraItems():size()==2,'native enriched bread not ready')
+ if stage=='FirstSandwich'then assert(#r.sandwiches==1,'native first sandwich conversion not complete')
+ elseif stage=='BreadAdded'then assert(bread and not bread:isCooked()and bread:getExtraItems()and bread:getExtraItems():size()==2,'native enriched bread not ready')
  elseif stage=='Baked'then assert(bread and bread:isCooked()and not bread:isBurnt(),'native bread not baked')
  else assert(not bread and #r.slices==3,'native slicing not complete')end
  s.checkpoints[stage]=r;return r

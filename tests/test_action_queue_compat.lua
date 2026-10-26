@@ -32,6 +32,7 @@ end
 LootSorter = {}
 ISBaseObject = {derive = derive}
 ISPanel = {derive = derive}
+ISUIElement = {derive = derive}
 ISTableLayout = {derive = derive}
 UIFont = {Small = 'small', Medium = 'medium'}
 getTextManager = function() return {getFontHeight = function() return 12 end} end
@@ -310,6 +311,7 @@ local Outfit = {
     providesAttachments = function() return false end,
 }
 local Gather = {build = function() return {} end, find = function(_, descriptor) return descriptor.item, 'container', descriptor.item:getContainer() end}
+local projectCookUiOriginal = {}
 local loaded = {}
 require = function(module)
     if module == 'PZSurvivorToolkit/ActionQueueSettlement' then
@@ -352,7 +354,8 @@ require = function(module)
     if module == 'ISUI/WMI_WashingSubmenus' then
         source = source .. '\nWS.WMI_BuildWashMenu = function(menu, items, character, sink) return menu:addOption("Wash", character, onWashClothing3, sink, {}, items, nil, true) end\n'
     elseif module == 'P4TidyUpMeister' then source = source .. '\nTidyFixture = P4TidyUpMeister\n' end
-    local result = assert(loadstring(source, (module == 'Project_Cook/PJCK_Config' or module == 'Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel') and '@'..module..'.lua' or module))()
+    local result = assert(loadstring(source, (module == 'Project_Cook/PJCK_Config' or module:match('^Project_Cook/EvolvedRecipePanel/')) and '@'..module..'.lua' or module))()
+    if module == 'Project_Cook/EvolvedRecipePanel/PJCK_InputPanel' then projectCookUiOriginal.canAddItem=PJCK_InputPanel.canAddItem end
     loaded[module] = result or true; return result
 end
 -- Load the real controller before source adapters, matching the game's lifecycle/load order.
@@ -996,6 +999,125 @@ recipe.getResultItem=function() return 'Test' end
 recipe.getItemsCanBeUse=function() return list({food}) end
 local group=panel:getItemGroupKey(food)
 panel.inputGroupCache.Ingredient[group]={usableItems={food}}
+-- A native-eligible new recipe may inherit labels without having any NEW additions yet.
+do
+ require('Project_Cook/EvolvedRecipePanel/PJCK_InputPanel');require('Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo')
+ local savedEnabled,savedManager,savedContainers,savedPolicy=enabled,RecipeManager,ISInventoryPaneContextMenu.getContainers,PJCK_Config.get().portionPolicy
+ local original=assert(projectCookUiOriginal.canAddItem,'actual original InputPanel callback missing')
+ local function sourceFood(id,kind,spice)
+  local value=item(bag,id);value.class='Food';value.fixtureSpice=spice
+  for _,name in ipairs({'isRotten','isBurnt','isFrozen','isCooked','IsDrainable','isNoRecipes'})do
+   value[name]=function(self)return self.blocked==name end
+  end
+  value.isFresh=function()return true end
+  value.isSpice=function(self)return self.fixtureSpice end
+  value.getFullType=function()return 'Base.'..kind end;value.getType=function()return kind end
+  value.getHungerChange=function()return -.4 end;value.getHungChange=value.getHungerChange
+  value.getActualWeight=function()return 1 end
+  value.getScriptItem=function()return{getHungerChange=function()return 40 end,getActualWeight=function()return 1 end}end
+  return value
+ end
+ local function setup(contained,seasonings)
+  reset()
+  local topping,spice=sourceFood(31002,'Tomato',false),sourceFood(31003,'Pepper',true)
+  local base=sourceFood(31001,'BreadSlices',false);base.container=inventory;base.kind='BreadSlices';base.contained=contained;base.seasonings=seasonings
+  base.getType=function(self)return self.kind end;base.getFullType=function(self)return 'Base.'..self.kind end
+  base.getFluidContainer=function(self)return self.fixtureFluid end
+  base.getExtraItems=function(self)local values={};for i=1,self.contained do values[i]='Base.Cheese'end;return list(values)end
+  base.haveExtraItems=function(self)return self.contained>0 end
+  base.getSpices=function(self)local values={};for i=1,self.seasonings do values[i]='Base.Salt'end;return list(values)end
+  local uiRecipe={getResultItem=function()return 'Sandwich'end,getMaxItems=function()return 4 end,
+   getMinimumWater=function(self)return self.minimumWater or 0 end,isAllowFrozenItem=function()return false end,
+   getItemRecipe=function()return{getUse=function()return 5 end}end}
+  -- Native/Java availability is a boundary input; real source builds the cached usable IDs/profiles.
+  uiRecipe.getItemsCanBeUse=function(_,actor,selected,containers)
+   assert(actor==player and selected==base and containers,'native availability arguments changed')
+   local available={};for _,value in ipairs({topping,spice})do if not value.blocked then available[#available+1]=value end end
+   return list(available)
+  end
+  inventory.values={base}
+  RecipeManager={getEvolvedRecipe=function()return list({uiRecipe})end}
+  ISInventoryPaneContextMenu.getContainers=function()return list({inventory,bag})end
+  local ui=setmetatable({player=player,baseItem=base,recipe=uiRecipe,preCookItems={},switchItems={},
+   showPossible={Ingredient=false,Seasoning=false},inputGroupCache={Ingredient={},Seasoning={}},
+   inputGroupCacheValid={Ingredient=false,Seasoning=false},Window={getAllItems=function()return list({topping,spice})end}},PJCK_EvoPanel)
+  local info=setmetatable({EvoPanel=ui,contentType='',content={},switchRecipeButton={setVisible=function()end}},PJCK_CookingInfo)
+  ui.cookingInfoPanel=info
+  local input=setmetatable({EvoPanel=ui,panelType='Ingredient'},PJCK_InputPanel)
+  local seasoning=setmetatable({EvoPanel=ui,panelType='Seasoning'},PJCK_InputPanel)
+  ui.ingredientsPanel,ui.seasoningsPanel=input,seasoning
+  info:updateContentType()
+  assert(info.contentType=='addOneFirst','real rendering state did not detect BreadSlices -> Sandwich')
+  ui:getInputList('Ingredient');ui:getInputList('Seasoning')
+  return ui,input,seasoning,info,base,topping,spice,uiRecipe
+ end
+ for _,queueMode in ipairs({true,false})do
+  for _,counts in ipairs({{0,0},{1,0},{2,0},{0,1},{2,1}})do
+   local ui,input,seasoning,info,base,topping,spice=setup(counts[1],counts[2]);enabled=queueMode
+   assert(ui:isUsableForRecipe(topping,ui.recipe,'Ingredient') and ui:getGroupUseCapacity(topping,'Ingredient')>0,
+    'real source native-usability/profile premise missing')
+   assert(original(input,topping)==(counts[1]+counts[2]==0),'original actual source did not reproduce inherited-label refusal')
+   local inputs,groups,selected=ui.cachedAvailableItems,ui.inputGroupCache,ui.preCookItems
+   for _,status in ipairs({'','showNutrition','addOneFirst'})do
+    info.contentType=status
+    assert(input:canAddItem(topping) and seasoning:canAddItem(spice),'first NEW addition must ignore inherited labels: '..status)
+    for _,pendingType in ipairs({'Ingredient','Seasoning'})do
+     ui.preCookItems={{panelType=pendingType,groupKey='some-other-selected-group'}}
+     assert(not input:canAddItem(topping)and not seasoning:canAddItem(spice),'second NEW pending addition escaped first-result limit: '..status)
+    end
+    ui.preCookItems=selected
+   end
+   info.contentType='addOneFirst'
+   assert(ui.cachedAvailableItems==inputs and ui.inputGroupCache==groups and base.contained==counts[1]and base.seasonings==counts[2],
+    'UI permission changed input caches, contained metadata or selection')
+   for _,blocked in ipairs({'isFrozen','isBurnt','isRotten','unusable'})do
+    topping.blocked=blocked;ui:invalidateInputCaches();ui:getInputList('Ingredient')
+    assert(not input:canAddItem(topping),'native-unavailable ingredient was admitted: '..blocked)
+   end
+   topping.blocked=nil;ui:invalidateInputCaches();ui:getInputList('Ingredient')
+   local data=assert(ui:getCachedGroupData(topping,'Ingredient'))
+   local full,total=data.fullUses,data.totalUses;data.fullUses,data.totalUses=0,0
+   assert(not input:canAddItem(topping),'empty portion group was admitted')
+   data.fullUses,data.totalUses=full,total
+   PJCK_Config.get().portionPolicy='full_only';data.fullUses=0
+   assert(not input:canAddItem(topping),'full-only portion rule was bypassed')
+   data.fullUses=full;PJCK_Config.get().portionPolicy=savedPolicy
+   if counts[1]+counts[2]>0 then
+    ui.recipe.minimumWater=.5;base.fixtureFluid={getAmount=function()return 0 end,getCapacity=function()return 1 end}
+    assert(info:isNeedWater(base,ui.recipe)and input:canAddItem(topping)==original(input,topping),
+     'unmet native water prerequisite escaped original UI permission')
+    ui.recipe.minimumWater=nil;base.fixtureFluid=nil
+   end
+   info.contentType='showNutrition';base.kind='Sandwich';base.contained=4
+   assert(not input:canAddItem(topping)and input:canAddItem(topping)==original(input,topping),'normal recipe MaxItems behavior changed')
+   base.contained=3;assert(input:canAddItem(topping)==original(input,topping),'normal non-transition behavior changed')
+  end
+ end
+ -- Unknown instance/class/config owners must keep the original refusal rather than gain permission.
+ for _,changed in ipairs({'input-instance','info-instance','evo-instance','foreign-child','foreign-info','global-input',
+  'global-info','global-evo','input-class','info-class','evo-class','config'})do
+  local ui,input,seasoning,info,base,topping=setup(2,0)
+  local restore
+  if changed=='input-instance'then input.getSelectedCount=function()return 0 end
+  elseif changed=='info-instance'then info.isAddOneFirst=function()return true end
+  elseif changed=='evo-instance'then ui.getCookStatus=function()return 'addOneFirst'end
+  elseif changed=='foreign-child'then ui.ingredientsPanel=seasoning
+  elseif changed=='foreign-info'then info.EvoPanel={}
+  elseif changed=='global-input'then local old=PJCK_InputPanel;PJCK_InputPanel={};restore=function()PJCK_InputPanel=old end
+  elseif changed=='global-info'then local old=PJCK_CookingInfo;PJCK_CookingInfo={};restore=function()PJCK_CookingInfo=old end
+  elseif changed=='global-evo'then local old=PJCK_EvoPanel;PJCK_EvoPanel={};restore=function()PJCK_EvoPanel=old end
+  elseif changed=='input-class'then local old=PJCK_InputPanel.getMaxAvailableCount;PJCK_InputPanel.getMaxAvailableCount=function()return 1 end;restore=function()PJCK_InputPanel.getMaxAvailableCount=old end
+  elseif changed=='info-class'then local old=PJCK_CookingInfo.isAddOneFirst;PJCK_CookingInfo.isAddOneFirst=function()return true end;restore=function()PJCK_CookingInfo.isAddOneFirst=old end
+  elseif changed=='evo-class'then local old=PJCK_EvoPanel.getCookStatus;PJCK_EvoPanel.getCookStatus=function()return 'addOneFirst'end;restore=function()PJCK_EvoPanel.getCookStatus=old end
+  else local old=PJCK_Config.get;PJCK_Config.get=function()return old()end;restore=function()PJCK_Config.get=old end end
+  assert(input:canAddItem(topping)==original(input,topping)and not original(input,topping),'unknown '..changed..' gained first-addition permission')
+  if restore then restore()end
+ end
+ reset();enabled,RecipeManager,ISInventoryPaneContextMenu.getContainers=savedEnabled,savedManager,savedContainers
+ PJCK_Config.get().portionPolicy=savedPolicy
+ print('PASS actual-source Cook rendered first-result permission, inherited metadata, native availability, capacity and unknown-owner guards in both settings')
+end
+
 local function cook()
     panel:addIngredients({{groupKey=group,panelType='Ingredient',recipeCompatible=true,recipeUse=5}},recipe,panel.baseItem)
     local first=queue.queue[1]; local book=tail(); first:start()
@@ -4100,6 +4222,73 @@ do
  PJCK_postIngredientUse,PJCK_processIngredientEntry=saved.post,saved.process
  end
  print('PASS unknown early Cook refresh/resolver/getter/input/invalidator callbacks remain outside shared canonicalizer')
+end
+
+-- Optional UI proof must never weaken the existing evolved/handcraft/return source proof.
+do
+ local saved={require=require,reader=getModFileReader,mods=getActivatedMods,events=Events,
+  operations=PZSurvivorToolkit.ActionQueueOperations,definitions=PZSurvivorToolkit.ActionQueueDefinitions,
+  compat=PZSurvivorToolkit.ActionQueueCompat,panel=PJCK_EvoPanel,craft=PJCK_CraftActionPanel,
+  input=PJCK_InputPanel,info=PJCK_CookingInfo,add=ISTimedActionQueue.add,after=ISTimedActionQueue.addAfter,
+  toQueue=ISTimedActionQueue.addToQueue,checkQueue=ISInventoryTransferAction.checkQueueList,
+  post=PJCK_postIngredientUse,process=PJCK_processIngredientEntry}
+ local modules={
+  ['Project_Cook/HandCraftPanel/PJCK_CraftActionPanel']='client/Project_Cook/HandCraftPanel/PJCK_CraftActionPanel.lua',
+  ['Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel']='client/Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel.lua',
+  ['Project_Cook/EvolvedRecipePanel/PJCK_InputPanel']='client/Project_Cook/EvolvedRecipePanel/PJCK_InputPanel.lua',
+  ['Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo']='client/Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo.lua',
+ }
+ for _,scenario in ipairs({'known','input-source','info-source','input-early','info-early','info-missing-water','input-extra'})do
+  local loadedUi,original,expected={}
+  local changed=scenario=='input-source'and 'media/lua/'..modules['Project_Cook/EvolvedRecipePanel/PJCK_InputPanel']
+   or scenario=='info-source'and 'media/lua/'..modules['Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo']
+  getActivatedMods=function()return{contains=function(_,id)return id=='Project_Cook'end}end
+  getModFileReader=function(id,path,...)
+   local reader=saved.reader(id,path,...)
+   if id=='Project_Cook'and path==changed then
+    local readLine,first=reader.readLine,true
+    reader.readLine=function(...)
+     local line=readLine(...);if first then first=false;return line..' -- changed UI source'end;return line
+    end
+   end
+   return reader
+  end
+  require=function(module)
+   local path=modules[module]
+   if not path then return saved.require(module)end
+   if loadedUi[module]then return loadedUi[module]end
+   local result=assert(loadstring(read(NativeWishlistWorkshopRoot..'/'..paths.Project_Cook..'/media/lua/'..path),'@'..module..'.lua'))()
+   if module=='Project_Cook/EvolvedRecipePanel/PJCK_InputPanel'then
+    original=PJCK_InputPanel.canAddItem
+    if scenario=='input-early'then PJCK_InputPanel.canAddItem=function(self,...)return original(self,...)end
+    elseif scenario=='input-extra'then PJCK_InputPanel.unreviewedHelper=function()end end
+    expected=PJCK_InputPanel.canAddItem
+   elseif module=='Project_Cook/EvolvedRecipePanel/PJCK_CookingInfo'then
+    if scenario=='info-early'then
+     local callback=PJCK_CookingInfo.isAddOneFirst
+     PJCK_CookingInfo.isAddOneFirst=function(self,...)return callback(self,...)end
+    elseif scenario=='info-missing-water'then PJCK_CookingInfo.isNeedWater=nil end
+   end
+   loadedUi[module]=result or true;return result
+  end
+  Events={OnTick={Add=function()end},OnGameStart={Add=function()end}}
+  PJCK_EvoPanel,PJCK_CraftActionPanel,PJCK_InputPanel,PJCK_CookingInfo=nil,nil,nil,nil
+  PZSurvivorToolkit.ActionQueueOperations={registerProducer=function()end}
+  PZSurvivorToolkit.ActionQueueDefinitions={registerBehavior=function()end}
+  local selected=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
+  assert(selected.isInstalled('Project_Cook'),'optional UI source disabled reviewed cooking core: '..scenario)
+  assert(selected.isInstalled('Project_Cook_FirstAddition')==(scenario=='known'),'optional first-addition proof admitted unknown source: '..scenario)
+  require('Project_Cook/EvolvedRecipePanel/PJCK_InputPanel')
+  if scenario=='known'then assert(PJCK_InputPanel.canAddItem~=original,'known UI source was not adapted')
+  else assert(PJCK_InputPanel.canAddItem==expected,'unknown UI callback was replaced: '..scenario)end
+ end
+ require,getModFileReader,getActivatedMods,Events=saved.require,saved.reader,saved.mods,saved.events
+ PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=saved.operations,saved.definitions,saved.compat
+ PJCK_EvoPanel,PJCK_CraftActionPanel,PJCK_InputPanel,PJCK_CookingInfo=saved.panel,saved.craft,saved.input,saved.info
+ ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.addToQueue=saved.add,saved.after,saved.toQueue
+ ISInventoryTransferAction.checkQueueList=saved.checkQueue
+ PJCK_postIngredientUse,PJCK_processIngredientEntry=saved.post,saved.process
+ print('PASS optional Cook first-addition source/early-closure guards retain original UI and reviewed cooking core')
 end
 
 print('Selected mod chain actual-source checks passed.')

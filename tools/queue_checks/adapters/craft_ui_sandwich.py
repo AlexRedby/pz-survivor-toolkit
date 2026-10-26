@@ -107,6 +107,10 @@ def expected_cost(before, use, level):
     return after, gain, effective >= -.0200001
 
 
+def checkpoint_stages(case):
+    return (['BreadAdded', 'Baked', 'Sliced'] if case == CASES[1] else []) + ['FirstSandwich']
+
+
 def check_case(selection, row, p, receipt, before_view, after_view, checkpoints):
     issues = []
     def fail(message):
@@ -140,10 +144,12 @@ def check_case(selection, row, p, receipt, before_view, after_view, checkpoints)
                    for k in ('breadInputs', 'sandwichInputs'))):
         return issues + ['Authoritative ingredient identities missing']
     gains = {'Bread': {key: 0 for key in NUTRIENTS}, 'Sandwich': {key: 0 for key in NUTRIENTS}}
+    gain_by_id = {}
     for actual in final_foods:
         original = seed_by_id[actual['id']]
         stage = 'Bread' if original['kind'] in USES['Bread'] else 'Sandwich'
         expected, gain, consumed = expected_cost(original, USES[stage][original['kind']], level)
+        gain_by_id[original['id']] = gain
         for key in NUTRIENTS:
             gains[stage][key] += gain[key]
         counts = dict(sourceCount=0 if consumed else 1, rootCount=0, ovenCount=0, totalCount=0 if consumed else 1)
@@ -162,20 +168,27 @@ def check_case(selection, row, p, receipt, before_view, after_view, checkpoints)
     if not isinstance(outputs, list) or len(outputs) != 1 or not food(outputs[0]):
         return issues + ['Exactly one native sandwich is required']
     sandwich = outputs[0]
-    if sandwich['kind'] != 'Base.Sandwich' or sandwich['burnt'] or sandwich['frozen'] or sandwich['extras'] != ['Base.Cabbage', 'Base.Tomato'] or sandwich['spices']:
+    if sandwich['kind'] != 'Base.Sandwich' or sandwich['cooked'] or sandwich['burnt'] or sandwich['frozen'] or sandwich['extras'] != ['Base.Cabbage', 'Base.Tomato'] or sandwich['spices']:
         fail('New sandwich ingredients differ from inherited bread labels')
+    if not same(sandwich['effectiveHunger'], sandwich['hunger']):
+        fail('Native sandwich conversion retained the cooked bread hunger multiplier')
     dispatches = row.get('dispatches')
-    stages = ['Bread', 'Sandwich'] if enriched else ['Sandwich']
+    stages = (['Bread'] if enriched else []) + ['Sandwich', 'Sandwich']
     if (not isinstance(dispatches, list) or not all(isinstance(d, dict) for d in dispatches)
             or [d.get('stage') for d in dispatches] != stages):
         return issues + ['Original plus/Cook dispatch stages missing']
-    for d in dispatches:
-        expected_inputs = p['breadInputs'] if d['stage'] == 'Bread' else p['sandwichInputs']
+    for index, d in enumerate(dispatches):
+        first = index == len(dispatches) - 2
+        expected_inputs = p['breadInputs'] if d['stage'] == 'Bread' else [p['sandwichInputs'][0 if first else 1]]
+        first_only = d.get('firstOnly') is True if first else d.get('firstOnly') is None or d.get('firstOnly') is False
+        if (d.get('cookStatus') != ('addOneFirst' if first else 'showNutrition')
+                or not first_only):
+            fail('Real rendered plus status or first-only conversion gate was bypassed')
         requests = d.get('requests', [])
         if not isinstance(requests, list) or len(requests) != len(expected_inputs) or any(not matches(r, dict(id=m['id'], kind=m['kind'],
-                recipeUse=USES[d['stage']][m['kind']], before=m)) for r, m in zip(requests, expected_inputs)):
+                recipeUse=USES[d['stage']][m['kind']], before=m, displayedUsable=True, plusAllowed=True)) for r, m in zip(requests, expected_inputs)):
             fail('Original plus selected another physical ingredient or native portion')
-    sandwich_base = dispatches[-1].get('baseBefore')
+    sandwich_base = dispatches[-2].get('baseBefore')
     if not food(sandwich_base) or sandwich_base['kind'] != 'Base.BreadSlices':
         return issues + ['Actual sandwich slice baseline missing']
     for key in NUTRIENTS:
@@ -187,17 +200,54 @@ def check_case(selection, row, p, receipt, before_view, after_view, checkpoints)
     if not matches(receipt.get('base'), dict(id=p['base']['id'], kind=p['base']['kind'], missing=True,
             sourceCount=0, rootCount=0, ovenCount=0, totalCount=0)):
         fail('Original bread base survives or was substituted')
+    cp = receipt.get('checkpoints')
+    if (not isinstance(cp, dict) or set(cp) != set(checkpoint_stages(p['case']))
+            or not same(row.get('actorCheckpoints'), cp) or not same(checkpoints, cp)):
+        return issues + ['Native bread and first sandwich checkpoints missing']
+    if any(not matches(cp[stage], dict(case=p['case'], stage=stage)) for stage in checkpoint_stages(p['case'])):
+        return issues + ['Native checkpoint stage identity differs']
+    first_cp = cp['FirstSandwich']
+    first_outputs = first_cp.get('sandwiches')
+    if not isinstance(first_outputs, list) or len(first_outputs) != 1 or not food(first_outputs[0]):
+        return issues + ['First native Cook did not produce exactly one sandwich']
+    first_sandwich = first_outputs[0]
+    if (not matches(first_sandwich, dict(id=sandwich['id'], kind='Base.Sandwich', cooked=False, burnt=False,
+            frozen=False, extras=['Base.Cabbage'], spices=[]))
+            or not same(first_sandwich['effectiveHunger'], first_sandwich['hunger'])
+            or not same(row.get('firstSandwich'), first_sandwich)
+            or not same(dispatches[-1].get('baseBefore'), first_sandwich)):
+        fail('First native conversion identity, local view or following Cook base differs')
+    first_input, second_input = p['sandwichInputs']
+    for key in ('hunger', 'baseHunger'):
+        if not same(first_sandwich[key], sandwich_base[key] - USES['Sandwich'][first_input['kind']] / 100):
+            fail('First native Cook raw hunger is not one nominal portion')
+    for key in NUTRIENTS:
+        if (not same(first_sandwich[key], sandwich_base[key] + gain_by_id[first_input['id']][key])
+                or not same(sandwich[key], first_sandwich[key] + gain_by_id[second_input['id']][key])):
+            fail('Separate native Cook nutrition charges are missing or duplicated')
+    untouched_second = dict(second_input, sourceCount=1, rootCount=0, ovenCount=0, totalCount=1)
+    if (not same(first_cp.get('breadInputs'), receipt['breadInputs'])
+            or not same(first_cp.get('sandwichInputs'), [receipt['sandwichInputs'][0], untouched_second])
+            or not same(first_cp.get('slices'), slices) or first_cp.get('bread') is not None):
+        fail('First native Cook charged another input or changed unused bread')
     if enriched:
-        cp = receipt.get('checkpoints')
-        if not isinstance(cp, dict) or set(cp) != {'BreadAdded', 'Baked', 'Sliced'} or not same(row.get('actorCheckpoints'), cp) or not same(checkpoints, cp):
-            return issues + ['Native bread creation/baking/slicing checkpoints missing']
         added, baked, sliced = (cp[k] for k in ('BreadAdded', 'Baked', 'Sliced'))
         if not all(isinstance(v, dict) for v in (added, baked, sliced)):
             return issues + ['Native bread checkpoints are not objects']
-        if not food(added.get('bread')) or not food(baked.get('bread')) or not matches(baked['bread'], dict(cooked=True, burnt=False)):
+        if not food(added.get('bread')) or not food(baked.get('bread')) or not matches(baked['bread'], dict(cooked=True, burnt=False, frozen=False)):
             return issues + ['Native enriched bread was not genuinely baked']
         if not matches(added['bread'], dict(id=p['base']['id'], kind='Base.BreadDough', extras=['Base.Cheese', 'Base.ChocolateChips'])):
             fail('Bread inherited ingredient baseline differs')
+        if (not matches(added['bread'], dict(cooked=False, burnt=False, frozen=False))
+                or not same(added['bread']['effectiveHunger'], added['bread']['hunger'])
+                or not same(baked['bread']['effectiveHunger'], baked['bread']['hunger'] * 1.3)):
+            fail('Native fresh bread cooking hunger multiplier differs')
+        untouched_inputs = [dict(v, sourceCount=1, rootCount=0, ovenCount=0, totalCount=1) for v in p['sandwichInputs']]
+        for stage in ('BreadAdded', 'Baked', 'Sliced'):
+            if (not same(cp[stage].get('breadInputs'), receipt['breadInputs'])
+                    or not same(cp[stage].get('sandwichInputs'), untouched_inputs)
+                    or cp[stage].get('sandwiches') != []):
+                fail('Bread checkpoint charged sandwich ingredients or changed prior portions')
         for key in NUTRIENTS:
             if not same(added['bread'][key], p['base'][key] + gains['Bread'][key]):
                 fail('Bread nutrition is not native base plus charged ingredients')
@@ -218,15 +268,16 @@ def check_case(selection, row, p, receipt, before_view, after_view, checkpoints)
         all_slices = sliced.get('slices')
         if not isinstance(all_slices, list) or len(all_slices) != 3 or not all(food(v) and v['kind'] == 'Base.BreadSlices' for v in all_slices) or not ids([v['id'] for v in all_slices]):
             return issues + ['Native SliceBread did not produce three distinct slices']
-        for key in ('hunger', 'baseHunger', *NUTRIENTS):
+        for key in ('hunger', 'effectiveHunger', 'baseHunger', *NUTRIENTS):
             if any(not same(v[key], baked['bread'][key] / 3) for v in all_slices):
                 fail('Native slices do not conserve the baked bread nutrition')
-        if any(v['extras'] != baked['bread']['extras'] or v['spices'] != baked['bread']['spices'] or not v['cooked'] for v in all_slices):
+        if any(v['extras'] != baked['bread']['extras'] or v['spices'] != baked['bread']['spices'] or not v['cooked']
+               or v['burnt'] or v['frozen'] or not same(v['effectiveHunger'], v['hunger'] * 1.3) for v in all_slices):
             fail('Native slice inheritance labels or cooked flags differ')
         chosen = next((v for v in all_slices if v['id'] == sandwich_base['id']), None)
         if not same(chosen, sandwich_base) or not same(slices, [v for v in all_slices if v['id'] != sandwich_base['id']]) or not same(row.get('sliceIds'), [v['id'] for v in all_slices]):
             fail('Sandwich used another slice or changed the two unused slices')
-    elif not same(sandwich_base, p['base']) or slices != [] or receipt.get('checkpoints') not in ({}, []):
+    elif not same(sandwich_base, p['base']) or slices != []:
         fail('Plain bread control was replaced by an enriched or fabricated base')
     if not same(row.get('actualSandwiches'), outputs) or not same(row.get('actualSlices'), slices):
         fail('Joining client food view disagrees with authoritative result')
@@ -237,19 +288,29 @@ def check_case(selection, row, p, receipt, before_view, after_view, checkpoints)
     transfers = [r for r in records if r.get('kind') == 'transfer']
     if len(evolved) != expected_count or [r.get('itemId') for r in evolved] != [m['id'] for m in seed_foods]:
         fail('Native ingredient applications are missing, duplicated or reordered')
+    expected_dispatches = ([1, 1] if enriched else []) + [len(dispatches) - 1, len(dispatches)]
+    expected_bases = ([p['base']['id']] * 2 if enriched else []) + [sandwich_base['id'], first_sandwich['id']]
+    if any(not matches(r, dict(dispatch=dispatch, baseId=base, inputBefore=original))
+           or type(r.get('dispatch')) is not int
+           for r, dispatch, base, original in zip(evolved, expected_dispatches, expected_bases, seed_foods)):
+        fail('Native applications do not match their original Cook dispatch and base')
     for r in records:
         if not matches(r, dict(progress=True, sourceMethodsUnchanged=True)):
             fail('Native action progress or unchanged callbacks missing')
+        if type(r.get('dispatch')) is not int or not 1 <= r['dispatch'] <= len(dispatches):
+            fail('Native action does not identify its original Cook dispatch')
         if r.get('kind') == 'evolved' and (not matches(r, dict(baseRoot=True, inputRoot=True, basePresent=True, inputPresent=True,
                 cookingLevel=level)) or not number(r.get('duration')) or r['duration'] != 100 - level * 2.5):
             fail('Ingredient was applied without actual root ownership or native time')
-    for original in seed_foods:
+    for original, dispatch in zip(seed_foods, expected_dispatches):
         related = [r for r in transfers if r.get('itemId') == original['id']]
         consumed = expected_cost(original, USES['Bread' if original['kind'] in USES['Bread'] else 'Sandwich'][original['kind']], level)[2]
         if len(related) != (1 if consumed else 2) or not related[0].get('pickup') or (not consumed and not related[1].get('returned')):
             fail('Original ingredient pickup or leftover return missing')
         if any(not number(r.get('transactionDuration')) or r['transactionDuration'] <= 1 for r in related):
             fail('Ingredient transfer was not paid natively')
+        if any(r.get('dispatch') != dispatch for r in related):
+            fail('Ingredient pickup or return crossed the original Cook dispatch')
     if enriched and len([r for r in records if r.get('kind') == 'slice' and r.get('duration') == 200]) != 1:
         fail('Native SliceBread cost/progress missing')
     owned = [p['base']['id'], p['book'], p['knife']['id'], *seed_by_id, *p['baselineOutputIds']]
@@ -298,8 +359,7 @@ def verify(root, selection, catalog):
     expected_raw = []
     for case in cases:
         expected_raw.extend([('PREPARED', case), ('OBSERVED_BEFORE', case)])
-        if case == CASES[1]:
-            expected_raw.extend([('CHECKPOINT', case)] * 3)
+        expected_raw.extend([('CHECKPOINT', case)] * len(checkpoint_stages(case)))
         expected_raw.extend([('VERIFIED', case), ('OBSERVED', case)])
     if [(kind, value.get('case')) for kind, value in raw] != expected_raw:
         issues.append('Missing, duplicated or reordered joining authority/observer receipts')
@@ -334,6 +394,8 @@ def verify(root, selection, catalog):
         cp_rows = [v for k, v in raw if k == 'CHECKPOINT' and v.get('case') == case]
         cps = {v.get('stage'): v.get('snapshot') for v in cp_rows}
         failures = check_case(selection, actor, p, receipt, before, after, cps)
+        if [v.get('stage') for v in cp_rows] != checkpoint_stages(case):
+            failures.append('Missing, duplicated or reordered native cooking checkpoint stages')
         if not matches(host, dict(status='observed', participation='observer', producerActor='client2', before=before, after=after)):
             failures.append('Host observer participation differs')
         for marker, stage in (('OBSERVED_BEFORE', before), ('OBSERVED', after)):

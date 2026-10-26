@@ -34,7 +34,7 @@ local function rootFoods(run,kind)
 end
 local function remember(run,action,kind)
  if run.seen[action]then return end
- local row={kind=kind,type=action.Type,duration=action:getDuration(),progress=false,stage=run.stage}
+ local row={kind=kind,type=action.Type,duration=action:getDuration(),progress=false,stage=run.stage,dispatch=run.currentDispatch}
  if action.item then row.itemId=action.item:getID();row.itemType=action.item:getFullType()end
  if action.usedItem then
   row.itemId=action.usedItem:getID();row.itemType=action.usedItem:getFullType();row.baseId=action.baseItem:getID()
@@ -85,9 +85,13 @@ end
 local function dispatch(run,base,target,metas,stage)
  local panel=run.panel;run.window:switchToPanel('evolved');local containers=nativeSources(run)
  panel:setContainers(containers);panel:setBaseItem(base);local recipe=recipeFor(panel,base,target);panel:setRecipe(recipe)
+ -- Use the same live state computation as CookingInfo:render before testing any plus.
+ panel.cookingInfoPanel:updateContentType()
+ local cookStatus=panel:getCookStatus();assert(cookStatus=='addOneFirst'or cookStatus=='showNutrition','real cooking content state differs')
  assert(base:getContainer()==run.state.root and panel:getBaseItem()==base,'real selected base is not canonical root')
  assert(#panel:getPreCookItems()==0,'real plus/Cook inherited pending requests')
- local record={stage=stage,baseBefore=F.snapshot(base),requests={}}
+ local record={stage=stage,baseBefore=F.snapshot(base),cookStatus=cookStatus,requests={}}
+ run.currentDispatch=#run.dispatches+1
  for _,meta in ipairs(metas)do
   local item=assert(exact(run,meta.id),'declared source ingredient missing')
   assert(item:getContainer()==run.state.sourceContainer and item:getFullType()==meta.kind,'ingredient left exact shared crate before plus')
@@ -101,13 +105,19 @@ local function dispatch(run,base,target,metas,stage)
   local input=assert(panel.ingredientsPanel);local scroll=assert(input.scrollView)
   local slot=input:onCreateSlot(1);slot:initialise();scroll:addChild(slot);input:onUpdateSlot(slot,info,1,1);slot:setVisible(true)
   assert(slot:getParent()==scroll and slot.onAddButton==PJCK_ItemSlot.onAddButton,'native plus slot binding changed')
+  local displayed=slot:isDisplayedItemUsable();local plusAllowed=input:canAddItem(item)
+  assert(displayed and plusAllowed,'real rendered plus control rejected a native-eligible ingredient: '..stage..':'..cookStatus)
   local before=#panel:getPreCookItems();local callback=slot.onAddButton;local ok,problem=pcall(callback,slot);scroll:removeChild(slot);assert(ok,problem)
   local requests=panel:getPreCookItems();local request=requests[#requests]
   assert(#requests==before+1 and request.displayItem and request.displayItem:getID()==meta.id
    and request.recipeCompatible==true and request.panelType=='Ingredient','real plus chose another ingredient/use')
   local use=assert(recipe:getItemRecipe(item)):getUse()
   assert(request.recipeUse==use,'source request/native portion mismatch')
-  record.requests[#record.requests+1]={id=meta.id,kind=meta.kind,recipeUse=use,groupKey=request.groupKey,before=F.snapshot(item)}
+  record.requests[#record.requests+1]={id=meta.id,kind=meta.kind,recipeUse=use,groupKey=request.groupKey,before=F.snapshot(item),displayedUsable=displayed,plusAllowed=plusAllowed}
+  if cookStatus=='addOneFirst'then
+   assert(#metas==1 and #requests==1 and not input:canAddItem(item),'first conversion allowed another pending ingredient')
+   record.firstOnly=true
+  end
  end
  local basePanel=assert(panel.baseItemPanel);assert(basePanel.onCook==PJCK_BaseItem.onCook,'native Cook callback changed')
  basePanel:updateButtonsVisibility()
@@ -138,7 +148,12 @@ local function transfer(run,item,from,to)
  action:setAllowMissingItems(false);ISTimedActionQueue.add(action);remember(run,action,'transfer');return action
 end
 local function finalCook(run,base)
- run.stage='sandwich';dispatch(run,base,'Base.Sandwich',run.ids.sandwichInputs,'Sandwich')
+ -- The real UI requires one addition to create a new recipe result before selecting more.
+ run.stage='sandwich-first';dispatch(run,base,'Base.Sandwich',{run.ids.sandwichInputs[1]},'Sandwich')
+ run.stage='sandwich-first-working'
+end
+local function finishSandwich(run,base)
+ run.stage='sandwich-rest';dispatch(run,base,'Base.Sandwich',{run.ids.sandwichInputs[2]},'Sandwich')
  run.tail=ISReadABook:new(run.player,run.state.book)
  assert(run.tail.minutesPerPage==2.0 and run.tail.maxTime>1 and not run.player:isTimedActionInstant(),'native reader cost changed')
  ISTimedActionQueue.add(run.tail);remember(run,run.tail,'tail');run.dispatched=true
@@ -210,7 +225,15 @@ function M.continueStart(run)
    run.sliceIds={};for _,item in ipairs(slices)do run.sliceIds[#run.sliceIds+1]=item:getID()end
    requestCheckpoint(run,'Sliced','sandwich-ready')
   end
- elseif run.stage=='sandwich-ready'then finalCook(run,assert(run.state.root:getItemById(run.sliceIds[1])))end
+ elseif run.stage=='sandwich-ready'then finalCook(run,assert(run.state.root:getItemById(run.sliceIds[1])))
+ elseif run.stage=='sandwich-first-working'and idle(run)then
+  local sandwiches=rootFoods(run,'Base.Sandwich')
+  if #sandwiches==1 then
+   run.firstSandwich=F.snapshot(sandwiches[1]);requestCheckpoint(run,'FirstSandwich','sandwich-rest-ready')
+  end
+ elseif run.stage=='sandwich-rest-ready'then
+  finishSandwich(run,assert(run.state.root:getItemById(run.firstSandwich.id)))
+ end
  return run
 end
 function M.finish(run,authority)
@@ -222,9 +245,9 @@ function M.finish(run,authority)
   if record.row.kind=='evolved'then
    evolved=evolved+1;if record.row.progress then progress=progress+1 end
    if run.enabled then
-    local token=action.toolkitQueueOperation
-    if not token or groups[action.recipe]and groups[action.recipe]~=token then grouped=false end
-    groups[action.recipe]=token
+    local token=action.toolkitQueueOperation;local dispatch=record.row.dispatch
+    if not token or not dispatch or groups[dispatch]and groups[dispatch]~=token then grouped=false end
+    groups[dispatch]=token
     if not run.tail.toolkitQueueOperation or run.tail.toolkitQueueOperation==token then tailIndependent=false end
    end
   end
@@ -240,7 +263,7 @@ function M.finish(run,authority)
  local value={event='case',id=run.ids.case,status=reason and 'failed'or 'passed',reason=reason,requested=expected,actions=evolved,
   sourceVerified=true,sourceMethodsUnchanged=unchanged,callbackClass='PJCK_EvoPanel',dispatchMethod='PJCK_ItemSlot.onAddButton+PJCK_BaseItem.onCook',
   cookingLevel=run.player:getPerkLevel(Perks.Cooking),actorId=run.player:getOnlineID(),records=run.records,dispatches=run.dispatches,
-  actorCheckpoints=run.checkpoints,tailProgress=run.tailObserved==true,returnsBeforeRead=run.returnsBeforeRead==true,
+  actorCheckpoints=run.checkpoints,firstSandwich=run.firstSandwich,tailProgress=run.tailObserved==true,returnsBeforeRead=run.returnsBeforeRead==true,
   actualSandwiches=actualSandwiches,actualSlices=actualSlices,finalSourceSnapshot=F.observerSnapshot(run.player,run.ids),sourceAtTail=run.sourceAtTail,sliceIds=run.sliceIds,
   tailIndependent=tailIndependent,tokensGrouped=run.enabled and grouped,bakingElapsedMs=run.bakingStarted and getTimestampMs()-run.bakingStarted or nil}
  for key,entry in pairs(authority)do if key~='case'then value[key]=entry end end

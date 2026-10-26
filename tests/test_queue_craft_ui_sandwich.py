@@ -73,6 +73,14 @@ def evidence(enriched=False, level=0, mode='native'):
                 records.append(dict(kind='transfer', itemId=original['id'], pickup=False, returned=True,
                                     progress=True, sourceMethodsUnchanged=True, transactionDuration=50))
     dispatches, checkpoints = [], {}
+    by_id = {v['id']: v for v in final}
+    untouched = [dict(copy.deepcopy(v), sourceCount=1, rootCount=0, ovenCount=0, totalCount=1) for v in inputs]
+    def checkpoint(stage, **kw):
+        return dict(case=case, stage=stage, breadInputs=copy.deepcopy(final[:len(bread_inputs)]),
+                    sandwichInputs=copy.deepcopy(untouched), slices=[], sandwiches=[], **kw)
+    def request(v, stage):
+        return dict(id=v['id'], kind=v['kind'], recipeUse=p['nativeRecipeUses'][stage][v['kind']],
+                    before=copy.deepcopy(v), displayedUsable=True, plusAllowed=True)
     sandwich_base, unused = copy.deepcopy(base), []
     if enriched:
         added = copy.deepcopy(base)
@@ -88,20 +96,42 @@ def evidence(enriched=False, level=0, mode='native'):
                 item[key] /= 3
             all_slices.append(item)
         sandwich_base, unused = all_slices[0], all_slices[1:]
-        checkpoints = dict(BreadAdded=dict(case=case, stage='BreadAdded', bread=added),
-                           Baked=dict(case=case, stage='Baked', bread=baked,
+        checkpoints = dict(BreadAdded=checkpoint('BreadAdded', bread=added),
+                           Baked=checkpoint('Baked', bread=baked,
                                       oven=dict(active=True, maximum=200, powered=True, generator=dict(p['generator'], fuel=99.5))),
-                           Sliced=dict(case=case, stage='Sliced', slices=all_slices))
-        dispatches.append(dict(stage='Bread', baseBefore=base,
-                               requests=[dict(id=v['id'], kind=v['kind'], recipeUse=p['nativeRecipeUses']['Bread'][v['kind']], before=v) for v in bread_inputs]))
+                           Sliced=checkpoint('Sliced'))
+        checkpoints['Sliced']['slices'] = copy.deepcopy(all_slices)
+        dispatches.append(dict(stage='Bread', baseBefore=base, cookStatus='showNutrition',
+                               requests=[request(v, 'Bread') for v in bread_inputs]))
         records.append(dict(kind='slice', duration=200, progress=True, sourceMethodsUnchanged=True))
-    sandwich = dict(copy.deepcopy(sandwich_base), id=40, kind='Base.Sandwich', cooked=False,
-                    hunger=sandwich_base['hunger'] - .12, baseHunger=sandwich_base['baseHunger'] - .12,
-                    effectiveHunger=sandwich_base['hunger'] - .12, extras=['Base.Cabbage', 'Base.Tomato'])
-    for nutrient in cook.NUTRIENTS:
-        sandwich[nutrient] += gains['Sandwich'][nutrient]
-    dispatches.append(dict(stage='Sandwich', baseBefore=sandwich_base,
-                           requests=[dict(id=v['id'], kind=v['kind'], recipeUse=6, before=v) for v in inputs]))
+    first_sandwich = dict(copy.deepcopy(sandwich_base), id=40, kind='Base.Sandwich', cooked=False,
+                         hunger=sandwich_base['hunger'] - .06, baseHunger=sandwich_base['baseHunger'] - .06,
+                         effectiveHunger=sandwich_base['hunger'] - .06, extras=['Base.Cabbage'])
+    sandwich = dict(copy.deepcopy(first_sandwich), hunger=first_sandwich['hunger'] - .06,
+                    baseHunger=first_sandwich['baseHunger'] - .06, effectiveHunger=first_sandwich['hunger'] - .06,
+                    extras=['Base.Cabbage', 'Base.Tomato'])
+    for index, original in enumerate(inputs):
+        fraction = (.06 * (1 - .03 * level)) / -original['hunger']
+        for nutrient in cook.NUTRIENTS:
+            gain = original[nutrient] * fraction * (1 + level / 15)
+            if index == 0: first_sandwich[nutrient] += gain
+            sandwich[nutrient] += gain
+    dispatches += [dict(stage='Sandwich', baseBefore=copy.deepcopy(sandwich_base), cookStatus='addOneFirst', firstOnly=True,
+                        requests=[request(inputs[0], 'Sandwich')]),
+                   dict(stage='Sandwich', baseBefore=copy.deepcopy(first_sandwich), cookStatus='showNutrition',
+                        requests=[request(inputs[1], 'Sandwich')])]
+    checkpoints['FirstSandwich'] = checkpoint('FirstSandwich')
+    checkpoints['FirstSandwich'].update(sandwiches=[copy.deepcopy(first_sandwich)], slices=copy.deepcopy(unused),
+                                        sandwichInputs=[copy.deepcopy(by_id[inputs[0]['id']]), copy.deepcopy(untouched[1])])
+    evolved = [r for r in records if r['kind'] == 'evolved']
+    dispatch_ids = ([1, 1] if enriched else []) + [len(dispatches) - 1, len(dispatches)]
+    base_ids = ([base['id']] * 2 if enriched else []) + [sandwich_base['id'], first_sandwich['id']]
+    for record, dispatch_id, base_id, original in zip(evolved, dispatch_ids, base_ids, bread_inputs + inputs):
+        record.update(dispatch=dispatch_id, baseId=base_id, inputBefore=copy.deepcopy(original))
+    dispatch_by_id = dict(zip([v['id'] for v in bread_inputs + inputs], dispatch_ids))
+    for record in records:
+        if record['kind'] == 'transfer': record['dispatch'] = dispatch_by_id[record['itemId']]
+        elif record['kind'] == 'slice': record['dispatch'] = 1
     terminal = dict(case=case, source=source, items=sorted([cook.raw_resource(v) for v in final if v['totalCount']], key=lambda v: v['id']))
     receipt = dict(case=case, actorId=2, cookingLevel=level, nativeRecipeUses=p['nativeRecipeUses'], source=source,
                    base=dict(id=10, kind=base['kind'], missing=True, sourceCount=0, rootCount=0, ovenCount=0, totalCount=0),
@@ -113,9 +143,10 @@ def evidence(enriched=False, level=0, mode='native'):
                dispatchMethod='PJCK_ItemSlot.onAddButton+PJCK_BaseItem.onCook', tailProgress=True,
                returnsBeforeRead=True, tailIndependent=True, tokensGrouped=mode == 'toolkit',
                dispatches=dispatches, records=records, finalSourceSnapshot=terminal, sourceAtTail=terminal,
-               actualSandwiches=[sandwich], actualSlices=unused)
+               actualSandwiches=[sandwich], actualSlices=unused, firstSandwich=copy.deepcopy(first_sandwich),
+               actorCheckpoints=copy.deepcopy(checkpoints))
     if enriched:
-        row.update(actorCheckpoints=checkpoints, sliceIds=[30, 31, 32])
+        row.update(sliceIds=[30, 31, 32])
     row.update({k: copy.deepcopy(v) for k, v in receipt.items() if k != 'case'})
     return [dict(mode=mode), row, p, receipt, before, copy.deepcopy(terminal), copy.deepcopy(checkpoints)]
 
@@ -129,6 +160,17 @@ class SandwichVerifierTests(unittest.TestCase):
         row.update({k: copy.deepcopy(v) for k, v in receipt.items() if k != 'case'})
         row['actualSandwiches'] = copy.deepcopy(receipt['sandwiches'])
         row['actualSlices'] = copy.deepcopy(receipt['slices'])
+
+    def sync_checkpoints(self, data):
+        self.sync_actor(data)
+        data[1]['actorCheckpoints'] = copy.deepcopy(data[3]['checkpoints'])
+        data[6] = copy.deepcopy(data[3]['checkpoints'])
+
+    def sync_first(self, data):
+        first = data[3]['checkpoints']['FirstSandwich']['sandwiches'][0]
+        data[1]['firstSandwich'] = copy.deepcopy(first)
+        data[1]['dispatches'][-1]['baseBefore'] = copy.deepcopy(first)
+        self.sync_checkpoints(data)
 
     def test_real_partial_same_count_and_native_skill_bonus_pass(self):
         for enriched in (False, True):
@@ -161,6 +203,74 @@ class SandwichVerifierTests(unittest.TestCase):
                     elif change == 'server': d[3]['sourceSnapshot']['items'][0]['calories'] += 1
                     else: d[1]['sourceAtTail']['items'][0]['calories'] += 1
                     self.assertTrue(self.check(d))
+
+    def test_real_plus_render_status_and_first_conversion_allowance_are_required(self):
+        for enriched in (False, True):
+            for change in ('stale-first', 'stale-rest', 'displayed', 'plus-allowed', 'first-unbounded',
+                           'rest-first-only', 'two-first-requests', 'old-combined-cook', 'wrong-dispatch', 'wrong-base'):
+                with self.subTest(enriched=enriched, change=change):
+                    d = evidence(enriched); first, rest = d[1]['dispatches'][-2:]
+                    if change == 'stale-first': first['cookStatus'] = 'showNutrition'
+                    elif change == 'stale-rest': rest['cookStatus'] = 'addOneFirst'
+                    elif change == 'displayed': first['requests'][0]['displayedUsable'] = False
+                    elif change == 'plus-allowed': first['requests'][0]['plusAllowed'] = False
+                    elif change == 'first-unbounded': first.pop('firstOnly')
+                    elif change == 'rest-first-only': rest['firstOnly'] = True
+                    elif change == 'two-first-requests': first['requests'] += copy.deepcopy(rest['requests'])
+                    elif change == 'old-combined-cook':
+                        first['requests'] += rest['requests'];d[1]['dispatches'].pop()
+                    else:
+                        record = [r for r in d[1]['records'] if r['kind'] == 'evolved'][-1]
+                        record['dispatch' if change == 'wrong-dispatch' else 'baseId'] -= 1
+                    self.assertTrue(self.check(d))
+        d = evidence(True);d[1]['dispatches'][0]['cookStatus'] = 'addOneFirst'
+        self.assertTrue(self.check(d))
+
+    def test_first_cook_conversion_and_each_partial_cost_have_independent_authority(self):
+        for enriched in (False, True):
+            for change in ('missing', 'cabbage-free', 'tomato-charged', 'double-charge', 'first-nutrition',
+                           'first-identity', 'old-base-survives', 'local-first', 'next-base'):
+                with self.subTest(enriched=enriched, change=change):
+                    d = evidence(enriched);cp = d[3]['checkpoints']['FirstSandwich']
+                    if change == 'missing': d[3]['checkpoints'].pop('FirstSandwich')
+                    elif change == 'cabbage-free':
+                        cp['sandwichInputs'][0] = dict(d[2]['sandwichInputs'][0], sourceCount=1, rootCount=0, ovenCount=0, totalCount=1)
+                    elif change == 'tomato-charged': cp['sandwichInputs'][1] = copy.deepcopy(d[3]['sandwichInputs'][1])
+                    elif change == 'double-charge': cp['sandwichInputs'][0]['hunger'] += .06
+                    elif change == 'first-nutrition': cp['sandwiches'][0]['calories'] += 1
+                    elif change == 'first-identity': cp['sandwiches'][0]['id'] += 1
+                    elif change == 'old-base-survives': cp['bread'] = copy.deepcopy(d[2]['base'])
+                    elif change == 'local-first': d[1]['firstSandwich']['calories'] += 1
+                    else: d[1]['dispatches'][-1]['baseBefore']['calories'] += 1
+                    if change not in ('missing', 'local-first', 'next-base'): self.sync_first(d)
+                    else: self.sync_checkpoints(d)
+                    self.assertTrue(self.check(d))
+
+    def test_cooking_multiplier_and_conversion_reset_cannot_be_forged_consistently(self):
+        for change in ('baked-effective', 'slice-effective', 'first-cooked', 'first-effective',
+                       'final-cooked', 'final-effective'):
+            with self.subTest(change=change):
+                d = evidence(True);cp = d[3]['checkpoints']
+                if change == 'baked-effective':
+                    cp['Baked']['bread']['effectiveHunger'] = cp['Baked']['bread']['hunger']
+                    for v in cp['Sliced']['slices']: v['effectiveHunger'] = v['hunger']
+                    d[1]['dispatches'][-2]['baseBefore'] = copy.deepcopy(cp['Sliced']['slices'][0])
+                    d[3]['slices'] = copy.deepcopy(cp['Sliced']['slices'][1:])
+                    cp['FirstSandwich']['slices'] = copy.deepcopy(d[3]['slices'])
+                elif change == 'slice-effective':
+                    cp['Sliced']['slices'][0]['effectiveHunger'] += .01
+                    d[1]['dispatches'][-2]['baseBefore'] = copy.deepcopy(cp['Sliced']['slices'][0])
+                elif change.startswith('first-'):
+                    v = cp['FirstSandwich']['sandwiches'][0]
+                    if change == 'first-cooked': v['cooked'] = True
+                    else: v['effectiveHunger'] = v['hunger'] * 1.3
+                    self.sync_first(d)
+                else:
+                    v = d[3]['sandwiches'][0]
+                    if change == 'final-cooked': v['cooked'] = True
+                    else: v['effectiveHunger'] = v['hunger'] * 1.3
+                self.sync_checkpoints(d)
+                self.assertTrue(self.check(d))
 
     def test_missing_paid_progress_pickup_return_and_tail_fail(self):
         for change in ('progress', 'pickup', 'return', 'duration', 'root', 'callback', 'tail'):
@@ -271,11 +381,13 @@ class SandwichVerifierTests(unittest.TestCase):
         d = evidence(True); d[3]['checkpoints']['Baked'] = None
         self.assertTrue(self.check(d))
 
-    def write_logs(self, root, mode='native', native_failure=False):
-        d = evidence(mode=mode); _, row, p, receipt, before, after, _ = d
+    def write_logs(self, root, mode='native', native_failure=False, enriched=False):
+        d = evidence(enriched=enriched, mode=mode); _, row, p, receipt, before, after, _ = d
         case = p['case']; cases = [case]
         selection = dict(mode=mode, cases=cases)
         server = [('PREPARED', p), ('OBSERVED_BEFORE', dict(case=case, actor='client1', snapshot=before)),
+                  *[('CHECKPOINT', dict(case=case, stage=stage, snapshot=receipt['checkpoints'][stage]))
+                    for stage in cook.checkpoint_stages(case)],
                   ('VERIFIED', receipt), ('OBSERVED', dict(case=case, actor='client1', snapshot=after))]
         (root / 'server-launch.log').write_text('\n'.join('[CRAFT_UI_TEST] ' + k + ' ' + json.dumps(v) for k, v in server))
         for role in ('client1', 'client2'):
@@ -309,6 +421,31 @@ class SandwichVerifierTests(unittest.TestCase):
                 result = cook.verify(root, selection, {})
                 self.assertIn('Native joining cooking fixture failed', result['issues'])
                 self.assertTrue(all(v['status'] == 'failed' for v in result['outcomes']))
+
+    def test_native_checkpoint_transport_requires_each_stage_in_original_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for enriched in (False, True):
+                selection = self.write_logs(root, enriched=enriched)
+                self.assertEqual(cook.verify(root, selection, {})['issues'], [])
+                for change in ('missing', 'duplicate', 'wrong-stage', 'wrong-inner-stage', 'reordered'):
+                    if change == 'reordered' and not enriched: continue
+                    with self.subTest(enriched=enriched, change=change):
+                        self.write_logs(root, enriched=enriched)
+                        path = root / 'server-launch.log';lines = path.read_text().splitlines()
+                        positions = [i for i, line in enumerate(lines) if '] CHECKPOINT ' in line]
+                        if change == 'missing': lines.pop(positions[-1])
+                        elif change == 'duplicate': lines.insert(positions[-1], lines[positions[-1]])
+                        elif change == 'reordered': lines[positions[0]], lines[positions[-1]] = lines[positions[-1]], lines[positions[0]]
+                        else:
+                            value = json.loads(lines[positions[-1]].split('CHECKPOINT ', 1)[1])
+                            if change == 'wrong-stage': value['stage'] = 'Sliced'
+                            else: value['snapshot']['stage'] = 'Sliced'
+                            lines[positions[-1]] = '[CRAFT_UI_TEST] CHECKPOINT ' + json.dumps(value)
+                        path.write_text('\n'.join(lines))
+                        result = cook.verify(root, selection, {})
+                        self.assertTrue(result['issues'])
+                        self.assertTrue(all(v['status'] == 'failed' for v in result['outcomes']))
 
     def test_observer_custom_marker_is_required_and_strictly_checked(self):
         with tempfile.TemporaryDirectory() as tmp:

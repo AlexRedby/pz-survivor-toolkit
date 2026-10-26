@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.272
+
+- Fixed: Project Cook permits the first ingredient when starting a new dish from a food base with inherited ingredients, including filled bread slices. Its first-addition step still allows only one new selection; native eligibility, portions, recipe limits, hunger and nutrition stay unchanged.
+
 ### 0.1.271
 
 - Preserve cart steering and grip while limping. Use the native injury gait and speed, respect native Run/Sprint eligibility, and keep directional turns/reverse and moving healing synchronized between Host players.
