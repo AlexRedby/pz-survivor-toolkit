@@ -148,6 +148,7 @@ local scope=generators:sub(first,last-1)
 for _,own in ipairs({false,true}) do
     for _,fails in ipairs({false,true}) do
         local env=environment()
+        env.Proof=assert(env.loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
         local later,earlier=0,0
         local class={onCompleted=function() earlier=earlier+1 end};class.__index=class
         local queue=setmetatable({},class)

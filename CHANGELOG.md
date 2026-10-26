@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.279
+
+- Fixed: shared callback and instance-field ownership checks now use Kahlua's actual own-field semantics in queued approach and fluid-completion guards, medical validation and temporary callback restoration. Inherited fields cannot masquerade as required owned state; native costs and effects are unchanged.
+- Development: action-queue checks can run as one offline group, collect all failures and explicit coverage gaps, and qualify the same behavior vectors against native Kahlua without launching the game.
+
 ### 0.1.278
 
 - **Fixed:** The hidden loot window now skips unused row, count and tooltip work during nearby-container discovery in B42.21. Kahlua's inherited `rawget` lookup had prevented the existing optimization from attaching. Live contents, explicit refreshes, selected items and reopening retain their existing behavior.

@@ -57,7 +57,7 @@ def grouped_tests(name, available):
     if name == "action-queue":
         shared_guards = {test for test in available
                          if test.startswith("test_wash_") or test in (
-                             "test_empty_fluid_action.lua", "test_source_proof.lua")}
+                             "test_empty_fluid_action.lua", "test_source_proof.lua", "test_kahlua_own_fields.lua")}
         return {test for test in available if test.startswith("test_action_queue")} | shared_guards
     return set()
 

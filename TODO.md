@@ -1,12 +1,7 @@
 # Batch action-queue audit and shared fixes
 
-- [ ] Add an opt-in keep-going result report to the existing offline Lua runner so one failed action family cannot hide the remaining failures. Preserve default invocation, isolated runtimes, required-input failures and explicit skipped checks.
-- [ ] Run the available action-queue source checks together against the current native and selected mod sources without launching the game; record every failure and missing-input/coverage gap separately.
-- [ ] Correct demonstrated Kahlua ownership failures through a shared owned-field query: foreign inherited radio/media callbacks can bypass provenance checks, deleted native transfer methods can inherit a base fallback and still acquire an edit contract, and generator callback restoration can leave an owned inherited alias. Gate: existing behavior vectors under native-style inheritance and Kahlua lookup plus focused native-Kahlua CPU qualification; no game launch.
-- [ ] Repair source-proven offline fixture drift in generator overlay, grab compatibility and fitness fallback preparation; keep the separately tracked cart-return failure distinct from new regressions and retain missing source checks explicitly.
-- [ ] Audit shared class/instance ownership, completion, dependency and recovery boundaries; group demonstrated failures by cause and fix shared mechanisms with failing regressions before extending individual families. Do not replace protective barriers with guessed contracts.
-- [ ] Prepare one consolidated affected-scenario qualification packet, reusing existing fixtures and queue-on/off SP/Host controls. No game launches during this audit; retain exact effects, authoritative costs and log auditing for the later runtime gate.
-- [ ] Deliver the verified offline tooling/fixes against current main with the appropriate component versions, keeping any unrun gameplay gates explicit.
+- [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
+- [ ] Prepare consolidated compatible SP/menu-Host queue-on/off scenarios for the next batch that changes gameplay effects or lifecycle behavior. Freeze the tested inputs before launch, gather all safe independent failures in a session, and repeat only failed or newly affected cases; offline/source qualification alone is not live gameplay coverage.
 
 # Storage performance stabilization
 
