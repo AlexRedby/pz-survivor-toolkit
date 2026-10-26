@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.275
+
+- Fixed: the translucent inventory drag preview stays at its original offset from the cursor while earlier queued transfers remove rows. Applies to native and CleanUI inventory lists, including Shift-selected ranges and expanded stacks.
+
 ### 0.1.274
 
 - Fixed: washing off makeup in Host now synchronizes its removal from the player inventory. Native washing costs, partial cleaning and interruption behavior are preserved with the action queue enabled or disabled.

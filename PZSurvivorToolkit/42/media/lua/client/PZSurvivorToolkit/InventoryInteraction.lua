@@ -6,6 +6,14 @@ local function rowIdentity(row)
     return row
 end
 
+local function firstSelectedRow(pane)
+    local first
+    for row in pairs(pane.selected) do
+        if not first or row < first then first = row end
+    end
+    return first
+end
+
 local patched = {}
 local function install(class)
     if not class or patched[class] then return end
@@ -14,15 +22,18 @@ local function install(class)
     class.onMouseDown = function(self, ...)
         local identity = rowIdentity(self.items[self.mouseOverOption])
         self.toolkitPressedRow = nil
+        self.toolkitDragFirstRow = nil
         local result = down(self, ...)
         if self.dragging and ISMouseDrag.draggingFocus == self then
             self.toolkitPressedRow = identity
+            if self.mode == "details" then self.toolkitDragFirstRow = firstSelectedRow(self) end
         end
         return result
     end
     class.onMouseUp = function(self, x, y)
         local identity = self.toolkitPressedRow
         self.toolkitPressedRow = nil
+        self.toolkitDragFirstRow = nil
         if identity and x == self.downX and y == self.downY and x >= self.column2
             and not isShiftKeyDown() and not isCtrlKeyDown() then
             -- Refresh can move the pressed item before native mouse-up selects its row again.
@@ -68,6 +79,21 @@ local function install(class)
     end
     local render = class.renderdetails
     class.renderdetails = function(self, doDragged, ...)
+        if doDragged and self.dragging and self.dragStarted and self.toolkitDragFirstRow
+            and ISMouseDrag.draggingFocus == self then
+            local first = firstSelectedRow(self)
+            if first then
+                -- Refresh moves selected rows as earlier transfers complete.
+                -- Keep the preview's top at its mouse-down offset, while native
+                -- input thresholds and drop handling retain their coordinates.
+                local draggingY = self.draggingY
+                self.draggingY = draggingY + (first - self.toolkitDragFirstRow) * self.itemHgt
+                local ok, result = pcall(render, self, doDragged, ...)
+                self.draggingY = draggingY
+                if not ok then error(result) end
+                return result
+            end
+        end
         -- Preserve the old row map for CleanUI's Shift-selection anchor capture.
         if doDragged == false and self.inventory:isDrawDirty() then
             self:refreshContainer()
