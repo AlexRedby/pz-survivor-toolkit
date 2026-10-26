@@ -11,7 +11,14 @@ Events.OnGameStart.Add(function()
         local size=assert(selection.window_size, 'prepared window_size missing')
         local width,height=getCore():getScreenWidth(),getCore():getScreenHeight()
         print('[QUEUE_TEST] WINDOW_SIZE width='..width..' height='..height)
-        assert(width==size[1] and height==size[2], 'window_size differs from prepared viewport: '..width..'x'..height)
+        if selection.options and selection.options.optimizer_archive then
+            local observed=assert(toolkitTestViewport, 'native viewport observer missing')(size[1],size[2])
+            assert(observed[1]==size[1] and observed[2]==size[2], 'logical window differs from prepared size')
+            assert(observed[7]==width and observed[8]==height, 'Core changed during viewport observation')
+            assert(observed[3]==width and observed[4]==height, 'optimizer Core differs from actual framebuffer')
+        else
+            assert(width==size[1] and height==size[2], 'window_size differs from prepared viewport: '..width..'x'..height)
+        end
         local count = 0
         for _, id in ipairs(selection.mods) do
             assert(getActivatedMods():contains(id), 'selected mod missing: ' .. id)

@@ -483,6 +483,36 @@ def execution_issues(root, selection, execution):
     return issues
 
 
+def _optimizer_viewports(root, role, text, expected, actuals, required):
+    """Admit framebuffer pixels only with fresh measurements of the owned logical window."""
+    pattern = (r'\[QUEUE_TEST\] WINDOW_VIEWPORT pid=(\d+) glfw=(\d+) contract=(\w+) '
+               r'display_sha256=([0-9a-f]{64}) window=(\d+)x(\d+) framebuffer=(\d+)x(\d+) '
+               r'display=(\d+)x(\d+) core=(\d+)x(\d+)(?:\s|$)')
+    matches = re.findall(pattern, text)
+    if len(matches) != required or text.count('[QUEUE_TEST] WINDOW_VIEWPORT ') != required:
+        raise ValueError('exact optimizer viewport observations missing or duplicated')
+    routes = {(int(pid), int(handle)) for pid, handle in re.findall(
+        r'\[QUEUE_TEST\] WINDOW_ROUTED pid=(\d+) glfw=(\d+) mode=', text)}
+    execution = read_json(Path(root) / 'execution.json')
+    pid = execution['processes'][role]['pid']
+    if type(pid) is not int or pid <= 0:
+        raise ValueError('owned process identity is missing')
+    result = []
+    for row, actual in zip(matches, actuals):
+        owner, handle = map(int, row[:2])
+        values = list(map(int, row[4:]))
+        logical, framebuffer, display, core = (values[i:i+2] for i in range(0, 8, 2))
+        if (owner != pid or handle <= 0 or (owner, handle) not in routes
+                or row[2] != 'framebuffer'
+                or row[3] != 'da78691b554a0341827f841abc73a34b776ecf0fde845b15703cb855a8847d57'
+                or min(values) <= 0 or logical != expected or core != actual
+                or core != framebuffer or display != framebuffer):
+            raise ValueError('optimizer viewport does not match its owned window/framebuffer contract')
+        result.append({'logical': logical, 'framebuffer': framebuffer, 'display': display, 'core': core,
+                       'pid': owner, 'glfw': handle, 'contract': row[2], 'display_sha256': row[3]})
+    return result
+
+
 def window_size_evidence(root, selection):
     """Require the declared number of native starts, each at the prepared viewport."""
     expected = selection.get('window_size')
@@ -512,6 +542,13 @@ def window_size_evidence(root, selection):
             evidence['issues'].append(role + ': window_size requires exactly ' + label)
             continue
         evidence['observed'][role] = actuals[0]
+        if selection.get('options', {}).get('optimizer_archive'):
+            try:
+                observed = _optimizer_viewports(root, role, text, expected, actuals, required)
+                evidence.setdefault('geometry', {})[role] = observed
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                evidence['issues'].append(role + ': ' + str(error))
+            continue
         for index, actual in enumerate(actuals):
             if actual != expected:
                 position = ' at startup ' + str(index + 1) if required > 1 else ''
@@ -612,6 +649,11 @@ def summary(report):
     if viewport.get('expected'):
         lines.append('Window size: expected ' + 'x'.join(map(str, viewport['expected'])) + '; observed ' +
                      ', '.join(role + '=' + 'x'.join(map(str, size)) for role, size in viewport.get('observed', {}).items()))
+        for role, observations in viewport.get('geometry', {}).items():
+            for value in observations:
+                lines.append(role + ' measured logical=' + 'x'.join(map(str, value['logical']))
+                             + '; framebuffer=' + 'x'.join(map(str, value['framebuffer']))
+                             + '; game=' + 'x'.join(map(str, value['core'])))
     trees = report['provenance'].get('game_input_trees')
     lines.append('Live game trees: ' + ('unsealed (legacy report)' if trees is None else ', '.join(trees) if trees else 'NOT VERIFIED'))
     for role, counts in report["functional"]["clients"].items():
