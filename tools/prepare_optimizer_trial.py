@@ -93,12 +93,6 @@ def build_bridge(destination: Path, game: Path, jdk: Path, root: Path = ROOT,
                 z.writestr(name, text.encode('ascii'))
             for file in sorted(classes.rglob('*.class')):
                 z.write(file, file.relative_to(classes).as_posix())
-    # The same dashboard fix is active in control and optimized trial profiles.
-    dashboard = root / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua'
-    regular(dashboard)
-    lua = mod / '42/media/lua/client/PZOptimizerTrialDashboard.lua'
-    lua.parent.mkdir(parents=True)
-    shutil.copy2(dashboard, lua)
     return mod
 
 
@@ -252,6 +246,7 @@ def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path
     (stage / 'pack-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     shutil.copy2(source / 'SurvivorQoL-selected.ini', stage / 'SurvivorQoL-selected.ini')
     lua = stage / 'mods' / BRIDGE / '42/media/lua/client'
+    lua.mkdir(parents=True, exist_ok=True)
     for name in ('PZOptimizerTrialPack.lua', 'PZOptimizerTrialTelemetry.lua'):
         regular(root / 'tests/optimizer_trial' / name)
         shutil.copy2(root / 'tests/optimizer_trial' / name, lua)
@@ -303,7 +298,7 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
                    'repository_versions': {id: row['version'] for id, row in pack['repository_mods'].items()},
                    'bridge_jar_sha256': hashlib.sha256(
                        (bridge / f'42/media/java/{BRIDGE}.jar').read_bytes()).hexdigest(),
-                   'dashboard_sha256': hashlib.sha256((bridge / '42/media/lua/client/PZOptimizerTrialDashboard.lua').read_bytes()).hexdigest()}
+                   'dashboard_sha256': hashlib.sha256((stage / 'mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua').read_bytes()).hexdigest()}
         candidate = stage / 'candidate-manifest.json'
         receipt['candidate_manifest_sha256'] = hashlib.sha256(candidate.read_bytes()).hexdigest()
         candidate_data = json.loads(candidate.read_text(encoding='utf-8'))
