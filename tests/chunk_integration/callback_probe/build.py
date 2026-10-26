@@ -24,6 +24,8 @@ def main():
     for name in ("game", "jdk", "output", "cache"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--check", action="store_true", help="Run headless real-ZombieBuddy weaving/Kahlua checks")
+    parser.add_argument("--capture-mode", choices=("startup", "manual"), default="startup",
+                        help="Capture startup automatically or wait for one explicit Lua begin/finish interval")
     args = parser.parse_args()
     for name in ("game", "jdk", "output", "cache"):
         setattr(args, name, getattr(args, name).resolve())
@@ -62,22 +64,24 @@ def main():
                         str(source / "Main.java")], check=True)
         resource = classes / "toolkit/chunkprobe/probe-opt-in.txt"
         resource.write_text(token + "\n", encoding="ascii")
-        check_output = None
+        (resource.parent / "probe-mode.txt").write_text(args.capture_mode + "\n", encoding="ascii")
+        check_logs = {}
         if args.check:
             checkpath = os.pathsep.join((str(classes), classpath))
             subprocess.run([str(javac), "--release", "25", "-cp", checkpath, "-d", str(checks),
                             str(source / "ProbeChecks.java")], check=True)
             agent_cache = staging / "agent-config"
             agent_cache.mkdir()
-            result = subprocess.run([str(java), "-javaagent:" + str(buddy) + "=config_dir=" + str(agent_cache)
-                                     + ",policy=deny-new,verbosity=1", "-Djava.awt.headless=true",
-                                     "-Duser.home=" + str(staging / "home"), "-Dzomboid.steam=0", "-cp",
-                                     os.pathsep.join((str(checks), checkpath)), "toolkit.chunkprobe.ProbeChecks"],
-                                    cwd=staging, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
-            check_output = result.stdout
-            if result.returncode or "CHUNK_CALLBACK_PROBE_CHECK_PASS" not in check_output or "Error during transformation" in check_output:
-                print(check_output)
-                raise SystemExit("Native weave checks failed; no fixture or opt-in written")
+            for scenario, extra in (("behavior", []), ("finish-race", ["--finish-race"])):
+                result = subprocess.run([str(java), "-javaagent:" + str(buddy) + "=config_dir=" + str(agent_cache)
+                                         + ",policy=deny-new,verbosity=1", "-Djava.awt.headless=true",
+                                         "-Duser.home=" + str(staging / "home"), "-Dzomboid.steam=0", "-cp",
+                                         os.pathsep.join((str(checks), checkpath)), "toolkit.chunkprobe.ProbeChecks", *extra],
+                                        cwd=staging, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
+                check_logs[scenario] = result.stdout
+                if result.returncode or "CHUNK_CALLBACK_PROBE_CHECK_PASS" not in result.stdout or "Error during transformation" in result.stdout:
+                    print(result.stdout)
+                    raise SystemExit("Native weave checks failed (" + scenario + "); no fixture or opt-in written")
         fixture = staging / MOD_ID
         version = fixture / "42"
         (version / "media/java").mkdir(parents=True)
@@ -86,6 +90,8 @@ def main():
         (version / "media/lua/client/ZZChunkCallbackProbe.lua").write_bytes(sources["ZZChunkCallbackProbe.lua"])
         receipt = {"format": 1, "test_only": True, "native_hashes": NATIVE_HASHES, "sources": fingerprints,
                    "checked": bool(args.check), "telemetry": "inclusive-per-handler-calls-sum-max",
+                   "capture_mode": args.capture_mode,
+                   "check_scenarios": list(check_logs),
                    "bounds": {"threads": 16, "handlers_per_thread": 128, "event_depth": 64}}
         with zipfile.ZipFile(version / "media/java/PZChunkCallbackProbe.jar", "w", zipfile.ZIP_DEFLATED) as archive:
             for file in sorted(classes.rglob("*")):
@@ -95,8 +101,11 @@ def main():
         args.output.mkdir(parents=True)
         shutil.copytree(fixture, args.output / MOD_ID)
         (args.output / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-        if check_output is not None:
-            (args.output / "weave-check.log").write_text(check_output)
+        if check_logs:
+            for scenario, text in check_logs.items():
+                (args.output / ("weave-check-" + scenario + ".log")).write_text(text)
+            (args.output / "weave-check.log").write_text("".join(
+                "SCENARIO " + scenario + "\n" + text for scenario, text in check_logs.items()))
         # The opt-in is created only after a successful build/check; it belongs solely to this fixture.
         with opt_in.open("x", encoding="ascii") as stream:
             stream.write(token + "\n")

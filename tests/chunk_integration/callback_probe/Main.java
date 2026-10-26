@@ -27,13 +27,15 @@ public final class Main {
     static volatile boolean enabled;
     static volatile String diagnostic;
     static int stateCount;
-    private static boolean started;
+    private static boolean started, captureStarted, finished;
+    private static String captureMode;
+    private static long windowStarted, windowEnded;
     private static Path ownedCache;
 
     static final class Stat {
         final String file;
         final int line;
-        long calls, nanos, max;
+        long calls, nanos, max, maxStarted, maxCompleted;
         Stat(LuaClosure callback) {
             file = callback.prototype.filename;
             int[] lines = callback.prototype.lines;
@@ -67,14 +69,38 @@ public final class Main {
                 return false;
             }
             ownedCache = real;
+            try (InputStream input = Main.class.getResourceAsStream("probe-mode.txt")) {
+                if (input == null) throw new IllegalStateException("missing capture mode");
+                captureMode = new String(input.readNBytes(32), java.nio.charset.StandardCharsets.US_ASCII).trim();
+                if (!"startup".equals(captureMode) && !"manual".equals(captureMode))
+                    throw new IllegalStateException("invalid capture mode");
+            }
             diagnostic = null;
             started = true;
-            enabled = true;
+            if ("startup".equals(captureMode)) activate();
             return true;
         } catch (Throwable failure) {
             diagnostic = "startup-guard-failure";
             return false;
         }
+    }
+    private static void activate() {
+        windowStarted = System.nanoTime();
+        captureStarted = true;
+        enabled = true;
+    }
+    @LuaMethod(name="chunkCallbackProbeCaptureMode", global=true)
+    public static String captureMode() { return captureMode; }
+
+    /** One explicit interval per JVM; calling twice cannot reset an active recording. */
+    @LuaMethod(name="chunkCallbackProbeBegin", global=true)
+    public static synchronized boolean beginWindow() {
+        if (!started || captureStarted || finished || diagnostic != null || !"manual".equals(captureMode)) return false;
+        try {
+            if (!owned(ownedCache)) { disable("begin-cache-guard"); return false; }
+            activate();
+            return true;
+        } catch (Throwable failure) { disable("begin-window-failure"); return false; }
     }
     static boolean matchesHash(InputStream input, String expected) throws Exception {
         if (input == null) return false;
@@ -167,30 +193,39 @@ public final class Main {
     }
     public static void end(Object function, long began) {
         if (began == 0) return;
-        long elapsed = System.nanoTime() - began;
+        long completed = System.nanoTime(), elapsed = completed - began;
         try {
             State state = local.get();
             synchronized (state) {
                 int frame = state.depth - 1;
                 if (frame < 0 || !state.active[frame]) { disable("callback-stack-mismatch"); return; }
                 state.active[frame] = false;
-                if (!enabled) return;
+                // finish sees either the active flag or this diagnostic under the same state lock.
+                if (!enabled) { disable("unfinished-callback"); return; }
                 Stat stat = state.stats.get(function);
                 if (stat == null || elapsed < 0 || stat.calls == Long.MAX_VALUE || stat.nanos > Long.MAX_VALUE - elapsed) {
                     disable("counter-overflow"); return;
                 }
                 stat.calls++;
                 stat.nanos += elapsed;
-                stat.max = Math.max(stat.max, elapsed);
+                if (elapsed > stat.max) {
+                    stat.max = elapsed;
+                    stat.maxStarted = began;
+                    stat.maxCompleted = completed;
+                }
             }
         } catch (Throwable failure) { disable("callback-exit-failure"); }
     }
     @LuaMethod(name="chunkCallbackProbeFinish", global=true)
-    public static void finish() {
+    public static synchronized void finish() {
+        if (finished) return;
+        finished = true;
         enabled = false;
+        windowEnded = System.nanoTime();
+        if (!captureStarted) disable("window-not-started");
         try {
             if (ownedCache == null || !owned(ownedCache)) { disable("finish-cache-guard"); return; }
-            StringBuilder out = new StringBuilder("file\tline\tcalls\tnanos\tmax_ns\n");
+            StringBuilder out = new StringBuilder("file\tline\tcalls\tnanos\tmax_ns\tmax_started_ns\tmax_completed_ns\n");
             long events = 0, calls = 0;
             synchronized (states) {
                 for (int i = 0; i < stateCount; i++) {
@@ -203,7 +238,8 @@ public final class Main {
                             String file = String.valueOf(stat.file).replace('\t', ' ').replace('\n', ' ').replace('\r', ' ');
                             if (file.length() > 2048) file = file.substring(0, 2048);
                             out.append(file).append('\t').append(stat.line).append('\t').append(stat.calls)
-                                .append('\t').append(stat.nanos).append('\t').append(stat.max).append('\n');
+                                .append('\t').append(stat.nanos).append('\t').append(stat.max)
+                                .append('\t').append(stat.maxStarted).append('\t').append(stat.maxCompleted).append('\n');
                         }
                     }
                 }
@@ -211,7 +247,8 @@ public final class Main {
             String status = diagnostic == null ? "complete" : "incomplete";
             Files.writeString(ownedCache.resolve("chunk-callbacks.tsv"), out);
             Files.writeString(ownedCache.resolve("chunk-callbacks-status.txt"),
-                "status=" + status + "\nreason=" + String.valueOf(diagnostic) + "\nevents=" + events + "\ncalls=" + calls + "\n");
+                "status=" + status + "\nreason=" + String.valueOf(diagnostic) + "\nevents=" + events + "\ncalls=" + calls
+                + "\ncapture_mode=" + captureMode + "\nwindow_start_ns=" + windowStarted + "\nwindow_end_ns=" + windowEnded + "\n");
             System.out.println("[CHUNK_CALLBACK_PROBE] FINISH status=" + status + " events=" + events + " calls=" + calls);
         } catch (Throwable failure) { disable("finish-output-failure"); }
     }
