@@ -130,6 +130,19 @@ def snapshot_pack(root: Path, destination: Path, reference: str) -> str:
     return revision
 
 
+def pack_provenance(root: Path, revision: str, base_ref: str = 'origin/main') -> dict:
+    """Describe the local candidate without claiming that its commit is published main."""
+    base = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify',
+                                    '--end-of-options', base_ref + '^{commit}'], text=True).strip()
+    ancestor = subprocess.check_output(['git', '-C', str(root), 'merge-base', revision, base], text=True).strip()
+    if any(not re.fullmatch(r'[0-9a-f]{40}', value) for value in (revision, base, ancestor)):
+        raise ValueError('Candidate provenance did not resolve to SHA-1 Git commits')
+    return {'source_kind': 'local-candidate', 'source_revision': revision,
+            'base_revision': ancestor, 'base_ref_revision': base,
+            # Legacy PowerShell consumers use this as the pack identity, not a branch assertion.
+            'main_revision': revision}
+
+
 def snapshot_java_source(java_source: Path, destination: Path) -> dict:
     """Use working sources only after explicit selection; never copy build/cache output."""
     java_source = java_source.absolute()
@@ -204,7 +217,8 @@ def record_java_source(jar: Path, identity: dict) -> None:
 
 
 def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path,
-                 kotlin_home: Path | None, root: Path, java_source_identity: dict | None = None) -> dict:
+                 kotlin_home: Path | None, root: Path, java_source_identity: dict | None = None,
+                 provenance: dict | None = None) -> dict:
     from tools.queue_checks.mod_selection import metadata, mod_ids
     from tools.prepare_driving_benchmark import _regular_tree
     settings = metadata(source / 'SurvivorQoL-selected.ini')
@@ -231,7 +245,7 @@ def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path
             'files': {p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                       for p in sorted(folder.rglob('*')) if p.is_file()}}
         shutil.copytree(folder, stage / 'mods' / identifier)
-    manifest = {'format': 1, 'main_revision': revision, 'mod_ids': ordered,
+    manifest = {'format': 1, **(provenance or pack_provenance(root, revision)), 'mod_ids': ordered,
                 'workshop_ids': workshop, 'repository_mods': own}
     if java_source_identity is not None:
         manifest['java_source'] = java_source_identity
@@ -249,8 +263,8 @@ def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path
 
 
 def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
-            pack_ref: str = 'origin/main', kotlin_home: Path | None = None,
-            java_source: Path | None = None) -> tuple[Path, Path]:
+            pack_ref: str = 'HEAD', kotlin_home: Path | None = None,
+            java_source: Path | None = None, base_ref: str = 'origin/main') -> tuple[Path, Path]:
     root, output, game, jdk = (p.absolute() for p in (root, output, game, jdk))
     archive = output.with_suffix('.zip')
     if output.exists() or archive.exists():
@@ -278,13 +292,14 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         (stage / 'Server').mkdir()
         (stage / 'Server/PZDrivingBench.ini').write_text(HOST_INI)
         bridge = build_bridge(stage / 'mods', game, jdk, root, stage / 'candidate-manifest.json')
-        pack_source = Path(temp) / 'main-source'
+        pack_source = Path(temp) / 'candidate-source'
         revision = snapshot_pack(root, pack_source, pack_ref)
+        provenance = pack_provenance(root, revision, base_ref)
         java_identity = snapshot_java_source(java_source, pack_source / 'JavaPatches') if java_source is not None else None
-        pack = include_pack(stage, pack_source, revision, game, jdk, kotlin_home, root, java_identity)
+        pack = include_pack(stage, pack_source, revision, game, jdk, kotlin_home, root, java_identity, provenance)
         receipt = {'format': 1, 'scope': 'experimental isolated single-player only',
                    'diagnostics_format': 3, 'diagnostics_revision': '3.1',
-                   'source_only_upstream': True, 'main_revision': revision, 'selected_mod_count': len(pack['mod_ids']),
+                   'source_only_upstream': True, **provenance, 'selected_mod_count': len(pack['mod_ids']),
                    'repository_versions': {id: row['version'] for id, row in pack['repository_mods'].items()},
                    'bridge_jar_sha256': hashlib.sha256(
                        (bridge / f'42/media/java/{BRIDGE}.jar').read_bytes()).hexdigest(),
@@ -294,7 +309,8 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         candidate_data = json.loads(candidate.read_text(encoding='utf-8'))
         receipt['optimizer_candidate'] = {'format': candidate_data['format'],
             'release_sha256': candidate_data.get('release_sha256'),
-            'profile_id': candidate_data.get('profile', {}).get('id')}
+            'profile_id': candidate_data.get('profile', {}).get('id'),
+            'profile_source_revision': candidate_data.get('toolkit_source_revision')}
         if java_identity is not None:
             receipt['java_source'] = java_identity
         (stage / 'build-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
@@ -316,11 +332,12 @@ def main() -> None:
     p.add_argument('--game', type=Path, required=True, help='Directory containing projectzomboid.jar and ZombieBuddy.jar')
     p.add_argument('--jdk', type=Path, required=True)
     p.add_argument('--output', type=Path, default=ROOT / 'dist' / PACKAGE)
-    p.add_argument('--pack-ref', default='origin/main', help='Exact fetched main commit/ref to snapshot once')
-    p.add_argument('--kotlin-home', type=Path, help='Pinned Kotlin compiler required by the snapshotted main builder')
+    p.add_argument('--pack-ref', default='HEAD', help='Exact local candidate commit/ref to snapshot once; uncommitted runtime changes are excluded')
+    p.add_argument('--base-ref', default='origin/main', help='Fetched main ref used to record the candidate merge base')
+    p.add_argument('--kotlin-home', type=Path, help='Pinned Kotlin compiler required by the snapshotted candidate builder')
     p.add_argument('--java-source', type=Path, help='Explicit reviewed JavaPatches working-source directory; Toolkit and mod selection stay pinned to --pack-ref')
     a = p.parse_args()
-    for value in prepare(a.output, a.game, a.jdk, pack_ref=a.pack_ref, kotlin_home=a.kotlin_home, java_source=a.java_source):
+    for value in prepare(a.output, a.game, a.jdk, pack_ref=a.pack_ref, kotlin_home=a.kotlin_home, java_source=a.java_source, base_ref=a.base_ref):
         print(value)
 
 
