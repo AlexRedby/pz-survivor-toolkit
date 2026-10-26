@@ -736,6 +736,68 @@ end
 local hiddenSteps={function() setupHiddenRefresh(true); checkHiddenRefresh() end,reopenHiddenRefresh,
     function() setupHiddenRefresh(false); checkHiddenRefresh() end,reopenHiddenRefresh}
 for i=#hiddenSteps,1,-1 do table.insert(steps,1,hiddenSteps[i]) end
+-- Bounded callback profile: aggregate in memory and print only after each window.
+-- Inclusive module timings overlap; do not add them or interpret them as FPS.
+local renderProfile
+local profiled = {}
+local function timeCall(label, fn, ...)
+    local active = renderProfile
+    if not active then return fn(...) end
+    local before = getTimestampMs()
+    local result = fn(...)
+    local record = active.metrics[label] or {calls=0, ms=0}
+    active.metrics[label] = record
+    record.calls = record.calls + 1
+    record.ms = record.ms + getTimestampMs() - before
+    return result
+end
+local function startRenderProfile(clean)
+    inventory(clean)
+    page:setVisible(true); page:setPinned()
+    local inv = getPlayer():getInventory()
+    inv:getItems():clear()
+    for i=1,300 do
+        local item = assert(inv:AddItem('Base.Battery'))
+        item:setName('Render sample ' .. i)
+    end
+    pane:refreshContainer()
+    for _, group in ipairs(pane.itemslist) do pane.collapsed[group.name] = true end
+    pane.selected={}; pane.firstSelect=nil; pane.dragging=nil; pane.dragStarted=false
+    pane:refreshContainer(); pane:setYScroll(0)
+    if not profiled[pane] then
+        profiled[pane] = true
+        local details = pane.renderdetails
+        pane.renderdetails = function(self, dragged, ...)
+            if renderProfile and self == pane then
+                if not dragged then renderProfile.frames = renderProfile.frames + 1 end
+                return timeCall(dragged and 'dragged' or 'normal', details, self, dragged, ...)
+            end
+            return details(self, dragged, ...)
+        end
+    end
+    renderProfile = {mode=clean and 'clean' or 'vanilla', frames=0, metrics={}}
+end
+for _, spec in ipairs({{'InventoryCapacity','drawIcon'}, {'InventoryIndicators','drawIcon'},
+    {'InventoryResearch','shouldShow'}, {'InventoryPlanting','describe'}, {'InventoryDetails','draw'},
+    {'InventoryRetention','draw'}}) do
+    local module = require('PZSurvivorToolkit/' .. spec[1])
+    local fn, label = module[spec[2]], spec[1]
+    module[spec[2]] = function(...) return timeCall(label, fn, ...) end
+end
+local function finishRenderProfile()
+    if renderProfile.frames < 240 then return false end
+    local finished = renderProfile
+    renderProfile = nil
+    local parts = {}
+    for label, record in pairs(finished.metrics) do
+        parts[#parts+1] = label .. '=' .. record.ms .. '/' .. record.calls
+    end
+    print('[INVENTORY_RENDER_PROFILE] mode=' .. finished.mode .. ' frames=' .. finished.frames
+        .. ' units=ms/calls ' .. table.concat(parts, ' '))
+end
+local profileSteps = {function() startRenderProfile(true) end, finishRenderProfile,
+    function() startRenderProfile(false) end, finishRenderProfile}
+for i=#profileSteps,1,-1 do table.insert(steps,1,profileSteps[i]) end
 add(function() print('[INVENTORY_SCREEN] COMPLETE'); done=true end)
 Events.OnMainMenuEnter.Add(function() entered=true end)
 Events.OnPreUIDraw.Add(function()
@@ -757,5 +819,6 @@ Events.OnTick.Add(function()
     if getTimestampMs()-since<1800 then return end
     local ok,err=pcall(steps[step])
     if not ok then print('[INVENTORY_SCREEN] FAIL step='..step..' '..tostring(err)); getCore():TakeFullScreenshot('inventory-failed.png'); done=true; since=getTimestampMs(); return end
+    if err == false then return end
     step=step+1; since=getTimestampMs()
 end)
