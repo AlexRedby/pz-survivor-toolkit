@@ -379,6 +379,8 @@ internal object MainSupport {
                 RadioInventoryState.SUPPORTED +
                 ", build=" +
                 Main.BUILD_SUPPORTED +
+                ", cutawaySouthEdge=" +
+                cutawaySouthEdge +
                 ", video=" +
                 Main.VIDEO_SUPPORTED +
                 ", animal=" +
