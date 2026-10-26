@@ -105,7 +105,8 @@ function Get-TrialModCandidates([string]$Directory, [string]$Kind, [string]$Item
     }
 }
 
-function Resolve-TrialPack([string]$Package, [string]$Source, [string]$Workshop) {
+function Resolve-TrialPack([string]$Package, [string]$Source, [string]$Workshop,
+    [ValidateSet('SinglePlayer','Multiplayer')][string]$SessionType = 'SinglePlayer') {
     $pack = Read-TrialPack $Package
     $workshopMods = @(); $localMods = @(Get-TrialModCandidates (Join-Path $Source 'mods') 'LocalFallback')
     $absentItems = @()
@@ -119,8 +120,11 @@ function Resolve-TrialPack([string]$Package, [string]$Source, [string]$Workshop)
     }
     foreach ($id in $pack.workshop_ids) { if (-not $Workshop -or -not (Test-Path -LiteralPath (Join-Path $Workshop $id) -PathType Container)) { $absentItems += $id } }
     $sources = @(); $missing = @()
-    $ids = @($pack.mod_ids) + @('PZDrivingBench', 'PZDrivingOptimizerBridge')
-    foreach ($id in $ids) {
+    $sourceIds = @($pack.mod_ids) + @('PZDrivingBench', 'PZDrivingOptimizerBridge')
+    $ids = @($sourceIds | Where-Object { $SessionType -eq 'SinglePlayer' -or $_ -cne 'PZDrivingBench' })
+    # Keep the complete private source inventory: Initialize-Profile copies the
+    # packaged starter directory even when its callbacks must remain inactive.
+    foreach ($id in $sourceIds) {
         if ($id -cin @('PZSurvivorToolkit', 'PZToolkitJavaPatches', 'PZDrivingBench', 'PZDrivingOptimizerBridge')) {
             $matches = @(Get-TrialModCandidates (Join-Path $Package 'mods') 'Package' | Where-Object { $_.Id -ceq $id })
         } else {
@@ -136,6 +140,7 @@ function Resolve-TrialPack([string]$Package, [string]$Source, [string]$Workshop)
         throw "Missing compatible Build 42.21 Mod IDs: $($missing -join ', '). Missing Workshop item IDs: $($absentItems -join ', '). Install/update the required items through Steam, or supply their local sources. Workshop links: $($links -join ' ')"
     }
     foreach ($sourceMod in $sources) {
+        if ($sourceMod.Id -cnotin $ids) { continue }
         if (-not $sourceMod.Metadata.ContainsKey('require')) { continue }
         foreach ($dependency in $sourceMod.Metadata['require'].Split(',')) {
             # B42.21 ChooseGameInfo.readModInfo removes backslashes before
@@ -149,7 +154,7 @@ function Resolve-TrialPack([string]$Package, [string]$Source, [string]$Workshop)
         if ($sourceMod.Kind -eq 'Workshop') { continue }
         $private += [pscustomobject]@{ Id = $sourceMod.Id; Files = (Get-TrialTreeFiles $sourceMod.Root) }
     }
-    return [pscustomobject]@{ Pack = $pack; ManifestHash = (Get-FileHash -LiteralPath (Join-Path $Package 'pack-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant(); Ids = $ids; Sources = $sources; Private = $private }
+    return [pscustomobject]@{ Pack = $pack; ManifestHash = (Get-FileHash -LiteralPath (Join-Path $Package 'pack-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant(); Session = $SessionType; Ids = $ids; Sources = $sources; Private = $private }
 }
 
 function Get-TrialSelectionText($Ids) {

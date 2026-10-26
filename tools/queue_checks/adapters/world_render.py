@@ -94,7 +94,18 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
-    return receipts.records(text, MARKER, 'COMPLETE') == [{'case': 'lighting', 'role': role}]
+    complete = receipts.records(text, MARKER, 'COMPLETE') == [{'case': 'lighting', 'role': role}]
+    options = selection.get('options', {})
+    if options.get('optimizer_prewarm') and role.startswith('client'):
+        complete = complete and all(marker in text for marker in (
+            '[OptimizerTrial] animation preload joined; animal preload started',
+            '[OptimizerTrial] bake scheduler used frames=',
+            'anim sets preloaded in ', 'action groups handed to the game'))
+        if selection['kind'] == 'mp':
+            complete = complete and all(marker in text for marker in (
+                '[OptimizerTrial] bridge ready mode=multiplayer client=true server=false session=1',
+                '[OptimizerTrial] animal drain invoked mode=multiplayer client=true server=false'))
+    return complete
 
 
 def verify(root, selection, catalog):
@@ -150,6 +161,10 @@ def verify(root, selection, catalog):
             ready = receipts.records(server, MARKER, 'READY')
             if sorted(row['role'] for row in ready) != roles or MARKER + 'FAIL ' in server:
                 issues.append('Missing distinct Host/joining-client authority readiness')
+            if selection.get('options', {}).get('optimizer_archive'):
+                if ('[OptimizerTrialProbe] native server resources=' not in server
+                        or 'overlayAbsent=true' not in server or '[OptimizerTrialProbe] FAIL ' in server):
+                    issues.append('Native Host resource isolation was not proved')
             evidence['authority'] = receipts.records(server, MARKER, 'AUTHORITY')
             for role in roles:
                 values = [row['active'] for row in evidence['authority']

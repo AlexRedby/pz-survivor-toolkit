@@ -3,6 +3,7 @@
 Own the client and its descendants with a Windows Job Object. No discovered user
 process is ever signaled. Other suite/platform coverage is deliberately not claimed.
 """
+from optimizer_profile import client_classpath
 import ctypes
 from ctypes import wintypes as W
 import json
@@ -89,7 +90,7 @@ def run(root, resource_wait=300):
                    '--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED', '-Dzomboid.steam=0',
                    '-Djava.library.path=win64;.', '-Xmx' + str(budget['heap_mib']) + 'm', '-XX:+UseZGC',
                    '-XX:-OmitStackTraceInFastThrow', '-Dtoolkit.test.hostCache=' + str(cache),
-                   '-cp', str(config['classes']) + os.pathsep + 'projectzomboid.jar', 'ToolkitSmokeLauncher',
+                   '-cp', client_classpath(config), 'ToolkitSmokeLauncher',
                    '-nosteam', '-novoip', '-cachedir=' + str(cache)]
         environment = {key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')}
         environment['JDK_JAVA_OPTIONS'] = coop.loader_options(agent)

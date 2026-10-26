@@ -7,4 +7,4 @@ require=\ZombieBuddy
 javaJarFile=media/java/PZDrivingOptimizerBridge.jar
 javaPkgName=net.alexredby.optimizertrial
 ZBVersionMin=2.3.4
-description=Experimental isolated single-player trial adapter. Requires explicit launcher opt-in and pinned official optimizer resources.
+description=Experimental isolated client trial adapter. Requires explicit launcher opt-in, a singleplayer or multiplayer launch mode and pinned official optimizer resources. Restart the game before another world session.

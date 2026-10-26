@@ -122,6 +122,121 @@ object HostLoaderChecks {
         check(otherAgent.command().contains("-javaagent:/other/Profiler.jar"))
     }
 
+    private fun optimizerIsolation(jar: Path, config: Path, cache: Path) {
+        val overlay =
+            Files.createDirectory(cache.resolve("optimizer overlay with spaces")).toRealPath()
+        val native = Files.createDirectory(cache.resolve("native jars with spaces")).toRealPath()
+        val separator = java.io.File.pathSeparator
+        val classpath = listOf(overlay.toString(), native.toString(), ".").joinToString(separator)
+        val clean = listOf(native.toString(), ".").joinToString(separator)
+        val admitted = HostLoader.OptimizerOverlay(overlay, classpath)
+        val clientClasspath = System.getProperty("java.class.path")
+        for (mode in
+            listOf(
+                "absent",
+                "explicit",
+                "JDK_JAVA_OPTIONS",
+                "JAVA_TOOL_OPTIONS",
+                "_JAVA_OPTIONS",
+            )) {
+            val extra = mutableListOf("-Djava.class.path=$classpath", "-Dsoftreset")
+            if (mode == "explicit") extra.add("-agentlib:zbNative")
+            val child = builder(*extra.toTypedArray())
+            if (mode !in listOf("absent", "explicit"))
+                child.environment()[mode] = "-Dunrelated=kept -agentlib:zbNative"
+            val before = ArrayList(child.command())
+            val environment = HashMap(child.environment())
+            HostLoader.configure(child, jar, config, emptyMap(), admitted)
+            check(child.command().contains("-Djava.class.path=$clean"))
+            check(
+                child.command().filterNot {
+                    it.startsWith("-Djava.class.path=") ||
+                        (mode == "absent" && it.startsWith("-javaagent:"))
+                } == before.filterNot { it.startsWith("-Djava.class.path=") },
+            )
+            check(child.environment() == environment)
+            check(System.getProperty("java.class.path") == clientClasspath)
+            val configured = ArrayList(child.command())
+            // The native boundary runs once. A second optimized rewrite must reject an already
+            // cleaned command instead of treating a missing directory as evidence of isolation.
+            rejects { HostLoader.configure(child, jar, config, emptyMap(), admitted) }
+            check(child.command() == configured)
+        }
+        fun reject(
+            classpathValue: String,
+            vararg extra: String,
+            expected: String = classpathValue,
+        ) {
+            val child = builder("-Djava.class.path=$classpathValue", *extra)
+            val before = ArrayList(child.command())
+            rejects {
+                HostLoader.configure(
+                    child,
+                    jar,
+                    config,
+                    emptyMap(),
+                    HostLoader.OptimizerOverlay(overlay, expected),
+                )
+            }
+            check(child.command() == before)
+        }
+        reject(classpath + separator + overlay)
+        reject(clean)
+        reject(clean, expected = classpath)
+        reject(overlay.toString())
+        reject(classpath, "-Djava.class.path=$classpath")
+        reject(classpath, "-Djava.class.path")
+        reject(classpath, "-cp", "unrelated")
+        reject(classpath, "--class-path=unrelated")
+        reject(classpath, "@hidden-classpath.args")
+        reject(classpath + separator)
+        reject(classpath + separator + "*")
+        rejects { HostLoader.configure(builder(), jar, config, emptyMap(), admitted) }
+        val duplicate = builder("-Djava.class.path=$classpath", "-agentlib:zbNative")
+        duplicate.environment()["JDK_JAVA_OPTIONS"] = "-javaagent:\"$jar\""
+        rejects { HostLoader.configure(duplicate, jar, config, emptyMap(), admitted) }
+        for (key in listOf("JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS")) {
+            val child = builder("-Djava.class.path=$classpath")
+            child.environment()[key] = "-Djava.class.path=unrelated"
+            rejects { HostLoader.configure(child, jar, config, emptyMap(), admitted) }
+        }
+        for (command in
+            listOf(
+                listOf("java", "other.Main"),
+                listOf("java", "zombie.network.GameServer", "-servername", "dedicated"),
+            )) {
+            val child = ProcessBuilder(command)
+            HostLoader.configure(child, jar, config, emptyMap(), admitted)
+            check(child.command() == command)
+        }
+        // Production admission must not trust a claimed profile/path, even though the pure
+        // command tests above supply an already authenticated value without foreign binaries.
+        val keys = listOf("pz.optimizerTrial.overlay", "java.class.path")
+        val saved = keys.associateWith { System.getProperty(it) }
+        try {
+            System.clearProperty("pz.optimizerTrial.overlay")
+            check(HostLoader.optimizerOverlay() == null)
+            for (declared in
+                listOf(
+                    "",
+                    "relative-overlay",
+                    cache.resolve("missing-overlay").toString(),
+                    overlay.toString(),
+                )) {
+                System.setProperty("pz.optimizerTrial.overlay", declared)
+                rejects { HostLoader.optimizerOverlay() }
+            }
+            System.setProperty("java.class.path", classpath)
+            System.setProperty("pz.optimizerTrial.overlay", overlay.toString())
+            // An empty directory in the advertised classpath is still not the active optimizer.
+            rejects { HostLoader.optimizerOverlay() }
+        } finally {
+            for ((key, value) in saved) {
+                if (value == null) System.clearProperty(key) else System.setProperty(key, value)
+            }
+        }
+    }
+
     private fun nativeBoundary(instrumentation: Instrumentation) {
         val original =
             CoopMaster::class
@@ -285,6 +400,7 @@ object HostLoaderChecks {
         val config = cache.resolve("approval directory with spaces")
         Files.createDirectories(config)
         policies(jar, config)
+        optimizerIsolation(jar, config, cache)
         check(HostLoader.install() && HostLoader.install())
         val instrumentation =
             Accessor.tryGet<Instrumentation>(Loader::class.java, "g_instrumentation", null)!!
@@ -318,7 +434,7 @@ object HostLoaderChecks {
             if (process.isAlive) process.destroyForcibly().waitFor()
         }
         println(
-            "HOST_LOADER_CHECKS_PASS (native Host/softreset boundary, idempotency, inherited/explicit loaders, approval policy, unrelated processes and real agent child)",
+            "HOST_LOADER_CHECKS_PASS (native Host/softreset boundary, idempotency, inherited/explicit loaders, approval policy, optimizer classpath isolation, unrelated processes and real agent child)",
         )
     }
 }
