@@ -24,6 +24,8 @@ def prepare(toolkit_source, output):
     client.mkdir(parents=True)
     fixture = HERE / manifest["fixture"]
     (client / fixture.name).write_bytes(fixture.read_bytes())
+    benchmark = HERE / "InventoryRenderBenchmark.lua"
+    (client / benchmark.name).write_bytes(benchmark.read_bytes())
     (output / "42/mod.info").write_text("name=Inventory presentation native fixture\nid=InventoryPresentationScreens\nversionMin=42.21\n")
     (output / "fixture-manifest.json").write_text(json.dumps({"scenario": manifest["id"],
         "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest()}, indent=2) + "\n")

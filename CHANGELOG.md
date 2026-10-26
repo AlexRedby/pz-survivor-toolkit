@@ -279,6 +279,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Fixed:** Ground highlighting keeps discovery progress while walking, so dense piles and items farther inside the radius do not remain undiscovered until the player stops. Normal and Wishlist highlighting retain the existing per-tick work limits.
 - Development: native lifecycle observers can capture settled receipt/effect snapshots before queue advancement retires required cleanup; failed diagnostics cannot block paid native completion.
 - Fixed: closing a deferred mod session after queue editing is disabled no longer drops a proven borrowed-item return from an already accepted cancellation. Closed sessions still reject new work; already-running transfers retain their exact observation handle, and the earned return can finish before the independent queue tail.
+- **Performance:** Research indicators reuse the stable recipe-list reference and player index within each inventory render, reducing repeated native getter calls. Learning, perk changes and expiry checks remain live; native/CleanUI drawing and drag callbacks still run in full.
 
 ### 0.1.283
 

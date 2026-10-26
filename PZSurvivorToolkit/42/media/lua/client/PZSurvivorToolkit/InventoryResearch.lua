@@ -9,16 +9,31 @@ function Research.texture()
     return texture
 end
 
-function Research.shouldShow(pane, item)
+function Research.shouldShow(pane, item, context)
     if not pane or not item then return false end
     local player = getSpecificPlayer(pane.player or 0)
     local script = item:getScriptItem()
     if not player or not script then return false end
 
     local now = getTimestampMs()
-    local recipes = player:getKnownRecipes()
+    -- A context belongs to one render, after its native callback. The native
+    -- player's recipe-list reference is final; its size must still stay live.
+    local recipes, index
+    local reuse = context and context.player == player and context.recipes ~= nil
+    if reuse then
+        recipes, index = context.recipes, context.index
+    else
+        recipes = player:getKnownRecipes()
+    end
     local knownCount = recipes and recipes:size() or -1
-    local index = player:getPlayerNum()
+    if not reuse then
+        index = player:getPlayerNum()
+        if context then
+            context.player, context.recipes, context.index = player, recipes, index
+        end
+    end
+    -- Read the authoritative cache on every call so LevelPerk invalidation is
+    -- visible even if another render/callback ran with the same context alive.
     local cache = caches[index]
     if not cache or cache.player ~= player or cache.knownCount ~= knownCount or now >= cache.expiresAt then
         cache = {player = player, knownCount = knownCount, expiresAt = now + CACHE_TTL_MS,
