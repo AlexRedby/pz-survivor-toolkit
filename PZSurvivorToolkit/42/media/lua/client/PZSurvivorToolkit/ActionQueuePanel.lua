@@ -1,6 +1,7 @@
 require "PZSurvivorToolkit/ActionQueue"
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISScrollingListBox"
+local Projection = require "PZSurvivorToolkit/ActionQueueProjection"
 
 local Toolkit = PZSurvivorToolkit
 local Panel = ISCollapsableWindow:derive("PZSurvivorToolkitActionQueuePanel")
@@ -370,13 +371,22 @@ function Panel.drawRow(list, y, row, alt)
 end
 
 function Panel:update()
+    -- Native UIManager still ticks hidden roots after refresh clears their view.
+    if not self:getIsVisible() then return end
     ISCollapsableWindow.update(self)
     local row = self.list.items[self.list.selected]
     local selected = row and row.item
     local selectedHeader = row and row.header
     self.expanded = self.expanded or {}
     local previousRows = self.list.items
+    local projection = Projection.capture(self.queue, self.projection)
+    self.projection = projection
+    self.currentIndex = projection.currentIndex
+    local rebuild = not projection.stable or self.projectedRows ~= previousRows
+        or self.projectedRowCount ~= #previousRows
     local rows, rowCount, live = nil, 0, {}
+    local cachedGroups = projection.groups
+    local groups = projection.native and (cachedGroups or {}) or nil
     -- Compare a fresh projection without allocating a second row table per action.
     -- Once anything changes, retain the matching prefix and build the new suffix.
     local function append(action, token, header, first, last, groupFirst, groupLast, task)
@@ -393,31 +403,70 @@ function Panel:update()
         rows[rowCount] = {item=action, operation=token, header=header, first=first, last=last,
             groupFirst=groupFirst, groupLast=groupLast, task=task}
     end
-    self.currentIndex = nil
-    local i, tasks = 1, 0
-    while i <= #self.queue.queue do
-        local action = self.queue.queue[i]
-        local token = action.toolkitQueueOperation
-        local last = i
-        while token and last < #self.queue.queue and self.queue.queue[last + 1].toolkitQueueOperation == token do
-            last = last + 1
-        end
-        for index = i, last do
-            if self.queue.queue[index] == self.queue.current then self.currentIndex = index end
-        end
-        if token and self.expanded[token] ~= nil then live[token] = true end
-        local grouped = last > i or Toolkit.ActionQueueBatch.isGrouped(action)
-        if grouped then
-            append(action, token, true, i, last, i, last, Panel.taskTitle(self.queue, i, last))
-        end
-        if not grouped or self.expanded[token] then
+    local i, groupCount = 1, 0
+    if not projection.native then
+        -- Preserve the original single-pass cost for queues the native helper
+        -- cannot prove, including ordinary untagged actions from other mods.
+        while i <= #self.queue.queue do
+            local action = self.queue.queue[i]
+            local token, last = action.toolkitQueueOperation, i
+            while token and last < #self.queue.queue
+                and self.queue.queue[last + 1].toolkitQueueOperation == token do last = last + 1 end
             for index = i, last do
-                append(self.queue.queue[index], token, nil, index, index, i, last)
+                if self.queue.queue[index] == self.queue.current then self.currentIndex = index end
             end
+            if token and self.expanded[token] ~= nil then live[token] = true end
+            local grouped = last > i or Toolkit.ActionQueueBatch.isGrouped(action)
+            if grouped then append(action, token, true, i, last, i, last, Panel.taskTitle(self.queue, i, last)) end
+            if not grouped or self.expanded[token] then
+                for index = i, last do
+                    append(self.queue.queue[index], token, nil, index, index, i, last)
+                end
+            end
+            groupCount = groupCount + 1
+            i = last + 1
         end
-        tasks = tasks + 1
-        i = last + 1
+    else
+        while i <= #self.queue.queue do
+            local action = self.queue.queue[i]
+            local token, last = action.toolkitQueueOperation, i
+            groupCount = groupCount + 1
+            local cached = cachedGroups and cachedGroups[groupCount]
+            if cached then
+                last = cached.last
+            else
+                while token and last < #self.queue.queue
+                    and self.queue.queue[last + 1].toolkitQueueOperation == token do last = last + 1 end
+            end
+            if token and self.expanded[token] ~= nil then live[token] = true end
+            -- Only structure is reused: batch state, expansion and title contracts
+            -- can change independently, so keep their per-group checks live.
+            local grouped = last > i or not not Toolkit.ActionQueueBatch.isGrouped(action)
+            local expanded = grouped and not not self.expanded[token]
+            local task = grouped and Panel.taskTitle(self.queue, i, last) or nil
+            if cached and (cached.grouped ~= grouped or cached.expanded ~= expanded or cached.task ~= task) then
+                rebuild = true
+            end
+            if groups then
+                local group = cached or {last = last}
+                group.grouped, group.expanded, group.task = grouped, expanded, task
+                groups[groupCount] = group
+            end
+            if rebuild then
+                if grouped then append(action, token, true, i, last, i, last, task) end
+                if not grouped or expanded then
+                    for index = i, last do
+                        append(self.queue.queue[index], token, nil, index, index, i, last)
+                    end
+                end
+            else
+                -- Preserve the proven prefix without walking every expanded child.
+                rowCount = rowCount + (grouped and 1 or 0) + ((not grouped or expanded) and last - i + 1 or 0)
+            end
+            i = last + 1
+        end
     end
+    projection.groups = groups
     for token in pairs(self.expanded) do if not live[token] then self.expanded[token] = nil end end
     if rows or #previousRows ~= rowCount then
         if not rows then
@@ -442,11 +491,14 @@ function Panel:update()
         self.list:setScrollHeight(height)
         self.list:setYScroll(scroll)
     end
-    self.title = getText("UI_PZSurvivorToolkit_queue_title", tasks)
+    self.projectedRows, self.projectedRowCount = self.list.items, #self.list.items
+    self.title = getText("UI_PZSurvivorToolkit_queue_title", groupCount)
     self:updateRecovery()
 end
 
 function Panel:clearSnapshots()
+    self.projection, self.projectedRows, self.projectedRowCount = nil, nil, nil
+    self.currentIndex = nil
     self.list:clearGesture()
     self.list.cancelFeedback = nil
     self.list:clear()

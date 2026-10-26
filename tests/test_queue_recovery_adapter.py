@@ -45,10 +45,21 @@ class RecoveryAdapterTests(unittest.TestCase):
                          token=tokens[0 if name=='front' else 2 if name=='tail' else 1],
                          approach=dict(owned=True,helper='walkAdj',target=dict(x=9,y=20,z=0)) if name=='approach' else False)
                     for name in names]
+        def projection_ui(tokens):
+            def sample(expanded):
+                specs=[(1,False,1,1,1,1),(2,True,2,3,2,3)]
+                if expanded:specs.extend([(2,False,2,2,2,3),(3,False,3,3,2,3)])
+                specs.append((4,False,4,4,4,4))
+                return dict(currentIndex=1,stableRows=True,rows=[dict(actionIndex=index,header=header,first=first,last=last,
+                    groupFirst=group_first,groupLast=group_last,token=tokens[0 if index==1 else 2 if index==4 else 1])
+                    for index,header,first,last,group_first,group_last in specs])
+            return dict(nativeUI=True,nativeSnapshot=True,stableReuse=True,actionsUnchanged=True,expansionRestored=True,
+                        hiddenCleared=True,reopened=True,visibilityRestored=True,queueCount=4,groups=3,
+                        operation=tokens[1],collapsed=sample(False),expanded=sample(True),reopenedView=sample(False))
         baseline,final=snapshot('baseline'),snapshot('final')
         recovery=dict(available=mode=='toolkit',restored=mode=='toolkit',historyAbsent=True,duplicateRejected=True)
         if mode=='toolkit':recovery.update(id=1,count=3,skipped=0,tokens=[5,6,7],steps=physical_steps([5,6,7],True),previewPure=True,
-            previewWorkload=dict(elapsedMs=1700,previews=6,plans=0,nativeUI=True))
+            previewWorkload=dict(elapsedMs=1700,previews=6,plans=0,nativeUI=True),projectionUI=projection_ui([5,6,7]))
         idle=dict(elapsedMs=1700,draws=30,carriedCalls=0,rowClears=0,selectorClears=0)
         wishlist=dict(empty=copy.deepcopy(idle),collapsed=copy.deepcopy(idle),
                       expanded=dict(amount=7,carried=1,firstDrawFresh=True),reopened=True,removed=True,restored=True)
@@ -57,6 +68,7 @@ class RecoveryAdapterTests(unittest.TestCase):
                  commands=commands,order=list(a.STARTS if mode=='toolkit'else a.STARTS[:2]),
                  cancellation=dict(entrypoint='IsoGameCharacter.StopAllActionQueueWalking'if case=='movement-cancel'else'ISTimedActionQueue.clear',before=copy.deepcopy(baseline),initialQueue=['front','approach','volume','tail']if mode=='toolkit'else list(a.ORIGINAL),steps=physical_steps([2,3,4]),drained=True,movementStopped=True,nativeCount=1,oldTokens=[dict(id=i,cancelled=True)for i in (2,3,4)]),
                  recovery=recovery,wishlist=wishlist,restoredQueue=['front','approach','volume','tail']if mode=='toolkit'else[],queueIdle=True,settleMilliseconds=1000)
+        if mode=='toolkit':row['cancellation']['projectionUI']=projection_ui([2,3,4])
         return row,spec,baseline,final,acks
 
     def check(self,evidence,selection=None):
@@ -137,6 +149,38 @@ class RecoveryAdapterTests(unittest.TestCase):
                        lambda r:r['client']['books']['tail'].update(pages=220,characterPages=220),lambda r:r['order'].append('restoredTail')):
             evidence=self.evidence(mode='native');change(evidence[0]);self.assertTrue(self.check(evidence,self.selection(mode='native')))
 
+    def test_production_projection_receipts_are_required_and_exact(self):
+        for phase in ('cancellation','recovery'):
+            changes={
+                'missing receipt':lambda r:r.pop('projectionUI'),
+                'false receipt':lambda r:r.update(projectionUI=False),
+                'missing native panel':lambda r:r['projectionUI'].update(nativeUI=False),
+                'Lua fallback':lambda r:r['projectionUI'].update(nativeSnapshot=False),
+                'snapshot not reused':lambda r:r['projectionUI'].update(stableReuse=False),
+                'queue mutated':lambda r:r['projectionUI'].update(actionsUnchanged=False),
+                'expansion retained':lambda r:r['projectionUI'].update(expansionRestored=False),
+                'hidden projection recreated':lambda r:r['projectionUI'].update(hiddenCleared=False),
+                'missing hidden check':lambda r:r['projectionUI'].pop('hiddenCleared'),
+                'reopen failed':lambda r:r['projectionUI'].update(reopened=False),
+                'missing reopen check':lambda r:r['projectionUI'].pop('reopened'),
+                'visibility retained':lambda r:r['projectionUI'].update(visibilityRestored=False),
+                'reopened rows missing':lambda r:r['projectionUI'].pop('reopenedView'),
+                'reopened current stale':lambda r:r['projectionUI']['reopenedView'].update(currentIndex=2),
+                'wrong operation':lambda r:r['projectionUI'].update(operation=999),
+                'stale current':lambda r:r['projectionUI']['collapsed'].update(currentIndex=2),
+                'false stable rows':lambda r:r['projectionUI']['expanded'].update(stableRows=False),
+                'missing child':lambda r:r['projectionUI']['expanded']['rows'].pop(2),
+                'split volume token':lambda r:r['projectionUI']['expanded']['rows'][3].update(token=999),
+                'stale bounds':lambda r:r['projectionUI']['collapsed']['rows'][1].update(last=2),
+                'coerced header':lambda r:r['projectionUI']['expanded']['rows'][1].update(header=1),
+                'coerced current':lambda r:r['projectionUI']['expanded'].update(currentIndex=True),
+            }
+            for label,change in changes.items():
+                with self.subTest(phase=phase,label=label):
+                    evidence=self.evidence();change(evidence[0][phase]);self.assertTrue(self.check(evidence),label)
+        # Queue-off controls intentionally have no production projection receipt.
+        self.assertEqual(self.check(self.evidence(mode='native'),self.selection(mode='native')),[])
+
     def test_wire_receipts_are_exact_and_ordered(self):
         for mutation in ('missing','duplicate','reverse','foreign','terminal'):
             evidence=self.evidence();acks=evidence[-1]
@@ -197,6 +241,67 @@ class RecoveryAdapterTests(unittest.TestCase):
             end
         """)
         check()
+
+    def test_projection_ui_gate_checks_native_rows_and_restores_expansion(self):
+        from lupa.lua51 import LuaRuntime
+        lua=LuaRuntime();lua.globals().NativeSnapshot=object()
+        gate=lua.execute((ROOT/'tests/native_queue/queue-recovery/client/QueueProjectionUI.lua').read_text())
+        check=lua.eval('''function(Gate,mode,expanded)
+            local tokens={{},{},{}}
+            local values={{toolkitQueueOperation=tokens[1]},{toolkitQueueOperation=tokens[2]},
+                {toolkitQueueOperation=tokens[2]},{toolkitQueueOperation=tokens[3]}}
+            local queue={queue=values,current=values[1]}
+            local Panel={refresh=function()end}
+            PZSurvivorToolkit={ActionQueuePanel=Panel}
+            toolkitQueueViewCurrentIndex=function()return 1 end
+            local view=setmetatable({queue=queue,visible=true,expanded={[tokens[2]]=expanded,[tokens[1]]=false},list={items={}}},Panel)
+            view.getIsVisible=function(self)return self.visible end
+            view.setVisible=function(self,value)self.visible=value end
+            view.clearSnapshots=function(self)
+                if mode=='clear-failed'then return end
+                self.projection,self.projectedRows,self.projectedRowCount,self.currentIndex=nil,nil,nil,nil
+                self.expanded,self.list.items,self.opened={},{},nil
+            end
+            view.update=function(self)
+                if not self.visible and mode~='hidden-recreated'then return end
+                local opened=not not self.expanded[tokens[2]]
+                local previous=self.projection
+                self.projection=previous or {native=NativeSnapshot,groups={{},{},{}}}
+                self.projection.stable=previous~=nil
+                self.currentIndex=mode=='stale-current'and 2 or 1
+                if mode=='fallback'then self.projection.native=nil end
+                if self.opened~=opened then
+                    local specs={{1,false,1,1,1,1},{2,true,2,3,2,3}}
+                    if opened then specs[#specs+1]={2,false,2,2,2,3};specs[#specs+1]={3,false,3,3,2,3}end
+                    specs[#specs+1]={4,false,4,4,4,4}
+                    self.list.items={}
+                    for index,s in ipairs(specs)do
+                        self.list.items[index]={item=values[s[1]],header=s[2],first=s[3],last=s[4],
+                            groupFirst=s[5],groupLast=s[6],index=index,operation=values[s[1]].toolkitQueueOperation}
+                    end
+                    self.opened=opened
+                end
+                if mode=='bad-bounds'then self.list.items[2].last=2 end
+                if mode=='mutated-action'then values[1].action={}end
+            end
+            local windows={size=function()return mode=='missing-panel'and 0 or 1 end,
+                get=function()return {getTable=function()return view end}end}
+            UIManager={getUI=function()return windows end}
+            local ok,result=pcall(Gate.capture,queue,tokens,function(token)
+                for index,value in ipairs(tokens)do if value==token then return index end end
+            end)
+            assert(view.expanded[tokens[2]]==expanded,'failed gate left expansion changed')
+            assert(view.expanded[tokens[1]]==false and view.visible,'failed gate left presentation state changed')
+            if mode=='ok'then
+                assert(ok,result)
+                assert(result.nativeSnapshot and result.stableReuse and result.expansionRestored
+                    and result.hiddenCleared and result.reopened and result.visibilityRestored
+                    and #result.collapsed.rows==3 and #result.expanded.rows==5 and #result.reopenedView.rows==3)
+            else assert(not ok,'invalid projection gate accepted '..mode)end
+        end''')
+        for expanded in (None,False,True):
+            for mode in ('ok','missing-panel','fallback','stale-current','bad-bounds','mutated-action','clear-failed','hidden-recreated'):
+                with self.subTest(expanded=expanded,mode=mode):check(gate,mode,expanded)
 
     def test_fixture_syntax_native_duration_and_frozen_sources(self):
         from lupa.lua51 import LuaRuntime

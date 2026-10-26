@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.286
+
+- **Performance:** Reuse unchanged action-queue rows and groups with matching Toolkit Java Patches, including expanded batches. Direct queue edits remain visible immediately; current action, progress, titles and controls stay live. Unsupported action tables and installations without the helper retain exact Lua scanning. Hidden panels no longer rebuild cleared snapshots and rows.
+
 ### 0.1.285
 
 - **Fixed:** Cancelled-queue previews validate recovery without constructing actions or repeatedly searching inventories for every saved item. Restore still resolves and validates current state before creating fresh actions.
@@ -1291,6 +1295,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.65
+
+- Provide a read-only, ordered action/token identity snapshot for the queue panel. Unchanged queues avoid repeated Lua traversal without relying on mutation hooks; snapshots belong to their panel and are released when it is hidden or removed.
 
 ### 0.1.64
 

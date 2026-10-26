@@ -120,6 +120,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.AlarmClockChecks': 'ALARM_CLOCK_CH
           'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks': 'WASH_WATER_RULE_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks': 'QUEUE_OWNERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueMembershipChecks': 'QUEUE_MEMBERSHIP_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.QueueViewChecks': 'QUEUE_VIEW_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.InventoryMembershipChecks': 'INVENTORY_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ContextMenuDuplicateChecks': 'CONTEXT_MENU_DUPLICATE_CHECKS_PASS',
           'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
@@ -334,7 +335,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.64',
+    'version': '0.1.65',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

@@ -128,6 +128,34 @@ def _steps(value, spec, tokens, enabled, restored=False):
     return value == expected
 
 
+def _projection_ui(value, tokens):
+    if (not isinstance(value, dict) or not isinstance(tokens, list) or len(tokens) != 3
+            or any(type(token) is not int for token in tokens)
+            or any(value.get(key) is not True for key in
+                   ('nativeUI', 'nativeSnapshot', 'stableReuse', 'actionsUnchanged', 'expansionRestored',
+                    'hiddenCleared', 'reopened', 'visibilityRestored'))
+            or type(value.get('queueCount')) is not int or value['queueCount'] != 4
+            or type(value.get('groups')) is not int or value['groups'] != 3
+            or type(value.get('operation')) is not int or value['operation'] != tokens[1]):
+        return False
+    collapsed = [(1, False, 1, 1, 1, 1), (2, True, 2, 3, 2, 3), (4, False, 4, 4, 4, 4)]
+    expanded = collapsed[:2] + [(2, False, 2, 2, 2, 3), (3, False, 3, 3, 2, 3)] + collapsed[2:]
+    for name, specs in (('collapsed', collapsed), ('expanded', expanded), ('reopenedView', collapsed)):
+        sample = value.get(name)
+        if (not isinstance(sample, dict) or sample.get('stableRows') is not True
+                or type(sample.get('currentIndex')) is not int or sample['currentIndex'] != 1
+                or not isinstance(sample.get('rows'), list) or len(sample['rows']) != len(specs)):
+            return False
+        for row, (index, header, first, last, group_first, group_last) in zip(sample['rows'], specs):
+            expected = dict(actionIndex=index, header=header, first=first, last=last,
+                            groupFirst=group_first, groupLast=group_last,
+                            token=tokens[0 if index == 1 else 2 if index == 4 else 1])
+            if (not isinstance(row, dict) or row != expected or type(row.get('header')) is not bool
+                    or any(type(row.get(key)) is not int for key in expected if key != 'header')):
+                return False
+    return True
+
+
 def check_case(row, case, selection, prepared, authority_baseline, verified, acks):
     errors = []
     spec = row.get('ids')
@@ -188,6 +216,10 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
     if not _steps(cancellation.get('steps'), spec, [r.get('id') for r in old], enabled):
         errors.append('Original physical actions or exact preparation operation differ')
     if enabled:
+        if not _projection_ui(cancellation.get('projectionUI'), [r.get('id') for r in old]):
+            errors.append('Original production queue projection UI evidence differs')
+        if not _projection_ui(recovery.get('projectionUI'), recovery.get('tokens')):
+            errors.append('Restored production queue projection UI evidence differs')
         workload = recovery.get('previewWorkload', {})
         if (not _number(workload.get('elapsedMs')) or not 1500 <= workload['elapsedMs'] < 10000
                 or type(workload.get('previews')) is not int or workload['previews'] < 4
