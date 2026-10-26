@@ -345,7 +345,7 @@ do
     end
     local cancelSource=assert(read(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua')
         :match('(function Queue.cancelOperation%(queue, action, expected%).-\nend)'))
-    local api=assert(loadstring('local Queue,Toolkit,Policy,Operations=...;local Batch;local stoppable=Policy.stoppable\n'
+    local api=assert(loadstring('local Queue,Toolkit,Policy,Operations=...;local Batch;local Settlement={admitCancellation=function()return true end};local stoppable=Policy.stoppable\n'
         ..cancelSource..'\nreturn Queue','@PZSurvivorToolkit/ActionQueue.lua'))({},toolkit,policy,
             {invalidate=function(token)token.toolkitCancelled=true end})
     local stopped=0

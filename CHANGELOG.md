@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.281
+
+- Fixed: disabling the queue editor after an accepted operation cancellation no longer discards the borrowed-item return or independent queued actions. The exact native step, server outcome and required cleanup finish once, including grounded fitness equipment; reset, replaced actions and unrelated asynchronous commands retain their existing cancellation protections.
+
 ### 0.1.280
 
 - Fixed: disabling the action queue during an admitted native completion no longer drops its independent pending tail. The matching phases finish once; fresh disabled actions retain native handling, while resets and replaced native episodes revoke stale callbacks. Existing asynchronous media cancellation rules remain unchanged.

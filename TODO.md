@@ -1,7 +1,7 @@
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
-- [ ] Prepare consolidated compatible SP/menu-Host queue-on/off scenarios for the next batch that changes gameplay effects or lifecycle behavior. Freeze the tested inputs before launch, gather all safe independent failures in a session, and repeat only failed or newly affected cases; offline/source qualification alone is not live gameplay coverage.
+- [ ] Prepare consolidated compatible SP/menu-Host queue-on/off scenarios for changed gameplay effects or lifecycle behavior, including editor disable during an admitted stop, preparation, pending server outcome and grounded fitness restoration. Freeze the tested inputs before launch, gather all safe independent failures in a session, and repeat only failed or newly affected cases; offline/source qualification alone is not live gameplay coverage.
 
 # Storage performance stabilization
 

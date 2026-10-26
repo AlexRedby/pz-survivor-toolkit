@@ -41,7 +41,11 @@ end
 local function updateOperationState(queue)
     if not queue then return end
     if (not Toolkit.Settings.actionQueue() or not live(queue)) and Operations.invalidateQueue then
-        if not queue.toolkitOperationsInvalid then Operations.invalidateQueue(queue); queue.toolkitOperationsInvalid = true end
+        if not queue.toolkitOperationsInvalid then
+            if Settlement and Settlement.invalidateEditor and Toolkit.Settings.actionQueue() == false then Settlement.invalidateEditor(queue)
+            else Operations.invalidateQueue(queue) end
+            queue.toolkitOperationsInvalid = true
+        end
     else queue.toolkitOperationsInvalid = nil end
 end
 -- Producers that capture receipts before enqueueing must share the same boundary
@@ -63,6 +67,7 @@ ISBaseTimedAction.begin = function(action)
     if type(token) == "table" then token.toolkitStarted = true end
     local result = begin(action)
     if media then media.bind(action) end
+    if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.bindCancellation(action) end
     return result
 end
 Policy.adoptBegin(begin, ISBaseTimedAction.begin)
@@ -126,6 +131,7 @@ function Queue.cancelOperation(queue, action, expected)
     if first == 1 and queue.current == queue.queue[1] then
         local current = queue.current
         request = {action = current, token = current.toolkitQueueOperation}
+        if not Settlement.admitCancellation(queue, request, decision) then return false, "unavailable" end
         if not stoppable(current) then
             Toolkit.ActionQueueLifecycle.acceptFinishStepCancellation(queue, current, request, decision)
         end
@@ -214,6 +220,7 @@ ISTimedActionQueue.onCompleted = function(queue, action)
             pending = queue.queue[2]
         end
     end
+    if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.completeCancellation(queue, action) end
     return completed(queue, action)
 end
 
@@ -358,6 +365,7 @@ if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop"
 -- Native reset/clear delegate here even when another mod retains an earlier reset wrapper.
 local cancelQueue = ISTimedActionQueue.cancelQueue
 ISTimedActionQueue.cancelQueue = function(queue)
+    Settlement.resetCancellation(queue)
     if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.reset(queue) end
     if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.capture(queue) end
     Toolkit.ActionQueueLifecycle.reset(queue)
@@ -394,6 +402,7 @@ end
 local tick = ISTimedActionQueue.tick
 ISTimedActionQueue.tick = function(queue)
     if ISTimedActionQueue.queues[queue.character] ~= queue then
+        Settlement.resetCancellation(queue)
         Toolkit.ActionQueueLifecycle.reset(queue)
         clearStop(queue)
         return

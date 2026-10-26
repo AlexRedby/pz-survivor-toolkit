@@ -816,6 +816,51 @@ local returnCount=0
 for _,action in ipairs(q.queue)do if action.Type=='ISInventoryTransferAction' and action.item==dumbbell then returnCount=returnCount+1 end end
 assert(returnCount==0,'generic core return duplicated fitness-owned pickup cleanup')
 
+-- The admitted cancellation must drain its earned ground pickup and equipment
+-- restoration when the editor is disabled before the root or retained command.
+do
+ for _,boundary in ipairs({'before-root','before-cleanup'})do
+  for _,toggle in ipairs({'enabled','disabled','reenabled'})do
+   reset()
+   local held=item('Axe',nil,nil,true)
+   local carrier=item('Bag_BigHikingBag',nil,'BACK')
+   local prop=item('DumbBell',carrier.inner)
+   player.primary,player.secondary=held,held;player.worn.BACK=carrier
+   local requestAction,owner=request('bicepscurl',10);expand(requestAction,owner)
+   local body=reachExercise(owner)
+   local ending=head();ISTimedActionQueue.add(ending)
+   local original=body.toolkitQueueOperation
+   assert(core.cancelOperation(owner,body),'fixture needs actual admitted fitness cancellation')
+   local label=boundary..'/'..toggle
+   if toggle~='enabled' and boundary=='before-root'then
+    enabled=false;settlement.invalidateEditor(owner);owner.toolkitOperationsInvalid=true
+   end
+   owner:onCompleted(body)
+   local cleanup=assert(owner.current)
+   assert(cleanup.Type=='ISQueueActionsAction' and settlement.requiredStep(cleanup)
+    and cleanup.toolkitQueueOperation~=original and owner.queue[#owner.queue]==ending,
+    label..': cancelled fitness lost its independent required cleanup command')
+   if toggle~='enabled' and boundary=='before-cleanup'then
+    enabled=false;settlement.invalidateEditor(owner);owner.toolkitOperationsInvalid=true
+   end
+   runCurrent(owner)
+   local pickup=assert(owner.current)
+   assert(pickup.Type=='ISInventoryTransferAction' and pickup.item:getID()==carrier:getID()
+    and pickup.destContainer==player.inventory and settlement.drainingAction(pickup),
+    label..': earned floor pickup did not inherit the private cancellation drain')
+   if toggle=='reenabled'then enabled=true;owner.toolkitOperationsInvalid=nil end
+   for _=1,20 do if owner.queue[1]==ending then break end;runCurrent(owner)end
+   assert(owner.queue[1]==ending and owner.queue[#owner.queue]==ending
+    and player.primary==held and player.secondary==held and player.worn.BACK==carrier
+    and prop:getContainer()==carrier.inner and #worlds==0,
+    label..': disabled fitness cancellation lost exact hands, carrier, prop return or independent tail')
+   assert(not settlement.drainingAction(ending),label..': completed cleanup granted drain permission to its tail')
+  end
+ end
+ enabled=true
+end
+print('PASS admitted fitness cancellation drains exact grounded carrier, hands and borrowed prop with editor disabled or re-enabled')
+
 reset()
 axe=item('Axe',nil,nil,true);backpack=item('Bag_BigHikingBag',nil,'BACK');dumbbell=item('DumbBell',backpack.inner)
 player.primary,player.secondary=axe,axe;player.worn.BACK=backpack

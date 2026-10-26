@@ -2179,3 +2179,180 @@ do
     end
 end
 print('Borrowed return child cancellation: real UI/Policy/Queue/earned ledger, continuing body and no later return recreation passed.')
+
+-- An accepted edit owns its native stop/transaction and earned return even when
+-- the optional editor is switched off before those boundaries finish.
+do
+    local previousClient, previousAcknowledgements = isClient, PZSurvivorToolkit.ActionQueueAcknowledgements
+    local previousEvent, receive = Events.OnServerCommand.Add
+    Events.OnServerCommand.Add = function(callback) receive = callback end
+    assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
+    Events.OnServerCommand.Add = previousEvent
+    local acknowledgements, serial = PZSurvivorToolkit.ActionQueueAcknowledgements, 0
+    local function fixture(preparing, remote)
+        enabled = true
+        isClient = function() return remote end
+        local actor = player()
+        function actor:getOnlineID() return 100 end
+        local body, sibling, ending = book(actor), book(actor), book(actor)
+        local source = sourceContainer()
+        borrowed(body.item, preparing and source or actor.inventory)
+        local fetched = preparing and transfer(actor, body.item, source, actor.inventory)
+        local originalReturn = transfer(actor, body.item, actor.inventory, source)
+        originalReturn.allowMissingItems = true
+        local owner
+        operations.run(function()
+            owner = ISTimedActionQueue.add(fetched or body)
+            if fetched then ISTimedActionQueue.add(body) end
+            ISTimedActionQueue.add(sibling)
+            ISTimedActionQueue.add(originalReturn)
+        end)
+        local token = body.toolkitQueueOperation
+        token.toolkitPickups = {[body.item] = source}
+        ISTimedActionQueue.add(ending)
+        frame(actor)
+        local root = owner.current
+        local receipt
+        if remote then
+            serial = serial + 1
+            root.toolkitNativeTransaction, root.toolkitNativeKind = serial, root.Type
+            local args = {protocol = 1, player = 100, transaction = serial, kind = root.Type,
+                token = string.format('00000000-0000-0000-0000-%012x', serial), state = 'started'}
+            receipt = function(state)
+                args.state = state
+                receive('PZSurvivorToolkitActions', 'State', args)
+            end
+            receipt('started')
+            assert(acknowledgements.capture(root), 'the drain fixture needs a genuine sealed Started receipt')
+        end
+        return {actor = actor, queue = owner, root = root, body = body, sibling = sibling, tail = ending,
+            item = body.item, itemId = body.item:getID(), source = source, originalReturn = originalReturn, token = token, receipt = receipt,
+            fetched = fetched}
+    end
+    local function returned(s, label)
+        local value = s.queue.current
+        assert(ISTimedActionQueue.queues[s.actor] == s.queue and #s.queue.queue == 2
+            and value and value.Type == 'ISInventoryTransferAction' and value ~= s.originalReturn
+            and value.item == s.item and value.item:getID() == s.itemId
+            and value.srcContainer == s.actor.inventory and value.destContainer == s.source
+            and value.allowMissingItems and value.toolkitQueueOperation ~= s.token
+            and PZSurvivorToolkit.ActionQueueSettlement.isCleanup(value)
+            and s.queue.queue[2] == s.tail and not s.tail.action and not s.sibling.action
+            and not s.originalReturn.action and s.item:getContainer() == s.actor.inventory,
+            label .. ': admitted cancellation lost its exact earned return or independent tail')
+        return value
+    end
+    for _,boundary in ipairs({'stop', 'preparation', 'mp-terminal', 'mp-preparation'}) do
+        for _,toggle in ipairs({'enabled', 'disabled', 'reenabled'}) do
+            local label = boundary .. '/' .. toggle
+            local s = fixture(boundary == 'preparation' or boundary == 'mp-preparation',
+                boundary == 'mp-terminal' or boundary == 'mp-preparation')
+            local optional = operations.attachContinuation({}, s.actor)
+            assert(api.cancelOperation(s.queue, s.body) and s.queue.toolkitGroupCancel,
+                label .. ': actual group cancellation was not admitted')
+            if s.fetched then
+                assert(not s.queue.toolkitCancel and not s.fetched.action.stopping,
+                    'accepted preparation must finish its native transfer without forceStop')
+            else assert(s.queue.toolkitCancel == s.root and s.root.action.stopping) end
+            if s.receipt and not s.fetched then
+                frame(s.actor)
+                assert(s.queue.current == s.root and s.queue.toolkitCancelStopped
+                    and not s.actor.actions[s.root.action] and not s.tail.action,
+                    'local MP stop must wait for its terminal receipt after native removal')
+            end
+            enabled = toggle == 'enabled'
+            if s.receipt then
+                s.queue:tick()
+                assert(s.queue.current == s.root and not s.tail.action,
+                    label .. ': changing editor state released a pending MP outcome')
+                if s.fetched then
+                    for _,name in ipairs({'pressedCancelAction','isRunning','isSprinting','isAiming'}) do
+                        s.actor[name]=function()return false end
+                    end
+                    local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+                    assert(lifecycle.allowNativeCompletionWait(s.root,s.root.action)
+                        and not lifecycle.allowNativeCompletion(s.root,s.root.action),
+                        label .. ': accepted preparation lost its exact Started wait')
+                    s.receipt('completed')
+                    assert(lifecycle.allowNativeCompletion(s.root,s.root.action),
+                        label .. ': accepted preparation lost its exact completed ACK')
+                    s.fetched.action.done=true;frame(s.actor)
+                else s.receipt('canceled');s.queue:tick() end
+            else
+                if s.fetched then s.fetched.action.done = true end
+                frame(s.actor)
+            end
+            local cleanup = returned(s, label)
+            if toggle ~= 'enabled' then
+                -- Existing optional producers lose their old generation even
+                -- though this exact admitted edit can finish its obligations.
+                enabled = true
+                local resumed = false
+                operations.runContinuation(optional, function() resumed = true end)
+                assert(not resumed, label .. ': cancellation drain renewed an optional asynchronous producer')
+                enabled = toggle == 'reenabled'
+                s.queue:tick()
+                assert(s.queue.current == cleanup and not s.tail.action,
+                    label .. ': toggling during earned cleanup advanced the independent tail')
+            end
+            if s.receipt and toggle == 'reenabled' then
+                -- This cleanup started while enabled; a later disable must not
+                -- lose its native server completion or reuse another receipt.
+                serial=serial+1
+                cleanup.toolkitNativeTransaction,cleanup.toolkitNativeKind=serial,cleanup.Type
+                local args={protocol=1,player=100,transaction=serial,kind=cleanup.Type,
+                    token=string.format('00000000-0000-0000-0000-%012x',serial),state='started'}
+                receive('PZSurvivorToolkitActions','State',args)
+                for _,name in ipairs({'pressedCancelAction','isRunning','isSprinting','isAiming'}) do
+                    s.actor[name]=function()return false end
+                end
+                enabled=false;s.queue:tick()
+                local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+                assert(lifecycle.allowNativeCompletionWait(cleanup,cleanup.action)
+                    and not lifecycle.allowNativeCompletion(cleanup,cleanup.action),
+                    label .. ': required cleanup lost its precise pending server result')
+                args.state='completed';receive('PZSurvivorToolkitActions','State',args)
+                assert(lifecycle.allowNativeCompletion(cleanup,cleanup.action),
+                    label .. ': disabling mid-cleanup revoked its native completed receipt')
+            end
+            cleanup.action.done = true
+            frame(s.actor)
+            assert(s.item:getContainer() == s.source and s.queue.current == s.tail and #s.queue.queue == 1
+                and not s.queue.toolkitGroupCancel and not s.queue.toolkitCancel,
+                label .. ': exact native return must finish once before starting the independent tail')
+            frame(s.actor); s.tail.action.done = true; frame(s.actor)
+            assert(#s.queue.queue == 0, label .. ': completed drain retained or replayed native work')
+            enabled = true
+        end
+    end
+    for _,revocation in ipairs({'reset', 'generation', 'native', 'request-copy', 'public-forgery'}) do
+        local s = fixture(false, false)
+        if revocation == 'public-forgery' then
+            s.token.toolkitCancelled = true
+            s.queue.toolkitGroupCancel = {action = s.root, token = s.token}
+            s.root:forceStop()
+        else
+            assert(api.cancelOperation(s.queue, s.body))
+            if revocation == 'request-copy' then
+                s.queue.toolkitGroupCancel = {action = s.root, token = s.token}
+            end
+        end
+        enabled = false
+        if revocation == 'reset' then s.queue:resetQueue()
+        elseif revocation == 'generation' then
+            s.queue.toolkitOperationGeneration = (s.queue.toolkitOperationGeneration or 0) + 1
+        elseif revocation == 'native' then
+            local previous = s.root.action
+            s.root.action = LuaTimedActionNew.new(s.root)
+            s.actor.actions[previous] = nil
+        end
+        frame(s.actor)
+        assert(#s.queue.queue == 0 and not s.tail.action and not s.originalReturn.action
+            and s.item:getContainer() == s.actor.inventory,
+            revocation .. ': revoked or forged cancellation acquired disabled cleanup permission')
+        enabled = true
+    end
+    PZSurvivorToolkit.ActionQueueAcknowledgements = previousAcknowledgements
+    isClient = previousClient
+end
+print('Admitted cancellation draining: editor off/on, native stop/preparation, sealed MP outcome, exact earned returns, independent tails and revocation passed.')

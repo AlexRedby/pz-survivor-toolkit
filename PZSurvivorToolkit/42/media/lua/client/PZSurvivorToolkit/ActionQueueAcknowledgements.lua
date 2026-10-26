@@ -24,7 +24,9 @@ local function identity(action, record)
         and character:getPlayerNum() == captured.player and character:getOnlineID() == captured.online
         and getSpecificPlayer(captured.player) == character and not character:isDead()
         and ISTimedActionQueue.queues[character] == queue and queue[queueEpoch] == captured.epoch
-        and (queue.toolkitOperationGeneration or 0) == captured.generation
+        and ((queue.toolkitOperationGeneration or 0) == captured.generation
+            or PZSurvivorToolkit.ActionQueueSettlement
+                and PZSurvivorToolkit.ActionQueueSettlement.cancellationGeneration(action, captured.generation))
         and record.queue == queue and record.native == captured.native and record.generation == captured.generation
         and record.transaction == captured.transaction and record.kind == captured.kind
         and record.token == captured.token and record.state == captured.state then return captured end

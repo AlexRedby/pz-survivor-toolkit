@@ -75,6 +75,10 @@ end
 f.project('ActionQueueOperations'); f.project('ActionQueueDefinitions'); f.project('ActionQueueLabels')
 local policy = f.project('ActionQueuePolicy')
 local api = f.project('ActionQueue')
+local function startedNative()
+    return {finished=function()return false end,isStarted=function()return true end,
+        isForceComplete=function()return false end}
+end
 local function dry(towel)
     local value = ISDryMyself:new(player, towel); value.toolkitQueueOperation={}; return value
 end
@@ -138,6 +142,8 @@ drying.onStartFunc=nil
 
 -- Native SP update spends the towel before completion; finishing or cancelling must never replay it.
 wetness=80; towel.uses=3; drying=dry(towel); tail=book(); q=f.queue(drying, tail)
+-- update is a started Java episode; preserve that identity through cancellation.
+drying.action=startedNative()
 drying:update()
 assert(towel.uses==2 and towel.spent==1 and wetness==72)
 assert(api.cancelOperation(q, drying) and q.toolkitGroupCancel and not q.toolkitCancel,
@@ -151,6 +157,7 @@ assert(q.queue[1]==tail and #q.queue==1 and tail.begun and towel.spent==1,
 towel.uses=3; drying=dry(towel); local follow=dry(item('Base.DishCloth'))
 follow.toolkitQueueOperation=drying.toolkitQueueOperation
 tail=book(); q=f.queue(drying, follow, tail)
+drying.action=startedNative()
 assert(api.cancelOperation(q, drying))
 drying:complete(); drying:perform()
 assert(q.queue[1]==tail and #q.queue==1 and not follow.action,
@@ -247,6 +254,7 @@ player.updateHandEquips, player.resetModel=function() end, function() end
 player.isPrimaryHandItem, player.isSecondaryHandItem=function() return false end, function() return false end
 local cleaning=wash(garment, soap); cleaning.noSoap=false
 soap.uses=2; tail=book(); q=f.queue(cleaning, tail)
+cleaning.action=startedNative()
 assert(api.cancelOperation(q, cleaning) and soap.uses==2 and cleaning.sink.water==10)
 assert(cleaning:complete() and soap.uses==1 and cleaning.sink.water==2)
 cleaning:perform()

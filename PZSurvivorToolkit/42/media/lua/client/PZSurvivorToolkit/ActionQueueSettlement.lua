@@ -6,11 +6,87 @@ local providers, byId = {}, {}
 local cleanupMarker = {}
 
 local operationMarker, stepMarker = {}, {}
+-- An accepted cancellation owns only its current native episode and earned
+-- cleanup. Editor invalidation still revokes all optional continuations.
+local cancellations = {}
+local function cancellation(queue)
+    local state = cancellations[queue]
+    if not state then return end
+    local current = queue.current
+    local member = state.members[current]
+    if ISTimedActionQueue.queues[state.character] ~= queue or queue.character ~= state.character
+        or queue.queue ~= state.list or state.character:isDead()
+        or getSpecificPlayer(state.character:getPlayerNum()) ~= state.character
+        or state.request.action ~= state.action or state.request.token ~= state.token
+        or (queue.toolkitOperationGeneration or 0) ~= state.generation
+        or queue.queue[1] ~= current
+        or not (current == state.action and current.action == state.native
+            and current.toolkitQueueOperation == state.token
+            and (queue.toolkitGroupCancel == state.request or state.scheduled and queue.toolkitGroupCancel == nil)
+            or state.scheduled and member and not queue.toolkitGroupCancel
+                and current.toolkitQueueOperation == member.token
+                and (not member.native or current.action == member.native)) then
+        cancellations[queue] = nil; return
+    end
+    return state
+end
+local function cancellationRecord(record)
+    local state = record and cancellation(record.queue)
+    if not state then return end
+    if state.record == record then return state end
+    for action, member in pairs(state.members) do
+        if action.toolkitQueueOperation == member.token and record.token == member.token then return state end
+    end
+end
+local function generationMatches(character, queue, generation, action)
+    if (queue.toolkitOperationGeneration or 0) == generation then return true end
+    local state = cancellation(queue)
+    if not state or state.character ~= character then return false end
+    local member = state.members[action]
+    return state.record.actions[action] ~= nil and generation == state.originalGeneration
+        or member ~= nil and (member.generation == generation or state.originalGeneration == generation)
+            and action.toolkitQueueOperation == member.token
+end
+function Settlement.cancellationGeneration(action, generation)
+    local queue = action and ISTimedActionQueue.queues[action.character]
+    local state = queue and cancellation(queue)
+    return not not (state and generationMatches(action.character, queue, generation, action))
+end
+function Settlement.drainingAction(action)
+    local queue = action and ISTimedActionQueue.queues[action.character]
+    local state = queue and cancellation(queue)
+    return not not (state and queue.current == action
+        and (action == state.action or state.members[action]))
+end
+function Settlement.bindCancellation(action)
+    local queue = action and ISTimedActionQueue.queues[action.character]
+    local state = queue and cancellation(queue)
+    local member = state and state.members[action]
+    if member and not member.native then member.native = action.action end
+end
+function Settlement.resetCancellation(queue) cancellations[queue] = nil end
+function Settlement.completeCancellation(queue, action)
+    local state = cancellation(queue)
+    if not state then return end
+    if state.members[action] then state.members[action] = nil end
+    for _ in pairs(state.members) do return end
+    cancellations[queue] = nil
+end
+-- Only this actual editor transition may bridge a generation for admitted debt.
+-- Reset/death/replaced queues and arbitrary generation changes never do.
+function Settlement.invalidateEditor(queue)
+    local state = cancellation(queue)
+    Toolkit.ActionQueueOperations.invalidateQueue(queue)
+    if state and not Toolkit.Settings.actionQueue()
+        and (queue.toolkitOperationGeneration or 0) == state.generation + 1 then
+        state.generation = queue.toolkitOperationGeneration
+    end
+end
 local function operationLive(record)
     return record and record.queue == ISTimedActionQueue.queues[record.character]
         and record.queue.character == record.character and not record.character:isDead()
-        and (record.queue.toolkitOperationGeneration or 0) == record.generation
-        and Toolkit.Settings and Toolkit.Settings.actionQueue()
+        and ((record.queue.toolkitOperationGeneration or 0) == record.generation
+            and Toolkit.Settings and Toolkit.Settings.actionQueue() or cancellationRecord(record))
 end
 
 local function operation(character, token, create)
@@ -25,6 +101,27 @@ local function operation(character, token, create)
     if not operationLive(record) then return end
     token[operationMarker] = function(value) if value == token then return record end end
     return record
+end
+
+function Settlement.admitCancellation(queue, request, decision)
+    local policy = Toolkit.ActionQueuePolicy
+    local action = request and request.action
+    if not Toolkit.Settings.actionQueue() or not decision or decision.allowed ~= true or decision.first ~= 1
+        or not policy or not policy.editUnchanged(queue, decision.snapshot)
+        or not action or not action.action
+        or action.character ~= queue.character or queue.current ~= action or queue.queue[1] ~= action
+        or request.token ~= action.toolkitQueueOperation or type(request.token) ~= "table" or request.token.toolkitCancelled then return false end
+    local record = operation(action.character, request.token, true)
+    if not record then return false end
+    cancellations[queue] = {character = action.character, action = action, native = action.action,
+        token = request.token, request = request, record = record, list = queue.queue, members = {},
+        generation = queue.toolkitOperationGeneration or 0, originalGeneration = record.generation}
+    return true
+end
+local function admitCleanup(queue, action)
+    local state = cancellation(queue)
+    if state then state.members[action] = {token = action.toolkitQueueOperation,
+        generation = queue.toolkitOperationGeneration or 0, native = action.action} end
 end
 
 local function stepProof(handle)
@@ -135,8 +232,10 @@ function Settlement.inheritCleanup(action, parent)
     if not queue or queue.current ~= parent or queue.queue[1] ~= parent
         or parent.Type ~= "ISQueueActionsAction" or not requiredCleanup(parent, true)
         or action.character ~= parent.character or action.toolkitQueueOperation ~= parent.toolkitQueueOperation then return false end
+    if not Toolkit.ActionQueuePolicy.inspect(action) then return false end
+    admitCleanup(queue, action)
     local step = stepProof(Settlement.track(action, "cleanup"))
-    if not step or not Toolkit.ActionQueuePolicy.inspect(action) then return false end
+    if not step then return false end
     local parentRecord = operation(parent.character, parent.toolkitQueueOperation)
     step.kind, step.required = action.Type, true
     step.prerequisites = parentRecord.actions[parent].prerequisites
@@ -205,6 +304,7 @@ local function insert(queue, action, index)
     local inherited = previous and previous.actions[action]
     -- Required work gets a fresh operation: cancelling its former owner cannot revoke it.
     action.toolkitQueueOperation, action.toolkitQueueReturn = {}, cleanupMarker
+    admitCleanup(queue, action)
     local step = stepProof(Settlement.track(action, "cleanup"))
     if step then
         step.required, step.kind = true, action.Type
@@ -251,7 +351,7 @@ function Settlement.effectState(handle, observed)
     local character, action, queue = proof.character, proof.action, proof.queue
     if action.character ~= character or action.action ~= proof.native or not queue
         or ISTimedActionQueue.queues[character] ~= queue or character:isDead()
-        or (queue.toolkitOperationGeneration or 0) ~= proof.generation
+        or not generationMatches(character, queue, proof.generation, action)
         or action.toolkitNativeTransaction ~= proof.transaction or action.toolkitNativeKind ~= proof.kind then return effectTerminal(proof, "unavailable") end
     if proof.confirmed then return "completed" end
     if not proof.required then
@@ -493,7 +593,7 @@ local function baseReturnValid(proof)
         and action.action == proof.native and isClient() == proof.client
         and not character:isDead() and character:getPlayerNum() == proof.player and character:getOnlineID() == proof.online
         and getSpecificPlayer(proof.player) == character and ISTimedActionQueue.queues[character] == queue
-        and (queue.toolkitOperationGeneration or 0) == proof.generation
+        and generationMatches(character, queue, proof.generation, action)
         and action.srcContainer == proof.source and action.destContainer == proof.destination
         and character:getInventory() == (proof.direction == "pickup" and proof.destination or proof.source)
         and (not proof.client or isItemTransactionDone == itemTransactionDone
@@ -589,7 +689,7 @@ function Settlement.beginReturn(action, obligation, guard)
         if type(guard) ~= "function" or not guard(action) then return false, "source" end
         local character, queue = action.character, scope.queue
         if character ~= scope.character or queue ~= ISTimedActionQueue.queues[character]
-            or (queue.toolkitOperationGeneration or 0) ~= scope.generation
+            or not generationMatches(character, queue, scope.generation, action)
             or queue.current ~= action or queue.queue[1] ~= action or not action.action
             or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "native_scope" end
         local inventory = character:getInventory()
@@ -755,9 +855,15 @@ local function borrowing(scope)
 end
 
 local function borrowingLive(scope)
-    return deferred(scope) and scope.phase ~= "retired" and Toolkit.Settings and Toolkit.Settings.actionQueue()
-        and not scope.character:isDead() and ISTimedActionQueue.queues[scope.character] == scope.queue
-        and (scope.queue.toolkitOperationGeneration or 0) == scope.generation
+    if not deferred(scope) or scope.phase == "retired" or scope.character:isDead()
+        or ISTimedActionQueue.queues[scope.character] ~= scope.queue then return false end
+    if Toolkit.Settings and Toolkit.Settings.actionQueue()
+        and (scope.queue.toolkitOperationGeneration or 0) == scope.generation then return true end
+    local state = cancellation(scope.queue)
+    if not state or scope.generation ~= state.originalGeneration then return false end
+    if state.record.preparationScope == scope then return true end
+    for _, binding in ipairs(state.record.borrowings) do if binding.scope == scope then return true end end
+    return false
 end
 
 -- The exact native pickup proves its original owner without relying on the
@@ -1472,6 +1578,7 @@ function Settlement.observeCleanupTransfer(action, parent)
     local square = preparation and preparation.preparation.before and preparation.preparation.before.square
     if not preparation or not square or not world or world:getItem() ~= action.item or world:getSquare() ~= square
         or not square:getWorldObjects():contains(world) then return false end
+    admitCleanup(queue, action)
     local step = stepProof(Settlement.track(action, "cleanup"))
     if step.returning then return false end
     Toolkit.BulkActions.guardTransfer(action)
@@ -1596,7 +1703,19 @@ function Settlement.finish(queue, request, discard)
         end
     end
     state.phase, record.phase = "scheduled", "cleanup"
+    local drain = cancellation(queue)
+    if drain then drain.scheduled = true end
     return true
 end
 
+-- Replaced queues are no longer ticked by the native registry. Retire bounded
+-- capabilities there as well as at explicit reset; do not retain old worlds.
+if Events and Events.OnTick then
+    Events.OnTick.Add(function()
+        for queue in pairs(cancellations) do cancellation(queue) end
+    end)
+end
+if Events and Events.OnMainMenuEnter then
+    Events.OnMainMenuEnter.Add(function() cancellations = {} end)
+end
 return Settlement

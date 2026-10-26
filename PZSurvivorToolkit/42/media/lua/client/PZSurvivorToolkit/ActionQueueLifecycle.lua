@@ -42,6 +42,15 @@ function Lifecycle.started(action)
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.started(action) end
     observe("started", action)
 end
+local function draining(action)
+    local settlement = Toolkit.ActionQueueSettlement
+    return settlement and settlement.drainingAction(action)
+end
+local function generationMatches(queue, action, generation)
+    local settlement = Toolkit.ActionQueueSettlement
+    return (queue.toolkitOperationGeneration or 0) == generation
+        or settlement and settlement.cancellationGeneration(action, generation)
+end
 local function enabled(action)
     local media=Toolkit.ActionQueueMedia
     return Toolkit.Settings and Toolkit.Settings.actionQueue() or media and media.tracks(action)
@@ -78,7 +87,7 @@ local function finishingCanceledStep(queue, action, nativeAction)
         and action.action == nativeAction and queue.toolkitGroupCancel == seal.request
         and seal.request.action == action and seal.request.token == seal.token
         and action.toolkitQueueOperation == seal.token and seal.token.toolkitCancelled == true
-        and (queue.toolkitOperationGeneration or 0) == seal.generation
+        and generationMatches(queue, action, seal.generation)
         and policy == seal.policy and policy.inspect == seal.inspect
         and policy.preparationCanFinish == seal.preparationCanFinish and policy.stoppable == seal.stoppable
     if valid then
@@ -102,14 +111,15 @@ local function nativeCompletionState(action, nativeAction, waiting)
         return false
     end
     local editing = Toolkit.Settings.actionQueue()
-    if not editing and queue then finishStepCancellations[queue] = nil end
-    local finishing = editing and queue and finishingCanceledStep(queue, action, nativeAction)
+    local admitted = draining(action)
+    if not editing and not admitted and queue then finishStepCancellations[queue] = nil end
+    local finishing = (editing or admitted) and queue and finishingCanceledStep(queue, action, nativeAction)
     if not owned(queue,action)or action.action~=nativeAction or character:isDead()or character:isAsleep()
         or not character:isLocalPlayer()or getSpecificPlayer(character:getPlayerNum())~=character
         or queue.toolkitCancel or queue.toolkitStopIntent or queue.toolkitOutcomeWait
         or (queue.toolkitGroupCancel and not finishing) or queue.toolkitResume
-        or (editing and queue.toolkitOperationsInvalid)
-        or (editing and action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled and not finishing)
+        or (editing and queue.toolkitOperationsInvalid and not admitted)
+        or (editing and action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled and not admitted and not finishing)
         or character:pressedCancelAction()
         or (action.stopOnWalk and (character:isPlayerMoving()or character:pressedMovement(false)))
         or (action.stopOnRun and (character:isRunning()or character:isSprinting()))
@@ -121,7 +131,7 @@ local function nativeCompletionState(action, nativeAction, waiting)
     local receipt=acknowledgements and acknowledgements.capture(action)
     local disabled = acknowledgements and (waiting and acknowledgements.allowsDisabledNativeCompletionWait
         or acknowledgements.allowsDisabledNativeCompletion)
-    if not editing and not (receipt and disabled and disabled(action,receipt)) then return end
+    if not editing and not admitted and not (receipt and disabled and disabled(action,receipt)) then return end
     return receipt and acknowledgements.state(action,receipt)
 end
 function Lifecycle.allowNativeCompletion(action, nativeAction)
@@ -297,7 +307,7 @@ end
 local function episodeOwned(queue, state)
     local action = state.action
     return owned(queue, action) and action.action == state.native
-        and (queue.toolkitOperationGeneration or 0) == state.generation
+        and generationMatches(queue, action, state.generation)
         and not (action.character.isDead and action.character:isDead())
 end
 
@@ -310,7 +320,7 @@ function Lifecycle.begin(action, phase)
     local queue = action and ISTimedActionQueue.queues[action.character]
     local state = queue and owned(queue, action) and pending[queue]
     if state and (state.action ~= action or not episodeOwned(queue, state)) then pending[queue] = nil; state = nil end
-    if not state and phase == "perform" and enabled(action) and owned(queue, action) and action.action
+    if not state and phase == "perform" and (enabled(action) or draining(action)) and owned(queue, action) and action.action
         and not (action.character.isDead and action.character:isDead()) then
         state = {action = action, native = action.action, generation = queue.toolkitOperationGeneration or 0,
             depth = 0, needsComplete = not isClient()}
@@ -436,7 +446,7 @@ end
 local operations = Toolkit.ActionQueueOperations
 local expandCommand = operations and operations.expandCommand
 ISQueueActionsAction.start = function(action)
-    if not nativeCommand or not Toolkit.Settings.actionQueue() then return commandStart(action) end
+    if not nativeCommand or not (Toolkit.Settings.actionQueue() or draining(action)) then return commandStart(action) end
     return expandCommand(action, operations.runWith, action.toolkitQueueOperation,
         action.addActionsFunction, action.character, unpack(action.args))
 end

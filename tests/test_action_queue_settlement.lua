@@ -2214,4 +2214,49 @@ for _, client in ipairs({false,true}) do
     end
 end
 
+-- A genuine accepted cancellation may settle old receipts across editor-only
+-- invalidation. Optional deferred contexts and unrelated actions cannot use it.
+for _, client in ipairs({false, true}) do
+    for _, timing in ipairs({'before-finish', 'during-return', 'twice'}) do
+        local s = pendingReturnFixture(client)
+        local T = PZSurvivorToolkit
+        T.ActionQueuePolicy.editUnchanged = function(q, snapshot) return q == s.queue and snapshot == s.queue end
+        T.ActionQueueOperations.invalidateQueue = function(q)
+            q.toolkitOperationGeneration = (q.toolkitOperationGeneration or 0) + 1
+            for _, action in ipairs(q.queue) do action.toolkitQueueOperation.toolkitCancelled = true end
+        end
+        local context = s.settlement.context(s.scope)
+        local request = {action = s.current, token = s.token}
+        assert(s.settlement.admitCancellation(s.queue, request, {allowed=true,first=1,snapshot=s.queue}))
+        s.queue.toolkitGroupCancel, s.token.toolkitCancelled = request, true
+        local function disable()
+            s.player.queueEnabled = false
+            s.settlement.invalidateEditor(s.queue)
+            assert(not s.settlement.isLive(context), 'admitted cleanup revived an optional deferred context')
+        end
+        if timing ~= 'during-return' then disable() end
+        assert(s.settlement.finish(s.queue, request, s.discard), timing .. ': exact borrowing did not settle')
+        local action = s.queue.queue[2]
+        assert(action ~= s.tail and action ~= s.pendingReturn and action.item == s.members[1]
+            and action.destContainer == s.source and s.queue.queue[3] == s.tail
+            and s.settlement.requiredStep(action), 'admitted cleanup lost its private exact-return proof')
+        s.settlement.completeCancellation(s.queue,s.current)
+        table.remove(s.queue.queue,1); s.queue.current = action; s.queue.toolkitGroupCancel = nil
+        action.action,action.transactionId,action.queueList = {},71,{{items={action.item}}}
+        s.settlement.bindCancellation(action)
+        if timing ~= 'before-finish' then disable() end
+        assert(s.settlement.drainingAction(action) and not s.settlement.drainingAction(s.tail))
+        assert(s.settlement.beginPlannedReturn(action,s.guard), timing .. ': native cleanup could not bind its original scope')
+        s.root.items[181],s.source.items[181],action.item.container = nil,action.item,s.source
+        action.queueList,action.transactionId = {},0
+        assert(s.settlement.finishPlannedReturn(action,true)
+            and s.settlement.completionState(s.queue,action) == 'ready', timing .. ': exact return was not observed once')
+        assert(not s.settlement.finish(s.queue,request,s.discard), 'a settled cancellation ran twice')
+        s.settlement.completeCancellation(s.queue,action)
+        table.remove(s.queue.queue,1); s.queue.current=s.tail
+        assert(not s.settlement.drainingAction(s.tail) and not s.settlement.drainingAction(action),
+            'cleanup authority escaped into independent work')
+    end
+end
+
 print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')
