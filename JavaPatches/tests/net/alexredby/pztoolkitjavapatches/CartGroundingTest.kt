@@ -416,6 +416,18 @@ object CartGroundingTest {
         body.modelInstance = parent
         val slot = ModelSlotRenderData()
         slot.character = character
+        val unrelated = ModelInstanceRenderData()
+        unrelated.modelInstance = ModelInstance()
+        unrelated.modelInstance.parent = parent
+        unrelated.modelInstance.modelScript =
+            ModelScript().also {
+                it.setModule(instance.modelScript.getModule())
+            }
+        if (unrelated.modelInstance.modelScript.getName() != null)
+            throw AssertionError("unnamed model fixture acquired a name")
+        unrelated.xfrm.translation(.12f, .34f, .56f)
+        val unrelatedTransform = Matrix4f(unrelated.xfrm)
+        slot.modelData.add(unrelated)
         slot.modelData.add(body)
         slot.modelData.add(data)
         val mesh = instance.model.mesh
@@ -457,6 +469,8 @@ object CartGroundingTest {
                         "render fixture does not distinguish native arm fallback from the rigid cart",
                     )
                 CartGrounding.render(slot)
+                if (!unrelated.xfrm.equals(unrelatedTransform))
+                    throw AssertionError("grounding changed the unrelated unnamed model")
                 val actual = Matrix4f(data.xfrm).transpose()
                 if (
                     !actual.equals(expected, .00001f) ||
@@ -1056,6 +1070,8 @@ object CartGroundingTest {
                 "secondaryOverride",
                 "unknownExpected",
                 "unknownActual",
+                "unnamedActual",
+                "missingScript",
                 "foreignExpected",
                 "foreignActual",
                 "differentFamily",
@@ -1080,6 +1096,12 @@ object CartGroundingTest {
                 "secondaryOverride" -> player.overrideSecondaryHandModel = "Mug"
                 "unknownExpected" -> item.setStaticModel("OtherCartFullModel")
                 "unknownActual" -> cached.modelScript = model("Base", "OtherCartModel")
+                "unnamedActual" ->
+                    cached.modelScript =
+                        ModelScript().also {
+                            it.setModule(full.getModule())
+                        }
+                "missingScript" -> cached.modelScript = null
                 "foreignExpected" -> {
                     model("Foreign", "ShoppingCartFullModel")
                     item.setStaticModel("Foreign.ShoppingCartFullModel")

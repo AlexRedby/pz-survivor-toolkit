@@ -1276,6 +1276,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.64
+
+- Ignore unnamed model scripts during cart transition and grounding rendering, preventing render-thread null-pointer exceptions while preserving processing of valid cart models later in the slot.
+
 ### 0.1.63
 
 - Match steady forward cart walking, running and sprinting to native no-cart movement at the same effective carried weight and injury. Remove the extra held-cart container penalty while Toolkit controls the cart, preserve native gait eligibility, and retain cart acceleration, braking and cautious reverse behavior.

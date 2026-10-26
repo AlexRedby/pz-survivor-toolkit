@@ -44,11 +44,10 @@ internal object CartGrounding {
             else -> false
         }
 
-    private fun cartModel(type: String, model: ModelScript?): Boolean =
-        model != null &&
-            model.getModule() != null &&
-            "Base" == model.getModule().name &&
-            cartModel(type, model.getName())
+    private fun cartModel(type: String, model: ModelScript?): Boolean {
+        val name = model?.getName() ?: return false
+        return "Base" == model.getModule()?.name && cartModel(type, name)
+    }
 
     @JvmStatic
     fun resolvedModel(item: InventoryItem): ModelScript? {
@@ -459,7 +458,7 @@ internal object CartGrounding {
         if (!handoff && !CartMotionSync.visualEnabled(player) && !heldPresentationReady(player))
             return
         val expected = resolvedModel(player.getPrimaryHandItem()) ?: return
-        val name = expected.getName()
+        val name = expected.getName() ?: return
         val profile = CartWheelbarrow.forModel(name)
         val clip = ModelManager.instance.getAnimationClip("Bob_Cart_Idle")
         for (data in slot.modelData) {
@@ -523,7 +522,7 @@ internal object CartGrounding {
                                 transform,
                                 instance.model.mesh.minXyz,
                                 instance.model.mesh.maxXyz,
-                                contact(instance.modelScript.getName()),
+                                contact(name),
                                 lean,
                                 state.delta,
                             )

@@ -2594,6 +2594,10 @@ object CartTransitionTest {
                     "foreign-lease",
                     "new-action",
                     "failed-solve",
+                    "missing-script",
+                    "unnamed-script",
+                    "unrelated-script",
+                    "unnamed-only",
                 )) {
                 val fixture = recovery(true)
                 var player = fixture.player
@@ -2719,7 +2723,39 @@ object CartTransitionTest {
                             player.performing = true
                             player.performingAction = "OtherAction"
                         }
-                        "failed-solve" -> {
+                        "unnamed-only" -> {
+                            val unrelated = zombie.core.skinnedmodel.model.ModelInstanceRenderData()
+                            unrelated.modelInstance = zombie.core.skinnedmodel.model.ModelInstance()
+                            unrelated.modelInstance.modelScript =
+                                zombie.scripting.objects.ModelScript()
+                            check(
+                                unrelated.modelInstance.modelScript.getName() == null,
+                                "unnamed model fixture acquired a name",
+                            )
+                            slot.modelData.add(unrelated)
+                            check(
+                                !CartTransition.render(slot) && state(player) === current,
+                                "unnamed entry counted as the missing cart model or ended bind grace",
+                            )
+                            value(current, "remoteModelBindStart", System.nanoTime() - 301_000_000L)
+                        }
+                        "failed-solve",
+                        "missing-script",
+                        "unnamed-script",
+                        "unrelated-script" -> {
+                            if (gate != "failed-solve") {
+                                val unrelated =
+                                    zombie.core.skinnedmodel.model.ModelInstanceRenderData()
+                                unrelated.modelInstance =
+                                    zombie.core.skinnedmodel.model.ModelInstance()
+                                unrelated.modelInstance.modelScript =
+                                    if (gate == "missing-script") null
+                                    else
+                                        zombie.scripting.objects.ModelScript().also {
+                                            if (gate == "unrelated-script") it.name = "OtherModel"
+                                        }
+                                slot.modelData.add(unrelated)
+                            }
                             var data = zombie.core.skinnedmodel.model.ModelInstanceRenderData()
                             data.modelInstance = zombie.core.skinnedmodel.model.ModelInstance()
                             data.modelInstance.modelScript =

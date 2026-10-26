@@ -1302,8 +1302,8 @@ internal object CartTransition {
             val instance = data.modelInstance
             val profile = CartWheelbarrow.forItem(state.item)
             val modelName = modelName(state.item)
-            if (instance.modelScript == null || !instance.modelScript.getName().equals(modelName))
-                continue
+            val actualName = instance.modelScript?.getName() ?: continue
+            if (actualName != modelName) continue
             cartModelPresent = true
             val held = Matrix4f()
             val delta = Matrix4f()
