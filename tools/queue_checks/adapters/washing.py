@@ -129,7 +129,9 @@ def p4_restoration(record, prep, reset):
             and trace['generation'] >= reset['beforeGeneration'] and number(trace.get('at')) and trace['at'] >= 0
             and type(frames) is list and 0 < len(frames) <= 32
             and all(isinstance(f, dict) and isinstance(f.get('file'), str) and type(f.get('line')) is int for f in frames)
-            and any(f['file'].replace('\\', '/').rsplit('/', 1)[-1] == 'P4TidyUpMeister.lua' and 911 <= f['line'] <= 916 for f in frames))
+            and any(f['file'].replace('\\', '/').rsplit('/', 1)[-1] == 'P4TidyUpMeister.lua' and f['line'] == 839
+                    and any(g['file'].replace('\\', '/') == f['file'].replace('\\', '/') and g['line'] == 895 for g in frames[i + 1:])
+                    for i, f in enumerate(frames)))
 
 
 def check_case(selection, row, prep, receipt):

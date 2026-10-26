@@ -41,10 +41,14 @@ local function creationTrace(action)
     local file=getFilenameOfCallframe(frame);local line=getLineNumber(frame)
     if file then
      file=tostring(file):gsub('\\','/');r.frames[#r.frames+1]={file=file,line=line}
-     -- Audited selected P4/42 same-item reequip branch: constructor911, add915.
-     if file:match('P4TidyUpMeister%.lua$')and line>=911 and line<=916 then r.p4RestoreSite=true end
     end
    end
+  end
+  -- Current pinned P4/42.20: add838 reports839; caller895 is the same-item branch.
+  local restoreFile
+  for _,frame in ipairs(r.frames)do
+   if frame.file:match('([^/]+)$')=='P4TidyUpMeister.lua'and frame.line==839 then restoreFile=frame.file
+   elseif restoreFile and frame.file==restoreFile and frame.line==895 then r.p4RestoreSite=true;break end
   end
  end
  return r

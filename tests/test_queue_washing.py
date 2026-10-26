@@ -211,7 +211,7 @@ local root={contains=function()return true end};local source={getContainingItem=
 local item={getID=function()return 100 end,getFullType=function()return 'Base.Tshirt_DefaultTEXTURE_TINT'end,getContainer=function()return root end}
 local run={resetting=true,allowed={[100]=true},creations={},creationCount=0,creationOverflow=false}
 set(ISTimedActionQueue.add,'run',run);set(set(ISTimedActionQueue.add,'creationTrace'),'state',{root=root,source=source})
-local frames={{file='client/P4TidyUpMeister.lua',line=915},{file='client/ZZWashing.lua',line=42}}
+local frames={{file='client/P4TidyUpMeister.lua',line=895},{file='client/P4TidyUpMeister.lua',line=839},{file='client/ZZWashing.lua',line=42}}
 function getCurrentCoroutine()return 'native-coroutine'end
 function getCallframeTop(c)assert(c=='native-coroutine');return #frames end
 function getCoroutineCallframeStack(c,i)assert(c=='native-coroutine');return frames[i+1]end
@@ -223,10 +223,19 @@ assert(ISInventoryTransferAction.new==ctor,'observer changed native constructor'
 local trace=assert(run.creations[action]);assert(trace.p4RestoreSite and trace.stackAvailable and trace.p4SourceVerified)
 assert(trace.itemId==100 and trace.actorMatches and trace.fromRoot and trace.toDeclaredBag and trace.rootPresent)
 assert(trace.destinationBagId==10 and trace.noCallbacks and trace.onComplete=='nil'and trace.generation==6 and trace.at==12345)
+for _,bad in ipairs({
+ {{file='client/P4TidyUpMeister.lua',line=915}},
+ {{file='client/P4TidyUpMeister.lua',line=839}},
+ {{file='other/P4TidyUpMeister.lua',line=895},{file='client/P4TidyUpMeister.lua',line=839}},
+ {{file='client/P4TidyUpMeister.lua',line=839},{file='client/P4TidyUpMeister.lua',line=895}}
+})do
+ frames=bad;local other={Type='ISInventoryTransferAction',item=item,character=actor,srcContainer=root,destContainer=source}
+ ISTimedActionQueue.add(other);assert(not run.creations[other].p4RestoreSite,'observer accepted another site/caller')
+end
 frames={{file='client/ISUI/WMI_WashingSubmenus.lua',line=341}}
 local child={Type='ISInventoryTransferAction',item=item,character=actor,srcContainer=root,destContainer=source,onCompleteFunc=function()end}
 ISTimedActionQueue.add(child);assert(not run.creations[child].p4RestoreSite and not run.creations[child].noCallbacks)
-assert(run.creationCount==2 and not run.creationOverflow)
+assert(run.creationCount==6 and not run.creationOverflow)
 print('actual native reset creation observer preserves delegation and provenance')
 '''
         result = subprocess.run([shutil.which('luajit'), '-', str(ROOT / 'tests/native_queue/washing/client/ZZWashing.lua'),
@@ -333,7 +342,7 @@ print('actual native menu shape/flag selection passed')
             fromRoot=True,toDeclaredBag=True,destinationBagId=prep['bagId'],destinationBagType=prep['bagType'],
             rootPresent=True,noCallbacks=True,p4SourceVerified=True,p4RestoreSite=True,stackAvailable=True,
             onStart='nil',onComplete='nil',onCancel='nil',generation=2,at=1234,
-            frames=[dict(file='client/P4TidyUpMeister.lua',line=915)])
+            frames=[dict(file='client/P4TidyUpMeister.lua',line=839),dict(file='client/P4TidyUpMeister.lua',line=895)])
         row['records'].append(restore);row['ownedCleanupActions']=1
         receipt['garments'][0].update(rootCount=0,sourceCount=1);self.sync(d)
         return d
@@ -360,13 +369,17 @@ print('actual native menu shape/flag selection passed')
                         self.assertEqual([],washing.check_case(*d))
         self.assertTrue(washing.check_case(*self.restored(behavior='compat.tidy-transfers')),
                         'disabled queue cannot claim compat cleanup ownership')
-        for change in ('unproven','wmi','wrong-site','wrong-file','wrong-bag','wrong-item','foreign-actor',
+        for change in ('unproven','wmi','wrong-site','legacy-site','missing-caller','different-file','reordered','wrong-file','wrong-bag','wrong-item','foreign-actor',
                        'callback','unknown-behavior','unpaid','duplicate','old-return','late-wash','late-wait','shared-claim','still-root'):
             with self.subTest(change=change):
                 d=self.restored();r=d[1]['records'][-1];trace=r['creation']
                 if change=='unproven': r.pop('creation')
                 elif change=='wmi': trace['frames']=[dict(file='ISUI/WMI_WashingSubmenus.lua',line=341)]
                 elif change=='wrong-site': trace['frames'][0]['line']=473
+                elif change=='legacy-site': trace['frames']=[dict(file='client/P4TidyUpMeister.lua',line=915)]
+                elif change=='missing-caller': trace['frames']=trace['frames'][:1]
+                elif change=='different-file': trace['frames'][1]['file']='other/P4TidyUpMeister.lua'
+                elif change=='reordered': trace['frames'].reverse()
                 elif change=='wrong-file': trace['frames'][0]['file']='NotP4TidyUpMeister.lua'
                 elif change=='wrong-bag': trace['destinationBagId']+=1
                 elif change=='wrong-item': trace['itemId']+=1
