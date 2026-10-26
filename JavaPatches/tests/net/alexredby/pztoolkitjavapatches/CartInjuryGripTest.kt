@@ -4,6 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.HashMap
 import org.joml.Matrix4f
+import org.joml.Quaternionf
 import org.joml.Vector3f
 import zombie.core.skinnedmodel.model.SkinningData
 
@@ -89,7 +90,7 @@ object CartInjuryGripTest {
         for (i in actual.indices) check(actual[i] == expected[i], "$label changed ${NAMES[i]}")
     }
 
-    private fun captured(values: List<String>, actor: SkinningData, bank: Float) {
+    private fun captured(values: List<String>, actor: SkinningData, bank: Float): Matrix4f {
         val model =
             if (values.size > 52 + 16 * NAMES.size) values[52 + 16 * NAMES.size]
             else "WheelbarrowWood"
@@ -195,6 +196,7 @@ object CartInjuryGripTest {
             cart.transformPosition(handle)
             close(palm.distance(handle), 0f, .00002f, "$label palm missed handle")
         }
+        return Matrix4f(poses[1])
     }
 
     @JvmStatic
@@ -208,6 +210,7 @@ object CartInjuryGripTest {
             else Path.of(args[0])
         val actor = skeleton()
         var count = 0
+        val continuity = HashMap<Float, MutableList<Matrix4f>>()
         for (line in Files.readAllLines(fixture)) if (!line.startsWith("#") && line.isNotBlank()) {
             val values = line.split(",")
             check(
@@ -219,13 +222,31 @@ object CartInjuryGripTest {
                     0f,
                     Math.toRadians(-3.0).toFloat(),
                     Math.toRadians(3.0).toFloat(),
-                )) captured(values, actor, bank)
+                )) {
+                val chest = captured(values, actor, bank)
+                if (values[0].startsWith("continuous-metal-"))
+                    continuity.getOrPut(bank) { ArrayList() }.add(chest)
+            }
             count++
         }
         check(
-            count == if (args.size > 1) args[1].toInt() else 31,
+            count == if (args.size > 1) args[1].toInt() else 33,
             "missing representative injury captures",
         )
+        if (args.isEmpty()) {
+            check(continuity.size == 3, "missing adjacent native chest captures")
+            for ((bank, poses) in continuity) {
+                check(poses.size == 2, "incomplete adjacent native chest pair")
+                val change = Matrix4f(poses[1]).mul(Matrix4f(poses[0]).invert())
+                val rotation = change.getUnnormalizedRotation(Quaternionf()).normalize()
+                val degrees =
+                    Math.toDegrees(2 * Math.acos(Math.min(1.0, Math.abs(rotation.w).toDouble())))
+                check(
+                    degrees.isFinite() && degrees < 10,
+                    "adjacent native chest snapped at bank $bank: $degrees degrees",
+                )
+            }
+        }
         check(
             CartGrip.injuryTorso(
                 emptyArray(),

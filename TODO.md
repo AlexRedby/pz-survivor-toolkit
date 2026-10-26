@@ -1,6 +1,7 @@
 # Injured cart main integration
 
-- [ ] Pass the final metal-cart injury matrix and focused wood/shopping SP and owner/observer Host checks with the rebuilt candidate.
+- [ ] Replace the discontinuous metal torso route switch with a continuous reachable correction; preserve hips/legs, chest pivot and grip constraints, add the captured adjacent-frame regression and replay the native pose corpus.
+- [ ] Verify the rebuilt metal injury matrix and owner/observer Host scenarios; retain the completed wood/shopping SP checks when their runtime behavior is unchanged.
 - [ ] Recheck latest main, publish with a normal fast-forward push, and verify the remote revision.
 
 # Welding torch refill

@@ -1189,6 +1189,56 @@ internal object CartGrip {
         return if (injuredArmsReachable(poses, actor, left, right, change, metal)) inset else high
     }
 
+    private data class InjuryChestFit(val axis: Vector3f, val amount: Float)
+
+    /** Minimize the bounded correction over a continuous circle of lean axes. */
+    private fun minimumMetalChest(
+        poses: Array<out Matrix4f?>,
+        actor: SkinningData,
+        left: Matrix4f,
+        right: Matrix4f,
+        pivot: Vector3f,
+        yaw: Float,
+        lean: Float,
+    ): InjuryChestFit? {
+        var bestAxis: Vector3f? = null
+        var bestAmount = Float.POSITIVE_INFINITY
+        var bestAngle = 0f
+        val interval = (Math.PI * 2 / 32).toFloat()
+        for (i in 0 until 32) {
+            val angle = interval * i
+            val axis = Quaternionf().rotationY(angle).transform(Vector3f(-1f, 0f, 0f))
+            val amount = injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, axis, true)
+            if (amount.isFinite() && amount < bestAmount) {
+                bestAxis = axis
+                bestAmount = amount
+                bestAngle = angle
+            }
+        }
+        if (bestAxis == null) return null
+        // The circle has no fixed/directed branch or angular seam. Refine the best local
+        // interval instead of jumping between separately calibrated feasible paths.
+        var span = interval
+        for (i in 0 until 8) {
+            span *= .5f
+            val center = bestAngle
+            for (side in 0 until 2) {
+                val angle = center + (if (side == 0) -span else span)
+                val axis = Quaternionf().rotationY(angle).transform(Vector3f(-1f, 0f, 0f))
+                val amount =
+                    injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, axis, true)
+                if (amount.isFinite() && amount < bestAmount) {
+                    bestAxis = axis
+                    bestAmount = amount
+                    bestAngle = angle
+                }
+            }
+        }
+        // Horizontal lean axes are orthogonal to yaw, so the full correction angle increases
+        // monotonically with amount under these limits. Minimizing it preserves the native pose.
+        return InjuryChestFit(bestAxis ?: return null, bestAmount)
+    }
+
     /**
      * Injured locomotion may yaw the chest beyond both fixed handles; keep the native hip and legs
      * live.
@@ -1237,26 +1287,12 @@ internal object CartGrip {
                 )
                 .toFloat() * injuryWeight
         val lean = Math.toRadians((if (metal) 39 else 12).toDouble()).toFloat() * injuryWeight
-        // Preserve the established path wherever it fits. Native arm asymmetry can require
-        // that axis even when leaning toward the handle center helps a different foot phase.
-        var leanAxis: Vector3f? = null
-        var amount = injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, null, metal)
-        if (!amount.isFinite() && metal) {
-            // Heavy limp poses can need lateral and forward clearance together. Offer a second
-            // bounded path toward both current handle targets, keeping the same chest pivot.
-            val center =
-                left
-                    .getTranslation(Vector3f())
-                    .add(right.getTranslation(Vector3f()))
-                    .mul(.5f)
-                    .sub(pivot)
-            val up = Vector3f(0f, 1f, 0f)
-            delta?.transformDirection(up)
-            val axis = up.cross(center)
-            if (!axis.isFinite() || axis.lengthSquared() < .00000001f) return 0f
-            leanAxis = axis.normalize()
-            amount = injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, leanAxis, true)
-        }
+        val fit =
+            if (metal) minimumMetalChest(poses, actor, left, right, pivot, yaw, lean) else null
+        val leanAxis = fit?.axis
+        val amount =
+            if (metal) fit?.amount ?: return 0f
+            else injuryChestAmount(poses, actor, left, right, pivot, yaw, lean, null, false)
         if (!amount.isFinite()) return 0f
         val change = injuryChestChange(pivot, yaw, lean, amount, leanAxis)
         for (i in 0 until actor.numBones()) if (descendant(actor.getBoneAt(i), chest))
