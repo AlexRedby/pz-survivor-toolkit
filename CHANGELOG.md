@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.284
+
+- Development: native lifecycle observers can capture settled receipt/effect snapshots before queue advancement retires required cleanup; failed diagnostics cannot block paid native completion.
+- Fixed: closing a deferred mod session after queue editing is disabled no longer drops a proven borrowed-item return from an already accepted cancellation. Closed sessions still reject new work; already-running transfers retain their exact observation handle, and the earned return can finish before the independent queue tail.
+
 ### 0.1.283
 
 - **Fixed:** Collapsed loot windows defer unused item rows and container tooltips while keeping header counts and nearby contents current. Hover, pin and drag expansion restore fresh rows before input or drawing; active selections and marquee gestures retain immediate updates.

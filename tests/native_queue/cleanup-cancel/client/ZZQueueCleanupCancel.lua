@@ -5,7 +5,7 @@ local T=PZSurvivorToolkit;local native=config.mode=='native'
 local phase,index,since='prepare',1,0
 local entered,ready,done=false,false,false
 local state,ids,baseline,checkpoint,final,records,byAction,cancelEvidence,tailSnapshot,quiet,tail,body,prep
-local bodyTerminal,idleEvidence
+local bodyTerminal,idleEvidence,editorTransitions
 local resolveLast,resolveSeen=nil,{}
 local authorityStart,baselineRequested
 local serial=0;local tokenSerial=0;local tokenIds={};local classes={};local completedStates={}
@@ -60,6 +60,18 @@ local function register(action)
  end
  return row
 end
+local function setEditor(value,boundary,action)
+ local row=assert(register(action),'editor transition lost its exact native action')
+ local q=queue();local before=q.toolkitOperationGeneration or 0
+ PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(value)
+ assert(T.Settings.actionQueue()==value,'editor option did not apply')
+ local entry={case=case(),enabled=value,at=now(),boundary=boundary,current=row.sequence,
+  actionRef=row.actionRef,nativeRef=action.action and tostring(action.action)or false,
+  generationBefore=before,generationAfter=q.toolkitOperationGeneration or 0,
+  tailRetained=q:indexOf(tail)~=-1,requestRetained=q.toolkitGroupCancel~=nil}
+ editorTransitions[#editorTransitions+1]=entry;raw('EDITOR_TRANSITION',entry)
+ assert(entry.tailRetained,'editor transition removed independent work')
+end
 local function intact()
  for class,saved in pairs(classes)do for name,callback in pairs(saved)do assert(class[name]==callback,'native lifecycle changed '..class.Type..'.'..name)end end
 end
@@ -100,6 +112,12 @@ local function duration(action,row)
  else assert(math.abs(action.maxTime-row.effectiveDuration)<.001,'allocated native duration changed')end
 end
 local function observe()
+ if not native and case()=='p4-editor-reenabled'and editorTransitions and #editorTransitions==1 then
+  local current=queue().current
+  if current and classify(current)=='cleanup'and T.ActionQueueSettlement.isCleanup(current)then
+   setEditor(true,'cleanup-current',current)
+  end
+ end
  local ready,detail=F.refresh(state);if not ready then resolveWait(detail);return false end
  for _,action in ipairs(queue().queue)do local row=register(action);if row then duration(action,row)end end
  local action=queue().current;local row=register(action)
@@ -160,6 +178,7 @@ Events.OnServerCommand.Add(function(module,command,args)
 end)
 local function enqueue()
  records,byAction,cancelEvidence,tailSnapshot,completedStates={}, {},nil,nil,{}
+ editorTransitions={}
  state.keepReturn=case()=='p4-keep-return'and not native
  baseline=snapshot();assert(authorityStart and not F.baselineDifference(state,baseline),'exact local/authority baseline required');raw('BASELINE',baseline)
  assert(not state.player:isTimedActionInstant(),'native actions must keep their duration')
@@ -302,6 +321,10 @@ local function cancelAtBoundary()
    assert(T.ActionQueue.cancelOperation(queue(),current),'public operation cancellation rejected')
   end
   assert(queue():indexOf(tail)~=-1,'operation cancellation removed independent native tail')
+  if case()=='p4-editor-off'or case()=='p4-editor-reenabled'then
+   setEditor(false,'accepted-cancel',current)
+   assert(editorTransitions[1].requestRetained,'editor disabled after the accepted request was already lost')
+  end
  end
  raw('BOUNDARY',cancelEvidence);phase='checkpoint';request('Checkpoint')
 end
@@ -323,8 +346,10 @@ local function finish()
   end
  end
  emit({event='case',id=case(),status='passed',ids=ids,baseline=baseline,authorityBaseline=authorityStart,checkpoint=checkpoint,
+  editorTransitions=editorTransitions,editorEnabled=T.Settings.actionQueue(),
   boundary=cancelEvidence,records=records,bodyTerminal=bodyTerminal or false,tailSnapshot=tailSnapshot,idleEvidence=idleEvidence,client=actual,server=final,nativeMethodsUnchanged=true,
   outcome={cleanupRestored=true,tailCompleted=true,authoritative=true,cancelled=not native,normalNativeControl=native,cleanupBeforeTail=F.ownedCleanupBeforeTail(state,tailSnapshot),originalEquipmentBeforeTail=F.restored(state,tailSnapshot)}})
+ PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)
  index=index+1;state=nil;ids=nil;checkpoint=nil;final=nil;tail=nil;body=nil;prep=nil;quiet=nil;bodyTerminal=nil;idleEvidence=nil;resolveLast=nil;resolveSeen={};authorityStart=nil;baselineRequested=nil;since=now();phase='prepare'
  if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
 end
@@ -369,7 +394,7 @@ Events.OnTick.Add(function()
  end)
  if not ok then
   local diagnostic=state and snapshot()or false
-  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),boundary=cancelEvidence or false,client=diagnostic,resolve=resolveLast or false,prepared=ids or false,records=records or{}})
+  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),editorTransitions=editorTransitions or{},editorEnabled=T.Settings.actionQueue(),boundary=cancelEvidence or false,client=diagnostic,resolve=resolveLast or false,prepared=ids or false,records=records or{}})
   print('[QUEUE_TEST] FAIL cleanup-cancel '..tostring(problem));done=true
  end
 end)

@@ -17,7 +17,7 @@ local function pack(...) return {n = select("#", ...), ...} end
 function Lifecycle.registerObserver(id, observer)
     if type(id) ~= "string" or type(observer) ~= "table" or observerIds[id] then return false end
     for key, callback in pairs(observer) do
-        if (key ~= "started" and key ~= "begin" and key ~= "finish") or type(callback) ~= "function" then return false end
+        if (key ~= "started" and key ~= "begin" and key ~= "finish" and key ~= "settled") or type(callback) ~= "function" then return false end
     end
     local entry = {}
     for key, callback in pairs(observer) do entry[key] = callback end
@@ -431,6 +431,11 @@ function Lifecycle.flush(queue)
     if cancellation == "waiting" then return "waiting", action end
     pending[queue] = nil
     if cancellation == "failed" or mediaState == "failed" then return "failed", action end
+    -- Receipts/effects are settled and Java has removed this exact episode, but
+    -- native advancement has not retired its required cleanup record yet.
+    -- Observers receive no edit capability; failures remain quarantined.
+    observe("settled", action)
+    if not episodeOwned(queue, state) then return "completed", action end
     if reading and reading.completedPickup then reading.completedPickup(queue, action) end
     queue:onCompleted(action)
     return "completed", action
