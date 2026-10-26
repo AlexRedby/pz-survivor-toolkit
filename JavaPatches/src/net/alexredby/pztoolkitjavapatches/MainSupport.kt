@@ -382,6 +382,7 @@ internal object MainSupport {
         val fences = FenceValidation.install(FenceValidation.SUPPORTED)
         val itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED)
         val hostLoader = HostLoader.install()
+        val cutawaySouthEdge = CutawaySouthEdge.install()
         // Define before patch registration: recursive loads during another transform bypass
         // instrumentation.
         if (Main.CART_TRANSITION_SUPPORTED)
@@ -403,6 +404,8 @@ internal object MainSupport {
                 RadioInventoryState.SUPPORTED +
                 ", build=" +
                 Main.BUILD_SUPPORTED +
+                ", cutawaySouthEdge=" +
+                cutawaySouthEdge +
                 ", video=" +
                 Main.VIDEO_SUPPORTED +
                 ", animal=" +
