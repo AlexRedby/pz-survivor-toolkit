@@ -15,13 +15,15 @@ from queue_checks.adapters import makeup as m
 
 
 class MakeupEvidenceTests(unittest.TestCase):
-    def selection(self,mode='toolkit',kind='sp',supplies=False):
+    def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False):
         value= dict(suite='makeup',cases=list(m.SP_CASES if kind=='sp' else m.MP_CASES),mode=mode,kind=kind,
                     clients=1,languages=['EN'],mods=list(m.MODS),options={'mp_host':True} if kind=='mp' else {})
         if supplies:value['options']['makeup_supplies']=True;value['cases']=list(m.cases(value))
+        if moves:value['options']['makeup_moves']=True;value['cases']=list(m.cases(value))
         return value
 
     def evidence(self,case,selection):
+        if selection.get('options',{}).get('makeup_moves'):return self.move_evidence(case,selection)
         if selection.get('options',{}).get('makeup_supplies'):return self.supply_evidence(case,selection)
         native=selection['mode']=='native';mp=selection['kind']=='mp'
         items=dict(kit=1,front=2,tail=3,**({'old':4} if case!='apply-empty' else {}))
@@ -118,6 +120,41 @@ class MakeupEvidenceTests(unittest.TestCase):
             value['root'].sort(key=lambda item:item['id']);value['worn'].sort(key=lambda item:item['slot'])
             value['supply']=copy.deepcopy(source);value['placement']=dict(tile=dict(x=10,y=20,z=0),square=dict(x=10,y=20,z=0))
             if not m.cancelling(case):value['frontPages']=row['ids']['frontInitial']
+        return row
+
+    def move_evidence(self,case,selection):
+        base=copy.deepcopy(selection);base['options'].pop('makeup_moves')
+        if case=='move-deny-nested':
+            base['options']['makeup_supplies']=True;row=self.supply_evidence('apply-nested-bag',base)
+        else:row=self.evidence('apply-replace' if case=='move-earlier' else 'apply-empty',base)
+        ids=row['ids'];row['id']=ids['case']=case;ids['move']=True;ids['placement']=dict(x=10,y=20,z=0)
+        ids['items']['middle']=5;ids['types']['middle']='Base.BookCooking1';ids['middleTotal']=100;ids['middleInitial']=99;ids['frontInitial']=92
+        if case=='move-deny-nested':ids['items'].pop('old');ids['types'].pop('old');row['submitted']['previous']=False;row.pop('applyQueues')
+        if case=='move-deny-writer':ids['items']['writer']=6;ids['types']['writer']='Base.Socks_Ankle'
+        values=[ids['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot']]
+        for point in row['checkpoints']:
+            for role in ('client','authority'):point[role]['case']=case;values.append(point[role]['snapshot'])
+            if case=='move-deny-nested' and point['client']['preview']:point['client']['preview']['previous']=False
+        row['receipt']['case']=case
+        for value in values:
+            value['case']=case;value['root'].append(dict(id=5,kind='Base.BookCooking1'))
+            value['placement']=dict(tile=dict(x=10,y=20,z=0),square=dict(x=10,y=20,z=0))
+            late=value['kit']['uses']==4
+            value['frontPages']=100 if late else 92;value['middlePages']=100 if late else 99
+            if case=='move-deny-nested':value['root']=[v for v in value['root'] if v['id']!=4];value['worn']=[v for v in value['worn'] if v['id']!=4]
+            if case=='move-deny-writer':
+                # The native actor already wears another sock item. Wear replaces
+                # its slot while preserving both physical items in root.
+                value['root'].extend([dict(id=6,kind='Base.Socks_Ankle'),dict(id=7,kind='Base.Socks_Ankle')])
+                value['worn'].append(dict(id=6 if late else 7,kind='Base.Socks_Ankle',slot='base:socks',root=True,sameReference=True,container='root'))
+            value['root'].sort(key=lambda v:v['id']);value['worn'].sort(key=lambda v:v['slot'])
+        before,after,starts,accepted=m.move_orders(case,selection['mode']=='toolkit')
+        edit=dict(at=25,accepted=accepted,reason=False if accepted or selection['mode']=='native' else 'dependent',before=before,after=after,
+            bodyUnallocated=True,ownershipPreserved=True,frontPages=93,frontDelta=.125,frontNativeBefore='native-front',frontNativeAfter='native-front',frontRetained=True,tailRetained=True)
+        row['edit']=edit;row['startOrder']=starts;row['supplyTransferStarts']=0
+        if case=='move-promote' and accepted:row['readerResume']=dict(pages=93,resumedPages=93,native='native-resumed-front')
+        for point in row['checkpoints']:
+            if point['client']['label'] in ('after-body','final'):point['client']['edit']=copy.deepcopy(edit)
         return row
 
     def write(self,root,selection,rows):
@@ -403,7 +440,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         self.assertEqual(list(checks['success-queued']),m.MP_CASES)
         self.assertEqual(list(checks['success-empty']),m.SUPPLY_SP_CASES)
         self.assertEqual(list(checks['cancel-waiting']),['cancel-waiting',*m.SUPPLY_MP_CASES[4:]])
-        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES)
+        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES+m.MOVE_CASES)
 
     def test_supply_option_cannot_silently_replace_or_mix_default_bank(self):
         for mutation in ('false','non-bool','missing','mixed'):
@@ -413,6 +450,126 @@ class MakeupEvidenceTests(unittest.TestCase):
             elif mutation=='missing':selection['options'].pop('makeup_supplies')
             else:selection['cases'][0]=m.SP_CASES[0]
             with self.subTest(mutation=mutation),self.assertRaises(ValueError):m.validate(selection)
+
+    def test_optional_moves_host_controls_and_toolkit(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',moves=True);rows=[self.evidence(case,selection) for case in selection['cases']]
+            with self.subTest(mode=mode):self.assertEqual(self.verify(selection,rows)['issues'],[])
+
+    def test_moves_selection_is_host_only_explicit_and_exclusive(self):
+        for mutation in ('sp','missing','string','supply','order','subset','mods','host'):
+            selection=self.selection(kind='mp',moves=True)
+            if mutation=='sp':selection['kind']='sp'
+            elif mutation=='missing':selection['options'].pop('makeup_moves')
+            elif mutation=='string':selection['options']['makeup_moves']='true'
+            elif mutation=='supply':selection['options']['makeup_supplies']=True
+            elif mutation=='order':selection['cases'].reverse()
+            elif mutation=='subset':selection['cases'].pop()
+            elif mutation=='mods':selection['mods'].pop()
+            elif mutation=='host':selection['options']['mp_host']=False
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):m.validate(selection)
+
+    def test_move_order_ownership_reader_checkpoint_and_exact_cost_falsifications(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',moves=True)
+            for mutation in ('before-order','after-order','start-order','ownership','allocated','reader-pages','reader-native','tail-lost',
+                             'tail-early','middle-short','kit-cost','output-reference','old-proxy','writer-lost','nested-root','transfer','admission','receipt-cost'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[0]
+                if mutation=='before-order':row['edit']['before'].reverse()
+                elif mutation=='after-order':row['edit']['after'].reverse()
+                elif mutation=='start-order':row['startOrder'].reverse()
+                elif mutation=='ownership':row['edit']['ownershipPreserved']=False
+                elif mutation=='allocated':row['edit']['bodyUnallocated']=False
+                elif mutation=='reader-pages':row['edit']['frontPages']=92
+                elif mutation=='reader-native':row['edit']['frontNativeAfter']='replacement'
+                elif mutation=='tail-lost':row['edit']['tailRetained']=False
+                elif mutation=='tail-early':row['beforeTail']['snapshot']['tailPages']=100
+                elif mutation=='middle-short':row['clientFinal']['middlePages']=99
+                elif mutation=='kit-cost':row['checkpoints'][2]['authority']['snapshot']['kit']['uses']=3
+                elif mutation=='output-reference':next(v for v in row['clientFinal']['worn'] if v['id']==row['output'])['sameReference']=False
+                elif mutation=='old-proxy':row['ids']['baseline']['worn'][0]['sameReference']=False
+                elif mutation=='writer-lost':rows[3]['clientFinal']['worn']=[]
+                elif mutation=='nested-root':rows[4]['checkpoints'][1]['client']['snapshot']['kit']['root']=True
+                elif mutation=='transfer':row['supplyTransferStarts']=1
+                elif mutation=='admission':rows[3]['edit']['accepted']=True
+                else:row['receipt']['snapshot']['kit']['uses']=3
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_writer_original_sock_transition_identity_and_other_slot_falsifications(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',moves=True)
+            for mutation in ('original-root-lost','original-still-worn','early-writer','baseline-writer','baseline-proxy',
+                             'writer-wrong-id','writer-wrong-type','writer-proxy','before-tail-old','receipt-old','other-slot-lost'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[3]
+                values=[row['ids']['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot'],
+                        *[point[role]['snapshot'] for point in row['checkpoints'] for role in ('client','authority')]]
+                # A separate untouched worn slot makes broad slot normalization
+                # observable: the evaluator must still conserve this exact hat.
+                for value in values:
+                    value['root'].append(dict(id=8,kind='Base.Hat_Beany'));value['root'].sort(key=lambda v:v['id'])
+                    value['worn'].append(dict(id=8,kind='Base.Hat_Beany',slot='base:hat',root=True,sameReference=True,container='root'))
+                    value['worn'].sort(key=lambda v:v['slot'])
+                late=row['checkpoints'][2]['client']['snapshot']
+                def sock(value):return next(w for w in value['worn'] if w['slot']=='base:socks')
+                if mutation=='original-root-lost':late['root']=[v for v in late['root'] if v['id']!=7]
+                elif mutation=='original-still-worn':sock(late)['id']=7
+                elif mutation=='early-writer':sock(row['checkpoints'][1]['authority']['snapshot'])['id']=6
+                elif mutation=='baseline-writer':
+                    for value in [row['ids']['baseline'],*[row['checkpoints'][0][role]['snapshot'] for role in ('client','authority')]]:sock(value)['id']=6
+                elif mutation=='baseline-proxy':sock(row['ids']['baseline'])['sameReference']=False
+                elif mutation=='writer-wrong-id':sock(late)['id']=999
+                elif mutation=='writer-wrong-type':sock(late)['kind']='Base.Socks_Long'
+                elif mutation=='writer-proxy':sock(late)['sameReference']=False
+                elif mutation=='before-tail-old':sock(row['beforeTail']['snapshot'])['id']=7
+                elif mutation=='receipt-old':sock(row['receipt']['snapshot'])['id']=7
+                else:late['worn']=[w for w in late['worn'] if w['slot']!='base:hat']
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_promotion_requires_native_checkpoint_resume(self):
+        selection=self.selection(kind='mp',moves=True)
+        for mutation in ('missing','rollback','same-native','wrong-sequence','double-body'):
+            rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[2]
+            if mutation=='missing':row.pop('readerResume')
+            elif mutation=='rollback':row['readerResume']['resumedPages']=92
+            elif mutation=='same-native':row['readerResume']['native']='native-front'
+            elif mutation=='wrong-sequence':row['startOrder']=['front','middle','body','front','tail']
+            else:row['body']['starts']=2
+            with self.subTest(mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_move_old_cosmetic_waits_for_client_root_ack_before_authority_wear(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/server/ZZMakeupServer.lua'
+        script="""
+isServer=function()return true end
+local handlers={};Events={}
+for _,name in ipairs({'OnServerStarted','OnClientCommand','OnTick'})do Events[name]={Add=function(fn)handlers[name]=fn end}end
+local prepared,wears,markers,failures=0,0,0,0
+local tile={x=10,y=20,z=0};local player={getUsername=function()return 'client1'end}
+local ids={case='move-earlier',items={old=4},wearPending=true}
+getTimestampMs=function()return 1000 end
+print=function(value)if value:find('[MAKEUP_TEST] PREPARED ',1,true)then markers=markers+1 end end
+sendServerCommand=function(actor,module,name,args)
+ assert(actor==player and module=='MakeupTest')
+ if name=='Prepared'then assert(args.wearPending and wears==0);prepared=prepared+1
+ elseif name=='WornPrepared'then assert(not args.wearPending and wears==1)
+ else assert(name=='Failed');failures=failures+1 end
+end
+package.loaded.QueueHealthEvents={encode=function()return '{}'end}
+package.loaded.QueueTestSelection={cases={'move-earlier'},options={makeup_moves=true}}
+package.loaded.QueueMakeup={validPlacement=function(v)return v==tile end,same=function(a,b)return a==b end,
+ atPlacement=function(actor,value)return actor==player and value==tile end,
+ prepare=function()return {ids=ids}end,
+ wearPrepared=function(s)assert(prepared==1 and markers==0 and s.ids==ids and ids.wearPending);wears=wears+1;ids.wearPending=nil end}
+assert(loadfile(arg[1]))()
+handlers.OnClientCommand('MakeupTest','Prepare',player,{case='move-earlier',placement=tile});handlers.OnTick()
+assert(prepared==1 and wears==0 and markers==0,'old worn before root acknowledgement')
+handlers.OnClientCommand('MakeupTest','WearPrepared',player,{case='move-earlier',item=999})
+assert(failures==1 and wears==0,'foreign item acknowledged root ownership')
+handlers.OnClientCommand('MakeupTest','WearPrepared',player,{case='move-earlier',item=4})
+assert(wears==1 and markers==1,'authority did not publish exact acknowledged worn baseline')
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
     def test_supply_placement_uses_floor_and_current_square_before_any_setup_mutation(self):

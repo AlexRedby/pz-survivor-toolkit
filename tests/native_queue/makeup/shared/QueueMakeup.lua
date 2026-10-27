@@ -10,6 +10,9 @@ function F.same(a,b)
  for k in pairs(b)do if a[k]==nil then return false end end
  return true
 end
+F.moves={'move-earlier','move-later','move-promote','move-deny-writer','move-deny-nested'}
+function F.moveCase(case)for _,value in ipairs(F.moves)do if case==value then return true end end;return false end
+function F.placed(case)return F.supplyCase(case)or F.moveCase(case)end
 F.supplySP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag'}
 F.supplyMP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag','cancel-nested-bag','cancel-world-container'}
 function F.cancel(case)return case=='cancel-waiting'or case:sub(1,7)=='cancel-'end
@@ -153,11 +156,13 @@ function F.snapshot(s)
  local value= {case=s.ids.case,actor=p:getOnlineID(),root=items,worn=worn,
   kit={id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=source==root},
   frontPages=p:getAlreadyReadPages(s.ids.types.front),tailPages=p:getAlreadyReadPages(s.ids.types.tail)}
- if supplyState then value.supply=supplyState;value.placement=F.placement(p)end;return value
+ if supplyState then value.supply=supplyState end
+ if s.ids.move then value.middlePages=p:getAlreadyReadPages(s.ids.types.middle)end
+ if supplyState or s.ids.move then value.placement=F.placement(p)end;return value
 end
 function F.resolve(player,ids)
  if isClient()and player:getOnlineID()~=ids.actor then return end
- if ids.supply and not F.atPlacement(player,ids.placement)then return end
+ if (ids.supply or ids.move)and not F.atPlacement(player,ids.placement)then return end
  local root=player:getInventory()
  for name,wanted in pairs(ids.items)do
   local item,source
@@ -165,46 +170,56 @@ function F.resolve(player,ids)
   if not item or item:getFullType()~=ids.types[name]or item:getContainer()~=source then return end
  end
  local s={player=player,ids=ids}
- for _,name in ipairs({'front','tail'})do
+ for _,name in ipairs(ids.move and {'front','middle','tail'}or {'front','tail'})do
   local item=root:getItemById(ids.items[name]);item:setAlreadyReadPages(ids[name..'Initial'])
   player:setAlreadyReadPages(item:getFullType(),ids[name..'Initial'])
  end
  player:setPerkLevelDebug(Perks.Woodwork,0);player:setPerkLevelDebug(Perks.Doctor,0)
+ if ids.move then player:setPerkLevelDebug(Perks.Cooking,0)end
  local actual=F.snapshot(s);local expected=ids.baseline
  if not F.same(actual.root,expected.root)or not F.same(actual.kit,expected.kit)or #actual.worn~=#expected.worn or not F.same(actual.supply,expected.supply)then return end
  for i,row in ipairs(actual.worn)do
   local before=expected.worn[i]
   if row.id~=before.id or row.kind~=before.kind or row.slot~=before.slot or row.root~=before.root then return end
  end
+ if ids.move then
+  for _,row in ipairs(actual.worn)do for _,slot in ipairs(slots)do
+   if row.slot==tostring(slot)and(not row.root or not row.sameReference or row.container~='root')then return end
+  end end
+ end
  return s
 end
 function F.prepare(player,case,previous,placement)
  assert(not isClient(),'makeup setup requires authority')
- if F.supplyCase(case)then assert(F.atPlacement(player,placement),'makeup supply actor has not settled on exact placement tile')end
+ if F.placed(case)then assert(F.atPlacement(player,placement),'makeup supply actor has not settled on exact placement tile')end
  local root=player:getInventory();cleanupSupply(player,previous)
  for _,slot in ipairs(slots)do local item=player:getWornItem(slot);if item then player:removeWornItem(item,false)end end
  local remove={}
  for i=0,root:getItems():size()-1 do
   local item=root:getItems():get(i)
-  local owned=previous and (item:getID()==previous.items.kit or item:getID()==previous.items.front or item:getID()==previous.items.tail)
+  local owned=previous and (item:getID()==previous.items.kit or item:getID()==previous.items.front or item:getID()==previous.items.tail or item:getID()==previous.items.middle or item:getID()==previous.items.writer)
   for _,slot in ipairs(slots)do if item:getBodyLocation()==slot then owned=true end end
   if owned then remove[#remove+1]=item end
  end
- for _,item in ipairs(remove)do if isServer()then sendRemoveItemFromContainer(root,item)end;root:Remove(item)end
+ for _,item in ipairs(remove)do
+  if previous and item:getID()==previous.items.writer then player:removeWornItem(item,false);if isServer()then sendClothing(player,item:getBodyLocation(),nil)end end
+  if isServer()then sendRemoveItemFromContainer(root,item)end;root:Remove(item)
+ end
  player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
- if not F.supplyCase(case)then require('QueueEnergyPlacement')(player)end
+ if not F.placed(case)then require('QueueEnergyPlacement')(player)end
  assert(not player:isTimedActionInstant()and not getDebug(),'ordinary non-debug makeup timing required')
  local ids={case=case,actor=player:getOnlineID(),items={},types={},target='Base.MakeUp_Crow',alternate='Base.MakeUp_RedStripes2',
   different='Base.MakeUp_EyesShadowWhite',oldType='Base.MakeUp_RedStripes1',slot=tostring(ItemBodyLocation.MAKE_UP_EYES),
   otherSlot=tostring(ItemBodyLocation.MAKE_UP_EYES_SHADOW),producer='ISMakeUpUI.onApplyMakeUp',duration=1}
+ if F.moveCase(case)then ids.move=true;ids.placement={x=placement.x,y=placement.y,z=placement.z}end
  local function seed(name,kind,destination)
   local item=assert((destination or root):AddItem(kind),'native fixture item absent '..kind);ids.items[name]=item:getID();ids.types[name]=kind;return item
  end
  -- Native Eyes supports both Eyes and EyesShadow; no fabricated All kit.
  local source,object,worldBag=root,nil,nil
- if F.supplyCase(case)then
+ if F.supplyCase(case)or case=='move-deny-nested'then
   ids.placement={x=placement.x,y=placement.y,z=placement.z}
-  source,ids.supply,object,worldBag=supply(player,case)
+  source,ids.supply,object,worldBag=supply(player,case=='move-deny-nested'and'apply-nested-bag'or case)
  end
  local kit=seed('kit','Base.MakeupEyeshadow',source)
  if ids.supply then assert(source:AddItem('Base.Pencil'),'native source sentinel missing')end
@@ -218,13 +233,18 @@ function F.prepare(player,case,previous,placement)
   and getScriptManager():FindItem(ids.alternate):getBodyLocation()==ItemBodyLocation.MAKE_UP_EYES
   and getScriptManager():FindItem(ids.oldType):getBodyLocation()==ItemBodyLocation.MAKE_UP_EYES
   and getScriptManager():FindItem(ids.different):getBodyLocation()==ItemBodyLocation.MAKE_UP_EYES_SHADOW,'native cosmetic slots changed')
- for _,name in ipairs({'front','tail'})do
-  local book=seed(name,name=='front'and'Base.BookCarpentry1'or'Base.BookFirstAid1')
-  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and 3 or 1)
+ for _,name in ipairs(ids.move and {'front','middle','tail'}or {'front','tail'})do
+  local book=seed(name,name=='front'and'Base.BookCarpentry1'or name=='middle'and'Base.BookCooking1'or'Base.BookFirstAid1')
+  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and(ids.move and 8 or 3)or 1)
   book:setAlreadyReadPages(ids[name..'Initial']);player:setAlreadyReadPages(book:getFullType(),ids[name..'Initial'])
  end
- if case~='apply-empty'then local old=seed('old',ids.oldType);player:setWornItem(ItemBodyLocation.MAKE_UP_EYES,old)end
+ if case=='move-deny-writer'then seed('writer','Base.Socks_Ankle')end
+ if case~='apply-empty'and not ids.move then local old=seed('old',ids.oldType);player:setWornItem(ItemBodyLocation.MAKE_UP_EYES,old)end
+ -- Native root packet acknowledgement precedes authoritative wearing. This
+ -- avoids manufacturing a same-ID unattached clothing proxy on the client.
+ if case=='move-earlier'then seed('old',ids.oldType);ids.wearPending=true end
  player:setPerkLevelDebug(Perks.Woodwork,0);player:setPerkLevelDebug(Perks.Doctor,0)
+ if ids.move then player:setPerkLevelDebug(Perks.Cooking,0)end
  if worldBag then
   local square=adjacent(player);square:AddWorldInventoryItem(worldBag,.5,.5,0,true);local world=assert(worldBag:getWorldItem())
   ids.supply.world={kind='world-bag',x=square:getX(),y=square:getY(),z=square:getZ(),index=square:getWorldObjects():indexOf(world),
@@ -239,6 +259,14 @@ function F.prepare(player,case,previous,placement)
   for _,slot in ipairs(slots)do sendClothing(player,slot,player:getWornItem(slot))end
  end
  local s={player=player,ids=ids};ids.baseline=F.snapshot(s);return s
+end
+function F.wearPrepared(s)
+ assert(isServer()and s.ids.wearPending and s.ids.case=='move-earlier','unexpected prepared makeup wear')
+ local old=assert(direct(s.player:getInventory(),s.ids.items.old));assert(old:getContainer()==s.player:getInventory())
+ s.player:setWornItem(ItemBodyLocation.MAKE_UP_EYES,old)
+ assert(s.player:getWornItem(ItemBodyLocation.MAKE_UP_EYES)==old,'authority did not wear exact root cosmetic')
+ sendClothing(s.player,ItemBodyLocation.MAKE_UP_EYES,old)
+ s.ids.wearPending=nil;s.ids.baseline=F.snapshot(s)
 end
 function F.output(snapshot,ids)
  local initial={};for _,row in ipairs(ids.baseline.root)do initial[row.id]=true end

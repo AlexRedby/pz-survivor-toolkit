@@ -12,13 +12,16 @@ Events.OnClientCommand.Add(function(module,name,player,args)
   assert(player:getUsername()=='client1'and args.case==config.cases[index],'makeup authority actor/case/order differs')
   if name=='Prepare'then
    assert(not state and not pending,'previous makeup case unsettled')
-   if config.options and config.options.makeup_supplies==true then
+   if config.options and (config.options.makeup_supplies==true or config.options.makeup_moves==true) then
     assert(F.validPlacement(args.placement)and(not placement or F.same(placement,args.placement)),'makeup authority placement target differs')
     pending={prepare=true,since=getTimestampMs(),player=player,placement=args.placement,case=args.case}
    else
     state=F.prepare(player,args.case,previous);sequence=0;raw('PREPARED',state.ids)
     sendServerCommand(player,module,'Prepared',state.ids)
    end
+  elseif name=='WearPrepared'then
+   assert(state and not pending and args.item==state.ids.items.old,'prepared root acknowledgement differs')
+   F.wearPrepared(state);raw('PREPARED',state.ids);sendServerCommand(player,module,'WornPrepared',state.ids)
   elseif name=='Snapshot'then
    assert(state and not pending and type(args.label)=='string'and args.sequence==sequence+1,'makeup authority snapshot ordering differs')
    pending={since=getTimestampMs(),player=player,label=args.label,sequence=args.sequence}
@@ -38,7 +41,7 @@ Events.OnTick.Add(function()
   local time=getTimestampMs();assert(time-pending.since<30000,'makeup authority placement/checkpoint timed out')
   if pending.prepare then
    if not F.atPlacement(player,pending.placement)then return end
-   placement=pending.placement;state=F.prepare(player,pending.case,previous,placement);sequence=0;raw('PREPARED',state.ids)
+   placement=pending.placement;state=F.prepare(player,pending.case,previous,placement);sequence=0;if not state.ids.wearPending then raw('PREPARED',state.ids)end
    sendServerCommand(player,'MakeupTest','Prepared',state.ids);pending=nil;return
   end
   local value=F.snapshot(state)

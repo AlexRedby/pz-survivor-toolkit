@@ -2,13 +2,25 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'ISUI/ISMakeUpUI'
 require 'TimedActions/ISReadABook'
 require 'TimedActions/ISApplyMakeUp'
+require 'TimedActions/ISWearClothing'
 local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
+local moves=config.options and config.options.makeup_moves==true
 local Proof=require 'PZSurvivorToolkit/SourceProof';local T=PZSurvivorToolkit;local native=config.mode=='native'
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
 local state,ids,previous,ui,front,tail,body,submitted,second,beforeTail,edit,verified,pending,authority
 local checkpoints,sequence,outcomes,renderWitness,renderLabel,renderNext,bodyQuiet,finalQuiet
 local bodyRecord,applyQueues,transferStarts,submitting,placement
+local M={}
+function M.name(action)
+ if action==body then return 'body'end
+ if action==M.writer then return 'writer'end
+ if action and action.Type=='ISReadABook'and ids then
+  for _,name in ipairs({'front','middle','tail'})do if action.item and action.item:getID()==ids.items[name]then return name end end
+ end
+ return action and action.Type or false
+end
+function M.order()local names={};for _,action in ipairs(ISTimedActionQueue.getTimedActionQueue(getPlayer()).queue)do names[#names+1]=M.name(action)end;return names end
 local previewShotFrames,previewShotSince,previewShotTaken=0,nil,false
 local uiMethods,bodyMethods={},{}
 local observerFailure
@@ -41,7 +53,7 @@ local function command(name,args)
  args=args or{};args.case=case()
  if isClient()then sendClientCommand('MakeupTest',name,args);return end
  if name=='Prepare'then
-  if config.options and config.options.makeup_supplies==true then assert(F.same(args.placement,placement)and F.atPlacement(getPlayer(),placement),'SP makeup supply placement is not settled')end
+  if config.options and (config.options.makeup_supplies==true or moves) then assert(F.same(args.placement,placement)and F.atPlacement(getPlayer(),placement),'SP makeup supply placement is not settled')end
   state=F.prepare(getPlayer(),case(),previous,args.placement);ids=state.ids;raw('PREPARED',ids)
  elseif name=='Snapshot'then
   authority={case=case(),label=args.label,sequence=args.sequence,at=now(),snapshot=snapshot()};raw('SNAPSHOT',authority)
@@ -93,16 +105,21 @@ local function queueSnapshot()
  return {types=types,hasTimedActions=state.player:hasTimedActions(),nativeActions=state.player:getCharacterActions():size()}
 end
 local function apply()
- if ids.supply then
+ if ids.supply and not moves then
   applyQueues={before=queueSnapshot()}
   assert(empty()and applyQueues.before.nativeActions==0,'supply native application did not start with empty queue')
  end
- if isClient()and(not ids.supply or F.cancel(case()))then
+ if isClient()and(moves or not ids.supply or F.cancel(case()))then
   front=ISReadABook:new(state.player,state.player:getInventory():getItemById(ids.items.front));ISTimedActionQueue.add(front)
+ end
+ if moves then
+  M.middle=ISReadABook:new(state.player,state.player:getInventory():getItemById(ids.items.middle))
+  if case()~='move-later'and case()~='move-deny-writer'then ISTimedActionQueue.add(M.middle)end
+  if case()=='move-deny-writer'then M.writer=ISWearClothing:new(state.player,state.player:getInventory():getItemById(ids.items.writer));ISTimedActionQueue.add(M.writer)end
  end
  if isClient()then bodyRecord={duration=1,starts=0,finishes={},nativeRef=false}end
  submitting=true;ui:onApplyMakeUp();submitting=false
- if ids.supply then applyQueues.after=queueSnapshot();raw('APPLY_QUEUES',{case=case(),evidence=applyQueues})end
+ if ids.supply and not moves then applyQueues.after=queueSnapshot();raw('APPLY_QUEUES',{case=case(),evidence=applyQueues})end
  if isClient()then
   for _,action in ipairs(queue().queue)do
    if action.Type=='ISApplyMakeUp'then assert(not body or body==action,'duplicate native makeup action');body=action end
@@ -110,7 +127,9 @@ local function apply()
   assert(body and body.maxTime==1 and body.item:getID()==ids.items.kit and body.type==ids.target,'native makeup constructor/duration changed')
   local contract,adapter=T.ActionQueuePolicy.inspect(body)
   assert(contract and adapter=='native.ISApplyMakeUp'and contract.cancelWaiting==(not native and body.action==nil),'native makeup producer receipt/allocation differs')
+  if moves and(case()=='move-later'or case()=='move-deny-writer')then ISTimedActionQueue.add(M.middle)end
   addTail()
+  if moves then close();phase='move-front';return end
   if case()=='apply-while-preview'then second=choose(ids.alternate);rendered('overlap-preview','wait-body')
   else close();phase=F.cancel(case())and'wait-front'or'wait-body'end
  else
@@ -171,6 +190,7 @@ Events.OnServerCommand.Add(function(module,name,args)
  end
  if module~='MakeupTest'or done then return end
  if name=='Prepared'then ids=args
+ elseif name=='WornPrepared'then ids=args;state=nil;M.wearReady=true;phase='prepared'
  elseif name=='Snapshot'then authority=args
  elseif name=='Verified'then verified=args
  elseif name=='Failed'then print('[QUEUE_TEST] FAIL makeup authority '..tostring(args.error));done=true end
@@ -190,10 +210,17 @@ Events.OnTick.Add(function()
    for _,name in ipairs({'new','isValid','start','update','stop','perform','complete','getDuration'})do bodyMethods[name]=ISApplyMakeUp[name]end
    assert(T.ActionQueueLifecycle.registerObserver('fixture.makeup',{
     started=observe(function(action)
+     if moves then
+      local name=M.name(action);M.startOrder[#M.startOrder+1]=name
+      if name=='front'then
+       local pages=state.player:getAlreadyReadPages(ids.types.front)
+       if M.readerResume then assert(pages>=M.readerResume.pages,'promoted native reader lost checkpoint pages');M.readerResume.resumedPages=pages;M.resumedAction=action end
+      end
+     end
      if submitting and ids.supply and action.Type=='ISApplyMakeUp'then
       assert(not body and action.item==F.kit(state)and action.type==ids.target,'unexpected native supply body began');body=action
      end
-     if ids and ids.supply and action.Type=='ISInventoryTransferAction'then transferStarts=transferStarts+1 end
+     if ids and(ids.supply or moves)and action.Type=='ISInventoryTransferAction'then transferStarts=transferStarts+1 end
      if action==body then bodyRecord.starts=bodyRecord.starts+1;assert(bodyRecord.starts==1,'native makeup started twice')end
      if action==tail then assert(not beforeTail,'tail began twice');beforeTail={at=now(),snapshot=snapshot()};raw('BEFORE_TAIL',{case=case(),evidence=beforeTail})end
     end),
@@ -209,13 +236,16 @@ Events.OnTick.Add(function()
   end
   assert(now()-since<180000,'makeup timeout '..tostring(case())..' phase='..phase)
   intact()
+  if moves and M.resumedAction and M.resumedAction.action and M.resumedAction:isStarted()then
+   M.readerResume.native=tostring(M.resumedAction.action)
+  end
   if phase=='prepare'then
-   if config.options and config.options.makeup_supplies==true and index==1 then
+   if config.options and (config.options.makeup_supplies==true or moves) and index==1 then
     assert(type(makeupClientReady)=='function','test-only native clothing connection readiness probe unavailable')
     if not makeupClientReady()then return end
    end
    if not empty()then return end
-   if config.options and config.options.makeup_supplies==true then
+   if config.options and (config.options.makeup_supplies==true or moves) then
     if not placement then
      local square=require('QueueEnergyPlacement')(player)
      placement={x=square:getX(),y=square:getY(),z=square:getZ()};return
@@ -223,9 +253,13 @@ Events.OnTick.Add(function()
     if index==1 and not F.atPlacement(player,placement)then return end
     assert(F.atPlacement(player,placement),'makeup supply actor left the settled placement tile')
    end
-   checkpoints,sequence,outcomes,transferStarts={},0,{},0;phase='prepared';command('Prepare',{placement=placement})
+   checkpoints,sequence,outcomes,transferStarts,M.startOrder={},0,{},0,{};phase='prepared';command('Prepare',{placement=placement})
   elseif phase=='prepared'and ids then
    if not state then state=F.resolve(player,ids);if not state then return end end
+   if ids.wearPending then
+    assert(not M.wearReady and ids.move and case()=='move-earlier','unexpected prepared makeup wear descriptor')
+    sendClientCommand('MakeupTest','WearPrepared',{case=case(),item=ids.items.old});state=nil;phase='wear-prepared';return
+   end
    if player:tooDarkToRead()then return end
    checkpoint('baseline','open')
   elseif phase=='checkpoint'and authority then
@@ -241,6 +275,25 @@ Events.OnTick.Add(function()
   elseif phase=='location-clear'then chooseLocation(ids.different);checkpoint('location-cleared','different')
   elseif phase=='different'then choose(ids.different,true);rendered('different-preview','close-location')
   elseif phase=='close-location'then close();checkpoint('closed','tail')
+  elseif phase=='move-front'then
+   if queue().current~=front or not front.action or not front:isStarted()or front:getJobDelta()<=0
+    or state.player:getAlreadyReadPages(ids.types.front)<=ids.frontInitial then return end
+   assert(not body.action and bodyRecord.starts==0,'move test body allocated before edit')
+   local before=M.order();local physical=snapshot();local token=body.toolkitQueueOperation
+   assert(token and token~=front.toolkitQueueOperation and token~=M.middle.toolkitQueueOperation and token~=tail.toolkitQueueOperation
+    and(not M.writer or token~=M.writer.toolkitQueueOperation),'native makeup shares an unrelated operation token')
+   local frontNative=tostring(front.action);local pages=physical.frontPages;local delta=front:getJobDelta()
+   local target=case()=='move-promote'and front or case()=='move-deny-writer'and M.writer or M.middle
+   local accepted,reason=false,false
+   if not native then accepted,reason=T.ActionQueue.move(queue(),body,target,case()=='move-later')end
+   local expected=not native and case()~='move-deny-writer'and case()~='move-deny-nested'
+   assert(accepted==expected,'makeup move admission differs '..tostring(reason))
+   assert(F.same(physical,snapshot())and token==body.toolkitQueueOperation and not body.action,'move mutated paid state or operation ownership')
+   edit={at=now(),accepted=accepted,reason=reason or false,before=before,after=M.order(),bodyUnallocated=true,
+    ownershipPreserved=true,frontPages=pages,frontDelta=delta,frontNativeBefore=frontNative,
+    frontNativeAfter=tostring(front.action),frontRetained=queue():indexOf(front)~=-1,tailRetained=queue():indexOf(tail)~=-1}
+   if expected and case()=='move-promote'then M.readerResume={pages=pages}end
+   raw('EDIT',{case=case(),evidence=edit});phase='wait-body'
   elseif phase=='wait-front'then
    if queue().current~=front or not front.action or not front:isStarted()or front:getJobDelta()<=0 then return end
    assert(not body.action and bodyRecord.starts==0,'pending makeup body allocated before cancellation')
@@ -263,10 +316,10 @@ Events.OnTick.Add(function()
    local final=snapshot();local output=F.output(verified.snapshot,ids)
    emit({event='case',id=case(),status='passed',ids=ids,checkpoints=checkpoints,receipt=verified,clientFinal=final,
     submitted=submitted,second=second or false,output=output,body=bodyRecord or false,outcomes=outcomes,
-    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true,applyQueues=applyQueues,supplyTransferStarts=ids.supply and transferStarts or nil})
+    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true,applyQueues=applyQueues,supplyTransferStarts=(ids.supply or moves)and transferStarts or nil,startOrder=moves and M.startOrder or nil,readerResume=M.readerResume or nil})
    previous=ids;index=index+1
    state,ids,ui,front,tail,body,submitted,second,beforeTail,edit,verified,pending,authority=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord,applyQueues=nil,nil,nil,nil,nil,nil,nil;since=now();phase='prepare'
+   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord,applyQueues=nil,nil,nil,nil,nil,nil,nil;M.middle,M.writer,M.readerResume,M.wearReady,M.resumedAction=nil,nil,nil,nil,nil;since=now();phase='prepare'
    if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
   end
  end)

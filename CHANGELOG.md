@@ -34,6 +34,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.312
+
+- Allow moving owned, unstarted Host makeup around independent queued work and before resumable reading. Track the exact root kit, current plain cosmetics and declared output type; keep prior resource changes, shared writers, capacity-sensitive transfers, depletion and unsupported producers protected.
+
 ### 0.1.311
 
 - Extend Disassembly to native copper, gold, silver and aluminum salvage, plus clothing, sheets and belts that can be recovered into materials. Follow native item-state and equipment restrictions without adding XP or furnace roles.

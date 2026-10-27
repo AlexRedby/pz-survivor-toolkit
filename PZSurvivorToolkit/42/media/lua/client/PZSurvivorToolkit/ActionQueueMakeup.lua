@@ -9,6 +9,8 @@ if not T or type(actionClass)~='table'or type(base)~='table'then
  function Makeup.installUI()return false end
  return Makeup
 end
+local Move=require 'PZSurvivorToolkit/ActionQueueMakeupMove'
+local applyMove=Move and Move.apply
 T.ActionQueueMakeup=Makeup
 local baseNew,forceCancel=base.new,base.forceCancel
 local receiptKey,previewKey={},{}
@@ -113,7 +115,7 @@ function Makeup.install(policy,resources)
  if type(policy)~='table'or type(policy.registerNative)~='function'or type(resources)~='function'
   or not Proof.matches('media/lua/shared/TimedActions/ISApplyMakeUp.lua',3487330035,nil,true)
   or not Proof.closure(actionClass.new,'ISApplyMakeUp.lua')then return false end
- policy.registerNative('ISApplyMakeUp',function(action)
+ policy.registerNative('ISApplyMakeUp',function(action,context)
   if not bodyUnchanged(action)then return end
   local c=resources(action)
   c.targets[action.character]=true
@@ -123,6 +125,10 @@ function Makeup.install(policy,resources)
   c.interrupt='finish-step'
   c.cancelWaiting=pendingProof(action)and true or false
   c.cancelOperation=c.cancelWaiting
+  if c.cancelWaiting and Move and T.ActionQueueMakeupMove==Move and Move.apply==applyMove
+   and type(applyMove)=='function'and Proof.closure(applyMove,'ActionQueueMakeupMove.lua')then
+   applyMove(action,c,policy,context or {contracts={},items={}})
+  end
   return c
  end)
  return true
