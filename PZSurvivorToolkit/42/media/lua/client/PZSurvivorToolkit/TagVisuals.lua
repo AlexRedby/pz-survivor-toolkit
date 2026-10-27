@@ -30,7 +30,7 @@ local families = {
     raw = {red, "Item_Steak"}, cooked = {green, "Item_Pan"}, burnt = {brown, "Item_Charcoal"},
     edible = {green, "Item_Fork"}, dismantle = {blue, "Item_Screwdriver"},
     bandage = {red, "Item_Bandage"}, disinfectant = {red, "Item_Alcohol"}, dirty = {brown, "Item_BandageDirty"},
-    ignite = {yellow, "Item_Lighter"},
+    ignite = {yellow, "Item_Lighter"}, smelting = {brown, "Item_Ingot_Iron"},
     ingredient = {green, "Item_Pan"}, beverage = {green, "Item_GlassJar"},
     fruit = {green, "Item_Apple"}, vegetable = {green, "Item_Carrots"}, meat = {green, "Item_Steak"},
 }

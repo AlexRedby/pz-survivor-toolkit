@@ -1,6 +1,17 @@
 -- Read physical capabilities without creating items or changing native definitions.
 local Properties = {}
 
+-- Fitness definitions also admit equipment added by mods. Read the declarations
+-- only; do not load the fitness UI or run exercise callbacks during filtering.
+function Properties.fitness(script, item)
+    local name = item and item.getFullType and item:getFullType()
+        or script and script.getFullName and script:getFullName()
+    if not name or not FitnessExercises or not FitnessExercises.exercisesType then return nil end
+    for _, exercise in pairs(FitnessExercises.exercisesType) do
+        if exercise.item == name then return true end
+    end
+end
+
 local function slot(value)
     return value ~= nil and value ~= false and tostring(value) ~= ""
 end

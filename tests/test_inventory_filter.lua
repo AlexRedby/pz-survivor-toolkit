@@ -20,6 +20,8 @@ require = function(name)
         or name == "PZSurvivorToolkit/ItemUsageTags"
         or name == "PZSurvivorToolkit/ItemBaitTags"
         or name == "PZSurvivorToolkit/ItemRepairTags"
+        or name == "PZSurvivorToolkit/ItemLaundryTags"
+        or name == "PZSurvivorToolkit/ItemSmeltingTags"
         or name == "PZSurvivorToolkit/ItemMediaTags" or name == "PZSurvivorToolkit/ItemCategories"
         or name == "PZSurvivorToolkit/ItemCategoryRules" or name == "PZSurvivorToolkit/ItemCategoryData"
         or name == "PZSurvivorToolkit/LegacyItemCategories"

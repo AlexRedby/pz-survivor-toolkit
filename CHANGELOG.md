@@ -32,9 +32,16 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.301
+### 0.1.302
 
 - Avoid rescanning a dropped radio's tile on every render of its open controls window. Reuse the matched item while its live list position and identity remain valid, and resolve again after pickup, replacement, list changes or rebinding. Late multiplayer arrivals remain discoverable; translated labels and native window controls are preserved.
+
+### 0.1.301
+
+- Separate dumbbells and barbells, including forged equipment, from Hygiene into Fitness. Equipment declared by additional fitness exercises gains the same role; toiletries retain Hygiene.
+- Extend Dirty to currently stained, natively washable clothing and bags. Clean/dirty previews remain independent of remaining supplies, and washing removes the state without changing bandaging roles.
+- Add Smelting for material subjects of verified native furnace recipes, including metal scrap, ore, broken glass and sand. Exclude accompanying fuel, tools and flux; partial sandbags need remaining material.
+- Preserve current laundry and smelting states in filters, container rules and warehouse snapshots, including older snapshot formats and manual tag corrections.
 
 ### 0.1.300
 
@@ -1383,6 +1390,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.71
+
+- Expose current covered-part laundry stains without initializing item visuals, drawing random values or changing item state. Unsupported native metadata remains unknown.
 
 ### 0.1.70
 
