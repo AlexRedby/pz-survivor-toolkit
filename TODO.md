@@ -229,6 +229,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Container groups
 
+- [ ] Integrate current `origin/main`, resolve release metadata without losing concurrent features, run the affected container/tag/manifest checks, then push the integrated commit to `main` with a normal fast-forward update.
 - [ ] Repeat `quartermaster-distribution/sort` on the final group-synchronization implementation in an isolated full-pack Host profile. The earlier native run verified six shared/local configuration stages, editor layout and exact book-ID transfers with matching server receipts; its source audit changed while the final synchronization gate was being added. Two fresh final-source runs stopped before world startup. Focused tests cover initial group sync, membership-before-snapshot revision markers, persistence, stale edits, local detachment, appearance, legacy consumers and multi-container routing. Close after a final-source native pass; keep simultaneous-client claims separate.
 
 # Preview tooling
