@@ -1,83 +1,166 @@
+# Shared in-game verification campaign
+
+Collect the outstanding native checks below into one coordinated campaign. Reuse compatible game sessions instead of launching once per TODO item; retain separate case evidence and unfinished gates. These are coverage blocks, not executable multi-suite jobs yet. Implementation/audit tasks below the campaign keep their acceptance requirements and join when ready.
+
+## Preparation and fewer-launch execution
+
+- [ ] Freeze one current complete selected-pack snapshot, matching prepared Toolkit/Java/CleanUI/DAMN copies and explicit external inputs; finish relevant offline checks before starting the game. Recheck historical missing-source claims below against the actual lock. Do not drop selected mods to make full-pack checks launch, reuse stale snapshots, or install conditional additions without the requested installation decision.
+- [ ] Add shared-session execution for selected compatible fixtures before scheduling the campaign. Current `batch` calls `native.prepare` and `runner.run` per job, and each run stops its processes (`tools/check_action_queue.py`, `tools/queue_checks/runner.py`); listing jobs together does not reduce launches. Reuse `tests/native_queue/support/QueueFixtureSession.lua` where applicable: exact owned resources, case/epoch receipts, drained actions/network requests, removed phase observers, server/client cleanup acknowledgements and quarantine on uncertain effects. Qualify SP use and each migrated fixture rather than assuming existing multi-client support covers them. Restore inventory/equipment, UI, health/injuries, weight, position, time/weather and sandbox changes between phases; never clear unrelated state.
+- [ ] Resolve current selection restrictions before claiming combined full-pack coverage: `item-retention` requires two EN/RU Host clients and forbids `organizedCategories_core`, while `warehouse-manifest/snapshot` requires it. Full-pack retention needs a proven fixture/contract migration; a reduced-pack control cannot close that gate. `torch-refill` accepts one EN client and one case; `storage-profile`/`smart-deposit` currently cover only SP/EN single cases; vehicle fixtures do not prove second-client/passenger/driving behavior. Extend exact validators, roles and receipts with focused checks before combining them; do not bypass guards.
+- [ ] Produce one executable campaign plan and coverage report after compatibility gates are resolved. Group by exact source lock, SP/Host topology, language, sandbox, control mode and world lifecycle; record actual launch count and reasons for splits. Run setup checks first, stop dependent phases after setup/cleanup failures, and rerun only failed or newly affected phases. Preserve ordinary action durations, independent native/queue-disabled controls, desktop ownership and full runtime-log auditing; functional success alone does not close a gate.
+
+| Session group | Combine after fixture qualification | Required separate boundaries |
+|---|---|---|
+| SP with the unchanged complete pack | Inventory/storage, torch refill, food/UI and compatible vehicle checks | Natural-age/cooling baselines and timing must not inherit time, lighting, injury or workload changes; isolate performance from video/capture work. |
+| Menu Host with two EN/RU clients | Warehouse edits, Wishlist, retention after its pack conflict is resolved, remote vehicle/cart views and joining-client cases | Single-client fixtures need explicit role/topology support; until then retain a qualified one-client Host group. |
+| Save/reload continuation | Compatible persistence checks from a verified stopped seed | Real save/quit, sealed export/copy and restart remain required. Preserve identities and exact pack/build; reuse worlds only where the suite contract supports it. |
+| Controls and external environments | Compatible controls within each unchanged mode/platform | Native/queue-disabled modes, loader inheritance controls, macOS/Linux qualification and real WAN reproduction remain distinct. |
+| Conditional mod/manual checks | Source-resolved installed additions, visual inspections and catalogue browsing | Keep installation decisions and missing inputs explicit. The normal silent runner cannot prove audible music playback; use an appropriate requested audio-check session. |
+
+## Inventory, crafting, food and storage block
+
+### Welding torch refill
+
+- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host using the complete locked 67-mod sources. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
+
+### Retained-item full-pack compatibility
+
+- [ ] Repeat the retained-item scenario with the complete current 67-mod selection using explicit locked sources; the earlier reduced-pack checks do not establish full-pack conservation.
+
+### Full-pack follow-up checks
+
+- [ ] Run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete current 67-Mod-ID pack and explicit locked sources. The earlier bounded checks used 45 Mod IDs.
+
+### Warehouse client workload
+
+- [ ] Extend the full 67-mod SP warehouse walking capture to native menu Host, including another player's container edits, crafting inputs and quick transfers with loot hidden. Existing SP walking and Host transfer/Grab checks do not establish concurrent-player behavior or the user-save stutter cause; keep GPU/FPS claims separate from Lua wall time and UI callback cadence.
+
+### Configure container UI repairs
+
+- [ ] Run the isolated `container-configuration/edit` native UI scenario after AeroSpace can discover the owned client window. Inspect the filter, checked electronics rows, advanced window foreground, scrolled lists and expanded group dropdown screenshots. Focused Lua regressions pass; the attempted macOS B42.21 run stopped at window admission before world startup, so no visual pass is established. Seven selected Workshop mods are unavailable; verify the full selected pack once present.
+
+### Item catalogue test world
+
+- [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen. The isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text. Seven selected Workshop mods remain outside coverage; five startup font errors also remain unclassified.
+
+### Food age and cooling
+
+- [ ] Complete live qualification of the prepared CleanUI food-age correction. `prepare_install --cleanui` now supplies a source-checked complete dependency copy; use that exact source in fresh native snapshots.
+  - [ ] Extend the passing 199/200-item SP natural-expiry/regroup/reopen case in both UI modes to expiry while clipped/hidden, later expand/refresh, repeated group rebuilds and Host/server replication. Record item identities, age/lastAged, boundary events and actual regrouping without observer age writes; the separate old `inventory-freshness` case still has `naturalAgeing=false`.
+  - [ ] Qualify live refrigeration/freezing, power changes and transfers between environments. Native `Food.updateAge` owns elapsed-time/freezing calculations and events; container transitions and generator toggles call it, while `finishupdate` can retire inert food and client cell processing is skipped. The new headless cooling controls use configured native states, not real appliance transitions. Preserve those calls and avoid a global age-result cache.
+
+## Vehicle and cart block
+
+Group compatible visual checks around prepared vehicles. Keep speed/healing measurements free of leftover injuries, load or capture overhead; put destructive salvage and persistent environment changes after checks needing the original state. Remote-view gates require an actual second client.
+
+### Cart motion full-pack compatibility
+
+- [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack using explicit locked sources.
+
+### Shopping cart turn footwork
+
+- [ ] Run the accepted native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
+
+### Vehicle entry and exit roof clipping
+
+- [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP checks with 55 mods and menu-Host checks with 67 mods cover stationary Base.CarNormal driver/passenger transitions and both cancellations, separate lead-foot steps for entry/exit, measured support-foot contacts, pelvis transfer, body/clothing agreement, clean HUD-free video review and authoritative seat occupancy. They do not establish second-client or other vehicle geometry coverage.
+
+### Sport headlight push-button cycle
+
+- [ ] Run the isolated sport push-button SP/Host checks when the shared desktop test slot is available. Inspect off/low/high/off releases, held/released appearance at all four scales and server power acknowledgements. Current focused regressions cover the cycle and ACK guards; native launch was blocked at admission. Keep the VVA-pair coexistence gate below separate from the available 45-mod test subset.
+
+### Approved truck headlight rocker
+
+- [ ] Complete the isolated Host truck-rocker run and inspect its server power acknowledgements. The focused regressions and full-mod-set single-player visual check already cover the off/low/high sequence, all four scales, complete pull-knob/legend removal and unchanged standard/sport controls.
+
+### In-cabin vehicle door control
+
+- [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.
+- [ ] Inspect passenger expanded/retracted controls and dashboard scaling in game; the current live scenario covers the stationary driver and programmatic callbacks.
+
+### Vehicle diagnostics controls
+
+- [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
+
+## Selected-mod block with input and installation gates
+
+Prepare fixtures before launch where possible; add them to compatible inventory/vehicle/Host sessions only after their source and installation prerequisites are met. Keep all reload and second-player requirements.
+
+### Winter, base and Jeep additions
+
+- [ ] After installation is requested, check snow/wetness and Open Jackets/VVA/cart visuals, exterior-light insects and performance, Jeep parts/animations/lighting/repair/towing, and furniture movement with exact container contents and Quartermaster designations in isolated full-pack macOS B42.21 SP/Host saves. Check reload and the second player's view/state; author declarations and selection checks do not establish runtime compatibility.
+
+### New Music selection
+
+- [ ] After installation is requested, check new ABBA/Queen/Fleetwood Mac media loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
+
+### Open Jackets and Climb Ladders selection
+
+- [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, plus ladder ascent/descent, occupied exits, moved ladders, reload and second-player synchronization in isolated full-pack macOS B42.21 SP/Host saves. Selection and author support claims do not establish runtime compatibility.
+
+### Vehicle Repair Overhaul verification
+
+- [ ] Resolve both VRO modules from Workshop 2757712197 or explicit sources, then check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
+
+### Vehicle aim roof fix verification
+
+- [ ] Resolve CarRoofFix through Workshop or an explicit source override, then verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
+
+### Nick's Turn Off Fridges selection
+
+- [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
+
+### Selected QoL additions
+
+- [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.
+
+### Vanilla vehicle visuals
+
+- [ ] After installation is requested, check the selected VVA/Animated Vehicle Parts Fix pair on macOS B42.21 in isolated full-pack SP/Host saves: removed hood/door interiors, running-engine unload/reload, Toolkit door controls and headlight/reverse-light alignment, plus a second Host player’s animation visibility. The fix rebuilds the native light list and VVA replaces vehicle models; static source review does not establish visual compatibility or MP animation synchronization.
+
+## Reproductions requiring missing inputs or specific peers
+
+Collect missing recipe inputs and original-episode diagnostics before reserving a session. Localhost cannot replace the requested WAN episode; absence of an intermittent failure is not a fix.
+
+### Sandwich ingredient consumption on a joining client
+
+- [ ] Reproduce the reported Project Cook “+” then Cook ingredient-consumption issue with the original bread add-ins and sandwich toppings, which are not yet identified. Compare actual raw hunger/nutrition deductions and the joining-client, host and server container states. If reproduced, fix the demonstrated shared cause while preserving native portions, completed costs and unrelated actions; require a failing regression and full-pack Host qualification with the queue enabled and disabled.
+
+### Vehicle ownership desync
+
+- [ ] Capture synchronous `[VEHICLE_SYNC]` logs from the original episode with two different vehicle positions: the controlled localhost race confirms ownership loss but does not establish the cause of the user's case. Check real WAN latency/packet loss.
+
+### Medical visual packet reproduction
+
+- [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 from MP10 using the preserved diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
+
+## Startup, restart and runtime diagnostics
+
+Capture these during relevant campaign launches rather than adding an unrelated launch for every observation. Required clean-start/restart/platform controls still need their own process lifecycle.
+
+### Legacy Host launchers
+
+- [ ] Retain the optional `start-host.ps1` / `start-host.command` files, packaging and launcher checks only until automatic Host loading has native macOS/Linux qualification as well as Windows. Remove those scripts and their packaging/test consumers once a normal client-only-loader launch on each platform starts a patched Host child with saved approvals and an inherited-loader control proves no duplicate agent. They remain fallback entrypoints for existing installations, not the normal user workflow.
+
+### Runtime observations to resolve
+
+- [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
+
+- [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
+
+- [ ] Diagnose intermittent menu-Host child startup failures. Container-group Host02 emitted ZombieBuddy premain output, then stalled before engine logs; `jcmd Thread.print` could not attach. Host03 emitted no child stdout and reported `Stream closed` 20.054 seconds after `HOST_REQUEST`. B42.21 `CoopMaster.watchServer()` destroys the child after 20 seconds unless `readServer()` has received its first line; timing supports that watchdog explanation, but the child exit reason was not preserved and the underlying JVM stall is unknown. Fresh Host04 passed with unchanged startup guards, so a retry does not establish a fix. Capture bounded child stderr, first-output timing and native termination reason on recurrence; preserve readiness, process-ownership and cleanup guards.
+
+## Development-gated additions to this campaign
+
+- [ ] Collect native acceptance cases from the remaining [queue root fixes](#root-fix-for-the-action-queue), [cancelled recovery](#extend-cancelled-queue-recovery) and [family migrations](#further-action-queue-migration) when their source audits/contracts or implementations are ready. Keep original cases, queue-on/off controls, exact consumption/cleanup and two-client reset/death/disconnect requirements; unresolved implementation work is not a runnable verification item. Add compatible cases to shared sessions instead of launching after each small fix.
+
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
 
-# Cart motion full-pack compatibility
-
-- [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack using explicit locked sources.
-
-# Sandwich ingredient consumption on a joining client
-
-- [ ] Reproduce the reported Project Cook “+” then Cook ingredient-consumption issue with the original bread add-ins and sandwich toppings, which are not yet identified. Compare actual raw hunger/nutrition deductions and the joining-client, host and server container states. If reproduced, fix the demonstrated shared cause while preserving native portions, completed costs and unrelated actions; require a failing regression and full-pack Host qualification with the queue enabled and disabled.
-
-# Welding torch refill
-
-- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host using the complete locked 67-mod sources. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
-
-# Legacy Host launchers
-
-- [ ] Retain the optional `start-host.ps1` / `start-host.command` files, packaging and launcher checks only until automatic Host loading has native macOS/Linux qualification as well as Windows. Remove those scripts and their packaging/test consumers once a normal client-only-loader launch on each platform starts a patched Host child with saved approvals and an inherited-loader control proves no duplicate agent. They remain fallback entrypoints for existing installations, not the normal user workflow.
-
-# Shopping cart turn footwork
-
-- [ ] Run the accepted native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
-
-# Winter, base and Jeep additions
-
-- [ ] After installation is requested, check snow/wetness and Open Jackets/VVA/cart visuals, exterior-light insects and performance, Jeep parts/animations/lighting/repair/towing, and furniture movement with exact container contents and Quartermaster designations in isolated full-pack macOS B42.21 SP/Host saves. Check reload and the second player's view/state; author declarations and selection checks do not establish runtime compatibility.
-
-# New Music selection
-
-- [ ] After installation is requested, check new ABBA/Queen/Fleetwood Mac media loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
-
-# Open Jackets and Climb Ladders selection
-
-- [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, plus ladder ascent/descent, occupied exits, moved ladders, reload and second-player synchronization in isolated full-pack macOS B42.21 SP/Host saves. Selection and author support claims do not establish runtime compatibility.
-
-# Retained-item full-pack compatibility
-
-- [ ] Repeat the retained-item scenario with the complete current 67-mod selection using explicit locked sources; the earlier reduced-pack checks do not establish full-pack conservation.
-
-# Vehicle entry and exit roof clipping
-
-- [ ] Verify entry/exit from a second Host client's view and on low-roof/tall-cab vehicles with the full selected B42.21 pack. Current isolated macOS SP checks with 55 mods and menu-Host checks with 67 mods cover stationary Base.CarNormal driver/passenger transitions and both cancellations, separate lead-foot steps for entry/exit, measured support-foot contacts, pelvis transfer, body/clothing agreement, clean HUD-free video review and authoritative seat occupancy. They do not establish second-client or other vehicle geometry coverage.
-
 # Container editor visual states
 
 - [ ] Agree item-catalog cleanup criteria before hiding native debug/dev entries or changing technical display-name fallbacks. Preserve saved item-name selections; the current catalogue already excludes items marked hidden/obsolete, while the rule preview intentionally includes hidden-but-routable items.
-
-# Vehicle Repair Overhaul verification
-
-- [ ] Resolve both VRO modules from Workshop 2757712197 or explicit sources, then check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
-
-# Vehicle aim roof fix verification
-
-- [ ] Resolve CarRoofFix through Workshop or an explicit source override, then verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
-
-# Nick's Turn Off Fridges selection
-
-- [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
-
-# Selected QoL additions
-
-- [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.
-
-# Sport headlight push-button cycle
-
-- [ ] Run the isolated sport push-button SP/Host checks when the shared desktop test slot is available. Inspect off/low/high/off releases, held/released appearance at all four scales and server power acknowledgements. Current focused regressions cover the cycle and ACK guards; native launch was blocked at admission. Keep the VVA-pair coexistence gate below separate from the available 45-mod test subset.
-
-# Vanilla vehicle visuals
-
-- [ ] After installation is requested, check the selected VVA/Animated Vehicle Parts Fix pair on macOS B42.21 in isolated full-pack SP/Host saves: removed hood/door interiors, running-engine unload/reload, Toolkit door controls and headlight/reverse-light alignment, plus a second Host player’s animation visibility. The fix rebuilds the native light list and VVA replaces vehicle models; static source review does not establish visual compatibility or MP animation synchronization.
-
-# Approved truck headlight rocker
-
-- [ ] Complete the isolated Host truck-rocker run and inspect its server power acknowledgements. The focused regressions and full-mod-set single-player visual check already cover the off/low/high sequence, all four scales, complete pull-knob/legend removal and unchanged standard/sport controls.
-
-# In-cabin vehicle door control
-
-- [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.
-- [ ] Inspect passenger expanded/retracted controls and dashboard scaling in game; the current live scenario covers the stationary driver and programmatic callbacks.
 
 # Root fix for the action queue
 
@@ -125,12 +208,11 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Near-term adapters
 
-The medical packet mismatch below is an unresolved runtime observation; its cause has not been attributed to queue scheduling.
+The unresolved medical packet mismatch is tracked in the [shared campaign](#medical-visual-packet-reproduction); its cause has not been attributed to queue scheduling.
 
 Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
 
 - [ ] SaucedCarts: world/vehicle/floor endpoints and custom callbacks need separate contracts. Add correlated server results with protection against duplicate/late responses before removing protection for active MP transfer and MP returns; check failure/partial batch without predicting success. Separately check replacing/resetting the cart itself while held; generators are currently protected while the cart is held. If needed, extend the capacity proof to deferred installation of upstream hooks and proven effects of the freed space.
-- [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 from MP10 using the preserved diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
 
 Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.
 
@@ -152,40 +234,22 @@ These families need contract/coverage audits. Missing verification or continued 
 
 For each migrated family, add an independent positive example and a dangerous example with a shared resource in both directions. When lifecycle changes, run the corresponding live gate. Changing a label/icon must remain a presentation/translation change; changing cancellation/transfer permission requires a separate behavior contract and check.
 
-# Vehicle ownership desync
-
-- [ ] Capture synchronous `[VEHICLE_SYNC]` logs from the original episode with two different vehicle positions: the controlled localhost race confirms ownership loss but does not establish the cause of the user's case. Check real WAN latency/packet loss.
-
-# Full-pack follow-up checks
-
-- [ ] Run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete current 67-Mod-ID pack and explicit locked sources. The earlier bounded checks used 45 Mod IDs.
-
 # Inventory infrastructure proposals
 
 - [ ] Keep the discarded details-selection mapping deferred per the prior decision; revisit only after native profiling shows material cost or a requested change requires this boundary. InventoryFilter still calls the upstream all-item mapper before replacing/clearing its result. The actual-source probe `.codex/investigations/stabilization-audit-20261026/selection_restore_audit.py` confirms 288,060 lookups for 60 empty-selection restores of 4,800 items, but adds no in-game latency evidence. If revisited, replace only verified mapper leaves while preserving external ordering/filter hooks, synchronous intermediate restores, unknown/icon-mode fallback and render-capped selection/Shift-anchor correctness.
-
-# Warehouse client workload
-
-- [ ] Extend the full 67-mod SP warehouse walking capture to native menu Host, including another player's container edits, crafting inputs and quick transfers with loot hidden. Existing SP walking and Host transfer/Grab checks do not establish concurrent-player behavior or the user-save stutter cause; keep GPU/FPS claims separate from Lua wall time and UI callback cadence.
 
 # Measured stabilization candidates
 
 - [ ] Defer Smart Deposit actor-identity cache hardening until a real consumer replaces the actor within a slot while retaining its pane, drag object and selection without normal lifecycle events. Current game respawn and CleanUI mode switching recreate the inventory UI. Eight current-source probe cases (`.codex/investigations/smart-deposit-actor-current/`) show an artificially retained hint can be stale below 200 ms, while fresh admission/execution and recreated UI use the current actor. If an actual retained-UI consumer is found, add actor identity to the cache key and qualify that path; do not treat ordinary respawn as a demonstrated bug.
 
-- [ ] Complete live qualification of the prepared CleanUI food-age correction. `prepare_install --cleanui` now supplies a source-checked complete dependency copy; use that exact source in fresh native snapshots.
-  - [ ] Extend the passing 199/200-item SP natural-expiry/regroup/reopen case in both UI modes to expiry while clipped/hidden, later expand/refresh, repeated group rebuilds and Host/server replication. Record item identities, age/lastAged, boundary events and actual regrouping without observer age writes; the separate old `inventory-freshness` case still has `naturalAgeing=false`.
-  - [ ] Qualify live refrigeration/freezing, power changes and transfers between environments. Native `Food.updateAge` owns elapsed-time/freezing calculations and events; container transitions and generator toggles call it, while `finishupdate` can retire inert food and client cell processing is skipped. The new headless cooling controls use configured native states, not real appliance transitions. Preserve those calls and avoid a global age-result cache.
-  - [ ] Optimize remaining vanilla full-stack render work separately through a public CleanUI-owned updater used by both renderers, or another proven narrow ownership boundary. The current helper is private; Toolkit/BC's freshness indicator installer only owns read/draw work. Avoid private-closure rewriting, whole-renderer replacement or globally suppressing `Food.updateAge`. Re-measure source-locked native calls and timing in both renderers across collapsed/expanded and primary/drag passes, separately from indicator aggregation. Require preserved ageing and renderer side effects plus a measured reduction before adopting an optimization; the old 8-9 ms collapsed baseline is historical.
+- [ ] Optimize remaining vanilla full-stack render work separately through a public CleanUI-owned updater used by both renderers, or another proven narrow ownership boundary. The current helper is private; Toolkit/BC's freshness indicator installer only owns read/draw work. Avoid private-closure rewriting, whole-renderer replacement or globally suppressing `Food.updateAge`. Re-measure source-locked native calls and timing in both renderers across collapsed/expanded and primary/drag passes, separately from indicator aggregation. Require preserved ageing and renderer side effects plus a measured reduction before adopting an optimization; the old 8-9 ms collapsed baseline is historical.
 
-# Vehicle diagnostics controls
-
-- [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
+The food-age runtime gates are grouped in the [shared campaign](#food-age-and-cooling); this optimization still requires implementation and measurement before acceptance.
 
 # Process friction
 
 - [ ] Reconnect the cumulative-agent-memory MCP after its runtime update: `memory.read` rejects requests with `Memory MCP is from an older release; reconnect the server`. The bundled CLI remains the fallback but needs access to its external state directory. Complete when normal MCP reads and capture writes work again.
 
-- [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
 
@@ -207,20 +271,10 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Qualify the bare game-JVM Kahlua model/server harness before using it as a full-suite gate: the storage segment passes, but the complete `test_wishlist_model.lua` run fails the departed-player weak-reference/GC assertion (`/tmp/pz-wishlist-v3-kahlua/model.log`). Distinguish harness lifetime/GC behavior from a product leak; preserve the passing normal LuaJIT suite and native SP/Host evidence.
 
-- [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
 
 - [ ] Add a reusable continuity diagnostic for native cart captures. Grip and motion checks accepted a 54-degree torso route-switch snap; diagnosing it required an external replay helper for `injury-torso-poses.jsonl`. The captured adjacent-frame JVM regression protects that failure. Complete when the normal diagnostic workflow reports correction rotation separately from native pose changes, with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without inventing a general visual-quality PASS.
 
 - [ ] Add isolated output selection to `JavaPatches/build.py`: the builder writes only to `ROOT/build`, so preserving an existing potentially shared artifact while building a fresh task candidate requires a separate source copy. During container-group native preparation, a previously source-matched artifact in another worktree was rebuilt concurrently; the manifest guard rejected changed `build.py`, `ScriptItemProperties.java` and `RecipeItemProperties.java` fingerprints, requiring a fresh task-owned build. Provide an explicit output directory with the same source-manifest validation and atomic promotion; do not weaken the stale-artifact guard.
-- [ ] Diagnose intermittent menu-Host child startup failures. Container-group Host02 emitted ZombieBuddy premain output, then stalled before engine logs; `jcmd Thread.print` could not attach. Host03 emitted no child stdout and reported `Stream closed` 20.054 seconds after `HOST_REQUEST`. B42.21 `CoopMaster.watchServer()` destroys the child after 20 seconds unless `readServer()` has received its first line; timing supports that watchdog explanation, but the child exit reason was not preserved and the underlying JVM stall is unknown. Fresh Host04 passed with unchanged startup guards, so a retry does not establish a fix. Capture bounded child stderr, first-output timing and native termination reason on recurrence; preserve readiness, process-ownership and cleanup guards.
-
-# Configure container UI repairs
-
-- [ ] Run the isolated `container-configuration/edit` native UI scenario after AeroSpace can discover the owned client window. Inspect the filter, checked electronics rows, advanced window foreground, scrolled lists and expanded group dropdown screenshots. Focused Lua regressions pass; the attempted macOS B42.21 run stopped at window admission before world startup, so no visual pass is established. Seven selected Workshop mods are unavailable; verify the full selected pack once present.
-
-# Item catalogue test world
-
-- [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen. The isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text. Seven selected Workshop mods remain outside coverage; five startup font errors also remain unclassified.
 
 # Preview tooling
 
