@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Build and prepare the complete local mod set for the server and all clients."""
+"""Build and prepare the two repository-owned mods for the server and all clients."""
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,13 +11,9 @@ import sys
 import tempfile
 
 try:
-    from .cleanui_source import prepare_cleanui
-    from .damnlib_source import prepare_damnlib
     from .package_mod import ROOT, validate, validate_no_symlinks
     from .queue_checks.mod_selection import mod_ids, metadata
 except ImportError:
-    from cleanui_source import prepare_cleanui
-    from damnlib_source import prepare_damnlib
     from package_mod import ROOT, validate, validate_no_symlinks
     from queue_checks.mod_selection import mod_ids, metadata
 
@@ -35,8 +30,7 @@ LOAD_ORDER = (
 
 
 def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None,
-            check: bool = False, kotlin_home: Path | None = None,
-            cleanui: Path | None = None, damnlib: Path | None = None) -> Path:
+            check: bool = False, kotlin_home: Path | None = None) -> Path:
     root = root.resolve()
     dist = root / "dist"
     output = dist / "SurvivorQoL"
@@ -59,18 +53,6 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     workshop = ini.get("WorkshopItems", "").split(";")
     if any(item and (not item.isascii() or not item.isdigit()) for item in workshop):
         raise ValueError("WorkshopItems must contain only numeric Workshop IDs; local mods have none")
-    dependencies = (("CleanUI", cleanui, "--cleanui", prepare_cleanui, "cleanui-source-patch.json"),
-                    ("damnlib", damnlib, "--damnlib", prepare_damnlib, "damnlib-source-patch.json"))
-    for identifier, path, option, _, _ in dependencies:
-        if identifier in selected and path is None:
-            raise ValueError(f"Selected {identifier} requires {option} with its complete source mod root; "
-                             "preparation includes its reviewed source correction")
-        if path is not None:
-            if identifier not in selected:
-                raise ValueError(f"{option} requires {identifier} in the selected mod list")
-            source = path.resolve()
-            if source.is_relative_to(output) or output.is_relative_to(source):
-                raise ValueError(f"{identifier} input must be outside the prepared output being replaced")
 
     dist.mkdir(exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".SurvivorQoL-", dir=dist))
@@ -78,10 +60,6 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     promoted = False
     try:
         staging = temporary / "prepared"
-        for identifier, path, _, prepare_dependency, record in dependencies:
-            if path is not None:
-                provenance = prepare_dependency(path, staging / "mods" / identifier)
-                (staging / record).write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
 
         command = [sys.executable, str(root / "JavaPatches/build.py")]
         for option, value in (("--game", game), ("--jdk", jdk), ("--kotlin-home", kotlin_home)):
@@ -147,20 +125,17 @@ def main() -> int:
     parser.add_argument("--game", type=Path, help="game Java folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--jdk", type=Path, help="JDK 25+ folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--kotlin-home", type=Path, help="Kotlin 2.4.21 compiler distribution; also accepts KOTLIN_HOME or kotlinc on PATH")
-    parser.add_argument("--cleanui", type=Path,
-                        help="complete CleanUI source mod root; required when selected, copied and corrected privately")
-    parser.add_argument("--damnlib", type=Path,
-                        help="complete DAMN Library source mod root; required when selected, copied without obsolete battery recipes")
     parser.add_argument("--check", action="store_true", help="also run the native JVM regression checks")
     args = parser.parse_args()
     try:
         output = prepare(game=args.game, jdk=args.jdk, check=args.check,
-                         kotlin_home=args.kotlin_home, cleanui=args.cleanui, damnlib=args.damnlib)
+                         kotlin_home=args.kotlin_home)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     print(f"Ready: {output}")
-    print("Copy the contents of mods/ into Zomboid/mods on the server and every client.")
+    print("Copy PZSurvivorToolkit and PZToolkitJavaPatches from mods/ into Zomboid/mods on every side.")
+    print("All third-party mods, including CleanUI and NewMusic, come from Workshop and are not bundled.")
     print("For a new server profile, copy Server/SurvivorQoL-selected.ini into Zomboid/Server.")
     print("For an existing profile, copy only Mods= and WorkshopItems= into its INI; keep its other settings.")
     print("Clients use this same prepared copy and do not need Python, a JDK or a Kotlin compiler.")

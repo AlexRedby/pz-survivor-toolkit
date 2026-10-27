@@ -95,7 +95,7 @@ local function setup(options)
     local nativeInstanceof=instanceof
     instanceof=function(value,name)
         return type(value)=='table'and((value.class=='IsoPlayer'and name=='IsoGameCharacter')
-            or((value.class=='Clothing'or value.class=='DrainableComboItem')and name=='InventoryItem'))or nativeInstanceof(value,name)
+            or((value.class=='Clothing'or value.class=='DrainableComboItem'or value.class=='InventoryContainer')and name=='InventoryItem'))or nativeInstanceof(value,name)
     end
     LuaTimedActionNew={new=function(action)return {lua=action,isStarted=function()return true end,
         getTable=function()return action end,hasStalled=function()return false end,getJobDelta=function()return 0 end}end}
@@ -110,7 +110,7 @@ local function setup(options)
     luautils={stringStarts=function(text,prefix)return text:sub(1,#prefix)==prefix end}
     local scriptText=read(NativeActionRoot:gsub('/media/lua/?$','')..'/media/scripts/generated/items/clothing.txt')
     local locations,scripts={},{}
-    ItemType={CLOTHING={}}
+    ItemType={CLOTHING={},CONTAINER={}}
     for name,body in scriptText:gmatch('item%s+(MakeUp_[%w_]+)%s*{(.-)}')do
         local slot=assert(body:match('BodyLocation%s*=%s*([%w_:]+)'))
         if not locations[slot]then
@@ -217,13 +217,41 @@ local function setup(options)
     local function worn(kind)
         local item=instanceItem(kind);inventory.values[#inventory.values+1]=item;item.container=inventory;player.worn[item.slot]=item;return item
     end
+    local function bag(parent)
+        parent=parent or inventory
+        local kind='Base.Bag_Schoolbag'
+        if not scripts[kind]then
+            scripts[kind]={class='Item',getFullName=function()return kind end,getItemType=function()return ItemType.CONTAINER end,
+                hasComponents=function(self)return self.components==true end,getObsolete=function()return false end,
+                getLuaCreate=function(self)return self.luaCreate end,getItemConfigKey=function(self)return self.configKey end,
+                getItemConfig=function(self)return self.config end,getReplaceOnUse=function()end,getReplaceOnDeplete=function()end,
+                getActualWeight=function()return 1 end}
+        end
+        local item=f.item(kind);item.class='InventoryContainer';item.container=parent
+        local contents={class='ItemContainer',values={},owner=item,kind='none'}
+        function contents:getItems()return list(self.values)end
+        function contents:getContainingItem()return self.owner end
+        function contents:getParent()return self.parent end
+        function contents:getType()return self.kind end
+        function contents:getAcceptItemFunction()return self.accept end
+        function contents:getOnlyAcceptCategory()return self.category end
+        function contents:getItemById(id)for _,member in ipairs(self.values)do if member:getID()==id then return member end end end
+        function item:getInventory()return self.contents end
+        function item:getScriptItem()return scripts[kind]end
+        function item:getContainer()return self.container end
+        function item:getWorldItem()return self.world end
+        function item:hasComponents()return self.components==true end
+        item.contents=contents
+        parent.values[#parent.values+1]=item
+        return item,contents
+    end
     local function waiting()
         local head=f.action(ISBaseTimedAction,{Type='IndependentHead'});head.action={}
         local queue=f.queue(head);local window=ui();select(window,'Base.MakeUp_LipsRed');window:prerender();window:onApplyMakeUp()
         assert(#queue.queue==2,'native multiplayer callback did not append exactly one body')
         return queue,queue.queue[2],window
     end
-    return{f=f,player=player,inventory=inventory,kit=kit,ui=ui,select=select,worn=worn,waiting=waiting,
+    return{f=f,player=player,inventory=inventory,kit=kit,ui=ui,select=select,worn=worn,bag=bag,waiting=waiting,
         makeup=makeup,policy=policy,move=move,scripts=scripts,packets=packets,events=events,views=views,options=options,
         nativeSelect=nativeSelect,nativeApply=nativeApply,visuals=function()return visuals end,factories=function()return made end,
         bridge=function(value)bridgeOK=value end,mode=function(value)client=value end}
@@ -452,6 +480,15 @@ local function inspectMove(s,a)
     local ok=s.move.apply(a,result,s.policy,{contracts={},items={}})
     return ok,result
 end
+local function carried(s,nested)
+    local outer,source=s.bag()
+    local inner
+    s.player.worn.back=outer
+    if nested then inner,source=s.bag(source)end
+    for i,item in ipairs(s.inventory.values)do if item==s.kit then table.remove(s.inventory.values,i);break end end
+    source.values[#source.values+1]=s.kit;s.kit.container=source
+    return outer,inner,source
+end
 value,queue,body,original=movable()
 local beforeFactories,beforeVisuals=value.factories(),value.visuals()
 writes,inventoryWrites=value.player.writes,value.inventory.writes
@@ -460,6 +497,7 @@ assert(allowed and footprint.knownInputs and not footprint.unknownOutputs
     and footprint.items[value.kit:getID()]and footprint.items[original:getID()]
     and footprint.itemTypes[value.kit:getFullType()]and footprint.outputTypes[body.type],
     'pure native makeup move proof omitted exact kit/worn/output resources')
+assert(footprint.containers[value.inventory],'root input footprint omitted its exact container')
 assert(not footprint.capacityNonIncreasing and value.factories()==beforeFactories and value.visuals()==beforeVisuals
     and value.player.writes==writes and value.inventory.writes==inventoryWrites and value.kit.uses==5 and #value.packets==0,
     'move inspection allocated, initialized visuals, changed state or credited speculative capacity')
@@ -469,6 +507,123 @@ for _,slot in ipairs({ItemBodyLocation.MAKE_UP_FULL_FACE,ItemBodyLocation.MAKE_U
     local item=value.worn(kind);allowed,footprint=inspectMove(value,body)
     assert(allowed and footprint.items[item:getID()],'another worn cosmetic slot was omitted')
 end
+
+for _,nested in ipairs({false,true})do
+    value,queue,body,original=movable()
+    local outer,inner,source=carried(value,nested)
+    beforeFactories,beforeVisuals=value.factories(),value.visuals()
+    writes,inventoryWrites=value.player.writes,value.inventory.writes
+    allowed,footprint=inspectMove(value,body)
+    assert(allowed and footprint.items[value.kit:getID()]and footprint.items[outer:getID()]
+        and footprint.containerOwners[outer:getID()]and footprint.itemTypes[outer:getFullType()]
+        and footprint.containers[source]and footprint.containers[value.inventory]
+        and(not inner or footprint.items[inner:getID()]and footprint.containerOwners[inner:getID()]
+            and footprint.containers[outer:getInventory()]),'carried kit lost exact ancestor/container resources')
+    assert(value.factories()==beforeFactories and value.visuals()==beforeVisuals and value.player.writes==writes
+        and value.inventory.writes==inventoryWrites and value.kit.uses==5 and value.kit:getContainer()==source
+        and source.values[#source.values]==value.kit and #value.packets==0,
+        'carried move inspection allocated or changed source, inventory, wear, cost or packets')
+    local head,tail=queue.queue[1],queue.queue[3]
+    assert(value.policy.evaluateMove(queue,body,tail,true).allowed,'carried makeup could not move later across independent reader')
+    queue.queue[2],queue.queue[3]=tail,body
+    assert(value.policy.evaluateMove(queue,body,tail,false).allowed,'carried makeup could not move earlier across independent reader')
+    head.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+    local promoted=value.policy.evaluateMove(queue,body,head,false)
+    assert(promoted.allowed and promoted.preempt,'carried makeup could not be promoted before active independent reader')
+    body.action={}
+    assert(not value.policy.evaluateMove(queue,body,tail,false).allowed,'allocated carried makeup became movable')
+end
+
+for _,change in ipairs({'kit-lost','outer-lost','outer-duplicate','outer-duplicate-id','inner-duplicate','cycle',
+    'owner-backref','inventory-backref','parent','foreign-root','world','ground','floor','proximity','corpse',
+    'source-callback','ancestor-callback','category','bag-components','bag-script-components','bag-lua-create',
+    'bag-config','bag-config-key','bag-class','bag-held','helper-binding','deep-chain'})do
+    value,queue,body,original=movable()
+    local outer,inner,source=carried(value,true)
+    assert(inspectMove(value,body))
+    if change=='kit-lost'then source.values={}
+    elseif change=='outer-lost'then
+        for i,item in ipairs(value.inventory.values)do if item==outer then table.remove(value.inventory.values,i);break end end
+    elseif change=='outer-duplicate'then value.inventory.values[#value.inventory.values+1]=outer
+    elseif change=='outer-duplicate-id'then
+        local duplicate=value.f.item('Base.Pencil');duplicate.id=outer:getID();value.inventory.values[#value.inventory.values+1]=duplicate
+    elseif change=='inner-duplicate'then outer:getInventory().values[#outer:getInventory().values+1]=inner
+    elseif change=='cycle'then outer.container=source;source.values[#source.values+1]=outer
+    elseif change=='owner-backref'then source.owner=outer
+    elseif change=='inventory-backref'then inner.contents={}
+    elseif change=='parent'then source.parent={class='IsoObject'}
+    elseif change=='foreign-root'then outer.container={class='ItemContainer',getAcceptItemFunction=function()end,
+        getOnlyAcceptCategory=function()end,getType=function()return'inventorymale'end,getParent=function()return{}end,
+        getItems=function()return list({outer})end,getItemById=function()return outer end}
+    elseif change=='world'then outer.world={}
+    elseif change=='ground'then outer.container=nil;outer.world={}
+    elseif change=='floor'then source.kind='floor'
+    elseif change=='proximity'then source.kind='proximityInv'
+    elseif change=='corpse'then source.kind='twistInv_corpses'
+    elseif change=='source-callback'then source.accept='Unknown.Callback'
+    elseif change=='ancestor-callback'then outer:getInventory().accept='Unknown.Callback'
+    elseif change=='category'then source.category='Appearance'
+    elseif change=='bag-components'then outer.components=true
+    elseif change=='bag-script-components'then outer:getScriptItem().components=true
+    elseif change=='bag-lua-create'then outer:getScriptItem().luaCreate='Unknown.Callback'
+    elseif change=='bag-config'then outer:getScriptItem().config={}
+    elseif change=='bag-config-key'then outer:getScriptItem().configKey='Unknown.Config'
+    elseif change=='bag-class'then outer.class='ForeignContainer'
+    elseif change=='bag-held'then value.player.primary=outer
+    elseif change=='helper-binding'then value.policy.addContainerResources=function()error('foreign container helper executed')end
+    elseif change=='deep-chain'then
+        for i=1,33 do local bag,contents=value.bag(source);source=contents end
+        source.values[#source.values+1]=value.kit;value.kit.container=source
+    end
+    allowed,footprint=inspectMove(value,body)
+    assert(not allowed and footprint.knownInputs==false and footprint.unknownOutputs and footprint.cancelWaiting
+        and footprint.cancelOperation and footprint.containers==nil and footprint.containerOwners==nil,
+        change..' admitted malformed carried ancestry or leaked staged resources/cancellation state')
+    for _ in pairs(footprint.items)do error(change..' leaked staged ancestor IDs')end
+    assert(value.kit.uses==5 and #value.packets==0,'denied carried inspection changed cost/packets')
+    assert(value.policy.evaluateCancel(queue,body).allowed,change..' blocked zero-effect owned waiting deletion')
+end
+
+for _,count in ipairs({32,33})do
+    value,queue,body=movable()
+    local source=value.inventory
+    for i=1,count-1 do local bag,contents=value.bag(source);source=contents end
+    for i,item in ipairs(value.inventory.values)do if item==value.kit then table.remove(value.inventory.values,i);break end end
+    source.values[#source.values+1]=value.kit;value.kit.container=source
+    assert(inspectMove(value,body)==(count==32),'carried depth bound must include root: '..count)
+end
+
+-- Earlier effects may invalidate the current bag snapshot without being the
+-- action being crossed. Later ancestor consumers remain ordinary dependencies.
+for _,where in ipairs({'prefix','crossed'})do
+    local changes={'ancestor-use','ancestor-type','ancestor-container','ancestor-transfer','capacity'}
+    if where=='prefix'then changes[#changes+1]='exact-container'end
+    for _,change in ipairs(changes)do
+    value,queue,body=movable()
+    local outer,inner,source=carried(value,true)
+    local other=value.f.action(ISBaseTimedAction,{Type='MakeupAncestorProbe'})
+    local c={items={},itemTypes={},targets={},containerOwners={}}
+    if change=='ancestor-use'then c.items[outer:getID()]=true
+    elseif change=='ancestor-type'then c.dynamicInputs={[outer:getFullType()]=true}
+    elseif change=='ancestor-container'then c.containerOwners[inner:getID()]=true
+    elseif change=='exact-container'then c.containers={[source]=true}
+    elseif change=='ancestor-transfer'then
+        other=value.f.action(ISInventoryTransferAction,{item=outer,srcContainer=value.inventory,destContainer=value.inventory})
+    else
+        other=value.f.action(ISInventoryTransferAction,{item=value.f.item('Base.Pencil'),srcContainer=source,destContainer=value.inventory})
+    end
+    if change~='capacity'and change~='ancestor-transfer'then
+        PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('test.makeup-ancestor',{
+            types={'MakeupAncestorProbe'},matches=function(a)return a==other end,inspect=function()return c end})
+    end
+    if where=='prefix'then
+        queue.queue[1],queue.current=other,other
+        assert(not inspectMove(value,body),'earlier '..change..' preserved carried snapshot proof')
+    else
+        queue.queue[3]=other
+        assert(not value.policy.evaluateMove(queue,body,other,true).allowed,'makeup crossed '..change..' affecting carried ancestry')
+    end
+end end
 
 for _,change in ipairs({'one-use','replacement','weight-empty','nan-weight','held-kit','secondary-kit','kit-components','kit-class',
     'kit-world','kit-nested','kit-duplicate','kit-id','output-components','output-type','obsolete','output-replacement',
