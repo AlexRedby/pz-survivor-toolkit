@@ -1,3 +1,8 @@
+# Container tag release and audit
+
+- [ ] Integrate the latest main in this worktree, check both delivered component versions and focused regressions, then commit and push the agreed container/tag changes to main.
+- [ ] Audit current tags against actual item definitions for practical capabilities, skill progression and storage destinations; report verified mismatches and proposals without silently changing ambiguous gameplay semantics.
+
 # Shopping cart animation port
 
 - [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
@@ -129,3 +134,11 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Vehicle ownership desync
 
 - [ ] Capture synchronous `[VEHICLE_SYNC]` logs from the original episode with two different vehicle positions: the controlled localhost race confirms ownership loss but does not establish the cause of the user's case. Check real WAN latency/packet loss.
+
+# Configure container UI repairs
+
+- [ ] Run the isolated `container-configuration/edit` native UI scenario after AeroSpace can discover the owned client window. Inspect the filter, checked electronics rows, advanced window foreground, scrolled lists and expanded group dropdown screenshots. Focused Lua regressions pass; the attempted macOS B42.21 run stopped at window admission before world startup, so no visual pass is established. Seven selected Workshop mods are unavailable; verify the full selected pack once present.
+
+# Item catalogue test world
+
+- [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen. The isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text. Seven selected Workshop mods remain outside coverage; five startup font errors also remain unclassified.

@@ -32,6 +32,9 @@ require = function(name)
     if name == 'PZSurvivorToolkit/TagRulePicker' then return {open = function(args) openedRulePicker = args end} end
     assert(name == 'PZSurvivorToolkit/ItemTags')
     return {enabled = function() return enabled end,
+        requiresItemRule = function(id) return id=='readable' or id=='literature' or id=='writeable'
+            or id=='fresh' or id=='stale' or id=='rotten' end,
+        choices = function(tags) return tags.menuChoices or tags end,
         normalizeRule = function(value)
             local result = {mode = value and value.mode or 'all', include = {}, exclude = {}}
             for _, field in ipairs({'include', 'exclude'}) do
@@ -105,6 +108,15 @@ local function click(p, id) local row = assert(find(p, id), 'missing ' .. id); p
 assert(open())
 local p = LootSorter._picker
 assert(p.children[#p.children] == p.dimmer, 'tag switch bypasses preset dimmer')
+assert(p.filter.nativeFont == UIFont.Medium, 'filter font was assigned only on the Lua wrapper after native creation')
+local originalFontHeight = getTextManager().getFontHeight
+getTextManager().getFontHeight = function(_, font) return font == UIFont.Medium and 40 or 32 end
+p:setHeight(380);p:layout()
+assert(p.minimumHeight > 380 and p.height >= p.minimumHeight
+    and p.listbox.y + p.listbox.height < p.btnSave.y, 'large-font minimum window overlaps its list/footer')
+getTextManager().getFontHeight = originalFontHeight
+p:setHeight(580);p:layout()
+
 assert(p.joypadButtonsY[4][1] == p.toolkitTagSwitch and p.joypadButtonsY[5][1] == p.toolkitTagRuleButton
     and p.listbox.y == 192)
 p:setWidth(520); p:setHeight(700); p:prerender()
@@ -265,25 +277,51 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     itemPicker.selectedCats.NewMissingCategory = nil; itemPicker.needRebuild = true; itemPicker:prerender()
     assert(not find(itemPicker, 'NewMissingCategory'), 'removed saved category left a stale row')
     seed, seedIndex = assert(find(itemPicker, 'seed'))
+    local previousEditor = openedRulePicker
     click(itemPicker,'seed')
-    assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.mode=='all'
-        and openedRulePicker.rule.include[1]=='seed' and openedRulePicker.scriptItems==scriptCatalog,
-        'partial seed tag did not open a locale-independent real-item rule draft')
+    assert(openedRulePicker == previousEditor, 'one-click tag selection unexpectedly opened advanced rules')
+    assert(itemPicker.toolkitTagRuleTouched and itemPicker.toolkitTagRule.mode=='any'
+        and itemPicker.toolkitTagRule.include[1]=='seed', 'partial tag was not selected as a stable union rule')
     unchanged(itemPicker.selectedCats,catsBefore,'partial tag click changed exact category picks')
     unchanged(itemPicker.selectedItems,itemsBefore,'partial tag click persisted localized names')
-    assert(openedRulePicker.selectedTag=='seed','refined row lost the explicit initial tag')
-    openedRulePicker.onApply({mode='all',include={'seed'},exclude={}},'seed')
     local suggestion=appearanceSelections[#appearanceSelections]
     assert(suggestion.picker==itemPicker and suggestion.kind=='tag' and suggestion.key=='seed',
-        'accepted rule did not forward first explicit tag to appearance')
-    assert(itemPicker.toolkitTagRuleTouched and itemPicker.toolkitTagRule.include[1]=='seed')
-    unchanged(itemPicker.selectedCats,catsBefore,'rule Apply changed manual categories')
-    unchanged(itemPicker.selectedItems,itemsBefore,'rule Apply changed manual items')
-    assert(itemPicker.selectedPresets.Pantry=='generation','rule Apply changed a manual preset')
+        'direct tag selection did not forward first explicit tag to appearance')
+    assert(itemPicker.selectedPresets.Pantry=='generation','direct tag click changed a manual preset')
+    local checked,total=adapter.state(itemPicker.selectedCats,seed,itemPicker.toolkitTagRule)
+    assert(checked==1 and total==1,'selected partial tag is not checked')
+    itemPicker.onlyChecked,itemPicker.needRebuild=true,true;itemPicker:prerender()
+    assert(find(itemPicker,'seed'),'Only Checked hid the applied tag rule')
+    itemPicker.onlyChecked,itemPicker.needRebuild=false,true;itemPicker:prerender()
+    seed,seedIndex=find(itemPicker,'seed')
     itemPicker.listbox.selected=seedIndex
     itemPicker.listbox.onJoypadDown(itemPicker.listbox,Joypad.AButton)
-    assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.include[1]=='seed',
-        'controller bypassed the stable rule draft for a partial tag')
+    assert(#itemPicker.toolkitTagRule.include==0 and openedRulePicker==previousEditor,
+        'controller failed to uncheck a direct rule tag')
+    itemPicker.toolkitTagRule={mode='all',include={'farming'},exclude={'seed','food'}}
+    click(itemPicker,'seed')
+    assert(itemPicker.toolkitTagRule.mode=='all' and #itemPicker.toolkitTagRule.include==2
+        and #itemPicker.toolkitTagRule.exclude==1 and itemPicker.toolkitTagRule.exclude[1]=='food',
+        'direct selection replaced advanced conditions or retained a contradictory exclusion')
+    itemPicker.selectedCats={};itemPicker.selection=itemPicker.selectedCats
+    local foodRow=assert(find(itemPicker,'food'))
+    assert(not foodRow.requiresRule, 'whole-category exclusion fixture changed')
+    adapter.select(itemPicker,foodRow,true)
+    assert(#itemPicker.toolkitTagRule.exclude==0 and #itemPicker.toolkitTagRule.include==3
+        and itemPicker.toolkitTagRule.mode=='all' and next(itemPicker.selectedCats)==nil,
+        'excluded whole-category tag bypassed the advanced rule via exact picks')
+    local suggestionsBefore=#appearanceSelections
+    adapter.select(itemPicker,foodRow,true)
+    assert(#appearanceSelections==suggestionsBefore, 'reselecting an existing rule tag supplied appearance again')
+    local limitRule={mode='all',include={},exclude={'food'}}
+    for i=1,64 do limitRule.include[i]='limit'..i end
+    itemPicker.toolkitTagRule=limitRule
+    adapter.select(itemPicker,foodRow,true)
+    assert(itemPicker.toolkitTagRule==limitRule and #limitRule.include==64 and limitRule.exclude[1]=='food'
+        and next(itemPicker.selectedCats)==nil and #appearanceSelections==suggestionsBefore,
+        'selection beyond the rule limit partially changed selections, exclusions or appearance')
+    itemPicker.toolkitTagRule={mode='any',include={'seed'},exclude={}}
+
     itemPicker.onlyContents,itemPicker.needRebuild=true,true;itemPicker:prerender()
     assert(find(itemPicker,'seed'),'Only Contents hid a partial category planting input')
     itemPicker.onlyContents,itemPicker.needRebuild=false,true;itemPicker:prerender()
@@ -291,21 +329,73 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(itemPicker.selectedCats.OC_Snack,'whole-category tag stopped selecting exact category IDs')
     unchanged(itemPicker.selectedItems,itemsBefore,'whole-category batch changed manual items')
     itemPicker.btnClear.onclick(itemPicker);itemPicker:prerender()
-    assert(next(itemPicker.selectedCats)==nil,'native Uncheck all failed to clear exact category picks')
+    assert(next(itemPicker.selectedCats)==nil and #itemPicker.toolkitTagRule.include==0
+        and #itemPicker.toolkitTagRule.exclude==0,'Uncheck all failed to clear category/tag picks')
     unchanged(itemPicker.selectedItems,itemsBefore,'Uncheck all removed existing manual items')
     itemPicker.filter:setText('seed');itemPicker.needRebuild=true;itemPicker:prerender()
     itemPicker.btnAll.onclick(itemPicker)
-    assert(openedRulePicker.rule.mode=='any' and openedRulePicker.rule.include[1]=='seed',
-        'Select all omitted a partial filtered tag')
-    openedRulePicker.onApply({mode='any',include={'seed'},exclude={}})
+    assert(itemPicker.toolkitTagRule.mode=='any' and itemPicker.toolkitTagRule.include[1]=='seed'
+        and openedRulePicker==previousEditor, 'Select all did not directly select the partial filtered tag')
     unchanged(itemPicker.selectedItems,itemsBefore,'Select all rule Apply persisted localized names')
     assert(next(itemPicker.selectedCats)==nil,'Select all broadened a partial category')
     itemPicker.toolkitTagRuleButton.onclick(itemPicker)
     assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
+    itemPicker.onlyChecked=true
+    openedRulePicker.onApply({mode='all',include={},exclude={'seed'}})
+    itemPicker:prerender()
+    assert(not find(itemPicker,'seed'), 'advanced Apply failed to refresh checked rows')
     assert(catalogReads == readsBefore + 1 and tagReads == projectionReads,
         'search, selection, saved-category changes or rule opening re-enumerated the item/tag catalog')
 end
 OrganizedCategories = nil
+do
+    categoryTags.OC_ToyWeapons={'weapon','ranged'}
+    availableCats[#availableCats+1]='OC_ToyWeapons'
+    scriptCatalog={script('Cap gun','OC_ToyWeapons',{'toy'})}
+    OrganizedCategories={getScriptInventoryDisplayCategory=function(value) return value.uiCategory end}
+    open();local toyPicker=LootSorter._picker
+    local toy=assert(find(toyPicker,'toy'))
+    assert(toy.requiresRule and #toy.categories==0,
+        'all currently known items were refined, but their legacy category was selected wholesale')
+    click(toyPicker,'toy')
+    assert(toyPicker.toolkitTagRule.include[1]=='toy' and not toyPicker.selectedCats.OC_ToyWeapons,
+        'toy checkbox stored a ranged-weapon category instead of the toy rule')
+    scriptCatalog[#scriptCatalog+1]=script('Crossbow','OC_ToyWeapons',{'weapon','ranged'})
+    open();toyPicker=LootSorter._picker
+    toy=assert(find(toyPicker,'toy'))
+    assert(toy.requiresRule and #toy.categories==0,'new real weapon broadened the toy row')
+    OrganizedCategories=nil
+end
+do
+    categoryTags.OC_Reading={'readable'}
+    availableCats[#availableCats+1]='OC_Reading'
+    scriptCatalog={script('Book','OC_Reading',{'readable'})}
+    OrganizedCategories={getScriptInventoryDisplayCategory=function(value) return value.uiCategory end}
+    open();local readingPicker=LootSorter._picker
+    local readable=assert(find(readingPicker,'readable'))
+    assert(readable.requiresRule and #readable.categories==0,'content capability collapsed into a category')
+    click(readingPicker,'readable')
+    assert(readingPicker.toolkitTagRule.include[1]=='readable' and not readingPicker.selectedCats.OC_Reading,
+        'Readable checkbox will accept unreadable instances from the same category')
+    OrganizedCategories=nil
+end
+do
+    categoryTags.OC_Fruit={'food','perishable'}
+    availableCats[#availableCats+1]='OC_Fruit'
+    local actual={'food','perishable'}
+    actual.menuChoices={'food','perishable','fresh','stale','rotten'}
+    scriptCatalog={script('Apple','OC_Fruit',actual)}
+    OrganizedCategories={getScriptInventoryDisplayCategory=function(value) return value.uiCategory end}
+    open();local foodPicker=LootSorter._picker
+    local rotten=assert(find(foodPicker,'rotten'),'future food states missing from script choices')
+    assert(rotten.requiresRule and #rotten.categories==0,'freshness choice collapsed into food category')
+    click(foodPicker,'rotten')
+    assert(foodPicker.toolkitTagRule.include[1]=='rotten' and not foodPicker.selectedCats.OC_Fruit,
+        'rotten-only choice will collect every apple')
+    assert(not find(foodPicker,'compost'),'removed Compost tag remains in the container picker')
+    assert(#actual==2,'picker injected possible states into actual script tags')
+    OrganizedCategories=nil
+end
 print('Quartermaster tag view checks passed: owned controls, exact/refined selections, filters, controller, modes, reopens and opt-out.')
 scriptCatalog = {}
 enabled = true

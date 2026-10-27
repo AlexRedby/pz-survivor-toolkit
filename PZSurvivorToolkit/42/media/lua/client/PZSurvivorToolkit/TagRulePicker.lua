@@ -17,6 +17,12 @@ local function closed(owner)
     return owner and (owner.removed or (owner.isReallyVisible and not owner:isReallyVisible())
         or (owner.getIsVisible and not owner:getIsVisible()))
 end
+-- Keep the native list viewport guard when replacing doDrawItem. The base
+-- prerender supplies the stencil for rows crossing the top/bottom edge.
+local function rowVisible(list, y, item)
+    return item.height > 0 and y + list:getYScroll() + item.height > 0
+        and y + list:getYScroll() < list.height
+end
 local function contains(values, id)
     for index, value in ipairs(values) do if value == id then return index end end
 end
@@ -56,7 +62,7 @@ function Picker:refreshPreview()
         end
     elseif self.sourceScriptItems then
         for _, script in ipairs(self.sourceScriptItems) do
-            if Tags.matchesRule(Tags.forScriptItem(script), self.rule) then names[#names + 1] = script:getDisplayName() end
+            if Tags.matchesScriptRule(script, self.rule) then names[#names + 1] = script:getDisplayName() end
         end
     else
         for _, category in ipairs(self.categories) do
@@ -145,40 +151,49 @@ function Picker:createChildren()
     ISCollapsableWindowJoypad.createChildren(self)
     local width, height = self.width, self.height
     local fontHeight = getTextManager():getFontHeight(UIFont.Small)
+    local controlHeight = math.max(26, fontHeight + 8)
+    local searchY = math.max(34, self:titleBarHeight() + 8)
+    local groupY, modeY = searchY + controlHeight + 6, searchY + (controlHeight + 6) * 2
+    local footerY = height - controlHeight - 16
+    self.hintY = footerY - fontHeight - 26
     local function button(x, y, w, label, callback)
-        local result = ISButton:new(x, y, w, 26, label, self, callback)
+        local result = ISButton:new(x, y, w, controlHeight, label, self, callback)
         result:initialise(); result:instantiate(); UIStyle.button(result); self:addChild(result)
         return result
     end
-    self.search = ISTextEntryBox:new("", 12, 34, width - 24, 26)
+    self.search = ISTextEntryBox:new("", 12, searchY, width - 24, controlHeight)
+    self.search:setFont(UIFont.Small)
     self.search:initialise(); self.search:instantiate(); self.search:setTooltip(text("Search")); self:addChild(self.search)
-    self.group = ISComboBox:new(12, 66, width - 24, 26)
+    self.group = ISComboBox:new(12, groupY, width - 24, controlHeight)
     self.group:initialise(); self.group:instantiate()
     self.group:addOptionWithData(text("AllGroups"), false)
     for _, family in ipairs(self.families) do self.group:addOptionWithData(Tags.label(family), family) end
     self:addChild(self.group)
-    self.modeButton = button(12, 98, width - 24, "", Picker.toggleMode)
+    self.modeButton = button(12, modeY, width - 24, "", Picker.toggleMode)
     self:updateMode()
     self.modeButton:setTooltip(text("Hint"))
-    local top, bottom = 150, height - 92 - fontHeight * 2
+    local top, bottom = modeY + controlHeight + 26, self.hintY - fontHeight - 24
+    local previewGap = fontHeight + 10
     local listWidth = width >= 620 and math.floor((width - 36) * 0.55) or width - 24
-    local listHeight = width >= 620 and bottom - top or math.floor((bottom - top - 28) * 0.6)
+    local listHeight = width >= 620 and bottom - top or math.floor((bottom - top - previewGap) * 0.6)
     self.list = ISScrollingListBox:new(12, top, listWidth, math.max(40, listHeight))
     self.list:initialise(); self.list:instantiate(); self.list.itemheight = fontHeight + 10
     self.list:setOnMouseDownFunction(self, Picker.cycle)
     self.list.doDrawItem = function(list, y, item)
+        if not rowVisible(list, y, item) then return y + item.height end
         local row, x = item.item, 8
+        local textY = y + (item.height - fontHeight) / 2
         if list.selected == item.index then list:drawRectBorder(1, y, list.width - 18, item.height, 0.9, 0.65, 0.8, 1) end
         if row.id then
             local state, style = self:state(row.id), Visuals.get(row.id)
             if state ~= "Neutral" then list:drawRect(0, y, list.width, item.height, 0.3,
                 state == "Exclude" and 0.7 or 0.2, 0.3, state == "Exclude" and 0.2 or 0.6) end
             if style.texture then
-                list:drawTextureScaledAspect(style.texture, x, y + 3, 18, 18, 1, style.r, style.g, style.b)
+                list:drawTextureScaledAspect(style.texture, x, y + (item.height - 18) / 2, 18, 18, 1, style.r, style.g, style.b)
             end
             x = x + 24
-            list:drawText(fit(text(state) .. ": " .. row.label, list.width - x - 20), x, y + 5, 1, 1, 1, 1, UIFont.Small)
-        else list:drawText(fit(row.label, list.width - x - 20), x, y + 5, 0.9, 0.72, 0.45, 1, UIFont.Small) end
+            list:drawText(fit(text(state) .. ": " .. row.label, list.width - x - 20), x, textY, 1, 1, 1, 1, UIFont.Small)
+        else list:drawText(fit(row.label, list.width - x - 20), x, textY, 0.9, 0.72, 0.45, 1, UIFont.Small) end
         return y + item.height
     end
     self.list.onRightMouseUp = function(list)
@@ -213,11 +228,12 @@ function Picker:createChildren()
     end
     self:addChild(self.list)
     local previewX = width >= 620 and listWidth + 24 or 12
-    local previewY = width >= 620 and top or top + self.list.height + 26
+    local previewY = width >= 620 and top or top + self.list.height + previewGap
     self.preview = ISScrollingListBox:new(previewX, previewY, width - previewX - 12, math.max(40, bottom - previewY))
     self.preview:initialise(); self.preview:instantiate(); self.preview.itemheight = fontHeight + 10
     self.preview.doDrawItem = function(list, y, item)
-        list:drawText(fit(item.text, list.width - 28), 8, y + 5, 0.9, 0.9, 0.9, 1, UIFont.Small)
+        if not rowVisible(list, y, item) then return y + item.height end
+        list:drawText(fit(item.text, list.width - 28), 8, y + (item.height - fontHeight) / 2, 0.9, 0.9, 0.9, 1, UIFont.Small)
         return y + item.height
     end
     self.preview.joypadParent = self
@@ -225,9 +241,9 @@ function Picker:createChildren()
     self.preview.onJoypadDownInParent = self.list.onJoypadDownInParent
     self.preview.onJoypadDirUp, self.preview.onJoypadDirDown = self.list.onJoypadDirUp, self.list.onJoypadDirDown
     self:addChild(self.preview)
-    self.clearButton = button(12, height - 42, 100, text("Clear"), Picker.clearRule)
-    self.cancelButton = button(width - 224, height - 42, 100, text("Cancel"), Picker.close)
-    self.applyButton = button(width - 112, height - 42, 100, text("Apply"), Picker.apply)
+    self.clearButton = button(12, footerY, 100, text("Clear"), Picker.clearRule)
+    self.cancelButton = button(width - 224, footerY, 100, text("Cancel"), Picker.close)
+    self.applyButton = button(width - 112, footerY, 100, text("Apply"), Picker.apply)
     self:reload(); self:refreshPreview()
 end
 
@@ -257,9 +273,9 @@ function Picker:prerender()
     if self.reassertTop then self.reassertTop = false; self:bringToTop() end
     if self.search:getText():lower() ~= self.lastQuery or self.group.selected ~= self.lastGroup then self:reload() end
     ISCollapsableWindowJoypad.prerender(self)
-    self:drawText(text("Preview") .. " (" .. self.matchCount .. ")", self.preview.x, self.preview.y - 21,
+    self:drawText(text(self.sourceScriptItems and "PreviewTypes" or "Preview") .. " (" .. self.matchCount .. ")", self.preview.x, self.preview.y - getTextManager():getFontHeight(UIFont.Small) - 5,
         0.9, 0.9, 0.9, 1, UIFont.Small)
-    local y = self.height - 84
+    local y = self.hintY
     self:drawText(fit(self.validationMessage or text("Hint"), self.width - 24), 12, y, 0.8, 0.8, 0.8, 1, UIFont.Small)
 end
 
@@ -278,6 +294,7 @@ function Picker.open(options)
     for _, source in ipairs(options.items or options.scriptItems or categories) do
         local ids = options.items and Tags.forItem(source)
             or options.scriptItems and Tags.forScriptItem(source) or Tags.forCategory(source)
+        ids = Tags.choices(ids)
         local sourceFamilies = {}
         for _, id in ipairs(ids) do if roots[id] then sourceFamilies[#sourceFamilies + 1] = id end end
         if #sourceFamilies == 0 and ids[1] then sourceFamilies[1] = ids[1] end
@@ -310,6 +327,9 @@ function Picker.open(options)
     picker.owner, picker.onApply, picker.player = options.owner, options.onApply, options.player
     picker.title, picker.resizable = options.title or text(""), false
     picker:initialise(); picker:instantiate(); picker:addToUIManager()
+    picker:bringToTop()
+    -- The opening mouse event can still raise the owner after its button callback.
+    picker.reassertTop = true
     if picker.owner then
         picker.owner.toolkitRulePicker = picker
         if picker.owner.dimmer and picker.owner.dimmer.setVisible then

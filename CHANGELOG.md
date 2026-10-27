@@ -17,6 +17,18 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.194
+
+- Fix Configure container filter fonts and control sizing. Select refined tags with one checkbox click, reflect active rules in checked rows and clear them with category selections; preserve explicit advanced conditions.
+- Keep the advanced tag editor in front of its owner and stop scrolled rows painting beyond its lists. Clarify the electronic-furniture tag label.
+- Remove the redundant General tag from ordinary containers while retaining saved filter behavior. Classify toy cap guns and their caps as toys in inventory tags and Quartermaster rules without changing native item properties.
+- Use the native furniture cabinet icon for the Furniture tag.
+- Rename the Surface tag to Table with the native whole-table icon. Keep Table alongside Storage and Container on the chestnut drawers, which also support native surface crafting; preserve exact legacy-category selections.
+- Derive Wearable tags from native body slots and wearable metadata across clothing, medical items and bags. Combine Furniture and Container for storage furniture using native sprite properties; hand-carried containers stay outside Wearable. Java Patches provides exact script-preview equipment metadata without creating items.
+- Use Readable for native reading and content-view actions, including photographs, newspapers, maps, learning materials and written notes. Reserve Literature for recreational books, magazines and comics; exclude blank writing materials, disabled reading and hollow-book containers. Reading filters remain item rules as content changes.
+- Add live Fresh, Stale and Rotten food tags for inventory filters and container sorting. Use native expiry boundaries for all spoiled food, expose future state choices without assigning an age to script types, and preserve per-item routing within mixed stacks. Replace empty-jar nonperishable/preserved icons with labelled food cans.
+- Allow rotten worms to become compost while preserving native fresh-worm breeding, compost yield and other items' compost restrictions.
+
 ### 0.1.193
 
 - Resolve Quartermaster's explicit item-name destination candidates once per requested display name and plan. Preserve priority/distance order, per-item carrier/destination admission, capacity overflow and category/tag fallback without enumerating unrelated preset entries.
@@ -890,6 +902,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.41
+
+- Expose native script wear slots and writing capability through read-only Lua helpers, so item-tag previews distinguish wearable bags and blank writing materials without creating inventory items or requiring debug mode.
 
 ### 0.1.40
 

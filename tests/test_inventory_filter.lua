@@ -11,7 +11,8 @@ require = function(name)
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
-        or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership" then
+        or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership"
+        or name == "PZSurvivorToolkit/ItemTagProperties" then
         local module = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
         if name == "PZSurvivorToolkit/ItemTags" then
             local forItem = module.forItem
@@ -926,3 +927,32 @@ do
         print('Actual CleanUI transfer handler preview, command, floor and menu integration passed.')
     end
 end
+
+-- Freshness choices include future states; filtering still splits actual mixed stacks.
+do
+    local function apple(age)
+        return {age=age,getDisplayCategory=function() return 'foodPerishable_fruit' end,
+            getCategory=function() return 'Food' end,getName=function() return 'Apple' end,
+            getFullType=function() return 'Base.Apple' end,getContainer=function() return source end,
+            getUnequippedWeight=function() return 1 end,IsFood=function() return true end,
+            getOffAge=function() return 1 end,getOffAgeMax=function() return 2 end,
+            isFresh=function(self) return self.age<1 end,isRotten=function(self) return self.age>=2 end}
+    end
+    local fresh,rotten=apple(0),apple(2)
+    groups={{cat='foodPerishable_fruit',name='Apple',items={fresh,fresh,rotten},matchesSearch=true}}
+    enabled,tagsEnabled=true,true
+    pane.toolkitCategory,pane.toolkitTag,pane.searchMode,pane.searchText=nil,nil,nil,''
+    pane.saved={};pane.toolkitTagRule={mode='all',include={'rotten'},exclude={}}
+    pane:refreshContainer()
+    assert(#pane.itemslist==1 and #pane.itemslist[1].items==2 and pane.itemslist[1].items[1]==rotten,
+        'freshness filter kept a fresh sibling in the same native stack')
+    local _,choices=PZSurvivorToolkit.InventoryFilter.choices(pane)
+    assert(choices.fresh and choices.stale and choices.rotten,
+        'future freshness choices were hidden by current state or active filter')
+    assert(not choices.compost,'removed Compost tag remains in the filter')
+    fresh.age=2;pane:refreshContainer()
+    assert(#pane.itemslist[1].items==3,'filter reused old freshness for a physical item')
+    fresh.age,rotten.age=0,0;pane:refreshContainer()
+    assert(#pane.itemslist==0,'rotten filter became a broad food-category filter')
+end
+print('Food inventory filters passed: mixed freshness stacks, future choices and live age changes.')

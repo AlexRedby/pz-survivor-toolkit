@@ -94,6 +94,46 @@ end
 local function target()
     return LootSorter.findDesignatedOnSquare(square, player)[1] or {cats = {}, items = {}, rules = {}}
 end
+do
+ local toyBox={cats={},rules={{mode='all',include={'toy'},exclude={}}}}
+ local weaponBox={cats={},rules={{mode='all',include={'weapon'},exclude={}}}}
+ local toy=record('weaponRanged','Base.Revolver_CapGun')
+ local weapon=record('weaponRanged','Base.Crossbow')
+ assert(Rules.matches(toyBox,toy) and not Rules.matches(toyBox,weapon), 'toy box inherited ranged category')
+ assert(not Rules.matches(weaponBox,toy) and Rules.matches(weaponBox,weapon), 'weapon box accepted a cap gun')
+ assert(Rules.matches(toyBox,record('ammunitionRanged','Base.CapGunCap')), 'toy box rejected caps')
+ local matcher=Rules.matcher()
+ assert(matcher(toyBox,toy) and not matcher(weaponBox,toy), 'planned routing disagreed with direct toy routing')
+end
+do
+    local ordinary={cats={},rules={{mode='all',include={'container'},exclude={'wearable'}}}}
+    local bag=record('Container','Mod.Backpack')
+    local case=record('Container','Mod.Case')
+    for _,value in ipairs({bag,case}) do
+        value.ref.IsInventoryContainer=function() return true end
+        value.ref.getBodyLocation=function() return nil end
+    end
+    bag.ref.canBeEquipped=function() return 'Back' end
+    case.ref.canBeEquipped=function() return nil end
+    assert(not Rules.matches(ordinary,bag) and Rules.matches(ordinary,case),
+        'Container excluding Wearable did not distinguish bags from hand-carried cases')
+    local matcher=Rules.matcher()
+    assert(not matcher(ordinary,bag) and matcher(ordinary,case),'planned container exclusion differed')
+end
+do
+    local readingBox={cats={},rules={{mode='all',include={'readable'},exclude={}}}}
+    local note=record('literatureWriteable','Base.Notebook')
+    note.ref.IsLiterature=function() return true end
+    note.ref.canBeWrite=function() return true end
+    note.ref.isEmptyPages=function(self) return not self.written end
+    assert(not Rules.matches(readingBox,note),'sorter accepted blank paper as readable')
+    note.ref.written=true
+    assert(Rules.matches(readingBox,note),'sorter rejected a written note')
+    local matcher=Rules.matcher()
+    assert(matcher(readingBox,note),'planner rejected a written note')
+    note.ref.written=false
+    assert(not Rules.matcher()(readingBox,note),'a new plan retained previously written content')
+end
 local rule={mode='all',include={'food'},exclude={'perishable'}}
 local function args(value) return {x=10,y=20,z=0,object=0,ci=0,rule=value or rule,baseRevision=Rules.getBoxRevision(object,0)} end
 local nativeLootSorter = LootSorter

@@ -102,7 +102,7 @@ function Controls.create(picker)
     picker.toolkitAppearanceInitialName = picker.toolkitAppearance.name or ""
     picker.appearanceLabel = ISLabel:new(10, 0, 24, text("Name"), 1, 1, 1, 1, UIFont.Small, true)
     picker.appearanceName = ISTextEntryBox:new(picker.toolkitAppearanceInitialName, 82, 0, 240, 24)
-    picker.appearanceName.font = UIFont.Medium
+    picker.appearanceName:setFont(UIFont.Medium)
     picker.appearanceName:setTooltip(text("NameHint"))
     picker.appearanceIcon = ISButton:new(10, 0, 100, 26, text("Icon"), picker, Controls.chooseIcon)
     picker.appearanceIcon:forceImageSize(22, 22)
@@ -120,15 +120,19 @@ end
 function Controls.layout(picker, top)
     if not picker.appearanceName then return top end
     local w, gap = picker:getWidth() - 20, 6
+    local nameH = math.max(24, getTextManager():getFontHeight(UIFont.Medium) + 6)
+    local buttonH = math.max(26, getTextManager():getFontHeight(UIFont.Small) + 8)
+    picker.appearanceName:setHeight(nameH)
+    picker.appearanceLabel:setHeight(nameH)
     local labelW = getTextManager():MeasureStringX(UIFont.Small, text("Name")) + 12
     picker.appearanceLabel:setY(top)
     picker.appearanceName:setX(10 + labelW); picker.appearanceName:setY(top)
     picker.appearanceName:setWidth(w - labelW)
     local bw = (w - gap * 2) / 3
     for index, child in ipairs({picker.appearanceIcon, picker.appearanceColor, picker.appearanceReset}) do
-        child:setX(10 + (index - 1) * (bw + gap)); child:setY(top + 30); child:setWidth(bw)
+        child:setX(10 + (index - 1) * (bw + gap)); child:setY(top + nameH + gap); child:setWidth(bw); child:setHeight(buttonH)
     end
-    return top + 64
+    return top + nameH + buttonH + gap * 2 + 2
 end
 
 function Controls.value(picker)

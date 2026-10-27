@@ -132,9 +132,9 @@ def verify(root, selection, catalog):
         category = prepared['category']
         if selection['kind'] == 'mp' and len(re.findall(re.escape('[STARTUP_TEST] SERVER_READY') + r'(?:\s|$)', authority)) != 1:
             raise ValueError('Missing/duplicate Host server readiness')
-        sequences = {'client1': ['SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
+        sequences = {'client1': ['SHOT', 'SHOT', 'SHOT', 'TAGUI', 'SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
         if selection['kind'] == 'sp':
-            sequences['client1'] = ['PREPARED', 'SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
+            sequences['client1'] = ['PREPARED', 'SHOT', 'SHOT', 'SHOT', 'TAGUI', 'SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
         else:
             sequences['client2'] = ['SHOT', 'OBSERVER', 'COMPLETE']
             sequences['server'] = ['PREPARED', 'AUTHORITY']
@@ -143,6 +143,8 @@ def verify(root, selection, catalog):
             events = re.findall(re.escape(MARKER) + r'([A-Z]+) ', text)
             if events != expected_events:
                 raise ValueError(role + ' native lifecycle missing, duplicated or reordered')
+        if _one(logs['client1'], 'TAGUI') != dict(oneClick=True, checked=True, advancedApplied=True, foreground=True):
+            raise ValueError('Direct tag selection, Apply or foreground evidence absent')
         expected = _expected(category)
         defaults = _one(logs['client1'], 'DEFAULTS')
         if (set(defaults) != {'tag', 'item', 'role', 'menuClasses'} or defaults['tag'] != 'food'
@@ -160,7 +162,7 @@ def verify(root, selection, catalog):
             if not _exact(receipts['client2'], expected):
                 raise ValueError('Observer global BC appearance or routing differs')
         for role, text in logs.items():
-            names = ['icon', 'edit'] if role == 'client1' else ['observer']
+            names = ['tag-checked', 'tag-scroll', 'tag-dropdown', 'icon', 'edit'] if role == 'client1' else ['observer']
             if _records(text, 'SHOT') != [{'name': name, 'role': role} for name in names]:
                 raise ValueError(role + ' screenshots missing, duplicated or reordered')
             screenshots += [_shot(root, role, name) for name in names]

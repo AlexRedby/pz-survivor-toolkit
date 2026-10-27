@@ -144,7 +144,7 @@ function Picker:createChildren()
 
     self.filter = ISTextEntryBox:new("", pad, 0, 10, 22)
     self.filter:initialise(); self.filter:instantiate()
-    self.filter.font = UIFont.Medium
+    self.filter:setFont(UIFont.Medium)
     self:addChild(self.filter)
     self.filter:setTooltip("Type to filter the list")
     self.lastFilter = nil
@@ -177,7 +177,7 @@ function Picker:createChildren()
     -- change handler validates instead.
     self.priorityEntry = ISTextEntryBox:new(tostring(self.priority), 0, 0, 40, 22)
     self.priorityEntry:initialise(); self.priorityEntry:instantiate()
-    self.priorityEntry.font = UIFont.Small
+    self.priorityEntry:setFont(UIFont.Small)
     self.priorityEntry.target = self
     self.priorityEntry.onTextChangeFunction = Picker.onPriorityTyped
     self.priorityEntry:setMaxTextLength(LootSorter.PRIORITY_MAX_DIGITS + 1)   -- +1 for a minus sign
@@ -306,7 +306,9 @@ end
 -- position every control from the CURRENT window size, so resizing stays aligned and nothing clips
 function Picker:layout()
     local pad, gap = 10, 6
-    local rowH, btnH = 22, 26
+    local rowH = math.max(22, getTextManager():getFontHeight(UIFont.Small) + 6)
+    local filterH = math.max(22, getTextManager():getFontHeight(UIFont.Medium) + 6)
+    local btnH = math.max(26, rowH)
     local w, h = self:getWidth(), self:getHeight()
     local innerW = w - pad * 2
     local halfW = (innerW - gap) / 2
@@ -314,9 +316,10 @@ function Picker:layout()
     local top = self:titleBarHeight() + 8
     top = AppearanceControls.layout(self, top)
 
-    self.filter:setX(pad); self.filter:setY(top); self.filter:setWidth(innerW)
+    self.filter:setX(pad); self.filter:setY(top); self.filter:setWidth(innerW); self.filter:setHeight(filterH)
+    self.listbox.itemheight = math.max(22, getTextManager():getFontHeight(UIFont.Medium) + 6)
 
-    local modeY = top + rowH + gap
+    local modeY = top + filterH + gap
     -- box picker: three mode toggles (Categories / Items / Presets). Preset editor: two only (no nested
     -- Presets tab), so the Presets button is hidden and the row splits in half.
     local editingPreset = self.targetKind == "preset"
@@ -367,6 +370,11 @@ function Picker:layout()
     self.chkContents:setX(pad); self.chkContents:setY(secondRowY)
     self.chkContents:setWidth(checkboxWidth(self.chkContents)); self.chkContents:setHeight(rowH)
 
+    local showTags = Tags.enabled() and self.mode == "cats"
+    local listY = secondRowY + rowH + gap
+    local visibleListY = listY + (showTags and (rowH + gap) * 2 or 0)
+    self.minimumHeight = math.max(380, visibleListY + math.max(40, self.listbox.itemheight * 2) + gap + btnH + 12)
+    if h < self.minimumHeight then h = self.minimumHeight; self:setHeight(h) end
     local by = h - btnH - 12                        -- action row, kept clear of the resize corner
     local bw = (innerW - pad * 2) / 3
     local xs = { pad, pad * 2 + bw, pad * 3 + bw * 2 }
@@ -374,8 +382,6 @@ function Picker:layout()
         b:setX(xs[i]); b:setY(by); b:setWidth(bw); b:setHeight(btnH)
     end
 
-    local listY = secondRowY + rowH + gap
-    local showTags = Tags.enabled() and self.mode == "cats"
     self.toolkitTagSwitch:setVisible(showTags)
     self.toolkitTagRuleButton:setVisible(showTags)
     if showTags then
@@ -434,7 +440,7 @@ function Picker:rebuild()
         local label = tagView and entry.label or entry
         local checked, hasContents
         if tagView then
-            checked = TagPicker.state(self.selectedCats, entry) > 0
+            checked = TagPicker.state(self.selectedCats, entry, self.toolkitTagRule) > 0
             hasContents = not contents
             if contents then
                 for _, category in ipairs(entry.sourceCategories) do
@@ -564,16 +570,9 @@ end
 function Picker.onRowClick(picker, itemData)
     if not itemData then return end
     if TagPicker.isTagView(picker) and itemData.toolkitTagRow then
-        if itemData.requiresRule then
-            TagPicker.openRule(picker, {mode = "all", include = {itemData.tag}, exclude = {}}, nil, itemData.tag)
-        else
-            local checked, total = TagPicker.state(picker.selectedCats, itemData)
-            TagPicker.selectRow(picker.selectedCats, itemData, checked ~= total)
-            if checked ~= total then
-                AppearanceControls.select(picker, itemData.tag and "tag" or "cats", itemData.tag or itemData.key)
-            end
-            picker.needRebuild = true
-        end
+        local checked, total = TagPicker.state(picker.selectedCats, itemData, picker.toolkitTagRule)
+        TagPicker.select(picker, itemData, checked ~= total)
+        picker.needRebuild = true
         return
     end
     local key = itemData.key
@@ -588,31 +587,10 @@ end
 
 function Picker:onSelectFiltered()
     if TagPicker.isTagView(self) then
-        local include, entries, candidates = {}, self.listbox.items, {}
-        for _, entry in ipairs(entries) do
-            if entry.item.requiresRule then include[#include + 1] = entry.item.tag end
-            local checked, total = TagPicker.state(self.selectedCats, entry.item)
-            if entry.item.requiresRule or checked ~= total then candidates[#candidates + 1] = entry.item end
+        for _, entry in ipairs(self.listbox.items) do
+            TagPicker.select(self, entry.item, true)
         end
-        local function selectCategories(rule)
-            for _, entry in ipairs(entries) do
-                if not entry.item.requiresRule then TagPicker.selectRow(self.selectedCats, entry.item, true) end
-            end
-            local included = {}
-            for _, tag in ipairs(rule and rule.include or {}) do included[tag] = true end
-            for _, row in ipairs(candidates) do
-                if not row.requiresRule or included[row.tag] then
-                    AppearanceControls.select(self, row.tag and "tag" or "cats", row.tag or row.key)
-                    break
-                end
-            end
-            self.needRebuild = true
-        end
-        if #include > 0 then
-            TagPicker.openRule(self, {mode = "any", include = include, exclude = {}}, selectCategories)
-        else
-            selectCategories()
-        end
+        self.needRebuild = true
         return
     end
     for i = 1, #self.listbox.items do
@@ -625,7 +603,11 @@ end
 function Picker:onClear()
     if self.mode == "items" then self.selectedItems = {}; self.selection = self.selectedItems
     elseif self.mode == "presets" then self.selectedPresets = {}; self.selection = self.selectedPresets
-    else self.selectedCats = {}; self.selection = self.selectedCats end
+    else
+        self.selectedCats = {}; self.selection = self.selectedCats
+        self.toolkitTagRule = Tags.normalizeRule(nil)
+        self.toolkitTagRuleTouched = true
+    end
     if self.onlyChecked then self.needRebuild = true end
 end
 

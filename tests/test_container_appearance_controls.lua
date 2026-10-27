@@ -3,7 +3,7 @@ PZSurvivorToolkit = {}
 UIFont = {Small=1, Medium=2}
 Joypad = {AButton=1, BButton=2}
 getText = function(key) return key end
-getTextManager = function() return {MeasureStringX=function(_, _, text) return #text end} end
+getTextManager = function() return {getFontHeight=function() return 12 end, MeasureStringX=function(_, _, text) return #text end} end
 local player = {getJoypadBind=function() return 0 end}
 getSpecificPlayer = function() return player end
 local focus
@@ -23,6 +23,8 @@ function Widget:setMaxTextLength(value) self.limit=value end
 function Widget:setX(value) self.x=value end
 function Widget:setY(value) self.y=value end
 function Widget:setWidth(value) self.width=value end
+function Widget:setHeight(value) self.height=value end
+function Widget:setFont(value) self.font=value end
 function Widget:getAbsoluteX() return self.x or 10 end
 function Widget:getAbsoluteY() return self.y or 20 end
 function Widget:getHeight() return 26 end

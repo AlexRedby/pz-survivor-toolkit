@@ -440,3 +440,34 @@ do
     assert(destinations[record]==category,'a later plan reused an earlier name index')
 end
 print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, destination admission, capacity/carriers/leftovers and failure safety.')
+
+-- Same type/name/category, different physical freshness: route using each instance.
+do
+    ItemTag={CANT_COMPOST='no-compost',IS_COMPOSTABLE='compostable'}
+    local function apple(age, forbidden)
+        local record=item('Base.Apple','foodPerishable_fruit','Apple')
+        local value=record.ref
+        value.age=age
+        value.IsFood=function() return true end
+        value.getOffAge=function() return 1 end
+        value.getOffAgeMax=function() return 2 end
+        value.isFresh=function(self) return self.age<1 end
+        value.isRotten=function(self) return self.age>=2 end
+        value.hasTag=function(_,tag) return forbidden and tag==ItemTag.CANT_COMPOST or false end
+        return record
+    end
+    local fresh,stale,rotten,restricted=apple(0),apple(1),apple(2),apple(2,true)
+    local compost=box({mode='all',include={'rotten'},exclude={}})
+    local fridge=box({mode='all',include={'perishable'},exclude={'rotten'}})
+    local route,plan=checkPlan({fresh,stale,rotten,restricted},{compost,fridge})
+    assert(route[fresh]==fridge and route[stale]==fridge and route[rotten]==compost,
+        'freshness routing mixed same-type physical food states')
+    assert(route[restricted]==compost and #plan.leftover==0,'Rotten incorrectly depends on compost eligibility')
+    fresh.ref.age=2
+    route=checkPlan({fresh,stale,rotten},{compost,fridge})
+    assert(route[fresh]==compost and route[stale]==fridge,'new plan retained pre-spoilage state')
+    fresh.ref.age=0
+    route=checkPlan({fresh},{compost,fridge})
+    assert(route[fresh]==fridge,'new plan retained an earlier rotten state')
+end
+print('Freshness routing passed: same-type states, fridge exclusion, universal rotten state and new-plan refresh.')

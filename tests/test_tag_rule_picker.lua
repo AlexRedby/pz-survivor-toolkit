@@ -4,20 +4,26 @@ getText=function(key) return key end
 getTextOrNull=function() end
 UIFont={Small=1}
 Joypad={AButton=1,BButton=2}
-getTextManager=function() return {getFontHeight=function() return 16 end,MeasureStringX=function(_,_,value) return #value*8 end} end
+local fontHeight=16
+getTextManager=function() return {getFontHeight=function() return fontHeight end,MeasureStringX=function(_,_,value) return #value*8 end} end
 local screenWidth=800
 getCore=function() return {getScreenWidth=function() return screenWidth end,getScreenHeight=function() return 600 end} end
+local topUI
 local Base={}
 function Base:new(x,y,width,height)
     return setmetatable({x=x,y=y,width=width,height=height,items={},visible=true}, {__index=self})
 end
 function Base:derive() local result={};setmetatable(result,{__index=self});return result end
 function Base:initialise() end
-function Base:instantiate() if self.createChildren then self:createChildren() end end
+function Base:instantiate() self.nativeFont=self.font;if self.createChildren then self:createChildren() end end
+function Base:setFont(font) self.font=font;self.nativeFont=font end
+function Base:titleBarHeight() return math.max(16,fontHeight+1) end
+function Base:getYScroll() return self.yScroll or 0 end
+function Base:bringToTop() topUI=self;self.raises=(self.raises or 0)+1 end
 function Base:createChildren() end
 function Base:prerender() end
 function Base:addChild() end
-function Base:addToUIManager() self.added=true end
+function Base:addToUIManager() self.added=true;topUI=self end
 function Base:removeFromUIManager() self.added=false end
 function Base:unfocus() self.focused=false end
 function Base:hidePopup() self.popup.visible=false end
@@ -54,6 +60,16 @@ local owner={getIsVisible=function() return true end,dimmer=Base:new(0,0,1,1)}
 owner.dimmer.visible=false
 local picker=Picker.open({player=0,owner=owner,rule=original,categories={'foodPerishable_ingredient','foodNonPerishable_ingredient','Tool','ModCat'},onApply=function(rule,first) applied=rule;firstSelected=first end})
 assert(picker and picker.added and owner.toolkitRulePicker==picker and owner.dimmer.visible)
+assert(topUI==picker,'opened rule picker was not raised')
+-- Native mouse dispatch can raise the owner after the opening button callback.
+topUI=owner;picker:prerender()
+assert(topUI==picker and not picker.reassertTop,'rule picker stayed behind its owner after mouse dispatch')
+local raises=picker.raises
+picker:prerender()
+assert(picker.raises==raises,'rule picker keeps stealing the foreground every frame')
+owner.dimmer:onMouseDown();topUI=owner;picker:prerender()
+assert(topUI==picker,'dimmer click failed to restore the advanced picker')
+assert(picker.search.nativeFont==UIFont.Small,'search instantiated with an inconsistent font')
 assert(picker.matchCount==2 and picker.rule~=original and picker.rule.include~=original.include,'draft aliases saved rule')
 local rows={}
 for _,row in ipairs(picker.entries) do rows[row.id]=row end
@@ -230,3 +246,74 @@ assert(rows.tailoring and picker.matchCount==1 and picker.preview.items[1].text=
 assert(thread:getDisplayCategory()=='Material','picker rewrote script loot category')
 picker:close()
 OrganizedCategories=nil
+
+do
+    ItemType={FOOD='Food'}
+    local apple=scriptItem('Base.Apple','foodPerishable_fruit','Apple')
+    apple.isItemType=function(_,kind) return kind==ItemType.FOOD end
+    apple.getDaysFresh=function() return 1 end
+    apple.getDaysTotallyRotten=function() return 2 end
+    local fresh=inventoryItem(apple)
+    fresh.age=0
+    fresh.IsFood=function() return true end
+    fresh.getOffAge=apple.getDaysFresh;fresh.getOffAgeMax=apple.getDaysTotallyRotten
+    fresh.isFresh=function(self) return self.age<1 end
+    fresh.isRotten=function(self) return self.age>=2 end
+    local rule={mode='all',include={'rotten'},exclude={}}
+    picker=Picker.open({items={fresh},rule=rule,onApply=function() end})
+    rows={};for _,row in ipairs(picker.entries) do rows[row.id]=row end
+    assert(rows.fresh and rows.stale and rows.rotten,'fresh items hid future rule choices')
+    assert(not rows.compost,'removed Compost tag remains in the rule editor')
+    assert(picker.matchCount==0,'possible Rotten choice contaminated the actual fresh-item preview')
+    fresh.age=2;picker:refreshPreview()
+    assert(picker.matchCount==1,'actual preview did not re-read the same item after spoilage')
+    picker:close()
+    picker=Picker.open({scriptItems={apple},rule=rule,onApply=function() end})
+    assert(picker.matchCount==1,'script preview omitted a type that can spoil')
+    picker.rule={mode='all',include={'fresh','rotten'},exclude={}};picker:refreshPreview()
+    assert(picker.matchCount==0,'script preview combined mutually exclusive age states')
+    picker:close()
+    ItemType=nil
+end
+
+
+-- Custom row drawing keeps native viewport culling, with partial rows left to
+-- the list's native stencil. Drawing offscreen rows can leak text above filters.
+fontHeight=32
+picker=Picker.open({categories={'Tool','Food'},onApply=function() end})
+assert(picker.search.height>=fontHeight+8 and picker.search.y>=picker:titleBarHeight()+8,
+    'large-font search intersects title bar or clips text')
+assert(picker.group.y>=picker.search.y+picker.search.height+6
+    and picker.modeButton.y>=picker.group.y+picker.group.height+6
+    and picker.list.y>=picker.modeButton.y+picker.modeButton.height+26,
+    'large-font controls overlap')
+assert(picker.preview.y-fontHeight-5>=picker.list.y+picker.list.height,
+    'stacked preview label overlaps tag rows')
+assert(picker.preview.y+picker.preview.height<picker.hintY
+    and picker.hintY+fontHeight<picker.applyButton.y
+    and picker.applyButton.y+picker.applyButton.height<=picker.height-16,
+    'large-font footer intersects preview, hint or window edge')
+for _,list in ipairs({picker.list,picker.preview}) do
+    local draws={}
+    list.drawText=function(_,_,_,y) draws[#draws+1]={kind='text',y=y} end
+    list.drawRect=function() draws[#draws+1]={kind='rect'} end
+    list.drawRectBorder=list.drawRect
+    list.drawTextureScaledAspect=list.drawRect
+    list.yScroll=-100
+    local row={item={id='tool',label='Tool'},text='Hammer',height=list.itemheight,index=1}
+    for _,y in ipairs({-100,100-row.height,100+list.height,100+list.height+50}) do
+        assert(list:doDrawItem(y,row)==y+row.height,'culling changed scroll geometry')
+        assert(#draws==0,'offscreen row drew over surrounding controls')
+    end
+    for _,y in ipairs({101-row.height,100,99+list.height}) do
+        draws={}
+        assert(list:doDrawItem(y,row)==y+row.height and #draws>0,'visible or partial row disappeared')
+        for _,draw in ipairs(draws) do
+            if draw.kind=='text' then
+                assert(draw.y==y+(row.height-fontHeight)/2,'row text ignores measured font height')
+            end
+        end
+    end
+end
+picker:close()
+print('Tag rule picker UI checks passed: deferred foreground, native viewport guards and large-font geometry.')

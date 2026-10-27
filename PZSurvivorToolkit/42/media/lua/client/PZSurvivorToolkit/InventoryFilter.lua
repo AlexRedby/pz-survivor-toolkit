@@ -95,7 +95,7 @@ function Filter.choices(pane, includeTags)
         local category = item:getDisplayCategory() or item:getCategory()
         if category then categories[category] = true end
         if tagsEnabled then
-            for _, id in ipairs(Tags.forItem(item)) do tags[id] = true end
+            for _, id in ipairs(Tags.choices(Tags.forItem(item))) do tags[id] = true end
         end
     end
     for category in pairs(categories) do

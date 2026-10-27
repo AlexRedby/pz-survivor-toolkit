@@ -3,12 +3,14 @@ local F=require 'ContainerConfigurationFixture'
 local Controls=require 'PZSurvivorToolkit/ContainerAppearanceControls'
 local Menus=require 'PZSurvivorToolkit/ContainerConfigurationMenus'
 local Tags=require 'PZSurvivorToolkit/ItemTags'
+local TagPicker=require 'PZSurvivorToolkit/QuartermasterTags'
 local Visuals=require 'PZSurvivorToolkit/TagVisuals'
 local Helpers=require 'BetterContainers/Helpers'
 local JSON=require 'QueueHealthEvents'
 local started,done,since,nextAt,phase=false,false,0,0,'prepare'
 local packet,obj,picker,role,go,observe,finished,localReceipt
 local menuClasses=0
+local tagRows={}
 local function emit(event,value) print('[CONTAINER_CONFIG] '..event..' '..JSON.encode(value))end
 local function close()if LootSorter._picker then LootSorter._picker:closePicker()end end
 local function shot(name)
@@ -103,6 +105,54 @@ local function tick()
   if not go then return end
   print('[CONTAINER_CONFIG_DIAG] editing local='..tostring(player:getUsername())..' specific='..tostring(getSpecificPlayer(0):getUsername())..' role='..tostring(role))
   probeMenus()
+  LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
+  picker:rebuild()
+  for _,row in ipairs(picker.listbox.items)do
+   if row.item.tag then tagRows[row.item.tag]=row.item end
+  end
+  assert(tagRows.electrical and tagRows.electronic and tagRows.seed,'Expected electrical/electronic/seed tags absent')
+  assert(tagRows.electrical.label~=tagRows.electronic.label,'Electrical tags have indistinguishable labels')
+  picker.listbox.onmousedown(picker,tagRows.electrical)
+  assert(not picker.toolkitRulePicker,'Checkbox click opened advanced editor')
+  local checked,total=TagPicker.state(picker.selectedCats,tagRows.electrical,picker.toolkitTagRule)
+  assert(checked==total and total>0,'Electrical selection did not check row')
+  picker.filter:setText(Tags.label('electrical'):sub(1,4));picker:rebuild()
+  phase='tag-checked';nextAt=getTimestampMs()+1200
+ elseif phase=='tag-checked'then
+  shot('tag-checked')
+  picker.filter:setText('');picker:rebuild()
+  assert(tagRows.seed.requiresRule,'Native partial-category seed fixture no longer covers rule rows')
+  picker.listbox.onmousedown(picker,tagRows.seed)
+  local selected=TagPicker.state(picker.selectedCats,tagRows.seed,picker.toolkitTagRule)
+  assert(not picker.toolkitRulePicker and selected==1,'Partial tag checkbox failed')
+  picker.onlyChecked=true;picker:rebuild()
+  local found=false
+  for _,row in ipairs(picker.listbox.items)do if row.item.tag=='seed' then found=true end end
+  assert(found,'Only Checked hid directly selected rule tag')
+  picker.toolkitTagRuleButton.onclick(picker)
+  local advanced=assert(picker.toolkitRulePicker)
+  picker:bringToTop() -- reproduce the owner's mouse-event tail after the opening callback
+  advanced.list:setYScroll(-180);advanced.preview:setYScroll(-60)
+  phase='tag-scroll';nextAt=getTimestampMs()+1200
+ elseif phase=='tag-scroll'then
+  local advanced=assert(picker.toolkitRulePicker)
+  local stack=UIManager.getUI();local ownerIndex,childIndex
+  for i=0,stack:size()-1 do
+   if stack:get(i)==picker.javaObject then ownerIndex=i end
+   if stack:get(i)==advanced.javaObject then childIndex=i end
+  end
+  assert(ownerIndex and childIndex and childIndex>ownerIndex,'Rule editor remained behind its owner')
+  shot('tag-scroll')
+  advanced.group:forceClick()
+  phase='tag-dropdown';nextAt=getTimestampMs()+1200
+ elseif phase=='tag-dropdown'then
+  shot('tag-dropdown')
+  local advanced=assert(picker.toolkitRulePicker)
+  advanced:apply()
+  local checked,total=TagPicker.state(picker.selectedCats,tagRows.seed,picker.toolkitTagRule)
+  assert(checked==total and total==1 and not picker.toolkitRulePicker,'Apply lost checked rule tag or retained popup')
+  emit('TAGUI',{oneClick=true,checked=true,advancedApplied=true,foreground=true})
+  picker:closePicker();assert(F.blankRead(obj,player),'Tag draft Cancel changed target')
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
   picker:setMode('items')
   local script=assert(getScriptManager():FindItem(F.item))

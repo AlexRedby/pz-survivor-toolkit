@@ -25,6 +25,11 @@ ACTION_TESTS += ("test_action_queue_membership.lua",)
 ACTION_TESTS += ("test_inventory_membership.lua",)
 ACTION_TESTS += ("test_context_menu_duplicates.lua",)
 EXTRA_TESTS = (
+    'test_worm_compost.lua',
+    'test_food_tags.lua',
+    'test_item_reading_tags.lua',
+    'test_item_tag_properties.lua',
+    'test_item_catalog.lua',
     'test_quartermaster_rpc.lua',
     'test_container_tag_icons.lua',
     'test_container_appearance_controls.lua',

@@ -46,7 +46,9 @@ return function(control, rules, options)
     end}
     ISTextEntryBox = {new = function(_, text, x, y, w, h)
         local c = rect(x, y, w, h)
-        c.text = text
+        c.text, c.font = text, UIFont.Small
+        function c:instantiate() self.nativeFont = self.font end
+        function c:setFont(font) self.font, self.nativeFont = font, font end
         function c:getInternalText() return self.text end
         function c:setText(value) self.text = value end
         function c:setMaxTextLength(value) self.maxLength = value end

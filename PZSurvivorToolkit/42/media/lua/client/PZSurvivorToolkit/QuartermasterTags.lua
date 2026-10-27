@@ -27,7 +27,15 @@ function Adapter.categories(source, selectedCats)
     return result
 end
 
-function Adapter.state(selectedCats, row)
+local function ruleIndex(rule, tag, field)
+    for index, id in ipairs(rule and rule[field] or {}) do if id == tag then return index end end
+end
+local function included(rule, tag) return ruleIndex(rule, tag, "include") end
+
+function Adapter.state(selectedCats, row, rule)
+    if row.requiresRule or included(rule, row.tag) then
+        return included(rule, row.tag) and 1 or 0, 1
+    end
     local checked = 0
     for _, category in ipairs(row.categories) do
         if selectedCats[category] then checked = checked + 1 end
@@ -39,6 +47,42 @@ function Adapter.selectRow(selectedCats, row, selected)
     for _, category in ipairs(row.categories) do selectedCats[category] = selected or nil end
 end
 
+-- Checkbox picks are a union by default. Keep an explicitly edited advanced mode and
+-- exclusions intact; selecting an excluded tag moves that tag back into the include set.
+function Adapter.select(picker, row, selected)
+    local checked, total = Adapter.state(picker.selectedCats, row, picker.toolkitTagRule)
+    local rule = Tags.normalizeRule(picker.toolkitTagRule)
+    local index = included(rule, row.tag)
+    if row.requiresRule or index or ruleIndex(rule, row.tag, "exclude") then
+        if not Tags.ruleActive(rule) then rule.mode = "any" end
+        if selected and not index then
+            if #rule.include >= 64 then
+                if LootSorter.notify then
+                    LootSorter.notify(getSpecificPlayer(picker.playerNum or 0), getText("UI_PZST_TagRuleLimit"))
+                end
+                return
+            end
+            rule.include[#rule.include + 1] = row.tag
+        elseif not selected and index then
+            table.remove(rule.include, index)
+        end
+        if selected then
+            for i = #rule.exclude, 1, -1 do
+                if rule.exclude[i] == row.tag then table.remove(rule.exclude, i) end
+            end
+        elseif not row.requiresRule then
+            Adapter.selectRow(picker.selectedCats, row, false)
+        end
+        picker.toolkitTagRule = Tags.normalizeRule(rule)
+        picker.toolkitTagRuleTouched = true
+    else
+        Adapter.selectRow(picker.selectedCats, row, selected)
+    end
+    if selected and checked ~= total then
+        AppearanceControls.select(picker, row.tag and "tag" or "cats", row.tag or row.key)
+    end
+end
+
 function Adapter.openRule(picker, rule, onApply, selectedTag)
     RulePicker.open({player = getSpecificPlayer(picker.playerNum or 0), owner = picker,
         selectedTag = selectedTag,
@@ -46,6 +90,7 @@ function Adapter.openRule(picker, rule, onApply, selectedTag)
         title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value, firstSelectedTag)
             picker.toolkitTagRule = Tags.normalizeRule(value)
             picker.toolkitTagRuleTouched = true
+            picker.needRebuild = true
             if onApply then onApply(picker.toolkitTagRule) end
             AppearanceControls.select(picker, "tag", firstSelectedTag)
         end})
@@ -59,11 +104,16 @@ function Adapter.catalog(picker)
     for _, script in ipairs(catalog.scriptItems) do
         local category = Categories.forScript(script)
         if category then
-            local group = catalog.groups[category] or {count = 0, tags = {}}
+            local group = catalog.groups[category]
+            if not group then
+                group = {count = 0, tags = {}, categoryTags = {}}
+                for _, id in ipairs(Tags.forCategory(category)) do group.categoryTags[id] = true end
+            end
             catalog.groups[category] = group
             group.count = group.count + 1
             local seen = {}
-            for _, id in ipairs(Tags.forScriptItem(script)) do
+            local tags = Tags.forScriptItem(script)
+            for _, id in ipairs(Tags.choices and Tags.choices(tags) or tags) do
                 if not seen[id] then group.tags[id] = (group.tags[id] or 0) + 1; seen[id] = true end
             end
         end
@@ -99,16 +149,15 @@ function Adapter.rows(picker, categoryList)
                 byTag[id], rows[#rows + 1] = row, row
             end
             row.sourceCategories[#row.sourceCategories + 1] = category
-            if not members or members.tags[id] == members.count then
+            if not (Tags.requiresItemRule and Tags.requiresItemRule(id))
+                and (not members or members.tags[id] == members.count and members.categoryTags[id]) then
                 row.categories[#row.categories + 1] = category
             else
-                -- Native specific-item keys are localized names; item refinements need a stable tag rule.
+                -- Even an entirely refined category needs a rule: a later item in that
+                -- legacy category need not share the refinement (e.g. toys vs ranged weapons).
                 row.requiresRule = true
             end
         end
-    end
-    for _, row in ipairs(rows) do
-        if row.requiresRule then row.label = row.label .. " (" .. getText("UI_PZST_QMTagRule") .. ")" end
     end
     table.sort(rows, function(a, b) return a.label < b.label end)
     catalog.categories, catalog.rows = categoryList, rows
@@ -117,7 +166,7 @@ end
 
 function Adapter.drawRow(list, y, item)
     local row, picker = item.item, list.target
-    local checked, total = Adapter.state(picker.selectedCats, row)
+    local checked, total = Adapter.state(picker.selectedCats, row, picker.toolkitTagRule)
     local h, w = item.height, list:getWidth()
     local scroll = list:getYScroll()
     if y + scroll + h < 0 or y + scroll >= list:getHeight() then return y + h end

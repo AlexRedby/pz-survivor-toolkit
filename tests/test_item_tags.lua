@@ -86,6 +86,18 @@ assert(not Tags.matchesRule('FurnitureDoor',assert(Tags.normalizeRule({include={
  'old exact-category exclusion stopped working')
 assert(Tags.matches('FurnitureDoor',{'category:FurnitureDoor'}),'single exact tag filter stopped working')
 
+-- Retired General chips disappear, but saved includes/excludes retain their exact scope.
+local oldGeneral=assert(Tags.normalizeRule({include={'general'}}))
+for _,category in ipairs({'Bag','Bear','containerGeneral'}) do
+ local ids=Tags.forCategory(category)
+ for _,id in ipairs(ids) do assert(id~='general','redundant General chip remained visible') end
+ assert(Tags.matches(ids,{'container'}) and Tags.matchesRule(ids,oldGeneral))
+ assert(not Tags.matchesRule(ids,assert(Tags.normalizeRule({exclude={'general'}}))))
+ assert(Tags.category(ids)==category,'container simplification lost exact legacy category')
+end
+assert(not Tags.matchesRule('containerWearable',oldGeneral),'old General rule broadened to backpacks')
+assert(not Tags.matchesRule('containerLiquid',oldGeneral),'old General rule broadened to bottles')
+
 -- Exclusions share one item-tag lookup, regardless of how many alternatives a
 -- saved rule contains. Retain exact legacy-category matching in that lookup.
 do
@@ -114,6 +126,27 @@ local function inventoryItem(script)
  return {category=script.category,getFullType=function() return script.fullType end,
   getDisplayCategory=function(self) return self.category end,getScriptItem=function() return script end}
 end
+-- Correct only the reviewed toy types, equally for physical items and script previews.
+for _,case in ipairs({{'Base.Revolver_CapGun','weaponRanged'}, {'Base.Rifle_CapGun','weaponRanged'},
+ {'Base.CapGunCap','ammunitionRanged'}, {'Base.CapGunCapBox','ammunitionRanged'},
+ {'base.revolver_capgun','Memento'}}) do
+ local script=scriptItem(case[1],case[2])
+ local item=inventoryItem(script)
+ for _,ids in ipairs({Tags.forItem(item),Tags.forScriptItem(script)}) do
+  assert(#ids==1 and ids[1]=='toy','cap gun or cap kept weapon/ammunition tags')
+  assert(Tags.matchesRule(ids,assert(Tags.normalizeRule({include={'toy'},exclude={'weapon','ammunition'}}))))
+  assert(not Tags.matches(ids,{'ranged'}))
+  assert(Tags.category(ids)==case[2] and Tags.matches(ids,{'category:'..case[2]}),
+   'toy refinement broke exact legacy selections')
+ end
+ assert(item.category==case[2] and script.category==case[2],'toy tags wrote native categories')
+ local changed=Tags.forItem(item);changed[1]='weapon'
+ assert(Tags.forItem(item)[1]=='toy','caller changed the shared toy override')
+end
+assert(Tags.matches(Tags.forScriptItem(scriptItem('Base.Crossbow','weaponRanged')),{'weapon','ranged'}))
+assert(Tags.matches(Tags.forScriptItem(scriptItem('Other.Revolver_CapGun','weaponRanged')),{'weapon','ranged'}),
+ 'toy override matched an unrelated mod type by suffix')
+assert(Tags.matches('weaponRanged',{'weapon','ranged'}),'toy overrides changed the entire ranged category')
 local function javaList(values)
  return {size=function() return #values end,get=function(_,index) return values[index+1] end}
 end
