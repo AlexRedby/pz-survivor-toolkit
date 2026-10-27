@@ -23,6 +23,8 @@ internal object OptimizerCompatibility {
             """
             org/lwjglx/opengl/Display.class 15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578 da78691b554a0341827f841abc73a34b776ecf0fde845b15703cb855a8847d57
             zombie/Lua/LuaEventManager.class 9706f17e9b5e095a0e24230dc944de5d552fa62c997214636c4deb4957cf354b d786c342e563fb735727beb268e39a9a40726c2e83a8ac15ec06c753580b524b
+            zombie/core/SpriteRenderer.class 12735b2809ddab37c96b9614e54d2d38639baa8f342546baedeb8562c617f9be 1ea4dfc3f1d762105e2c5820fe30b2a73d445eefac7f56d6f221bc4f737b7fd8
+            zombie/core/opengl/ShaderUnit.class fbc3aa3aea91b2bf17f25181de411d240e5e202b0a5c7a65183b7afd0fe54255 30cb3e01ed60112dd7591bcee7248d0e8d3cdf86bf98a53e93fe7f1cb08cf2d4
             zombie/characters/IsoGameCharacter${'$'}Bandages.class bb87836b717355811e6f699377896918b9d4f4d050a5ad7bc1f1a35a70ebdedd ca97b043b65d969b01e31dac140d0032f797d6d7ebca7c7eb4a95ee069811127
             zombie/characters/IsoGameCharacter.class 29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b e4a9984940b144d976ff37331ed7dad4b1de7a017d34ad8bb47ff877f1ea3853
             zombie/core/properties/PropertyContainer.class bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77 bdb0ac0f09b7ae3ab9a2b72486e3e5f419cb3e25bc03a4245ba9e6b43d5010bb

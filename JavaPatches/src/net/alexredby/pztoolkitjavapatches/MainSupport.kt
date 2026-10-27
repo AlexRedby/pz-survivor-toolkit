@@ -383,6 +383,8 @@ internal object MainSupport {
                 cutawaySouthEdge +
                 ", translucentSquareUnion=" +
                 translucentSquareUnion +
+                ", worldItemTextureDimensions=" +
+                worldItemTextureDimensions +
                 ", video=" +
                 Main.VIDEO_SUPPORTED +
                 ", animal=" +

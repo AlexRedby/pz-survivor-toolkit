@@ -15,7 +15,7 @@ object OptimizerCompatibilityChecks {
             "FBO scheduler consumption requires a positive outer budget",
         )
         verify(pinned.size == 770, "complete reviewed configuration was not retained")
-        verify(OptimizerCompatibility.alternatives.size == 18, "reviewed pair set changed")
+        verify(OptimizerCompatibility.alternatives.size == 20, "reviewed pair set changed")
         verify(
             OptimizerCompatibility.configurationMatches(profile, pinned),
             "exact profile rejected",
@@ -166,7 +166,7 @@ object OptimizerCompatibilityChecks {
             }
         }
         println(
-            "OPTIMIZER_COMPATIBILITY_CHECKS_PASS (18 exact triples; every configuration pin missing/changed; real native resources retained)",
+            "OPTIMIZER_COMPATIBILITY_CHECKS_PASS (20 exact triples; every configuration pin missing/changed; real native resources retained)",
         )
     }
 }
