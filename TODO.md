@@ -1,3 +1,7 @@
+# Pure script fluid previews
+
+- [ ] Replace `ItemCategoryRules.resolveScriptFluidCategory`'s call to native `FluidContainerScript:getInitialAmount()` with read-only initial-amount metadata. B42.21 bytecode draws from `Rand.Next` for ranged defaults, so category previews can consume game RNG. Preserve explicit empty/fixed/ranged defaults and add a native regression proving repeated previews leave RNG unchanged; the new cooking-tag reader already avoids this getter.
+
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
@@ -119,7 +123,7 @@ These operations can execute normally while some queue controls remain disabled.
 - [ ] Complex handcraft recipes: identify concrete blocked recipes with Lua callbacks, fluid/energy inputs, unrestricted item selection or replacement/depletion/break effects. Add narrow resource/output contracts where practical; keep actual shared materials and shared crafting UI ordered. Plain-item crafting support is not an unfinished item here.
 - [ ] Medical world pickups and unknown treatment producers: add exact item/patient/wound contracts for specific unsupported entry points before allowing edits. Preserve native wound checks, supplies and clothing effects; do not mark all medicine unsupported.
 - [ ] Carried-container capacity: MP does not credit space that a previous pending pickup may free; synthetic proximity endpoints and unknown capacity callbacks also remain protected. Prove exact source/destination/ancestor capacity and authoritative transfer effects before relaxing a concrete blocked case.
-- [ ] Grooming: describe tools, cosmetic-state and dynamic gel/spray/fluid effects before expanding active cancellation or reordering for `ISCutHair`, `ISTrimBeard` and `ISDyeHair`. Waiting-only cancellation does not establish safe interruption or resource ordering for their native completion effects.
+- [ ] Grooming: describe exact tools, cosmetic-state and dynamic gel/spray/fluid effects before expanding reordering for `ISCutHair`, `ISTrimBeard` and `ISDyeHair`. The verified pre-completion cancellation boundary does not establish safe resource or cosmetic ordering, checkpoint/resume or arbitrary interruption of modified callbacks.
 - [ ] Makeup: describe and restore the actual UI preview before granting waiting cancellation. `ISMakeUpUI.onSelectMakeUp` immediately wears a preview and remembers the displaced item; MP `onApplyMakeUp` clears that restoration state while enqueueing, whereas SP applies directly. An unallocated `ISApplyMakeUp` alone does not prove zero prior effects.
 - [ ] Unknown mod actions and asynchronous continuations: capture the concrete action type, producer, continuation and cleanup when an operation is split into separate rows or becomes an edit barrier. Add scoped grouping/edit contracts for reviewed entry points; unknown or modified callbacks must retain a clear denial reason.
 
@@ -229,7 +233,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Container groups
 
-- [ ] Integrate current `origin/main`, resolve release metadata without losing concurrent features, run the affected container/tag/manifest checks, then push the integrated commit to `main` with a normal fast-forward update.
 - [ ] Repeat `quartermaster-distribution/sort` on the final group-synchronization implementation in an isolated full-pack Host profile. The earlier native run verified six shared/local configuration stages, editor layout and exact book-ID transfers with matching server receipts; its source audit changed while the final synchronization gate was being added. Two fresh final-source runs stopped before world startup. Focused tests cover initial group sync, membership-before-snapshot revision markers, persistence, stale edits, local detachment, appearance, legacy consumers and multi-container routing. Close after a final-source native pass; keep simultaneous-client claims separate.
 
 # Preview tooling

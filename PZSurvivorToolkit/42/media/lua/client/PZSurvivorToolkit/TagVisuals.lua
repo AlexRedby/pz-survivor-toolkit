@@ -27,6 +27,9 @@ local families = {
     security = {yellow, "Item_Key1"}, placeable = {neutral, "Item_Plank"},
     junk = {neutral, "Item_Money"},
     fresh = {green, "Item_Apple"}, stale = {yellow, "Item_AlarmClock"}, rotten = {brown, "Item_AppleRotten"},
+    edible = {green, "Item_Fork"}, dismantle = {blue, "Item_Screwdriver"},
+    ingredient = {green, "Item_Pan"}, beverage = {green, "Item_GlassJar"},
+    fruit = {green, "Item_Apple"}, vegetable = {green, "Item_Carrots"}, meat = {green, "Item_Steak"},
 }
 local icons = {
     perishable = "Item_AlarmClock", nonperishable = "Item_CannedCorn", preserved = "Item_CannedPeas",

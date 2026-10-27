@@ -32,14 +32,27 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.295
+
+- **Added:** Container groups share a name, icon, color, sorting filters, tag rules and priority. Create a group from the container editor or select an existing one to inherit its settings. Save changes for the whole group or only the current container; a local edit detaches that container. Groups work with duplicate exclusion disabled and synchronize through the existing revisioned Host authority.
+- **Added:** Optional **No duplicates** sorting reserves one copy of each item type across the whole batch, per container or across all discovered members of its group. Skill-book volumes remain distinct, and extra copies continue to other matching destinations in the existing priority order. The setting is included in copy/paste. Ordinary manual transfers are unchanged; concurrent Host transfers by different players still require coordination.
+
+### 0.1.294
+
+- Replace the visible broad Food tag with concrete, overlapping roles: Can Eat, Cooking Ingredient, existing meat/vegetable/fruit/beverage/alcohol tags, and Feed for pet food. Saved Food rules and manual assignments retain their previous membership without reappearing as new tag choices.
+- Derive Cooking Ingredient from native meal additions, food bases and consumed cooking-recipe inputs. Include meat, vegetables, bread, flour, seasonings, peanuts and native milk powder; exclude utensils, fuel, mere can-opening steps and fishing chum. Unknown callback-only recipes stay unclassified.
+- Classify liquid ingredients from their current contents, preserving empty and unsuitable-fluid negatives. Capture ingredient state in warehouse rows so filtering and grouping do not substitute a bottle's default contents; older snapshots keep unknown fluid state conservative.
+
 ### 0.1.293
 
-- **Added:** Container groups share a name, icon, color, sorting filters, tag rules and priority. Create a group from the container editor or select an existing one to inherit its settings. Save changes for the whole group or only the current container; a local edit detaches that container. Groups work with duplicate exclusion disabled.
-- **Improved:** No-duplicates distribution checks all discovered members of a group and reserves one copy per item type across the whole batch. Extra copies keep following the existing priority order to other matching destinations. Group settings persist in the world and synchronize through the existing revisioned Host authority; concurrent transfers from different players still require coordination.
+- Allow canceling an already-started native haircut, beard trim or hair/beard dye without discarding subsequent queued work. Preserve borrowed-tool and equipment cleanup, cosmetic state and unspent styling/dye resources; Host requires the exact still-started server receipt.
 
 ### 0.1.292
 
-- **Added:** Container sorting has an optional **No duplicates** setting. Distribution skips containers already holding the same item type and reserves only one copy per destination across the whole batch. Skill-book volumes remain distinct. Extra copies continue to the next matching container in the existing priority order, so a high-priority bookshelf can send duplicates to lower-priority storage. The setting is saved per compartment and included in copy/paste. Concurrent Host transfers by different players are not coordinated and can still add duplicate copies.
+- Derive Experience and Recipe tags independently from each recording. Combined lessons retain both tags, recipe-only recordings are supported, and container previews use real combinations without inventing content. Keep manual tag corrections and saved exact categories.
+- Add Disassembly for the consumed subjects of supported native dismantling recipes and scrap furniture, with skill tags from their XP rewards. Exclude kept tools and unrelated craft inputs; inspect live item restrictions without executing recipes. Unknown recipe callbacks remain unclassified.
+- Add Can Eat separately from Food using native Eat/Open and Eat behavior. Exclude Smoke/Drink and inedible ingredients; preserve Container and Liquid on fluid vessels regardless of their current contents.
+- Project warehouse entries through an explicit snapshot API, preserving recorded content and manual assignments without passing snapshot tables to native InventoryItem predicates.
 
 ### 0.1.291
 
@@ -1338,6 +1351,14 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.68
+
+- Expose read-only recipe creation-handler metadata so cooking tags recognize native milk-powder recipes without executing them or accepting a replaced handler.
+
+### 0.1.67
+
+- Expose read-only native Eat-menu and recipe item-test metadata for accurate tag previews. Unsupported bytecode returns unknown; neither helper creates items or executes recipe callbacks.
 
 ### 0.1.66
 

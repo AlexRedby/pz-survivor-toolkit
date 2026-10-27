@@ -36,6 +36,8 @@ public final class ScriptItemPropertiesChecks {
         require(function != null, "ZombieBuddy did not register the Lua global");
         Object writableFunction = LuaManager.env.rawget("toolkitScriptCanBeWrite");
         require(writableFunction != null, "ZombieBuddy did not register the writable Lua global");
+        Object eatMenuFunction = LuaManager.env.rawget("toolkitScriptHasEatMenu");
+        require(eatMenuFunction != null, "ZombieBuddy did not register the Eat-menu Lua global");
         var thread = new KahluaThread(LuaManager.platform, LuaManager.env);
         thread.debugOwnerThread = Thread.currentThread();
         LuaManager.thread = thread;
@@ -44,6 +46,7 @@ public final class ScriptItemPropertiesChecks {
         require(ScriptItemProperties.SUPPORTED, "current native script Item hash is unsupported");
         require(Boolean.FALSE.equals(thread.call(function, new Object[]{null})), "nil script was not false");
         require(thread.call(writableFunction, new Object[]{null}) == null, "nil script writable property was not nil");
+        require(thread.call(eatMenuFunction, new Object[]{null}) == null, "nil script Eat menu was not unknown");
         for (boolean client : new boolean[]{false, true}) {
             GameClient.client = client;
             GameServer.server = !client;
@@ -59,6 +62,14 @@ public final class ScriptItemPropertiesChecks {
                     "Kahlua bridge did not read the live native writable property on client/server");
                 require(script.canBeWrite == writable, "bridge changed the native writable property");
             }
+            for (String menu : new String[]{null, "Eat", "Smoke", "Drink", "", null}) {
+                script.customContextMenu = menu;
+                require(Boolean.valueOf(menu == null || menu.equals("Eat"))
+                    .equals(thread.call(eatMenuFunction, new Object[]{script})), "incorrect native Eat-menu flag");
+                require(java.util.Objects.equals(menu, script.customContextMenu), "bridge changed native menu");
+                require(ScriptItemProperties.readHasEatMenu(script, false) == null,
+                    "unsupported bytecode exposed an Eat-menu flag");
+            }
         }
         script.canBeEquipped = ItemBodyLocation.BACK;
         require(!ScriptItemProperties.read(script, false), "unsupported bytecode exposed a wearable slot");
@@ -71,7 +82,7 @@ public final class ScriptItemPropertiesChecks {
         }
         GameClient.client = false;
         GameServer.server = false;
-        System.out.println("SCRIPT_ITEM_PROPERTIES_CHECKS_PASS (live native script slot and writable property, no writes, non-debug client/server, nil/unsupported, ZombieBuddy scan and Kahlua)");
+        System.out.println("SCRIPT_ITEM_PROPERTIES_CHECKS_PASS (live native slot, writable and Eat-menu properties, no writes, non-debug client/server, nil/unsupported, ZombieBuddy scan and Kahlua)");
         System.exit(0);
     }
 }

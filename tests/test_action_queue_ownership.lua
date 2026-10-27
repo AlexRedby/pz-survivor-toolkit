@@ -24,6 +24,7 @@ local cases={
     OwnershipLifecycle="test_action_queue_lifecycle.lua",
     OwnershipSettlement="test_action_queue_settlement.lua",
     OwnershipGrooming="test_action_queue_grooming.lua",
+    OwnershipGroomingActive="test_action_queue_grooming_active.lua",
     OwnershipAnimalStops="test_action_queue_animal_stops.lua",
 }
 for flag,name in pairs(cases)do

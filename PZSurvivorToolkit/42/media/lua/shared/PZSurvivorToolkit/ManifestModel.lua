@@ -1,6 +1,7 @@
 -- Locale-independent, world-owned warehouse snapshots. Names are custom/legacy labels only.
 local Categories = require "PZSurvivorToolkit/ItemCategories"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
+local Cooking = require "PZSurvivorToolkit/ItemCookingTags"
 local Model = {SCHEMA = 2, STORE = "LootSorter_Manifest", PAGE_ROWS = 96, PAGE_CONTAINERS = 24,
     PAGE_BYTES = 24000, POLL_MS = 2000}
 PZSurvivorToolkit = PZSurvivorToolkit or {}
@@ -58,9 +59,14 @@ function Model.item(item)
     local mediaKey = mediaId or (mediaIndex and ("#" .. tostring(mediaIndex)))
     local delta = Custom.itemDelta(item)
     local tagKey = Model.tagIdentity(delta)
+    local script = item.getScriptItem and item:getScriptItem()
+    local ingredient = Cooking.read(script, item)
+    if type(ingredient) ~= "boolean" then ingredient = nil end
     local key = Model.identity(ft, name, cat, mediaKey)
+    if ingredient ~= nil then key = key .. ":ingredient:" .. tostring(ingredient) end
     if tagKey ~= "" then key = key .. #tagKey .. ":" .. tagKey end
     return {key = key, ft = ft, name = name, cat = cat,
+        ingredient = ingredient,
         tagDelta = tagKey ~= "" and delta or nil, tagKey = tagKey ~= "" and tagKey or nil,
         mediaId = mediaId, mediaIndex = mediaIndex, n = 1}
 end

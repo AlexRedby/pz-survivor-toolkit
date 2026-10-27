@@ -52,9 +52,17 @@ function Properties.read(script, item)
     elseif script and script.isItemType and ItemType and ItemType.CONTAINER then
         container = script:isItemType(ItemType.CONTAINER)
     end
-    if container then return worn, true, false end
+    local fluid
+    if item and item.isFluidContainer then
+        fluid = item:isFluidContainer()
+    elseif item and item.getFluidContainer then
+        fluid = item:getFluidContainer() ~= nil
+    elseif script and script.containsComponent and ComponentType and ComponentType.FluidContainer then
+        fluid = script:containsComponent(ComponentType.FluidContainer)
+    end
+    if container then return worn, true, false, fluid end
     local furniture = storageFurniture(script, item)
-    return worn, furniture, furniture
+    return worn, furniture or fluid == true, furniture, fluid
 end
 
 local function itemType(script, item, method, kind)
@@ -70,6 +78,33 @@ end
 
 local function negative(source, method)
     return source[method] and source[method](source) < 0
+end
+
+-- Native Eat/Open and Eat capability. Player hunger, tools and recipe knowledge
+-- do not change an item's role; Smoke/Drink and merely being Food are not Eat.
+function Properties.edible(script, item)
+    local food = itemType(script, item, "IsFood", "FOOD")
+    if not food then return food end
+    if not script or not script.isCantEat then return nil end
+    local source = item or script
+    local opening = source.getOpeningRecipe and source:getOpeningRecipe()
+    if opening and opening ~= "" and getScriptManager then
+        local manager = getScriptManager()
+        if manager and manager.getCraftRecipe and manager:getCraftRecipe(opening) then return true end
+    end
+    if script:isCantEat() then return false end
+    local eatMenu
+    if item and item.getCustomMenuOption then
+        local menu = item:getCustomMenuOption()
+        eatMenu = menu == nil or getText ~= nil and menu == getText("ContextMenu_Eat")
+    elseif toolkitScriptHasEatMenu then
+        eatMenu = toolkitScriptHasEatMenu(script)
+    end
+    if eatMenu ~= true then return eatMenu end
+    local hungerMethod = item and "getHungChange" or "getHungerChange"
+    local hunger = source[hungerMethod] and source[hungerMethod](source)
+    if type(hunger) ~= "number" then return nil end
+    return hunger < 0
 end
 
 -- Read/View means native content, not generic Inspect or a disabled Read option.

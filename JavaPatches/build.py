@@ -107,6 +107,7 @@ def build_kotlin_relocator(jdk, home, destination, *, run=None):
 
 
 CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRIPT_ITEM_PROPERTIES_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.RecipeItemPropertiesChecks': 'RECIPE_ITEM_PROPERTIES_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.WormCompostChecks': 'WORM_COMPOST_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.AlarmClockChecks': 'ALARM_CLOCK_CHECKS_PASS',
           'zombie.vehicles.VehicleInventoryOrderingChecks': 'VEHICLE_INVENTORY_ORDERING_CHECKS_PASS',
@@ -337,7 +338,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.66',
+    'version': '0.1.68',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

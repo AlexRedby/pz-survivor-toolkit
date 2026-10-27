@@ -210,26 +210,38 @@ function C.itemDelta(item)
     if not item or not item.hasModData or not item.getModData or not item:hasModData() then return {} end
     return C.normalizeChanges(item:getModData()[C.FIELD] or {}, true) or {}
 end
-function C.project(baseTags, fullType, item)
+function C.projectSnapshot(baseTags, fullType, delta)
     local result, present = {}, {}
     -- Preserve classification provenance used by lossless legacy projections.
     for key, value in pairs(baseTags or {}) do if type(key) ~= "number" then result[key] = copy(value) end end
-    for _, id in ipairs(baseTags or {}) do
-        if C.isActive(id) and not present[id] then result[#result + 1], present[id] = id, true end
+    local retired = schema.retiredTags or {}
+    local function legacy(id, value)
+        result.legacyTags = result.legacyTags or {}
+        result.legacyTags[id] = value or nil
     end
-    for _, delta in ipairs({C.typeDelta(fullType), C.itemDelta(item)}) do
+    for _, id in ipairs(baseTags or {}) do
+        if C.isActive(id) and not present[id] then
+            if retired[id] then legacy(id, true)
+            else result[#result + 1], present[id] = id, true end
+        end
+    end
+    for _, delta in ipairs({C.typeDelta(fullType), C.normalizeChanges(delta or {}, true) or {}}) do
         for index = #result, 1, -1 do
             local id = result[index]
             if delta[id] == "remove" then table.remove(result, index); present[id] = nil end
         end
         local additions = {}
         for id, op in pairs(delta) do
-            if op == "add" and C.isActive(id) and not present[id] then additions[#additions + 1] = id end
+            if retired[id] then legacy(id, op == "add" and C.isActive(id))
+            elseif op == "add" and C.isActive(id) and not present[id] then additions[#additions + 1] = id end
         end
         table.sort(additions)
         for _, id in ipairs(additions) do result[#result + 1], present[id] = id, true end
     end
     return result
+end
+function C.project(baseTags, fullType, item)
+    return C.projectSnapshot(baseTags, fullType, C.itemDelta(item))
 end
 function C.changeDelta(current, changes, reset)
     local delta = reset and {} or copy(current)

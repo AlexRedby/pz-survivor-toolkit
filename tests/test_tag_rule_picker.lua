@@ -87,7 +87,8 @@ assert(picker.searchLabel.text=='UI_PZST_TagRuleSearch' and picker.searchLabel.y
 assert(picker.matchCount==2 and picker.rule~=original and picker.rule.include~=original.include,'draft aliases saved rule')
 local rows={}
 for _,row in ipairs(picker.entries) do rows[row.id]=row end
-assert(rows.food.bucket==1 and rows.ingredient.bucket==2 and rows['category:ModCat'].bucket==3,'tags not grouped')
+assert(rows.food.bucket==3 and rows.ingredient.bucket==2 and rows['category:ModCat'].bucket==3,
+    'saved retired Food must remain editable outside the new tag choices')
 picker:cycle(rows.ingredient)
 assert(picker:state('ingredient')=='Include' and picker.matchCount==2)
 picker:cycle(rows.ingredient)
@@ -217,9 +218,9 @@ local live=inventoryItem(sunflower)
 picker=Picker.open({categories={'foodNonPerishable_candySnack'},items={live},rule=seedRule,onApply=function() end})
 rows={}
 for _,row in ipairs(picker.entries) do rows[row.id]=row end
-assert(rows.seed and rows.seed.bucket==2 and rows.farming and rows.food,
+assert(rows.seed and rows.seed.bucket==2 and rows.farming and not rows.food,
     'inventory-only sunflower did not expose item-specific seed choice')
-assert(rows.seed.families.food and rows.seed.families.farming,'dual-use item lost a family filter')
+assert(rows.seed.families.nonperishable and rows.seed.families.farming,'dual-use item lost a visible family filter')
 assert(picker.matchCount==1 and picker.preview.items[1].text=='Sunflower seeds','item-aware seed preview is empty')
 picker:close()
 picker=Picker.open({categories={'farmingSeed'},items={inventoryItem(candy)},onApply=function() end})
@@ -238,7 +239,7 @@ live.category='foodNonPerishable_candySnack';picker:close()
 picker=Picker.open({categories={'Tool'},scriptItems={sunflower,candy,full,empty},rule=seedRule,onApply=function() end})
 rows={}
 for _,row in ipairs(picker.entries) do rows[row.id]=row end
-assert(rows.seed and rows.food and rows.farming and not rows.tool,'script item choices used category fallback')
+assert(rows.seed and not rows.food and rows.farming and not rows.tool,'script item choices used category fallback')
 assert(picker.matchCount==2 and picker.preview.items[1].text=='Full seed packet'
     and picker.preview.items[2].text=='Sunflower seeds','script catalog seed preview counted candy/empty or used inventory names')
 picker.rule={mode='all',include={'food','seed'},exclude={}};picker:refreshPreview()

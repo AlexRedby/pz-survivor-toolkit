@@ -94,6 +94,10 @@ def configure_test_sources(lua, name, args):
         lua.globals().NativeModalDialogSource = (args.native_action_root / "client/ISUI/ISModalDialog.lua").read_text(encoding="utf-8")
     if name in ("test_inventory_planting.lua", "test_inventory_indicators.lua") and args.native_action_root:
         lua.globals().NativePlantingLuaRoot = str(args.native_action_root)
+    if name == "test_item_disassembly_tags.lua":
+        media = args.native_action_root.parent if args.native_action_root else args.game / "media" if args.game else None
+        if media:
+            lua.globals().NativeDisassemblyScriptsRoot = str(media / "scripts/generated/recipes")
     if name == "test_inventory_tooltips.lua":
         if args.native_action_root:
             lua.globals().NativeTooltipLuaRoot = str(args.native_action_root)
@@ -172,7 +176,7 @@ def test_variants(name, args):
                   "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
     if name == "test_action_queue_ownership.lua" and args.native_action_root:
         flags += ["OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-                  "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming"]
+                  "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipAnimalStops"]
     return flags
 
 
