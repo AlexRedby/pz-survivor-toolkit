@@ -83,6 +83,7 @@ function Deposit.plan(pane, items, target)
             end
         end
     end
+    if #ordered == 0 then return result end
     -- Work on a private list: preview must not change the current drag selection.
     pane:sortItemsByTypeAndWeight(ordered)
     local nearby, seen = {}, {}

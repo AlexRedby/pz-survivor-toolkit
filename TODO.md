@@ -174,7 +174,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Measured stabilization candidates
 
-- [ ] Requalify two Smart Deposit candidates from the archived old-baseline investigation (`193e336c`): avoid destination stock indexing when no admissible origin-bearing items remain, and invalidate advisory drag previews when the actual player actor changes within the same player slot. The old zero-stock-read and actor-replacement assertions were never qualified on the current implementation; preserve fresh admission/execution and current owner-local caches, and require focused current-source regressions before adopting either change.
+- [ ] Requalify the remaining Smart Deposit candidate from archived investigation `193e336c`: invalidate advisory drag previews when the actual player actor changes within the same player slot. The old actor-replacement assertion remains unqualified on the current implementation; preserve fresh admission/execution and owner-local caching, and require a focused current-source regression before adopting a change.
 
 - [ ] Complete the exclusive full-pack freshness on/off renderer comparison using fresh sealed `/tmp/pz-freshness-attribution-current` (67 mods, current Toolkit/Java, 14 phases and refresh counters), or prepare fresh if inputs changed. Admission expired behind other desktop work without launching a game. Native Kahlua with real Food and unchanged BC source independently measured about 21.5 ms for a 10,000-item aggregate, both visible and fully clipped; UI drawing/base render were doubles. Keep that result separate from the earlier inclusive 26-28 ms game-render baseline.
 

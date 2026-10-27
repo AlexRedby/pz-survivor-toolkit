@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.304
+
+- Skip Smart Deposit's nearby storage scan when the selection contains no movable items. Preserve mixed-selection routing, favorite and retained-item rules, and fresh checks when dropping items.
+
 ### 0.1.303
 
 - Allow moving unstarted plain haircuts, hair tie/untie and beard trims across independent queued work. Keep exact tool, appearance and equipment dependencies ordered, preserve native timing and P4 returns, and retain protection for gel/spray styling, dye, modified callbacks and started operations.

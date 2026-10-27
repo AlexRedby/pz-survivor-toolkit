@@ -147,6 +147,99 @@ local function setup(active, native)
     return w
 end
 
+-- Rejected selections must stop before discovering or reading destination stock.
+local function checkEmptyEligibleSelection()
+    local world = setup(true)
+    dofile(gate); world.upstream.install()
+    local deposit = PZSurvivorToolkit.SmartDeposit
+    local calls = {plans = 0, loot = 0, items = 0, get = 0}
+    local planFresh, lootFresh = deposit.plan, getPlayerLoot
+    deposit.plan = function(...)
+        calls.plans = calls.plans + 1
+        return planFresh(...)
+    end
+    getPlayerLoot = function(...)
+        calls.loot = calls.loot + 1
+        return lootFresh(...)
+    end
+    local crate = world.container()
+    crate.values = {world.item('Stock'), world.item('OtherStock')}
+    local itemsFresh = crate.getItems
+    function crate:getItems()
+        calls.items = calls.items + 1
+        local contents = itemsFresh(self)
+        local getFresh = contents.get
+        function contents:get(index)
+            calls.get = calls.get + 1
+            return getFresh(self, index)
+        end
+        return contents
+    end
+    world.nearby(crate)
+    local function measured(scans, action, message)
+        for key in pairs(calls) do calls[key] = 0 end
+        local result = action()
+        assert(calls.plans == 1, message .. ': must exercise a fresh plan')
+        assert(calls.loot == scans and calls.items == scans and calls.get == 2 * scans,
+            message .. ': unexpected loot/getItems/list:get calls: '
+                .. calls.loot .. '/' .. calls.items .. '/' .. calls.get)
+        return result
+    end
+    local favorite, originless = world.item('Favorite'), world.item('Originless')
+    favorite.favorite, originless.source = true, nil
+    local atTarget, containing, protected = world.item('AtTarget', 1, nil, world.target),
+        world.item('Containing'), world.item('Protected')
+    protected.stuck, world.target.inside = true, containing
+    local cases = {
+        {'empty', {}}, {'favorite only', {favorite}}, {'originless', {originless}},
+        {'source equals target', {atTarget}}, {'target containment', {containing}},
+        {'combined rejections', {favorite, originless, atTarget, containing}},
+        {'automatic protected only', {protected}, true},
+        {'combined automatic rejections', {favorite, originless, atTarget, containing, protected}, true},
+    }
+    for _, classes in ipairs({
+        {ISInventoryPane, ISInventoryPage, ISInventoryPaneDraggedItems},
+        {CleanUI_Vanilla_ISInventoryPane, CleanUI_Vanilla_ISInventoryPage, CleanUI_Vanilla_ISInventoryPaneDraggedItems},
+    }) do
+        local view = world.pane(classes[1])
+        local page = setmetatable({inventoryPane = view, mouseOverButton = {inventory = world.target}}, {__index = classes[2]})
+        for _, case in ipairs(cases) do
+            local name, items, automatic = case[1], case[2], case[3]
+            ISMouseDrag.dragging = not automatic and items or nil
+            local plan = measured(0, function() return deposit.plan(view, items, world.target) end, name .. ' plan')
+            assert(#plan.destinations == 0 and next(plan.groups) == nil and next(plan.accepted) == nil,
+                name .. ': empty eligibility must preserve the empty plan shape')
+            if not automatic then
+                assert(not measured(0, function() return view:canPutIn() end, name .. ' pane admission'))
+                assert(not measured(0, function() return page:canPutIn() end, name .. ' page admission'))
+                local drag = world.drag(items, classes[3], view)
+                for _, phase in ipairs({'cold', 'expired'}) do
+                    measured(0, function() return drag:update() end, name .. ' ' .. phase .. ' preview')
+                    for _, item in ipairs(items) do assert(drag.itemNotOK[item], name .. ': preview must reject every row') end
+                    world.now = world.now + 200
+                end
+            end
+            world.queued = {}
+            measured(0, function() view:transferItemsByWeight(items, world.target) end, name .. ' transfer')
+            assert(#world.queued == 0, name .. ': no transfer action may be queued')
+        end
+        -- Explicit retained items and mixed selections still need normal allocation.
+        local valid = world.item('Valid')
+        for _, items in ipairs({{protected}, {favorite, originless, atTarget, containing, protected, valid}}) do
+            ISMouseDrag.dragging = items
+            local plan = measured(1, function() return deposit.plan(view, items, world.target) end, 'eligible control plan')
+            assert(plan.accepted[protected] == crate and not plan.accepted[favorite]
+                and not plan.accepted[originless] and not plan.accepted[atTarget] and not plan.accepted[containing])
+            assert((plan.accepted[valid] == crate) == (#items > 1))
+            world.queued = {}
+            measured(1, function() view:transferItemsByWeight(items, world.target) end, 'eligible control transfer')
+            assert(#world.queued == (#items > 1 and 2 or 1), 'eligible controls must still queue their accepted items')
+        end
+    end
+end
+checkEmptyEligibleSelection()
+print('PASS empty eligible selections skip stock reads across plans, admission, previews and transfer')
+
 local w = setup(false)
 local untouched = ISInventoryPane.transferItemsByWeight
 dofile(gate)
@@ -297,10 +390,11 @@ local function checkCachedPreview()
     local world = setup(true)
     dofile(gate); world.upstream.install()
     local deposit = PZSurvivorToolkit.SmartDeposit
-    local plans, planFresh = 0, deposit.plan
+    local plans, latestPlan, planFresh = 0, nil, deposit.plan
     deposit.plan = function(...)
         plans = plans + 1
-        return planFresh(...)
+        latestPlan = planFresh(...)
+        return latestPlan
     end
     local function planning(expected, action, message)
         local before = plans
@@ -433,6 +527,33 @@ local function checkCachedPreview()
     planning(1, function() view:transferItemsByWeight({first}, world.target) end, 'execution replans newly available capacity')
     assert(#world.queued == 1 and world.queued[1].item == first and world.queued[1].destination == crate,
         'stale red preview cannot block a valid fresh transfer')
+
+    -- A same-count stock replacement changes affinity without invalidating the hint.
+    for _, classes in ipairs({
+        {ISInventoryPane, ISInventoryPage, ISInventoryPaneDraggedItems},
+        {CleanUI_Vanilla_ISInventoryPane, CleanUI_Vanilla_ISInventoryPage, CleanUI_Vanilla_ISInventoryPaneDraggedItems},
+    }) do
+        local left, right = world.container(), world.container()
+        left.values, right.values = {world.item('First')}, {world.item('Other')}
+        world.nearby(left, right)
+        local affinityView = world.pane(classes[1])
+        local affinityPage = setmetatable({inventoryPane = affinityView, mouseOverButton = {inventory = world.target}},
+            {__index = classes[2]})
+        local affinityDrag = world.drag({first}, classes[3], affinityView)
+        planning(1, function() affinityDrag:update() end, 'initial stock affinity preview')
+        assert(latestPlan.accepted[first] == left)
+        left.values[1], right.values[1] = right.values[1], left.values[1]
+        planning(0, function() affinityDrag:update() end, 'same-count stock swap may retain advisory affinity')
+        assert(latestPlan.accepted[first] == left, 'fixture must retain the old cached destination')
+        planning(1, function() assert(affinityView:canPutIn()) end, 'pane replans stock affinity')
+        assert(latestPlan.accepted[first] == right, 'pane admission must read same-count stock replacements')
+        planning(1, function() assert(affinityPage:canPutIn()) end, 'page replans stock affinity')
+        assert(latestPlan.accepted[first] == right, 'page admission must read same-count stock replacements')
+        world.queued = {}
+        planning(1, function() affinityView:transferItemsByWeight({first}, world.target) end, 'execution replans stock affinity')
+        assert(#world.queued == 1 and world.queued[1].destination == right,
+            'transfer must use fresh affinity despite the stale cached destination')
+    end
 end
 checkCachedPreview()
 print('PASS drag-local bounded advisory preview, lifecycle invalidation and fresh drop authority')
