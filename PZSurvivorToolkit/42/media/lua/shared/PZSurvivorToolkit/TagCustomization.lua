@@ -214,8 +214,16 @@ function C.projectSnapshot(baseTags, fullType, delta)
     local result, present = {}, {}
     -- Preserve classification provenance used by lossless legacy projections.
     for key, value in pairs(baseTags or {}) do if type(key) ~= "number" then result[key] = copy(value) end end
+    local retired = schema.retiredTags or {}
+    local function legacy(id, value)
+        result.legacyTags = result.legacyTags or {}
+        result.legacyTags[id] = value or nil
+    end
     for _, id in ipairs(baseTags or {}) do
-        if C.isActive(id) and not present[id] then result[#result + 1], present[id] = id, true end
+        if C.isActive(id) and not present[id] then
+            if retired[id] then legacy(id, true)
+            else result[#result + 1], present[id] = id, true end
+        end
     end
     for _, delta in ipairs({C.typeDelta(fullType), C.normalizeChanges(delta or {}, true) or {}}) do
         for index = #result, 1, -1 do
@@ -224,7 +232,8 @@ function C.projectSnapshot(baseTags, fullType, delta)
         end
         local additions = {}
         for id, op in pairs(delta) do
-            if op == "add" and C.isActive(id) and not present[id] then additions[#additions + 1] = id end
+            if retired[id] then legacy(id, op == "add" and C.isActive(id))
+            elseif op == "add" and C.isActive(id) and not present[id] then additions[#additions + 1] = id end
         end
         table.sort(additions)
         for _, id in ipairs(additions) do result[#result + 1], present[id] = id, true end

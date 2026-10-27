@@ -4,6 +4,7 @@ local categories = require "PZSurvivorToolkit/ItemCategories"
 local properties = require "PZSurvivorToolkit/ItemTagProperties"
 local media = require "PZSurvivorToolkit/ItemMediaTags"
 local disassembly = require "PZSurvivorToolkit/ItemDisassemblyTags"
+local cooking = require "PZSurvivorToolkit/ItemCookingTags"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
@@ -34,7 +35,7 @@ function Tags.requiresItemRule(id)
     -- Content and freshness depend on the physical instance, even when all
     -- script defaults in a legacy category currently agree.
     if id == "fresh" or id == "stale" or id == "rotten" or id == "edible" or id == "dismantle"
-        or id == "experience" or id == "recipe" then return true end
+        or id == "experience" or id == "recipe" or id == "ingredient" then return true end
     return id == "readable" or id == "literature" or id == "writeable"
 end
 
@@ -43,6 +44,12 @@ function Tags.forCategory(category)
     if not category or category == "" then return result end
     local definition = schema.categories[category] or {"category:" .. category}
     for i, id in ipairs(definition) do result[i] = id end
+    for id, categories in pairs(schema.retiredCategories or {}) do
+        if categories[category] then
+            result.legacyTags = result.legacyTags or {}
+            result.legacyTags[id] = true
+        end
+    end
     -- Distinct legacy aliases can have identical tags (e.g. two 7.62x51 keys).
     result.legacyCategory = category
     return result
@@ -60,7 +67,7 @@ local function setTag(tags, id, value)
     return false
 end
 
-local function itemTags(category, fullType, script, item, recording, snapshot)
+local function itemTags(category, fullType, script, item, recording, snapshot, snapshotIngredient)
     local tags = Tags.forCategory(category)
     local override = fullType and schema.items[string.lower(tostring(fullType))]
     if override then
@@ -81,6 +88,10 @@ local function itemTags(category, fullType, script, item, recording, snapshot)
     if furniture then refined = setTag(tags, "furniture", true) or refined end
     if fluid then refined = setTag(tags, "liquid", true) or refined end
     refined = setTag(tags, "edible", properties.edible(script, item)) or refined
+    local ingredient
+    if snapshot and type(snapshotIngredient) == "boolean" then ingredient = snapshotIngredient
+    else ingredient = cooking.read(script, item, snapshot) end
+    refined = setTag(tags, "ingredient", ingredient) or refined
     local canDismantle, skills = disassembly.read(script, item)
     refined = setTag(tags, "dismantle", canDismantle) or refined
     for _, id in ipairs(skills or {}) do refined = setTag(tags, id, true) or refined end
@@ -150,8 +161,8 @@ end
 
 -- Serialized rows have no InventoryItem. Use script capabilities and the captured
 -- recording, without invoking predicates that require a live native item.
-function Tags.forSnapshot(script, fullType, category, recording, tagDelta)
-    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true), fullType, tagDelta)
+function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient)
+    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true, ingredient), fullType, tagDelta)
 end
 
 -- Cache only automatic script tags. World custom definitions are merged live.
@@ -176,7 +187,9 @@ end
 function Tags.allIds(items)
     local ids, seen = {}, {}
     local function add(id)
-        if id ~= "general" and not seen[id] then ids[#ids + 1], seen[id] = id, true end
+        if id ~= "general" and not (schema.retiredTags or {})[id] and not seen[id] then
+            ids[#ids + 1], seen[id] = id, true
+        end
     end
     for _, id in ipairs(Custom.allIds()) do add(id) end
     for id in pairs(loadedAutomaticIds()) do add(id) end
@@ -187,7 +200,13 @@ function Tags.allIds(items)
     return ids
 end
 function Tags.revision() return Custom.cacheRevision() end
-Tags.signature = signature
+function Tags.signature(tags)
+    local ids = {}
+    for _, id in ipairs(tags) do ids[#ids + 1] = id end
+    -- Stack partitions must preserve saved-rule membership even for retired tags.
+    for id, value in pairs(tags.legacyTags or {}) do if value then ids[#ids + 1] = id end end
+    return signature(ids)
+end
 
 function Tags.category(tags, originalKey)
     originalKey = originalKey or tags.legacyCategory
@@ -225,6 +244,7 @@ local function tagSet(categoryOrTags)
     local tags = type(categoryOrTags) == "string" and Tags.forCategory(categoryOrTags) or categoryOrTags
     local present = {}
     for _, id in ipairs(tags or {}) do present[id] = true end
+    for id, value in pairs(tags and tags.legacyTags or {}) do if value then present[id] = true end end
     -- Saved exact-category filters survive a category gaining semantic tags later.
     if tags and schema.categories[tags.legacyCategory] then
         present["category:" .. tags.legacyCategory] = true

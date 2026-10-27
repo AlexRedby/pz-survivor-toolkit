@@ -18,5 +18,14 @@ public final class RecipeItemProperties {
         return supported && recipe != null ? Boolean.valueOf(recipe.hasLuaCall(CraftRecipe.LuaCall.OnTest)) : null;
     }
 
+    @LuaMethod(name="toolkitRecipeOnCreate", global=true)
+    public static String onCreate(CraftRecipe recipe) {
+        return readOnCreate(recipe, SUPPORTED);
+    }
+
+    static String readOnCreate(CraftRecipe recipe, boolean supported) {
+        return supported && recipe != null ? recipe.getLuaCallString(CraftRecipe.LuaCall.OnCreate) : null;
+    }
+
     private RecipeItemProperties() {}
 }

@@ -1,3 +1,7 @@
+# Pure script fluid previews
+
+- [ ] Replace `ItemCategoryRules.resolveScriptFluidCategory`'s call to native `FluidContainerScript:getInitialAmount()` with read-only initial-amount metadata. B42.21 bytecode draws from `Rand.Next` for ranged defaults, so category previews can consume game RNG. Preserve explicit empty/fixed/ranged defaults and add a native regression proving repeated previews leave RNG unchanged; the new cooking-tag reader already avoids this getter.
+
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.

@@ -109,7 +109,8 @@ assert(projected[1]=='perishable' and projected[2]==tag and projected.legacyCate
 projected.details.safe=false;assert(base.details.safe and base[1]=='food','projection is isolated and keeps dynamic provenance')
 assert(assign({own},'item',{food='add',perishable='remove'})=='accepted')
 projected=C.project(base,'Base.Apple',mine)
-assert(projected[1]==tag and projected[2]=='food' and mine.data.untouched==42,'instance delta layers over type delta')
+assert(projected[1]==tag and #projected==1 and projected.legacyTags.food and mine.data.untouched==42,
+    'instance delta layers over type delta without resurfacing retired Food')
 assert(assign({own},'item',{food='default'})=='accepted' and C.itemDelta(mine).food==nil)
 assert(assign({own},'item',{food='add'},true)=='accepted' and C.itemDelta(mine).perishable==nil,'reset clears scope then applies draft')
 revision=C.getRevision();local before=C.snapshot();local delta=C.itemDelta(mine)

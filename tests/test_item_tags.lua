@@ -118,7 +118,7 @@ do
  local accepted=Tags.matchesRule(tags,rule)
  ipairs=originalIpairs
  assert(accepted and traversals==1,'tag rule rebuilt item membership for each exclusion')
- tags[1]='changed'
+ for i,id in ipairs(tags) do if id=='fruit' then tags[i]='changed' end end
  assert(not Tags.matchesRule(tags,rule),'rule matching retained an earlier tag-set cache')
 end
 

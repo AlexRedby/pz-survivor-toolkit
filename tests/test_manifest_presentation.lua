@@ -12,9 +12,10 @@ local providerCalls = 0
 local Categories = {forScript = function(actual)
     assert(actual == script); providerCalls = providerCalls + 1; return 'craftingMaterial'
 end}
-local Tags = {forSnapshot = function(actual,fullType,category,recording,delta)
+local Tags = {forSnapshot = function(actual,fullType,category,recording,delta,ingredient)
     assert(actual==script and fullType=='Base.Nails')
     assert(recording==nil and delta==nil,'ordinary manifest entry invented recorded content or changes')
+    assert(ingredient==nil,'old snapshot invented a captured ingredient value')
     return {'tag:' .. category}
 end, forItem=function() error('manifest passed a Lua proxy to native item classification') end,
 label = function(id) return 'Label ' .. id end}
@@ -34,7 +35,7 @@ OrganizedCategories = setmetatable({}, {__index=function() error('removed media 
 Categories.refineMediaCategory = function(proxy, cat)
     assert(proxy:getMediaData() == media and cat == 'craftingMaterial'); return 'experienceMedia'
 end
-Tags.forSnapshot=function(actual,fullType,category,recording,delta)
+Tags.forSnapshot=function(actual,fullType,category,recording,delta,ingredient)
     assert(actual==script and fullType=='Base.Nails' and recording==media and delta==nil,
         'manifest snapshot omitted resolved recorded content')
     return {'tag:'..category}
@@ -52,3 +53,17 @@ Tags.forSnapshot=function(actual,fullType,category,recording,delta)
  return {'tool'}
 end
 Presentation.describe({ft='Base.Nails',cat='instance',tagDelta=storedDelta})
+
+local expected
+Tags.forSnapshot=function(actual,fullType,category,recording,delta,ingredient)
+    assert(actual==script and fullType=='Base.MilkBottle' and delta==storedDelta)
+    assert(ingredient==expected,'manifest lost captured false/true or invented an unknown ingredient value')
+    return {}
+end
+for _,state in ipairs({{true},{false},{}})do
+    expected=state[1]
+    for _,loaded in ipairs({true,false})do
+        Presentation.describe({ft='Base.MilkBottle',cat='instance-fluid',tagDelta=storedDelta,
+            ingredient=expected,loaded=loaded})
+    end
+end

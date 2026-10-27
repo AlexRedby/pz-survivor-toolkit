@@ -298,7 +298,9 @@ end
 
 buildEntries = function(options, rule)
     local entries, families, roots, seen = {}, {}, {}, {}
-    for _, definition in pairs(Schema.categories) do roots[definition[1]] = true end
+    for _, definition in pairs(Schema.categories) do
+        if definition[1] then roots[definition[1]] = true end
+    end
     local categories = {}
     for _, category in ipairs(options.categories or {}) do
         if not seen[category] then categories[#categories + 1], seen[category] = category, true end

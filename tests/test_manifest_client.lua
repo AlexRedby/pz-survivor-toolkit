@@ -50,9 +50,18 @@ end
 -- Inline SP uses the same paginated API without recursion, premature callback or partial publish.
 setup(false)
 inlinePages={page(4,7,1),page(4,nil,2)}
+inlinePages[1].containers[1].entries.entry1.ingredient=false
+inlinePages[1].containers[1].entries.entry1.tagDelta={ingredient='add'}
+inlinePages[2].containers[1].entries.entry2.ingredient=true
 local ready=0
 Client.open(1,function(payload,status)
-    if status=='ready'then ready=ready+1;assert(payload.containers['1,2,0/0/0'].entries.entry2.n==2)end
+    if status=='ready'then
+        ready=ready+1
+        local entries=payload.containers['1,2,0/0/0'].entries
+        assert(entries.entry2.n==2 and entries.entry2.ingredient==true)
+        assert(entries.entry1.ingredient==false and entries.entry1.tagDelta.ingredient=='add',
+            'client page merge lost captured false ingredient state or manual assignments')
+    end
 end)
 assert(Client.getState(1).status=='loading' and not Client.getState(1).payload and ready==0)
 fire('OnTick')

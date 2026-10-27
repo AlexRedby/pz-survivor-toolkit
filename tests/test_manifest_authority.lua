@@ -15,11 +15,20 @@ getCell = function()return {getGridSquare=function(_,x,y,z)return squares[x..','
 local presets = {}
 local Tags = {enabled=function()return true end,normalizeRule=function(rule)return rule end,
     ruleActive=function(rule)return rule and #rule.include>0 end}
+local milkScript = {getFullName=function()return 'Base.MilkBottle'end}
+local Cooking = {read=function(script, value)
+    if script == milkScript then
+        assert(value.getFluidContainer, 'manifest did not supply the sampled physical item')
+        return value:getFluidContainer() == 'milk'
+    end
+    return nil
+end}
 local cached = {}
 require = function(name)
     if cached[name] then return cached[name] end
     local module
     if name=='PZSurvivorToolkit/ItemTags' then module=Tags
+    elseif name=='PZSurvivorToolkit/ItemCookingTags' then module=Cooking
     elseif name=='PZSurvivorToolkit/QuartermasterPresets' then
         module={native=function()return presets end,rules=function()return {}end}
     elseif name=='PZSurvivorToolkit/ContainerAppearance' then
@@ -43,6 +52,13 @@ local function item(ft, label, custom)
     return {getFullType=function()return ft end,getDisplayName=function()return label end,
         getName=function()return label end,isCustomName=function()return custom end,
         getDisplayCategory=function()return 'Food' end}
+end
+local function bottle(fluid)
+    local value=item('Base.MilkBottle','Bottle')
+    value.fluid=fluid
+    value.getScriptItem=function()return milkScript end
+    value.getFluidContainer=function(self)return self.fluid end
+    return value
 end
 local function container(values)
     local items=list(values,true)
@@ -81,11 +97,21 @@ assert(store.schema==2 and not store.boxes and store.containers['legacy:99,0,0']
 local legacy=store.containers['legacy:99,0,0']
 assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].n==8)
 assert(legacy.legacy and not legacy.loaded and legacy.sampledAt==0)
+assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].ingredient==nil,
+    'legacy row invented a current cooking classification')
 -- Stable identity separates types with identical labels, preserves custom names, ignores locale.
 assert(Model.item(item('Base.A','Translated A')).key==Model.item(item('Base.A','Other locale')).key)
 assert(Model.item(item('Base.A','Same')).key~=Model.item(item('Base.B','Same')).key)
 assert(Model.item(item('Base.A','Renamed',true)).name=='Renamed')
 assert(Model.item(item('Base.A','Renamed',true)).key~=Model.item(item('Base.A','Same')).key)
+local milk,empty,petrol=bottle('milk'),bottle(nil),bottle('petrol')
+local milkRow,emptyRow,petrolRow=Model.item(milk),Model.item(empty),Model.item(petrol)
+assert(milkRow.ingredient==true and emptyRow.ingredient==false and petrolRow.ingredient==false,
+    'snapshot did not capture live contents independently of the milk bottle type')
+assert(milkRow.key~=petrolRow.key and emptyRow.key==petrolRow.key,
+    'snapshot grouping ignored captured cooking capability')
+assert(Model.item(item('Base.Unknown','Unknown')).ingredient==nil,
+    'unavailable native cooking metadata must remain unknown')
 -- Multicontainer, presets (including generation), and tag-only designations share real resolver.
 local many={}
 for i=1,220 do many[i]=item('Base.T'..i,'Same label') end
@@ -321,3 +347,51 @@ end
 local projectedA,projectedB=Model.item(exactA),Model.item(exactB)
 assert(projectedA.key~=projectedB.key and projectedA.tagDelta.food=='remove'
  and projectedB.tagDelta.tool=='add','warehouse merged different physical tag assignments')
+
+-- Same-type bottles retain live cooking capability through grouping, scans and RPC pages.
+milk.hasModData=function()return true end
+milk.getModData=function()return {PZSTItemTags={ingredient='remove',tool='add'}}end
+local bottles=container({milk,empty,petrol})
+square(2,{object({bottles},{PZSTQuartermasterTagRules={['0']={include={'tool'},exclude={}}}})})
+settle(100)
+local bottleRecord=assert(store.containers['2,0,0/0/0'])
+assert(#bottleRecord.itemOrder==2 and bottleRecord.entries[emptyRow.key].n==2)
+local capturedMilk=assert(bottleRecord.entries[Model.item(milk).key])
+assert(capturedMilk.ingredient==true and capturedMilk.tagDelta.ingredient=='remove'
+    and capturedMilk.tagDelta.tool=='add', 'cooking capture lost manual tag assignments')
+local capturedRevision=store.revision
+settle(100)
+assert(store.revision==capturedRevision and store.containers[bottleRecord.id].entries==bottleRecord.entries,
+    'unchanged cooking capture rebuilt the sample')
+Model.PAGE_ROWS=1
+local bottlePlayer,seenMilk,seenOther={},false,false
+local _,bottlePage=Authority.requestPage(bottlePlayer,{})
+while bottlePage do
+    for _,record in ipairs(bottlePage.containers)do
+        if record.id==bottleRecord.id then
+            for _,row in pairs(record.entries)do
+                if row.ingredient==true then
+                    seenMilk=true
+                    assert(row.tagDelta.ingredient=='remove' and row.tagDelta.tool=='add')
+                elseif row.ingredient==false then seenOther=true;assert(row.n==2)
+                else error('pagination dropped a captured false cooking capability') end
+            end
+        elseif record.legacy then
+            for _,row in pairs(record.entries)do assert(row.ingredient==nil)end
+        end
+    end
+    if bottlePage.cursor then _,bottlePage=Authority.requestPage(bottlePlayer,{cursor=bottlePage.cursor})
+    else bottlePage=nil end
+end
+assert(seenMilk and seenOther,'paginated sample omitted cooking groups')
+Model.PAGE_ROWS=oldRows
+milk.fluid='petrol'
+settle(100)
+local changedBottles=store.containers[bottleRecord.id]
+assert(store.revision>capturedRevision and not changedBottles.entries[capturedMilk.key],
+    'live fluid mutation retained an old ingredient classification')
+for _,row in pairs(changedBottles.entries)do assert(row.ingredient==false)end
+squares['2,0,0']=nil
+settle(10)
+assert(not store.containers[bottleRecord.id].loaded)
+for _,row in pairs(store.containers[bottleRecord.id].entries)do assert(row.ingredient==false)end

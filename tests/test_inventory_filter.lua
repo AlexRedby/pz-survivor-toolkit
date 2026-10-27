@@ -14,6 +14,10 @@ require = function(name)
     end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
         or name == "PZSurvivorToolkit/TagCustomization" or name == "PZSurvivorToolkit/PlantingTags"
+        or name == "PZSurvivorToolkit/ItemCookingTags" or name == "PZSurvivorToolkit/ItemDisassemblyTags"
+        or name == "PZSurvivorToolkit/ItemMediaTags" or name == "PZSurvivorToolkit/ItemCategories"
+        or name == "PZSurvivorToolkit/ItemCategoryRules" or name == "PZSurvivorToolkit/ItemCategoryData"
+        or name == "PZSurvivorToolkit/LegacyItemCategories"
         or name == "PZSurvivorToolkit/InventoryMembership" or name == "PZSurvivorToolkit/ItemTagProperties" then
         local module = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
         if name == "PZSurvivorToolkit/ItemTags" then
@@ -138,8 +142,8 @@ do
     for pass=1,5 do pane:restoreSelection({}) end
     assert(categoryReads == 0 and tagReads == 0, 'inactive restores still classified inventory for closed menus')
     local categories, tags = PZSurvivorToolkit.InventoryFilter.choices(pane)
-    assert(#categories == 3 and tags.food and tags.tool and tagReads == 4,
-        'on-demand choices omitted items or classified duplicated group headers')
+    assert(#categories == 3 and not tags.food and tags.tool and tagReads == 4,
+        'on-demand choices resurfaced retired Food or classified duplicated group headers')
     categoryReads, tagReads = 0, 0
     categoryChoices(pane)
     assert(categoryReads == 4 and tagReads == 0, 'category-only choices unnecessarily classified tags')
@@ -236,13 +240,16 @@ trigger.callback(trigger.target,trigger)
 local tagMenu=assert(menu)
 assert(#tagMenu.options>0 and tagMenu.options[1].iconTexture,'tag picker missing icons')
 assert(tagMenu.options[1].color.g>tagMenu.options[1].color.r,'tag picker missing family color')
-local foodOption
-for _,option in ipairs(tagMenu.options) do if option.arg=='food' then foodOption=option end end
-assert(foodOption,'food tag missing from picker')
+local toolOption
+for _,option in ipairs(tagMenu.options) do
+    assert(option.arg~='food','retired Food must not appear as a new picker choice')
+    if option.arg=='tool' then toolOption=option end
+end
+assert(toolOption,'tool tag missing from picker')
 local beforeTag = refreshes
-foodOption.callback(foodOption.target,foodOption.arg)
+toolOption.callback(toolOption.target,toolOption.arg)
 assert(refreshes == beforeTag + 1, 'tag selection rebuilt the inventory more than once')
-assert(pane.toolkitTag=='food' and #pane.itemslist==1,'decorated picker changed tag filtering')
+assert(pane.toolkitTag=='tool' and #pane.itemslist==2,'decorated picker changed tag filtering')
 print('Inventory filter checks passed: exact categories, search, empty results, selections, bulk actions and clear.')
 
 pane.toolkitTag, pane.toolkitTagRule = nil, {mode='all', include={'tool'}, exclude={'weapon'}}
