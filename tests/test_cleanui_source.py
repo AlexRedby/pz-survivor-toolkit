@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools import cleanui_source
+from tools import cleanui_source, dependency_source
 
 
 ORIGINAL = b"""local CLEANUI_LARGE_STACK_OPTIMIZATION_THRESHOLD = 200
@@ -170,7 +170,7 @@ class CleanUISource(unittest.TestCase):
                 (self.source / "common/texture.bin").write_bytes(b"changed by another process")
             return result
 
-        with patch.object(cleanui_source.shutil, "copytree", side_effect=changed):
+        with patch.object(dependency_source.shutil, "copytree", side_effect=changed):
             with self.assertRaisesRegex(ValueError, "changed during preparation"):
                 cleanui_source.prepare_cleanui(self.source, self.output)
         self.assertFalse(self.output.exists())

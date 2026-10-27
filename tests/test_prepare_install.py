@@ -401,9 +401,72 @@ class PrepareInstall(unittest.TestCase):
     def test_current_selected_mod_order_is_accepted(self):
         shutil.copyfile(ROOT / prepare_install.INI_NAME, self.root / prepare_install.INI_NAME)
         source = self.cleanui_fixture(select=False)
-        with patch.object(prepare_install, 'prepare_cleanui', side_effect=self.stage_cleanui):
-            prepare_install.prepare(self.root, cleanui=source)
+        damnlib = self.damnlib_fixture(select=False)
+        with patch.object(prepare_install, 'prepare_cleanui', side_effect=self.stage_cleanui), \
+                patch.object(prepare_install, 'prepare_damnlib', side_effect=self.stage_damnlib):
+            result = prepare_install.prepare(self.root, cleanui=source, damnlib=damnlib)
+        self.assertEqual(set(prepare_install.MOD_IDS) | {'CleanUI', 'damnlib'},
+                         {path.name for path in (result / 'mods').iterdir()})
         self.build.assert_called_once()
+
+    def damnlib_fixture(self, select=True):
+        source = self.root / 'DAMN source'
+        target = source / '42.20/media/scripts/damnCraft/recipes_damnCraft.txt'
+        target.parent.mkdir(parents=True)
+        target.write_text('original recipes')
+        (source / '42.20/mod.info').write_text('id=damnlib\n')
+        if select:
+            (self.root / prepare_install.INI_NAME).write_text(
+                'Mods=ZombieBuddy;damnlib;' + ';'.join(prepare_install.MOD_IDS) + '\n')
+        return source
+
+    @staticmethod
+    def stage_damnlib(source, destination):
+        shutil.copytree(source, destination)
+        (destination / '42.20/media/scripts/damnCraft/recipes_damnCraft.txt').write_text('remaining recipes')
+        return {'patch_id': 'fixture-native-battery-recipes'}
+
+    def test_selected_damnlib_requires_explicit_source_before_build(self):
+        self.damnlib_fixture()
+        with self.assertRaisesRegex(ValueError, 'requires --damnlib'):
+            prepare_install.prepare(self.root)
+        self.build.assert_not_called()
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+
+    def test_damnlib_copy_and_provenance_publish_without_changing_source(self):
+        source = self.damnlib_fixture()
+        with patch.object(prepare_install, 'prepare_damnlib', side_effect=self.stage_damnlib):
+            result = prepare_install.prepare(self.root, damnlib=source)
+        target = Path('42.20/media/scripts/damnCraft/recipes_damnCraft.txt')
+        self.assertEqual((source / target).read_text(), 'original recipes')
+        self.assertEqual((result / 'mods/damnlib' / target).read_text(), 'remaining recipes')
+        self.assertEqual(json.loads((result / 'damnlib-source-patch.json').read_text()),
+                         {'patch_id': 'fixture-native-battery-recipes'})
+        self.assertFalse(self.sentinel.exists())
+
+    def test_damnlib_failure_preserves_bundle_after_cleanui_staging(self):
+        cleanui = self.cleanui_fixture(select=False)
+        damnlib = self.damnlib_fixture(select=False)
+        (self.root / prepare_install.INI_NAME).write_text(
+            'Mods=ZombieBuddy;damnlib;CleanUI;' + ';'.join(prepare_install.MOD_IDS) + '\n')
+        with patch.object(prepare_install, 'prepare_cleanui', side_effect=self.stage_cleanui), \
+                patch.object(prepare_install, 'prepare_damnlib', side_effect=ValueError('unknown DAMN source')):
+            with self.assertRaisesRegex(ValueError, 'unknown DAMN source'):
+                prepare_install.prepare(self.root, cleanui=cleanui, damnlib=damnlib)
+        self.build.assert_not_called()
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+        self.assertEqual(list((self.root / 'dist').iterdir()), [self.output])
+
+    def test_unselected_or_output_damnlib_source_rejects_before_build(self):
+        source = self.damnlib_fixture(select=False)
+        with self.assertRaisesRegex(ValueError, '--damnlib requires damnlib'):
+            prepare_install.prepare(self.root, damnlib=source)
+        (self.root / prepare_install.INI_NAME).write_text(
+            'Mods=ZombieBuddy;damnlib;' + ';'.join(prepare_install.MOD_IDS) + '\n')
+        with self.assertRaisesRegex(ValueError, 'outside the prepared output'):
+            prepare_install.prepare(self.root, damnlib=self.output / 'mods/damnlib')
+        self.build.assert_not_called()
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
 
     def cleanui_fixture(self, select=True):
         source = self.root / 'CleanUI source'

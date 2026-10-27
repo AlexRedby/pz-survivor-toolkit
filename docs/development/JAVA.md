@@ -20,7 +20,7 @@ export KOTLIN_HOME="/path/to/kotlin-distribution"
 export PZ_GAME="/path/to/game/Java"
 export PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI"
 export PATH="$JAVA_HOME/bin:$PATH"
-python3 tools/prepare_install.py --game "$PZ_GAME" --jdk "$JAVA_HOME" --cleanui "$PZ_CLEANUI_SOURCE" --check
+python3 tools/prepare_install.py --game "$PZ_GAME" --jdk "$JAVA_HOME" --cleanui "$PZ_CLEANUI_SOURCE" --damnlib "$PZ_DAMNLIB_SOURCE" --check
 ```
 
 The explicit flags are shown so the selected JDK and game are clear; Kotlin is selected from `KOTLIN_HOME`. If the build reports a missing or invalid Kotlin distribution, check that `KOTLIN_HOME` points to the root containing `lib/kotlin-compiler.jar` and `lib/kotlin-stdlib.jar`, both report version 2.4.21, and the distribution includes its license files. Passing `--kotlin-home /path/to/kotlin-distribution` overrides the environment. Discovery through `PATH` requires an executable `bin/kotlinc` script; if an archive extractor removed its executable permission, use `KOTLIN_HOME` or unpack it with permissions preserved. Playing and launching Host do not require this compiler: the ordinary mod JAR bundles its relocated private runtime. The early font JAR remains Java-only. The distribution does not include `kotlin-reflect` or promise Kotlin reflection over relocated metadata.

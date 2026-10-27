@@ -11,6 +11,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Fixed:** Prepared that DAMN Library copies remove the two obsolete Plastic Welding Gun battery recipes. The existing standard recipes preserve the gun and transfer its battery charge; the duplicate removal recipe that created a full battery without draining the gun is no longer available. Preparation requires a complete `--damnlib` source, verifies the reviewed script and leaves Workshop inputs untouched.
+
 - **Fixed:** Prepared CleanUI copies refresh every member of visible collapsed food stacks at the existing one-second interval. Older food beyond the first 50 items can now become stale and regroup while a younger header remains fresh. Preparation requires an explicit complete CleanUI source, checks the reviewed source hashes and includes the corrected copy for every client/Host without changing Workshop downloads.
 
 - **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Downloaded B42 metadata confirms the main Jeep requires only `damnlib`; optional JP18 adds Jurassic Park spawns and requires the main Jeep. JP18/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.

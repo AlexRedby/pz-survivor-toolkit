@@ -1,6 +1,6 @@
 require 'Entity/ISEntityUI'
 local config=require 'QueueTestSelection'
-if config.suite~='plastic-battery' then return end
+if config.suite~='plastic-battery' or config.cases[1]~='charge-matrix' then return end
 local JSON=require 'QueueHealthEvents'
 local gunType='damnCraft.PlasticWeldingGun'
 local plans={}

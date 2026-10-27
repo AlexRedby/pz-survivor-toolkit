@@ -27,7 +27,7 @@ python3 tools/package_mod.py --check
 python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip
 python3 -m unittest discover -s tests -p 'test_prepare_install.py'
 python3 -m unittest discover -s JavaPatches/tests
-python3 tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE" --check
+python3 tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE" --damnlib "$PZ_DAMNLIB_SOURCE" --check
 ```
 
 List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Quartermaster checks always use the owned `PZSurvivorToolkit/42/media/lua` sources. Explicitly selecting its craft UI or the native tag transfer/placement checks also requires native game sources through `--game` or `--native-action-root`. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
@@ -50,7 +50,7 @@ With `--game`, vehicle ground-placement regressions exercise the installed game'
 
 Action queue and native Wishlist menu checks use `--game`. Add `--wishlist-workshop-root /path/to/steamapps/workshop/content/108600` for the Wishlist checks against installed adapters.
 
-`python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically. Use `tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE"` to prepare the two owned mods and a complete corrected CleanUI copy; it creates no archive. `PZ_CLEANUI_SOURCE` is the complete external mod root. The reviewed offline patch changes only its active food-age helper; unknown source hashes fail before publication and Workshop inputs remain unchanged. For a fresh native pack lock/snapshot, pass `--mod-source CleanUI=/absolute/path/to/dist/SurvivorQoL/mods/CleanUI` so the normal source seals cover the delivered dependency. The root `cleanui-source-patch.json` records portable input/output hashes.
+`python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically. Use `tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE" --damnlib "$PZ_DAMNLIB_SOURCE"` to prepare the two owned mods and complete corrected CleanUI/DAMN Library copies; it creates no archive. Both inputs must be complete external mod roots. Reviewed offline patches change only CleanUI's active food-age helper and DAMN Library's active duplicate battery recipe pair; unknown source hashes fail before publication and Workshop inputs remain unchanged. Fresh native pack locks must select both prepared dependency roots with `--mod-source CleanUI=/path/to/dist/SurvivorQoL/mods/CleanUI --mod-source damnlib=/path/to/dist/SurvivorQoL/mods/damnlib`. The root `cleanui-source-patch.json` and `damnlib-source-patch.json` record portable input/output hashes.
 
 To run the same checks against your installed game's native Mod Options implementation:
 

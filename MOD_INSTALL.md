@@ -10,7 +10,7 @@ For the Steam edition of **Project Zomboid B42.21**, in single-player or **Host*
 | I already use an older version | [Update the set](#update-the-set) |
 | The loader or a vehicle fix seems inactive | [Activation checks](JavaPatches/README.md#verify-activation) and [vehicle logs](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs) |
 
-The [server INI](SurvivorQoL-selected.ini) defines the selection. Toolkit and Java Patches have no Workshop download. Everyone also needs the same prepared CleanUI copy, which contains the food-age correction. [Current versions and changes](CHANGELOG.md) come from the component metadata linked in the [overview](README.md#components). Options are per player; see [features and controls](docs/FEATURES.md).
+The [server INI](SurvivorQoL-selected.ini) defines the selection. Toolkit and Java Patches have no Workshop download. Everyone also needs the same prepared CleanUI and that DAMN Library copies, which correct food ageing and remove the broken duplicate battery recipes. [Current versions and changes](CHANGELOG.md) come from the component metadata linked in the [overview](README.md#components). Options are per player; see [features and controls](docs/FEATURES.md).
 
 **Back up an existing world before changing its mods.** The Java patch gives one stock corridor a distinct persistent room key. Saving with this correction requires the matching patch afterward; disabling it or loading an unsupported game build loses that corridor's saved explored, lighting, spawning and roof flags. See [the save dependency](JavaPatches/README.md#included-fixes).
 
@@ -25,7 +25,7 @@ The [server INI](SurvivorQoL-selected.ini) defines the selection. Toolkit and Ja
 
 ## Local mods: server and every player
 
-With the game/server stopped, copy **all three complete folders inside the prepared `mods` folder** (`PZSurvivorToolkit`, `PZToolkitJavaPatches`, `CleanUI`) into `Zomboid/mods`. Keep every version and `common` subfolder. The owned mods use `42/mod.info`; CleanUI retains its selected B42 version folder. Check these metadata files; avoid double nesting such as `PZSurvivorToolkit/PZSurvivorToolkit`.
+With the game/server stopped, copy **all four complete folders inside the prepared `mods` folder** (`PZSurvivorToolkit`, `PZToolkitJavaPatches`, `CleanUI`, `damnlib`) into `Zomboid/mods`. Keep every version and `common` subfolder. The owned mods use `42/mod.info`; dependencies retain their selected B42 version folders. Check these metadata files; avoid double nesting such as `PZSurvivorToolkit/PZSurvivorToolkit`.
 
 | Platform | Zomboid directory |
 |---|---|
@@ -33,7 +33,7 @@ With the game/server stopped, copy **all three complete folders inside the prepa
 | macOS / Linux | `~/Zomboid` |
 | Dedicated server | `Zomboid` in the home directory of the account running the server; use the specified directory when launching with `-cachedir` |
 
-The prepared folders **do not download when joining**. Distribute the same copy to everyone, including CleanUI: its unchanged Mod ID remains selected, while the local copy overrides the Workshop download. The downloaded Workshop files remain untouched. Do not replace this prepared CleanUI copy with an uncorrected download; its collapsed food stacks can retain stale freshness beyond the first 50 items.
+The prepared folders **do not download when joining**. Distribute the same copies to everyone, including CleanUI and `damnlib`: their unchanged Mod IDs remain selected, while the local copies override the Workshop downloads. The downloaded Workshop files remain untouched. Keep the prepared corrections: CleanUI refreshes freshness throughout visible food stacks, and the Plastic Welding Gun uses the standard battery recipes without the duplicate recipe that creates free batteries.
 
 ## ZombieBuddy loader
 
@@ -49,7 +49,7 @@ After launching the client, check for **ZombieBuddy ... loaded** in the upper-le
 ## Server
 
 1. Stop the server. Back up the world and an existing profile's INI. Include `Zomboid/Lua/PZSurvivorWishlist/` in backups: shared lists are stored there separately from the world, under its encoded save path. Keep that save path when restoring.
-2. Install all three [local mod folders](#local-mods-server-and-every-player).
+2. Install all four [local mod folders](#local-mods-server-and-every-player).
 3. For a **new profile**, copy the prepared `Server/SurvivorQoL-selected.ini` into `Zomboid/Server`. For an **existing profile**, copy only the `Mods=` and `WorkshopItems=` lines into its existing INI; keep its other settings.
 4. Keep the supplied order. ZombieBuddy comes first, Java Patches immediately after it, libraries before their dependants, CleanUI before Toolkit, Toolkit before MP Fast Forward/Better Containers, and Realistic Dashboard before Navigator. All local IDs are already included; do not add them to `WorkshopItems=`.
 5. Set up the [server Java loader](JavaPatches/README.md#server-loader). **Host owners must complete the client steps too**, then follow [Host: save approvals first](JavaPatches/README.md#host-save-approvals-first) before using the supplied launcher. Dedicated servers also need the loader for VHS, build cancellation and vehicle authority recovery.
@@ -65,8 +65,8 @@ The server owner prepares one copy for everyone. Players receiving it do not nee
 
 1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit). Install **Python 3.10+**, **JDK 25+** and unpack the [Kotlin 2.4.21 compiler distribution](https://github.com/JetBrains/kotlin/releases/tag/v2.4.21) on the build machine; preparation builds Toolkit and Java Patches. Point `KOTLIN_HOME` to the distribution root containing `lib/` (not `bin/`); the build prefers `--kotlin-home`, then `KOTLIN_HOME`, then `kotlinc` on `PATH`.
 2. Install the [ZombieBuddy loader](#zombiebuddy-loader) there. The game Java directory must contain both `projectzomboid.jar` and `ZombieBuddy.jar`.
-3. From the repository root run `python3 tools/prepare_install.py --cleanui "/path/to/mods/CleanUI"` on macOS/Linux, or `py -3 tools/prepare_install.py --cleanui "C:\path\to\mods\CleanUI"` on Windows. Supply the complete downloaded CleanUI mod root, containing its version and `common` folders. Preparation requires the reviewed active source and stops on an unknown update; it changes only the private prepared copy. For a custom installation add `--game "/path/to/folder-containing-both-jars"`; to choose a JDK add `--jdk "/path/to/jdk-25"`. To select Kotlin explicitly add `--kotlin-home "/path/to/kotlin-distribution"`. The build requires compiler and stdlib version 2.4.21 and downloads nothing; a missing or mismatched compiler fails preparation. Add `--check` to run the native JVM regression checks too.
-4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZToolkitJavaPatches`, the corrected `mods/CleanUI`, `cleanui-source-patch.json` with portable source/patch hashes, `Server/SurvivorQoL-selected.ini`, optional legacy Windows/macOS Host launchers, this installation guide and `JavaPatches/README.md`. Workshop supplies the remaining dependencies. Keep the provenance file with the prepared set when checking later CleanUI updates. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
+3. From the repository root run `python3 tools/prepare_install.py --cleanui "/path/to/mods/CleanUI" --damnlib "/path/to/mods/damnlib"` on macOS/Linux, or `py -3 tools/prepare_install.py --cleanui "C:\path\to\mods\CleanUI" --damnlib "C:\path\to\mods\damnlib"` on Windows. Supply the complete downloaded CleanUI and DAMN Library mod roots, including their version and `common` folders. Preparation requires reviewed active sources and stops on an unknown update; it changes only the private prepared copies. For a custom installation add `--game "/path/to/folder-containing-both-jars"`; to choose a JDK add `--jdk "/path/to/jdk-25"`. To select Kotlin explicitly add `--kotlin-home "/path/to/kotlin-distribution"`. The build requires compiler and stdlib version 2.4.21 and downloads nothing; a missing or mismatched compiler fails preparation. Add `--check` to run the native JVM regression checks too.
+4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZToolkitJavaPatches`, the corrected `mods/CleanUI` and `mods/damnlib`, `cleanui-source-patch.json` and `damnlib-source-patch.json` with portable source/patch hashes, `Server/SurvivorQoL-selected.ini`, optional legacy Windows/macOS Host launchers, this installation guide and `JavaPatches/README.md`. Workshop supplies the remaining dependencies. Keep both provenance files with the prepared set when checking later dependency updates. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
 
 ## Vehicle diagnostics
 
@@ -78,10 +78,10 @@ Recording continues until manually stopped or the process exits. Files rotate at
 
 1. Stop the server and all clients. Back up the world and `Zomboid/Lua/`, including Wishlist data, `QuartermasterPresets.txt`, `PZSTQuartermasterPresets_a.txt`, `PZSTQuartermasterPresets_b.txt` and `PZSTQuartermasterTagRules.txt` when present. Keep these files and both mods' existing settings; they preserve lists, sorting presets and preferences. Container designations stay in the world save.
 2. Delete the old installed `Zomboid/mods/PZSurvivorWishlist` folder from every client, Host and dedicated-server installation. In the game's Mods menu, remove the old `PZSurvivorWishlist` Mod ID from each saved single-player profile's mod list; leave `PZSurvivorToolkit` enabled. Never load the old Wishlist folder and integrated Toolkit version together. Do not delete `Zomboid/Lua/PZSurvivorWishlist/` or the Wishlist Mod Options.
-3. Update the repository and repeat preparation with the complete CleanUI source input. Replace all three prepared local folders on the server and clients with this matching prepared version; do not merge old and new files.
+3. Update the repository and repeat preparation with the complete CleanUI and DAMN Library source inputs. Replace all four prepared local folders on the server and clients with this matching prepared version; do not merge old and new files.
 4. Copy only `Mods=` and `WorkshopItems=` from the prepared INI into an existing server profile. Disable the separate mods listed below in server and single-player profiles; Toolkit now includes their features. Keep saved preferences and data.
 5. Use one installation method per Workshop mod: Steam or a complete local copy. The INI does not update local copies. Reapprove changed Java JARs when prompted on clients and the server.
-6. Start and join, checking the server Java loader as above. For version mismatches, compare all three local folders and Workshop updates. Keep `DoLuaChecksum=true`.
+6. Start and join, checking the server Java loader as above. For version mismatches, compare all four local folders and Workshop updates. Keep `DoLuaChecksum=true`.
 
 
 If migrating from older versions, remove these separate copies:
