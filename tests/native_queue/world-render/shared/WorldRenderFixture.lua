@@ -71,6 +71,57 @@ function F.corridor(player)
  end
  return best
 end
+-- Find existing outdoor pavement once, before the daylight decal scene. No tiles are replaced.
+function F.decalScene(player)
+ local origin=assert(player:getSquare(),'Decal scene requires a loaded actor square')
+ local vehicleClear={}
+ local function paving(square)
+  if not F.free(square)or not square:isOutside()or square:getRoom()then return end
+  local floor=square:getFloor();local sprite=floor and floor:getSprite()
+  local name=sprite and sprite:getName()
+  -- Native asphalt/road tiles. Do not admit grass, dirt, or arbitrary outdoor floors.
+  if name and string.sub(name,1,14)=='blends_street_'then
+   -- isFree(false) ignores cars. Include a one-tile margin for their visible body.
+   local key=square:getX()..':'..square:getY()
+   if vehicleClear[key]==nil then
+    local clear=true
+    for dx=-1,1 do for dy=-1,1 do
+     local nearby=getCell():getGridSquare(square:getX()+dx,square:getY()+dy,square:getZ())
+     if nearby and nearby:isVehicleIntersecting()then clear=false end
+    end end
+    vehicleClear[key]=clear
+   end
+   if vehicleClear[key]then return name end
+  end
+ end
+ local best,bestFacing,bestDistance
+ local directions={{1,0},{0,1},{-1,0},{0,-1}}
+ for ox=-24,24 do for oy=-24,24 do
+  local distance=ox*ox+oy*oy
+  if distance<=24*24 then
+   local x,y,z=origin:getX()+ox,origin:getY()+oy,origin:getZ()
+   local start=getCell():getGridSquare(x,y,z);local floorName=paving(start)
+   if floorName then for rank,v in ipairs(directions)do
+    local previous=start;local length=0
+    for step=1,6 do
+     local dx,dy=ox+v[1]*step,oy+v[2]*step
+     if dx*dx+dy*dy>24*24 then break end
+     local square=getCell():getGridSquare(x+v[1]*step,y+v[2]*step,z)
+     if not paving(square)or previous:isBlockedTo(square)then break end
+     length=step;previous=square
+    end
+    -- Prefer screen-lower directions, then the nearest matching corridor.
+    local facing=rank<=2 and 0 or 1
+    if length>=4 and(not best or facing<bestFacing or facing==bestFacing and
+      (distance<bestDistance or distance==bestDistance and length>best.length))then
+     best={x=x,y=y,z=z,dx=v[1],dy=v[2],length=length,floorName=floorName}
+     bestFacing,bestDistance=facing,distance
+    end
+   end end
+  end
+ end end
+ return best
+end
 function F.delta(newer,older)
  local delta=0
  for _,a in ipairs(newer)do for _,b in ipairs(older)do if a.x==b.x and a.y==b.y and a.z==b.z then
