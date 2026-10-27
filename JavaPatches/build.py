@@ -109,6 +109,7 @@ def build_kotlin_relocator(jdk, home, destination, *, run=None):
 CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRIPT_ITEM_PROPERTIES_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.RecipeItemPropertiesChecks': 'RECIPE_ITEM_PROPERTIES_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.FluidScriptPropertiesChecks': 'FLUID_SCRIPT_PROPERTIES_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.RadioDeviceLookupChecks': 'RADIO_DEVICE_LOOKUP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.WormCompostChecks': 'WORM_COMPOST_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.AlarmClockChecks': 'ALARM_CLOCK_CHECKS_PASS',
           'zombie.vehicles.VehicleInventoryOrderingChecks': 'VEHICLE_INVENTORY_ORDERING_CHECKS_PASS',

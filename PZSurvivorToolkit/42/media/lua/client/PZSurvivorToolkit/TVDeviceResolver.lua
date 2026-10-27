@@ -3,7 +3,16 @@ require "PZSurvivorToolkit/Settings"
 local Resolver = {}
 PZSurvivorToolkit.TVDeviceResolver = Resolver
 
-function Resolver.fullType(device)
+local function boundItem(binding, device, square, id)
+    if not binding or binding.device ~= device or binding.square ~= square or binding.id ~= id then return end
+    local objects = square[binding.method](square)
+    if objects ~= binding.objects or binding.index >= objects:size()
+        or objects:get(binding.index) ~= binding.world then return end
+    local item = binding.world:getItem()
+    if item == binding.item and item:getID() == id then return item end
+end
+
+function Resolver.fullType(device, binding)
     if not device then return end
     if instanceof(device, "InventoryItem") then return device:getFullType() end
     if instanceof(device, "VehiclePart") then
@@ -15,6 +24,8 @@ function Resolver.fullType(device)
     local id = modData and modData.RadioItemID
     local square = device:getSquare()
     if id and square then
+        local bound = boundItem(binding, device, square, id)
+        if bound then return bound:getFullType(), binding end
         for _, method in ipairs({"getWorldObjects", "getObjects"}) do
             local objects = square[method](square)
             if objects then
@@ -22,7 +33,12 @@ function Resolver.fullType(device)
                     local object = objects:get(i)
                     if instanceof(object, "IsoWorldInventoryObject") then
                         local item = object:getItem()
-                        if item and item:getID() == id then return item:getFullType() end
+                        if item and item:getID() == id then
+                            -- Square/reverse links can survive removal. Keep the exact live list
+                            -- slot so reuse proves membership without another linear indexOf scan.
+                            return item:getFullType(), {device = device, square = square, id = id,
+                                method = method, objects = objects, index = i, world = object, item = item}
+                        end
                     end
                 end
             end
@@ -35,10 +51,10 @@ function Resolver.fullType(device)
     if instanceof(device, "IsoRadio") then return "Base.RadioMakeShift" end
 end
 
-function Resolver.call(device, fn, ...)
-    local fullType = Resolver.fullType(device)
+function Resolver.call(device, binding, fn, ...)
+    local fullType, resolved = Resolver.fullType(device, binding)
     local data = fullType and device:getDeviceData()
-    if not fullType or not data then return fn(...) end
+    if not fullType or not data then return fn(...), nil, nil end
     local original, name = getItemNameFromFullType, data:getDeviceName()
     -- Upstream only compares item names in these calls; use identity, then restore translations.
     getItemNameFromFullType = function(itemType)
@@ -47,7 +63,7 @@ function Resolver.call(device, fn, ...)
     local ok, result = pcall(fn, ...)
     getItemNameFromFullType = original
     if not ok then error(result) end
-    return result
+    return result, resolved, data
 end
 
 return Resolver

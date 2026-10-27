@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.301
+
+- Avoid rescanning a dropped radio's tile on every render of its open controls window. Reuse the matched item while its live list position and identity remain valid, and resolve again after pickup, replacement, list changes or rebinding. Late multiplayer arrivals remain discoverable; translated labels and native window controls are preserved.
+
 ### 0.1.300
 
 - Derive fishing and trapping bait roles from native definitions and current food eligibility. Preserve food uses and distinguish cooked bait, trap-incompatible additions and usable supplies in filters and warehouse snapshots.

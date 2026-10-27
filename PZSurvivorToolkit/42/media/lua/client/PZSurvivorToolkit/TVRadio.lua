@@ -138,11 +138,23 @@ local function install()
     local class = ISRadioWindow
     if TVRadio.windowClass == class then return end
     TVRadio.windowClass = class
-    local activate, prerender, outside, read = class.activate, class.prerender,
-        class.onMouseDownOutside, class.readFromObject
+    local activate, prerender, outside, read, clear = class.activate, class.prerender,
+        class.onMouseDownOutside, class.readFromObject, class.clear
     local resolver = Toolkit.TVDeviceResolver
+    class.clear = function(self, ...)
+        self._toolkitRadioBinding = nil
+        return clear(self, ...)
+    end
     class.readFromObject = function(self, player, device)
-        return resolver.call(device, read, self, player, device)
+        self._toolkitRadioBinding = nil
+        local result, binding, data = resolver.call(device, nil, read, self, player, device)
+        -- Upstream read clears the old binding itself. Publish only after it succeeds
+        -- and still owns the intended device; rejected/failed/reentrant reads stay uncached.
+        if data and self.player == player and self.device == device and self.deviceData == data
+            and self._toolkitRadioBinding == nil then
+            self._toolkitRadioBinding = binding
+        end
+        return result
     end
     class.activate = function(...)
         local window = activate(...)
@@ -150,7 +162,12 @@ local function install()
         return window
     end
     class.prerender = function(self, ...)
-        local result = resolver.call(self.device, prerender, self, ...)
+        local device, player, previous = self.device, self.player, self._toolkitRadioBinding
+        local result, binding, data = resolver.call(device, previous, prerender, self, ...)
+        if self._toolkitRadioBinding == previous then
+            self._toolkitRadioBinding = data and self.device == device and self.player == player
+                and self.deviceData == data and binding or nil
+        end
         updateCloseButton(self)
         return result
     end
