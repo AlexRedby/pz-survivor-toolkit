@@ -167,6 +167,16 @@ def verify(root, selection, catalog):
                 if text.count('[PZToolkitJavaPatches] Outline composite shaders prepared on render context: 3') != 1:
                     raise ValueError('Expected exactly one successful outline preparation')
                 evidence[role]['resources'] = resources
+                scenes = receipts.records(text, MARKER, 'RESOURCE_SCENE')
+                if len(scenes) != 1 or scenes[0].get('role') != role or not 12 <= scenes[0].get('time', 0) < 13:
+                    raise ValueError('Missing daylight resource scene')
+                squares = scenes[0].get('squares', [])
+                if len(squares) != 6 or any(row.get('visible') is not True or row.get('vehiclesClear') is not True
+                        or not row.get('floor', '').startswith('blends_street_')
+                        or any(not .5 <= row.get(channel, 0) <= 1.01 for channel in ('r', 'g', 'b'))
+                        for row in squares):
+                    raise ValueError('Resource decals need visible illuminated pavement')
+                evidence[role]['resource_scene'] = scenes[0]
         except (OSError, ValueError, KeyError, TypeError) as error:
             issues.append(role + ': ' + str(error))
     if selection['kind'] == 'mp':
@@ -183,11 +193,14 @@ def verify(root, selection, catalog):
             for role in roles:
                 values = [row['active'] for row in evidence['authority']
                           if row.get('role') == role and row.get('kind') == 'torch']
-                expected_torch = [False, True, False]
-                if selection.get('options', {}).get('world_render_resources'):
-                    expected_torch += [True, False]
-                if values != expected_torch:
+                if values != [False, True, False]:
                     issues.append(role + ': authoritative torch off/on/off absent')
+            if selection.get('options', {}).get('world_render_resources'):
+                times = receipts.records(server, MARKER, 'RESOURCE_TIME')
+                if (len(times) != 2 or times[0] != {'stage': 'day', 'time': 12}
+                        or times[1].get('stage') != 'restored' or not 0 <= times[1].get('time', -1) < 24):
+                    issues.append('Missing coordinated resource daylight/restoration')
+                evidence['resource_time'] = times
         except (OSError, ValueError, KeyError, TypeError) as error:
             issues.append('authority: ' + str(error))
     return {'issues': issues, 'outcomes': [{'actor': role, 'case': 'lighting',
