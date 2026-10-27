@@ -383,6 +383,7 @@ internal object MainSupport {
         val itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED)
         val hostLoader = HostLoader.install()
         val cutawaySouthEdge = CutawaySouthEdge.install()
+        val translucentSquareUnion = TranslucentSquareUnion.install()
         // Define before patch registration: recursive loads during another transform bypass
         // instrumentation.
         if (Main.CART_TRANSITION_SUPPORTED)
@@ -406,6 +407,8 @@ internal object MainSupport {
                 Main.BUILD_SUPPORTED +
                 ", cutawaySouthEdge=" +
                 cutawaySouthEdge +
+                ", translucentSquareUnion=" +
+                translucentSquareUnion +
                 ", video=" +
                 Main.VIDEO_SUPPORTED +
                 ", animal=" +
