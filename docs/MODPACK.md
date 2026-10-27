@@ -394,6 +394,8 @@ Plays audible cassette, CD and vinyl recordings through portable and world devic
 
 The author declares Build 42, single-player and hosted multiplayer support, and permits adding the mod mid-save. No required framework or Java loader is listed. Install the Workshop item on Host and every client and enable `NewMusic` as supplied in the INI. Keep existing sandbox settings; the INI supplies neither media-spawn settings nor player volume preferences. The author describes a separate playback system rather than vanilla radio internals; coexistence with TV & Radio ReInvented still requires a full-pack check.
 
+Toolkit 0.1.308 disables NewMusic's conversion of vanilla CDs and CD players through runtime compatibility, even if the saved conversion setting is enabled. It also unregisters the associated inventory-refresh and periodic container scans. Normal media/device loot and playback remain in the unchanged Workshop mod; distribute only Toolkit and Java Patches, with matching Toolkit versions on Host and clients.
+
 Full-pack macOS B42.21 SP/Host audio output, device/battery controls, ground-to-hand continuity, save/reload and second-player synchronization remain unverified. Recent Workshop reports mention performance costs with large music collections and inventory/loot-panel problems on controllers; these reports do not establish a cause or resolution in this set. Check audible playback and responsiveness in a disposable profile before using a gameplay world. Do not remove a content mod from an existing save without checking its removal instructions and preserving backups.
 
 ### Selected songs released before 1993

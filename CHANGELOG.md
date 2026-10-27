@@ -11,7 +11,9 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
-- **Fixed:** Prepared CleanUI copies refresh every member of visible collapsed food stacks at the existing one-second interval. Older food beyond the first 50 items can now become stale and regroup while a younger header remains fresh. Preparation requires an explicit complete CleanUI source, checks the reviewed source hashes and includes the corrected copy for every client/Host without changing Workshop downloads.
+- **Changed:** Distribute only Toolkit and Java Patches. NewMusic, CleanUI and other third-party dependencies stay on Workshop; preparation no longer requires or ships modified dependency copies.
+
+- **Earlier experiment, no longer shipped:** A prepared CleanUI copy corrected freshness beyond the first 50 items in visible collapsed stacks. Third-party source preparation is now excluded from delivery; a Toolkit/Java implementation remains a separate follow-up.
 
 - **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Downloaded B42 metadata confirms the main Jeep requires only `damnlib`; optional JP18 adds Jurassic Park spawns and requires the main Jeep. JP18/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.
 
@@ -33,6 +35,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit
+
+### 0.1.308
+
+- **Fixed:** Toolkit disables NewMusic vanilla CD/player conversion and removes its inventory-refresh and periodic scan callbacks on clients. Saved sandbox settings and debug probing cannot re-enable them. Normal music loot and playback remain provided by the unchanged Workshop mod.
 
 ### 0.1.307
 
