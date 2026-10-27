@@ -284,7 +284,6 @@ function Invoke-TrialWprWorker([string]$Root,[string]$Hash) {
                 $stop=Invoke-TrialWprCommand $tool @('-stop',$trace,'-skipPdbGen','-instancename',$instance) 80
                 $status.evidence+=@([ordered]@{stage='Stop';result=$stop})
                 if ($stop.exitCode -eq 0 -and -not $stop.timedOut) {
-                    $closed=$true
                     $status.profileState='Absent'; $status.cleanupState='Stopped'
                     $status.stoppedUtc=[DateTime]::UtcNow.ToString('o')
                     if (Test-TrialWprTrace $trace) {
@@ -297,7 +296,8 @@ function Invoke-TrialWprWorker([string]$Root,[string]$Hash) {
                     $verified=Get-TrialWprCollectorState $ownedCollectors $instance
                     $status.cleanupState=$verified.state
                     $status.evidence+=@([ordered]@{stage='OwnedCollectorsAfterStop';result=$verified})
-                    if ($verified.state -ne 'Absent') { $closed=$false; $status.status='Incomplete'; $status.reason='OwnedCollectorAbsenceUnverified' }
+                    if ($verified.state -eq 'Absent') { $closed=$true }
+                    else { $status.status='Incomplete'; $status.reason='OwnedCollectorAbsenceUnverified' }
                 } else {
                     $status.status='Incomplete'; $status.reason='OwnedSessionSaveFailed'; $status.saveFailure='OwnedSessionSaveFailed'
                 }
