@@ -155,7 +155,7 @@ object QueueOwnershipChecks {
                 )
         val variants = listOf(
             null, "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement",
+            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming",
         )
         val failures = mutableListOf<String>()
         for (variant in variants) {

@@ -32,10 +32,12 @@ local function cancelsOperation(row)
         or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)
 end
 
-local function cancelRejected(list, row, reason)
+local function cancelRejected(list, row, reason, decision)
     list.cancelFeedback = {item = row.item, operation = row.operation, header = row.header,
         text = getText("UI_PZSurvivorToolkit_queue_" .. (reason or "unavailable")),
         at = getTimestampMs and getTimestampMs()}
+    local details = decision and Toolkit.ActionQueueLabels.decisionDetails(decision)
+    if details then list.cancelFeedback.text = list.cancelFeedback.text .. " <LINE> " .. details end
     list.previewText = nil
 end
 
@@ -99,19 +101,21 @@ function List:onMouseDown(x, y)
         self.pressedToggle = row.operation
     elseif x >= self:cancelX() then
         if cancelsOperation(row) then
-            local reason, first, last = Toolkit.ActionQueue.cancelOperationReason(self.parent.queue, row.item)
+            local decision = Toolkit.ActionQueuePolicy.evaluateCancel(self.parent.queue, row.item, true)
+            local reason, first, last = decision.reason, decision.first, decision.last
             if not reason then
                 self.pressedOperation = {item = row.item, operation = row.operation, members = {}}
                 for i = first, last do
                     table.insert(self.pressedOperation.members, self.parent.queue.queue[i])
                 end
             else
-                cancelRejected(self, row, reason)
+                cancelRejected(self, row, reason, decision)
             end
         else
-            local reason = Toolkit.ActionQueue.cancelReason(self.parent.queue, row.item)
+            local decision = Toolkit.ActionQueuePolicy.evaluateCancel(self.parent.queue, row.item)
+            local reason = decision.reason
             if not reason then self.pressedCancel = row.item
-            else cancelRejected(self, row, reason) end
+            else cancelRejected(self, row, reason, decision) end
         end
     else
         ISScrollingListBox.onMouseDown(self, x, y)
@@ -142,11 +146,11 @@ function List:onMouseUp(x, y)
     elseif row and cancelsOperation(row)
         and self.pressedOperation and self.pressedOperation.item == row.item
         and self.pressedOperation.operation == row.operation and x >= self:cancelX() then
-        local accepted, reason = Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
-        if not accepted then cancelRejected(self, row, reason) end
+        local accepted, reason, decision = Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
+        if not accepted then cancelRejected(self, row, reason, decision) end
     elseif row and not row.header and self.pressedCancel == row.item and x >= self:cancelX() then
-        local accepted, reason = Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
-        if not accepted then cancelRejected(self, row, reason) end
+        local accepted, reason, decision = Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
+        if not accepted then cancelRejected(self, row, reason, decision) end
     elseif row and self.dragging then
         Toolkit.ActionQueue.move(self.parent.queue, self.dragAction, row.item,
             y > self:topOfItem(row.index) + row.height / 2)

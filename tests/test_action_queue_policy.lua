@@ -132,7 +132,10 @@ do
     assert(inspections[independent]==1 and inspections[transfer]==1)
     independent.container=vessel()
     independent.updateEmpty=function()error('must never execute replaced helpers')end
-    assert(policy.evaluateMove(queue,independent,transfer).reason=='move_dependent','next decision revalidates helpers')
+    result=policy.evaluateMove(queue,independent,transfer)
+    assert(not result.allowed and result.reason=='edit_unknown' and result.blocker==independent,
+        'next decision revalidates helpers and identifies the unreviewed action')
+    assert(policy.moveReason(queue,independent,transfer)=='move_dependent','raw helper guard remains compatible')
     independent.updateEmpty=nil
     assert(policy.evaluateMove(queue,independent,transfer).allowed,'restored helper restores the next decision')
     local opaque=f.action(ISBaseTimedAction:derive('OpaqueAnalysis'))
@@ -330,7 +333,9 @@ for _, actionType in ipairs({'handcraft', 'legacy'}) do
             end)
             assert(not checked.resources and not checked.contract.knownInputs and checked.contract.unknownOutputs,
                 actionType .. ' ' .. method .. ' keeps unknown craft effects protected')
-            assert(not checked.cancel.allowed and checked.cancel.reason == 'operation_dependent')
+            assert(not checked.cancel.allowed and checked.cancel.reason == 'edit_unknown' and checked.cancel.blocker == rejected)
+            assert(policy.cancelOperationReason(redrawQueue, second) == 'operation_dependent',
+                'unknown craft effects retain the raw cancellation gate')
             assert(not checked.rejectedCancel.allowed and checked.rejectedCancel.reason == 'operation_dependent')
             assert(not checked.move.allowed and checked.move.reason == 'move_craft_inputs')
         end

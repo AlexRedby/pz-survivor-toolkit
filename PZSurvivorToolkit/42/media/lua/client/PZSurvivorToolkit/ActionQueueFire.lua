@@ -577,6 +577,7 @@ Definitions.registerBehavior("toolkit.fire-unequip", {
         return record and action.character == record.character and action.item == record.item
             and action.toolkitQueueOperation == record.token and snapshotUnchanged(record.saved, record.expected)
             and helpersSafe() and equipmentSafe(record.saved) and type(cartMatches) == "function" and cartMatches(action)
+            and not Toolkit.ActionQueuePolicy.matchesNative(action)
     end, inspect = function(action)
         return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true}, targets = {},
             hands = action.character, preparation = true, preparationFinish = true, cancelWaiting = false, interrupt = "finish-step"}

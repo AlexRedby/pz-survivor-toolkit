@@ -536,7 +536,7 @@ local unverified=f.project('ActionQueueCarts')
 assert(not unverified.install() and ISCartTransferAction.canMergeAction==mergeBefore
     and not unverified.isTransferConstructor(ISInventoryTransferAction.new),
     'unverified constructor installed permissions or altered upstream batching')
--- ContainerRestrictions changes unequip new/complete globally, but only the marked non-cart food mask is audited.
+-- Actual globally wrapped unequip preparation shares one guarded native contract for ordinary items.
 local restrictionsPath=SaucedCartsSource..'/ContainerRestrictions.lua'
 local restrictionsSource=read(restrictionsPath)
 local coreSource=read(SaucedCartsSource..'/Core.lua')
@@ -563,8 +563,8 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
     ItemBodyLocation={};ISWearClothing={isStopOnWalk=function() return false end}
     maskFixture.native('shared/TimedActions/ISUnequipAction.lua')
     maskFixture.native('shared/TimedActions/ISDropWorldItemAction.lua')
-    local removed=0
-    character.removeWornItem=function() removed=removed+1 end
+    local removed,removedItems=0,{}
+    character.removeWornItem=function(_,value) removed=removed+1;removedItems[#removedItems+1]=value end
     character.getPrimaryHandItem,character.getSecondaryHandItem=function() end,function() end
     getPlayerHotbar,sendEquip,triggerEvent=function() end,function() end,function() end
     isForceDropHeavyItem=function() return false end
@@ -619,19 +619,45 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
     for _,callback in ipairs(pendingStarts) do callback() end
     local mask=maskFixture.item('Base.Hat_GasMask_nofilter')
     mask.getCategory=function() return 'Clothing' end;mask.getWorldItem=function() end
+    local hat=maskFixture.item('Base.Hat_BaseballCap')
+    hat.getCategory=function() return 'Clothing' end;hat.getWorldItem=function() end
     owned=ISUnequipAction:new(character,mask,50,'food')
     local foreign=ISUnequipAction:new(character,mask,50,'food')
-    assert(owned.maxTimeInit==50 and owned.reason=='food','actual wrapper changed native constructor arguments')
-    assert(not maskPolicy.inspect(foreign),'unmarked identical mask removal borrowed food ownership')
+    local ordinaryHat=ISUnequipAction:new(character,hat,50)
+    assert(owned.maxTimeInit==50 and owned.reason=='food'and ordinaryHat.maxTimeInit==50 and ordinaryHat.reason==nil,
+        'actual wrapper changed native constructor arguments')
     local contract,adapter=maskPolicy.inspect(owned)
     if mode~='valid' then
-        assert(not contract,'changed source or preinstalled helper acquired mask permission: '..mode)
+        assert(not contract and not maskPolicy.inspect(foreign)and not maskPolicy.inspect(ordinaryHat)
+            and not maskPolicy.matchesNative(owned)and not maskPolicy.matchesNative(ordinaryHat),
+            'changed source or preinstalled helper acquired ordinary equipment permission: '..mode)
         if mode=='changed-source' or mode=='preinstalled' then
             assert(not maskCarts.isDropCallback('new',ISDropWorldItemAction.new),'unverified drop predecessor/source acquired storage permission: '..mode)
         end
     else
-        assert(adapter=='compat.food-mask-unequip' and contract.preparationFinish and maskPolicy.preparationCanFinish(owned),
-            'owned native mask removal did not regain preparation cancellation')
+        local function canonical(action)
+            local value,id=maskPolicy.inspect(action)
+            assert(value and id=='native.ISUnequipAction'and value.preparation and value.preparationFinish
+                and value.cancelWaiting==false and value.interrupt=='finish-step'
+                and value.items[action.item:getID()]and value.hands==character
+                and maskPolicy.preparationCanFinish(action)and maskPolicy.matchesNative(action),
+                'ordinary marked/unmarked equipment did not retain canonical native preparation')
+            local behavior,behaviorID=PZSurvivorToolkit.ActionQueueDefinitions.behavior(action)
+            assert(behavior and behaviorID==id,'ordinary equipment has ambiguous native/food contracts')
+            return value
+        end
+        canonical(owned);canonical(foreign);canonical(ordinaryHat)
+        -- Marker ownership is unrelated to the exact reviewed native preparation binding.
+        owned=ordinaryHat;canonical(ordinaryHat);canonical(foreign)
+        owned=ISUnequipAction:new(character,mask,50,'food');canonical(owned)
+        for _,action in ipairs({owned,ordinaryHat})do
+            for _,field in ipairs({'onStartFunc','onCompleteFunc','onCancelFunc','onFailFunc','additionalTest','retriggerLastAction'})do
+                action[field]=function()end
+                assert(not maskPolicy.inspect(action)and not maskPolicy.matchesNative(action),
+                    'custom equipment callback retained canonical binding: '..field)
+                action[field]=nil
+            end
+        end
         character.getPrimaryHandItem=function(self) return self.primary end
         character.getSecondaryHandItem=function(self) return self.secondary end
         local bag=maskFixture.item('Base.Bag_Schoolbag');bag.class='InventoryContainer'
@@ -650,7 +676,8 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
             assert(not maskCarts.equipmentSafe(character),'held cart acquired equipment proof: '..hand)
             character[hand]=nil
         end
-        owned:complete();assert(removed==1,'actual non-cart wrapper did not delegate native completion exactly once')
+        owned:complete();assert(removed==1 and removedItems[1]==mask,'actual mask wrapper did not delegate exact native completion once')
+        ordinaryHat:complete();assert(removed==2 and removedItems[2]==hat,'actual hat wrapper did not delegate exact native completion once')
         for _,name in ipairs({'new','complete','start','stop'}) do
             local method=ISUnequipAction[name];ISUnequipAction[name]=function() end
             assert(not maskPolicy.inspect(owned) and not maskCarts.isUnequipConstructor(ISUnequipAction.new),'changed unequip lifecycle retained equipment permission: '..name)
@@ -668,10 +695,15 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
         cartTypes[mask:getFullType()]={}
         assert(not maskPolicy.inspect(owned),'registered cart type retained non-cart mask permission');cartTypes[mask:getFullType()]=nil
         local marking=maskFood.isMaskRemoval;maskFood.isMaskRemoval=function() return true end
-        assert(not maskPolicy.inspect(owned),'replacement ownership predicate retained mask permission');maskFood.isMaskRemoval=marking
+        canonical(owned);canonical(foreign);canonical(ordinaryHat);maskFood.isMaskRemoval=marking
         owned.item.cart=true
-        assert(not maskPolicy.inspect(owned),'cart classification retained ordinary mask permission');owned.item.cart=nil
-        assert(maskPolicy.inspect(owned),'restored exact helpers did not restore mask permission')
+        assert(not maskPolicy.inspect(owned)and not maskPolicy.matchesNative(owned),'cart classification retained ordinary mask permission');owned.item.cart=nil
+        canonical(owned);canonical(foreign);canonical(ordinaryHat)
+        -- Adoption is exact and atomic; a foreign predecessor cannot replace the established binding.
+        assert(not maskPolicy.adoptNativeUnequipVariant({new=function()end,complete=originalComplete},
+            {new=ISUnequipAction.new,complete=ISUnequipAction.complete},function()return true end,function()return true end),
+            'foreign equipment predecessor was adopted')
+        canonical(owned);canonical(ordinaryHat)
     end
     SaucedCarts.debug=debugBefore
 end

@@ -32,13 +32,25 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.287
+### 0.1.289
 
 - **Performance:** Better Containers freshness indicators read only visible inventory rows and skip hidden panels and dragged rows. Visible stacks still use their least-fresh member with current values; bar/percentage options and the original inventory-mode scope are preserved. Partial rows are clipped to the inventory contents.
 
+- **Performance:** Reuse unchanged action-queue rows and groups with matching Toolkit Java Patches, including expanded batches. Direct queue edits remain visible immediately; current action, progress, titles and controls stay live. Unsupported action tables and installations without the helper retain exact Lua scanning. Hidden panels no longer rebuild cleared snapshots and rows.
+
+### 0.1.288
+
+- Improved: queue move/cancel explanations distinguish required finishing steps, unreviewed action handlers and work that is still adding its next steps. Tooltips and rejected cancellation clicks identify the blocking action; existing item/state/capacity evidence and edit permissions are preserved.
+
+### 0.1.287
+
+- Fixed: waiting beard trimming and hair/beard dye actions can be cancelled without losing borrowed-item cleanup or independent queued work. Native shaving colours and dye fluid costs remain unchanged; active edits retain their resource protections.
+- Fixed: unreviewed replacements of the base action constructor cannot inherit native grooming cancellation permissions.
+- Fixed: ordinary equipment removal uses the shared verified native branch when SaucedCarts is loaded, so headwear preparation no longer blocks cancelling queued dye actions. Cart handling and required cleanup remain protected.
+
 ### 0.1.286
 
-- **Performance:** Reuse unchanged action-queue rows and groups with matching Toolkit Java Patches, including expanded batches. Direct queue edits remain visible immediately; current action, progress, titles and controls stay live. Unsupported action tables and installations without the helper retain exact Lua scanning. Hidden panels no longer rebuild cleared snapshots and rows.
+- Fixed: waiting native haircuts can be cancelled after tool preparation. Borrowed scissors retain their required return and independent queued work continues; native appearance changes and styling-item costs remain unchanged.
 
 ### 0.1.285
 

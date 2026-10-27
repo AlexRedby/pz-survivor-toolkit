@@ -1312,7 +1312,7 @@ if SaucedCartsSource then
   ..'local function filename(callback)return getFilenameOfClosure(callback):match("([^/]+)$")end\n'
   ..'local function unchanged()return Toolkit.ActionQueueCarts==Carts end\n'
   ..assert(cartsText:match('(local equipmentGuard, equipmentMatch, equipmentPrevious, equipmentReplacement.-)\nfunction Carts.install'))
-  ..'\nToolkit.ActionQueueCarts=Carts;installFoodMaskRemoval();installFitnessStorageDrop();return Carts'
+  ..'\nToolkit.ActionQueueCarts=Carts;installEquipmentBinding();installFitnessStorageDrop();return Carts'
  local hookCode='local dropActionHookInitialized=false;local unequipHookInitialized=false\n'
   ..assert(restrictions:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
   ..assert(restrictions:match('(local function wrapDropNew%(%).-\nend)'))..'\n'
@@ -1408,9 +1408,12 @@ if SaucedCartsSource then
    assert(#reviewedUnequips==2,'actual wrapper fixture omitted hand/bag preparation')
    for _,action in ipairs(reviewedUnequips)do
     local contract,adapter=policy.inspect(action)
-    assert(contract and adapter=='toolkit.fitness-cart-unequip','owned wrapped unequip lacks its unambiguous Fitness contract')
+    assert(contract and adapter=='native.ISUnequipAction'and contract.preparation and contract.preparationFinish
+     and not contract.cancelWaiting and policy.matchesNative(action),'owned wrapped unequip lacks its canonical native preparation contract')
     local foreign=ISUnequipAction:new(player,action.item,50)
-    assert(not policy.inspect(foreign),'identical unowned wrapped unequip acquired Fitness queue-edit permission')
+    local ordinary,ordinaryAdapter=policy.inspect(foreign)
+    assert(ordinary and ordinaryAdapter=='native.ISUnequipAction'and ordinary.preparation and ordinary.preparationFinish
+     and not ordinary.cancelWaiting and not fitnessQueue.isManaged(foreign),'ordinary wrapped preparation acquired Fitness ownership or lost its native binding')
    end
    local function rejected(message)
     player.primary,player.secondary=nil,nil
@@ -1437,7 +1440,9 @@ if SaucedCartsSource then
    for _,name in ipairs({'isUnequipConstructor','isNonCartUnequip'})do
     local helper=carts[name];carts[name]=function()return true end
     rejected('replacement equipment helper retained managed permission: '..name)
-    assert(not policy.inspect(reviewedUnequips[1]),'replacement equipment helper retained owned contract')
+    local plain,plainAdapter=policy.inspect(reviewedUnequips[1])
+    assert(plain and plainAdapter=='native.ISUnequipAction'and plain.preparation and not plain.cancelWaiting
+     and not fitnessQueue.isManaged(reviewedUnequips[1]),'replacement Fitness helper retained managed ownership or expanded ordinary preparation permissions')
     carts[name]=helper
    end
    local classifier=SaucedCarts.safeIsCart;SaucedCarts.safeIsCart=function()return false end

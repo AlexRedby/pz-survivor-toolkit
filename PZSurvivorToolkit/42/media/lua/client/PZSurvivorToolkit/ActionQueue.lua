@@ -75,11 +75,11 @@ Policy.adoptBegin(begin, ISBaseTimedAction.begin)
 function Queue.cancel(queue, action)
     local decision = Policy.evaluateCancel(queue, action)
     Policy.record("cancel", action, decision)
-    if not decision.allowed then return false, decision.reason end
+    if not decision.allowed then return false, decision.reason, decision end
     if decision.mode == "pending-return" then
         if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
         decision = Policy.evaluateCancel(queue, action)
-        if not decision.allowed then return false, decision.reason end
+        if not decision.allowed then return false, decision.reason, decision end
         if decision.mode ~= "pending-return" or not Policy.commitReturnCancellation(action, decision.returnWaiver) then
             return false, "unavailable"
         end
@@ -100,7 +100,7 @@ function Queue.cancel(queue, action)
     local first, last = Operations.bounds(queue, action)
     if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
     decision = Policy.evaluateCancel(queue, action)
-    if not decision.allowed then return false, decision.reason end
+    if not decision.allowed then return false, decision.reason, decision end
     if first == last and Operations.invalidate then Operations.invalidate(action.toolkitQueueOperation) end
     if action == queue.current then
         return Toolkit.ActionQueueLifecycle.requestStop(queue, action, "cancel", "action")
@@ -115,7 +115,7 @@ end
 function Queue.cancelOperation(queue, action, expected)
     local decision = Policy.evaluateCancel(queue, action, true)
     Policy.record("cancel-operation", action, decision)
-    if not decision.allowed then return false, decision.reason end
+    if not decision.allowed then return false, decision.reason, decision end
     local first, last = decision.first, decision.last
     if expected then
         if #expected ~= last - first + 1 then return false, "unavailable" end
@@ -125,7 +125,7 @@ function Queue.cancelOperation(queue, action, expected)
     end
     if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
     decision = Policy.evaluateCancel(queue, action, true)
-    if not decision.allowed then return false, decision.reason end
+    if not decision.allowed then return false, decision.reason, decision end
     if decision.first ~= first or decision.last ~= last then return false, "unavailable" end
     local request
     if first == 1 and queue.current == queue.queue[1] then

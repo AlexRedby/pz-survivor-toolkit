@@ -7,6 +7,9 @@ require = function(name)
     if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
         return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
     end
+    if name == 'PZSurvivorToolkit/ActionQueueGrooming' then
+        return PZSurvivorToolkit.ActionQueueGrooming or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
     if name == 'PZSurvivorToolkit/SourceProof' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
     end
@@ -52,6 +55,10 @@ if NativeQuartermasterLuaRoot then
     reloadQuartermaster()
 end
 load('shared/TimedActions/ISReadABook.lua')
+load('shared/TimedActions/ISCutHair.lua')
+load('shared/TimedActions/ISTrimBeard.lua')
+load('shared/TimedActions/ISDyeHair.lua')
+load('shared/TimedActions/ISUnequipAction.lua')
 load('shared/Moveables/ISMoveablesAction.lua')
 load('shared/Vehicles/TimedActions/ISRemoveBurntVehicle.lua')
 ISInventoryPage = {}
@@ -1128,8 +1135,15 @@ do
     assert(counts.previewCancel==2,'external changes receive a bounded hint refresh without queue invalidation')
     local targetAction=target.item
     targetAction.onCancelFunc=function() error('stale preview must not authorize this callback') end
+    previewClock=previewClock+250;draw(view)
+    assert(target.tooltip:find('queue_edit_unknown',1,true) and target.tooltip:find('queue_blocked_by',1,true),
+        'hover must identify the missing callback integration and exact blocking action')
     viewList:onMouseDown(x,y)
     assert(not viewList.pressedOperation,'mouse-down rechecks live callbacks after an allowed preview')
+    assert(viewList.cancelFeedback.text:find('queue_edit_unknown',1,true)
+        and viewList.cancelFeedback.text:find('queue_blocked_by',1,true)
+        and not viewList.cancelFeedback.snapshot and not viewList.cancelFeedback.blocker,
+        'rejected press retains explanation text without retaining decision authority')
     targetAction.onCancelFunc=nil
     viewList:onMouseDown(x,y);assert(viewList.pressedOperation)
     targetAction.onCancelFunc=function() error('changed callback must not execute') end
@@ -1137,8 +1151,10 @@ do
     counts={};viewList:onMouseUp(x,y)
     assert(#viewQueue.queue==remaining and counts.evaluateCancel==1,
         'mouse-up uses authoritative evaluation again after a previously permitted press')
-    assert(viewList.cancelFeedback and viewList.cancelFeedback.text=='UI_PZSurvivorToolkit_queue_operation_dependent',
+    assert(viewList.cancelFeedback and viewList.cancelFeedback.text:find('UI_PZSurvivorToolkit_queue_edit_unknown',1,true),
         'a formerly allowed but rejected release must retain the actual localized reason')
+    assert(viewList.cancelFeedback.text:find('queue_blocked_by',1,true),
+        'release rejection must retain the exact blocker from the authoritative decision')
     targetAction.onCancelFunc=nil
     draw(view)
     assert(target.tooltip:find(viewList.cancelFeedback.text,1,true),'release rejection must remain visible on the same row')
@@ -2516,3 +2532,111 @@ do
     isClient = previousClient
 end
 print('Admitted cancellation draining: editor off/on, native stop/preparation, sealed MP outcome, exact earned returns, independent tails and revocation passed.')
+
+-- The native character-screen producer may have already borrowed scissors while
+-- its haircut is still unallocated. Cancel only that waiting body and its debt.
+do
+    local function text(path)
+        if NativeReadText then return NativeReadText(path):gsub('\r','') end
+        local file=assert(io.open(path));local source=file:read('*a');file:close();return source:gsub('\r','')
+    end
+    local source=text(NativeActionRoot..'/client/XpSystem/ISUI/ISCharacterScreen.lua')
+    local predicates=assert(source:match('(local function predicateRazor.-)local function predicateDoHairdo'))
+    local body=assert(source:match('(ISCharacterScreen%.onTrimBeard = function.-)\nISCharacterScreen%.setDisplayedTraits'))
+    local originalWorld,originalEquip,originalDebug,originalInventory=ISWorldObjectContextMenu,ISEquipWeaponAction,getDebug,ISInventoryPaneContextMenu
+    ISCharacterScreen={}
+    assert(loadstring(predicates..'\n'..body))()
+    local inventory=text(NativeActionRoot..'/client/ISUI/ISInventoryPaneContextMenu.lua')
+    ISInventoryPaneContextMenu={}
+    for key,value in pairs(originalInventory or {})do ISInventoryPaneContextMenu[key]=value end
+    assert(loadstring(assert(inventory:match('(function ISInventoryPaneContextMenu%.transferIfNeeded.-)\nISInventoryPaneContextMenu%.onEjectMagazine'))))()
+    assert(loadstring(assert(inventory:match('(ISInventoryPaneContextMenu%.onDyeHair = function.-)\nISInventoryPaneContextMenu%.onDryMyself'))))()
+    ItemBodyLocation=ItemBodyLocation or {}
+    ItemBodyLocation.HAT,ItemBodyLocation.MASK='base:hat','base:mask'
+    ISWearClothing={isStopOnWalk=function()return false end}
+    getPlayerHotbar=function()end
+    isServer=function()return false end
+    local world=text(NativeActionRoot..'/client/ISUI/ISWorldObjectContextMenu.lua')
+    ISWorldObjectContextMenu={}
+    assert(loadstring(assert(world:match('(function ISWorldObjectContextMenu%.transferIfNeeded.-)\n%-%- we equip'))))()
+    assert(loadstring(assert(world:match('(ISWorldObjectContextMenu%.equip = function.-)\nISWorldObjectContextMenu%.equip2'))))()
+    ISEquipWeaponAction={new=function(_,actor,item)
+        return preparation(actor,'ISEquipWeaponAction',item)
+    end}
+    luautils={haveToBeTransfered=function(actor,item)return item:getContainer()~=actor:getInventory()end}
+    getDebug=function()return false end
+    getHairStylesInstance=function()return {FindMaleStyle=function(_,name)
+        return {getName=function()return name end,isAttachedHair=function()return name=='Attached'end}
+    end}end
+    local hairStarts=0
+    assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('haircut-waiting-proof',{
+        started=function(action)if action.Type=='ISCutHair'then hairStarts=hairStarts+1 end end
+    }))
+    local function scenario(withTool,kind,beard)
+        local actor=player();actor.getOnlineID=function()return 19 end
+        actor.isFemale=function()return false end;actor.getClothingItem_Head=function()end
+        actor.getPrimaryHandItem=function()end
+        local head
+        if kind=='ISDyeHair'then
+            head=book(actor).item
+            head.getFullType=function()return beard and'Base.Hat_DustMask'or'Base.Hat_BaseballCap'end
+        end
+        actor.getWornItem=function(_,location)
+            if head and location==(beard and ItemBodyLocation.MASK or ItemBodyLocation.HAT)then return head end
+        end
+        actor.getVisual=function()return {getNonAttachedHair=function()end}end
+        local initial=book(actor);local ending=book(actor)
+        local root=actor:getInventory();root.isExistYet=function()return true end
+        local source=sourceContainer();local scissors
+        if withTool then
+            scissors=borrowed(book(actor).item,source)
+            scissors.getFullType=function()return kind=='ISTrimBeard'and'Base.Razor'or kind=='ISDyeHair'and'Base.HairDyeCommon'or'Base.Scissors'end
+            scissors.getType=function()return kind=='ISTrimBeard'and'Razor'or'Scissors'end;scissors.isBroken=function()return false end
+            scissors.hasTag=function()return false end
+            source.getItemById=function(_,id)if id==scissors:getID()and scissors:getContainer()==source then return scissors end end
+        end
+        root.getFirstEvalRecurse=function(_,predicate)if scissors and predicate(scissors)then return scissors end end
+        local queue=ISTimedActionQueue.add(initial)
+        operations.run(function()
+            if kind=='ISTrimBeard'then ISCharacterScreen.onTrimBeard(actor,'')
+            elseif kind=='ISDyeHair'then ISInventoryPaneContextMenu.onDyeHair(scissors,actor,beard)
+            else ISCharacterScreen.onCutHair(actor,withTool and 'GreasedBack' or 'Attached',withTool and 300 or 100)end
+        end)
+        local cut=assert(queue.queue[#queue.queue]);assert(cut.Type==kind and (cut.item or cut.hairDye)==scissors)
+        if scissors then assert(cut.toolkitQueueOperation.toolkitPickups and cut.toolkitQueueOperation.toolkitPickups[scissors]==source,kind..': actual producer did not retain native pickup provenance')end
+        if head then
+            local count=0
+            for _,member in ipairs(queue.queue)do
+                if member.Type=='ISUnequipAction'then count=count+1;assert(member.item==head and not member.action,'wrong or already-started dye headwear preparation')end
+            end
+            assert(count==1,'actual dye producer omitted its headwear preparation')
+        end
+        ISTimedActionQueue.add(ending)
+        return actor,queue,initial,cut,ending,scissors,source
+    end
+    -- The source-bound waiting contract must exist before whole-operation removal.
+    if PZSurvivorToolkit.ActionQueueGrooming then PZSurvivorToolkit.ActionQueuePolicy.installContracts()end
+    for _,spec in ipairs({{'ISCutHair',true},{'ISCutHair',false},{'ISTrimBeard',true},{'ISDyeHair',true,false},{'ISDyeHair',true,true}})do
+        local kind,withTool=spec[1],spec[2]
+        local actor,queue,initial,cut,ending,scissors,source=scenario(withTool,kind,spec[3])
+        if withTool then
+            initial.action.done=true;frame(actor);frame(actor)
+            assert(queue.current.Type=='ISInventoryTransferAction'and queue.current.item==scissors and queue.current:isStarted())
+        end
+        assert(not cut.action,'haircut fixture accidentally started its protected body')
+        local accepted,reason=api.cancelOperation(queue,cut)
+        assert(accepted,'waiting native '..kind..' could not be cancelled after preparation: '..tostring(reason))
+        if withTool then
+            local pickup=queue.current;pickup.action.done=true;frame(actor)
+            local cleanup=queue.current
+            assert(cleanup and cleanup.Type=='ISInventoryTransferAction'and cleanup.item==scissors
+                and cleanup.destContainer==source and queue.queue[2]==ending and not cut.action,
+                'cancelled waiting haircut lost its exact borrowed-scissors return')
+            cleanup.action.done=true;frame(actor)
+            assert(queue.current==ending and scissors:getContainer()==source,'haircut return did not precede independent work')
+        else assert(queue.current==initial and queue.queue[2]==ending,'styling cancellation changed the independent queue')end
+        assert(hairStarts==0,'cancelled haircut executed native work')
+    end
+    ISWorldObjectContextMenu,ISEquipWeaponAction,getDebug,ISInventoryPaneContextMenu=originalWorld,originalEquip,originalDebug,originalInventory
+end
+print('Waiting grooming cancellation: actual haircut/trim/dye producers, borrowed items and no-tool styling preserve exact cleanup and independent tail.')
