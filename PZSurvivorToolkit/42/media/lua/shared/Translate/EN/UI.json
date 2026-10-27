@@ -785,6 +785,8 @@
   "UI_PZST_Tag_fresh": "Fresh",
   "UI_PZST_Tag_stale": "Stale",
   "UI_PZST_Tag_rotten": "Rotten",
+  "UI_PZST_Tag_edible": "Can Eat",
+  "UI_PZST_Tag_dismantle": "Disassembly",
   "UI_PZST_TagRuleEmpty": "No matches",
   "UI_PZST_TagRuleRoots": "Item families",
   "UI_PZST_TagRuleQualifiers": "Properties",

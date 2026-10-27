@@ -210,14 +210,14 @@ function C.itemDelta(item)
     if not item or not item.hasModData or not item.getModData or not item:hasModData() then return {} end
     return C.normalizeChanges(item:getModData()[C.FIELD] or {}, true) or {}
 end
-function C.project(baseTags, fullType, item)
+function C.projectSnapshot(baseTags, fullType, delta)
     local result, present = {}, {}
     -- Preserve classification provenance used by lossless legacy projections.
     for key, value in pairs(baseTags or {}) do if type(key) ~= "number" then result[key] = copy(value) end end
     for _, id in ipairs(baseTags or {}) do
         if C.isActive(id) and not present[id] then result[#result + 1], present[id] = id, true end
     end
-    for _, delta in ipairs({C.typeDelta(fullType), C.itemDelta(item)}) do
+    for _, delta in ipairs({C.typeDelta(fullType), C.normalizeChanges(delta or {}, true) or {}}) do
         for index = #result, 1, -1 do
             local id = result[index]
             if delta[id] == "remove" then table.remove(result, index); present[id] = nil end
@@ -230,6 +230,9 @@ function C.project(baseTags, fullType, item)
         for _, id in ipairs(additions) do result[#result + 1], present[id] = id, true end
     end
     return result
+end
+function C.project(baseTags, fullType, item)
+    return C.projectSnapshot(baseTags, fullType, C.itemDelta(item))
 end
 function C.changeDelta(current, changes, reset)
     local delta = reset and {} or copy(current)

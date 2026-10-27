@@ -2,6 +2,8 @@ local schema = require "PZSurvivorToolkit/ItemTagSchema"
 local planting = require "PZSurvivorToolkit/PlantingTags"
 local categories = require "PZSurvivorToolkit/ItemCategories"
 local properties = require "PZSurvivorToolkit/ItemTagProperties"
+local media = require "PZSurvivorToolkit/ItemMediaTags"
+local disassembly = require "PZSurvivorToolkit/ItemDisassemblyTags"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
@@ -31,7 +33,8 @@ end
 function Tags.requiresItemRule(id)
     -- Content and freshness depend on the physical instance, even when all
     -- script defaults in a legacy category currently agree.
-    if id == "fresh" or id == "stale" or id == "rotten" then return true end
+    if id == "fresh" or id == "stale" or id == "rotten" or id == "edible" or id == "dismantle"
+        or id == "experience" or id == "recipe" then return true end
     return id == "readable" or id == "literature" or id == "writeable"
 end
 
@@ -57,7 +60,7 @@ local function setTag(tags, id, value)
     return false
 end
 
-local function itemTags(category, fullType, script, item)
+local function itemTags(category, fullType, script, item, recording, snapshot)
     local tags = Tags.forCategory(category)
     local override = fullType and schema.items[string.lower(tostring(fullType))]
     if override then
@@ -72,10 +75,15 @@ local function itemTags(category, fullType, script, item)
         if not farming then tags[#tags + 1] = "farming" end
         if role == "seed" then tags[#tags + 1] = "seed" end
     end
-    local wearable, container, furniture = properties.read(script, item)
+    local wearable, container, furniture, fluid = properties.read(script, item)
     local refined = setTag(tags, "wearable", wearable)
     if container then refined = setTag(tags, "container", true) or refined end
     if furniture then refined = setTag(tags, "furniture", true) or refined end
+    if fluid then refined = setTag(tags, "liquid", true) or refined end
+    refined = setTag(tags, "edible", properties.edible(script, item)) or refined
+    local canDismantle, skills = disassembly.read(script, item)
+    refined = setTag(tags, "dismantle", canDismantle) or refined
+    for _, id in ipairs(skills or {}) do refined = setTag(tags, id, true) or refined end
     local readable, recreational, writeable = properties.reading(script, item)
     if fullType and schema.readableItems[string.lower(tostring(fullType))] then readable = true end
     refined = setTag(tags, "readable", readable) or refined
@@ -90,6 +98,17 @@ local function itemTags(category, fullType, script, item)
         if freshness then refined = setTag(tags, freshness, true) or refined end
         tags.foodStates = foodStates
     end
+    local experience, recipe, mediaStates
+    if snapshot then
+        if recording then experience, recipe = media.effects(recording)
+        elseif script and script.getRecordedMediaCat then
+            local carrier = script:getRecordedMediaCat()
+            if carrier and tostring(carrier) ~= "" then experience, recipe = false, false end
+        end
+    else experience, recipe, mediaStates = media.read(script, item) end
+    refined = setTag(tags, "experience", experience) or refined
+    refined = setTag(tags, "recipe", recipe) or refined
+    tags.mediaStates = mediaStates
     if override or role or refined then tags.itemCategory, tags.itemSignature = category, signature(tags) end
     return tags
 end
@@ -112,6 +131,10 @@ function Tags.choices(tags)
     local result = {}
     for _, id in ipairs(tags) do result[#result + 1] = id end
     for _, id in ipairs(tags.foodStates or {}) do setTag(result, id, true) end
+    for _, state in ipairs(tags.mediaStates or {}) do
+        if state.experience then setTag(result, "experience", true) end
+        if state.recipe then setTag(result, "recipe", true) end
+    end
     return result
 end
 
@@ -123,6 +146,12 @@ end
 function Tags.forItem(item)
     if not item then return {} end
     return Custom.project(Tags.automaticForItem(item), item.getFullType and item:getFullType(), item)
+end
+
+-- Serialized rows have no InventoryItem. Use script capabilities and the captured
+-- recording, without invoking predicates that require a live native item.
+function Tags.forSnapshot(script, fullType, category, recording, tagDelta)
+    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true), fullType, tagDelta)
 end
 
 -- Cache only automatic script tags. World custom definitions are merged live.
@@ -271,14 +300,27 @@ function Tags.matchesScriptRule(script, rule)
     local tags = Tags.automaticForScriptItem(script)
     -- Scripts have no current age. Preview types that can match in at least one
     -- state; never put mutually exclusive states on the same imagined item.
-    for _, state in ipairs(tags.foodStates or {}) do
-        tags[#tags + 1] = state
-        local matches = Tags.matchesRule(Custom.project(tags, script:getFullName()), rule)
-        table.remove(tags)
-        if matches then return true end
+    local function matchesFoodStates()
+        for _, state in ipairs(tags.foodStates or {}) do
+            tags[#tags + 1] = state
+            local matches = Tags.matchesRule(Custom.project(tags, script:getFullName()), rule)
+            table.remove(tags)
+            if matches then return true end
+        end
+        if tags.foodStates and #tags.foodStates > 0 then return false end
+        return Tags.matchesRule(Custom.project(tags, script:getFullName()), rule)
     end
-    if tags.foodStates and #tags.foodStates > 0 then return false end
-    return Tags.matchesRule(Custom.project(tags, script:getFullName()), rule)
+    -- A carrier preview must use one real recording's combination of effects.
+    -- Project manual changes after these automatic possibilities, just as for live items.
+    if tags.mediaStates then
+        for _, state in ipairs(tags.mediaStates) do
+            setTag(tags, "experience", state.experience)
+            setTag(tags, "recipe", state.recipe)
+            if matchesFoodStates() then return true end
+        end
+        return false
+    end
+    return matchesFoodStates()
 end
 
 function Tags.matchesRule(categoryOrTags, rule)

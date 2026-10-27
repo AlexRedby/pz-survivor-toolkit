@@ -12,10 +12,12 @@ local providerCalls = 0
 local Categories = {forScript = function(actual)
     assert(actual == script); providerCalls = providerCalls + 1; return 'craftingMaterial'
 end}
-local Tags = {forItem = function(proxy)
-    assert(proxy:getFullType() == 'Base.Nails' and proxy:getScriptItem() == script)
-    return {'tag:' .. proxy:getDisplayCategory()}
-end, label = function(id) return 'Label ' .. id end}
+local Tags = {forSnapshot = function(actual,fullType,category,recording,delta)
+    assert(actual==script and fullType=='Base.Nails')
+    assert(recording==nil and delta==nil,'ordinary manifest entry invented recorded content or changes')
+    return {'tag:' .. category}
+end, forItem=function() error('manifest passed a Lua proxy to native item classification') end,
+label = function(id) return 'Label ' .. id end}
 require = function(module)
     if module == 'PZSurvivorToolkit/ItemCategories' then return Categories end
     if module == 'PZSurvivorToolkit/ItemTags' then return Tags end
@@ -32,16 +34,21 @@ OrganizedCategories = setmetatable({}, {__index=function() error('removed media 
 Categories.refineMediaCategory = function(proxy, cat)
     assert(proxy:getMediaData() == media and cat == 'craftingMaterial'); return 'experienceMedia'
 end
+Tags.forSnapshot=function(actual,fullType,category,recording,delta)
+    assert(actual==script and fullType=='Base.Nails' and recording==media and delta==nil,
+        'manifest snapshot omitted resolved recorded content')
+    return {'tag:'..category}
+end
 name, label = Presentation.describe({ft = 'Base.Nails', cat = 'Material', mediaId = 'stable-media'})
 assert(name == 'Local VHS title' and label == 'Label tag:experienceMedia')
 name = Presentation.describe({ft = 'Base.Nails', cat = 'Material', mediaIndex = 42, name = 'Named VHS'})
 assert(name == 'Named VHS', 'media title replaced a custom name')
-print('Manifest presentation: local names/owned classification, instance categories, tag proxy and recorded-media labels passed.')
+print('Manifest presentation: local names/owned classification, instance categories, snapshot tags and recorded-media labels passed.')
 
 local storedDelta={food='remove',tool='add'}
-Tags.forItem=function(proxy)
- assert(proxy:hasModData() and proxy:getModData().PZSTItemTags==storedDelta,
- 'warehouse presentation lost exact instance assignments')
+Tags.forSnapshot=function(actual,fullType,category,recording,delta)
+ assert(actual==script and fullType=='Base.Nails' and category=='instance' and recording==nil and delta==storedDelta,
+ 'warehouse snapshot presentation lost exact instance assignments')
  return {'tool'}
 end
 Presentation.describe({ft='Base.Nails',cat='instance',tagDelta=storedDelta})

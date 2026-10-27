@@ -26,5 +26,15 @@ public final class ScriptItemProperties {
         return supported && script != null ? Boolean.valueOf(script.canBeWrite) : null;
     }
 
+    @LuaMethod(name="toolkitScriptHasEatMenu", global=true)
+    public static Boolean hasEatMenu(Item script) {
+        return readHasEatMenu(script, SUPPORTED);
+    }
+
+    static Boolean readHasEatMenu(Item script, boolean supported) {
+        if (!supported || script == null) return null;
+        return script.customContextMenu == null || "Eat".equals(script.customContextMenu);
+    }
+
     private ScriptItemProperties() {}
 }

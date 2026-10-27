@@ -373,6 +373,8 @@ return {
         ["quartermaster.storagemanifest"] = true,
     },
     labels = {
+        ["edible"] = "Can Eat",
+        ["dismantle"] = "Disassembly",
         ["fresh"] = "Fresh",
         ["stale"] = "Stale",
         ["rotten"] = "Rotten",
