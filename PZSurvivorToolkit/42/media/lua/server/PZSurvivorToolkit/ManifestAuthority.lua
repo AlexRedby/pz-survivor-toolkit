@@ -19,7 +19,7 @@ local function sameFields(a, b, fields)
 end
 local HEADER_FIELDS = {"id", "key", "x", "y", "z", "object", "ci", "kind", "name", "loaded", "legacy"}
 local ICON_FIELDS, COLOR_FIELDS = {"kind", "value"}, {"r", "g", "b", "a"}
-local ENTRY_FIELDS = {"key", "ft", "name", "cat", "mediaId", "mediaIndex", "tagKey", "ingredient", "cookingState", "n"}
+local ENTRY_FIELDS = {"key", "ft", "name", "cat", "mediaId", "mediaIndex", "tagKey", "ingredient", "cookingState", "fluidState", "n"}
 local function sameHeader(a, b)
     return sameFields(a, b, HEADER_FIELDS) and sameFields(a.icon, b.icon, ICON_FIELDS)
         and sameFields(a.color, b.color, COLOR_FIELDS)
@@ -313,9 +313,9 @@ function Authority.requestPage(player, args)
                 header.entries[key] = {key = entry.key, ft = entry.ft, name = entry.name, cat = entry.cat,
                     mediaId = entry.mediaId, mediaIndex = entry.mediaIndex, n = entry.n,
                     tagKey = entry.tagKey, tagDelta = entry.tagDelta, ingredient = entry.ingredient,
-                    cookingState = entry.cookingState}
+                    cookingState = entry.cookingState, fluidState = entry.fluidState}
                 rows, bytes, session.item = rows + 1, bytes + #key + #(entry.ft or "")
-                    + #(entry.name or "") + #(entry.cat or "") + #(entry.mediaId or "") + #(entry.tagKey or "") + 120, session.item + 1
+                    + #(entry.name or "") + #(entry.cat or "") + #(entry.mediaId or "") + #(entry.tagKey or "") + 168, session.item + 1
             end
             if session.item > #record.itemOrder then session.index, session.item, session.record = session.index + 1, 1, nil end
         end

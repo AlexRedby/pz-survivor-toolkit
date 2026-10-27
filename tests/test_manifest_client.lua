@@ -51,8 +51,10 @@ end
 setup(false)
 inlinePages={page(4,7,1),page(4,nil,2)}
 inlinePages[1].containers[1].entries.entry1.ingredient=false
+inlinePages[1].containers[1].entries.entry1.fluidState='none'
 inlinePages[1].containers[1].entries.entry1.tagDelta={ingredient='add'}
 inlinePages[2].containers[1].entries.entry2.ingredient=true
+inlinePages[2].containers[1].entries.entry2.fluidState='alcoholic'
 local ready=0
 Client.open(1,function(payload,status)
     if status=='ready'then
@@ -61,6 +63,8 @@ Client.open(1,function(payload,status)
         assert(entries.entry2.n==2 and entries.entry2.ingredient==true)
         assert(entries.entry1.ingredient==false and entries.entry1.tagDelta.ingredient=='add',
             'client page merge lost captured false ingredient state or manual assignments')
+        assert(entries.entry1.fluidState=='none' and entries.entry2.fluidState=='alcoholic',
+            'client page merge lost captured fluid contents')
     end
 end)
 assert(Client.getState(1).status=='loading' and not Client.getState(1).payload and ready==0)

@@ -45,6 +45,10 @@ require = function(name)
         assert(script == item.script, 'capture omitted the physical item script')
         return item.state, {'raw','cooked','burnt'}
     end} end
+    if name == 'PZSurvivorToolkit/ItemFluidTags' then return {read=function(script,item)
+        assert(script == item.script, 'capture omitted the physical fluid item script')
+        return item.fluidState, {'beverage','alcoholic'}, true
+    end} end
     error(name)
 end
 local capture = dofile(shared .. 'PZSurvivorToolkit/ManifestModel.lua')
@@ -64,3 +68,18 @@ local unknown = capture.item(value)
 assert(unknown.cookingState == nil and not keys[unknown.key],
     'snapshot inferred current cooking state from script possibilities')
 assert(capture.item(value).key == unknown.key, 'unknown-state identity is unstable')
+
+local fluidKeys = {}
+for _, state in ipairs({'none','beverage','alcoholic'}) do
+    value.fluidState = state
+    local row = capture.item(value)
+    assert(row.fluidState == state, 'snapshot lost the current fluid contents state')
+    assert(not fluidKeys[row.key] and row.key ~= unknown.key, 'snapshot merged distinct fluid contents')
+    fluidKeys[row.key] = true
+end
+for _, invalid in ipairs({{}, {false}, {'unknown'}, {true}}) do
+    value.fluidState = invalid[1]
+    local row = capture.item(value)
+    assert(row.fluidState == nil and row.key == unknown.key,
+        'snapshot inferred contents from script possibilities or accepted an invalid fluid state')
+end

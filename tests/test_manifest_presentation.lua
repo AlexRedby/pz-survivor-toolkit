@@ -12,11 +12,12 @@ local providerCalls = 0
 local Categories = {forScript = function(actual)
     assert(actual == script); providerCalls = providerCalls + 1; return 'craftingMaterial'
 end}
-local Tags = {forSnapshot = function(actual,fullType,category,recording,delta,ingredient,cookingState)
+local Tags = {forSnapshot = function(actual,fullType,category,recording,delta,ingredient,cookingState,fluidState)
     assert(actual==script and fullType=='Base.Nails')
     assert(recording==nil and delta==nil,'ordinary manifest entry invented recorded content or changes')
     assert(ingredient==nil,'old snapshot invented a captured ingredient value')
     assert(cookingState==nil,'old snapshot invented a captured cooking state')
+    assert(fluidState==nil,'old snapshot invented captured fluid contents')
     return {'tag:' .. category}
 end, forItem=function() error('manifest passed a Lua proxy to native item classification') end,
 label = function(id) return 'Label ' .. id end}
@@ -26,6 +27,7 @@ require = function(module)
     if module == 'PZSurvivorToolkit/TagCustomization' then return {FIELD='PZSTItemTags'} end
     error(module)
 end
+
 local Presentation = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ManifestPresentation.lua')
 local name, label, tags = Presentation.describe({ft = 'Base.Nails', cat = 'Material'})
 assert(name == 'Local nails' and label == 'Label tag:craftingMaterial' and tags[1] == 'tag:craftingMaterial')
@@ -82,5 +84,21 @@ for _,state in ipairs({{'raw'},{'cooked'},{'burnt'},{false},{}})do
             ingredient=false,cookingState=expectedCooking,loaded=loaded})
         assert(rendered==(expectedCooking and 'Label '..expectedCooking or ''))
         assert(#renderedTags==(expectedCooking and 1 or 0))
+    end
+end
+
+local expectedFluid
+Tags.forSnapshot=function(actual,fullType,category,recording,delta,ingredient,cookingState,fluidState)
+    assert(actual==script and fullType=='Base.MilkBottle' and ingredient==false and cookingState==false)
+    assert(fluidState==expectedFluid,'presentation lost captured contents or inferred an old snapshot fluid state')
+    return fluidState and {fluidState} or {}
+end
+for _,state in ipairs({{'none'},{'beverage'},{'alcoholic'},{}})do
+    expectedFluid=state[1]
+    for _,loaded in ipairs({true,false})do
+        local _,rendered,renderedTags=Presentation.describe({ft='Base.MilkBottle',cat='Food',
+            ingredient=false,cookingState=false,fluidState=expectedFluid,loaded=loaded})
+        assert(rendered==(expectedFluid and 'Label '..expectedFluid or ''))
+        assert(#renderedTags==(expectedFluid and 1 or 0))
     end
 end

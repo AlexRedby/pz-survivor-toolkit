@@ -44,6 +44,7 @@ local function request(playerNum, command, args, callback, baseRevision)
 end
 function Client.edit(playerNum, id, definition, callback, baseRevision)
     if id ~= nil and not C.isValidId(id) then return reject(callback, "invalid id") end
+    id = C.canonicalId(id)
     if definition ~= false and not C.normalizeDefinition(definition, true) then return reject(callback, "invalid definition") end
     return request(playerNum, "Edit", {id=id,definition=C.copy(definition)}, callback, baseRevision)
 end

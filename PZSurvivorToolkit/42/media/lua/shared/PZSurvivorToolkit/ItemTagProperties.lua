@@ -146,6 +146,14 @@ function Properties.reading(script, item)
     return true, recreational, false
 end
 
+-- Native evolved-recipe additives do not consume the main ingredient slots.
+function Properties.seasoning(script, item)
+    local food = itemType(script, item, "IsFood", "FOOD")
+    if food ~= true then return food end
+    local source = item or script
+    if source and source.isSpice then return source:isSpice() end
+end
+
 function Properties.food(script, item)
     if not itemType(script, item, "IsFood", "FOOD") then return nil end
     local source = item or script

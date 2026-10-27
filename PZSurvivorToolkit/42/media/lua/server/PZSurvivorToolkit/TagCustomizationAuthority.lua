@@ -50,7 +50,7 @@ function Authority.applyRequest(player, command, args)
         return result(player, args, "conflict", "catalog changed")
     end
     if candidate.revision == 2147483647 then return result(player, args, "rejected", "revision limit") end
-    local id, updates = args.id, {}
+    local id, updates = C.canonicalId(args.id), {}
     if command == "Edit" then
         if not knownFields(args, editFields) or id ~= nil and not C.isValidId(id) then
             return result(player, args, "rejected", "invalid definition id")

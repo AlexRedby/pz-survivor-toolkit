@@ -21,6 +21,7 @@ local function copy(value)
     return out
 end
 C.copy = copy
+function C.canonicalId(id) return (schema.aliases or {})[id] or id end
 function C.hasEntries(value) for _ in pairs(value) do return true end; return false end
 
 -- Lua 5.1 strings index UTF-8 bytes; native Kahlua indexes UTF-16 code units.
@@ -115,7 +116,8 @@ function C.normalizeChanges(value, stored)
         count = count + 1
         if count > C.MAX_CHANGES or not C.isValidId(id) or operation ~= "add" and operation ~= "remove"
             and (stored or operation ~= "default") then return nil, "invalid change" end
-        out[id] = operation
+        local canonical = C.canonicalId(id)
+        if canonical == id or value[canonical] == nil then out[canonical] = operation end
     end
     return out
 end
@@ -147,7 +149,8 @@ function C.normalizeCatalog(value)
         else
             local clean = C.normalizeDefinition(definition)
             if not clean or C.customId(id) and not clean.name then return nil, "invalid definition" end
-            out.definitions[id] = clean
+            local canonical = C.canonicalId(id)
+            if canonical == id or value.definitions[canonical] == nil then out.definitions[canonical] = clean end
         end
     end
     count = 0
@@ -175,7 +178,13 @@ function C.cacheRevision() return tostring(C.getRevision()) .. ":" .. tostring(g
 function C.snapshot() local data = C.catalog(); return data and copy(data) end
 function C.definition(id)
     local data = C.catalog()
+    id = C.canonicalId(id)
     local definition = data and data.definitions[id]
+    if not definition and data then
+        for alias, canonical in pairs(schema.aliases or {}) do
+            if canonical == id and data.definitions[alias] then definition = data.definitions[alias]; break end
+        end
+    end
     return definition and copy(definition) or nil
 end
 function C.isActive(id)
@@ -194,9 +203,13 @@ function C.customIds()
 end
 function C.allIds()
     local out, seen = {}, {}
-    for id in pairs(schema.labels) do out[#out + 1], seen[id] = id, true end
+    for id in pairs(schema.labels) do
+        id = C.canonicalId(id)
+        if not seen[id] then out[#out + 1], seen[id] = id, true end
+    end
     local data = C.catalog()
     for id, definition in pairs(data and data.definitions or {}) do
+        id = C.canonicalId(id)
         if not seen[id] and not definition.deleted then out[#out + 1] = id end
     end
     table.sort(out)
@@ -204,7 +217,7 @@ function C.allIds()
 end
 function C.typeDelta(fullType)
     local data, key = C.catalog(), C.normalizeType(fullType)
-    return copy(data and key and data.types[key] or {})
+    return C.normalizeChanges(data and key and data.types[key] or {}, true) or {}
 end
 function C.itemDelta(item)
     if not item or not item.hasModData or not item.getModData or not item:hasModData() then return {} end
@@ -220,6 +233,7 @@ function C.projectSnapshot(baseTags, fullType, delta)
         result.legacyTags[id] = value or nil
     end
     for _, id in ipairs(baseTags or {}) do
+        id = C.canonicalId(id)
         if C.isActive(id) and not present[id] then
             if retired[id] then legacy(id, true)
             else result[#result + 1], present[id] = id, true end
@@ -244,8 +258,8 @@ function C.project(baseTags, fullType, item)
     return C.projectSnapshot(baseTags, fullType, C.itemDelta(item))
 end
 function C.changeDelta(current, changes, reset)
-    local delta = reset and {} or copy(current)
-    for id, operation in pairs(changes) do delta[id] = operation ~= "default" and operation or nil end
+    local delta = reset and {} or C.normalizeChanges(current, true) or {}
+    for id, operation in pairs(C.normalizeChanges(changes) or {}) do delta[id] = operation ~= "default" and operation or nil end
     return delta
 end
 function C.onChange(fn) if type(fn) == "function" then listeners[#listeners + 1] = fn end end

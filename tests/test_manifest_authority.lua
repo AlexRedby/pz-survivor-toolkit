@@ -23,12 +23,22 @@ local Cooking = {read=function(script, value)
     end
     return nil
 end}
+local Fluids = {read=function(script, value)
+    if script == milkScript then
+        local fluid = value:getFluidContainer()
+        if fluid == 'unknown' then return nil, {'beverage','alcoholic'}, true end
+        if fluid == 'alcohol' then return 'alcoholic', {'beverage','alcoholic'}, true end
+        if fluid == 'milk' or fluid == 'water' then return 'beverage', {'beverage','alcoholic'}, true end
+        return 'none', {'beverage','alcoholic'}, true
+    end
+end}
 local cached = {}
 require = function(name)
     if cached[name] then return cached[name] end
     local module
     if name=='PZSurvivorToolkit/ItemTags' then module=Tags
     elseif name=='PZSurvivorToolkit/ItemCookingTags' then module=Cooking
+    elseif name=='PZSurvivorToolkit/ItemFluidTags' then module=Fluids
     elseif name=='PZSurvivorToolkit/QuartermasterPresets' then
         module={native=function()return presets end,rules=function()return {}end}
     elseif name=='PZSurvivorToolkit/ContainerAppearance' then
@@ -101,6 +111,8 @@ assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].in
     'legacy row invented a current cooking classification')
 assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].cookingState==nil,
     'legacy row invented a current cooking state')
+assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].fluidState==nil,
+    'legacy row invented current fluid contents')
 -- Stable identity separates types with identical labels, preserves custom names, ignores locale.
 assert(Model.item(item('Base.A','Translated A')).key==Model.item(item('Base.A','Other locale')).key)
 assert(Model.item(item('Base.A','Same')).key~=Model.item(item('Base.B','Same')).key)
@@ -458,3 +470,76 @@ squares['3,0,0']=nil
 settle(10)
 assert(not store.containers[foodRecord.id].loaded and store.containers[foodRecord.id].entries==changedFoods.entries,
     'unloading lost the last known cooking states')
+
+-- Current contents partition identical bottles even when their cooking capability is identical.
+local water,waterAgain,alcohol,unavailable=bottle('water'),bottle('water'),bottle('alcohol'),bottle('unknown')
+local fluidItems={water,waterAgain,alcohol,bottle(nil),unavailable}
+square(4,{object({container(fluidItems)},{PZSTQuartermasterTagRules={['0']={include={'tool'},exclude={}}}})})
+settle(100)
+local fluidRecord=assert(store.containers['4,0,0/0/0'])
+assert(#fluidRecord.itemOrder==4, 'same-type bottles merged distinct current contents or unknown state')
+assert(fluidRecord.entries[Model.item(water).key].n==2, 'identical fluid states did not aggregate')
+local fluidRevision=store.revision
+settle(100)
+assert(store.revision==fluidRevision and store.containers[fluidRecord.id].entries==fluidRecord.entries,
+    'unchanged fluid contents rebuilt the immutable sample')
+-- Even an old row whose identity already matches must have its captured field reconciled.
+fluidRecord.entries[Model.item(alcohol).key].fluidState=nil
+settle(100)
+assert(store.revision>fluidRevision and store.containers[fluidRecord.id].entries[Model.item(alcohol).key].fluidState=='alcoholic',
+    'entry comparison ignored the captured fluid state')
+fluidRecord=store.containers[fluidRecord.id]
+fluidRevision=store.revision
+Model.PAGE_ROWS=1
+local fluidPlayer,contents={},{}
+local _,fluidPage=Authority.requestPage(fluidPlayer,{})
+while fluidPage do
+    for _,record in ipairs(fluidPage.containers)do
+        if record.id==fluidRecord.id then
+            for _,row in pairs(record.entries)do contents[row.fluidState or 'unknown']=row.n end
+        elseif record.legacy then
+            for _,row in pairs(record.entries)do assert(row.fluidState==nil)end
+        end
+    end
+    if fluidPage.cursor then _,fluidPage=Authority.requestPage(fluidPlayer,{cursor=fluidPage.cursor})
+    else fluidPage=nil end
+end
+assert(contents.beverage==2 and contents.alcoholic==1 and contents.none==1 and contents.unknown==1,
+    'pagination lost captured contents or inferred old/unknown fluid state')
+Model.PAGE_ROWS=oldRows
+-- The per-row payload estimate reserves space for the added contents field.
+local allOrder,allBytes=store.order,Model.PAGE_BYTES
+store.order={fluidRecord.id}
+local firstFluid=fluidRecord.entries[fluidRecord.itemOrder[1]]
+Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+168
+local budgetPlayer={}
+local _,budgetPage=Authority.requestPage(budgetPlayer,{})
+local budgetRows=0
+for _ in pairs(budgetPage.containers[1].entries)do budgetRows=budgetRows+1 end
+assert(budgetRows==1 and budgetPage.cursor, 'page estimate omitted the fluid contents field allowance')
+store.order,Model.PAGE_BYTES=allOrder,allBytes
+water.fluid='alcohol'
+settle(100)
+local changedFluids=store.containers[fluidRecord.id]
+assert(store.revision>fluidRevision and changedFluids.entries[Model.item(water).key].n==2
+    and changedFluids.entries[Model.item(waterAgain).key].n==1,
+    'in-place fluid mutation did not repartition the sample')
+squares['4,0,0']=nil
+settle(10)
+assert(not store.containers[fluidRecord.id].loaded and store.containers[fluidRecord.id].entries==changedFluids.entries,
+    'unloading lost last-known fluid contents')
+-- Existing schema-2 samples remain valid and unknown while their source chunk is unavailable.
+local oldKey=Model.identity('Base.MilkBottle',nil,'Food')
+local oldId='55,0,0/0/0'
+local oldSample={id=oldId,key='55,0,0',x=55,y=0,z=0,object=0,ci=0,loaded=false,
+    sampledAt=123,entries={[oldKey]={key=oldKey,ft='Base.MilkBottle',cat='Food',n=1}},itemOrder={oldKey}}
+store.containers[oldId]=oldSample
+store.order[#store.order+1]=oldId
+store.positions[oldId]=#store.order
+store.byCoord[oldSample.key]={[oldId]=true}
+store.liveCount=store.liveCount+1
+Authority.resetRuntime()
+settle(100)
+assert(Authority.getStore()==store and store.schema==2 and store.containers[oldId]==oldSample
+    and oldSample.entries[oldKey].fluidState==nil,
+    'additive fluid capture invalidated schema-2 samples or inferred unloaded bottle contents')

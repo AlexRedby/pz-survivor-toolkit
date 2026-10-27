@@ -32,6 +32,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.297
+
+- Rename the visible Experience tag to Learning while preserving saved rules and assignments; books and recordings retain their common training role without skill subdivisions.
+- Derive Beverage and Alcohol from current fluid components, including diluted alcoholic drinks and empty containers. Water mixed with medical alcohol does not become an alcoholic drink; Beverage describes contents, not safe drinking. Warehouse snapshots preserve the observed role instead of assuming factory contents.
+- Unify Condiment and Seasoning as one native cooking-additive role. Salt, sauces and oils remain Cooking Ingredients; ordinary beans no longer inherit the additive role. Migrate old tag selections and manual corrections, preserving restrictive legacy exclusions.
+
 ### 0.1.296
 
 - Add Raw, Cooked and Burnt tags from each food item's current native state, independently of spoilage. Ordinary uncookable fruit is not labelled Raw; burnt food can still be Rotten.

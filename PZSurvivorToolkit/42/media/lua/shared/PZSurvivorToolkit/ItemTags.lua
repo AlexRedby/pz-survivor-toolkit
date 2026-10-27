@@ -6,10 +6,12 @@ local media = require "PZSurvivorToolkit/ItemMediaTags"
 local disassembly = require "PZSurvivorToolkit/ItemDisassemblyTags"
 local cooking = require "PZSurvivorToolkit/ItemCookingTags"
 local cookingStates = require "PZSurvivorToolkit/ItemCookingStates"
+local fluids = require "PZSurvivorToolkit/ItemFluidTags"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
+local function canonical(id) return (schema.aliases or {})[id] or id end
 
 local function signature(tags)
     local result, seen = {}, {}
@@ -33,11 +35,13 @@ function Tags.enabled()
 end
 
 function Tags.requiresItemRule(id)
+    id = canonical(id)
     -- Content and freshness depend on the physical instance, even when all
     -- script defaults in a legacy category currently agree.
     if id == "fresh" or id == "stale" or id == "rotten" or id == "edible" or id == "dismantle"
         or id == "experience" or id == "recipe" or id == "ingredient"
-        or id == "raw" or id == "cooked" or id == "burnt" then return true end
+        or id == "raw" or id == "cooked" or id == "burnt"
+        or id == "beverage" or id == "alcoholic" or id == "seasoning" then return true end
     return id == "readable" or id == "literature" or id == "writeable"
 end
 
@@ -69,7 +73,7 @@ local function setTag(tags, id, value)
     return false
 end
 
-local function itemTags(category, fullType, script, item, recording, snapshot, snapshotIngredient, snapshotCookingState)
+local function itemTags(category, fullType, script, item, recording, snapshot, snapshotIngredient, snapshotCookingState, snapshotFluidState)
     local tags = Tags.forCategory(category)
     local override = fullType and schema.items[string.lower(tostring(fullType))]
     if override then
@@ -89,11 +93,21 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
     if container then refined = setTag(tags, "container", true) or refined end
     if furniture then refined = setTag(tags, "furniture", true) or refined end
     if fluid then refined = setTag(tags, "liquid", true) or refined end
+    local fluidState, fluidStates, isFluid = fluids.read(script, item)
+    if snapshot then fluidState, fluidStates = snapshotFluidState, nil end
+    if isFluid or fluid or fluidState ~= nil then
+        -- Unknown snapshot contents cannot inherit a factory-filled bottle label.
+        refined = setTag(tags, "beverage", fluidState == "beverage" or fluidState == "alcoholic") or refined
+        refined = setTag(tags, "alcoholic", fluidState == "alcoholic") or refined
+        tags.fluidStates = fluidStates
+    end
     refined = setTag(tags, "edible", properties.edible(script, item)) or refined
+    local seasoning = properties.seasoning(script, item)
+    refined = setTag(tags, "seasoning", seasoning) or refined
     local ingredient
     if snapshot and type(snapshotIngredient) == "boolean" then ingredient = snapshotIngredient
     else ingredient = cooking.read(script, item, snapshot) end
-    refined = setTag(tags, "ingredient", ingredient) or refined
+    refined = setTag(tags, "ingredient", seasoning == true or ingredient) or refined
     local cookingState, possibleCookingStates
     if snapshot then cookingState = snapshotCookingState
     else cookingState, possibleCookingStates = cookingStates.read(script, item) end
@@ -154,6 +168,10 @@ function Tags.choices(tags)
     for _, id in ipairs(tags) do result[#result + 1] = id end
     for _, id in ipairs(tags.foodStates or {}) do setTag(result, id, true) end
     for _, id in ipairs(tags.cookingStates or {}) do setTag(result, id, true) end
+    for _, state in ipairs(tags.fluidStates or {}) do
+        if state ~= "none" then setTag(result, "beverage", true) end
+        if state == "alcoholic" then setTag(result, "alcoholic", true) end
+    end
     for _, state in ipairs(tags.mediaStates or {}) do
         if state.experience then setTag(result, "experience", true) end
         if state.recipe then setTag(result, "recipe", true) end
@@ -173,8 +191,8 @@ end
 
 -- Serialized rows have no InventoryItem. Use script capabilities and the captured
 -- recording, without invoking predicates that require a live native item.
-function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient, cookingState)
-    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true, ingredient, cookingState), fullType, tagDelta)
+function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient, cookingState, fluidState)
+    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true, ingredient, cookingState, fluidState), fullType, tagDelta)
 end
 
 -- Cache only automatic script tags. World custom definitions are merged live.
@@ -199,6 +217,7 @@ end
 function Tags.allIds(items)
     local ids, seen = {}, {}
     local function add(id)
+        id = canonical(id)
         if id ~= "general" and not (schema.retiredTags or {})[id] and not seen[id] then
             ids[#ids + 1], seen[id] = id, true
         end
@@ -232,6 +251,7 @@ function Tags.category(tags, originalKey)
 end
 
 function Tags.label(id)
+    id = canonical(id)
     local definition = Custom.definition(id)
     if definition and definition.name then
         local label = definition.name
@@ -244,6 +264,7 @@ function Tags.label(id)
 end
 
 function Tags.defaultLabel(id)
+    id = canonical(id)
     if id:sub(1, 9) == "category:" then
         local category = id:sub(10)
         return (getTextOrNull and getTextOrNull("IGUI_ItemCat_" .. category)) or category
@@ -255,7 +276,7 @@ local formerGeneral = {Bag = true, Bear = true, containerGeneral = true}
 local function tagSet(categoryOrTags)
     local tags = type(categoryOrTags) == "string" and Tags.forCategory(categoryOrTags) or categoryOrTags
     local present = {}
-    for _, id in ipairs(tags or {}) do present[id] = true end
+    for _, id in ipairs(tags or {}) do present[canonical(id)] = true end
     for id, value in pairs(tags and tags.legacyTags or {}) do if value then present[id] = true end end
     -- Saved exact-category filters survive a category gaining semantic tags later.
     if tags and schema.categories[tags.legacyCategory] then
@@ -269,6 +290,7 @@ end
 local function matchesSelection(present, selected, mode)
     local count = 0
     for _, id in ipairs(selected) do
+        id = canonical(id)
         count = count + 1
         if mode == "any" and present[id] then return true end
         if mode ~= "any" and not present[id] then return false end
@@ -309,7 +331,21 @@ function Tags.normalizeRule(value)
         result[field] = list
         if field == "include" then included = seen end
     end
-    return result
+    local migrated, migratedIncludes = {mode=mode}, {}
+    for _, field in ipairs({"include", "exclude"}) do
+        local list, seen = {}, {}
+        for _, id in ipairs(result[field]) do
+            id = canonical(id)
+            -- Old opposing alias selections remain restrictive and editable;
+            -- never discard an exclusion or invalidate the whole preset file.
+            if field == "exclude" and migratedIncludes[id] then return result end
+            if not seen[id] then list[#list+1], seen[id] = id, true end
+        end
+        table.sort(list)
+        migrated[field] = list
+        if field == "include" then migratedIncludes = seen end
+    end
+    return migrated
 end
 
 function Tags.ruleActive(rule)
@@ -323,7 +359,7 @@ local function validRule(rule)
 end
 
 local function matchesRule(present, rule)
-    for _, id in ipairs(rule.exclude) do if present[id] then return false end end
+    for _, id in ipairs(rule.exclude) do if present[canonical(id)] then return false end end
     return #rule.include == 0 or matchesSelection(present, rule.include, rule.mode)
 end
 
@@ -353,17 +389,26 @@ function Tags.matchesScriptRule(script, rule)
         if tags.cookingStates and #tags.cookingStates > 0 then return false end
         return matchesFoodStates(false)
     end
+    local function matchesFluidStates()
+        for _, state in ipairs(tags.fluidStates or {}) do
+            setTag(tags, "beverage", state ~= "none")
+            setTag(tags, "alcoholic", state == "alcoholic")
+            if matchesCookingStates() then return true end
+        end
+        if tags.fluidStates and #tags.fluidStates > 0 then return false end
+        return matchesCookingStates()
+    end
     -- A carrier preview must use one real recording's combination of effects.
     -- Project manual changes after these automatic possibilities, just as for live items.
     if tags.mediaStates then
         for _, state in ipairs(tags.mediaStates) do
             setTag(tags, "experience", state.experience)
             setTag(tags, "recipe", state.recipe)
-            if matchesCookingStates() then return true end
+            if matchesFluidStates() then return true end
         end
         return false
     end
-    return matchesCookingStates()
+    return matchesFluidStates()
 end
 
 function Tags.matchesRule(categoryOrTags, rule)

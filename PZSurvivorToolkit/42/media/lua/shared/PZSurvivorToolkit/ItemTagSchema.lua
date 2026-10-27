@@ -189,11 +189,11 @@ return {
         ["foodNonPerishable"] = {"nonperishable"},
         ["foodNonPerishable_candySnack"] = {"nonperishable", "snack"},
         ["foodNonPerishable_cannedJarred"] = {"nonperishable", "preserved"},
-        ["foodNonPerishable_condiment"] = {"nonperishable", "condiment"},
+        ["foodNonPerishable_condiment"] = {"nonperishable", "seasoning"},
         ["foodNonPerishable_ingredient"] = {"nonperishable", "ingredient"},
         ["foodNonPerishable_spice"] = {"nonperishable", "seasoning"},
         ["foodPerishable"] = {"perishable"},
-        ["foodPerishable_condiment"] = {"perishable", "condiment"},
+        ["foodPerishable_condiment"] = {"perishable", "seasoning"},
         ["foodPerishable_fruit"] = {"perishable", "fruit"},
         ["foodPerishable_ingredient"] = {"perishable", "ingredient"},
         ["foodPerishable_meat"] = {"perishable", "meat"},
@@ -361,6 +361,8 @@ return {
         ["weaponThrown_improvised"] = {"weapon", "thrown", "improvised"},
     },
     -- Saved Food rules keep their original membership, separately from visible tags.
+    -- Persisted IDs remain accepted at the boundary; only the canonical tag is offered.
+    aliases = {condiment = "seasoning"},
     retiredTags = {food = true},
     retiredCategories = {
         food = {
@@ -491,7 +493,7 @@ return {
         ["electronic"] = "Electronic",
         ["entertainment"] = "Entertainment",
         ["equipment"] = "Equipment",
-        ["experience"] = "Experience",
+        ["experience"] = "Learning",
         ["explosive"] = "Explosive",
         ["eyes"] = "Eyes",
         ["farming"] = "Farming",
