@@ -1,6 +1,7 @@
 -- Execute actual shared/server fixtures under LuaJIT with native API boundaries stubbed.
 -- ASCII bounds agree with Kahlua's UTF-16 length; the Java probe owns the UTF-8 byte cap.
-local root=assert(arg[1]);local config={suite='lot-streaming',cases={'fresh'}}
+local root=ProjectRoot or (arg and arg[1]) or '.'
+local config={suite='lot-streaming',cases={'fresh'}}
 package.preload.QueueTestSelection=function()return config end
 package.preload.QueueHealthEvents=function()return {encode=function(value)return '"'..tostring(value)..'"'end}end
 local record
