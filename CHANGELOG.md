@@ -32,6 +32,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.306
+
+- Add Broken from the current native item state, independent of partial wear, empty supplies and food spoilage. Show healthy/broken preview alternatives for native wear classes and tools degraded by crafting inputs without creating items or running callbacks.
+- Allow broken tools into explicitly matching Broken or Smelting container rules, including combined rules and linked presets. Preserve ordinary usable-tool selections, exclusions, manual tag corrections and named-item precedence.
+- Keep Broken separate from Sharpen in previews and store the current broken state in warehouse snapshots, retaining older snapshot formats and independent smelting eligibility.
+
 ### 0.1.305
 
 - Add Sharpen for usable items with missing sharpness, including partly dulled blades. Read native attributes without modifying sharpness; fully sharpened and broken items are excluded, while favorite items remain eligible.

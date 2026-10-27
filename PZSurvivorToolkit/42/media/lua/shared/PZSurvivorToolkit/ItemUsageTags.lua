@@ -5,10 +5,11 @@ local repair = require "PZSurvivorToolkit/ItemRepairTags"
 local laundry = require "PZSurvivorToolkit/ItemLaundryTags"
 local smelting = require "PZSurvivorToolkit/ItemSmeltingTags"
 local sharpening = require "PZSurvivorToolkit/ItemSharpeningTags"
+local broken = require "PZSurvivorToolkit/ItemBrokenTags"
 local Usage = {}
 -- The first four positions are the original snapshot format.
 local fields = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment",
-    "spentBattery", "fishBait", "trapBait", "repair", "smelting", "sharpen"}
+    "spentBattery", "fishBait", "trapBait", "repair", "smelting", "sharpen", "broken"}
 
 local function tagged(source, id)
     if not source or not source.hasTag or not ItemTag or not ItemTag[id] then return nil end
@@ -78,12 +79,20 @@ local function stateKey(state)
     return table.concat(key, ":")
 end
 
-local function previews(roles, fluidStates, baitStates, varying, laundryStates, sharpeningStates)
+local function previews(roles, fluidStates, baitStates, varying, laundryStates, sharpeningStates, brokenStates)
     local hasVarying = false
     for _ in pairs(varying) do hasVarying = true; break end
     if #fluidStates == 0 and #baitStates == 0 and not hasVarying
-        and not laundryStates and not sharpeningStates then return {} end
+        and not laundryStates and not sharpeningStates and not brokenStates then return {} end
     local result, seen = {}, {}
+    local function add(state)
+        -- Native sharpening requires a usable item. Keep other capabilities
+        -- (such as smelting with AllowDestroyedItem) independent of breakage.
+        if state.broken == true and state.sharpen == true then return end
+        if state.sharpen == true then state.broken = false end
+        local key = stateKey(state)
+        if not seen[key] then result[#result + 1], seen[key] = state, true end
+    end
     -- Native fractional getters normalize the same integer remaining uses.
     -- A small positive fraction still has a use; do not invent half a use.
     local levels = hasVarying and {0, 1} or {0}
@@ -97,14 +106,16 @@ local function previews(roles, fluidStates, baitStates, varying, laundryStates, 
                     elseif mode == "fractional" then state[id] = level > 0
                     else state[id] = level >= 1 end
                 end
-                -- Stains and sharpness are independent of remaining material/uses.
+                -- Condition/stains and remaining supplies are separate states.
                 for _, dirty in ipairs(laundryStates or {"unchanged"}) do
                     for _, sharpen in ipairs(sharpeningStates or {"unchanged"}) do
-                        local variant = copy(state)
-                        if type(dirty) == "boolean" then variant.dirty = dirty end
-                        if type(sharpen) == "boolean" then variant.sharpen = sharpen end
-                        local key = stateKey(variant)
-                        if not seen[key] then result[#result + 1], seen[key] = variant, true end
+                        for _, isBroken in ipairs(brokenStates or {"unchanged"}) do
+                            local variant = copy(state)
+                            if type(dirty) == "boolean" then variant.dirty = dirty end
+                            if type(sharpen) == "boolean" then variant.sharpen = sharpen end
+                            if type(isBroken) == "boolean" then variant.broken = isBroken end
+                            add(variant)
+                        end
                     end
                 end
             end
@@ -167,9 +178,12 @@ function Usage.read(script, item)
     if not item and smeltingStates and #smeltingStates > 0 then varying.smelting = "whole" end
     local sharpeningRole, sharpeningStates = sharpening.read(script, item)
     roles.sharpen = sharpeningRole
+    local brokenRole, brokenStates = broken.read(script, item)
+    roles.broken = brokenRole
     local baitRoles, baitStates = bait.read(script, item)
     merge(roles, baitRoles)
-    possible = not item and previews(roles, possible, baitStates or {}, varying, laundryStates, sharpeningStates) or {}
+    possible = not item and previews(roles, possible, baitStates or {}, varying,
+        laundryStates, sharpeningStates, brokenStates) or {}
     return roles, possible, isFluid
 end
 
@@ -187,7 +201,7 @@ function Usage.encode(roles)
 end
 
 function Usage.decode(value)
-    if type(value) ~= "string" or (#value ~= 4 and #value ~= 10 and #value ~= 11 and #value ~= #fields)
+    if type(value) ~= "string" or (#value ~= 4 and #value ~= 10 and #value ~= 11 and #value ~= 12 and #value ~= #fields)
         or value:find("[^10?]") then return {} end
     local result = {}
     for i, field in ipairs(fields) do

@@ -455,6 +455,18 @@ do
     brokenFood.ref.isBroken=function() return true end
     checkPlan({brokenFood},alternatives)
     assert(reads==1 and preparations==1,'broken non-tool rebuilt its prepared membership for rules')
+    local brokenTool=item('Base.Hammer','toolCarpentry','Broken hammer')
+    brokenTool.ref.isBroken=function() return true end
+    reads,preparations=0,0
+    checkPlan({brokenTool},{box(nil,{}, {[brokenTool.name]=true})})
+    assert(reads==0 and preparations==0,'explicit broken-tool assignment eagerly prepared semantic tags')
+    local brokenAlternatives={}
+    for index=1,40 do
+        brokenAlternatives[index]=box({mode='any',include={'broken','tool'},exclude={}})
+        brokenAlternatives[index].capacity=0
+    end
+    checkPlan({brokenTool},brokenAlternatives)
+    assert(reads==1 and preparations==1,'Broken destination exceptions reclassified each alternative')
     Tags.forItem,Tags.ruleMatcher=classify,prepare
 
     local state={category='Food',broken=false}
@@ -635,4 +647,118 @@ do
         'sharpening box accepted fully sharpened/broken tools or lost partial sharpness')
     dull.ref.sharpness=1
     assert(not checkPlan({dull},{station})[dull],'new plan retained the old sharpening state')
+end
+
+-- Broken tools need a positive, currently matching destination role. In
+-- particular, a false arm of an Any rule must not open ordinary tool routing.
+do
+    local Custom = require 'PZSurvivorToolkit/TagCustomization'
+    local broken = item('Base.Hammer', 'toolCarpentry', 'Broken hammer')
+    broken.ref.broken = true
+    broken.ref.isBroken = function(ref) return ref.broken end
+    local delta = {}
+    broken.ref.hasModData = function() return true end
+    broken.ref.getModData = function() return {[Custom.FIELD] = delta} end
+    local brokenBox = box({mode = 'all', include = {'broken'}, exclude = {}})
+    local smeltingBox = box({mode = 'all', include = {'smelting'}, exclude = {}})
+    local combined = box({mode = 'all', include = {'broken', 'smelting'}, exclude = {}})
+    local brokenAny = box({mode = 'any', include = {'broken', 'tool'}, exclude = {}}, {toolCarpentry = true})
+    local smeltingAny = box({mode = 'any', include = {'smelting', 'tool'}, exclude = {}}, {toolCarpentry = true})
+    local excludesBroken = box({mode = 'all', include = {'smelting'}, exclude = {'broken'}}, {toolCarpentry = true})
+    local negativeOnly = box({mode = 'all', include = {'tool'}, exclude = {'broken'}}, {toolCarpentry = true})
+    local function expect(target, record, wanted, message)
+        assert(Rules.matches(target, record) == wanted, 'direct: ' .. message)
+        assert((checkPlan({record}, {target})[record] == target) == wanted, 'plan: ' .. message)
+    end
+    expect(brokenBox, broken, true, 'Broken selection lost a broken tool')
+    expect(brokenAny, broken, true, 'Any lost its matching Broken arm')
+    expect(smeltingBox, broken, false, 'broken alone fabricated Smelting')
+    expect(combined, broken, false, 'All skipped its absent Smelting requirement')
+    expect(smeltingAny, broken, false, 'nonmatching Smelting alternative bypassed the tool guard')
+    expect(negativeOnly, broken, false, 'Broken exclusion was ignored')
+
+    delta.broken = 'remove'
+    expect(brokenBox, broken, false, 'manual Broken removal was ignored')
+    expect(brokenAny, broken, false, 'nonmatching Broken alternative or category bypassed the guard')
+    expect(negativeOnly, broken, false, 'negative Broken reference opened ordinary tool routing')
+    delta.smelting = 'add'
+    expect(smeltingBox, broken, true, 'manual Smelting addition could not collect a broken tool')
+    expect(smeltingAny, broken, true, 'Any lost its matching Smelting arm')
+    expect(combined, broken, false, 'All ignored manually removed Broken')
+    expect(excludesBroken, broken, true, 'Broken removal did not update an explicit exclusion')
+    delta.broken = nil
+    expect(combined, broken, true, 'explicit Broken and Smelting combination failed')
+    expect(excludesBroken, broken, false, 'category bypassed a failed explicit exclusion')
+    delta.smelting = 'remove'
+    expect(smeltingAny, broken, false, 'manual Smelting removal left a false Any bypass')
+    expect(combined, broken, false, 'All ignored manually removed Smelting')
+
+    presetRules.BrokenTools = {gen = 31, rule = {mode = 'all', include = {'broken'}, exclude = {}}}
+    local presets = {BrokenTools = {gen = 31, cats = {toolCarpentry = true}, items = {}}}
+    local linked = box(nil, {}, {}, {BrokenTools = 31}, presets)
+    expect(linked, broken, true, 'linked Broken preset did not collect a broken tool')
+    delta.broken = 'remove'
+    expect(linked, broken, false, 'linked preset category bypassed removed Broken')
+    delta.broken = nil
+    broken.ref.broken = false
+    expect(brokenBox, broken, false, 'repaired item retained Broken in a later plan')
+    expect(box(nil, {toolCarpentry = true}), broken, true, 'repair did not restore ordinary tool routing')
+    broken.ref.broken = true
+    enabled = false
+    expect(box(nil, {toolCarpentry = true}), broken, true, 'tag opt-out changed legacy broken-tool routing')
+    enabled = true
+    presetRules.BrokenTools = nil
+end
+
+-- Scissors are both tools and genuine furnace subjects. Native furnace inputs
+-- with AllowDestroyedItem accept their broken instances through Smelting.
+do
+    local savedManager, savedResource = getScriptManager, ResourceType
+    local savedCreate, savedTest = toolkitRecipeOnCreate, toolkitRecipeHasItemTest
+    ResourceType = {Item = 'item'}
+    toolkitRecipeOnCreate = function() return nil end
+    toolkitRecipeHasItemTest = function() return false end
+    local scissors, definition = item('Base.Scissors', 'toolCooking', 'Scissors')
+    scissors.ref.isBroken = function() return true end
+    local allowDestroyed = true
+    -- ExtractSteelFromSmallItem resolves smeltablesteelsmall at input 4/4;
+    -- mode:destroy and ItemCount make the scissors a whole material subject.
+    local input = {
+        getResourceType = function() return ResourceType.Item end,
+        getPossibleInputItems = function() return list({definition}) end,
+        getIntAmount = function() return 1 end,
+        isUsesPartialItem = function() return false end,
+        doesItemPassRoutineStatusTests = function(_, ref, character)
+            assert(ref == scissors.ref and character == nil)
+            return not ref:isBroken() or allowDestroyed
+        end,
+    }
+    for _, method in ipairs({'isKeep', 'isTool', 'isApplyOnTick', 'hasConsumeFromItem', 'hasCreateToItem', 'isReplace'}) do
+        input[method] = function() return false end
+    end
+    local recipes = list({{
+        getName = function() return 'ExtractSteelFromSmallItem' end,
+        getInputs = function() return list({{}, {}, {}, input}) end,
+        isVanilla = function() return true end,
+    }})
+    local manager = {getAllCraftRecipes = function() return recipes end}
+    getScriptManager = function() return manager end
+    local furnace = box({mode = 'all', include = {'smelting'}, exclude = {}})
+    local combined = box({mode = 'all', include = {'broken', 'smelting'}, exclude = {}})
+    for _, target in ipairs({furnace, combined}) do
+        assert(Rules.matches(target, scissors) and checkPlan({scissors}, {target})[scissors] == target,
+            'AllowDestroyedItem furnace subject was stopped by the broken-tool guard')
+    end
+    presetRules.Furnace = {gen = 32, rule = {mode = 'all', include = {'smelting'}, exclude = {}}}
+    local linked = box(nil, {}, {}, {Furnace = 32}, {Furnace = {gen = 32, cats = {toolCooking = true}, items = {}}})
+    assert(Rules.matches(linked, scissors) and checkPlan({scissors}, {linked})[scissors] == linked,
+        'linked Smelting preset could not collect native broken scissors')
+    allowDestroyed = false
+    for _, target in ipairs({furnace, combined, linked}) do
+        assert(not Rules.matches(target, scissors) and not checkPlan({scissors}, {target})[scissors],
+            'native destroyed-item refusal was bypassed by a category or an explicit role')
+    end
+    presetRules.Furnace = nil
+    getScriptManager, ResourceType = savedManager, savedResource
+    toolkitRecipeOnCreate, toolkitRecipeHasItemTest = savedCreate, savedTest
 end

@@ -403,6 +403,7 @@ return {
         ["ignite"] = "Ignition",
         ["smelting"] = "Smelting",
         ["sharpen"] = "Sharpen",
+        ["broken"] = "Broken",
         ["edible"] = "Can Eat",
         ["dismantle"] = "Disassembly",
         ["fresh"] = "Fresh",

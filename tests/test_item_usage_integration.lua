@@ -351,7 +351,7 @@ assert(Tags.matchesScriptRule(knife,rule({'sharpen'})) and Tags.matchesScriptRul
 assert(not Tags.matches(Tags.forScriptItem(knife),{'sharpen'}))
 assert(Tags.matches(Tags.choices(Tags.forScriptItem(knife)),{'sharpen'}))
 local bluntMask=Usage.encode(Usage.read(knife,blade))
-assert(#bluntMask==12 and Tags.matches(snapshot(knife,bluntMask),{'sharpen'}))
+assert(#bluntMask==13 and Tags.matches(snapshot(knife,bluntMask),{'sharpen'}))
 for _, length in ipairs({4,10,11})do
     assert(not Tags.matches(snapshot(knife,bluntMask:sub(1,length)),{'sharpen'}),'legacy snapshot fabricated sharpness')
 end
@@ -399,3 +399,52 @@ if NativeActionRoot then
     local insert=assert(content:match('craftRecipe InsertPropaneBottleIntoLantern%s*(%b{})'))
     assert(insert:find('[Base.Propane_Refill] flags[ItemCount;InheritUses]',1,true),'refill no longer transfers fuel to a lantern')
 end
+
+-- Broken is a current native state, independent of wear percentage or supplies.
+ItemType.WEAPON='weapon';knife.kind=ItemType.WEAPON
+knife.getConditionMax=function()return 10 end
+blade.broken,blade.sharpness=true,0.1
+assert(Tags.matches(Tags.forItem(blade),{'broken','tool'}))
+assert(not Tags.matches(Tags.forItem(blade),{'sharpen'}))
+assert(not Tags.matches(Tags.forScriptItem(knife),{'broken'}),'script invented a current broken flag')
+assert(Tags.matches(Tags.choices(Tags.forScriptItem(knife)),{'broken','sharpen'}))
+assert(Tags.requiresItemRule('broken'))
+assert(Tags.matchesScriptRule(knife,rule({'broken'},{'sharpen'})))
+assert(Tags.matchesScriptRule(knife,rule({'sharpen'},{'broken'})))
+assert(not Tags.matchesScriptRule(knife,rule({'broken','sharpen'})),'preview invented a broken sharpening subject')
+local brokenMask=Usage.encode(Usage.read(knife,blade))
+assert(#brokenMask==13 and Tags.matches(snapshot(knife,brokenMask),{'broken'}))
+for _, length in ipairs({4,10,11,12})do
+    assert(not Tags.matches(snapshot(knife,brokenMask:sub(1,length)),{'broken'}),'legacy snapshot invented broken state')
+end
+blade.broken=false
+local repairedMask=Usage.encode(Usage.read(knife,blade))
+assert(repairedMask~=brokenMask and not Tags.matches(Tags.forItem(blade),{'broken'}))
+assert(not Tags.matches(snapshot(knife,repairedMask),{'broken'}))
+assert(Tags.matches(Tags.forItem(blade),{'sharpen'}),'repair lost independent sharpening need')
+blade.isBroken=nil
+assert(Usage.read(knife,blade).broken==nil,'missing live flag reconstructed from script')
+blade.isBroken=function(i)return i.broken==true end
+blade.broken=true
+world.types['base.kitchenknife']={broken='remove'}
+assert(not Tags.matches(Tags.forItem(blade),{'broken'}))
+assert(not Tags.matchesScriptRule(knife,rule({'broken'})))
+world.types={}
+assert(Tags.matches(snapshot(knife,repairedMask,{broken='add'}),{'broken'}),'manual Broken snapshot addition was lost')
+
+local spent=item(script('Base.Battery','craftingElectrical_material',ItemType.DRAINABLE))
+spent.uses,spent.fraction=0,0;spent.isBroken=function()return false end
+assert(Tags.matches(Tags.forItem(spent),{'junk'}) and not Tags.matches(Tags.forItem(spent),{'broken'}),
+    'empty battery was confused with native breakage')
+refillItem.isBroken=function()return false end
+assert(not Tags.matches(Tags.forItem(refillItem),{'broken'}),'empty propane was confused with native breakage')
+
+-- Broken and current smelting may coexist; the furnace handles destroyed input.
+Smelting.read=function(s,i)
+    if s==knife then return true end
+    return readSmelting(s,i)
+end
+assert(Tags.matches(Tags.forItem(blade),{'broken','smelting'}))
+assert(Tags.matchesScriptRule(knife,rule({'broken','smelting'},{'sharpen'})))
+assert(not Tags.matchesScriptRule(knife,rule({'broken','smelting','sharpen'})))
+Smelting.read=readSmelting

@@ -52,6 +52,10 @@ function Rules.forBox(obj, ci, links, presets)
 end
 
 local toolRule = {mode = "all", include = {"tool"}, exclude = {}}
+local brokenDestinations = {
+    broken = {mode = "all", include = {"broken"}, exclude = {}},
+    smelting = {mode = "all", include = {"smelting"}, exclude = {}},
+}
 
 local function itemMatcher(state)
     if not state.matchRule then state.matchRule = Tags.ruleMatcher(Tags.forItem(state.ref)) end
@@ -67,15 +71,32 @@ local function itemState(item)
     return state
 end
 
+local function acceptsBrokenTool(state, rule, matchRule)
+    for _, id in ipairs(rule.include) do
+        local role = brokenDestinations[id]
+        if role then
+            state.brokenRoles = state.brokenRoles or {}
+            local present = state.brokenRoles[id]
+            if present == nil then
+                present = matchRule(role)
+                state.brokenRoles[id] = present
+            end
+            if present then return true end
+        end
+    end
+    return false
+end
+
 local function matches(box, item, enabled, state)
-    -- Tag/category selections describe usable tools. Explicit item assignments still
-    -- take precedence in the planner, so broken tools can be collected separately.
-    if enabled and state.blocked then return false end
-    if item.cat and box.cats and box.cats[item.cat] then return true end
+    -- Ordinary tool selections describe usable items. A broken tool needs a
+    -- matching positive Broken/Smelting role; category picks cannot supply it.
+    -- Explicit item assignments still take precedence in the planner.
+    local blocked = enabled and state.blocked
+    if not blocked and item.cat and box.cats and box.cats[item.cat] then return true end
     if not enabled or not box.rules or #box.rules == 0 then return false end
     local matchRule = itemMatcher(state)
     for _, rule in ipairs(box.rules) do
-        if matchRule(rule) then return true end
+        if matchRule(rule) and (not blocked or acceptsBrokenTool(state, rule, matchRule)) then return true end
     end
     return false
 end
