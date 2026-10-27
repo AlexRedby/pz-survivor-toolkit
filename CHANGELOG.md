@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.296
+
+- Add Raw, Cooked and Burnt tags from each food item's current native state, independently of spoilage. Ordinary uncookable fruit is not labelled Raw; burnt food can still be Rotten.
+- Support cooking-state choices and coherent rule previews in inventory and container filters, retaining manual tag corrections. Warehouse snapshots preserve captured cooking states and keep older, uncaptured states unknown until refreshed.
+
 ### 0.1.295
 
 - **Added:** Container groups share a name, icon, color, sorting filters, tag rules and priority. Create a group from the container editor or select an existing one to inherit its settings. Save changes for the whole group or only the current container; a local edit detaches that container. Groups work with duplicate exclusion disabled and synchronize through the existing revisioned Host authority.
