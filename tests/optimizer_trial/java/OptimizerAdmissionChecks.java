@@ -3,6 +3,7 @@ import java.util.Map;
 import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
 import net.alexredby.pztoolkitjavapatches.CutawaySouthEdge;
 import net.alexredby.pztoolkitjavapatches.OptimizerCompatibility;
+import net.alexredby.pztoolkitjavapatches.TranslucentSquareUnion;
 
 /** Executes admission and the actual weave against an explicit, verified optimizer classpath. */
 public final class OptimizerAdmissionChecks {
@@ -23,6 +24,14 @@ public final class OptimizerAdmissionChecks {
         if (CutawaySouthEdge.SUPPORTED != accepted) throw new AssertionError("cutaway admission");
         if (CutawaySouthEdge.install() != accepted) throw new AssertionError("actual cutaway weave");
         if (accepted && !CutawaySouthEdge.install()) throw new AssertionError("idempotent install");
+        if (TranslucentSquareUnion.SUPPORTED != accepted) throw new AssertionError("union admission");
+        if (TranslucentSquareUnion.install() != accepted) throw new AssertionError("actual union weave");
+        if (accepted) {
+            if (!TranslucentSquareUnion.install()) throw new AssertionError("idempotent union install");
+            // Resolve the complete woven class, including its retained stack-map frames.
+            Class.forName("zombie.iso.fboRenderChunk.FBORenderCell", false,
+                    OptimizerAdmissionChecks.class.getClassLoader()).getDeclaredMethods();
+        }
         System.out.println("OPTIMIZER_ADMISSION_PASS accepted=" + accepted + " pairs=" + checked);
     }
 }
