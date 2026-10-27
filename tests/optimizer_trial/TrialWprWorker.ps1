@@ -79,7 +79,8 @@ function Assert-TrialWprControl([string]$Root,[string]$Hash) {
     $config=Read-TrialWprJson $path
     if ($config.format -ne 1 -or $config.captureId -ne [IO.Path]::GetFileName($Root) -or
         $config.captureSeconds -lt 30 -or $config.captureSeconds -gt 240 -or $config.prepareSeconds -ne 900 -or
-        $config.profileSha256 -notmatch '^[a-fA-F0-9]{64}$' -or $config.maximumTempBytes -ne 2147483648 -or $config.targetPid -le 0 -or $config.parentPid -le 0) { throw 'Invalid recorder control.' }
+        $config.profileSha256 -notmatch '^[a-fA-F0-9]{64}$' -or $config.toolSha256 -notmatch '^[a-fA-F0-9]{64}$' -or
+        [string]::IsNullOrWhiteSpace($config.toolPath) -or $config.toolSource -notin @('ADK','System') -or $config.maximumTempBytes -ne 2147483648 -or $config.targetPid -le 0 -or $config.parentPid -le 0) { throw 'Invalid recorder control.' }
     return $config
 }
 function Read-TrialWprSignal([string]$Root,[string]$Action,$Config) {
@@ -190,6 +191,7 @@ function Invoke-TrialWprWorker([string]$Root,[string]$Hash) {
     if ($status.captureId -ne $config.captureId -or $status.targetPid -ne $config.targetPid -or $status.processStartUtc -ne $config.processStartUtc -or $status.status -ne 'Requested' -or $status.instanceName -ne ('PZTrial_'+$config.captureId)) { throw 'Recorder receipt identity changed.' }
     $helper=Get-Process -Id $PID
     $status.helperPid=$PID; $status.helperStartUtc=$helper.StartTime.ToUniversalTime().ToString('o')
+    $status | Add-Member -NotePropertyName tool -NotePropertyValue $null -Force
     $status | Add-Member -NotePropertyName evidence -NotePropertyValue @()
     $status | Add-Member -NotePropertyName maximumCaptureSeconds -NotePropertyValue $config.captureSeconds
     $status | Add-Member -NotePropertyName maximumTempBytes -NotePropertyValue $config.maximumTempBytes
@@ -205,8 +207,12 @@ function Invoke-TrialWprWorker([string]$Root,[string]$Hash) {
     $instance=$status.instanceName; $trace=Join-Path $Root 'drive.etl'; $temp=Join-Path $Root 'temp'
     try {
         if (-not (Test-TrialWprElevated)) { $status.reason='HelperNotElevated'; return }
-        $tool=Get-TrialWprTool
-        if (-not $tool) { $status.reason='WprUnavailable'; return }
+        # Use the exact signed tool selected before elevation, never reselect
+        # a different install between start/stop. Reject replaced binaries.
+        $identity=Get-TrialWprToolMetadata $config.toolPath $config.toolSource
+        $status.tool=$identity
+        if (-not $identity.Eligible -or $identity.Path -ne $config.toolPath -or $identity.Sha256 -ne $config.toolSha256) { $status.reason='WprToolIdentityChanged'; return }
+        $tool=$identity.Path
         # Test support BEFORE any session operation; no default-instance fallback.
         $advanced=Invoke-TrialWprCommand $tool @('-help','advanced')
         $status.evidence+=@([ordered]@{stage='NamedInstanceSupport';result=$advanced})
@@ -245,6 +251,8 @@ function Invoke-TrialWprWorker([string]$Root,[string]$Hash) {
             Start-Sleep -Milliseconds 100
         }
         if ((Get-TrialWprProfile).Sha256 -ne $config.profileSha256) { $status.reason='ProfileIdentityChanged'; return }
+        $identity=Get-TrialWprToolMetadata $config.toolPath $config.toolSource
+        if (-not $identity.Eligible -or $identity.Path -ne $tool -or $identity.Sha256 -ne $config.toolSha256) { $status.reason='WprToolIdentityChanged'; return }
         $attempted=$true
         $start=Invoke-TrialWprCommand $tool @('-start',$profile.Selector,'-filemode','-recordtempto',$temp,'-instancename',$instance) 15
         $status.evidence+=@([ordered]@{stage='Start';result=$start})
@@ -286,6 +294,10 @@ function Invoke-TrialWprWorker([string]$Root,[string]$Hash) {
                         $status.status='Complete'
                         if (-not $started -or $status.stopCause -in @('ParentExited','TargetIdentityLost','ValidationFailure','SizeWatchdog','CaptureWatchdog')) { $status.status='Incomplete' }
                     } else { $status.status='Incomplete'; $status.reason='TraceHeaderInvalid' }
+                    $verified=Get-TrialWprCollectorState $ownedCollectors $instance
+                    $status.cleanupState=$verified.state
+                    $status.evidence+=@([ordered]@{stage='OwnedCollectorsAfterStop';result=$verified})
+                    if ($verified.state -ne 'Absent') { $closed=$false; $status.status='Incomplete'; $status.reason='OwnedCollectorAbsenceUnverified' }
                 } else {
                     $status.status='Incomplete'; $status.reason='OwnedSessionSaveFailed'; $status.saveFailure='OwnedSessionSaveFailed'
                 }

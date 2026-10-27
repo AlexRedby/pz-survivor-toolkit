@@ -87,14 +87,15 @@ class WprProtocolTests(unittest.TestCase):
 $global:mode=''' + "'" + mode + "'" + r'''
 $run=Join-Path $env:PZ_WPR_ROOT ('a'*32); if (Test-Path $run) { Remove-Item $run -Recurse -Force }; [IO.Directory]::CreateDirectory($run) | Out-Null
 $id='a'*32
-$c=[ordered]@{profileSha256=(Get-TrialWprProfile).Sha256;format=1;captureId=$id;targetPid=123;processStartUtc='2026-10-26T12:00:00.0000000Z';expectedExecutable='java.exe';parentPid=456;parentStartUtc='2026-10-26T12:00:00.0000000Z';parentExecutable='powershell.exe';captureSeconds=30;prepareSeconds=900;maximumTempBytes=2147483648}
+$c=[ordered]@{toolPath=(Join-Path $env:PZ_WPR_ROOT 'fake-wpr');toolSource='System';toolSha256=('a'*64);profileSha256=(Get-TrialWprProfile).Sha256;format=1;captureId=$id;targetPid=123;processStartUtc='2026-10-26T12:00:00.0000000Z';expectedExecutable='java.exe';parentPid=456;parentStartUtc='2026-10-26T12:00:00.0000000Z';parentExecutable='powershell.exe';captureSeconds=30;prepareSeconds=900;maximumTempBytes=2147483648}
 Write-TrialWprJson (Join-Path $run 'control.json') $c
 $hash=(Get-FileHash (Join-Path $run 'control.json')).Hash
 $s=[ordered]@{format=1;captureId=$id;instanceName=('PZTrial_'+$id);targetPid=123;processStartUtc=$c.processStartUtc;status='Requested';reason=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');startRequestedUtc=$null;startedUtc=$null;stopRequestedUtc=$null;stoppedUtc=$null;helperPid=$null;helperStartUtc=$null;profiles=@('PZTrial.light');loggingMode='File';traceFile='drive.etl';traceBytes=$null;traceSha256=$null;headerValidated=$false}
 Write-TrialWprJson (Join-Path $run 'wpr-status.json') $s
 Write-TrialWprJson (Join-Path $run 'start.request.json') @{captureId=$id;action='start';targetPid=123;requestedUtc=[DateTime]::UtcNow.ToString('o')}
 $global:commands=@(); $global:collectorQueries=@()
-function Get-TrialWprTool { 'fake-wpr' }
+function Get-TrialWprToolSelection { [pscustomobject]@{Selected=[pscustomobject]@{Path=(Join-Path $env:PZ_WPR_ROOT 'fake-wpr');Source='System';Sha256=('a'*64);Version='10.0.26100.1'};Candidates=@();Reason=$null} }
+function Get-TrialWprToolMetadata { param($Path,$Source); [pscustomobject]@{Path=$Path;Source=$Source;Sha256=('a'*64);Eligible=$true} }
 function Test-TrialWprElevated { $global:mode -ne 'not-elevated' }
 function Test-TrialWprIdentity { param($ProcessId,$Executable,$StartUtc); return ($global:mode -ne 'parent-exit' -or $global:commands.Count -lt 3) }
 function Get-TrialWprTempBytes { param($Root); if ($global:mode -eq 'size') { return 2147483648 }; return 0 }
@@ -181,7 +182,8 @@ $null=Invoke-TrialWprWorker $run $hash
                 self.assertEqual(command[-2:], ['-instancename', receipt['instanceName']])
         self.assertIn('-filemode', result['commands'][2])
         self.assertIsNone(receipt['lostEvents'])
-        self.assertIn('Events Lost : 7', receipt['evidence'][-2]['result']['output'])
+        self.assertIn('Events Lost : 7', next(e['result']['output'] for e in receipt['evidence'] if e['stage']=='CollectorsBeforeStop'))
+        self.assertEqual(receipt['cleanupState'], 'Absent')
 
     def test_unsupported_instance_or_coverage_never_starts_or_controls_session(self):
         for mode, reason in (('unsupported', 'NamedInstancesUnsupported'), ('coverage', 'RequiredProfileCoverageUnavailable'),
@@ -413,7 +415,7 @@ try { Read-TrialWprJson $p } catch { $large=$true }
         result = self.run_ps(r'''
 . (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWpr.ps1')
 function Assert-JfrTargetProcess { param($Process,$Path,$Utc); $global:gated=$true }
-function Get-TrialWprTool { return $null }
+function Get-TrialWprToolSelection { [pscustomobject]@{Selected=$null;Candidates=@();Reason='WprUnavailable'} }
 $p=[pscustomobject]@{Id=123}; $plan=[pscustomobject]@{Java='java.exe';ProcessStartUtc='2026-10-26T12:00:00Z'}
 $c=Initialize-TrialWprCapture $env:PZ_WPR_ROOT $p $plan
 $a=Start-TrialWprCapture $c; $b=Complete-TrialWprCapture $c; $d=Stop-TrialWprCapture $c
@@ -467,7 +469,8 @@ $p=Get-Process -Id $PID
 . (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWpr.ps1')
 function Get-TrialWprSystemDirectory { $env:PZ_WPR_ROOT }
 function Assert-JfrTargetProcess { }
-function Get-TrialWprTool { 'fake-wpr' }
+function Get-TrialWprToolSelection { [pscustomobject]@{Selected=[pscustomobject]@{Path=(Join-Path $env:PZ_WPR_ROOT 'fake-wpr');Source='System';Sha256=('a'*64);Version='10.0.26100.1'};Candidates=@();Reason=$null} }
+function Get-TrialWprToolMetadata { param($Path,$Source); [pscustomobject]@{Path=$Path;Source=$Source;Sha256=('a'*64);Eligible=$true} }
 function Start-Process { throw 'UAC declined fixture' }
 $p=[pscustomobject]@{Id=123}; $plan=[pscustomobject]@{Java=(Join-Path $env:PZ_WPR_ROOT 'java.exe');ProcessStartUtc=[DateTime]::UtcNow.ToString('o')}
 $c=Initialize-TrialWprCapture $env:PZ_WPR_ROOT $p $plan
@@ -482,7 +485,8 @@ $c=Initialize-TrialWprCapture $env:PZ_WPR_ROOT $p $plan
 . (Join-Path $env:PZ_WPR_SCRIPTS 'TrialWpr.ps1')
 function Get-TrialWprSystemDirectory { $env:PZ_WPR_ROOT }; $global:gates=0; $global:verb=$null
 function Assert-JfrTargetProcess { $global:gates++ }
-function Get-TrialWprTool { 'fake-wpr' }
+function Get-TrialWprToolSelection { [pscustomobject]@{Selected=[pscustomobject]@{Path=(Join-Path $env:PZ_WPR_ROOT 'fake-wpr');Source='System';Sha256=('a'*64);Version='10.0.26100.1'};Candidates=@();Reason=$null} }
+function Get-TrialWprToolMetadata { param($Path,$Source); [pscustomobject]@{Path=$Path;Source=$Source;Sha256=('a'*64);Eligible=$true} }
 function Start-Process {
  param($FilePath,$ArgumentList,$Verb,$WindowStyle,[switch]$PassThru,$ErrorAction)
  $global:verb=$Verb
@@ -512,6 +516,27 @@ $final=Get-TrialWprStatus $c
 @{ready=$ready;final=$final.status;gates=$global:gates;verb=$global:verb;startUnchanged=($start -eq (Get-Item (Join-Path $c.Directory 'start.request.json')).LastWriteTimeUtc.Ticks);stopUnchanged=($stop -eq (Get-Item (Join-Path $c.Directory 'stop.request.json')).LastWriteTimeUtc.Ticks);bound=(Read-TrialWprJson (Join-Path $c.Directory 'control.json')).captureSeconds} | ConvertTo-Json -Compress
 """)
         self.assertEqual(result, {'ready': 'Ready', 'final': 'Complete', 'gates': 2, 'verb': 'RunAs', 'startUnchanged': True, 'stopUnchanged': True, 'bound': 240})
+
+    def test_successful_stop_with_active_or_unknown_collector_still_cleans_owned_instance(self):
+        for code, expected in ((0, 'Active'), (5, 'Unknown')):
+            result = self.worker("function Get-TrialWprCollectorQueryCode { param($Name); return " + str(code) + " }")
+            self.assertEqual(result['receipt']['status'], 'Incomplete')
+            self.assertEqual(result['receipt']['reason'], 'OwnedCollectorAbsenceUnverified')
+            self.assertEqual(result['receipt']['cleanupState'], expected)
+            cancel = [c for c in result['commands'] if c[0]=='-cancel']
+            self.assertEqual(cancel, [['-cancel','-instancename',result['receipt']['instanceName']]])
+
+    def test_replaced_or_ineligible_tool_never_executes_session_commands(self):
+        for expression in ("$false", "$true"):
+            setup = "function Get-TrialWprToolMetadata { param($Path,$Source); [pscustomobject]@{Path=$Path;Source=$Source;Sha256=('b'*64);Eligible=" + expression + "} }"
+            result = self.worker(setup)
+            self.assertEqual(result['receipt']['reason'], 'WprToolIdentityChanged')
+            self.assertEqual(result['commands'], [])
+
+    def test_tool_replaced_while_waiting_for_start_never_starts(self):
+        result = self.worker("$global:checks=0; function Get-TrialWprToolMetadata { param($Path,$Source); $global:checks++; [pscustomobject]@{Path=$Path;Source=$Source;Sha256=$(if($global:checks -eq 1){'a'*64}else{'b'*64});Eligible=$true} }")
+        self.assertEqual(result['receipt']['reason'], 'WprToolIdentityChanged')
+        self.assertFalse(any(c[0] in ('-start','-stop','-cancel') for c in result['commands']))
 
     def test_trace_header_rejects_absent_empty_or_short_files_before_native_call(self):
         result = self.run_ps(r'''
