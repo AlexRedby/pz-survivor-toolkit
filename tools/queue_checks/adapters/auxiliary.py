@@ -30,7 +30,7 @@ def definitions():
         ('item-tags', ['scenes'], 'sp', ['RU'], ITEM_MODS),
         ('inventory-presentation', ['scenes'], 'sp', ['EN'], INVENTORY_MODS),
         ('smart-deposit', ['partial'], 'sp', ['EN'], INVENTORY_MODS),
-        ('storage-profile', ['walk', 'inventory-work', 'inventory-freshness'], 'sp', ['EN'], INVENTORY_MODS),
+        ('storage-profile', ['walk', 'inventory-work', 'inventory-freshness', 'inventory-food-age'], 'sp', ['EN'], INVENTORY_MODS),
         ('inventory-tooltips', ['scenes'], 'sp', ['EN'], INVENTORY_MODS + ['VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO']),
         ('animal-trailer', list(ANIMAL_CASES), 'mp', ['EN'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
     ):
@@ -43,7 +43,7 @@ def definitions():
     result['smart-deposit']['window_size'] = [1280, 900]
     result['storage-profile']['window_size'] = [1280, 900]
     for case in result['storage-profile']['cases']:
-        case['capability'] = 'effect' if case['id'] == 'inventory-freshness' else 'capture'
+        case['capability'] = 'effect' if case['id'] in ('inventory-freshness', 'inventory-food-age') else 'capture'
     result['inventory-tooltips']['window_size'] = [1280, 900]
     return result
 
@@ -311,7 +311,8 @@ def verify(root, selection, catalog):
         if suite == 'video-recording':
             evidence['clips'] = _load(intake / 'verify.py').verify(root / 'client1', _path(selection, 'ffmpeg', True), _path(selection, 'ffprobe', True))
         elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
-            verifier = ({'inventory-work': 'inventory_work_verify.py', 'inventory-freshness': 'freshness_verify.py'}
+            verifier = ({'inventory-work': 'inventory_work_verify.py', 'inventory-freshness': 'freshness_verify.py',
+                         'inventory-food-age': 'food_age_verify.py'}
                         .get(selection['cases'][0], 'verify.py') if suite == 'storage-profile' else 'verify.py')
             evidence.update(_load(intake / verifier).verify(root, text))
         elif suite == 'item-tags':
@@ -339,5 +340,5 @@ def verify(root, selection, catalog):
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': selection['cases'][0],
-            'status': 'failed' if issues else 'captured' if suite == 'storage-profile' and selection['cases'] != ['inventory-freshness'] else 'passed', 'reason': '; '.join(issues),
+            'status': 'failed' if issues else 'captured' if suite == 'storage-profile' and selection['cases'][0] not in ('inventory-freshness', 'inventory-food-age') else 'passed', 'reason': '; '.join(issues),
             'outcome': {'fixture': suite}}], 'evidence': evidence}

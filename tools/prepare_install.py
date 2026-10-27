@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,9 +12,11 @@ import sys
 import tempfile
 
 try:
+    from .cleanui_source import prepare_cleanui
     from .package_mod import ROOT, validate, validate_no_symlinks
     from .queue_checks.mod_selection import mod_ids, metadata
 except ImportError:
+    from cleanui_source import prepare_cleanui
     from package_mod import ROOT, validate, validate_no_symlinks
     from queue_checks.mod_selection import mod_ids, metadata
 
@@ -30,7 +33,8 @@ LOAD_ORDER = (
 
 
 def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None,
-            check: bool = False, kotlin_home: Path | None = None) -> Path:
+            check: bool = False, kotlin_home: Path | None = None,
+            cleanui: Path | None = None) -> Path:
     root = root.resolve()
     dist = root / "dist"
     output = dist / "SurvivorQoL"
@@ -53,26 +57,15 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     workshop = ini.get("WorkshopItems", "").split(";")
     if any(item and (not item.isascii() or not item.isdigit()) for item in workshop):
         raise ValueError("WorkshopItems must contain only numeric Workshop IDs; local mods have none")
-
-    command = [sys.executable, str(root / "JavaPatches/build.py")]
-    for option, value in (("--game", game), ("--jdk", jdk), ("--kotlin-home", kotlin_home)):
-        if value is not None:
-            command.extend((option, str(value.resolve())))
-    if check:
-        command.append("--check")
-    subprocess.run(command, cwd=root, check=True)
-
-    patch = root / "JavaPatches/build" / MOD_IDS[1]
-    errors = validate_no_symlinks(patch)
-    if errors:
-        raise ValueError("; ".join(errors))
-    info = metadata(patch / "42/mod.info")
-    if info.get("id") != MOD_IDS[1] or not (patch / "common").is_dir():
-        raise ValueError("Generated Java patch mod has an invalid ID or missing common directory")
-    jar_name = info.get("javaJarFile", "")
-    jar = patch / "42" / jar_name
-    if not jar_name or not jar.is_file() or not jar.resolve().is_relative_to((patch / "42").resolve()):
-        raise ValueError("Generated Java patch mod javaJarFile is missing or outside the mod")
+    if "CleanUI" in selected and cleanui is None:
+        raise ValueError("Selected CleanUI requires --cleanui with its complete source mod root; "
+                         "preparation includes the checked food-age correction")
+    if cleanui is not None:
+        if "CleanUI" not in selected:
+            raise ValueError("--cleanui requires CleanUI in the selected mod list")
+        source = cleanui.resolve()
+        if source.is_relative_to(output) or output.is_relative_to(source):
+            raise ValueError("CleanUI input must be outside the prepared output being replaced")
 
     dist.mkdir(exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".SurvivorQoL-", dir=dist))
@@ -80,6 +73,31 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     promoted = False
     try:
         staging = temporary / "prepared"
+        if cleanui is not None:
+            provenance = prepare_cleanui(cleanui, staging / "mods/CleanUI")
+            (staging / "cleanui-source-patch.json").write_text(
+                json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+
+        command = [sys.executable, str(root / "JavaPatches/build.py")]
+        for option, value in (("--game", game), ("--jdk", jdk), ("--kotlin-home", kotlin_home)):
+            if value is not None:
+                command.extend((option, str(value.resolve())))
+        if check:
+            command.append("--check")
+        subprocess.run(command, cwd=root, check=True)
+
+        patch = root / "JavaPatches/build" / MOD_IDS[1]
+        errors = validate_no_symlinks(patch)
+        if errors:
+            raise ValueError("; ".join(errors))
+        info = metadata(patch / "42/mod.info")
+        if info.get("id") != MOD_IDS[1] or not (patch / "common").is_dir():
+            raise ValueError("Generated Java patch mod has an invalid ID or missing common directory")
+        jar_name = info.get("javaJarFile", "")
+        jar = patch / "42" / jar_name
+        if not jar_name or not jar.is_file() or not jar.resolve().is_relative_to((patch / "42").resolve()):
+            raise ValueError("Generated Java patch mod javaJarFile is missing or outside the mod")
+
         for name in MOD_IDS:
             source = patch if name == MOD_IDS[1] else root / name
             shutil.copytree(source, staging / "mods" / name)
@@ -124,10 +142,13 @@ def main() -> int:
     parser.add_argument("--game", type=Path, help="game Java folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--jdk", type=Path, help="JDK 25+ folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--kotlin-home", type=Path, help="Kotlin 2.4.21 compiler distribution; also accepts KOTLIN_HOME or kotlinc on PATH")
+    parser.add_argument("--cleanui", type=Path,
+                        help="complete CleanUI source mod root; required when selected, copied and corrected privately")
     parser.add_argument("--check", action="store_true", help="also run the native JVM regression checks")
     args = parser.parse_args()
     try:
-        output = prepare(game=args.game, jdk=args.jdk, check=args.check, kotlin_home=args.kotlin_home)
+        output = prepare(game=args.game, jdk=args.jdk, check=args.check,
+                         kotlin_home=args.kotlin_home, cleanui=args.cleanui)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

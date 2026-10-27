@@ -19,9 +19,10 @@ def prepare(toolkit_source, output, case='walk'):
     if case not in manifest['cases']:
         raise ValueError('Unsupported storage profile case')
     fixture = {'walk': manifest['fixture'], 'inventory-work': 'ZZInventoryWorkProfile.lua',
-               'inventory-freshness': 'ZZInventoryFreshness.lua'}[case]
+               'inventory-freshness': 'ZZInventoryFreshness.lua',
+               'inventory-food-age': 'ZZFoodAgeNative.lua'}[case]
     (client / fixture).write_bytes((HERE / fixture).read_bytes())
-    if case != 'inventory-freshness':
+    if case not in ('inventory-freshness', 'inventory-food-age'):
         helper='StorageFairnessNative.lua' if case == 'walk' else 'ReceiptLookupNative.lua'
         (client / helper).write_bytes((HERE / helper).read_bytes())
     (output / '42/mod.info').write_text('name=Native storage profile fixture\nid=StorageProfileNative\nversionMin=42.21\n')

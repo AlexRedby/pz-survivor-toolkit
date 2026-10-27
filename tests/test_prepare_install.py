@@ -1,6 +1,7 @@
 """The prepared set is complete, isolated and replaced only after success."""
 
 import os
+import json
 import shutil
 from pathlib import Path
 import re
@@ -399,8 +400,85 @@ class PrepareInstall(unittest.TestCase):
 
     def test_current_selected_mod_order_is_accepted(self):
         shutil.copyfile(ROOT / prepare_install.INI_NAME, self.root / prepare_install.INI_NAME)
-        prepare_install.prepare(self.root)
+        source = self.cleanui_fixture(select=False)
+        with patch.object(prepare_install, 'prepare_cleanui', side_effect=self.stage_cleanui):
+            prepare_install.prepare(self.root, cleanui=source)
         self.build.assert_called_once()
+
+    def cleanui_fixture(self, select=True):
+        source = self.root / 'CleanUI source'
+        target = source / '42.19/media/lua/client/ISUI/ISInventoryPane.lua'
+        target.parent.mkdir(parents=True)
+        target.write_text('original dependency')
+        (source / '42.19/mod.info').write_text('id=CleanUI\n')
+        if select:
+            (self.root / prepare_install.INI_NAME).write_text(
+                'Mods=ZombieBuddy;CleanUI;' + ';'.join(prepare_install.MOD_IDS) + '\n')
+        return source
+
+    @staticmethod
+    def stage_cleanui(source, destination):
+        # Source qualification itself is covered by test_cleanui_source.
+        shutil.copytree(source, destination)
+        (destination / '42.19/media/lua/client/ISUI/ISInventoryPane.lua').write_text('corrected dependency')
+        return {'patch_id': 'fixture-food-age', 'target': '42.19/media/lua/client/ISUI/ISInventoryPane.lua'}
+
+    def test_selected_cleanui_requires_explicit_source_before_build(self):
+        self.cleanui_fixture()
+        with self.assertRaisesRegex(ValueError, 'requires --cleanui'):
+            prepare_install.prepare(self.root)
+        self.build.assert_not_called()
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+
+    def test_cleanui_copy_and_provenance_publish_with_owned_mods(self):
+        source = self.cleanui_fixture()
+        with patch.object(prepare_install, 'prepare_cleanui', side_effect=self.stage_cleanui) as prepare:
+            result = prepare_install.prepare(self.root, cleanui=source)
+        self.assertEqual(source, prepare.call_args.args[0])
+        self.assertEqual(set(prepare_install.MOD_IDS) | {'CleanUI'},
+                         {path.name for path in (result / 'mods').iterdir()})
+        target = Path('42.19/media/lua/client/ISUI/ISInventoryPane.lua')
+        self.assertEqual('original dependency', (source / target).read_text())
+        self.assertEqual('corrected dependency', (result / 'mods/CleanUI' / target).read_text())
+        provenance = json.loads((result / 'cleanui-source-patch.json').read_text())
+        self.assertEqual({'patch_id': 'fixture-food-age', 'target': target.as_posix()}, provenance)
+        self.assertFalse(self.sentinel.exists())
+
+    def test_unqualified_cleanui_preserves_previous_output_without_build(self):
+        source = self.cleanui_fixture()
+        with patch.object(prepare_install, 'prepare_cleanui', side_effect=ValueError('unknown source')):
+            with self.assertRaisesRegex(ValueError, 'unknown source'):
+                prepare_install.prepare(self.root, cleanui=source)
+        self.build.assert_not_called()
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+        self.assertEqual([self.output], list((self.root / 'dist').iterdir()))
+
+    def test_build_failure_removes_staged_cleanui_without_changing_input(self):
+        source = self.cleanui_fixture()
+        self.build.side_effect = subprocess.CalledProcessError(1, ['build'])
+        with patch.object(prepare_install, 'prepare_cleanui', side_effect=self.stage_cleanui):
+            with self.assertRaises(subprocess.CalledProcessError):
+                prepare_install.prepare(self.root, cleanui=source)
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+        self.assertEqual([self.output], list((self.root / 'dist').iterdir()))
+        self.assertEqual('original dependency',
+                         (source / '42.19/media/lua/client/ISUI/ISInventoryPane.lua').read_text())
+
+    def test_cleanui_input_cannot_be_inside_replaced_bundle(self):
+        source = self.cleanui_fixture()
+        nested = self.output / 'mods/CleanUI'
+        shutil.copytree(source, nested)
+        with self.assertRaisesRegex(ValueError, 'outside the prepared output'):
+            prepare_install.prepare(self.root, cleanui=nested)
+        self.build.assert_not_called()
+        self.assertTrue(self.sentinel.is_file())
+        self.assertTrue(nested.is_dir())
+
+    def test_unselected_cleanui_input_is_rejected(self):
+        source = self.cleanui_fixture(select=False)
+        with self.assertRaisesRegex(ValueError, 'requires CleanUI in the selected'):
+            prepare_install.prepare(self.root, cleanui=source)
+        self.build.assert_not_called()
 
     def test_rerun_removes_stale_prepared_files_and_preserves_other_dist_outputs(self):
         sibling = self.root / "dist/unrelated.zip"

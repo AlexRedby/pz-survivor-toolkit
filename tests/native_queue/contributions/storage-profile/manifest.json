@@ -28,7 +28,8 @@
   "cases": [
     "walk",
     "inventory-work",
-    "inventory-freshness"
+    "inventory-freshness",
+    "inventory-food-age"
   ],
   "feature_controls": [
     "off-empty",

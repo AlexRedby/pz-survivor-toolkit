@@ -27,7 +27,7 @@ python3 tools/package_mod.py --check
 python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip
 python3 -m unittest discover -s tests -p 'test_prepare_install.py'
 python3 -m unittest discover -s JavaPatches/tests
-python3 tools/prepare_install.py --check
+python3 tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE" --check
 ```
 
 List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Quartermaster checks always use the owned `PZSurvivorToolkit/42/media/lua` sources. Explicitly selecting its craft UI or the native tag transfer/placement checks also requires native game sources through `--game` or `--native-action-root`. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
@@ -50,13 +50,15 @@ With `--game`, vehicle ground-placement regressions exercise the installed game'
 
 Action queue and native Wishlist menu checks use `--game`. Add `--wishlist-workshop-root /path/to/steamapps/workshop/content/108600` for the Wishlist checks against installed adapters.
 
-`python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically. Use `tools/prepare_install.py` to prepare both local folders, including the Java mod; it creates no archive.
+`python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically. Use `tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE"` to prepare the two owned mods and a complete corrected CleanUI copy; it creates no archive. `PZ_CLEANUI_SOURCE` is the complete external mod root. The reviewed offline patch changes only its active food-age helper; unknown source hashes fail before publication and Workshop inputs remain unchanged. For a fresh native pack lock/snapshot, pass `--mod-source CleanUI=/absolute/path/to/dist/SurvivorQoL/mods/CleanUI` so the normal source seals cover the delivered dependency. The root `cleanui-source-patch.json` records portable input/output hashes.
 
 To run the same checks against your installed game's native Mod Options implementation:
 
 ```sh
 .venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_highlighter
 ```
+
+The opt-in native food-age regression compiles only its Java fixture against the installed game and runs original/prepared CleanUI helpers in real Kahlua. Run `PZ_NATIVE_FOOD_AGE_CHECK=1 PZ_GAME="/path/to/game/Java" PZ_JDK="/path/to/jdk" PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI" python3 -m unittest tests.test_cleanui_food_age_native`. It checks native ageing, freshness events, cooling controls and clock handling; it does not establish live UI or Host transport. The default test run skips this external-input check.
 
 ## Native scenarios
 

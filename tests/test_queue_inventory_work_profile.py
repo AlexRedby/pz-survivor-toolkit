@@ -199,7 +199,7 @@ class InventoryWorkProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):V.verify(ROOT,log(rows)+'[STORAGE_PROFILE] FAIL\n')
 
     def test_selection_and_isolated_stage(self):
-        self.assertEqual([case['capability']for case in auxiliary.definitions()['storage-profile']['cases']],['capture','capture','effect'])
+        self.assertEqual([case['capability']for case in auxiliary.definitions()['storage-profile']['cases']],['capture','capture','effect','effect'])
         prepare=auxiliary._load(INTAKE/'prepare.py').prepare
         with tempfile.TemporaryDirectory()as temp:
             target=Path(temp)/'fixture';prepare(ROOT/'PZSurvivorToolkit',target,case='inventory-work')
