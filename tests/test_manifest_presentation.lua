@@ -12,10 +12,11 @@ local providerCalls = 0
 local Categories = {forScript = function(actual)
     assert(actual == script); providerCalls = providerCalls + 1; return 'craftingMaterial'
 end}
-local Tags = {forSnapshot = function(actual,fullType,category,recording,delta,ingredient)
+local Tags = {forSnapshot = function(actual,fullType,category,recording,delta,ingredient,cookingState)
     assert(actual==script and fullType=='Base.Nails')
     assert(recording==nil and delta==nil,'ordinary manifest entry invented recorded content or changes')
     assert(ingredient==nil,'old snapshot invented a captured ingredient value')
+    assert(cookingState==nil,'old snapshot invented a captured cooking state')
     return {'tag:' .. category}
 end, forItem=function() error('manifest passed a Lua proxy to native item classification') end,
 label = function(id) return 'Label ' .. id end}
@@ -65,5 +66,21 @@ for _,state in ipairs({{true},{false},{}})do
     for _,loaded in ipairs({true,false})do
         Presentation.describe({ft='Base.MilkBottle',cat='instance-fluid',tagDelta=storedDelta,
             ingredient=expected,loaded=loaded})
+    end
+end
+
+local expectedCooking
+Tags.forSnapshot=function(actual,fullType,category,recording,delta,ingredient,cookingState)
+    assert(actual==script and fullType=='Base.Steak' and ingredient==false)
+    assert(cookingState==expectedCooking,'presentation lost false/current state or inferred an old snapshot state')
+    return cookingState and {cookingState} or {}
+end
+for _,state in ipairs({{'raw'},{'cooked'},{'burnt'},{false},{}})do
+    expectedCooking=state[1]
+    for _,loaded in ipairs({true,false})do
+        local _,rendered,renderedTags=Presentation.describe({ft='Base.Steak',cat='Food',
+            ingredient=false,cookingState=expectedCooking,loaded=loaded})
+        assert(rendered==(expectedCooking and 'Label '..expectedCooking or ''))
+        assert(#renderedTags==(expectedCooking and 1 or 0))
     end
 end

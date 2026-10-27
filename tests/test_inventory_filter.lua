@@ -15,6 +15,7 @@ require = function(name)
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
         or name == "PZSurvivorToolkit/TagCustomization" or name == "PZSurvivorToolkit/PlantingTags"
         or name == "PZSurvivorToolkit/ItemCookingTags" or name == "PZSurvivorToolkit/ItemDisassemblyTags"
+        or name == "PZSurvivorToolkit/ItemCookingStates"
         or name == "PZSurvivorToolkit/ItemMediaTags" or name == "PZSurvivorToolkit/ItemCategories"
         or name == "PZSurvivorToolkit/ItemCategoryRules" or name == "PZSurvivorToolkit/ItemCategoryData"
         or name == "PZSurvivorToolkit/LegacyItemCategories"

@@ -2,6 +2,7 @@
 local Categories = require "PZSurvivorToolkit/ItemCategories"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
 local Cooking = require "PZSurvivorToolkit/ItemCookingTags"
+local CookingStates = require "PZSurvivorToolkit/ItemCookingStates"
 local Model = {SCHEMA = 2, STORE = "LootSorter_Manifest", PAGE_ROWS = 96, PAGE_CONTAINERS = 24,
     PAGE_BYTES = 24000, POLL_MS = 2000}
 PZSurvivorToolkit = PZSurvivorToolkit or {}
@@ -62,11 +63,15 @@ function Model.item(item)
     local script = item.getScriptItem and item:getScriptItem()
     local ingredient = Cooking.read(script, item)
     if type(ingredient) ~= "boolean" then ingredient = nil end
+    local cookingState = CookingStates.read(script, item)
+    if cookingState ~= false and cookingState ~= "raw" and cookingState ~= "cooked"
+        and cookingState ~= "burnt" then cookingState = nil end
     local key = Model.identity(ft, name, cat, mediaKey)
     if ingredient ~= nil then key = key .. ":ingredient:" .. tostring(ingredient) end
+    if cookingState ~= nil then key = key .. ":cookingState:" .. tostring(cookingState) end
     if tagKey ~= "" then key = key .. #tagKey .. ":" .. tagKey end
     return {key = key, ft = ft, name = name, cat = cat,
-        ingredient = ingredient,
+        ingredient = ingredient, cookingState = cookingState,
         tagDelta = tagKey ~= "" and delta or nil, tagKey = tagKey ~= "" and tagKey or nil,
         mediaId = mediaId, mediaIndex = mediaIndex, n = 1}
 end

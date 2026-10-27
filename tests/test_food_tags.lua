@@ -3,7 +3,7 @@ isClient = function() return false end
 ModData = {getOrCreate=function() return worldTags end}
 package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
 ItemType = {FOOD='food', NORMAL='normal', CONTAINER='container', LITERATURE='literature', MAP='map'}
-ItemTag = {CANT_COMPOST='cantcompost', IS_COMPOSTABLE='iscompostable'}
+ItemTag = {CANT_COMPOST='cantcompost', IS_COMPOSTABLE='iscompostable', ALREADY_COOKED='alreadycooked'}
 PZSurvivorToolkit = {Settings={itemTags=function() return true end}}
 -- Preview classification must never instantiate an item or run an OnCreate hook.
 InventoryItemFactory = {CreateItem=function() error('food preview created an item') end}
@@ -17,6 +17,7 @@ local function script(name, category, fresh, rotten, kind)
         getFullName=function(self) return self.name end,
         getDisplayCategory=function(self) return self.category end,
         isItemType=function(self, expected) return self.kind==expected end,
+        isIsCookable=function(self) return self.cookable or false end,
         getDaysFresh=function(self) return self.fresh end,
         getDaysTotallyRotten=function(self) return self.rotten end,
         hasTag=function(self,tag) return self.tags[tag]==true end,
@@ -41,6 +42,7 @@ local function food(definition)
         isBurnt=function(self) return self.burnt end,
         isFrozen=function(self) return self.frozen end,
         isCooked=function(self) return self.cooked or false end,
+        isCookable=function(self) return self.definition.cookable or false end,
         isFertilized=function(self) return self.fertilized end}
 end
 
@@ -241,5 +243,59 @@ assert(not Tags.matchesRule(Tags.forItem(corrected),rule({'rotten'})))
 assert(not Tags.matchesScriptRule(apple,rule({'rotten'})), 'preview restored a manually removed age tag')
 worldTags.types['fixture.apple'].recipe='add'
 assert(Tags.matchesScriptRule(apple,rule({'recipe','stale'})), 'preview lost a manual type addition')
+worldTags.types={}
+
+-- Cooking is independent of spoilage, but native burnt food has no Fresh/Stale.
+local steak=script('Steak','foodPerishable_meat',3,5);steak.cookable=true
+local serving=food(steak)
+local rawTags=Tags.forItem(serving)
+assert(Tags.matches(rawTags,{'raw','fresh'}))
+serving.cooked=true
+local cookedTags=Tags.forItem(serving)
+assert(Tags.matches(cookedTags,{'cooked','fresh'}) and not Tags.matches(cookedTags,{'raw'}))
+assert(Tags.signature(rawTags)~=Tags.signature(cookedTags),'mixed stacks lost cooking-state partitions')
+serving.burnt=true
+assert(Tags.matches(Tags.forItem(serving),{'burnt'}))
+assert(not Tags.matches(Tags.forItem(serving),{'cooked','fresh'},'any'))
+serving.age=5
+assert(Tags.matches(Tags.forItem(serving),{'burnt','rotten'}))
+for _,state in ipairs({'raw','cooked','burnt'}) do
+    assert(Tags.requiresItemRule(state),'cooking states fell back to static category matching')
+    assert(has(Tags.choices(Tags.forScriptItem(steak)),state),'missing cooking-state choice')
+    assert(not has(Tags.forScriptItem(steak),state),'script fabricated a current cooking state')
+    assert(Tags.matchesScriptRule(steak,rule({state})))
+end
+assert(not Tags.matchesScriptRule(steak,rule({'raw','cooked'})))
+assert(not Tags.matchesScriptRule(steak,rule({'burnt','cooked'})))
+assert(not Tags.matchesScriptRule(steak,rule({'burnt','fresh'})))
+assert(not Tags.matchesScriptRule(steak,rule({'burnt','stale'})))
+assert(Tags.matchesScriptRule(steak,rule({'burnt','rotten'})))
+assert(Tags.matchesScriptRule(steak,rule({'burnt'},{'rotten','fresh','stale'})))
+zero.cookable=true
+assert(not Tags.matchesScriptRule(zero,rule({'burnt'},{'rotten'})),
+    'cooking preview invented a pre-rot state for immediate expiry')
+assert(not Tags.matchesScriptRule(apple,rule({'raw','cooked','burnt'},{},'any')),
+    'ordinary uncookable fruit received cooking states')
+
+local toast=script('Toast','foodPerishable',3,5);toast.cookable=true
+toast.tags[ItemTag.ALREADY_COOKED]=true
+assert(Tags.matches(Tags.forScriptItem(toast),{'cooked'}))
+assert(Tags.matchesScriptRule(toast,rule({'burnt'},{'cooked'})))
+assert(not Tags.matchesScriptRule(toast,rule({'raw'})))
+local function snapshot(state)
+    return Tags.forSnapshot(toast,toast.name,toast.category,nil,nil,true,state)
+end
+assert(Tags.matches(snapshot('burnt'),{'burnt'}) and not Tags.matches(snapshot('burnt'),{'cooked'}))
+for _,values in ipairs({snapshot(nil),snapshot(false)}) do
+    assert(not Tags.matches(values,{'raw','cooked','burnt'},'any'),
+        'missing/negative captured state was replaced with a script cooked default')
+end
+-- Manual corrections win even over normally exclusive automatic states.
+worldTags.types['fixture.steak']={burnt='remove'}
+assert(not Tags.matchesRule(Tags.forItem(serving),rule({'burnt'})))
+assert(not Tags.matchesScriptRule(steak,rule({'burnt'})))
+worldTags.types['fixture.steak']={fresh='add'}
+assert(Tags.matches(Tags.forItem(serving),{'burnt','fresh'}))
+assert(Tags.matchesScriptRule(steak,rule({'burnt','fresh'})))
 worldTags.types={}
 print('food freshness tags: OK')

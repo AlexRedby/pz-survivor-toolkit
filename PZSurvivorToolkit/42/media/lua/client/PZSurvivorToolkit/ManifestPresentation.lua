@@ -21,7 +21,7 @@ function Presentation.describe(entry)
         category = Categories.refineMediaCategory({getMediaData = function() return media end}, category) or category
     end
     -- Captured rows have no live InventoryItem for native capability predicates.
-    local tags = Tags.forSnapshot(script, entry.ft, category, media, entry.tagDelta, entry.ingredient)
+    local tags = Tags.forSnapshot(script, entry.ft, category, media, entry.tagDelta, entry.ingredient, entry.cookingState)
     local labels = {}
     for _, id in ipairs(tags) do labels[#labels + 1] = Tags.label(id) end
     return name, table.concat(labels, ", "), tags

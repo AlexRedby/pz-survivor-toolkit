@@ -99,6 +99,8 @@ assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].n=
 assert(legacy.legacy and not legacy.loaded and legacy.sampledAt==0)
 assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].ingredient==nil,
     'legacy row invented a current cooking classification')
+assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].cookingState==nil,
+    'legacy row invented a current cooking state')
 -- Stable identity separates types with identical labels, preserves custom names, ignores locale.
 assert(Model.item(item('Base.A','Translated A')).key==Model.item(item('Base.A','Other locale')).key)
 assert(Model.item(item('Base.A','Same')).key~=Model.item(item('Base.B','Same')).key)
@@ -395,3 +397,64 @@ squares['2,0,0']=nil
 settle(10)
 assert(not store.containers[bottleRecord.id].loaded)
 for _,row in pairs(store.containers[bottleRecord.id].entries)do assert(row.ingredient==false)end
+
+-- Native flags on identical full types partition immutable groups and survive pages/unloading.
+local function food(state)
+    local value=item('Base.Steak','Steak')
+    value.state=state
+    value.IsFood=function()return true end
+    value.isCookable=function(self)return self.state~=false end
+    value.isCooked=function(self)return self.state=='cooked' end
+    value.isBurnt=function(self)return self.state=='burnt' end
+    return value
+end
+local raw,cooked,burnt,inapplicable=food('raw'),food('cooked'),food('burnt'),food(false)
+local unknown=item('Base.Steak','Steak')
+local foodItems={raw,food('raw'),cooked,burnt,inapplicable,unknown}
+local foods=container(foodItems)
+square(3,{object({foods},{PZSTQuartermasterTagRules={['0']={include={'food'},exclude={}}}})})
+settle(100)
+local foodRecord=assert(store.containers['3,0,0/0/0'])
+assert(#foodRecord.itemOrder==5,'same-type food merged different cooking states')
+assert(foodRecord.entries[Model.item(raw).key].n==2,'identical cooking states did not aggregate')
+local foodRevision=store.revision
+settle(100)
+assert(store.revision==foodRevision and store.containers[foodRecord.id].entries==foodRecord.entries,
+    'unchanged cooking states rebuilt the immutable sample')
+-- Comparison must notice captured fields even in an older or malformed stored identity.
+foodRecord.entries[Model.item(cooked).key].cookingState=nil
+settle(100)
+assert(store.revision>foodRevision and store.containers[foodRecord.id].entries[Model.item(cooked).key].cookingState=='cooked',
+    'entry comparison ignored the captured cooking state')
+foodRecord=store.containers[foodRecord.id]
+foodRevision=store.revision
+Model.PAGE_ROWS=1
+local foodPlayer,states={},{}
+local _,foodPage=Authority.requestPage(foodPlayer,{})
+while foodPage do
+    for _,record in ipairs(foodPage.containers)do
+        if record.id==foodRecord.id then
+            for _,row in pairs(record.entries)do
+                local state=row.cookingState
+                states[state==nil and 'unknown' or tostring(state)]=row.n
+            end
+        elseif record.legacy then
+            for _,row in pairs(record.entries)do assert(row.cookingState==nil)end
+        end
+    end
+    if foodPage.cursor then _,foodPage=Authority.requestPage(foodPlayer,{cursor=foodPage.cursor})
+    else foodPage=nil end
+end
+assert(states.raw==2 and states.cooked==1 and states.burnt==1 and states['false']==1 and states.unknown==1,
+    'paginated food sample lost a cooking state or inferred unknown state')
+Model.PAGE_ROWS=oldRows
+raw.state='cooked'
+settle(100)
+local changedFoods=store.containers[foodRecord.id]
+assert(store.revision>foodRevision and changedFoods.entries[Model.item(raw).key].n==2
+    and changedFoods.entries[Model.item(food('raw')).key].n==1,
+    'in-place cooking mutation did not repartition the sample')
+squares['3,0,0']=nil
+settle(10)
+assert(not store.containers[foodRecord.id].loaded and store.containers[foodRecord.id].entries==changedFoods.entries,
+    'unloading lost the last known cooking states')

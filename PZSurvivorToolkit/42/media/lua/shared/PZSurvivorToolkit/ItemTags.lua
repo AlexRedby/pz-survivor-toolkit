@@ -5,6 +5,7 @@ local properties = require "PZSurvivorToolkit/ItemTagProperties"
 local media = require "PZSurvivorToolkit/ItemMediaTags"
 local disassembly = require "PZSurvivorToolkit/ItemDisassemblyTags"
 local cooking = require "PZSurvivorToolkit/ItemCookingTags"
+local cookingStates = require "PZSurvivorToolkit/ItemCookingStates"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
@@ -35,7 +36,8 @@ function Tags.requiresItemRule(id)
     -- Content and freshness depend on the physical instance, even when all
     -- script defaults in a legacy category currently agree.
     if id == "fresh" or id == "stale" or id == "rotten" or id == "edible" or id == "dismantle"
-        or id == "experience" or id == "recipe" or id == "ingredient" then return true end
+        or id == "experience" or id == "recipe" or id == "ingredient"
+        or id == "raw" or id == "cooked" or id == "burnt" then return true end
     return id == "readable" or id == "literature" or id == "writeable"
 end
 
@@ -67,7 +69,7 @@ local function setTag(tags, id, value)
     return false
 end
 
-local function itemTags(category, fullType, script, item, recording, snapshot, snapshotIngredient)
+local function itemTags(category, fullType, script, item, recording, snapshot, snapshotIngredient, snapshotCookingState)
     local tags = Tags.forCategory(category)
     local override = fullType and schema.items[string.lower(tostring(fullType))]
     if override then
@@ -92,6 +94,15 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
     if snapshot and type(snapshotIngredient) == "boolean" then ingredient = snapshotIngredient
     else ingredient = cooking.read(script, item, snapshot) end
     refined = setTag(tags, "ingredient", ingredient) or refined
+    local cookingState, possibleCookingStates
+    if snapshot then cookingState = snapshotCookingState
+    else cookingState, possibleCookingStates = cookingStates.read(script, item) end
+    if cookingState ~= nil then
+        for _, id in ipairs({"raw", "cooked", "burnt"}) do
+            refined = setTag(tags, id, cookingState == id) or refined
+        end
+    end
+    tags.cookingStates = possibleCookingStates
     local canDismantle, skills = disassembly.read(script, item)
     refined = setTag(tags, "dismantle", canDismantle) or refined
     for _, id in ipairs(skills or {}) do refined = setTag(tags, id, true) or refined end
@@ -142,6 +153,7 @@ function Tags.choices(tags)
     local result = {}
     for _, id in ipairs(tags) do result[#result + 1] = id end
     for _, id in ipairs(tags.foodStates or {}) do setTag(result, id, true) end
+    for _, id in ipairs(tags.cookingStates or {}) do setTag(result, id, true) end
     for _, state in ipairs(tags.mediaStates or {}) do
         if state.experience then setTag(result, "experience", true) end
         if state.recipe then setTag(result, "recipe", true) end
@@ -161,8 +173,8 @@ end
 
 -- Serialized rows have no InventoryItem. Use script capabilities and the captured
 -- recording, without invoking predicates that require a live native item.
-function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient)
-    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true, ingredient), fullType, tagDelta)
+function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient, cookingState)
+    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true, ingredient, cookingState), fullType, tagDelta)
 end
 
 -- Cache only automatic script tags. World custom definitions are merged live.
@@ -318,17 +330,28 @@ end
 function Tags.matchesScriptRule(script, rule)
     if not script then return false end
     local tags = Tags.automaticForScriptItem(script)
-    -- Scripts have no current age. Preview types that can match in at least one
-    -- state; never put mutually exclusive states on the same imagined item.
-    local function matchesFoodStates()
+    -- Scripts have no current age or cooking flags. Match one coherent possible
+    -- item at a time, then apply the same manual corrections as for live items.
+    local function matchesFoodStates(burnt)
         for _, state in ipairs(tags.foodStates or {}) do
-            tags[#tags + 1] = state
+            -- Burnt food loses Fresh/Stale but may still be Rotten. A pre-rot
+            -- burnt item has no freshness tag, not a fabricated Fresh state.
+            local visible = not burnt or state == "rotten"
+            if visible then tags[#tags + 1] = state end
             local matches = Tags.matchesRule(Custom.project(tags, script:getFullName()), rule)
-            table.remove(tags)
+            if visible then table.remove(tags) end
             if matches then return true end
         end
         if tags.foodStates and #tags.foodStates > 0 then return false end
         return Tags.matchesRule(Custom.project(tags, script:getFullName()), rule)
+    end
+    local function matchesCookingStates()
+        for _, state in ipairs(tags.cookingStates or {}) do
+            for _, id in ipairs({"raw", "cooked", "burnt"}) do setTag(tags, id, state == id) end
+            if matchesFoodStates(state == "burnt") then return true end
+        end
+        if tags.cookingStates and #tags.cookingStates > 0 then return false end
+        return matchesFoodStates(false)
     end
     -- A carrier preview must use one real recording's combination of effects.
     -- Project manual changes after these automatic possibilities, just as for live items.
@@ -336,11 +359,11 @@ function Tags.matchesScriptRule(script, rule)
         for _, state in ipairs(tags.mediaStates) do
             setTag(tags, "experience", state.experience)
             setTag(tags, "recipe", state.recipe)
-            if matchesFoodStates() then return true end
+            if matchesCookingStates() then return true end
         end
         return false
     end
-    return matchesFoodStates()
+    return matchesCookingStates()
 end
 
 function Tags.matchesRule(categoryOrTags, rule)
