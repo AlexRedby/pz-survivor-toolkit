@@ -1,7 +1,3 @@
-# Final remote-main refresh
-
-- [ ] Rebuild and verify the final Windows archive, recheck remote refs and publish the refreshed research head.
-
 # Windows capture reliability
 
 - [ ] Diagnose exceptional presentation stalls separately from gameplay chunk/FBO work. Use diagnostics 3.3 with a supported installed WPR after its standalone save check, and only when a further recording answers a concrete unresolved question; no rerun is requested now. Preserve clock uncertainty and distinguish native SwapBuffers waiting from GPU, driver, scheduler and capture interference; never infer CPU saturation from PresentMon CpuActive equalling whole-frame duration.
