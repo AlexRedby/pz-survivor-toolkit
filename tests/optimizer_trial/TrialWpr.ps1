@@ -37,16 +37,7 @@ function Read-TrialWprJson([string]$Path) {
 function Get-TrialWprSystemDirectory {
     return [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
 }
-function Get-TrialWprTool {
-    # Never execute an untrusted PATH candidate from the elevated helper.
-    if ([Environment]::OSVersion.Platform -ne 'Win32NT' ) { return $null }
-    $system=Get-TrialWprSystemDirectory
-    if (-not $system) { return $null }
-    $tool=Join-Path $system 'wpr.exe'
-    Assert-TrialWprPath $tool
-    if (Test-Path -LiteralPath $tool -PathType Leaf) { return [IO.Path]::GetFullPath($tool) }
-    return $null
-}
+. (Join-Path $PSScriptRoot 'TrialWprTools.ps1')
 function Get-TrialWprProfile {
     $path=Join-Path $PSScriptRoot 'PZTrial.wprp'
     Assert-TrialWprPath $path
@@ -89,12 +80,18 @@ function Initialize-TrialWprCapture([string]$Directory,$Process,$Plan) {
     $ErrorActionPreference='Stop'
     $identity=(ConvertTo-TrialWprUtc $Plan.ProcessStartUtc)
     $null=Assert-JfrTargetProcess $Process $Plan.Java $identity
+    return (Initialize-TrialWprOwnedCapture $Directory $Process $Plan)
+}
+# Shared recorder lifecycle. The game entrypoint above retains its Java target
+# gate; the standalone probe uses only its own controller PID, never a game.
+function Initialize-TrialWprOwnedCapture([string]$Directory,$Process,$Plan) {
+    $ErrorActionPreference='Stop'
     Assert-TrialWprPath $Directory
     $captureId=[Guid]::NewGuid().ToString('N')
     $run=Join-Path $Directory $captureId
     [IO.Directory]::CreateDirectory($run) | Out-Null
     $status=[pscustomobject][ordered]@{format=1;captureId=$captureId;instanceName=('PZTrial_'+$captureId);targetPid=$Process.Id;
-        processStartUtc=$Plan.ProcessStartUtc;status='Requested';reason=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');
+        processStartUtc=$Plan.ProcessStartUtc;toolSelection=$null;tool=$null;status='Requested';reason=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');
         startRequestedUtc=$null;startedUtc=$null;stopRequestedUtc=$null;stoppedUtc=$null;helperPid=$null;helperStartUtc=$null;
         profiles=@('PZTrial.light');loggingMode='File';traceFile='drive.etl';traceBytes=$null;traceSha256=$null;headerValidated=$false;
         limitations='System-wide ETW with file-writing overhead. Sampled CPU/ReadyThread stacks only; no CSwitch/IO/graphics stacks or heap/allocation profile. Lower volume is a candidate, not a measured overhead claim. Lost-event evidence remains raw/localized; zero loss is not inferred.'}
@@ -103,19 +100,22 @@ function Initialize-TrialWprCapture([string]$Directory,$Process,$Plan) {
         Status=$status;LocalFailure=$null;Worker=$null;WorkerStartUtc=$null;StartSent=$false;StopSent=$false}
     Write-TrialWprJson $context.StatusPath $status
     try {
-        $tool=Get-TrialWprTool
-        if (-not $tool) { $status.reason='WprUnavailable'; $status.status='Unavailable'; return $context }
+        $selection=Get-TrialWprToolSelection; $status.toolSelection=$selection
+        $tool=$selection.Selected
+        if (-not $tool) { $status.reason=$selection.Reason; $status.status='Unavailable'; return $context }
+        $status.tool=$tool
         $parent=Get-Process -Id $PID -ErrorAction Stop
         $seconds=180
         if ($Plan.PSObject.Properties['WprDurationSeconds']) { $seconds=[int]$Plan.WprDurationSeconds }
         $seconds=[Math]::Max(30,[Math]::Min(240,$seconds))
         $profile=Get-TrialWprProfile
-        $control=[ordered]@{profileSha256=$profile.Sha256;format=1;captureId=$captureId;targetPid=$Process.Id;processStartUtc=$Plan.ProcessStartUtc;expectedExecutable=[IO.Path]::GetFullPath($Plan.Java);
+        $control=[ordered]@{toolPath=$tool.Path;toolSha256=$tool.Sha256;toolSource=$tool.Source;profileSha256=$profile.Sha256;format=1;captureId=$captureId;targetPid=$Process.Id;processStartUtc=$Plan.ProcessStartUtc;expectedExecutable=[IO.Path]::GetFullPath($Plan.Java);
             parentPid=$PID;parentStartUtc=$parent.StartTime.ToUniversalTime().ToString('o');parentExecutable=$parent.Path;
             captureSeconds=$seconds;prepareSeconds=900;maximumTempBytes=2147483648}
         $controlPath=Join-Path $run 'control.json'
         Write-TrialWprJson $controlPath $control
         $hash=(Get-FileHash -LiteralPath $controlPath -Algorithm SHA256).Hash
+        Write-TrialWprJson $context.StatusPath $status
         $helper=Join-Path $PSScriptRoot 'TrialWprWorker.ps1'
         Assert-TrialWprPath $helper
         $shell=Join-Path (Get-TrialWprSystemDirectory) 'WindowsPowerShell/v1.0/powershell.exe'
