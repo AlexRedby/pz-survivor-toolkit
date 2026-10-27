@@ -38,7 +38,65 @@ local function setup(options)
  local server,client=options.server~=false,options.client==true
  isServer=function()return server end;isClient=function()return client end
  local actor=f.player;actor.class='IsoPlayer';actor.worn={};actor.writes=0
- local root=actor.inventory;root.class='ItemContainer';root.values={};root.adds=0;root.removals=0
+ local recursiveCalls=0
+ local function square(x,y,z)
+  local value={x=x,y=y,z=z,objects={}}
+  function value:getX()return self.x end;function value:getY()return self.y end;function value:getZ()return self.z end
+  function value:getObjects()return list(self.objects)end;function value:getStaticMovingObjects()return list({})end
+  function value:isBlockedTo()return options.wall==true end
+  return value
+ end
+ local current,worldSquare=square(0,0,0),square(1,0,0)
+ function actor:getCurrentSquare()return current end
+ function actor:canAccessContainer(container)return container~=options.deniedContainer end
+ getCell=function()return {getGridSquare=function(_,x,y,z)
+  if worldSquare.x==x and worldSquare.y==y and worldSquare.z==z then return worldSquare end
+ end}end
+ getVehicleById=function()end
+ SafeHouse={isSafehouseAllowLoot=function()return options.safehouse~=false end}
+ local function outer(item)
+  recursiveCalls=recursiveCalls+1
+  local container=item:getContainer()
+  for _=1,64 do
+   if not container then return end
+   local holder=container:getContainingItem()
+   if not holder or not holder:getContainer()then return container end
+   container=holder:getContainer()
+  end
+  error('recursive outer traversal reached malformed ancestry')
+ end
+ local function methods(container)
+  container.class='ItemContainer';container.values={}
+  function container:getItems()return list(self.values)end
+  function container:getParent()return self.parent end
+  function container:getContainingItem()return self.holder end
+  function container:getVehiclePart()return self.part end
+  function container:getSourceGrid()return self.square end
+  function container:getItemById(id)for _,item in ipairs(self.values)do if item:getID()==id then return item end end end
+  function container:isInCharacterInventory(player)
+   recursiveCalls=recursiveCalls+1
+   local cursor=self
+   for _=1,64 do
+    if cursor==player:getInventory()then return true end
+    local holder=cursor:getContainingItem();cursor=holder and holder:getContainer()
+    if not cursor then return false end
+   end
+   error('inventory ancestry reached malformed chain')
+  end
+  function container:getItemWithIDRecursiv(id)
+   recursiveCalls=recursiveCalls+1
+   local function search(cursor,depth)
+    assert(depth<=32,'unsafe recursive item lookup preceded ancestry admission')
+    for _,value in ipairs(cursor.values)do
+     if value:getID()==id then return value end
+     if value.class=='InventoryContainer'then local found=search(value:getInventory(),depth+1);if found then return found end end
+    end
+   end
+   return search(self,1)
+  end
+  return container
+ end
+ local root=methods(actor.inventory);root.adds=0;root.removals=0
  function root:getParent()return actor end
  function root:getContainingItem()end
  function root:getItems()return list(self.values)end
@@ -85,9 +143,40 @@ local function setup(options)
   made=made+1;return item(kind,1000+made)
  end
  local kit=f.item('Base.MakeupEyes');kit.uses=5;kit.container=root
+ function kit:getOutermostContainer()return outer(self)end;function kit:getWorldItem()end
  function kit:getContainer()return self.container end;function kit:getMakeUpType()return'All'end
  function kit:getCurrentUses()return self.uses end;function kit:Use()self.uses=self.uses-1 end
  root.values[1]=kit
+ local function move(destination)
+  local source=kit.container
+  if source and source.values then for i=#source.values,1,-1 do if source.values[i]==kit then table.remove(source.values,i)end end end
+  kit.container=destination
+  if destination then destination.values[#destination.values+1]=kit end
+ end
+ local bagID=100
+ local function bag(parent)
+  bagID=bagID+1
+  local holder={class='InventoryContainer',id=bagID,container=parent}
+  local inventory=methods({holder=holder})
+  function holder:getID()return self.id end;function holder:getContainer()return self.container end
+  function holder:getInventory()return inventory end;function holder:getWorldItem()return self.world end
+  function holder:getOutermostContainer()return outer(self)end
+  if parent then parent.values[#parent.values+1]=holder end
+  return inventory,holder
+ end
+ local function worldContainer()
+  local container=methods({square=worldSquare})
+  local object={class='IsoObject',getSquare=function()return worldSquare end,
+   getContainerCount=function()return 1 end,getContainerByIndex=function(_,index)if index==0 then return container end end}
+  container.parent=object;worldSquare.objects[#worldSquare.objects+1]=object
+  return container,object
+ end
+ local function worldBag()
+  local container,holder=bag()
+  local object={class='IsoWorldInventoryObject',getSquare=function()return worldSquare end,getItem=function()return holder end}
+  holder.world=object;worldSquare.objects[#worldSquare.objects+1]=object
+  return container,holder
+ end
  local packets={add={},remove={},clothing={},stats={},order={}}
  sendAddItemToContainer=function(container,value)
   assert(container==root)
@@ -106,7 +195,12 @@ local function setup(options)
  local java={}
  getClassSimpleName=function(value)return java[value]and'LuaJavaInvoker'or type(value)=='table'and value.class or'LuaClosure'end
  for _,name in ipairs({'isServer','isClient','instanceof','getClassSimpleName','getScriptManager','instanceItem',
-  'sendAddItemToContainer','sendRemoveItemFromContainer','sendClothing','sendItemStats'})do java[_G[name]]=true end
+  'sendAddItemToContainer','sendRemoveItemFromContainer','sendClothing','sendItemStats','getCell','getVehicleById'})do java[_G[name]]=true end
+ local access=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemAccess.lua'))()
+ local nativeRequire=require
+ require=function(module)if module=='PZSurvivorToolkit/ItemAccess'then return access end;return nativeRequire(module)end
+ if options.foreignAccess then access[options.foreignAccess]=function()return kit end end
+ java[SafeHouse.isSafehouseAllowLoot]=true
  local native=ISApplyMakeUp.complete
  if options.foreign then ISApplyMakeUp[options.foreign]=function()end end
  local before=ISApplyMakeUp.complete
@@ -117,7 +211,8 @@ local function setup(options)
   local value=item('Base.MakeUp_LipsBlue',500);value.container=root;root.values[#root.values+1]=value;actor.worn[value.slot]=value;return value
  end
  return {actor=actor,root=root,kit=kit,action=action,packets=packets,options=options,old=old,item=item,
-  native=native,before=before,wrapped=wrapped,invoke=function()return wrapped(action)end,
+  native=native,before=before,wrapped=wrapped,access=access,move=move,bag=bag,worldContainer=worldContainer,worldBag=worldBag,
+  worldSquare=worldSquare,current=current,recursiveCalls=function()return recursiveCalls end,invoke=function()return wrapped(action)end,
   made=function()return made end,attempts=function()return attempts end,mode=function(s,c)server,client=s,c end}
 end
 local baseline=setup({unpatched=true})
@@ -140,15 +235,35 @@ for _,replacing in ipairs({false,true})do
   and s.packets.order[#s.packets.order-1].kind=='clothing'and s.packets.order[#s.packets.order-1].item==output
   and s.packets.order[#s.packets.order].kind=='stats','new output add did not precede clothing in native packet order')
 end
+-- These sources remain in place and incur the exact native one-use cost. The
+-- output is always inserted into the actor's root before its clothing packet.
+for _,placement in ipairs({'worn bag','nested carried bag','world object','world bag'})do
+ local s=setup();local source,holder
+ if placement=='worn bag'then source,holder=s.bag(s.root);s.actor.worn.Bag=holder
+ elseif placement=='nested carried bag'then local outer=s.bag(s.root);source=s.bag(outer)
+ elseif placement=='world object'then source=s.worldContainer()
+ else source=s.worldBag()end
+ s.move(source)
+ assert(s.access.admit(s.actor,s.access.locate(s.kit,s.actor))==s.kit,'fixture did not establish native ItemAccess permission: '..placement)
+ assert(s.invoke()==true)
+ local cosmetic=s.actor:getWornItem(ItemBodyLocation.MAKE_UP_LIPS)
+ assert(s.made()==1 and s.attempts()==1 and s.kit.uses==4 and s.kit:getContainer()==source
+  and source:getItemById(s.kit:getID())==s.kit and #s.packets.add==1 and s.packets.add[1]==cosmetic
+  and s.root:contains(cosmetic)and #s.packets.clothing==1 and #s.packets.stats==1,
+  'eligible '..placement..' did not correct exactly one native output packet')
+ assert(s.packets.order[1].kind=='add'and s.packets.order[1].item==cosmetic
+  and s.packets.order[#s.packets.order-1].kind=='clothing','nested output notification did not precede clothing')
+end
 for _,options in ipairs({{server=false},{server=false,client=true},{server=true,client=true},
- {changedSource='ISApplyMakeUp.lua'},{changedSource='MakeUpDefinitions.lua'},{foreign='update'},{foreign='extraHelper'}})do
+ {changedSource='ISApplyMakeUp.lua'},{changedSource='MakeUpDefinitions.lua'},
+ {foreignAccess='admit'},{foreignAccess='locate'},{foreign='update'},{foreign='extraHelper'}})do
  local s=setup(options);assert(s.wrapped==s.before,'unsupported realm/source/class installed completion override')
  s.invoke();assert(#s.packets.add<=1,'unsupported completion received an extra inventory packet')
 end
-local function rejected(change)
+local function rejected(change,label)
  local s=setup();change(s);s.invoke()
  assert(#s.packets.add==1 and s.packets.add[1]==s.kit and s.kit.uses==4 and s.attempts()==1,
-  'foreign completion gained correction or native completion was replayed')
+  'foreign completion gained correction or native completion was replayed: '..(label or 'guard'))
 end
 rejected(function(s)s.action.onCompleteFunc=function()end end)
 rejected(function(s)s.action.update=function()end end)
@@ -164,6 +279,53 @@ rejected(function(s)s.options.configKey='Unknown.Config'end)
 rejected(function(s)s.options.config={}end)
 rejected(function(s)s.mode(false,false)end)
 rejected(function(s)s.root.values[#s.root.values+1]=s.kit end)
+-- Admission must reject malformed identity/ancestry before invoking recursive
+-- native searches: recursive ID lookup cannot establish exact chain membership.
+local function malformed(change,label)
+ rejected(function(s)
+  local calls=s.recursiveCalls();change(s)
+  local invoke=s.invoke
+  s.invoke=function()local result=invoke();assert(s.recursiveCalls()==calls,'unsafe recursive API reached: '..label);return result end
+ end,label)
+end
+malformed(function(s)s.root.values={}end,'missing kit reference')
+malformed(function(s)local duplicate=s.item('Base.MakeUp_LipsBlue',s.kit:getID());duplicate.container=s.root;s.root.values[#s.root.values+1]=duplicate end,'duplicate kit ID')
+malformed(function(s)s.kit.id='invalid'end,'noninteger kit ID')
+malformed(function(s)s.kit.id=2147483648 end,'out of range kit ID')
+malformed(function(s)local source=s.bag(s.root);s.move(source);source.values={}end,'missing nested kit')
+malformed(function(s)local source=s.bag(s.root);s.move(source);source.values[#source.values+1]=s.kit end,'duplicate nested kit reference')
+malformed(function(s)local source=s.bag(s.root);s.move(source);source.getItemById=function()return s.item('Base.MakeUp_LipsBlue',s.kit:getID())end end,'foreign direct lookup')
+malformed(function(s)local source,holder=s.bag(s.root);s.move(source);holder.id=0/0 end,'noninteger holder ID')
+malformed(function(s)local source,holder=s.bag(s.root);s.move(source);holder.id=2147483648 end,'out of range holder ID')
+malformed(function(s)local source,holder=s.worldBag();s.move(source);holder.id=2147483648 end,'out of range world holder ID')
+malformed(function(s)local source,holder=s.worldBag();s.move(source);holder.world.getItem=function()return s.item('Base.MakeUp_LipsBlue',holder.id)end end,'forged world holder')
+malformed(function(s)local source,holder=s.bag(s.root);s.move(source);s.root.values={}end,'missing holder')
+malformed(function(s)local source,holder=s.bag(s.root);s.move(source);s.root.values[#s.root.values+1]=holder end,'duplicate holder reference')
+malformed(function(s)local source,holder=s.bag(s.root);s.move(source);local _,other=s.bag(s.root);other.id=holder.id end,'duplicate holder ID')
+malformed(function(s)local source,holder=s.bag(s.root);s.move(source);local foreign=s.bag(s.root);holder.getInventory=function()return foreign end end,'forged inventory backreference')
+malformed(function(s)local source,holder=s.bag(s.root);s.move(source);holder.container=source;source.values[#source.values+1]=holder end,'cyclic holder chain')
+malformed(function(s)local source=s.root;for _=1,34 do source=s.bag(source)end;s.move(source)end,'overdeep chain')
+malformed(function(s)local source=s.bag(s.root);s.move(source);source.holder.class='InventoryItem'end,'unsupported holder class')
+rejected(function(s)local source=s.bag(s.root);local nested=s.bag(source);s.move(nested);s.options.deniedContainer=source end,'inaccessible ancestor')
+rejected(function(s)local source=s.worldContainer();s.move(source);s.worldSquare.x=3 end,'distant world source')
+rejected(function(s)local source=s.worldBag();s.move(source);s.options.wall=true end,'world wall')
+rejected(function(s)local source=s.worldContainer();s.move(source);s.options.safehouse=false end,'safehouse loot denial')
+rejected(function(s)local source=s.worldBag();s.move(source);s.options.deniedContainer=source end,'inaccessible world bag')
+rejected(function(s)
+ local foreign=s.worldContainer();local imposter=s.item('Base.MakeUp_LipsBlue',s.kit:getID());imposter.container=foreign
+ function imposter:getOutermostContainer()return foreign end;function imposter:getWorldItem()end
+ foreign.values[1]=imposter
+ local source=s.worldContainer();s.move(source)
+ end,'foreign world lookup identity')
+for _,method in ipairs({'locate','resolve','integer','validLocator','sameLocation','admit'})do
+ rejected(function(s)local original=s.access[method];s.access[method]=function(...)return original(...)end end,'changed ItemAccess.'..method)
+end
+rejected(function(s)setmetatable(s.access,{})end,'changed ItemAccess table metatable')
+rejected(function()SafeHouse={}end,'changed SafeHouse owner')
+rejected(function()local nativeAllow=SafeHouse.isSafehouseAllowLoot;SafeHouse.isSafehouseAllowLoot=function(...)return nativeAllow(...)end end,'changed SafeHouse helper')
+for _,global in ipairs({'getCell','getVehicleById'})do
+ rejected(function()local original=_G[global];_G[global]=function(...)return original(...)end end,'changed '..global)
+end
 rejected(function(s)local nativeFactory=instanceItem;instanceItem=function(kind)return nativeFactory(kind)end end)
 rejected(function(s)local nativeNotify=sendAddItemToContainer;sendAddItemToContainer=function(...)return nativeNotify(...)end end)
 rejected(function(s)local nativeClothing=sendClothing;sendClothing=function(...)return nativeClothing(...)end end)
@@ -181,4 +343,4 @@ for _,stage in ipairs({'factory','clothing'})do
   and s.attempts()==1 and s.kit.uses==5 and #s.packets.add==(stage=='factory'and 0 or 1),
   'native failure was replayed, suppressed or received an output correction')
 end
-print('Native makeup output sync: exact one-argument body correction, output-before-clothing, costs and closed unsupported paths passed.')
+print('Native makeup output sync: exact one-argument correction, carried/world ancestry admission, output-before-clothing, native costs and closed unsupported paths passed.')

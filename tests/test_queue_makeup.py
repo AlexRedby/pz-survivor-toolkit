@@ -7,17 +7,22 @@ import unittest
 from unittest.mock import patch
 import struct
 import zlib
+import shutil
+import subprocess
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from queue_checks.adapters import makeup as m
 
 
 class MakeupEvidenceTests(unittest.TestCase):
-    def selection(self,mode='toolkit',kind='sp'):
-        return dict(suite='makeup',cases=list(m.SP_CASES if kind=='sp' else m.MP_CASES),mode=mode,kind=kind,
+    def selection(self,mode='toolkit',kind='sp',supplies=False):
+        value= dict(suite='makeup',cases=list(m.SP_CASES if kind=='sp' else m.MP_CASES),mode=mode,kind=kind,
                     clients=1,languages=['EN'],mods=list(m.MODS),options={'mp_host':True} if kind=='mp' else {})
+        if supplies:value['options']['makeup_supplies']=True;value['cases']=list(m.cases(value))
+        return value
 
     def evidence(self,case,selection):
+        if selection.get('options',{}).get('makeup_supplies'):return self.supply_evidence(case,selection)
         native=selection['mode']=='native';mp=selection['kind']=='mp'
         items=dict(kit=1,front=2,tail=3,**({'old':4} if case!='apply-empty' else {}))
         types=dict(kit='Base.MakeupEyeshadow',front='Base.BookCarpentry1',tail='Base.BookFirstAid1',**({'old':m.OLD} if 'old'in items else {}))
@@ -77,6 +82,44 @@ class MakeupEvidenceTests(unittest.TestCase):
                     checkpoints=points,receipt=receipt,clientFinal=copy.deepcopy(points[-1]['client']['snapshot']),submitted=submitted,second=second,
                     output=output,body=body,outcomes=outcomes,edit=edit,beforeTail=dict(at=100,snapshot=before_tail),nativeMethodsUnchanged=True)
 
+    def supply_evidence(self,case,selection):
+        source_selection=copy.deepcopy(selection);source_selection['options'].pop('makeup_supplies')
+        row=self.evidence('cancel-waiting' if m.cancelling(case) else 'apply-replace',source_selection)
+        kind=case.split('-',1)[1]
+        world=False;ancestors=[];contents=[dict(id=1,kind='Base.MakeupEyeshadow'),dict(id=15,kind='Base.Pencil')]
+        if kind in ('worn-bag','nested-bag'):
+            ancestors=[dict(id=10,kind='Base.Bag_Schoolbag',parent='root')]
+            if kind=='nested-bag':ancestors.append(dict(id=11,kind='Base.Bag_Schoolbag',parent=10))
+        else:
+            world=dict(kind=kind,x=11,y=20,z=0,index=1,owner='owned-native-source',type='Base.Bag_Schoolbag' if kind=='world-bag' else 'crate')
+            if kind=='world-bag':world['id']=12
+            else:world.update(sprite='carpentry_01_16',containerIndex=0)
+        spec=dict(kind=kind,world=world,ancestors=ancestors)
+        source=dict(kind=kind,world=copy.deepcopy(world),ancestors=[],items=contents,access=dict(blocked=False) if world else False)
+        for i,ancestor in enumerate(ancestors):
+            members=contents if i==len(ancestors)-1 else [dict(id=11,kind='Base.Bag_Schoolbag'),dict(id=16,kind='Base.Pencil')]
+            source['ancestors'].append(dict(ancestor,items=copy.deepcopy(members)))
+        row['id']=case;row['ids']['case']=case;row['ids']['supply']=spec;row['ids']['placement']=dict(x=10,y=20,z=0)
+        row['applyQueues']=dict(before=dict(types=[],hasTimedActions=False,nativeActions=0),after=dict(
+            types=(['ISReadABook'] if m.cancelling(case) else [])+['ISApplyMakeUp'] if selection['kind']=='mp' else [],
+            hasTimedActions=selection['kind']=='mp',nativeActions=int(selection['kind']=='mp')))
+        row['supplyTransferStarts']=0
+        values=[row['ids']['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot']]
+        for point in row['checkpoints']:
+            for role in ('client','authority'):
+                point[role]['case']=case;values.append(point[role]['snapshot'])
+        row['receipt']['case']=case
+        for value in values:
+            value['case']=case;value['kit']['root']=False
+            value['root']=[item for item in value['root'] if item['id']!=1]
+            if ancestors:
+                value['root'].append(dict(id=10,kind='Base.Bag_Schoolbag'))
+                value['worn'].append(dict(id=10,kind='Base.Bag_Schoolbag',slot='base:back',root=True,sameReference=True,container='root'))
+            value['root'].sort(key=lambda item:item['id']);value['worn'].sort(key=lambda item:item['slot'])
+            value['supply']=copy.deepcopy(source);value['placement']=dict(tile=dict(x=10,y=20,z=0),square=dict(x=10,y=20,z=0))
+            if not m.cancelling(case):value['frontPages']=row['ids']['frontInitial']
+        return row
+
     def write(self,root,selection,rows):
         def raw(marker,row):return m.PREFIX+marker+' '+json.dumps(row)+'\n'
         def event(row):return '[QUEUE_CHECK] '+json.dumps(row)+'\n'
@@ -89,6 +132,7 @@ class MakeupEvidenceTests(unittest.TestCase):
                 client+=raw('CLIENT_SNAPSHOT',point['client']);authority+=raw('SNAPSHOT',point['authority'])
             for outcome in row['outcomes']:client+=raw('OUTCOME',dict(case=row['id'],receipt=outcome))
             if row['edit']:client+=raw('EDIT',dict(case=row['id'],evidence=row['edit']))
+            if row.get('applyQueues'):client+=raw('APPLY_QUEUES',dict(case=row['id'],evidence=row['applyQueues']))
             client+=raw('BEFORE_TAIL',dict(case=row['id'],evidence=row['beforeTail']))
             authority+=raw('VERIFIED',row['receipt'])
             if selection['kind']=='sp':client+=authority;authority=''
@@ -96,7 +140,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         client+=event(dict(context,event='complete',cases=selection['cases'],performed=len(rows),failed=0,skipped=0))
         client+=raw('COMPLETE',dict(cases=selection['cases']))
         filename='makeup-preview-'+selection['kind']+'-'+selection['mode']+'.png'
-        client+=raw('SCREENSHOT',dict(case='preview-close',file=filename,renderFrames=3,renderMs=500,fadeClear=True,nativeRendered=True))
+        client+=raw('SCREENSHOT',dict(case=selection['cases'][0],file=filename,renderFrames=3,renderMs=500,fadeClear=True,nativeRendered=True))
         image=root/'client1/Screenshots'/filename;image.parent.mkdir(parents=True,exist_ok=True)
         def chunk(kind,body):return struct.pack('>I',len(body))+kind+body+struct.pack('>I',zlib.crc32(kind+body))
         image.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',128,128,8,2,0,0,0))
@@ -270,8 +314,199 @@ class MakeupEvidenceTests(unittest.TestCase):
             elif mutation=='not-host':selection['options']['mp_host']=False
             with self.subTest(mutation=mutation),self.assertRaises(ValueError):m.validate(selection)
 
+    def test_optional_supply_bank_sp_host_native_and_toolkit(self):
+        for kind in ('sp','mp'):
+            for mode in ('native','toolkit'):
+                selection=self.selection(mode,kind,supplies=True)
+                with self.subTest(kind=kind,mode=mode):
+                    rows=[self.evidence(case,selection) for case in selection['cases']]
+                    self.assertEqual(self.verify(selection,rows)['issues'],[])
+
+    def test_supply_ancestor_member_source_and_empty_queue_falsifications_fail(self):
+        selection=self.selection(kind='mp',supplies=True)
+        for mutation in ('ancestor-id','ancestor-parent','ancestor-type','ancestor-member','ancestor-root-alias','ancestor-member-alias','ancestor-wrong-slot','source-member','source-reorder',
+                         'source-duplicate','source-moved-root','source-world-id','source-world-owner','kit-cost',
+                         'queue-front','queue-native','queue-active','queue-transfer','transfer-start','output-lost','output-reference','tail-front'):
+            with self.subTest(mutation=mutation):
+                rows=[self.evidence(case,selection) for case in selection['cases']]
+                row=rows[3] if mutation.startswith('source-world') else rows[1]
+                point=row['checkpoints'][2]['authority']['snapshot'];source=point['supply']
+                if mutation=='ancestor-id':source['ancestors'][0]['id']=999
+                elif mutation=='ancestor-parent':source['ancestors'][1]['parent']=999
+                elif mutation=='ancestor-type':source['ancestors'][1]['kind']='Base.Bag_DuffelBagTINT'
+                elif mutation=='ancestor-member':source['ancestors'][0]['items'].pop()
+                elif mutation=='ancestor-root-alias':point['root'].append(dict(id=11,kind='Base.Bag_Schoolbag'));point['root'].sort(key=lambda item:item['id'])
+                elif mutation=='ancestor-member-alias':source['ancestors'][0]['items'].append(dict(id=15,kind='Base.Pencil'));source['ancestors'][0]['items'].sort(key=lambda item:item['id'])
+                elif mutation=='ancestor-wrong-slot':next(item for item in point['worn'] if item['id']==10)['slot']='base:hat'
+                elif mutation=='source-member':source['items'].pop()
+                elif mutation=='source-reorder':source['items'].reverse()
+                elif mutation=='source-duplicate':source['items'].append(copy.deepcopy(source['items'][0]))
+                elif mutation=='source-moved-root':point['root'].append(dict(id=1,kind='Base.MakeupEyeshadow'));point['kit']['root']=True
+                elif mutation=='source-world-id':source['world']['id']=999
+                elif mutation=='source-world-owner':source['world']['owner']='foreign-owner'
+                elif mutation=='kit-cost':point['kit']['uses']=3
+                elif mutation=='queue-front':row['applyQueues']['before']['types']=['ISReadABook']
+                elif mutation=='queue-native':row['applyQueues']['before']['nativeActions']=1
+                elif mutation=='queue-active':row['applyQueues']['before']['hasTimedActions']=True
+                elif mutation=='queue-transfer':row['applyQueues']['after']['types'].insert(0,'ISInventoryTransferAction')
+                elif mutation=='transfer-start':row['supplyTransferStarts']=1
+                elif mutation=='output-lost':point['root']=[item for item in point['root'] if item['id']!=row['output']]
+                elif mutation=='output-reference':next(item for item in point['worn'] if item['id']==row['output'])['sameReference']=False
+                elif mutation=='tail-front':row['checkpoints'][-1]['client']['snapshot']['frontPages']=100
+                self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_supply_settled_placement_and_adjacent_unblocked_world_sources_are_required(self):
+        selection=self.selection(kind='mp',supplies=True)
+        for mutation in ('target-missing','position-missing','stale-current-square','stale-floor-coordinate',
+                         'authority-position','later-tile','world-distance','world-level','world-wall'):
+            with self.subTest(mutation=mutation):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[2]
+                point=row['checkpoints'][1]['client']['snapshot']
+                if mutation=='target-missing':row['ids'].pop('placement')
+                elif mutation=='position-missing':point.pop('placement')
+                elif mutation=='stale-current-square':point['placement']['square']['y']-=1
+                elif mutation=='stale-floor-coordinate':point['placement']['tile']['y']-=1
+                elif mutation=='authority-position':row['checkpoints'][1]['authority']['snapshot']['placement']['square']['x']-=1
+                elif mutation=='later-tile':
+                    row['ids']['placement']['y']+=1
+                    for value in [row['ids']['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot'],
+                                  *[p[role]['snapshot'] for p in row['checkpoints'] for role in ('client','authority')]]:
+                        value['placement']['tile']['y']+=1;value['placement']['square']['y']+=1
+                        value['supply']['world']['y']+=1
+                    row['ids']['supply']['world']['y']+=1
+                elif mutation in ('world-distance','world-level'):
+                    axis='x' if mutation=='world-distance' else 'z'
+                    row['ids']['supply']['world'][axis]+=1
+                    for value in [row['ids']['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot'],
+                                  *[p[role]['snapshot'] for p in row['checkpoints'] for role in ('client','authority')]]:
+                        value['supply']['world'][axis]+=1
+                else:point['supply']['access']['blocked']=True
+                self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_supply_native_cancel_and_authority_receipts_remain_strict(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',supplies=True)
+            for mutation in ('cancel-cost','cancel-output','cancel-body','authority-source','queue-boundary-missing'):
+                with self.subTest(mode=mode,mutation=mutation):
+                    rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[4]
+                    if mutation=='cancel-cost':row['checkpoints'][-1]['client']['snapshot']['kit']['uses']=3
+                    elif mutation=='cancel-output':row['output']=999
+                    elif mutation=='cancel-body':row['body']['starts']=1-int(mode=='native')
+                    elif mutation=='authority-source':row['receipt']['snapshot']['supply']['items'].pop()
+                    else:row.pop('applyQueues')
+                    self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_supply_cases_register_without_relabeling_old_bank_contracts(self):
+        from queue_checks import scenarios
+        suite=m.definitions()['makeup'];scenarios.validate(suite)
+        checks=suite['scenario_actions']['native-makeup-ui']['checks']
+        self.assertEqual(list(checks['success-queued']),m.MP_CASES)
+        self.assertEqual(list(checks['success-empty']),m.SUPPLY_SP_CASES)
+        self.assertEqual(list(checks['cancel-waiting']),['cancel-waiting',*m.SUPPLY_MP_CASES[4:]])
+        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES)
+
+    def test_supply_option_cannot_silently_replace_or_mix_default_bank(self):
+        for mutation in ('false','non-bool','missing','mixed'):
+            selection=self.selection(supplies=True)
+            if mutation=='false':selection['options']['makeup_supplies']=False
+            elif mutation=='non-bool':selection['options']['makeup_supplies']='true'
+            elif mutation=='missing':selection['options'].pop('makeup_supplies')
+            else:selection['cases'][0]=m.SP_CASES[0]
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):m.validate(selection)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_supply_placement_uses_floor_and_current_square_before_any_setup_mutation(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/shared/QueueMakeup.lua'
+        script="""
+package.preload['Definitions/MakeUpDefinitions']=function()end
+ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
+isClient=function()return false end
+local F=assert(loadfile(arg[1]))()
+local x,y,z=10.1,20.9,0
+local sx,sy,sz=10,20,0
+local square={getX=function()return sx end,getY=function()return sy end,getZ=function()return sz end}
+local player={getX=function()return x end,getY=function()return y end,getZ=function()return z end,
+ getCurrentSquare=function()return square end,getInventory=function()error('setup mutated before settled placement')end}
+local target={x=10,y=20,z=0}
+assert(F.atPlacement(player,target),'non-centered integer teleport destination should settle')
+sy=19;assert(not F.atPlacement(player,target),'stale currentSquare admitted')
+local ok,problem=pcall(F.prepare,player,'apply-world-container',nil,target)
+assert(not ok and tostring(problem):find('has not settled',1,true),'setup mutation preceded placement guard')
+sy=20;x=11.1;assert(not F.atPlacement(player,target),'stale floor position admitted')
+x=10.1;assert(not F.atPlacement(player,nil)and not F.atPlacement(player,{x=10.5,y=20,z=0}))
+ok,problem=pcall(F.prepare,player,'apply-nested-bag',nil,nil)
+assert(not ok and tostring(problem):find('has not settled',1,true),'missing placement reached setup')
+-- Schoolbags expose canBeEquipped()=BACK; their clothing BodyLocation may be nil.
+ItemBodyLocation.BACK='back'
+local bag={getID=function()return 10 end,getFullType=function()return 'Base.Bag_Schoolbag'end,
+ getItemContainer=function()return {setExplored=function()end}end,
+ canBeEquipped=function()return ItemBodyLocation.BACK end,
+ getBodyLocation=function()error('backpack clothing BodyLocation was used')end}
+local empty={size=function()return 0 end}
+player.getInventory=function()return {getItems=function()return empty end,AddItem=function(_,kind)
+ assert(kind=='Base.Bag_Schoolbag');return bag end}end
+player.getWornItem=function()return nil end;player.getOnlineID=function()return 7 end
+player.setGodMod=function()end;player.setGhostMode=function()end;player.setAutoDrink=function()end
+player.isTimedActionInstant=function()return false end;getDebug=function()return false end
+player.setWornItem=function(_,slot,item)
+ assert(slot==ItemBodyLocation.BACK and item==bag,'schoolbag used an invalid native equipment slot')
+ error('BACK_SLOT_CONFIRMED')
+end
+ok,problem=pcall(F.prepare,player,'apply-worn-bag',nil,target)
+assert(not ok and tostring(problem):find('BACK_SLOT_CONFIRMED',1,true),'native backpack slot was not used before source setup: '..tostring(problem))
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_supply_server_prepare_waits_for_real_actor_coordinates_without_relocation(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/server/ZZMakeupServer.lua'
+        script="""
+isServer=function()return true end
+local handlers={};Events={}
+for _,name in ipairs({'OnServerStarted','OnClientCommand','OnTick'})do
+ Events[name]={Add=function(callback)handlers[name]=callback end}
+end
+local settled=false;local calls=0;local failures=0;local replies=0;local clock=0
+local target={x=10,y=20,z=0}
+local player={getUsername=function()return 'client1'end}
+getTimestampMs=function()return clock end
+sendServerCommand=function(actor,module,name,args)
+ assert(actor==player and module=='MakeupTest')
+ if name=='Failed'then failures=failures+1 else assert(name=='Prepared');replies=replies+1 end
+end
+package.loaded.QueueHealthEvents={encode=function()return '{}'end}
+package.loaded.QueueTestSelection={cases={'apply-worn-bag'},options={makeup_supplies=true}}
+package.loaded.QueueMakeup={
+ validPlacement=function(value)return value==target end,
+ same=function(a,b)return a==b end,
+ atPlacement=function(actor,value)assert(actor==player and value==target);return settled end,
+ prepare=function(actor,case,previous,value)
+  assert(settled and actor==player and case=='apply-worn-bag'and previous==nil and value==target)
+  calls=calls+1;return {ids={case=case,placement=value}}
+ end}
+assert(loadfile(arg[1]))()
+handlers.OnClientCommand('MakeupTest','Prepare',player,{case='apply-worn-bag'})
+assert(failures==1 and calls==0,'missing placement was admitted')
+handlers.OnClientCommand('MakeupTest','Prepare',player,{case='apply-worn-bag',placement=target})
+assert(calls==0 and replies==0,'prepare seeded before authority position settled')
+clock=500;handlers.OnTick();assert(calls==0 and replies==0)
+settled=true;clock=1000;handlers.OnTick()
+assert(calls==1 and replies==1,'authority failed to acknowledge exact settled position')
+handlers.OnTick();assert(calls==1,'authority setup repeated after acknowledgement')
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_native_fixture_lua_parses(self):
+        root=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup'
+        for path in root.rglob('*.lua'):
+            result=subprocess.run([shutil.which('luajit'),'-',str(path)],input='assert(loadfile(arg[1]))',capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
     def test_stage_and_source_membership(self):
-        selection=self.selection();project=Path(__file__).resolve().parents[1]
+        selection=self.selection(supplies=True);project=Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory()as directory:
             root=Path(directory);cache=root/'cache';lua=cache/'mods/ActionQueueTest/42/media/lua'
             for side in ('client','shared','server'):(lua/side).mkdir(parents=True)

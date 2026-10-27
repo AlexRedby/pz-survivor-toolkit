@@ -1,6 +1,6 @@
 if not isServer()then return end
 local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
-local state,previous,pending=nil,nil,nil;local index,sequence=1,0
+local state,previous,pending,placement=nil,nil,nil,nil;local index,sequence=1,0
 local function raw(marker,row)print('[MAKEUP_TEST] '..marker..' '..JSON.encode(row))end
 local function fail(player,problem)
  print('[QUEUE_TEST] FAIL makeup server '..tostring(problem));sendServerCommand(player,'MakeupTest','Failed',{error=tostring(problem)})
@@ -12,8 +12,13 @@ Events.OnClientCommand.Add(function(module,name,player,args)
   assert(player:getUsername()=='client1'and args.case==config.cases[index],'makeup authority actor/case/order differs')
   if name=='Prepare'then
    assert(not state and not pending,'previous makeup case unsettled')
-   state=F.prepare(player,args.case,previous);sequence=0;raw('PREPARED',state.ids)
-   sendServerCommand(player,module,'Prepared',state.ids)
+   if config.options and config.options.makeup_supplies==true then
+    assert(F.validPlacement(args.placement)and(not placement or F.same(placement,args.placement)),'makeup authority placement target differs')
+    pending={prepare=true,since=getTimestampMs(),player=player,placement=args.placement,case=args.case}
+   else
+    state=F.prepare(player,args.case,previous);sequence=0;raw('PREPARED',state.ids)
+    sendServerCommand(player,module,'Prepared',state.ids)
+   end
   elseif name=='Snapshot'then
    assert(state and not pending and type(args.label)=='string'and args.sequence==sequence+1,'makeup authority snapshot ordering differs')
    pending={since=getTimestampMs(),player=player,label=args.label,sequence=args.sequence}
@@ -30,7 +35,12 @@ Events.OnTick.Add(function()
  if not pending then return end
  local player=pending.player
  local ok,problem=pcall(function()
-  local time=getTimestampMs();assert(time-pending.since<30000,'makeup authority read-only checkpoint timed out')
+  local time=getTimestampMs();assert(time-pending.since<30000,'makeup authority placement/checkpoint timed out')
+  if pending.prepare then
+   if not F.atPlacement(player,pending.placement)then return end
+   placement=pending.placement;state=F.prepare(player,pending.case,previous,placement);sequence=0;raw('PREPARED',state.ids)
+   sendServerCommand(player,'MakeupTest','Prepared',state.ids);pending=nil;return
+  end
   local value=F.snapshot(state)
   if not pending.snapshot or not F.same(value,pending.snapshot)then pending.snapshot=value;pending.quiet=time;return end
   if time-pending.quiet<500 then return end

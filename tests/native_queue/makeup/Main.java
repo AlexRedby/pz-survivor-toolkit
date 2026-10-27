@@ -8,6 +8,7 @@ import java.util.HexFormat;
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import zombie.core.skinnedmodel.advancedanimation.AnimatedModel;
 import zombie.ui.UI3DModel;
+import zombie.network.GameClient;
 
 /** Test-only observation. No constructors, rendering, actor writes or debug-mode reflection. */
 public final class Main {
@@ -41,6 +42,12 @@ public final class Main {
         return NATIVE_SUPPORTED && MODEL != null;
     }
 
+    /** Mirrors the native clothing packet's connection gate without changing it. */
+    @LuaMethod(name="makeupClientReady", global=true)
+    public static boolean clientReady() {
+        return !GameClient.client || GameClient.connection != null && GameClient.connection.isReady();
+    }
+
     @LuaMethod(name="makeupAvatarRendered", global=true)
     public static boolean rendered(UI3DModel ui) {
         if (!supported() || ui == null || ui.getClass() != UI3DModel.class) return false;
@@ -61,6 +68,10 @@ public final class Main {
         LuaMethod annotation = Main.class.getMethod("rendered", UI3DModel.class).getAnnotation(LuaMethod.class);
         if (annotation == null || !annotation.global() || !annotation.name().equals("makeupAvatarRendered"))
             throw new AssertionError("test-only capture Lua method missing");
+        // Inspect registration only: do not initialize or query GameClient outside a game.
+        LuaMethod ready = Main.class.getMethod("clientReady").getAnnotation(LuaMethod.class);
+        if (ready == null || !ready.global() || !ready.name().equals("makeupClientReady"))
+            throw new AssertionError("test-only connection-readiness Lua method missing");
         System.out.println("MAKEUP_AVATAR_CAPTURE_CHECKS_PASS (native class hashes/field and nil; no GL)");
     }
 

@@ -4,11 +4,12 @@ if not isServer() or isClient() then return end
 require 'TimedActions/ISApplyMakeUp'
 require 'Definitions/MakeUpDefinitions'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
+local Access=require 'PZSurvivorToolkit/ItemAccess'
 local matches,closure=Proof.matches,Proof.closure
 local owner,locations=ISApplyMakeUp,ItemBodyLocation
 local globals={}
 for _,name in ipairs({'isServer','isClient','instanceof','getClassSimpleName','getScriptManager','instanceItem',
- 'sendAddItemToContainer','sendRemoveItemFromContainer','sendClothing','sendItemStats'})do
+ 'sendAddItemToContainer','sendRemoveItemFromContainer','sendClothing','sendItemStats','getCell','getVehicleById'})do
  globals[name]=_G[name]
  if type(globals[name])~='function'then return end
 end
@@ -20,6 +21,17 @@ for _,callback in pairs(globals)do if not invoker(callback)then return end end
 if type(owner)~='table'or not locations or type(matches)~='function'or type(closure)~='function'
  or not matches('media/lua/shared/TimedActions/ISApplyMakeUp.lua',3487330035,nil,true)
  or not matches('media/lua/shared/Definitions/MakeUpDefinitions.lua',2881080941,nil,true)then return end
+-- Reuse the shared exact-resolution/access boundary rather than a second world
+-- or bag permission implementation. Refuse changed entry points before calling it.
+if type(Access)~='table'or getmetatable(Access)then return end
+local accessMethods={}
+for _,name in ipairs({'locate','resolve','integer','validLocator','sameLocation','admit'})do
+ local callback=Access[name]
+ if type(callback)~='function'or not closure(callback,'ItemAccess.lua')then return end
+ accessMethods[name]=callback
+end
+local safehouse,allowLoot=SafeHouse,SafeHouse and SafeHouse.isSafehouseAllowLoot
+if allowLoot and not invoker(allowLoot)then return end
 local methods,seen={},{}
 for name,callback in pairs(owner)do
  if type(callback)=='function'and name~='derive'then
@@ -43,6 +55,10 @@ local function live(action)
   or(owner.__index~=nil and owner.__index~=owner)or type(action)~='table'or getmetatable(action)~=owner
   or action.Type~=kind then return false end
  for name,callback in pairs(globals)do if _G[name]~=callback or not invoker(callback)then return false end end
+ if getmetatable(Access)or SafeHouse~=safehouse or(safehouse and safehouse.isSafehouseAllowLoot~=allowLoot)then return false end
+ for name,callback in pairs(accessMethods)do
+  if Access[name]~=callback or not closure(callback,'ItemAccess.lua')then return false end
+ end
  if locations.MAKE_UP_FULL_FACE~=slots[1]or locations.MAKE_UP_EYES~=slots[2]
   or locations.MAKE_UP_EYES_SHADOW~=slots[3]or locations.MAKE_UP_LIPS~=slots[4]then return false end
  for name,callback in pairs(methods)do
@@ -56,21 +72,46 @@ local function live(action)
  return not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc and not action.onFailFunc
   and not action.additionalTest and not action.retriggerLastAction
 end
+-- Check native direct membership and bag backrefs before recursive resolution.
+-- This also bounds malformed/cyclic ancestry while preserving root duplicate guards.
+local function exactChain(item)
+ local member,container=item,item:getContainer()
+ local seen={}
+ for depth=1,32 do
+  if not container or seen[container]or not globals.instanceof(container,'ItemContainer')then return false end
+  seen[container]=true
+  local id=member:getID()
+  if not accessMethods.integer(id,2147483647)or container:getItemById(id)~=member then return false end
+  local refs,ids=0,0
+  local values=container:getItems()
+  for i=0,values:size()-1 do
+   local value=values:get(i)
+   if value==member then refs=refs+1 end
+   if value:getID()==id then ids=ids+1 end
+  end
+  if refs~=1 or ids~=1 then return false end
+  local holder=container:getContainingItem()
+  if not holder then return true end
+  if not globals.instanceof(holder,'InventoryContainer')or not accessMethods.integer(holder:getID(),2147483647)
+   or holder:getInventory()~=container then return false end
+  local parent=holder:getContainer()
+  if not parent then
+   local world=holder:getWorldItem()
+   return world~=nil and world:getItem()==holder
+  end
+  member,container=holder,parent
+ end
+ return false
+end
 local function eligible(action)
  if not live(action)or not globals.instanceof(action.character,'IsoPlayer')
   or not globals.instanceof(action.item,'InventoryItem')then return false end
  local actor,kit=action.character,action.item
  local root=actor:getInventory()
  if not globals.instanceof(root,'ItemContainer')or root:getParent()~=actor or root:getContainingItem()~=nil
-  or kit:getContainer()~=root or root:getItemById(kit:getID())~=kit then return false end
- local refs,ids=0,0
- local values=root:getItems()
- for i=0,values:size()-1 do
-  local value=values:get(i)
-  if value==kit then refs=refs+1 end
-  if value:getID()==kit:getID()then ids=ids+1 end
- end
- if refs~=1 or ids~=1 then return false end
+  or not exactChain(kit)then return false end
+ local locator=accessMethods.locate(kit,actor)
+ if not locator or accessMethods.admit(actor,locator)~=kit then return false end
  if type(MakeUpDefinitions)~='table'or getmetatable(MakeUpDefinitions)
   or type(MakeUpDefinitions.makeup)~='table'or getmetatable(MakeUpDefinitions.makeup)then return false end
  for _,definition in ipairs(MakeUpDefinitions.makeup)do

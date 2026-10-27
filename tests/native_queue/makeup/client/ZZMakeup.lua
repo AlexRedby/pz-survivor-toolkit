@@ -8,7 +8,7 @@ local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
 local state,ids,previous,ui,front,tail,body,submitted,second,beforeTail,edit,verified,pending,authority
 local checkpoints,sequence,outcomes,renderWitness,renderLabel,renderNext,bodyQuiet,finalQuiet
-local bodyRecord
+local bodyRecord,applyQueues,transferStarts,submitting,placement
 local previewShotFrames,previewShotSince,previewShotTaken=0,nil,false
 local uiMethods,bodyMethods={},{}
 local observerFailure
@@ -40,7 +40,9 @@ end
 local function command(name,args)
  args=args or{};args.case=case()
  if isClient()then sendClientCommand('MakeupTest',name,args);return end
- if name=='Prepare'then state=F.prepare(getPlayer(),case(),previous);ids=state.ids;raw('PREPARED',ids)
+ if name=='Prepare'then
+  if config.options and config.options.makeup_supplies==true then assert(F.same(args.placement,placement)and F.atPlacement(getPlayer(),placement),'SP makeup supply placement is not settled')end
+  state=F.prepare(getPlayer(),case(),previous,args.placement);ids=state.ids;raw('PREPARED',ids)
  elseif name=='Snapshot'then
   authority={case=case(),label=args.label,sequence=args.sequence,at=now(),snapshot=snapshot()};raw('SNAPSHOT',authority)
  elseif name=='Finish'then verified={case=case(),sequence=sequence,snapshot=snapshot()};raw('VERIFIED',verified)end
@@ -78,7 +80,7 @@ local function rendered(label,nextPhase)
 end
 local function open()
  assert(not ISMakeUpUI.windows[state.player:getPlayerNum()+1],'previous native makeup window remains')
- ISInventoryPaneContextMenu.onMakeUp(assert(state.player:getInventory():getItemById(ids.items.kit)),state.player)
+ ISInventoryPaneContextMenu.onMakeUp(assert(F.kit(state)),state.player)
  ui=assert(ISMakeUpUI.windows[state.player:getPlayerNum()+1],'native inventory producer made no real makeup UI')
  assert(ui.avatarPanel and ui.avatarPanel.javaObject and getClassSimpleName(ui.avatarPanel.javaObject)=='UI3DModel','native avatar renderer unavailable')
  submitted=choose(ids.target);rendered('preview','after-preview')
@@ -86,22 +88,31 @@ end
 local function addTail()
  assert(not tail,'independent tail duplicated');tail=ISReadABook:new(state.player,state.player:getInventory():getItemById(ids.items.tail));ISTimedActionQueue.add(tail)
 end
+local function queueSnapshot()
+ local types={};for _,action in ipairs(queue().queue)do types[#types+1]=action.Type end
+ return {types=types,hasTimedActions=state.player:hasTimedActions(),nativeActions=state.player:getCharacterActions():size()}
+end
 local function apply()
- if isClient()then
+ if ids.supply then
+  applyQueues={before=queueSnapshot()}
+  assert(empty()and applyQueues.before.nativeActions==0,'supply native application did not start with empty queue')
+ end
+ if isClient()and(not ids.supply or F.cancel(case()))then
   front=ISReadABook:new(state.player,state.player:getInventory():getItemById(ids.items.front));ISTimedActionQueue.add(front)
  end
- ui:onApplyMakeUp()
+ if isClient()then bodyRecord={duration=1,starts=0,finishes={},nativeRef=false}end
+ submitting=true;ui:onApplyMakeUp();submitting=false
+ if ids.supply then applyQueues.after=queueSnapshot();raw('APPLY_QUEUES',{case=case(),evidence=applyQueues})end
  if isClient()then
   for _,action in ipairs(queue().queue)do
-   if action.Type=='ISApplyMakeUp'then assert(not body,'duplicate native makeup action');body=action end
+   if action.Type=='ISApplyMakeUp'then assert(not body or body==action,'duplicate native makeup action');body=action end
   end
   assert(body and body.maxTime==1 and body.item:getID()==ids.items.kit and body.type==ids.target,'native makeup constructor/duration changed')
-  bodyRecord={duration=body.maxTime,starts=0,finishes={},nativeRef=false}
   local contract,adapter=T.ActionQueuePolicy.inspect(body)
-  assert(contract and adapter=='native.ISApplyMakeUp'and contract.cancelWaiting==(not native),'pending makeup producer receipt unavailable')
+  assert(contract and adapter=='native.ISApplyMakeUp'and contract.cancelWaiting==(not native and body.action==nil),'native makeup producer receipt/allocation differs')
   addTail()
   if case()=='apply-while-preview'then second=choose(ids.alternate);rendered('overlap-preview','wait-body')
-  else close();phase=case()=='cancel-waiting'and'wait-front'or'wait-body'end
+  else close();phase=F.cancel(case())and'wait-front'or'wait-body'end
  else
   for _,action in ipairs(queue().queue)do assert(action.Type~='ISApplyMakeUp','SP immediate UI emitted timed makeup')end
   close();checkpoint('after-body','tail')
@@ -114,7 +125,7 @@ local function completed()
 end
 local function afterBody()
  if not empty()and queue():indexOf(body)~=-1 then bodyQuiet=nil;return end
- local cancelled=case()=='cancel-waiting'and not native
+ local cancelled=F.cancel(case())and not native
  if not cancelled and (not completed()or snapshot().kit.uses~=ids.kitUses-1)then return end
  bodyQuiet=bodyQuiet or now();if now()-bodyQuiet<750 then return end
  checkpoint('after-body',case()=='apply-while-preview'and'close-overlap'or'final-drain')
@@ -143,7 +154,7 @@ Events.OnPostUIDraw.Add(function()
   previewShotSince=previewShotSince or now();previewShotFrames=previewShotFrames+1
   local stableMs=now()-previewShotSince
   if previewShotFrames<3 or stableMs<500 then return end
-  if case()=='preview-close'and not previewShotTaken then
+  if case()==config.cases[1]and not previewShotTaken then
    local filename='makeup-preview-'..config.kind..'-'..config.mode..'.png'
    getCore():TakeFullScreenshot(filename);previewShotTaken=true
    raw('SCREENSHOT',{case=case(),file=filename,renderFrames=previewShotFrames,renderMs=stableMs,fadeClear=true,nativeRendered=true})
@@ -179,6 +190,10 @@ Events.OnTick.Add(function()
    for _,name in ipairs({'new','isValid','start','update','stop','perform','complete','getDuration'})do bodyMethods[name]=ISApplyMakeUp[name]end
    assert(T.ActionQueueLifecycle.registerObserver('fixture.makeup',{
     started=observe(function(action)
+     if submitting and ids.supply and action.Type=='ISApplyMakeUp'then
+      assert(not body and action.item==F.kit(state)and action.type==ids.target,'unexpected native supply body began');body=action
+     end
+     if ids and ids.supply and action.Type=='ISInventoryTransferAction'then transferStarts=transferStarts+1 end
      if action==body then bodyRecord.starts=bodyRecord.starts+1;assert(bodyRecord.starts==1,'native makeup started twice')end
      if action==tail then assert(not beforeTail,'tail began twice');beforeTail={at=now(),snapshot=snapshot()};raw('BEFORE_TAIL',{case=case(),evidence=beforeTail})end
     end),
@@ -195,8 +210,20 @@ Events.OnTick.Add(function()
   assert(now()-since<180000,'makeup timeout '..tostring(case())..' phase='..phase)
   intact()
   if phase=='prepare'then
+   if config.options and config.options.makeup_supplies==true and index==1 then
+    assert(type(makeupClientReady)=='function','test-only native clothing connection readiness probe unavailable')
+    if not makeupClientReady()then return end
+   end
    if not empty()then return end
-   checkpoints,sequence,outcomes={},0,{};phase='prepared';command('Prepare')
+   if config.options and config.options.makeup_supplies==true then
+    if not placement then
+     local square=require('QueueEnergyPlacement')(player)
+     placement={x=square:getX(),y=square:getY(),z=square:getZ()};return
+    end
+    if index==1 and not F.atPlacement(player,placement)then return end
+    assert(F.atPlacement(player,placement),'makeup supply actor left the settled placement tile')
+   end
+   checkpoints,sequence,outcomes,transferStarts={},0,{},0;phase='prepared';command('Prepare',{placement=placement})
   elseif phase=='prepared'and ids then
    if not state then state=F.resolve(player,ids);if not state then return end end
    if player:tooDarkToRead()then return end
@@ -236,10 +263,10 @@ Events.OnTick.Add(function()
    local final=snapshot();local output=F.output(verified.snapshot,ids)
    emit({event='case',id=case(),status='passed',ids=ids,checkpoints=checkpoints,receipt=verified,clientFinal=final,
     submitted=submitted,second=second or false,output=output,body=bodyRecord or false,outcomes=outcomes,
-    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true})
+    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true,applyQueues=applyQueues,supplyTransferStarts=ids.supply and transferStarts or nil})
    previous=ids;index=index+1
    state,ids,ui,front,tail,body,submitted,second,beforeTail,edit,verified,pending,authority=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord=nil,nil,nil,nil,nil,nil;since=now();phase='prepare'
+   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord,applyQueues=nil,nil,nil,nil,nil,nil,nil;since=now();phase='prepare'
    if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
   end
  end)

@@ -10,7 +10,126 @@ function F.same(a,b)
  for k in pairs(b)do if a[k]==nil then return false end end
  return true
 end
-function F.applies(case)return case:sub(1,6)=='apply-'or case=='cancel-waiting'end
+F.supplySP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag'}
+F.supplyMP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag','cancel-nested-bag','cancel-world-container'}
+function F.cancel(case)return case=='cancel-waiting'or case:sub(1,7)=='cancel-'end
+function F.applies(case)return case:sub(1,6)=='apply-'or F.cancel(case)end
+function F.supplyCase(case)
+ for _,value in ipairs(F.supplyMP)do if case==value then return true end end;return false
+end
+function F.placement(player)
+ local square=player:getCurrentSquare()
+ return {tile={x=math.floor(player:getX()),y=math.floor(player:getY()),z=math.floor(player:getZ())},
+  square=square and {x=square:getX(),y=square:getY(),z=square:getZ()}or false}
+end
+function F.validPlacement(tile)
+ if type(tile)~='table'then return false end
+ local count=0;for key,value in pairs(tile)do
+  if (key~='x'and key~='y'and key~='z')or type(value)~='number'or value~=math.floor(value)then return false end;count=count+1
+ end;return count==3
+end
+function F.atPlacement(player,tile)
+ if not F.validPlacement(tile)then return false end
+ local actual=F.placement(player);return F.same(actual.tile,tile)and F.same(actual.square,tile)
+end
+local function members(container)
+ local out={};local items=container:getItems()
+ for i=0,items:size()-1 do local item=items:get(i);out[#out+1]={id=item:getID(),kind=item:getFullType()}end
+ table.sort(out,function(a,b)return a.id<b.id end);return out
+end
+local function direct(container,id)
+ local found
+ for i=0,container:getItems():size()-1 do local item=container:getItems():get(i)
+  if item:getID()==id then assert(not found,'duplicate supply member identity');found=item end
+ end;return found
+end
+local function worldSource(spec)
+ local square=getCell():getGridSquare(spec.x,spec.y,spec.z);if not square then return end
+ if spec.kind=='world-bag'then
+  if spec.index<0 or spec.index>=square:getWorldObjects():size()then return end
+  local obj=square:getWorldObjects():get(spec.index);local bag=obj:getItem()
+  if not bag or bag:getID()~=spec.id or bag:getFullType()~=spec.type or bag:getWorldItem()~=obj
+   or obj:getSquare()~=square or bag:getModData().MakeupSupplyOwner~=spec.owner then return end
+  return bag:getItemContainer(),obj,bag
+ end
+ if spec.index<0 or spec.index>=square:getObjects():size()then return end
+ local obj=square:getObjects():get(spec.index)
+ if not instanceof(obj,'IsoThumpable')or obj:getSquare()~=square or not obj:getSprite()
+  or obj:getSprite():getName()~=spec.sprite or obj:getModData().MakeupSupplyOwner~=spec.owner then return end
+ local c=obj:getContainerByIndex(spec.containerIndex)
+ if not c or c:getParent()~=obj or c:getSourceGrid()~=square or c:getType()~=spec.type then return end
+ return c,obj
+end
+function F.supplyState(player,spec)
+ local container=player:getInventory();local rows={};local world,access
+ if spec.world then
+  local obj,bag;container,obj,bag=worldSource(spec.world);if not container then return end
+  access={blocked=assert(player:getCurrentSquare()):isBlockedTo(obj:getSquare())}
+  world={kind=spec.world.kind,x=obj:getSquare():getX(),y=obj:getSquare():getY(),z=obj:getSquare():getZ(),
+   index=spec.world.kind=='world-bag'and obj:getSquare():getWorldObjects():indexOf(obj)or obj:getObjectIndex(),
+   owner=(bag or obj):getModData().MakeupSupplyOwner,type=bag and bag:getFullType()or container:getType()}
+  if bag then world.id=bag:getID()else world.sprite=obj:getSprite():getName();world.containerIndex=obj:getContainerIndex(container)end
+ end
+ for _,expected in ipairs(spec.ancestors)do
+  local bag=direct(container,expected.id)
+  if not bag or not instanceof(bag,'InventoryContainer')or bag:getFullType()~=expected.kind or bag:getContainer()~=container then return end
+  container=bag:getItemContainer()
+  rows[#rows+1]={id=bag:getID(),kind=bag:getFullType(),parent=expected.parent,items=members(container)}
+ end
+ -- World roots also publish their direct contents, independently on both roles.
+ local source={kind=spec.kind,world=world or false,ancestors=rows,items=members(container),access=access or false}
+ return container,source
+end
+function F.kit(s)
+ local source
+ if s.ids.supply then source=F.supplyState(s.player,s.ids.supply)else source=s.player:getInventory()end
+ return source and direct(source,s.ids.items.kit),source
+end
+local function adjacent(player)
+ local origin=assert(player:getCurrentSquare())
+ for _,d in ipairs({{1,0},{-1,0},{0,1},{0,-1}})do
+  local square=getCell():getGridSquare(origin:getX()+d[1],origin:getY()+d[2],origin:getZ())
+  if square and square:canStand()and square:isFree(false)and not origin:isBlockedTo(square)then return square end
+ end;error('no free adjacent makeup supply tile')
+end
+local function backpackSlot(bag)
+ local slot=ItemBodyLocation.BACK
+ assert(slot and bag:canBeEquipped()==slot,'native schoolbag Back equipment slot changed')
+ return slot
+end
+local function supply(player,case)
+ local kind=assert(case:match('^[^-]+%-(.+)$'));local spec={kind=kind,world=false,ancestors={}};local root=player:getInventory();local c=root;local object,worldBag
+ if kind=='world-container'then
+  local square=adjacent(player);object=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
+  object:setBlockAllTheSquare(true);object:setIsContainer(true);c=assert(object:getContainer());c:setType('crate');c:setCapacity(100);c:setExplored(true)
+  square:AddSpecialObject(object);object:getModData().MakeupSupplyOwner=case..':'..tostring(getTimestampMs())
+  spec.world={kind=kind,x=square:getX(),y=square:getY(),z=square:getZ(),index=object:getObjectIndex(),
+   containerIndex=object:getContainerIndex(c),sprite='carpentry_01_16',type=c:getType(),owner=object:getModData().MakeupSupplyOwner}
+ elseif kind=='world-bag'then
+  worldBag=assert(instanceItem('Base.Bag_Schoolbag'));c=worldBag:getItemContainer();c:setExplored(true)
+  worldBag:getModData().MakeupSupplyOwner=case..':'..tostring(getTimestampMs())
+ elseif kind=='worn-bag'or kind=='nested-bag'then
+  local bag=assert(root:AddItem('Base.Bag_Schoolbag'));c=bag:getItemContainer();c:setExplored(true)
+  spec.ancestors[1]={id=bag:getID(),kind=bag:getFullType(),parent='root'}
+  player:setWornItem(backpackSlot(bag),bag)
+  if kind=='nested-bag'then c:AddItem('Base.Pencil');local inner=assert(c:AddItem('Base.Bag_Schoolbag'));c=inner:getItemContainer();c:setExplored(true)
+   spec.ancestors[2]={id=inner:getID(),kind=inner:getFullType(),parent=bag:getID()}end
+ else error('unknown makeup supply topology '..tostring(kind))end
+ return c,spec,object,worldBag
+end
+local function cleanupSupply(player,ids)
+ if not ids or not ids.supply then return end
+ local spec=ids.supply
+ assert(F.supplyState(player,spec),'previous exact supply source disappeared')
+ if spec.world then
+  local _,object,bag=worldSource(spec.world);local square=assert(object:getSquare());square:transmitRemoveItemFromSquare(object)
+  if bag then square:removeWorldObject(object);bag:setWorldItem(nil)end
+ else
+  local bag=assert(direct(player:getInventory(),spec.ancestors[1].id));player:removeWornItem(bag,false)
+  if isServer()then sendRemoveItemFromContainer(player:getInventory(),bag);sendClothing(player,backpackSlot(bag),nil)end
+  player:getInventory():Remove(bag)
+ end
+end
 function F.definition(kind)
  for _,v in ipairs(MakeUpDefinitions.makeup)do if v.item==kind then return v end end
  error('native makeup definition missing '..tostring(kind))
@@ -27,18 +146,23 @@ function F.snapshot(s)
    sameReference=found==item,container=item:getContainer()==root and'root'or false}
  end
  table.sort(worn,function(a,b)return a.slot<b.slot end)
- local kit=assert(root:getItemById(s.ids.items.kit),'exact native makeup kit disappeared')
- assert(kit:getFullType()==s.ids.types.kit and kit:getContainer()==root,'makeup kit identity/topology changed')
- return {case=s.ids.case,actor=p:getOnlineID(),root=items,worn=worn,
-  kit={id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=true},
+ local kit,source=F.kit(s);assert(kit,'exact native makeup kit disappeared')
+ assert(kit:getFullType()==s.ids.types.kit and kit:getContainer()==source,'makeup kit identity/topology changed')
+ local supplyState
+ if s.ids.supply then local ignored;ignored,supplyState=F.supplyState(p,s.ids.supply);assert(ignored==source,'supply identity changed')end
+ local value= {case=s.ids.case,actor=p:getOnlineID(),root=items,worn=worn,
+  kit={id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=source==root},
   frontPages=p:getAlreadyReadPages(s.ids.types.front),tailPages=p:getAlreadyReadPages(s.ids.types.tail)}
+ if supplyState then value.supply=supplyState;value.placement=F.placement(p)end;return value
 end
 function F.resolve(player,ids)
  if isClient()and player:getOnlineID()~=ids.actor then return end
+ if ids.supply and not F.atPlacement(player,ids.placement)then return end
  local root=player:getInventory()
  for name,wanted in pairs(ids.items)do
-  local item=root:getItemById(wanted)
-  if not item or item:getFullType()~=ids.types[name]or item:getContainer()~=root then return end
+  local item,source
+  if name=='kit'and ids.supply then item,source=F.kit({player=player,ids=ids})else item,source=root:getItemById(wanted),root end
+  if not item or item:getFullType()~=ids.types[name]or item:getContainer()~=source then return end
  end
  local s={player=player,ids=ids}
  for _,name in ipairs({'front','tail'})do
@@ -47,16 +171,17 @@ function F.resolve(player,ids)
  end
  player:setPerkLevelDebug(Perks.Woodwork,0);player:setPerkLevelDebug(Perks.Doctor,0)
  local actual=F.snapshot(s);local expected=ids.baseline
- if not F.same(actual.root,expected.root)or not F.same(actual.kit,expected.kit)or #actual.worn~=#expected.worn then return end
+ if not F.same(actual.root,expected.root)or not F.same(actual.kit,expected.kit)or #actual.worn~=#expected.worn or not F.same(actual.supply,expected.supply)then return end
  for i,row in ipairs(actual.worn)do
   local before=expected.worn[i]
   if row.id~=before.id or row.kind~=before.kind or row.slot~=before.slot or row.root~=before.root then return end
  end
  return s
 end
-function F.prepare(player,case,previous)
+function F.prepare(player,case,previous,placement)
  assert(not isClient(),'makeup setup requires authority')
- local root=player:getInventory()
+ if F.supplyCase(case)then assert(F.atPlacement(player,placement),'makeup supply actor has not settled on exact placement tile')end
+ local root=player:getInventory();cleanupSupply(player,previous)
  for _,slot in ipairs(slots)do local item=player:getWornItem(slot);if item then player:removeWornItem(item,false)end end
  local remove={}
  for i=0,root:getItems():size()-1 do
@@ -66,16 +191,23 @@ function F.prepare(player,case,previous)
   if owned then remove[#remove+1]=item end
  end
  for _,item in ipairs(remove)do if isServer()then sendRemoveItemFromContainer(root,item)end;root:Remove(item)end
- player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false);require('QueueEnergyPlacement')(player)
+ player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
+ if not F.supplyCase(case)then require('QueueEnergyPlacement')(player)end
  assert(not player:isTimedActionInstant()and not getDebug(),'ordinary non-debug makeup timing required')
  local ids={case=case,actor=player:getOnlineID(),items={},types={},target='Base.MakeUp_Crow',alternate='Base.MakeUp_RedStripes2',
   different='Base.MakeUp_EyesShadowWhite',oldType='Base.MakeUp_RedStripes1',slot=tostring(ItemBodyLocation.MAKE_UP_EYES),
   otherSlot=tostring(ItemBodyLocation.MAKE_UP_EYES_SHADOW),producer='ISMakeUpUI.onApplyMakeUp',duration=1}
- local function seed(name,kind)
-  local item=assert(root:AddItem(kind),'native fixture item absent '..kind);ids.items[name]=item:getID();ids.types[name]=kind;return item
+ local function seed(name,kind,destination)
+  local item=assert((destination or root):AddItem(kind),'native fixture item absent '..kind);ids.items[name]=item:getID();ids.types[name]=kind;return item
  end
  -- Native Eyes supports both Eyes and EyesShadow; no fabricated All kit.
- local kit=seed('kit','Base.MakeupEyeshadow')
+ local source,object,worldBag=root,nil,nil
+ if F.supplyCase(case)then
+  ids.placement={x=placement.x,y=placement.y,z=placement.z}
+  source,ids.supply,object,worldBag=supply(player,case)
+ end
+ local kit=seed('kit','Base.MakeupEyeshadow',source)
+ if ids.supply then assert(source:AddItem('Base.Pencil'),'native source sentinel missing')end
  assert(kit:getMakeUpType()=='Eyes'and kit:getMaxUses()==5,'native Eyes supply definition changed')
  kit:setCurrentUses(kit:getMaxUses());ids.kitUses=kit:getCurrentUses();ids.kitType=kit:getMakeUpType()
  for _,kind in ipairs({ids.target,ids.alternate,ids.different,ids.oldType})do
@@ -93,8 +225,17 @@ function F.prepare(player,case,previous)
  end
  if case~='apply-empty'then local old=seed('old',ids.oldType);player:setWornItem(ItemBodyLocation.MAKE_UP_EYES,old)end
  player:setPerkLevelDebug(Perks.Woodwork,0);player:setPerkLevelDebug(Perks.Doctor,0)
+ if worldBag then
+  local square=adjacent(player);square:AddWorldInventoryItem(worldBag,.5,.5,0,true);local world=assert(worldBag:getWorldItem())
+  ids.supply.world={kind='world-bag',x=square:getX(),y=square:getY(),z=square:getZ(),index=square:getWorldObjects():indexOf(world),
+   id=worldBag:getID(),type=worldBag:getFullType(),owner=worldBag:getModData().MakeupSupplyOwner}
+ end
  if isServer()then
-  for _,wanted in pairs(ids.items)do sendAddItemToContainer(root,assert(root:getItemById(wanted)))end
+  if object then object:transmitCompleteItemToClients();object:transmitModData()end
+  if ids.supply and not ids.supply.world then
+   local bag=assert(direct(root,ids.supply.ancestors[1].id));sendAddItemToContainer(root,bag);sendClothing(player,backpackSlot(bag),bag)
+  end
+  for name,wanted in pairs(ids.items)do if name~='kit'or source==root then sendAddItemToContainer(root,assert(root:getItemById(wanted)))end end
   for _,slot in ipairs(slots)do sendClothing(player,slot,player:getWornItem(slot))end
  end
  local s={player=player,ids=ids};ids.baseline=F.snapshot(s);return s

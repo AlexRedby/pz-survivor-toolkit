@@ -34,6 +34,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.310
+
+- Synchronize paid makeup results when the kit remains in an accessible worn or nested bag, nearby container or ground bag. Reuse exact shared item access with bounded ancestor membership checks, preserving native creation, consumption and unsupported callbacks.
+
 ### 0.1.309
 
 - Keep supported makeup previews on an isolated avatar instead of changing real clothing before Apply. Preserve SP instant application and native Host execution, prevent stale preview restoration, and allow cancellation only for owned unstarted Host actions.

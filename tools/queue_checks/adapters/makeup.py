@@ -11,6 +11,16 @@ from .tv_controls import MODS
 
 SP_CASES=['preview-close','preview-location','apply-empty','apply-replace']
 MP_CASES=SP_CASES+['cancel-waiting','apply-while-preview']
+SUPPLY_SP_CASES=['apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag']
+SUPPLY_MP_CASES=SUPPLY_SP_CASES+['cancel-nested-bag','cancel-world-container']
+
+
+def cancelling(case):return case.startswith('cancel-')
+
+
+def cases(selection):
+    supply=selection.get('options',{}).get('makeup_supplies') is True
+    return (SUPPLY_SP_CASES if selection.get('kind')=='sp' else SUPPLY_MP_CASES) if supply else (SP_CASES if selection.get('kind')=='sp' else MP_CASES)
 PREFIX='[MAKEUP_TEST] '
 TARGET='Base.MakeUp_Crow'
 OLD='Base.MakeUp_RedStripes1'
@@ -21,28 +31,31 @@ OTHER_SLOT='base:makeup_eyesshadow'
 
 
 def labels(case):
-    middle=['same-preview','location-cleared','different-preview','closed'] if case=='preview-location' else ['closed'] if case=='preview-close' else ['cancelled','after-body'] if case=='cancel-waiting' else ['overlap-preview','after-body','closed'] if case=='apply-while-preview' else ['after-body']
+    middle=['same-preview','location-cleared','different-preview','closed'] if case=='preview-location' else ['closed'] if case=='preview-close' else ['cancelled','after-body'] if cancelling(case) else ['overlap-preview','after-body','closed'] if case=='apply-while-preview' else ['after-body']
     return ['baseline','preview',*middle,'final']
 
 
 def definitions():
     checks={name:{case:dict(avatarVerified=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MP_CASES}
             for name in ('success-queued','server-authority')}
-    checks['cancel-waiting']={'cancel-waiting':dict(cancelled=True,unallocated=True,tailCompleted=True)}
+    checks['server-authority'].update({case:dict(avatarVerified=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in SUPPLY_MP_CASES})
+    checks['success-empty']={case:dict(avatarVerified=True,identityVerified=True,authoritative=True,tailCompleted=True,emptyQueueVerified=True) for case in SUPPLY_SP_CASES}
+    checks['cancel-waiting']={case:dict(cancelled=True,unallocated=True,tailCompleted=True) for case in ['cancel-waiting',*SUPPLY_MP_CASES[4:]]}
     return {'makeup':dict(status='ready',clients=1,default_mods=list(MODS),
         scenario_actions={'native-makeup-ui':dict(checks=checks,toolkit_only=['cancel-waiting'],
-            scope='Current full selected pack, fresh macOS SP/menu Host, one EN actor. Real native makeup window/combo/apply/close and avatar model; detached preview rendering and exact root/worn/supply identity checkpoints independently read on Host. SP immediate application; Host native duration-one body behind ordinary front reader, pending group deletion and a second preview spanning paid completion. Queue-disabled controls explicitly allow the source-bounded initial ready-gated preview send, exact unattached preview reference retention during location/close, displaced old root items and stale close restoration. Paid Host output must exist physically in root on both roles; the native sendAddItemToContainer(kit) defect is not waived. Programmatic native UI calls and bridge return witness; no physical input or screenshot pixel assertion implied.')},
-        cases=[dict(id=case,producer='native-makeup-ui',capability='effect',kinds=['sp','mp'] if case in SP_CASES else ['mp'],
-                    modes=['native','toolkit'],languages=['EN']) for case in MP_CASES])}
+            scope='Current full selected pack, fresh macOS SP/menu Host, one EN actor. Real native makeup window/combo/apply/close and avatar model; detached preview rendering and exact root/worn/supply identity checkpoints independently read on Host. SP immediate application; Host native duration-one body behind ordinary front reader in the preview bank; optional makeup_supplies bank covers worn/nested bags and adjacent native crate/world bag with empty application queues and front-reader pending group deletion and a second preview spanning paid completion. Queue-disabled controls explicitly allow the source-bounded initial ready-gated preview send, exact unattached preview reference retention during location/close, displaced old root items and stale close restoration. Paid Host output must exist physically in root on both roles; the native sendAddItemToContainer(kit) defect is not waived. Programmatic native UI calls and bridge return witness; no physical input or screenshot pixel assertion implied.')},
+        cases=[dict(id=case,producer='native-makeup-ui',capability='effect',kinds=['sp','mp'] if case in SP_CASES+SUPPLY_SP_CASES else ['mp'],
+                    modes=['native','toolkit'],languages=['EN']) for case in MP_CASES+SUPPLY_MP_CASES])}
 
 
 def validate(selection):
-    if (selection.get('kind') not in ('sp','mp') or selection.get('cases')!=(SP_CASES if selection.get('kind')=='sp' else MP_CASES)
+    if (selection.get('kind') not in ('sp','mp') or selection.get('cases')!=cases(selection)
+            or ('makeup_supplies' in selection.get('options',{}) and type(selection['options']['makeup_supplies']) is not bool)
             or selection.get('mode') not in ('native','toolkit') or selection.get('mods')!=MODS
             or selection.get('languages')!=['EN'] or type(selection.get('clients')) is not int or selection['clients']!=1
             or selection.get('options',{}).get('world_template')
             or selection['kind']=='mp' and selection.get('options',{}).get('mp_host') is not True):
-        raise ValueError('Makeup requires the canonical ordered SP4/Host6 cases, full selected EN pack, fresh one-client SP/menu Host and native/toolkit mode')
+        raise ValueError('Makeup requires the canonical ordered preview or optional supply SP4/Host6 cases, full selected EN pack, fresh one-client SP/menu Host and native/toolkit mode')
 
 
 def sources(project,selection):
@@ -85,7 +98,7 @@ def complete(selection,role,text):
 
 
 def snapshot(value,ids):
-    assert type(value) is dict and set(value)=={'case','actor','root','worn','kit','frontPages','tailPages'},'snapshot shape differs'
+    assert type(value) is dict and set(value)=={'case','actor','root','worn','kit','frontPages','tailPages'}|({'supply','placement'} if 'supply'in ids else set()),'snapshot shape differs'
     assert value['case']==ids['case'] and value['actor']==ids['actor'],'snapshot actor/case differs'
     root=value['root'];assert type(root) is list and root,'physical root identities absent'
     assert all(type(row) is dict and set(row)=={'id','kind'} and type(row['id']) is int and type(row['kind']) is str and row['kind'] for row in root)
@@ -99,12 +112,74 @@ def snapshot(value,ids):
                and (not row['sameReference'] or row['root'] and row['container']=='root') for row in worn),'worn/root identity differs'
     assert [row['slot'] for row in worn]==sorted({row['slot'] for row in worn}) and len({row['id'] for row in worn})==len(worn),'duplicate worn identity/slot'
     kit=value['kit'];assert type(kit) is dict and set(kit)=={'id','kind','uses','maxUses','root'}
-    assert kit['id']==ids['items']['kit'] and kit['kind']==ids['types']['kit'] and found.get(kit['id'])==kit['kind'] and kit['root'] is True
+    assert kit['id']==ids['items']['kit'] and kit['kind']==ids['types']['kit']
+    if 'supply'in ids:
+        assert kit['id'] not in found and kit['root'] is False,'supply kit moved to root'
+        tile=ids['placement']
+        assert type(tile) is dict and set(tile)=={'x','y','z'} and all(type(number) is int for number in tile.values()),'supply placement target absent/invalid'
+        assert value['placement']==dict(tile=tile,square=tile),'supply actor coordinates/current square did not settle on exact placement'
+        supply_snapshot(value,ids,found)
+    else:assert found.get(kit['id'])==kit['kind'] and kit['root'] is True
     assert type(kit['uses']) is int and 0<=kit['uses']<=kit['maxUses']==5
     for name in ('front','tail'):
         assert found.get(ids['items'][name])==ids['types'][name]
         assert type(value[name+'Pages']) is int and ids[name+'Initial']<=value[name+'Pages']<=ids[name+'Total']
     return found
+
+
+def supply_snapshot(value,ids,root):
+    spec=ids['supply'];source=value['supply']
+    assert type(spec) is dict and set(spec)=={'kind','world','ancestors'}
+    kind=ids['case'].split('-',1)[1]
+    assert spec['kind']==kind and kind in ('worn-bag','nested-bag','world-container','world-bag')
+    assert type(source) is dict and set(source)=={'kind','world','ancestors','items','access'} and source['kind']==kind
+    assert type(spec['ancestors']) is list and type(source['ancestors']) is list
+    expected_count=2 if kind=='nested-bag' else 1 if kind=='worn-bag' else 0
+    assert len(spec['ancestors'])==len(source['ancestors'])==expected_count
+    known=set(ids['items'].values());parent='root'
+    for expected,actual in zip(spec['ancestors'],source['ancestors']):
+        assert set(expected)=={'id','kind','parent'} and type(expected['id']) is int and expected['id'] not in known
+        assert expected['kind']=='Base.Bag_Schoolbag' and expected['parent']==parent
+        if parent!='root':assert expected['id'] not in root,'nested source ancestor duplicated in root'
+        assert type(actual) is dict and set(actual)=={'id','kind','parent','items'}
+        assert {key:actual[key] for key in expected}==expected,'supply ancestor identity differs'
+        known.add(expected['id']);parent=expected['id']
+    if expected_count:
+        outer=spec['ancestors'][0]
+        assert root.get(outer['id'])==outer['kind'],'outer bag left actor root'
+        assert any(row['id']==outer['id'] and row['kind']==outer['kind'] and row['slot']=='base:back' and row['root'] and row['sameReference'] for row in value['worn']),'outer source backpack no longer worn'
+        assert spec['world'] is False and source['world'] is False and source['access'] is False
+    else:
+        world=spec['world'];assert type(world) is dict and source['world']==world,'world source identity differs'
+        fields={'kind','x','y','z','index','owner','type'}|({'id'} if kind=='world-bag' else {'sprite','containerIndex'})
+        assert set(world)==fields and world['kind']==kind
+        assert all(type(world[key]) is int for key in ('x','y','z','index')) and world['index']>=0
+        assert type(world['owner']) is str and world['owner']
+        tile=ids['placement']
+        assert world['z']==tile['z'] and abs(world['x']-tile['x'])+abs(world['y']-tile['y'])==1,'world makeup source is not adjacent to settled actor'
+        assert source['access']==dict(blocked=False),'world makeup source is blocked by a wall'
+        if kind=='world-bag':assert type(world['id']) is int and world['id'] not in known and world['id'] not in root and world['type']=='Base.Bag_Schoolbag'
+        else:assert world['type']=='crate' and world['sprite']=='carpentry_01_16' and type(world['containerIndex']) is int and world['containerIndex']>=0
+    def members(rows):
+        assert type(rows) is list and all(type(row) is dict and set(row)=={'id','kind'} and type(row['id']) is int and type(row['kind']) is str and row['kind'] for row in rows)
+        assert [row['id'] for row in rows]==sorted({row['id'] for row in rows}),'duplicate/reordered source member'
+        return {row['id']:row['kind'] for row in rows}
+    direct=members(source['items'])
+    assert direct.get(ids['items']['kit'])==ids['types']['kit'],'exact supply member absent'
+    assert not any(item in root for item in direct),'source member duplicated in root'
+    seen=set(root)
+    containers=source['ancestors'] if source['ancestors'] else [dict(items=source['items'])]
+    for container in containers:
+        contents=members(container['items'])
+        assert not seen.intersection(contents),'supply source/ancestor member duplicated across containers'
+        seen.update(contents)
+    for i,actual in enumerate(source['ancestors']):
+        contents=members(actual['items'])
+        if i+1<len(spec['ancestors']):
+            child=spec['ancestors'][i+1]
+            assert contents.get(child['id'])==child['kind'] and ids['items']['kit'] not in contents,'nested parent/member differs'
+        else:assert contents==direct
+    assert source==ids['baseline']['supply'],'source/ancestor contents conservation differs'
 
 
 def worn_identity(value):return [{key:row[key] for key in ('id','kind','slot','root')} for row in value['worn']]
@@ -141,7 +216,8 @@ def native_control_worn(base,ids,case,label,role,points):
 
 
 def check_case(row,selection,prepared,receipt):
-    ids=row['ids'];case=row['id'];native=selection['mode']=='native';mp=selection['kind']=='mp'
+    ids=row['ids'];case=row['id'];supply=selection.get('options',{}).get('makeup_supplies') is True;native=selection['mode']=='native';mp=selection['kind']=='mp'
+    assert ('supply'in ids)==supply,'supply bank topology absent/unexpected'
     assert ids==prepared and row['receipt']==receipt and row['status']=='passed','authority publication or fixture status differs'
     assert ids['case']==case and ids['target']==TARGET and ids['oldType']==OLD and ids['alternate']==ALTERNATE and ids['different']==DIFFERENT
     assert ids['slot']==SLOT and ids['otherSlot']==OTHER_SLOT and ids['producer']=='ISMakeUpUI.onApplyMakeUp' and ids['duration']==1
@@ -156,14 +232,20 @@ def check_case(row,selection,prepared,receipt):
     assert [point['authority']['label'] for point in checkpoints]==labels(case)
     base=ids['baseline'];base_root=snapshot(base,ids)
     assert base['kit']['uses']==5 and base['frontPages']==ids['frontInitial'] and base['tailPages']==ids['tailInitial']
-    assert all(base_root.get(value)==ids['types'][name] for name,value in ids['items'].items())
+    assert all(base_root.get(value)==ids['types'][name] for name,value in ids['items'].items() if name!='kit'or not supply)
     assert not any(value['slot'] in (SLOT,OTHER_SLOT) for value in base['worn'] if value['id']!=ids['items'].get('old'))
     if 'old'in names:assert [v for v in worn_identity(base) if v['slot']==SLOT]==[dict(id=ids['items']['old'],kind=OLD,slot=SLOT,root=True)]
+    reserved=set(base_root)|set(ids['items'].values())
+    if supply:
+        source=base['supply'];reserved.update(value['id'] for value in source['items'])
+        for ancestor in source['ancestors']:
+            reserved.add(ancestor['id']);reserved.update(value['id'] for value in ancestor['items'])
+        if source['world'] and source['world']['kind']=='world-bag':reserved.add(source['world']['id'])
     submitted=row['submitted'];assert type(submitted) is dict and set(submitted)=={'id','kind','slot','root','previous'}
-    assert type(submitted['id']) is int and submitted['id'] not in base_root and submitted['kind']==TARGET and submitted['slot']==SLOT and submitted['root'] is False
+    assert type(submitted['id']) is int and submitted['id'] not in reserved and submitted['kind']==TARGET and submitted['slot']==SLOT and submitted['root'] is False
     assert submitted['previous']==ids['items'].get('old',False)
-    output=row['output'];paid=case.startswith('apply-') or case=='cancel-waiting' and native
-    assert (type(output) is int and output not in base_root) if paid else output is False
+    output=row['output'];paid=case.startswith('apply-') or cancelling(case) and native
+    assert (type(output) is int and output not in reserved) if paid else output is False
     if paid and not mp:assert output==submitted['id'],'SP immediate result changed native preview identity'
     if paid and mp:assert output!=submitted['id'],'Host result reused client preview identity'
     second=row['second'];assert (type(second) is dict and second['kind']==ALTERNATE and second['slot']==SLOT
@@ -187,7 +269,7 @@ def check_case(row,selection,prepared,receipt):
         selected=client['preview'];render=client['render']
         active=label in ('preview','same-preview','different-preview','overlap-preview')
         if active:
-            assert type(selected) is dict and set(selected)==set(submitted) and selected['root'] is False and type(selected['id']) is int and selected['id'] not in base_root
+            assert type(selected) is dict and set(selected)==set(submitted) and selected['root'] is False and type(selected['id']) is int and selected['id'] not in reserved
             expected_kind=ALTERNATE if label in ('same-preview','overlap-preview') else DIFFERENT if label=='different-preview' else TARGET
             expected_slot=OTHER_SLOT if label=='different-preview' else SLOT
             assert selected['kind']==expected_kind and selected['slot']==expected_slot
@@ -204,7 +286,11 @@ def check_case(row,selection,prepared,receipt):
             assert value['kit']['uses']==5-int(paid and late),'supply cost differs at '+label+'/'+role
             if label=='baseline':assert worn_identity(value)==worn_identity(base) and value['frontPages']==ids['frontInitial'] and value['tailPages']==ids['tailInitial']
             expected_worn=worn_identity(base)
-            if late and paid:expected_worn=desired_worn(base,ids,output,TARGET,SLOT,True)
+            if late and paid:
+                expected_worn=desired_worn(base,ids,output,TARGET,SLOT,True)
+                if not(native and case=='apply-while-preview'and label in ('closed','final')):
+                    assert any(row['id']==output and row['kind']==TARGET and row['slot']==SLOT and row['root']
+                               and row['sameReference'] and row['container']=='root' for row in value['worn']),'paid output is not exact physical worn reference'
             if native and active:
                 expected_worn=desired_worn(base,ids,selected['id'],selected['kind'],selected['slot'])
                 if label=='different-preview':expected_worn=desired_worn(base,ids,selected['id'],selected['kind'],OTHER_SLOT)
@@ -219,9 +305,9 @@ def check_case(row,selection,prepared,receipt):
                 assert len(matched)==1,'worn preview/paid result identity differs at '+label+'/'+role
                 control_baseline.append(dict(label=label,role=role,reason=matched[0]))
             if label=='final':
-                assert value['frontPages']==(ids['frontTotal'] if mp and (paid or case=='cancel-waiting') else ids['frontInitial'])
+                assert value['frontPages']==(ids['frontTotal'] if mp and (cancelling(case) or paid and not supply) else ids['frontInitial'])
                 assert value['tailPages']==ids['tailTotal'],'independent tail pages differ'
-            elif not(mp and case in ('apply-empty','apply-replace','cancel-waiting','apply-while-preview') and label not in ('baseline','preview')):
+            elif not(mp and (cancelling(case) or not supply and case in ('apply-empty','apply-replace','apply-while-preview')) and label not in ('baseline','preview')):
                 assert value['frontPages']==ids['frontInitial']
             if not late:assert value['tailPages']==ids['tailInitial'],'independent tail advanced before body/checkpoint'
         if label=='preview':assert selected==submitted and client['bodyUnallocated'] is True
@@ -229,8 +315,18 @@ def check_case(row,selection,prepared,receipt):
         if label in ('cancelled','baseline','preview','same-preview','location-cleared','different-preview'):assert client['bodyUnallocated'] is True
     assert row['clientFinal']==by_label['final']['client']['snapshot'] and receipt['snapshot']==by_label['final']['authority']['snapshot']
     assert receipt['case']==case and receipt['sequence']==len(checkpoints)
+    if supply:
+        evidence=row['applyQueues']
+        assert type(evidence) is dict and set(evidence)=={'before','after'}
+        assert evidence['before']==dict(types=[],hasTimedActions=False,nativeActions=0),'supply application did not start with empty queue'
+        after=evidence['after']
+        assert type(after) is dict and set(after)=={'types','hasTimedActions','nativeActions'}
+        expected_types=(['ISReadABook'] if cancelling(case) else [])+['ISApplyMakeUp'] if mp else []
+        assert after['types']==expected_types,'native supply producer inserted/reordered actions'
+        assert after['hasTimedActions'] is mp and type(after['nativeActions']) is int and after['nativeActions']==int(mp)
+        assert row['supplyTransferStarts']==0 and type(row['supplyTransferStarts']) is int,'supply fixture performed a transfer'
     body=row['body'];outcomes=row['outcomes']
-    if mp and (case.startswith('apply-') or case=='cancel-waiting'):
+    if mp and (case.startswith('apply-') or cancelling(case)):
         assert type(body) is dict and set(body)=={'duration','starts','finishes','nativeRef'} and body['duration']==1
         assert body['starts']==int(paid) and type(body['starts']) is int
         if paid:
@@ -244,7 +340,7 @@ def check_case(row,selection,prepared,receipt):
         else:assert body['nativeRef'] is False and body['finishes']==[] and outcomes==[]
     else:assert body is False and outcomes==[],'SP immediate/preview-only scenario manufactured native body'
     edit=row['edit']
-    if case=='cancel-waiting':
+    if cancelling(case):
         assert type(edit) is dict and edit['accepted'] is (not native) and edit['bodyAbsent'] is (not native)
         assert edit['bodyUnallocated'] is True and edit['frontSame'] is True and edit['tailRetained'] is True and isinstance(edit['frontNative'],str)
         assert by_label['cancelled']['client']['edit']==edit
@@ -253,9 +349,9 @@ def check_case(row,selection,prepared,receipt):
     snapshot(row['beforeTail']['snapshot'],ids)
     assert row['beforeTail']['snapshot']['tailPages']==ids['tailInitial'],'tail was already consumed before its native begin'
     return dict(avatarVerified=True,identityVerified=True,authoritative=True,tailCompleted=True,
-                cancelled=case=='cancel-waiting'and not native,unallocated=case=='cancel-waiting',
+                cancelled=cancelling(case)and not native,unallocated=cancelling(case),
                 nativePreviewControl=native,paid=paid,nativeStaleRestore=native and case=='apply-while-preview',
-                nativeControlBaseline=control_baseline)
+                nativeControlBaseline=control_baseline,emptyQueueVerified=supply and not cancelling(case))
 
 
 def verify(root,selection,catalog):
@@ -271,7 +367,7 @@ def verify(root,selection,catalog):
     if not rows or any(rows[-1].get(key)!=value for key,value in dict(cases=selection['cases'],performed=len(selection['cases']),skipped=0,failed=0).items()):issues.append('Makeup completion counts differ')
     if not complete(selection,'client1',text):issues.append('Makeup completion marker absent/duplicated')
     shots=raw(text,'SCREENSHOT');filename='makeup-preview-'+selection['kind']+'-'+selection['mode']+'.png'
-    if (len(shots)!=1 or shots[0].get('case')!='preview-close' or shots[0].get('file')!=filename
+    if (len(shots)!=1 or shots[0].get('case')!=selection['cases'][0] or shots[0].get('file')!=filename
         or shots[0].get('fadeClear') is not True or shots[0].get('nativeRendered') is not True
         or type(shots[0].get('renderFrames')) is not int or shots[0]['renderFrames']<3
         or type(shots[0].get('renderMs')) is not int or shots[0]['renderMs']<500):
@@ -291,7 +387,10 @@ def verify(root,selection,catalog):
     if raw(authority,'SNAPSHOT')!=expected_authority:issues.append('Raw makeup authority checkpoints differ')
     if raw(text,'OUTCOME')!=[dict(case=row['id'],receipt=receipt) for row in results for receipt in row.get('outcomes',[])]:issues.append('Raw makeup native outcomes differ')
     if raw(text,'BEFORE_TAIL')!=[dict(case=row['id'],evidence=row.get('beforeTail')) for row in results]:issues.append('Raw makeup tail boundary differs')
-    if raw(text,'EDIT')!=[dict(case=row['id'],evidence=row.get('edit')) for row in results if row.get('id')=='cancel-waiting']:issues.append('Raw makeup pending edit differs')
+    if raw(text,'EDIT')!=[dict(case=row['id'],evidence=row.get('edit')) for row in results if cancelling(row.get('id',''))]:issues.append('Raw makeup pending edit differs')
+    if selection.get('options',{}).get('makeup_supplies') is True and (not prepared or any(value.get('placement')!=prepared[0].get('placement') for value in prepared)):
+        issues.append('Makeup supply cases did not retain one settled placement tile')
+    if raw(text,'APPLY_QUEUES')!=[dict(case=row['id'],evidence=row.get('applyQueues')) for row in results if selection.get('options',{}).get('makeup_supplies') is True]:issues.append('Raw makeup native queue submission boundary differs')
     # Matching per-marker lists alone must not admit case/checkpoint reordering.
     client_order=[];server_order=[]
     for line in text.splitlines():
