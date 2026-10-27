@@ -9,7 +9,7 @@ local broken = require "PZSurvivorToolkit/ItemBrokenTags"
 local Usage = {}
 -- The first four positions are the original snapshot format.
 local fields = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment",
-    "spentBattery", "fishBait", "trapBait", "repair", "smelting", "sharpen", "broken"}
+    "spentBattery", "fishBait", "trapBait", "repair", "smelting", "sharpen", "broken", "empty"}
 
 local function tagged(source, id)
     if not source or not source.hasTag or not ItemTag or not ItemTag[id] then return nil end
@@ -201,7 +201,8 @@ function Usage.encode(roles)
 end
 
 function Usage.decode(value)
-    if type(value) ~= "string" or (#value ~= 4 and #value ~= 10 and #value ~= 11 and #value ~= 12 and #value ~= #fields)
+    if type(value) ~= "string" or (#value ~= 4 and #value ~= 10 and #value ~= 11 and #value ~= 12
+        and #value ~= 13 and #value ~= #fields)
         or value:find("[^10?]") then return {} end
     local result = {}
     for i, field in ipairs(fields) do

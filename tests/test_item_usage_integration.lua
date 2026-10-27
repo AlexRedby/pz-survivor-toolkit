@@ -484,3 +484,50 @@ assert(Tags.matches(Tags.forItem(blade),{'broken','smelting'}))
 assert(Tags.matchesScriptRule(knife,rule({'broken','smelting'},{'sharpen'})))
 assert(not Tags.matchesScriptRule(knife,rule({'broken','smelting','sharpen'})))
 Smelting.read=readSmelting
+
+-- Empty is the vessel's current amount, not its name or a missing content role.
+do
+    local vessel=script('Base.EmptyPetrolCan','containerLiquid')
+    vessel.component={getCapacity=function()return 1 end,getInitialFluids=function()return list({})end,
+        isInitialFluidsIsRandom=function()return false end,
+        getInitialAmount=function()error('Empty preview drew factory amount RNG')end}
+    local can=item(vessel)
+    local amount=0
+    can.container={isEmpty=function()return amount==0 end,getAmount=function()return amount end}
+    local emptyTags=Tags.forItem(can)
+    assert(Tags.matches(emptyTags,{'container','liquid','empty'}))
+    local emptyMask=Usage.encode(Usage.read(vessel,can))
+    assert(#emptyMask==14 and Tags.matches(snapshot(vessel,emptyMask),{'empty'}))
+    for _,width in ipairs({4,10,11,12,13}) do
+        assert(not Tags.matches(snapshot(vessel,emptyMask:sub(1,width),nil,'none'),{'empty'}),
+            'legacy nonbeverage snapshot was assumed empty')
+    end
+    assert(not Tags.matches(Tags.forScriptItem(vessel),{'empty'}),'script invented current empty contents')
+    assert(Tags.requiresItemRule('empty') and Tags.matches(Tags.allIds(),{'empty'}))
+    assert(Tags.matchesScriptRule(vessel,rule({'liquid','empty'})))
+    assert(Tags.matchesScriptRule(vessel,rule({'liquid'},{'empty'})),
+        'factory-empty vessel could not preview a later fill')
+    for _,content in ipairs({'beverage','alcoholic','fuel','disinfectant'}) do
+        assert(not Tags.matchesScriptRule(bottle,rule({'empty',content})),
+            'automatic preview combined Empty and '..content)
+    end
+    amount=0.000001
+    local filledMask=Usage.encode(Usage.read(vessel,can))
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}) and filledMask~=emptyMask)
+    assert(Tags.signature(emptyTags)~=Tags.signature(Tags.forItem(can)),'empty and filled stacks merged')
+    assert(not Tags.matches(snapshot(vessel,filledMask),{'empty'}))
+    amount=0
+    assert(Tags.matches(Tags.forItem(can),{'empty'}),'pouring out did not restore Empty')
+    can.container=nil
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}),'removed fluid component retained Empty')
+    can.container={}
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}),'unknown amount became Empty')
+    world.types['base.emptypetrolcan']={empty='add'}
+    assert(Tags.matches(Tags.forItem(can),{'empty'}),'manual Empty addition lost')
+    world.types['base.emptypetrolcan']={empty='remove'}
+    can.container={isEmpty=function()return true end}
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}))
+    assert(not Tags.matchesScriptRule(vessel,rule({'empty'})),'manual Empty removal lost in preview')
+    world.types={}
+    assert(Tags.matches(snapshot(vessel,filledMask,{empty='add'}),{'empty'}))
+end

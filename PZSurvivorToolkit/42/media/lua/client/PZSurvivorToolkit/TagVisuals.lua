@@ -31,6 +31,7 @@ local families = {
     edible = {green, "Item_Fork"}, dismantle = {blue, "Item_Screwdriver"},
     bandage = {red, "Item_Bandage"}, disinfectant = {red, "Item_Alcohol"}, dirty = {brown, "Item_BandageDirty"},
     broken = {red, "media/ui/icon_broken.png"},
+    empty = {blue, "Item_GlassBottle"},
     sharpen = {blue, "Item_Whetstone2"},
     ignite = {yellow, "Item_Lighter"}, smelting = {brown, "Item_Ingot_Iron"},
     ingredient = {green, "Item_Pan"}, beverage = {green, "Item_GlassJar"},

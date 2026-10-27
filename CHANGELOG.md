@@ -34,6 +34,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.311
+
+- Extend Disassembly to native copper, gold, silver and aluminum salvage, plus clothing, sheets and belts that can be recovered into materials. Follow native item-state and equipment restrictions without adding XP or furnace roles.
+- Add Empty for liquid vessels with no current contents. Update filters and container rules after filling or emptying, preserve coherent previews and manual corrections, and carry the state through warehouse snapshots without inferring it for older records.
+
 ### 0.1.310
 
 - Synchronize paid makeup results when the kit remains in an accessible worn or nested bag, nearby container or ground bag. Reuse exact shared item access with bounded ancestor membership checks, preserving native creation, consumption and unsupported callbacks.

@@ -116,6 +116,46 @@ preview(script({{whiskey, 1}}, false, 0), "none")
 preview(script({{nil, 1}}), "none")
 print("fluid roles follow current components, preserve unknown/nonfluid states and inspect pure preview metadata")
 
+-- Empty is observable independently of fluid identity, safety and factory fill.
+for _, contents in ipairs({{}, {[water] = 1}, {[bleach] = 1}, {[tainted] = 0.000001}}) do
+    local actual, vessel = item(contents)
+    local roles = Tags.usage(nil, actual)
+    assert(roles.empty == vessel:isEmpty(), 'Empty did not follow native current contents')
+end
+local measured = 0
+local partial = {getFluidContainer = function()return {getAmount=function()return measured end}end}
+assert(Tags.usage(nil,partial).empty == true)
+measured = 0.000001
+assert(Tags.usage(nil,partial).empty == false, 'trace contents were discarded')
+for _, invalid in ipairs({-1, math.huge, 0/0}) do
+    measured = invalid
+    assert(Tags.usage(nil,partial).empty == nil, 'invalid amount became a known Empty state')
+end
+assert(Tags.usage(nil,{getFluidContainer=function()return {}end}).empty == nil)
+assert(Tags.usage(definition,{getFluidContainer=function()end}).empty == nil)
+assert(Tags.usage(definition,{}).empty == nil, 'missing live APIs fell back to script defaults')
+local function checkEmptyPreview(definition, canFill)
+    local current, states = Tags.usage(definition)
+    assert(current.empty == nil, 'preview invented a current fill state')
+    local empty, filled = false, false
+    for _, state in ipairs(states) do
+        if state.empty then
+            empty = true
+            assert(state.beverage == false and state.alcoholic == false
+                and state.fuel == false and state.disinfectant == false,
+                'Empty preview retained contents')
+        elseif state.empty == false then filled = true end
+    end
+    assert(empty and filled == canFill, 'vessel preview lost an empty/filled possibility')
+end
+checkEmptyPreview(script({}), true)
+checkEmptyPreview(script({{bleach,1}}), true)
+checkEmptyPreview(script({{whiskey,1}}), true)
+checkEmptyPreview(script({}, false, 0), false)
+checkEmptyPreview(script({}, false, 0/0), false)
+checkEmptyPreview({getComponentScriptFor=function()return {getCapacity=function()return 1 end}end}, true)
+checkEmptyPreview({getComponentScriptFor=function()return {}end}, false)
+
 -- Source-backed category and initial-fluid fixtures from installed B42.21.
 -- These adapt declarations without constructing game objects or executing Lua
 -- callbacks. Java getter semantics are independently verified with javap.
@@ -154,8 +194,10 @@ if NativeActionRoot then
             for fluidName, percentage in component:gmatch("fluid%s*=%s*([%w_]+):([%d.]+)") do
                 entries[#entries + 1] = {native(fluidName), tonumber(percentage)}
             end
-            preview(script(entries, component:match("PickRandomFluid%s*=%s*true") ~= nil,
-                tonumber(component:match("Capacity%s*=%s*([%d.]+)"))), wanted[name])
+            local definition = script(entries, component:match("PickRandomFluid%s*=%s*true") ~= nil,
+                tonumber(component:match("Capacity%s*=%s*([%d.]+)")))
+            preview(definition, wanted[name])
+            checkEmptyPreview(definition, true)
             wanted[name] = nil
         end
     end

@@ -1,3 +1,9 @@
+# Finish container-tag work
+
+- [ ] Finish integration as Toolkit 0.1.311 after concurrent main took 0.1.309 and 0.1.310, resolving the changelog/mod.info rebase conflicts and verifying the merged checks and pushed tip.
+- [ ] Check task-owned ignored/untracked files, saved catalogue assets, stashes and temporary resources; preserve needed results outside the managed worktree.
+- [ ] Remove only integrated task branches, complete memory, then archive this chat with its current managed worktree left for app cleanup.
+
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
@@ -188,6 +194,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 - [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
 
 # Process friction
+
+- [ ] Reconnect the cumulative-memory MCP after its runtime upgrade: calls report `Memory MCP is from an older release; reconnect the server`. The matching runtime CLI works as a fallback; complete when MCP reads and capture completion use the current release again.
 
 - [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
 

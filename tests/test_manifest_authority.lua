@@ -523,7 +523,7 @@ Model.PAGE_ROWS=oldRows
 local allOrder,allBytes=store.order,Model.PAGE_BYTES
 store.order={fluidRecord.id}
 local firstFluid=fluidRecord.entries[fluidRecord.itemOrder[1]]
-Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+222
+Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+224
 local budgetPlayer={}
 local _,budgetPage=Authority.requestPage(budgetPlayer,{})
 local budgetRows=0
@@ -563,7 +563,7 @@ do
         value.usage=roles
         return value
     end
-    local good=usageBottle({bandage=false,disinfectant=true,dirty=false,fuel=true,fishBait=true,trapBait=true,sharpen=false,broken=true})
+    local good=usageBottle({bandage=false,disinfectant=true,dirty=false,fuel=true,fishBait=true,trapBait=true,sharpen=false,broken=true,empty=false})
     local diluted=usageBottle({bandage=false,disinfectant=false,dirty=false,fuel=false,fishBait=false,trapBait=false})
     local unknown=usageBottle({})
     local usageItems={good,usageBottle(good.usage),diluted,unknown}
@@ -578,7 +578,7 @@ do
         'unchanged medical/fuel roles rebuilt the immutable sample')
     record.entries[Model.item(good).key].usageState=nil
     settle(100)
-    assert(store.revision>revision and store.containers[record.id].entries[Model.item(good).key].usageState=='0101???11??01',
+    assert(store.revision>revision and store.containers[record.id].entries[Model.item(good).key].usageState=='0101???11??010',
         'entry comparison ignored the captured usage roles')
     record=store.containers[record.id]
     revision=store.revision
@@ -600,7 +600,7 @@ do
         if page.cursor then _,page=Authority.requestPage(player,{cursor=page.cursor})
         else page=nil end
     end
-    assert(states['0101???11??01']==2 and states['0000???00?']==1 and states.unknown==1,
+    assert(states['0101???11??010']==2 and states['0000???00?']==1 and states.unknown==1,
         'pagination lost known-false usage roles or inferred unknown contents')
     Model.PAGE_ROWS=oldRows
     good.usage=diluted.usage

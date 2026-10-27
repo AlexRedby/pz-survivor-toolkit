@@ -70,18 +70,25 @@ local function stateForRole(role)
 end
 
 local function emptyState()
-    return {beverage = false, alcoholic = false, disinfectant = false, fuel = false}
+    return {empty = true, beverage = false, alcoholic = false, disinfectant = false, fuel = false}
 end
 
 -- These fields are read together so a script preview never combines the
 -- beverage role of one random fluid with the disinfectant/fuel of another.
 local function currentUsage(container)
     local state = stateForRole(currentRole(container))
-    if container.isEmpty and container:isEmpty() then return emptyState() end
+    if container.isEmpty then
+        local empty = container:isEmpty()
+        if type(empty) == "boolean" then state.empty = empty end
+        if empty == true then return emptyState() end
+    end
     if container.getAmount then
         local amount = container:getAmount()
-        if type(amount) == "number" then
-            if amount <= 0 then return emptyState() end
+        if type(amount) == "number" and amount >= 0 and amount < math.huge then
+            -- Native isEmpty uses exact zero. Do not discard trace contents or
+            -- infer an amount from the vessel's name or factory definition.
+            if state.empty == nil then state.empty = amount == 0 end
+            if amount == 0 then return emptyState() end
             if amount <= 0.15 then state.disinfectant = false
             elseif container.getProperties then
                 local properties = container:getProperties()
@@ -100,10 +107,17 @@ end
 
 local function initialUsage(component)
     local result = {emptyState()}
-    if not component.getInitialFluids or not component.getCapacity
-        or not component.isInitialFluidsIsRandom then return result end
-    local capacity, choices = component:getCapacity(), component:getInitialFluids()
-    if type(capacity) ~= "number" or capacity <= 0 or not choices then return result end
+    local capacity = component.getCapacity and component:getCapacity()
+    if type(capacity) ~= "number" or capacity ~= capacity or capacity <= 0 or capacity >= math.huge then return result end
+    -- A vessel sold empty can later contain fluid. Its contents remain unknown
+    -- until supplied by initial-fluid metadata or a real inventory instance.
+    local function unknownFilled()
+        result[#result + 1] = {empty = false}
+        return result
+    end
+    if not component.getInitialFluids or not component.isInitialFluidsIsRandom then return unknownFilled() end
+    local choices = component:getInitialFluids()
+    if not choices then return unknownFilled() end
     local random, mixtures = component:isInitialFluidsIsRandom(), {}
     local mixed = {role = "none", fuel = false, alcohol = 0, percentage = 0, known = true}
     local function addFluid(mixture, fluid, percentage)
@@ -131,8 +145,10 @@ local function initialUsage(component)
         end
     end
     if not random and mixed.percentage > 0 then mixtures[1] = mixed end
-    local seen = {["false:false:false:false"] = true}
+    if #mixtures == 0 then return unknownFilled() end
+    local seen = {}
     local function add(state)
+        state.empty = false
         local key = tostring(state.beverage) .. ":" .. tostring(state.alcoholic)
             .. ":" .. tostring(state.disinfectant) .. ":" .. tostring(state.fuel)
         if not seen[key] then seen[key], result[#result + 1] = true, state end
