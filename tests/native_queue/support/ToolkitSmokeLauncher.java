@@ -5,6 +5,38 @@ import zombie.gameStates.GameLoadingState;
 import zombie.gameStates.MainScreenState;
 import zombie.gameStates.TermsOfServiceState;
 public class ToolkitSmokeLauncher {
+    /** Inspect only the proved native Host child after exit; never consume protocol stdout. */
+    private static String exitedHostDiagnostic(ProcessHandle child, String hostCache) throws Exception {
+        var field = zombie.network.CoopMaster.class.getDeclaredField("serverProcess");
+        field.setAccessible(true);
+        var process = (Process)field.get(zombie.network.CoopMaster.instance);
+        return captureExitedHostStderr(process, child.pid(), java.nio.file.Path.of(hostCache));
+    }
+
+    static String captureExitedHostStderr(Process process, long observedPid, java.nio.file.Path cache) {
+        if (process == null || process.pid() != observedPid || process.isAlive()) {
+            throw new IllegalStateException("Exited native Host process differs from the proved child");
+        }
+        int exit = process.exitValue();
+        try {
+            if (!cache.isAbsolute() || !java.nio.file.Files.isDirectory(cache, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalStateException("Owned Host cache is not an absolute directory");
+            }
+            var stderr = process.getErrorStream();
+            int readable = Math.min(Math.max(stderr.available(), 0), 64 * 1024);
+            byte[] bytes = stderr.readNBytes(readable);
+            var evidence = cache.resolve("coop-stderr.txt");
+            try (var output = java.nio.file.Files.newOutputStream(evidence,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                output.write(bytes);
+            }
+            return "pid=" + observedPid + " exit=" + exit + " stderr=" + evidence + " bytes=" + bytes.length;
+        } catch (java.io.IOException | RuntimeException error) {
+            return "pid=" + observedPid + " exit=" + exit + " stderr=unavailable(" + error.getClass().getSimpleName() + ")";
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         if (!java.util.Arrays.asList(args).contains("-novoip")) throw new IllegalArgumentException("Native tests require -novoip to leave the microphone closed.");
         ToolkitWindowBootstrap.beforeGlfwInit();
@@ -103,7 +135,8 @@ public class ToolkitSmokeLauncher {
                                 }
                             }
                         } else if (!shuttingDown.get() && !hostChild.get().isAlive()) {
-                            throw new IllegalStateException("Host child exited before its owner");
+                            throw new IllegalStateException("Host child exited before its owner: "
+                                + exitedHostDiagnostic(hostChild.get(), hostCache));
                         }
                     }
                     var state = GameWindow.states == null ? null : GameWindow.states.current;

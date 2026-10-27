@@ -8,6 +8,36 @@ local phase='prepare';local since,nextAt,beginAt=0,0,0
 local packet,role,torch,torchAck,switchAck,scene,off,lit,torchDelta,origin,walkTarget,walkAction,switchOld,corridor
 local sceneSteps,sceneIndex={},1
 local pendingCutaway=0
+local resourceMode=config.options and config.options.world_render_resources
+local decalBuffer,decalPending,decalDraws
+Events.RenderOpaqueObjectsInWorld.Add(function(playerIndex)
+ if not resourceMode or done or not started or phase~='decal_loading'and phase~='decal_ready' then return end
+ local ok,err=pcall(function()
+  local player=getSpecificPlayer(playerIndex)
+  if player~=getPlayer() then return end
+  if not decalBuffer then
+   assert(ISnow and ISnow.Decals,'ImmersiveSnow decal renderer unavailable')
+   local D=ISnow.Decals
+   assert(not D.toViewpoint,'Resource scenario requires the native mod render path')
+   worldRenderDecalPending(player)
+   local set=D.newSet(function(level)return ISnow.bloodTrackFile(1,16,level)end,ISnow.TRACK_BLOOD_LEVELS)
+   decalBuffer=D.newBuffer(function()return 6 end,nil,.4,'strength',true)
+   local ax,ay,az=D.anchor(ISnow.TRACK_SIZE,ISnow.TRACK_REACH)
+   for i=1,6 do
+    local x,y=player:getX()+corridor.dx*(1+i*.4),player:getY()+corridor.dy*(1+i*.4)
+    decalBuffer:push({x=x+ax,y=y+ay,z=math.floor(player:getZ()),rz=math.floor(player:getZ())+az,
+      sx=math.floor(x),sy=math.floor(y),set=set,strength=1})
+   end
+   decalBuffer:render(playerIndex,10)
+   assert(decalBuffer.drawn==6,'Actual mod renderer did not attempt all six pending decals')
+   worldRenderDecalPendingCheck(player);decalPending=true
+   F.emit('RESOURCE',{role=role,stage='pending',draws=decalBuffer.drawn,dimensionsUnchanged=true})
+  else
+   decalBuffer:render(playerIndex,10);decalDraws=decalBuffer.drawn
+  end
+ end)
+ if not ok then done=true;F.emit('FAIL',{role=role or 'unknown',phase='decal-render',error=tostring(err)})end
+end)
 -- Core.StartFrameUI/UIManager draws after IngameState's world render. Observe only requested settled scenes.
 Events.OnPreUIDraw.Add(function()
  if pendingCutaway<=0 or done or not started or not isIngameState()then return end
@@ -81,6 +111,7 @@ local function tick()
   player:faceLocationF(player:getX()+corridor.dx*4,player:getY()+corridor.dy*4)
   origin={x=math.floor(player:getX()),y=math.floor(player:getY()),z=math.floor(player:getZ())}
   scene=F.discover(player)
+  if resourceMode then worldRenderResourcesBegin(player) end
   wait('arrival',2500)
  elseif phase=='arrival'then
   -- TorchInfo reads the animation look vector, not only the discrete IsoDirections field.
@@ -126,6 +157,28 @@ local function tick()
   else F.emit('LIMIT',{role=role,scope='window/cutaway',reason='No standable interior/exterior window pair within bounded discovery'})end
   if scene.tree then sceneSteps[#sceneSteps+1]={name='tree_edge',target=scene.tree}
   else F.emit('LIMIT',{role=role,scope='tree',reason='No natural tree with standable adjacent square within bounded discovery'})end
+  if resourceMode then
+   assert(scene.window,'Resource visual check requires a discovered interior floor')
+   move(scene.window.inside)
+   corridor=assert(F.corridor(player),'No clear interior decal corridor')
+   player:faceLocationF(player:getX()+corridor.dx*4,player:getY()+corridor.dy*4)
+   light(true);wait('decal_light',2500)
+  else wait('scene',100)end
+ elseif phase=='decal_light'then
+  if torchAck~=true or not torch:isActivated() then return end
+  shot('decal_control');wait('decal_loading',100)
+ elseif phase=='decal_loading'then
+  if not decalPending or not worldRenderDecalReady(player) then return end
+  wait('decal_ready',1500)
+ elseif phase=='decal_ready'then
+  assert(decalDraws==6,'Actual ready decal render incomplete')
+  shot('decal_ready');decalBuffer:clear();wait('decal_restored',1500)
+ elseif phase=='decal_restored'then
+  shot('decal_restored');worldRenderResourcesFinish(player)
+  F.emit('RESOURCE',{role=role,stage='ready',draws=decalDraws,width=64,height=64,outlinePrograms=3,outlineIdentityStable=true})
+  light(false);wait('decal_off',1500)
+ elseif phase=='decal_off'then
+  if torchAck~=false or torch:isActivated() then return end
   wait('scene',100)
  elseif phase=='scene'then
   local entry=sceneSteps[sceneIndex]

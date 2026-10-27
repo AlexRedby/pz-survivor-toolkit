@@ -384,6 +384,7 @@ internal object MainSupport {
         val hostLoader = HostLoader.install()
         val cutawaySouthEdge = CutawaySouthEdge.install()
         val translucentSquareUnion = TranslucentSquareUnion.install()
+        val worldItemTextureDimensions = WorldItemTextureDimensions.install()
         // Define before patch registration: recursive loads during another transform bypass
         // instrumentation.
         if (Main.CART_TRANSITION_SUPPORTED)
@@ -409,6 +410,8 @@ internal object MainSupport {
                 cutawaySouthEdge +
                 ", translucentSquareUnion=" +
                 translucentSquareUnion +
+                ", worldItemTextureDimensions=" +
+                worldItemTextureDimensions +
                 ", video=" +
                 Main.VIDEO_SUPPORTED +
                 ", animal=" +
