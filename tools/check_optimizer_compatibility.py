@@ -90,7 +90,7 @@ def main() -> None:
                    'OptimizerAdmissionChecks', str(expected).lower()]
         result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
         (cache / 'check.log').write_text(result.stdout)
-        marker = f'OPTIMIZER_ADMISSION_PASS accepted={str(expected).lower()} pairs=18'
+        marker = f'OPTIMIZER_ADMISSION_PASS accepted={str(expected).lower()} pairs=20'
         passed = result.returncode == 0 and marker in result.stdout
         results.append({'case': name, 'passed': passed, 'exit': result.returncode})
         print(name, 'PASS' if passed else 'FAIL', flush=True)

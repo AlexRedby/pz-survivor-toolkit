@@ -14,6 +14,10 @@ import zombie.iso.IsoCamera;
 import zombie.iso.IsoChunk;
 import zombie.iso.IsoWorld;
 import zombie.iso.fboRenderChunk.FBORenderCutaways;
+import zombie.core.textures.Texture;
+import zombie.core.opengl.ShaderProgram;
+import zombie.core.opengl.RenderThread;
+import zombie.core.skinnedmodel.model.ModelOutlines;
 
 /** Test-only post-world-draw snapshots. Never edits cutaway flags, caches, dirty bits or callbacks. */
 public final class Main {
@@ -27,6 +31,77 @@ public final class Main {
     private static int snapshots, observations, mismatches, asymmetric, lastFrame = -1;
     private static int firstX, firstY, firstZ;
     private static boolean firstExpected, firstCached;
+    private static Texture decalTexture;
+    private static int pendingWidth, pendingHeight;
+    private static ShaderProgram[] outlinePrograms;
+
+    @LuaMethod(name="worldRenderResourcesBegin", global=true)
+    public static void resourcesBegin(IsoPlayer player) throws Exception {
+        disposable(player);
+        require(Thread.currentThread() == zombie.GameWindow.gameThread, "Game-thread resource observation required");
+        require(outlinePrograms == null, "Resource probe already started");
+        RenderThread.invokeOnRenderContext(() -> {
+            try {
+                outlinePrograms = outlinePrograms();
+                for (ShaderProgram program : outlinePrograms)
+                    require(program != null && program.isCompiled(), "Outline shader was not prepared after load");
+            } catch (ReflectiveOperationException error) { throw new IllegalStateException(error); }
+        });
+    }
+
+    private static ShaderProgram[] outlinePrograms() throws ReflectiveOperationException {
+        ShaderProgram[] result = new ShaderProgram[3];
+        String[] names = {"thickenHShader", "thickenVShader", "blitShader"};
+        for (int i = 0; i < names.length; i++) {
+            Field field = ModelOutlines.class.getDeclaredField(names[i]); field.setAccessible(true);
+            result[i] = (ShaderProgram) field.get(ModelOutlines.instance);
+        }
+        return result;
+    }
+
+    private static int dimension(Texture texture, String name) throws ReflectiveOperationException {
+        Field field = Texture.class.getDeclaredField(name); field.setAccessible(true);
+        return field.getInt(texture);
+    }
+
+    @LuaMethod(name="worldRenderDecalPending", global=true)
+    public static void decalPending(IsoPlayer player) throws Exception {
+        disposable(player);
+        require(decalTexture == null, "Decal probe already started");
+        decalTexture = Texture.getSharedTexture("media/textures/ImmersiveSnow/btrack_1_16_6.png");
+        require(decalTexture != null && !decalTexture.isReady(), "Fresh decal must still be pending");
+        pendingWidth = dimension(decalTexture, "width"); pendingHeight = dimension(decalTexture, "height");
+        require(pendingWidth <= 0 && pendingHeight <= 0, "Fresh decal dimensions already read");
+    }
+
+    @LuaMethod(name="worldRenderDecalPendingCheck", global=true)
+    public static void decalPendingCheck(IsoPlayer player) throws Exception {
+        disposable(player);
+        require(decalTexture != null && !decalTexture.isReady(), "Pending draw changed asset readiness");
+        require(dimension(decalTexture, "width") == pendingWidth && dimension(decalTexture, "height") == pendingHeight,
+                "Pending Render3DItem read dimensions synchronously");
+    }
+
+    @LuaMethod(name="worldRenderDecalReady", global=true)
+    public static boolean decalReady(IsoPlayer player) throws Exception {
+        disposable(player);
+        if (decalTexture == null || !decalTexture.isReady()) return false;
+        require(decalTexture.getWidthOrig() == 64 && decalTexture.getHeightOrig() == 64, "Unexpected authored decal size");
+        return true;
+    }
+
+    @LuaMethod(name="worldRenderResourcesFinish", global=true)
+    public static void resourcesFinish(IsoPlayer player) {
+        disposable(player);
+        require(outlinePrograms != null && decalTexture != null && decalTexture.isReady(), "Resource scenario incomplete");
+        RenderThread.invokeOnRenderContext(() -> {
+            try {
+                ShaderProgram[] current = outlinePrograms();
+                for (int i = 0; i < current.length; i++) require(current[i] == outlinePrograms[i] && current[i].isCompiled(),
+                        "Native outline program identity changed");
+            } catch (ReflectiveOperationException error) { throw new IllegalStateException(error); }
+        });
+    }
 
     private static void require(boolean value, String message) {
         if (!value) throw new IllegalStateException(message);

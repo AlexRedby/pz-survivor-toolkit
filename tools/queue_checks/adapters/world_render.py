@@ -25,6 +25,10 @@ def validate(selection):
     kind = selection.get('kind')
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     options = selection.get('options', {})
+    if type(options.get('world_render_resources', False)) is not bool:
+        raise ValueError('world_render_resources must be boolean')
+    if options.get('world_render_resources') and 'ImmersiveSnow' not in selection.get('mods', []):
+        raise ValueError('Resource scenario requires the selected ImmersiveSnow mod')
     if 'world_render_probe_expect' in options:
         raise ValueError('Obsolete clean-light probe option; use world_render_expect for cutaway snapshots')
     if options.get('world_render_expect', 'observe') not in ('observe', 'control', 'patched'):
@@ -153,6 +157,16 @@ def verify(root, selection, catalog):
                 raise ValueError('Patched south-edge cache must have observed edges and no mismatch')
             evidence[role] = {'phases': phases, 'checks': checks, 'cutaway': probe,
                               'limits': receipts.records(text, MARKER, 'LIMIT')}
+            if selection.get('options', {}).get('world_render_resources'):
+                resources = receipts.records(text, MARKER, 'RESOURCE')
+                expected = [dict(role=role, stage='pending', draws=6, dimensionsUnchanged=True),
+                            dict(role=role, stage='ready', draws=6, width=64, height=64,
+                                 outlinePrograms=3, outlineIdentityStable=True)]
+                if resources != expected or not all(name in names for name in ('decal_control', 'decal_ready', 'decal_restored')):
+                    raise ValueError('Resource lifecycle scenario incomplete')
+                if text.count('[PZToolkitJavaPatches] Outline composite shaders prepared on render context: 3') != 1:
+                    raise ValueError('Expected exactly one successful outline preparation')
+                evidence[role]['resources'] = resources
         except (OSError, ValueError, KeyError, TypeError) as error:
             issues.append(role + ': ' + str(error))
     if selection['kind'] == 'mp':
@@ -169,7 +183,10 @@ def verify(root, selection, catalog):
             for role in roles:
                 values = [row['active'] for row in evidence['authority']
                           if row.get('role') == role and row.get('kind') == 'torch']
-                if values != [False, True, False]:
+                expected_torch = [False, True, False]
+                if selection.get('options', {}).get('world_render_resources'):
+                    expected_torch += [True, False]
+                if values != expected_torch:
                     issues.append(role + ': authoritative torch off/on/off absent')
         except (OSError, ValueError, KeyError, TypeError) as error:
             issues.append('authority: ' + str(error))
