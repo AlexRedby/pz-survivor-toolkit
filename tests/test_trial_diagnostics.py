@@ -241,7 +241,7 @@ function Start-TrialFrameCapture { $script:frameStarts++; return & $script:start
     def test_failed_helper_metadata_retains_context_and_signals_owned_stop(self):
         with tempfile.TemporaryDirectory() as t:
             root=Path(t).resolve();body=self.fixture(root)+r"""
-function Get-TrialWprTool { 'fake-wpr' }
+function Get-TrialWprToolSelection { [pscustomobject]@{Selected=[pscustomobject]@{Path=(Join-Path $plan.Cache 'fake-wpr');Source='System';Sha256=('a'*64);Version='10.0.26100.1'};Candidates=@();Reason=$null} }
 function Get-TrialWprSystemDirectory { $plan.Cache }
 function Start-Process {
  $child=[pscustomobject]@{Id=456;HasExited=$false}
