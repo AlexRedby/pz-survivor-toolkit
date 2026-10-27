@@ -1,6 +1,8 @@
 """Focused qualification gates: loaded modifiers, authoritative persistence, bounded actual transitions."""
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -34,15 +36,22 @@ class LotStreamingTests(unittest.TestCase):
     def line(self, event, value):
         return A.MARKER + event + ' ' + json.dumps(value) + '\n'
 
+    def compact(self):
+        return dict(format=1, ok=True, kind='lot-streaming-baseline', world=A.WORLD, server=False, client=False,
+            seedString=A.SEED, cells=[{k: c[k] for k in ('x', 'y', 'loaded', 'generated', 'animalZones', 'geometrySha256')}
+                                    for c in self.snapshot()['cells']])
+
     def log(self, reload=False):
         text = ''
-        if reload: text += self.line('BASELINE', dict(role='client1', phase='saved', probe=self.snapshot()))
+        if reload: text += self.line('BASELINE', dict(role='client1', phase='saved', probe=self.compact()))
         for phase in A.PHASES:
             text += self.line('SNAPSHOT', dict(role='client1', phase=phase, probe=self.snapshot(reload or phase != 'before')))
             text += self.line('TREES', dict(role='client1', phase=phase, probe=dict(ok=True, runtime=self.runtime(),
-                chunks=[dict(trees=0, authoredLayers=[dict(payloadSha256='b' * 64)]) for _ in range(2)])))
+                chunks=[dict(wx=x, wy=y, trees=0, authoredLayers=[dict(payloadSha256='b' * 64)]) for x, y in A.CHUNKS])))
         for phase in ('away', 'returned'):
-            text += self.line('TRANSITION', dict(role='client1', phase=phase, steps=23, maxStep=12, distance=272))
+            target = A.AWAY if phase == 'away' else A.START
+            text += self.line('TRANSITION', dict(role='client1', phase=phase, steps=23, maxStep=12, distance=272, x=target[0], y=target[1], z=0))
+        text += self.line('PERSIST_BASELINE', dict(role='client1', phase='returned', probe=self.compact()))
         text += self.line('SAVE_READY', dict(case='reload' if reload else 'fresh', role='client1', nativeSave=True))
         text += self.line('COMPLETE', dict(case='reload' if reload else 'fresh', role='client1'))
         return text
@@ -77,12 +86,27 @@ class LotStreamingTests(unittest.TestCase):
         self.assertTrue(self.verify(text)['issues'])
         text = self.log().replace('"generated": false', '"generated": true')
         self.assertTrue(self.verify(text)['issues'])
+        self.assertTrue(self.verify(self.log().replace('"animalZones": 2', '"animalZones": 0'))['issues'])
+        self.assertTrue(self.verify(self.log().replace('"x": 10595', '"x": 11107', 1))['issues'])
+        self.assertTrue(self.verify(self.log().replace('"wx": 1295', '"wx": 1296', 1))['issues'])
 
     def test_reload_compares_saved_geometry_and_generated_bits(self):
         self.selection['cases'] = ['reload']
         self.selection['options']['world_template'] = '/sealed/world'
         text = self.log(True); self.assertEqual(self.verify(text)['issues'], [])
         text = text.replace('a' * 64, 'c' * 64, 1)
+        self.assertTrue(self.verify(text)['issues'])
+
+    def test_compact_baseline_rejects_full_snapshot_oversize_and_wrong_identity(self):
+        self.assertEqual(A._baseline(self.compact(), False), A._cells(self.snapshot()))
+        with self.assertRaises(ValueError): A._baseline(self.snapshot(), False)
+        for field, value in (('world', 'other-world'), ('server', True), ('seedString', 'other-seed'),
+                             ('kind', 'legacy-snapshot'), ('world', '\u00e9' * 5000)):
+            bad = self.compact(); bad[field] = value
+            with self.subTest(field=field, value=str(value)[:20]), self.assertRaises(ValueError): A._baseline(bad, False)
+        bad = self.compact(); bad['cells'][1]['x'] = 99
+        with self.assertRaises(ValueError): A._baseline(bad, False)
+        text = self.log().replace('"kind": "lot-streaming-baseline"', '"kind": "legacy"')
         self.assertTrue(self.verify(text)['issues'])
 
     def test_bad_probe_and_duplicate_records_do_not_hide_beside_good_rows(self):
@@ -113,19 +137,36 @@ class LotStreamingTests(unittest.TestCase):
                     for side in ('client', 'shared', 'server'):
                         (root / role / 'mods/ActionQueueTest/42/media/lua' / side).mkdir(parents=True)
                 if kind == 'mp':
-                    (root / 'server/Server').mkdir(); (root / 'server/Server/queue-smoke.ini').write_text('Map=Muldraugh, KY\n')
+                    (root / 'server/Server').mkdir(); (root / 'server/Server/queue-smoke.ini').write_text('Map=Muldraugh, KY\nSpawnPoint=10835,10144,0\n')
                 with patch.object(A.subprocess, 'run'), patch.object(A.optimizer_profile, 'stage'):
                     A.stage(ROOT, root, root / 'game', root / 'jdk', selection, {}, runtime)
                 starter = root / 'client1/mods/ActionQueueTest/42/media/lua/client/ZZStartup.lua'
                 text = starter.read_text()
+                if shutil.which('luajit'):
+                    subprocess.run([shutil.which('luajit'), '-b', str(starter), str(root / 'starter.luac')],
+                                   check=True, capture_output=True, text=True, timeout=10)
                 self.assertIn('HOST_REQUEST', text)
                 self.assertIn('OnConnectFailed', text)
                 if kind == 'sp' and case == 'reload': self.assertIn("continueLatestSave('Sandbox','" + A.WORLD + "')", text)
                 if kind == 'sp' and case == 'fresh': self.assertIn("setSeedString('" + A.SEED + "')", text)
+                self.assertIn('posX=10323,posY=8752,posZ=0', text)
                 if kind == 'mp': self.assertIn('Seed=' + A.SEED, (root / 'server/Server/queue-smoke.ini').read_text())
-                if kind == 'mp':
-                    self.assertEqual(runtime['roles']['client1']['env']['PZ_LOT_QUAL_SERVER_CACHE'], str(root / 'server'))
+                if kind == 'mp': self.assertIn('SpawnPoint=10323,8752,0', (root / 'server/Server/queue-smoke.ini').read_text())
+                from queue_checks.runner import _fixture_environment
+                for role in roles:
+                    staged = runtime['roles'][role]['env']
+                    admitted = _fixture_environment(selection, role, root / role, staged)
+                    self.assertEqual(admitted['PZ_LOT_QUAL_CACHE'], str(root / role))
+                with self.assertRaisesRegex(ValueError, 'Invalid fixture-owned'):
+                    _fixture_environment(selection, 'client1', root / 'client1',
+                        dict(runtime['roles']['client1']['env'], PZ_LOT_QUAL_SERVER_CACHE=str(root / 'server')))
                 self.assertEqual(runtime['fixture']['mods'], ['LotStreamingProbe'])
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is unavailable')
+    def test_actual_lua_compact_storage_and_before_barrier(self):
+        result = subprocess.run([shutil.which('luajit'), str(ROOT / 'tests/test_queue_lot_streaming_fixture.lua'), str(ROOT)],
+                                check=True, capture_output=True, text=True, timeout=10)
+        self.assertIn('LOT_STREAMING_LUA_CHECKS_OK', result.stdout)
 
 
 if __name__ == '__main__': unittest.main()

@@ -34,6 +34,7 @@ public final class Main {
     private static final String CELL_HASH = "ccf99cd2b176b079da51f31a74ae9408b45255a328f6d1ab6fe536600226cdee";
     private static final String GENERATOR_HASH = "10ed8c0fef67cdbf3a0f355f2142bf35e401df82e0578b473206f3baccafba29";
     private static final int MAX_COORDS = 16, MAX_MAPS = 256, MAX_ZONES = 8192, MAX_POINTS = 65536;
+    private static final int MAX_BASELINE_UTF8 = 8192;
     private Main() { }
 
     private static void require(boolean condition, String message) {
@@ -47,8 +48,7 @@ public final class Main {
         Path actual = Path.of(ZomboidFileSystem.instance.getCacheDir()).toAbsolutePath().normalize();
         String client = System.getenv("PZ_LOT_QUAL_CACHE");
         require(client != null && Path.of(client).isAbsolute(), "Owned runner cache environment required");
-        require(sameCache(client, actual) || GameServer.server
-                && sameCache(System.getenv("PZ_LOT_QUAL_SERVER_CACHE"), actual), "Owned runner cache differs");
+        require(sameCache(client, actual), "Owned runner cache differs");
     }
     private static List<int[]> coordinates(String value) {
         require(value != null && value.length() <= 512 && !value.isBlank(), "Supply 1..16 x,y coordinates");
@@ -167,7 +167,9 @@ public final class Main {
         List<Integer> points = new ArrayList<>();
         for (int i = 0; i < zone.points.size(); i++) points.add(zone.points.getQuick(i));
         return object("name", zone.name, "type", zone.type, "originalName", zone.getOriginalName(),
-            "animalType", privateValue(zone, "animalType"), "action", zone.action,
+            // Native AnimalZone.save writes null strings as length zero; load returns "".
+            // Canonicalize only this optional field, retaining its raw value in dynamic evidence.
+            "animalType", java.util.Objects.toString(privateValue(zone, "animalType"), ""), "action", zone.action,
             "x", zone.x, "y", zone.y, "z", zone.z, "w", zone.w, "h", zone.h,
             "geometryType", String.valueOf(zone.geometryType), "polylineWidth", zone.polylineWidth, "points", points);
     }
@@ -210,6 +212,7 @@ public final class Main {
                         String geometry = json(geometry(zone));
                         canonical.add(geometry);
                         dynamic.add(object("geometrySha256", hash(geometry), "id", zone.id == null ? null : zone.id.toString(),
+                            "animalTypeRaw", privateValue(zone, "animalType"),
                             "spawnedAnimals", privateValue(zone, "spawnedAnimals"), "spawnAnimal", privateValue(zone, "spawnAnimal"),
                             "hourLastSeen", zone.hourLastSeen, "lastActionTimestamp", zone.lastActionTimestamp));
                     }
@@ -232,7 +235,7 @@ public final class Main {
                 observations.add(item);
             }
             return json(object("format", 1, "ok", true, "runtime", runtime(), "cells", observations,
-                "geometryHashFormat", "sha256(UTF8(JSON(sorted canonical zone JSON strings))); fields defined by geometry(); UUID/spawn/runtime fields excluded",
+                "geometryHashFormat", "sha256(UTF8(JSON(sorted canonical zone JSON strings))); optional animalType null canonicalized to native persisted empty string; UUID/spawn/runtime fields excluded",
                 "persistenceScope", "generated bit only; detached memory roundtrip, not world save/reload"));
         } catch (Exception | LinkageError error) { return json(failed(error)); }
     }
@@ -245,6 +248,46 @@ public final class Main {
             word.clear(); word.putInt(lot.data.getQuick(i)); digest.update(word.array());
         }
         return HexFormat.of().formatHex(digest.digest());
+    }
+    /** Compact persisted receipt; full snapshots and dynamic state stay in launch logs. */
+    @LuaMethod(name="lotQualBaseline", global=true)
+    public static String lotQualBaseline(String cells) {
+        try {
+            disposable();
+            require(!GameClient.client, "Only authoritative world state may be persisted");
+            var grid = IsoWorld.instance.getMetaGrid();
+            require(grid != null, "Native meta grid required");
+            Field generated = field(IsoMetaCell.class, "animalZonesGenerated");
+            List<Object> observations = new ArrayList<>();
+            int totalZones = 0, totalPoints = 0;
+            for (int[] position : coordinates(cells)) {
+                IsoMetaCell cell = grid.getCellData(position[0], position[1]);
+                Map<String, Object> item = object("x", position[0], "y", position[1], "loaded", cell != null,
+                    "generated", null, "animalZones", null, "geometrySha256", null);
+                if (cell != null) {
+                    int size = cell.getAnimalZonesSize();
+                    totalZones += size;
+                    require(size <= MAX_ZONES && totalZones <= MAX_ZONES, "Baseline zone bound exceeded");
+                    List<String> canonical = new ArrayList<>();
+                    for (int i = 0; i < size; i++) {
+                        AnimalZone zone = cell.getAnimalZone(i);
+                        totalPoints += zone.points.size();
+                        require(totalPoints <= 262144, "Baseline point bound exceeded");
+                        canonical.add(json(geometry(zone)));
+                    }
+                    Collections.sort(canonical);
+                    item.put("generated", generated.getBoolean(cell)); item.put("animalZones", size);
+                    item.put("geometrySha256", hash(json(canonical)));
+                }
+                observations.add(item);
+            }
+            String result = json(object("format", 1, "ok", true, "kind", "lot-streaming-baseline",
+                "world", IsoWorld.instance.getWorld(), "server", GameServer.server, "client", GameClient.client,
+                "seedString", WorldGenParams.INSTANCE.getSeedString(), "cells", observations));
+            require(result.getBytes(StandardCharsets.UTF_8).length <= MAX_BASELINE_UTF8,
+                "Baseline exceeds native-safe UTF-8 byte bound");
+            return result;
+        } catch (Exception | LinkageError error) { return json(failed(error)); }
     }
     @LuaMethod(name="lotQualTreeCounts", global=true)
     public static String lotQualTreeCounts(String chunks) {
