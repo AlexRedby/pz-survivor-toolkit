@@ -379,6 +379,11 @@ return {
     },
     -- User-facing taxonomy corrections; native item properties remain untouched.
     items = {
+        -- The imported mixed hygiene/fitness category loses this equipment role.
+        ["base.barbell"] = {"character", "fitness"},
+        ["base.barbell_forged"] = {"character", "fitness"},
+        ["base.dumbbell"] = {"character", "fitness"},
+        ["base.dumbbell_forged"] = {"character", "fitness"},
         ["base.revolver_capgun"] = {"toy"},
         ["base.rifle_capgun"] = {"toy"},
         ["base.capguncap"] = {"toy"},
@@ -394,6 +399,7 @@ return {
         ["disinfectant"] = "Disinfection",
         ["dirty"] = "Dirty",
         ["ignite"] = "Ignition",
+        ["smelting"] = "Smelting",
         ["edible"] = "Can Eat",
         ["dismantle"] = "Disassembly",
         ["fresh"] = "Fresh",

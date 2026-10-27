@@ -219,3 +219,83 @@ for _,id in ipairs({'bait','fishing','trapping','ignite','treatment','repair','j
     assert(Tags.requiresItemRule(id), 'category routing bypasses physical state for '..id)
 end
 print('bait, supplies, ignition, plant treatment and spent-battery integration passed')
+
+-- Fitness keeps the native and forged equipment out of the imported mixed group.
+for _, name in ipairs({'Base.DumbBell','Base.BarBell','Base.DumbBell_Forged','Base.BarBell_Forged'}) do
+    local gear=script(name,'characterHygieneFitness')
+    assert(Tags.matches(Tags.forItem(item(gear)),{'fitness','character'}))
+    assert(not Tags.matches(Tags.forScriptItem(gear),{'hygiene'}))
+    assert(Tags.matchesScriptRule(gear,rule({'fitness'},{'hygiene'})))
+end
+local soap=script('Base.Soap2','characterHygieneFitness')
+assert(Tags.matches(Tags.forScriptItem(soap),{'hygiene'}) and not Tags.matches(Tags.forScriptItem(soap),{'fitness'}))
+FitnessExercises={exercisesType={custom={item='Fixture.ExerciseGear'}}}
+local extra=script('Fixture.ExerciseGear','characterHygieneFitness')
+assert(Tags.matches(Tags.forScriptItem(extra),{'fitness'}) and not Tags.matches(Tags.forScriptItem(extra),{'hygiene'}))
+FitnessExercises=nil
+for _, id in ipairs({'fitness','hygiene','dirty','smelting'}) do assert(Tags.requiresItemRule(id)) end
+
+-- Real laundry reader feeds physical tags, state alternatives and stored snapshots.
+ItemType.CLOTHING,ItemType.CONTAINER='clothing','container'
+ItemTag.BREAK_WHEN_WET='breakwet'
+local function list(values)return {size=function()return #values end,get=function(_,i)return values[i+1]end}end
+BloodClothingType={getCoveredParts=function(types)return types end}
+toolkitItemLaundryDirty=function(i)return i.stains end
+local shirt=script('Fixture.Shirt','clothingTop',ItemType.CLOTHING)
+shirt.isHidden=function()return false end
+shirt.getBloodClothingType=function()return list({'Torso'})end
+local laundryItem=item(shirt)
+laundryItem.isHidden=shirt.isHidden
+laundryItem.stains=true
+assert(Tags.matches(Tags.forItem(laundryItem),{'clothing','dirty'}))
+local dirtyMask=Usage.encode(Usage.read(shirt,laundryItem))
+assert(Tags.matches(snapshot(shirt,dirtyMask),{'dirty'}))
+laundryItem.stains=false
+local cleanMask=Usage.encode(Usage.read(shirt,laundryItem))
+assert(cleanMask~=dirtyMask and not Tags.matches(snapshot(shirt,cleanMask),{'dirty'}))
+assert(not Tags.matches(Tags.forItem(laundryItem),{'dirty'}))
+assert(not Tags.matches(snapshot(shirt,nil),{'dirty'}),'old snapshot guessed laundry state')
+assert(not Tags.matches(Tags.forScriptItem(shirt),{'dirty'}),'definition claimed a current stain')
+assert(Tags.matches(Tags.choices(Tags.forScriptItem(shirt)),{'dirty'}))
+assert(Tags.matchesScriptRule(shirt,rule({'dirty'})) and Tags.matchesScriptRule(shirt,rule({}, {'dirty'})))
+local bridge=toolkitItemLaundryDirty;toolkitItemLaundryDirty=nil
+assert(Usage.read(shirt,laundryItem).dirty==nil,'missing bridge guessed clean')
+toolkitItemLaundryDirty=bridge
+world.types['fixture.shirt']={dirty='remove'}
+assert(not Tags.matchesScriptRule(shirt,rule({'dirty'})))
+world.types={}
+
+-- Composition must not tie independent stains to remaining material/uses.
+local Smelting=require 'PZSurvivorToolkit/ItemSmeltingTags'
+local readSmelting=Smelting.read
+Smelting.read=function(s,i)
+    if s==shirt then
+        if i then return i.uses>0 end
+        return nil,{false,true}
+    end
+    return readSmelting(s,i)
+end
+for _, withDirty in ipairs({false,true})do
+    for _, withSmelting in ipairs({false,true})do
+        local included,excluded={},{}
+        for id,enabled in pairs({dirty=withDirty,smelting=withSmelting})do
+            local target=enabled and included or excluded;target[#target+1]=id
+        end
+        assert(Tags.matchesScriptRule(shirt,rule(included,excluded)),'independent stains/material states collapsed')
+    end
+end
+laundryItem.stains,laundryItem.uses=true,1
+local current=Usage.encode(Usage.read(shirt,laundryItem))
+assert(#current==11 and Tags.matches(snapshot(shirt,current),{'dirty','smelting'}))
+assert(not Tags.matches(snapshot(shirt,current:sub(1,10)),{'smelting'}),'legacy snapshot fabricated smelting')
+laundryItem.uses=0
+local exhausted=Usage.encode(Usage.read(shirt,laundryItem))
+assert(current~=exhausted and not Tags.matches(snapshot(shirt,exhausted),{'smelting'}))
+assert(Tags.matches(snapshot(shirt,exhausted,{smelting='add'}),{'smelting'}))
+Smelting.read=readSmelting
+
+if NativeActionRoot then
+    local f=assert(io.open(NativeActionRoot..'/shared/Definitions/FitnessExercises.lua','r'))
+    local content=f:read('*a');f:close()
+    assert(content:find('item = "Base.BarBell"',1,true) and content:find('item = "Base.DumbBell"',1,true))
+end

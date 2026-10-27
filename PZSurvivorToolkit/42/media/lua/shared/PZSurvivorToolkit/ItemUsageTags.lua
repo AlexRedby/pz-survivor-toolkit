@@ -2,10 +2,12 @@
 local fluids = require "PZSurvivorToolkit/ItemFluidTags"
 local bait = require "PZSurvivorToolkit/ItemBaitTags"
 local repair = require "PZSurvivorToolkit/ItemRepairTags"
+local laundry = require "PZSurvivorToolkit/ItemLaundryTags"
+local smelting = require "PZSurvivorToolkit/ItemSmeltingTags"
 local Usage = {}
 -- The first four positions are the original snapshot format.
 local fields = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment",
-    "spentBattery", "fishBait", "trapBait", "repair"}
+    "spentBattery", "fishBait", "trapBait", "repair", "smelting"}
 
 local function tagged(source, id)
     if not source or not source.hasTag or not ItemTag or not ItemTag[id] then return nil end
@@ -74,10 +76,10 @@ local function stateKey(state)
     return table.concat(key, ":")
 end
 
-local function previews(roles, fluidStates, baitStates, varying)
+local function previews(roles, fluidStates, baitStates, varying, laundryStates)
     local hasVarying = false
     for _ in pairs(varying) do hasVarying = true; break end
-    if #fluidStates == 0 and #baitStates == 0 and not hasVarying then return {} end
+    if #fluidStates == 0 and #baitStates == 0 and not hasVarying and not laundryStates then return {} end
     local result, seen = {}, {}
     -- Native fractional getters normalize the same integer remaining uses.
     -- A small positive fraction still has a use; do not invent half a use.
@@ -92,8 +94,13 @@ local function previews(roles, fluidStates, baitStates, varying)
                     elseif mode == "fractional" then state[id] = level > 0
                     else state[id] = level >= 1 end
                 end
-                local key = stateKey(state)
-                if not seen[key] then result[#result + 1], seen[key] = state, true end
+                -- Stains are independent of remaining material/uses.
+                for _, dirty in ipairs(laundryStates or {"unchanged"}) do
+                    local variant = copy(state)
+                    if type(dirty) == "boolean" then variant.dirty = dirty end
+                    local key = stateKey(variant)
+                    if not seen[key] then result[#result + 1], seen[key] = variant, true end
+                end
             end
         end
     end
@@ -120,6 +127,8 @@ function Usage.read(script, item)
             roles.dirty = false
         elseif washable and cleaning and tostring(cleaning) ~= "" then roles.dirty = true end
     end
+    local dirty, laundryStates, laundryManaged = laundry.read(script, item)
+    if laundryManaged then roles.dirty = dirty end
     local fuel, fuelMode = solidFuel(script, item, isDrainable)
     if isFluid == false then
         roles.fuel = fuel
@@ -147,27 +156,31 @@ function Usage.read(script, item)
     local repairRole, repairStates = repair.read(script, item)
     roles.repair = repairRole
     if not item and repairStates and #repairStates > 0 then varying.repair = "whole" end
+    local smeltingRole, smeltingStates = smelting.read(script, item)
+    roles.smelting = smeltingRole
+    if not item and smeltingStates and #smeltingStates > 0 then varying.smelting = "whole" end
     local baitRoles, baitStates = bait.read(script, item)
     merge(roles, baitRoles)
-    possible = not item and previews(roles, possible, baitStates or {}, varying) or {}
+    possible = not item and previews(roles, possible, baitStates or {}, varying, laundryStates) or {}
     return roles, possible, isFluid
 end
 
 -- Compact snapshots preserve false separately from unknown. No factory-state
 -- reconstruction is needed when a manifest is read without an InventoryItem.
 function Usage.encode(roles)
-    local result, known, extended = {}, false, false
+    local result, known, length = {}, false, 4
     for i, field in ipairs(fields) do
         local value = roles and roles[field]
         result[i] = value == true and "1" or value == false and "0" or "?"
         if type(value) == "boolean" then known = true end
-        if i > 4 and type(value) == "boolean" then extended = true end
+        if i > 4 and type(value) == "boolean" then length = math.max(length, i <= 10 and 10 or i) end
     end
-    return known and table.concat(result):sub(1, extended and #fields or 4) or nil
+    return known and table.concat(result):sub(1, length) or nil
 end
 
 function Usage.decode(value)
-    if type(value) ~= "string" or (#value ~= 4 and #value ~= #fields) or value:find("[^10?]") then return {} end
+    if type(value) ~= "string" or (#value ~= 4 and #value ~= 10 and #value ~= #fields)
+        or value:find("[^10?]") then return {} end
     local result = {}
     for i, field in ipairs(fields) do
         local character = value:sub(i, i)
