@@ -24,7 +24,7 @@ local function input(items, keep, options)
     end
     value.doesItemPassRoutineStatusTests = function(_, item, ...)
         assert(select('#', ...) == 1 and ... == nil, 'routine native predicate needs one nullable character argument')
-        return not item.broken and not item.sealed
+        return (not item.broken or value.destroyed == true) and not item.favorite and not item.sealed
     end
     value.doesItemPassClothingTypeStatusTests = function(_, item, ...)
         assert(select('#', ...) == 0, 'clothing native predicate accepts only an item')
@@ -51,6 +51,8 @@ local cd, radio, tv = script('Base.CDplayer'), script('Base.RadioRed'), script('
 local watch, screwdriver = script('Base.WristWatch_Left_DigitalBlack'), script('Base.Screwdriver')
 local lighter, blade, wire = script('Base.Lighter_Battery'), script('Base.HuntingKnife'), script('Base.ElectricWire')
 local unopened = script('Base.CannedFoodBox')
+local pliers, smallSaw = script('Base.Pliers'), script('Base.SmallSaw')
+local modJewelry = script('Test.GoldPendant', {['base:tinygoldscrap'] = true})
 local recipes = list({
     recipe('DismantleMiscElectronics', {input({screwdriver}, true), input({cd}, false)}, 'Electricity'),
     recipe('DismantleElectronicsDevice', {input({radio, tv}, false), input({screwdriver}, true)}, 'Electricity'),
@@ -59,6 +61,7 @@ local recipes = list({
     recipe('DismantleBlade', {input({blade}, false)}),
     recipe('CraftMakeshiftRadio', {input({wire}, false), input({screwdriver}, true)}, 'Electricity'),
     recipe('OpenFoodBox', {input({unopened}, false)}),
+    recipe('Scrap_Gold_Jewellery', {input({modJewelry}, false, {destroyed = true}), input({pliers, smallSaw}, true)}),
 })
 local legacy = list({})
 local manager = {getAllCraftRecipes = function() return recipes end, getAllRecipes = function() return legacy end}
@@ -86,6 +89,15 @@ for _, definition in ipairs({cd, radio, tv, watch}) do expect(definition, nil, t
 expect(lighter, nil, true)
 expect(blade, nil, true)
 for _, definition in ipairs({screwdriver, wire, unopened}) do expect(definition, nil, false) end
+-- Recipe-resolved subjects include mod items; kept jewelry tools are not subjects.
+expect(modJewelry, nil, true)
+for _, definition in ipairs({pliers, smallSaw}) do expect(definition, nil, false) end
+local jewelryItem = {broken = true}
+expect(modJewelry, jewelryItem, true)
+jewelryItem.favorite = true
+expect(modJewelry, jewelryItem, false)
+jewelryItem.favorite = false
+expect(modJewelry, jewelryItem, true)
 expect(watch, {worn = true}, false)
 expect(watch, {worn = false}, true, 'electrical')
 expect(cd, {broken = true}, false)
@@ -163,20 +175,38 @@ boot()
 -- Exercise the real installed B42.21 recipe declarations through the same index
 -- fixture. No recipe callbacks or inventory-item constructors are executed.
 if NativeDisassemblyScriptsRoot then
-    local scripts = {cd, radio, tv, watch, screwdriver, lighter, blade, wire, unopened}
+    local jewelry = {}
+    for _, name in ipairs({'Ring_Right_MiddleFinger_Gold', 'NecklaceLong_Gold',
+        'Earring_LoopLrg_Silver', 'NoseStud_Silver', 'Necklace_Choker_Diamond', 'Earring_Stone_Ruby'}) do
+        jewelry[#jewelry + 1] = script('Base.' .. name)
+    end
+    local pearl, signet = script('Base.Necklace_Pearl'), script('Base.Ring_Right_MiddleFinger_Signet')
+    local scripts = {cd, radio, tv, watch, screwdriver, lighter, blade, wire, unopened,
+        pliers, smallSaw, pearl, signet, modJewelry}
+    for _, definition in ipairs(jewelry) do scripts[#scripts + 1] = definition end
+    local declared = {}
     local itemRoot = NativeDisassemblyScriptsRoot .. '/../items/'
-    for _, name in ipairs({'normal.txt', 'radio.txt', 'alarmclockclothing.txt', 'weapon.txt'}) do
+    for _, name in ipairs({'normal.txt', 'radio.txt', 'alarmclockclothing.txt', 'weapon.txt', 'clothing.txt'}) do
         local file = assert(io.open(itemRoot .. name));local text = file:read('*a');file:close()
         for nativeName, block in text:gmatch('item%s+([%w_]+)%s*(%b{})') do
             for _, definition in ipairs(scripts) do
                 if definition:getFullName() == 'Base.' .. nativeName then
+                    declared[definition] = true
                     for tag in (block:match('Tags%s*=%s*([^,]+)') or ''):gmatch('[%w_:]+') do definition.tags[tag] = true end
                 end
             end
         end
     end
+    for _, definition in ipairs({pliers, smallSaw, pearl, signet}) do
+        assert(declared[definition], 'missing native declaration: ' .. definition:getFullName())
+    end
+    for _, definition in ipairs(jewelry) do
+        assert(declared[definition], 'missing native declaration: ' .. definition:getFullName())
+    end
     local native = {}
-    for _, filename in ipairs({'recipes_electrical.txt', 'recipes_radio.txt', 'recipes_disassembly.txt'}) do
+    local jewelryRecipes = {Scrap_Gold_Jewellery = false, Scrap_Silver_Jewellery = false, scrap_jewellery = false}
+    for _, filename in ipairs({'recipes_electrical.txt', 'recipes_radio.txt', 'recipes_disassembly.txt',
+        '../entities/blacksmith/craftRecipes/recipes_blacksmith_other_metals.txt'}) do
         local file = assert(io.open(NativeDisassemblyScriptsRoot .. '/' .. filename))
         local text = file:read('*a');file:close()
         for name, block in text:gmatch('craftRecipe%s+([%w_]+)%s*(%b{})') do
@@ -196,19 +226,33 @@ if NativeDisassemblyScriptsRoot then
                         if matches then candidates[#candidates + 1] = definition end
                     end
                     inputs[#inputs + 1] = input(candidates, choices:find('mode:keep', 1, true) ~= nil,
-                        {amount = tonumber(amount), notWorn = choices:find('IsNotWorn', 1, true) ~= nil})
+                        {amount = tonumber(amount), notWorn = choices:find('IsNotWorn', 1, true) ~= nil,
+                            destroyed = choices:find('AllowDestroyedItem', 1, true) ~= nil})
                 end
             end
             local xp = block:match('xpAward%s*=%s*([%w_]+):')
+            if jewelryRecipes[name] ~= nil then
+                jewelryRecipes[name] = true
+                assert(not xp, 'native jewelry scrapping must not fabricate a skill award')
+            end
             native[#native + 1] = recipe(name, inputs, xp)
         end
     end
+    for name, found in pairs(jewelryRecipes) do assert(found, 'missing native jewelry recipe: ' .. name) end
     recipes = list(native)
     for _, definition in ipairs({cd, radio, tv, watch}) do expect(definition, nil, true, 'electrical') end
     expect(watch, {worn = true}, false)
     expect(lighter, nil, true)
     expect(blade, nil, true)
     for _, definition in ipairs({screwdriver, wire, unopened}) do expect(definition, nil, false) end
+    -- Gold/silver and gem-only items exercise all three recipes and several shapes.
+    for _, definition in ipairs(jewelry) do
+        expect(definition, nil, true)
+        expect(definition, {broken = true}, true)
+        expect(definition, {favorite = true}, false)
+    end
+    expect(modJewelry, nil, true)
+    for _, definition in ipairs({pearl, signet, pliers, smallSaw}) do expect(definition, nil, false) end
     print('native B42.21 disassembly recipe declarations checked')
 else
     print('SKIP native disassembly declaration check (NativeDisassemblyScriptsRoot not supplied)')

@@ -1,13 +1,16 @@
 local Disassembly = {}
 
 -- B42.21 has no dismantling flag. These are the native dismantling recipes,
--- including the no-XP blade/handle recipes; their animation is also used by crafts.
+-- including no-XP blade/handle and jewelry scrapping recipes. The animation and
+-- crafting category alone do not distinguish dismantling from making items.
 local nativeRecipes = {
     DismantleElectronics = true, DismantleMiscElectronics = true,
     DismantleElectronicsDevice = true, DismantlePowerBar = true,
     DismantleImprovisedLighter = true, DismantleBlade = true,
     DismantleLongImplement = true, DismantleShortImplement = true,
     ReclaimFromSpear = true,
+    Scrap_Gold_Jewellery = true, Scrap_Silver_Jewellery = true,
+    scrap_jewellery = true,
 }
 
 local skillTags = {

@@ -34,6 +34,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.308
+
+- Include jewelry accepted by the native gold, silver and gemstone scrapping recipes in Disassembly filters and container rules. Preserve recipe state checks and manual tag corrections; decorative pieces and kept tools remain excluded, and jewelry scrapping does not imply Smelting or skill experience.
+
 ### 0.1.307
 
 - Allow moving unstarted hair/beard dye and supported gel/spray hairstyles around independent queued work. Preserve exact dye identity, native late styling selectors and costs, including GreasedBack double use; keep shared materials, unsupported replacements and active bodies protected.

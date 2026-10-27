@@ -294,6 +294,42 @@ assert(current~=exhausted and not Tags.matches(snapshot(shirt,exhausted),{'smelt
 assert(Tags.matches(snapshot(shirt,exhausted,{smelting='add'}),{'smelting'}))
 Smelting.read=readSmelting
 
+-- Jewelry scrapping reaches effective tags and rules through the real reader.
+do
+    local ring=script('Base.Ring_Left_RingFinger_Gold','clothingAccessory_wearable',ItemType.CLOTHING)
+    local pearl=script('Base.Necklace_Pearl','clothingAccessory_neck',ItemType.CLOTHING)
+    local pliers=script('Base.Pliers','toolMetalworking')
+    local subject=input(false,false,{ring})
+    subject.getIntAmount=function()return 1 end
+    subject.isUsesPartialItem=function()return false end
+    subject.doesItemPassRoutineStatusTests=function(_,i)return not i.favorite end
+    local jewelry={getName=function()return 'Scrap_Gold_Jewellery'end,
+        getInputs=function()return list({subject,input(true,false,{pliers})})end,
+        getXPAwardCount=function()return 0 end}
+    local previousRecipes=recipes
+    recipes=list({jewelry})
+    local worn=item(ring)
+    local effective=Tags.forItem(worn)
+    assert(Tags.matches(effective,{'accessory','dismantle'}))
+    assert(not Tags.matches(effective,{'smelting','metalworking','experience'},'any'),
+        'jewelry scrapping fabricated furnace eligibility or a learning role')
+    assert(Tags.matchesScriptRule(ring,rule({'accessory','dismantle'},{'smelting'})))
+    assert(Tags.matches(snapshot(ring,nil),{'dismantle'}))
+    for _,s in ipairs({pearl,pliers}) do
+        assert(not Tags.matches(Tags.forItem(item(s)),{'dismantle'}),
+            'decorative jewelry or a kept tool became the dismantled subject')
+        assert(not Tags.matchesScriptRule(s,rule({'dismantle'})))
+    end
+    worn.favorite=true
+    assert(not Tags.matches(Tags.forItem(worn),{'dismantle'}),'live recipe status was ignored')
+    worn.favorite=false
+    world.types['base.ring_left_ringfinger_gold']={dismantle='remove'}
+    assert(not Tags.matches(Tags.forItem(worn),{'dismantle'}))
+    assert(not Tags.matchesScriptRule(ring,rule({'dismantle'})),'manual removal was ignored in previews')
+    world.types={}
+    recipes=previousRecipes
+end
+
 if NativeActionRoot then
     local f=assert(io.open(NativeActionRoot..'/shared/Definitions/FitnessExercises.lua','r'))
     local content=f:read('*a');f:close()
