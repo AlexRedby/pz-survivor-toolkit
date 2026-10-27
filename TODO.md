@@ -62,10 +62,6 @@
 
 - [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.
 
-# Auto-drink after multiplayer respawn
-
-- [ ] Verify death and new-character creation as a client in an isolated full-pack Host session on macOS B42.21, with auto-drink disabled and enabled. Pick up a water bottle and compare the menu preference, character flag and server water/thirst effects after the connection reply. Native reply ordering and the one-shot repair are covered by source inspection and focused Lua regressions; this live network scenario remains unverified.
-
 # Sport headlight push-button cycle
 
 - [ ] Run the isolated sport push-button SP/Host checks when the shared desktop test slot is available. Inspect off/low/high/off releases, held/released appearance at all four scales and server power acknowledgements. Current focused regressions cover the cycle and ACK guards; native launch was blocked at admission. Keep the VVA-pair coexistence gate below separate from the available 45-mod test subset.
@@ -189,7 +185,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
 
-- [ ] Verify the selected that DAMN Library Plastic Welding Gun battery recipe against its callbacks: `42.20/media/scripts/damnCraft/recipes_damnCraft.txt:239-254` references functions that appear commented out in `media/lua/server/Crafting/DAMN_damnCraft.lua:570-598`. The battery audit could not recommend this as a working reuse path. Reproduce the recipe in an isolated selected-pack scenario and confirm callback resolution before changing or reporting the upstream behavior.
+- [ ] Retire that DAMN Library's duplicate Plastic Welding Gun battery recipes through a source-checked prepared dependency copy, using the working native `base:usesbattery` recipes. Full67 SP `plastic-battery/charge-matrix` with the queue disabled confirms custom removal creates a full battery without draining the gun and is exposed beside native removal; custom insertion cannot satisfy both `IsEmpty` and remaining-use quantity counting without `ItemCount`. Both custom callbacks are absent. Gate: preserve native partial/full charge transfer and gun identity, remove the duplicate menu paths, and qualify SP/menu Host without modifying Workshop inputs. Evidence: `.codex/investigations/plastic-battery-20261027/analysis.json`; product fix not yet implemented.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
 
