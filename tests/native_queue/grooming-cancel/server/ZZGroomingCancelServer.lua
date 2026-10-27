@@ -27,7 +27,19 @@ Events.OnClientCommand.Add(function(module,name,player,args)
    assert(not player:hasTimedActions()and player:getCharacterActions():isEmpty(),'authority native action queue not idle')
    local final=F.snapshot(state)
    assert(F.restored(state,final)and final.tailPages==state.ids.tailTotal,'authority grooming items/equipment/reader not restored')
-   assert(F.effectsMatch(state,final,baseline,config.mode=='native'),'authority grooming appearance/fluid/gel differs')
+   local completed=config.mode=='native'or F.moving(state.ids.case)
+   local effectsMatch=F.effectsMatch(state,final,baseline,completed)
+   if not effectsMatch then
+    local expected={appearance=F.expectedAppearance(state,baseline,completed),gel=false,dye=false}
+    if state.gel then expected.gel={id=baseline.gel.id,uses=completed and 19 or 20}end
+    if state.dye then
+     expected.dye={id=baseline.dye.id,amount=completed and math.max(0,baseline.dye.amount-.5)or baseline.dye.amount,color=baseline.dye.color}
+    end
+    raw('EFFECT_MISMATCH',{case=state.ids.case,mode=config.mode,actionKind=state.ids.actionKind,nativeEffects=completed,
+     baseline=baseline,checkpoint=checkpoint,actual=final,expected=expected,
+     matches={appearance=F.same(final.appearance,expected.appearance),gel=F.same(final.gel,expected.gel),dye=F.same(final.dye,expected.dye)}})
+   end
+   assert(effectsMatch,'authority grooming appearance/fluid/gel differs')
    local receipt={baseline=baseline,checkpoint=checkpoint,final=final,bodyCompletes=false,bodyRecords={},
     completeCountProof='unavailable-remote-callback',
     completeCountLimit='NetTimedAction.perform directly invokes complete; server callback invocation count unavailable without replacement'}

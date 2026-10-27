@@ -2,6 +2,9 @@ require 'TimedActions/ISCutHair'
 require 'TimedActions/ISTrimBeard'
 require 'TimedActions/ISDyeHair'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
+local Pending=require 'PZSurvivorToolkit/ActionQueueGroomingPending'
+local applyPending=Pending and Pending.apply
+local adoptPending=Pending and Pending.adoptBase
 local Grooming={}
 local base=ISBaseTimedAction
 local toolkit=PZSurvivorToolkit
@@ -96,7 +99,12 @@ function Grooming.bindInterruption(owner)
  acknowledgements,captureReceipt,receiptState=liveAcknowledgements,liveAcknowledgements.capture,liveAcknowledgements.state
  return true
 end
-local function inspector(profile,snapshot,resources)
+function Grooming.adoptBase(name,previous,replacement)
+ if not Pending or Pending.adoptBase~=adoptPending or not adoptPending
+  or not toolkit or toolkit.ActionQueueGroomingPending~=Pending then return false end
+ return adoptPending(name,previous,replacement)
+end
+local function inspector(profile,snapshot,resources,policy)
  return function(action)
   if not unchanged(profile,snapshot,action)then return end
   local result=resources({item=action[profile.field]})
@@ -112,6 +120,9 @@ local function inspector(profile,snapshot,resources)
   result.cancelWaiting=waiting
   result.cancelOperation=waiting or running
   if running then result.interrupt='audited-stop'end
+  if waiting and lifecycle and stopBridge and stopBridge()and applyPending and Pending.apply==applyPending
+   and Pending.adoptBase==adoptPending and toolkit.ActionQueueGroomingPending==Pending
+   and Proof.closure(applyPending,'ActionQueueGroomingPending.lua')then applyPending(profile,snapshot,action,result,policy)end
   return result
  end
 end
@@ -129,7 +140,7 @@ function Grooming.install(policy,resources)
   if not profile.installed then
    local snapshot=capture(profile)
    if snapshot then
-    policy.registerNative(profile.name,inspector(profile,snapshot,resources))
+    policy.registerNative(profile.name,inspector(profile,snapshot,resources,policy))
     profile.installed=true
    else complete=false end
   end

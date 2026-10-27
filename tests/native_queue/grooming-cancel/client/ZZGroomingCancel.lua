@@ -30,6 +30,7 @@ local serial=0
 local function case()return config.cases[index]end
 local function baseCase()return F.baseCase(case())end
 local function active()return F.active(case())end
+local function moving()return F.moving(case())end
 local function now()return getTimestampMs()end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
@@ -64,7 +65,7 @@ local function register(action)
  records[#records+1]=row;actions[action]=row
  local class=getmetatable(action)
  if not classes[class]then
-  local methods={};for _,name in ipairs({'new','isValid','isValidStart','waitToStart','start','stop','update','perform','complete','getDuration','forceCancel','forceStop','stopSound'})do methods[name]=class[name]or false end
+  local methods={};for _,name in ipairs({'new','isValid','isValidStart','waitToStart','start','stop','update','perform','complete','getDuration','forceCancel','forceStop','stopSound','create','begin','adjustMaxTime','interruptWaitToStart','getDeltaModifiers','getJobDelta','setActionAnim','setOverrideHandModels','setAnimVariable'})do methods[name]=class[name]or false end
   classes[class]=methods
  end
  return row
@@ -78,7 +79,7 @@ local function intact()
  elseif ids.actionKind=='ISTrimBeard'then assert(body.beardStyle==ids.targetBeard,'native beard target changed')
  else assert(body.beard==(baseCase()=='dye-beard')and itemID(body)==ids.items.dye,'native dye target/identity changed')end
  local contract,adapter=T.ActionQueuePolicy.inspect(body)
- assert(contract and adapter=='native.'..ids.actionKind and contract.knownInputs==false,'source-pinned native haircut inspector unavailable')
+ assert(contract and adapter=='native.'..ids.actionKind and (F.moveAllowed(case())or contract.knownInputs==false),'source-pinned native haircut inspector unavailable')
 end
 local function observeStarted(action)
  local row=register(action);if not row then return end
@@ -86,7 +87,7 @@ local function observeStarted(action)
   assert(not beforeTail,'independent tail began twice')
   beforeTail={case=case(),at=now(),callback='ISBaseTimedAction.begin',snapshot=snapshot()};raw('BEFORE_TAIL',beforeTail)
   local borrowed=F.borrowed(state)
-  if not native and borrowed then
+  if not native and not moving()and borrowed then
    assert(F.source(state,borrowed:getContainer()),'required exact borrowed grooming item return did not precede independent tail')
   end
  end
@@ -115,7 +116,7 @@ local function observe()
  for action,row in pairs(actions)do
   if action.action and action:isStarted()and not row.started then
    row.started=true;row.starts=row.starts+1;row.startedAt=now();row.nativeRef=tostring(action.action);nativeEpisodes[action]=action.action
-   if action==body then bodyStarts=bodyStarts+1;assert(native or active(),'canceled waiting haircut started')end
+   if action==body then bodyStarts=bodyStarts+1;assert(native or active()or moving(),'canceled waiting haircut started')end
   end
   if active()and not native and action==body and boundary and not row.stoppedRemoval then
    local episode=nativeEpisodes[action]
@@ -150,7 +151,7 @@ local function request(name)
   bodyCompletes=bodyCompletes,bodyRecords=records,completeCountProof='shared-native-complete'};raw('VERIFIED',authorityFinal)end
 end
 Events.OnServerCommand.Add(function(module,name,args)
- if module=='PZSurvivorToolkitActions'and name=='State'and body and active()
+ if module=='PZSurvivorToolkitActions'and name=='State'and body and(active()or moving())
   and args.player==ids.actor and args.transaction==body.toolkitNativeTransaction and args.kind==body.toolkitNativeKind then
   local row={protocol=args.protocol,player=args.player,transaction=args.transaction,kind=args.kind,token=args.token,state=args.state}
   outcomes[#outcomes+1]=row;raw('OUTCOME',{case=case(),receipt=row});return
@@ -167,7 +168,8 @@ local function enqueue()
  baseline=snapshot();records,actions,classes,ackRecords,observedTerminal={},{},{},{},{};serial=0
  bodyStarts,bodyCompletes=0,0;outcomes,startedReceipt,nativeEpisodes={},nil,{}
  assert(not state.player:isTimedActionInstant()and not getDebug(),'native haircut producer requires ordinary non-debug durations/equip')
- if baseCase()=='style-no-tool'then front=ISReadABook:new(state.player,state.front);ISTimedActionQueue.add(front)end
+ if moving()or baseCase()=='style-no-tool'then front=ISReadABook:new(state.player,state.front);ISTimedActionQueue.add(front)end
+ if moving()then tail=ISReadABook:new(state.player,state.tail);ISTimedActionQueue.add(tail)end
  local producer=assert(producers[ids.actionKind])
  assert(producer.owner[producer.key]==producer.callback and Proof.closure(producer.callback,producer.source),'actual native grooming UI producer unavailable')
  if state.gel then assert(state.player:getInventory():getItemFromType('Hairgel',true,true)==state.gel,'native styling selector chose foreign Hairgel')end
@@ -183,10 +185,45 @@ local function enqueue()
  end
  assert(body and body.action==nil and body.maxTime==ids.duration and (ids.actionKind~='ISCutHair'or body.maxTimeInit==ids.duration),'native haircut constructor/time differs')
  assert(itemID(body)==(F.borrowed(state)and F.borrowed(state):getID()or false),'UI selected foreign grooming tool/dye')
- tail=ISReadABook:new(state.player,state.tail);ISTimedActionQueue.add(tail)
+ if not moving()then tail=ISReadABook:new(state.player,state.tail);ISTimedActionQueue.add(tail)end
  for _,action in ipairs(queue().queue)do register(action)end
- assert(queue():indexOf(tail)>queue():indexOf(body),'independent tail was grouped/lost')
+ assert(moving()and queue():indexOf(front)==1 and queue():indexOf(tail)<queue():indexOf(body)or not moving()and queue():indexOf(tail)>queue():indexOf(body),'independent tail was grouped/lost')
  phase='running'
+end
+local function moveAtBoundary()
+ if boundary then return end
+ local current=queue().current
+ if current~=front or not current.action or not current:isStarted()or current:getJobDelta()<=0 then return end
+ assert(body.action==nil and bodyStarts==0 and bodyCompletes==0,'grooming move crossed an allocated body')
+ local contract,adapter=T.ActionQueuePolicy.inspect(body)
+ assert(contract and adapter=='native.'..ids.actionKind and contract.knownInputs==F.moveAllowed(case()),'pending grooming move source/resource proof differs: '..tostring(contract and contract.pendingMoveBlocker))
+ local beforeOrder,group={},{}
+ local token=assert(body.toolkitQueueOperation,'grooming operation token missing')
+ for _,action in ipairs(queue().queue)do
+  local row=assert(register(action),'unowned action in pending grooming move')
+  beforeOrder[#beforeOrder+1]=row.sequence
+  if action.toolkitQueueOperation==token then group[#group+1]=row.sequence end
+ end
+ assert(#group>0 and beforeOrder[1]==actions[front].sequence and beforeOrder[2]==actions[tail].sequence
+  and #beforeOrder==#group+2,'grooming producer group was detached before move')
+ local before=snapshot();local progress=current:getJobDelta();local at=now()
+ local accepted,reason=false,false
+ if not native then accepted,reason=T.ActionQueue.move(queue(),body,tail,false)end
+ assert(accepted==(not native and F.moveAllowed(case())),'pending grooming move permission differs: '..tostring(reason))
+ local afterOrder={}
+ for _,action in ipairs(queue().queue)do afterOrder[#afterOrder+1]=assert(actions[action],'move introduced foreign action').sequence end
+ local expected={beforeOrder[1]}
+ if accepted then
+  for _,sequence in ipairs(group)do expected[#expected+1]=sequence end
+  expected[#expected+1]=beforeOrder[2]
+ else for i=2,#beforeOrder do expected[#expected+1]=beforeOrder[i]end end
+ assert(F.same(afterOrder,expected),'pending grooming move detached preparation or changed protected order')
+ assert(queue().current==front and front.action==nativeEpisodes[front]and front:isStarted()and body.action==nil,'pending move interrupted native front or allocated body')
+ boundary={case=case(),at=at,mode=config.mode,kind=current.Type,item=itemID(current),progress=progress,started=true,
+  bodyUnallocated=true,stage='move',startedReceipt=false,tailRetained=queue():indexOf(tail)~=-1,snapshot=before,
+  accepted=accepted,reason=reason or false,beforeOrder=beforeOrder,afterOrder=afterOrder,group=group,
+  front=actions[front].sequence,tail=actions[tail].sequence,body=actions[body].sequence}
+ raw('EDIT',boundary);phase='checkpoint';request('Checkpoint')
 end
 local function cancelAtBoundary()
  if boundary then return end
@@ -228,14 +265,14 @@ local function cancelAtBoundary()
  raw('CANCEL',boundary);phase='checkpoint';request('Checkpoint')
 end
 local function finish()
- local actual=snapshot();local expected=native and 1 or 0
+ local actual=snapshot();local expected=(native or moving())and 1 or 0
  assert(bodyStarts==(active()and 1 or expected)and bodyCompletes==expected,'native haircut start/complete count differs')
  assert(beforeTail and boundary and F.restored(state,actual)and F.restored(state,authorityFinal.final),'grooming cleanup/restoration proof missing')
  assert(actual.tailPages==ids.tailTotal and authorityFinal.final.tailPages==ids.tailTotal,'independent reader did not complete on both roles')
  for role,value in ipairs({actual,authorityFinal.final})do
-  assert(F.effectsMatch(state,value,role==1 and baseline or authorityFinal.baseline,native,isClient()and role==1,authorityFinal.baseline),'native grooming cosmetic/fluid/gel effects differ')
+  assert(F.effectsMatch(state,value,role==1 and baseline or authorityFinal.baseline,native or moving(),isClient()and role==1,authorityFinal.baseline),'native grooming cosmetic/fluid/gel effects differ')
  end
- local command={producer=ids.producer,duration=ids.duration,cancelled=not native,boundary=boundary,beforeTail=beforeTail,
+ local command={producer=ids.producer,duration=ids.duration,cancelled=not native and not moving(),boundary=boundary,beforeTail=beforeTail,
   records=records,bodyStarts=bodyStarts,bodyCompletes=bodyCompletes,idle=idle,frontQueued=front~=nil,
   completeCountProof=isClient()and'sealed-native-transaction'or'shared-native-complete',outcomes=outcomes}
  emit({event='case',id=case(),status='passed',ids=ids,baseline=baseline,command=command,receipt=authorityFinal,clientFinal=actual,nativeMethodsUnchanged=true})
@@ -265,7 +302,7 @@ Events.OnTick.Add(function()
    if isClient()and not baselineRequested then baselineRequested=true;phase='baseline';request('Baseline');return end
    if not player:tooDarkToRead()then enqueue()end
   elseif phase=='baseline'and authorityBaseline then if not player:tooDarkToRead()then enqueue()end
-  elseif phase=='running'then cancelAtBoundary()
+  elseif phase=='running'then if moving()then moveAtBoundary()else cancelAtBoundary()end
   elseif phase=='checkpoint'and checkpoint then phase='drain'
   elseif phase=='drain'then
    if not empty()then quiet=nil;return end

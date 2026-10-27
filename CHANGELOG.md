@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.303
+
+- Allow moving unstarted plain haircuts, hair tie/untie and beard trims across independent queued work. Keep exact tool, appearance and equipment dependencies ordered, preserve native timing and P4 returns, and retain protection for gel/spray styling, dye, modified callbacks and started operations.
+
 ### 0.1.302
 
 - Avoid rescanning a dropped radio's tile on every render of its open controls window. Reuse the matched item while its live list position and identity remain valid, and resolve again after pickup, replacement, list changes or rebinding. Late multiplayer arrivals remain discoverable; translated labels and native window controls are preserved.

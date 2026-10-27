@@ -1,6 +1,8 @@
 -- Disposable setup ends at baseline. All later helpers only observe native state.
 local F={cases={'borrowed-scissors','style-no-tool','styled-scissors','beard-trim','dye-hair','dye-beard'}}
-function F.baseCase(caseID)return (caseID:gsub('^active%-',''))end
+function F.baseCase(caseID)return (caseID:gsub('^active%-',''):gsub('^move%-',''))end
+function F.moving(caseID)return caseID:sub(1,5)=='move-'end
+function F.moveAllowed(caseID)local base=F.baseCase(caseID);return base=='borrowed-scissors'or base=='style-no-tool'or base=='beard-trim'end
 function F.active(caseID)return caseID:sub(1,7)=='active-'end
 function F.haircut(caseID)caseID=F.baseCase(caseID);return caseID=='borrowed-scissors'or caseID=='style-no-tool'or caseID=='styled-scissors'end
 function F.borrowed(state)return state.scissors or state.razor or state.dye end
@@ -63,7 +65,7 @@ function F.sameSetup(a,b)
  for key,value in pairs(a)do if key~='appearance'then left[key]=value end end
  for key,value in pairs(b)do if key~='appearance'then right[key]=value end end
  if isClient()and b.dye then right.dye={id=b.dye.id,amount=b.dye.amount,color=F.fluidWireColor(b.dye.color)}end
- return F.same(left,right)and a.appearance.model==b.appearance.model and a.appearance.nonAttached==b.appearance.nonAttached and a.appearance.beardModel==b.appearance.beardModel
+ return F.same(left,right)and F.same(a.appearance,b.appearance)
 end
 local function styles(player,caseID)
  local owner=getHairStylesInstance();local values=player:isFemale()and owner:getAllFemaleStyles()or owner:getAllMaleStyles()
@@ -106,6 +108,10 @@ local function equipment(state)
  p:setPrimaryHandItem(state.torch);p:setSecondaryHandItem(state.secondary)
  state.torch:setUsedDelta(1);state.torch:setActivated(true)
  local visual=p:getHumanVisual();visual:setHairModel(state.ids.initialStyle);visual:setNonAttachedHair(nil)
+ -- Disposable setup must not inherit prior dye colors. These values are exact
+ -- fixed points of native HumanVisual's float32 -> byte -> float32 transport.
+ visual:setHairColor(ImmutableColor.new(51/255,102/255,153/255,1))
+ visual:setBeardColor(ImmutableColor.new(153/255,102/255,51/255,1))
  if state.ids.initialBeard then visual:setBeardModel(state.ids.initialBeard)end
  p:resetModel()
  for _,name in ipairs({'front','tail'})do

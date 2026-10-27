@@ -17,6 +17,7 @@ require "TimedActions/ISTakeCarBatteryChargerAction"
 local Toolkit = PZSurvivorToolkit
 local Grooming = require 'PZSurvivorToolkit/ActionQueueGrooming'
 Toolkit.ActionQueueGrooming = Grooming
+local adoptGroomingBase = Grooming and Grooming.adoptBase
 local Policy = {}
 Toolkit.ActionQueuePolicy = Policy
 local Operations = Toolkit.ActionQueueOperations
@@ -1762,6 +1763,7 @@ Policy.resumableWorld, Policy.preparationCanFinish = resumableWorld, preparation
 Policy.operationItems = operationItems
 
 function Policy.replaceStop(previous, replacement)
+    if type(adoptGroomingBase) == "function" and Toolkit.ActionQueueGrooming == Grooming and Grooming.adoptBase == adoptGroomingBase then adoptGroomingBase("stop", previous, replacement) end
     if Firearms then Firearms.adoptBase("stop", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("stop", previous, replacement) end
     if ItemEditAdapters then ItemEditAdapters.adoptBase("stop", previous, replacement) end
@@ -1776,6 +1778,7 @@ function Policy.replaceStop(previous, replacement)
 end
 
 function Policy.adoptBegin(previous, replacement)
+    if type(adoptGroomingBase) == "function" and Toolkit.ActionQueueGrooming == Grooming and Grooming.adoptBase == adoptGroomingBase then adoptGroomingBase("begin", previous, replacement) end
     if Firearms then Firearms.adoptBase("begin", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("begin", previous, replacement) end
     if ItemEditAdapters then ItemEditAdapters.adoptBase("begin", previous, replacement) end

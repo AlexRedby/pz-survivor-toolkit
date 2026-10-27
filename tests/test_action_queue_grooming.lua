@@ -6,6 +6,8 @@ end
 local loaded={}
 local Proof
 require=function(name)
+ if name=='PZSurvivorToolkit/TextResolverProof'then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()end
+ if name=='PZSurvivorToolkit/ActionQueueGroomingPending'then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()end
  if name=='PZSurvivorToolkit/SourceProof'then
   Proof=Proof or assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
   return Proof
