@@ -17,7 +17,7 @@ SOURCE_MANIFEST = 'META-INF/pztoolkit-build-inputs.json'
 
 def source_fingerprints(root):
     """Portable fingerprints for the ordinary runtime and its build tools, without local paths."""
-    sources = list((root / 'src/net/alexredby/pztoolkitjavapatches').rglob('*'))
+    sources = list((root / 'src').rglob('*'))
     sources = [path for path in sources if path.suffix in ('.java', '.kt') and path.is_file()]
     sources += [path for path in (root / 'build.py', root / 'tools/RelocateKotlin.java') if path.is_file()]
     return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -622,7 +622,7 @@ def main(argv=None):
                             shutil.copy2(testclasses / relative, runtime_classes / relative)
                         cold_fonts = name == 'net.alexredby.pztoolkitjavapatches.FontColdChecks'
                         cold_kotlin = name == 'net.alexredby.javapatchfixture.KotlinRuntimeChecks'
-                        testpath = [str(testclasses), classpath] if cold_fonts or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
+                        testpath = [str(testclasses), classpath] if cold_bootstrap or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
                         log = log_path(name, trace)
                         timeout = args.test_timeout if args.test_timeout is not None else CHECK_TIMEOUTS.get(name, 120)
                         try:
