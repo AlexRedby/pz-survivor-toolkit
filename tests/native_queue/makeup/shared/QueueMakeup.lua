@@ -12,10 +12,13 @@ function F.same(a,b)
 end
 F.moves={'move-earlier','move-later','move-promote','move-deny-writer'}
 F.carriedMoves={'move-worn-earlier','move-nested-later','move-nested-promote','move-nested-deny-writer'}
+F.worldMoves={'move-world-container-earlier','move-world-bag-later','move-world-container-promote','move-world-bag-deny-walk'}
 local moveSpecs={
  ['move-earlier']={kind='earlier'},['move-later']={kind='later'},['move-promote']={kind='promote'},['move-deny-writer']={kind='deny-writer'},
  ['move-worn-earlier']={kind='earlier',supply='worn-bag'},['move-nested-later']={kind='later',supply='nested-bag'},
- ['move-nested-promote']={kind='promote',supply='nested-bag'},['move-nested-deny-writer']={kind='deny-writer',supply='nested-bag'}}
+ ['move-nested-promote']={kind='promote',supply='nested-bag'},['move-nested-deny-writer']={kind='deny-writer',supply='nested-bag'},
+ ['move-world-container-earlier']={kind='earlier',supply='world-container'},['move-world-bag-later']={kind='later',supply='world-bag'},
+ ['move-world-container-promote']={kind='promote',supply='world-container'},['move-world-bag-deny-walk']={kind='deny-walk',supply='world-bag'}}
 function F.moveCase(case)return moveSpecs[case]~=nil end
 function F.moveKind(case)return moveSpecs[case]and moveSpecs[case].kind end
 function F.moveSupply(case)return moveSpecs[case]and moveSpecs[case].supply end
@@ -101,6 +104,20 @@ local function adjacent(player)
   local square=getCell():getGridSquare(origin:getX()+d[1],origin:getY()+d[2],origin:getZ())
   if square and square:canStand()and square:isFree(false)and not origin:isBlockedTo(square)then return square end
  end;error('no free adjacent makeup supply tile')
+end
+-- A free native two-step route; execution uses normal pathfinding in both
+-- directions. The actor's published supply checkpoints stay on the origin.
+function F.walkRoute(player,world)
+ local origin=assert(player:getCurrentSquare());local x,y,z=origin:getX(),origin:getY(),origin:getZ()
+ for _,d in ipairs({{1,0},{-1,0},{0,1},{0,-1}})do
+  local via=getCell():getGridSquare(x+d[1],y+d[2],z)
+  local out=getCell():getGridSquare(x+2*d[1],y+2*d[2],z)
+  if via and out and via:canStand()and out:canStand()and via:isFree(false)and out:isFree(false)
+   and not origin:isBlockedTo(via)and not via:isBlockedTo(out)
+   and math.max(math.abs(out:getX()-world.x),math.abs(out:getY()-world.y))>1 then
+   return {origin={x=x,y=y,z=z},via={x=via:getX(),y=via:getY(),z=z},out={x=out:getX(),y=out:getY(),z=z},source=world}
+  end
+ end;error('no free native two-step makeup walk route away from world source')
 end
 local function backpackSlot(bag)
  local slot=ItemBodyLocation.BACK
@@ -257,6 +274,7 @@ function F.prepare(player,case,previous,placement)
   ids.supply.world={kind='world-bag',x=square:getX(),y=square:getY(),z=square:getZ(),index=square:getWorldObjects():indexOf(world),
    id=worldBag:getID(),type=worldBag:getFullType(),owner=worldBag:getModData().MakeupSupplyOwner}
  end
+ if F.moveKind(case)=='deny-walk'then ids.walk=F.walkRoute(player,assert(ids.supply.world))end
  if isServer()then
   if object then object:transmitCompleteItemToClients();object:transmitModData()end
   if ids.supply and not ids.supply.world then

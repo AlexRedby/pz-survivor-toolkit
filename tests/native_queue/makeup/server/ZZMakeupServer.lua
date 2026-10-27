@@ -12,7 +12,7 @@ Events.OnClientCommand.Add(function(module,name,player,args)
   assert(player:getUsername()=='client1'and args.case==config.cases[index],'makeup authority actor/case/order differs')
   if name=='Prepare'then
    assert(not state and not pending,'previous makeup case unsettled')
-   if config.options and (config.options.makeup_supplies==true or config.options.makeup_moves==true or config.options.makeup_carried_moves==true) then
+   if config.options and (config.options.makeup_supplies==true or config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true) then
     assert(F.validPlacement(args.placement)and(not placement or F.same(placement,args.placement)),'makeup authority placement target differs')
     pending={prepare=true,since=getTimestampMs(),player=player,placement=args.placement,case=args.case}
    else

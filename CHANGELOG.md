@@ -38,6 +38,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.316
+
+- Allow moving supported unstarted Host makeup with a kit in adjacent ordinary storage or a ground bag. Track exact world ownership, access, position and nearby blockers; preserve native consumption and protect movement or access-changing dependencies.
+
 ### 0.1.315
 
 - **Fixed:** Toolkit disables NewMusic vanilla CD/player conversion and removes its inventory-refresh and periodic scan callbacks on clients. Saved sandbox settings and debug probing cannot re-enable them. Normal music loot and playback remain provided by the unchanged Workshop mod.

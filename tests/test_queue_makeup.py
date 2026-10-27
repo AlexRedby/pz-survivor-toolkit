@@ -15,12 +15,13 @@ from queue_checks.adapters import makeup as m
 
 
 class MakeupEvidenceTests(unittest.TestCase):
-    def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False,carried_moves=False):
+    def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False,carried_moves=False,world_moves=False):
         value= dict(suite='makeup',cases=list(m.SP_CASES if kind=='sp' else m.MP_CASES),mode=mode,kind=kind,
                     clients=1,languages=['EN'],mods=list(m.MODS),options={'mp_host':True} if kind=='mp' else {})
         if supplies:value['options']['makeup_supplies']=True;value['cases']=list(m.cases(value))
         if moves:value['options']['makeup_moves']=True;value['cases']=list(m.cases(value))
         if carried_moves:value['options']['makeup_carried_moves']=True;value['cases']=list(m.cases(value))
+        if world_moves:value['options']['makeup_world_moves']=True;value['cases']=list(m.cases(value))
         return value
 
     def evidence(self,case,selection):
@@ -124,7 +125,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         return row
 
     def move_evidence(self,case,selection):
-        base=copy.deepcopy(selection);base['options'].pop('makeup_moves',None);base['options'].pop('makeup_carried_moves',None)
+        base=copy.deepcopy(selection);base['options'].pop('makeup_moves',None);base['options'].pop('makeup_carried_moves',None);base['options'].pop('makeup_world_moves',None)
         if case in m.MOVE_SUPPLIES:
             base['options']['makeup_supplies']=True;row=self.supply_evidence('apply-'+m.MOVE_SUPPLIES[case],base)
         else:row=self.evidence('apply-replace' if case=='move-earlier' else 'apply-empty',base)
@@ -154,6 +155,14 @@ class MakeupEvidenceTests(unittest.TestCase):
         edit=dict(at=25,accepted=accepted,reason=False if accepted or selection['mode']=='native' else 'dependent',before=before,after=after,
             bodyUnallocated=True,ownershipPreserved=True,frontPages=ids['frontInitial']+1,frontDelta=1/(ids['frontTotal']-ids['frontInitial']),frontNativeBefore='native-front',frontNativeAfter='native-front',frontRetained=True,tailRetained=True)
         row['edit']=edit;row['startOrder']=starts;row['supplyTransferStarts']=0
+        if kind=='deny-walk':
+            origin=copy.deepcopy(ids['placement']);out=dict(x=8,y=20,z=0)
+            ids['walk']=dict(origin=origin,via=dict(x=9,y=20,z=0),out=out,source=copy.deepcopy(ids['supply']['world']))
+            def witness(at,tile):return dict(at=at,placement=dict(tile=copy.deepcopy(tile),square=copy.deepcopy(tile)),
+                source=copy.deepcopy(ids['baseline']['supply']),kit=dict(ids['baseline']['kit'],uses=4))
+            row['walk']=dict(out=dict(duration=-1,starts=1,dequeues=1,nativeRef='native-walk-out',finishes=[dict(phase='perform',succeeded=True,at=26)],dequeuedAt=27),
+                back=dict(duration=-1,starts=1,dequeues=1,nativeRef='native-walk-back',finishes=[dict(phase='perform',succeeded=True,at=28)],dequeuedAt=29),
+                outEndpoint=witness(27,out),returnedOrigin=witness(29,origin))
         if kind=='promote' and accepted:row['readerResume']=dict(pages=ids['frontInitial']+1,resumedPages=ids['frontInitial']+1,native='native-resumed-front')
         for point in row['checkpoints']:
             if point['client']['label'] in ('after-body','final'):point['client']['edit']=copy.deepcopy(edit)
@@ -169,6 +178,8 @@ class MakeupEvidenceTests(unittest.TestCase):
             authority+=raw('PREPARED',row['ids'])
             for point in row['checkpoints']:
                 client+=raw('CLIENT_SNAPSHOT',point['client']);authority+=raw('SNAPSHOT',point['authority'])
+            if row.get('walk'):
+                for label in ('outEndpoint','returnedOrigin'):client+=raw('WALK',dict(case=row['id'],label=label,evidence=row['walk'][label]))
             for outcome in row['outcomes']:client+=raw('OUTCOME',dict(case=row['id'],receipt=outcome))
             if row['edit']:client+=raw('EDIT',dict(case=row['id'],evidence=row['edit']))
             if row.get('applyQueues'):client+=raw('APPLY_QUEUES',dict(case=row['id'],evidence=row['applyQueues']))
@@ -442,7 +453,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         self.assertEqual(list(checks['success-queued']),m.MP_CASES)
         self.assertEqual(list(checks['success-empty']),m.SUPPLY_SP_CASES)
         self.assertEqual(list(checks['cancel-waiting']),['cancel-waiting',*m.SUPPLY_MP_CASES[4:]])
-        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES+m.MOVE_CASES+m.CARRIED_MOVE_CASES)
+        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES+m.MOVE_CASES+m.CARRIED_MOVE_CASES+m.WORLD_MOVE_CASES)
 
     def test_supply_option_cannot_silently_replace_or_mix_default_bank(self):
         for mutation in ('false','non-bool','missing','mixed'):
@@ -533,6 +544,106 @@ class MakeupEvidenceTests(unittest.TestCase):
                     else:worn['id']=7
                 with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
 
+    def test_optional_world_moves_host_controls_and_toolkit(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',world_moves=True)
+            rows=[self.evidence(case,selection) for case in selection['cases']]
+            with self.subTest(mode=mode):self.assertEqual(self.verify(selection,rows)['issues'],[])
+
+    def test_world_move_bank_is_explicit_host_only_and_exclusive(self):
+        for mutation in ('sp','missing','false','string','root','carried','supply','order','subset','host','mods','language','world'):
+            selection=self.selection(kind='mp',world_moves=True)
+            if mutation=='sp':selection['kind']='sp'
+            elif mutation=='missing':selection['options'].pop('makeup_world_moves')
+            elif mutation=='false':selection['options']['makeup_world_moves']=False
+            elif mutation=='string':selection['options']['makeup_world_moves']='true'
+            elif mutation=='root':selection['options']['makeup_moves']=True
+            elif mutation=='carried':selection['options']['makeup_carried_moves']=True
+            elif mutation=='supply':selection['options']['makeup_supplies']=True
+            elif mutation=='order':selection['cases'].reverse()
+            elif mutation=='subset':selection['cases'].pop()
+            elif mutation=='host':selection['options']['mp_host']=False
+            elif mutation=='mods':selection['mods'].pop()
+            elif mutation=='language':selection['languages']=['RU']
+            else:selection['options']['world_template']='existing'
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):m.validate(selection)
+
+    def test_world_source_members_owner_access_paid_identity_and_resume_are_strict(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',world_moves=True)
+            for mutation in ('world-id','world-owner','world-index','world-type','world-distance','source-member','source-duplicate','source-reorder',
+                             'kit-root-alias','kit-root-owner','source-blocked','placement','actor','transfer','charge','paid-root-lost','paid-worn-proxy','writer-injected','resume','start-order'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[1]
+                value=row['checkpoints'][2]['client']['snapshot'];world=value['supply']['world']
+                if mutation=='world-id':world['id']=999
+                elif mutation=='world-owner':world['owner']='foreign-source'
+                elif mutation=='world-index':world['index']+=1
+                elif mutation=='world-type':world['type']='Base.Bag_DuffelBagTINT'
+                elif mutation=='world-distance':world['x']+=2
+                elif mutation=='source-member':value['supply']['items'].pop()
+                elif mutation=='source-duplicate':value['supply']['items'].append(copy.deepcopy(value['supply']['items'][0]))
+                elif mutation=='source-reorder':value['supply']['items'].reverse()
+                elif mutation=='kit-root-alias':value['root'].append(dict(id=1,kind='Base.MakeupEyeshadow'));value['root'].sort(key=lambda v:v['id'])
+                elif mutation=='kit-root-owner':value['kit']['root']=True
+                elif mutation=='source-blocked':value['supply']['access']['blocked']=True
+                elif mutation=='placement':value['placement']['square']['x']-=1
+                elif mutation=='actor':value['actor']=8
+                elif mutation=='transfer':row['supplyTransferStarts']=1
+                elif mutation=='charge':value['kit']['uses']=3
+                elif mutation=='paid-root-lost':value['root']=[v for v in value['root'] if v['id']!=row['output']]
+                elif mutation=='paid-worn-proxy':next(v for v in value['worn'] if v['id']==row['output'])['sameReference']=False
+                elif mutation=='writer-injected':row['ids']['items']['writer']=6;row['ids']['types']['writer']='Base.Socks_Ankle'
+                elif mutation=='resume':
+                    if mode=='toolkit':rows[2]['readerResume']['resumedPages']=97
+                    else:rows[2]['readerResume']=dict(pages=98,resumedPages=98,native='manufactured')
+                else:rows[2]['startOrder'].reverse()
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_world_walk_denial_requires_real_out_return_refs_order_and_exact_endpoints(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',world_moves=True)
+            for mutation in ('admitted','before-order','after-order','start-order','walk-missing','walk-unexpected','route-origin','route-via','route-out','route-source',
+                             'out-starts','back-starts','out-dequeues','back-dequeues','ref-missing','ref-shared','ref-front','duration','finish-failed','finish-duplicate',
+                             'dequeue-late','out-position','back-position','out-square','out-time','source-owner','source-member','source-access','kit-charge','final-placement','raw-marker'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[3];walk=row['walk']
+                if mutation=='admitted':row['edit']['accepted']=True
+                elif mutation=='before-order':row['edit']['before'].reverse()
+                elif mutation=='after-order':row['edit']['after'].reverse()
+                elif mutation=='start-order':row['startOrder'].reverse()
+                elif mutation=='walk-missing':row.pop('walk')
+                elif mutation=='walk-unexpected':rows[0]['walk']=copy.deepcopy(walk)
+                elif mutation=='route-origin':row['ids']['walk']['origin']['x']+=1
+                elif mutation=='route-via':row['ids']['walk']['via']['x']-=1
+                elif mutation=='route-out':row['ids']['walk']['out']['x']+=1
+                elif mutation=='route-source':row['ids']['walk']['source']['owner']='foreign-source'
+                elif mutation=='out-starts':walk['out']['starts']=2
+                elif mutation=='back-starts':walk['back']['starts']=0
+                elif mutation=='out-dequeues':walk['out']['dequeues']=0
+                elif mutation=='back-dequeues':walk['back']['dequeues']=2
+                elif mutation=='ref-missing':walk['out']['nativeRef']=False
+                elif mutation=='ref-shared':walk['back']['nativeRef']=walk['out']['nativeRef']
+                elif mutation=='ref-front':walk['out']['nativeRef']='native-front'
+                elif mutation=='duration':walk['out']['duration']=1
+                elif mutation=='finish-failed':walk['back']['finishes'][0]['succeeded']=False
+                elif mutation=='finish-duplicate':walk['out']['finishes'].append(copy.deepcopy(walk['out']['finishes'][0]))
+                elif mutation=='dequeue-late':walk['back']['dequeuedAt']=31
+                elif mutation=='out-position':walk['outEndpoint']['placement']=copy.deepcopy(walk['returnedOrigin']['placement'])
+                elif mutation=='back-position':walk['returnedOrigin']['placement']=copy.deepcopy(walk['outEndpoint']['placement'])
+                elif mutation=='out-square':walk['outEndpoint']['placement']['square']['x']+=1
+                elif mutation=='out-time':walk['outEndpoint']['at']=24
+                elif mutation=='source-owner':walk['outEndpoint']['source']['world']['owner']='foreign-source'
+                elif mutation=='source-member':walk['outEndpoint']['source']['items'].pop()
+                elif mutation=='source-access':walk['returnedOrigin']['source']['access']['blocked']=True
+                elif mutation=='kit-charge':walk['outEndpoint']['kit']['uses']=3
+                elif mutation=='final-placement':row['checkpoints'][2]['client']['snapshot']['placement']['tile']['x']-=2
+                if mutation=='raw-marker':
+                    with tempfile.TemporaryDirectory()as directory:
+                        root=Path(directory);self.write(root,selection,rows);log=root/'client1-launch.log'
+                        log.write_text('\n'.join(line for line in log.read_text().splitlines() if m.PREFIX+'WALK 'not in line)+'\n')
+                        with self.subTest(mode=mode,mutation=mutation):self.assertTrue(m.verify(root,selection,{})['issues'])
+                else:
+                    with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
     def test_moves_selection_is_host_only_explicit_and_exclusive(self):
         for mutation in ('sp','missing','string','supply','order','subset','mods','host'):
             selection=self.selection(kind='mp',moves=True)
@@ -613,13 +724,83 @@ class MakeupEvidenceTests(unittest.TestCase):
             with self.subTest(mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_controller_walk_constructor_does_not_expand_resolver_message_into_callback(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/client/ZZMakeup.lua'
+        text=source.read_text();start=text.index('   local function square(tile)')
+        last=text.index("   assert(M.walkActions.out.toolkitQueueOperation~=M.walkActions.back.toolkitQueueOperation",start)
+        block=text[start:text.index('\n',last)+1]
+        resolver=block[:block.index('   M.walkActions=')]
+        # Execute the actual controller block, including its constructor guards.
+        # Native new(character, location, additionalTest, additionalContext) gets
+        # all values from a final argument expression, including assert's message.
+        prefix="""
+local player={};local origin={x=10,y=20,z=0};local out={x=8,y=20,z=0}
+local state={player=player};local ids={walk={origin=origin,out=out}};local M={}
+local calls,queued={},{}
+getCell=function()return {getGridSquare=function(_,x,y,z)
+ assert(z==0);if x==origin.x and y==origin.y then return origin end
+ assert(x==out.x and y==out.y);return out
+end}end
+ISWalkToTimedAction={new=function(_,actor,location,additionalTest,additionalContext)
+ assert(actor==player and(location==origin or location==out))
+ assert(additionalTest==nil and additionalContext==nil,'EXTRA_NATIVE_WALK_CALLBACK')
+ local action={maxTime=-1,location=location,additionalTest=additionalTest,additionalContext=additionalContext}
+ if arg[1]~='clean'then action[arg[1]]=function()end end
+ calls[#calls+1]=action;return action
+end}
+ISTimedActionQueue={add=function(action)
+ action.toolkitQueueOperation={};queued[#queued+1]=action
+end}
+"""
+        suffix="""
+assert(#calls==2 and #queued==2 and calls[1]==queued[1]and calls[2]==queued[2])
+assert(calls[1].location==out and calls[2].location==origin,'native walk targets changed')
+assert(M.walkRecord.out.starts==0 and M.walkRecord.back.starts==0,'constructor manufactured execution')
+"""
+        def run(actual,mode='clean'):
+            return subprocess.run([shutil.which('luajit'),'-',mode],input=prefix+actual+suffix,capture_output=True,text=True)
+        result=run(block);self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        previous="   local function square(tile)return assert(getCell():getGridSquare(tile.x,tile.y,tile.z),'native makeup walk square unavailable')end\n"
+        result=run(block.replace(resolver,previous,1))
+        self.assertNotEqual(result.returncode,0);self.assertIn('EXTRA_NATIVE_WALK_CALLBACK',result.stderr)
+        for field in ('additionalTest','additionalContext'):
+            with self.subTest(field=field):
+                result=run(block,field);self.assertNotEqual(result.returncode,0)
+                self.assertIn('native walk constructor/duration/callback changed',result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_native_world_walk_route_requires_two_free_unblocked_steps_out_of_source_reach(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/shared/QueueMakeup.lua'
+        script="""
+package.preload['Definitions/MakeUpDefinitions']=function()end
+ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
+local F=assert(loadfile(arg[1]))();local blocked=false;local free=true;local squares={}
+local function square(x,y)
+ local key=x..':'..y;if squares[key]then return squares[key]end
+ local value={getX=function()return x end,getY=function()return y end,getZ=function()return 0 end,
+  canStand=function()return true end,isFree=function()return free end,isBlockedTo=function()return blocked end}
+ squares[key]=value;return value
+end
+getCell=function()return {getGridSquare=function(_,x,y,z)assert(z==0);return square(x,y)end}end
+local origin=square(10,20);local player={getCurrentSquare=function()return origin end}
+local source={kind='world-bag',x=11,y=20,z=0,id=123,owner='owned-source'}
+local route=F.walkRoute(player,source)
+assert(F.same(route.origin,{x=10,y=20,z=0})and F.same(route.via,{x=9,y=20,z=0})and F.same(route.out,{x=8,y=20,z=0}))
+assert(route.source==source,'walk lost exact source descriptor')
+blocked=true;assert(not pcall(F.walkRoute,player,source),'blocked native route admitted')
+blocked=false;free=false;assert(not pcall(F.walkRoute,player,source),'occupied native route admitted')
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
     def test_native_move_case_kind_and_carried_source_mapping_matches_adapter(self):
         source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/shared/QueueMakeup.lua'
         script="""
 package.preload['Definitions/MakeUpDefinitions']=function()end
 ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
 local F=assert(loadfile(arg[1]))()
-assert(#F.moves==4 and #F.carriedMoves==4)
+assert(#F.moves==4 and #F.carriedMoves==4 and #F.worldMoves==4)
 for i=2,#arg,3 do
  local case,kind,source=arg[i],arg[i+1],arg[i+2]
  assert(F.moveCase(case)and F.moveKind(case)==kind,'native move kind mapping differs')

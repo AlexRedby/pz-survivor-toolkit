@@ -15,19 +15,23 @@ SUPPLY_SP_CASES=['apply-worn-bag','apply-nested-bag','apply-world-container','ap
 SUPPLY_MP_CASES=SUPPLY_SP_CASES+['cancel-nested-bag','cancel-world-container']
 MOVE_CASES=['move-earlier','move-later','move-promote','move-deny-writer']
 CARRIED_MOVE_CASES=['move-worn-earlier','move-nested-later','move-nested-promote','move-nested-deny-writer']
+WORLD_MOVE_CASES=['move-world-container-earlier','move-world-bag-later','move-world-container-promote','move-world-bag-deny-walk']
 MOVE_KINDS=dict(zip(MOVE_CASES,['earlier','later','promote','deny-writer']))
 MOVE_KINDS.update(zip(CARRIED_MOVE_CASES,['earlier','later','promote','deny-writer']))
+MOVE_KINDS.update(zip(WORLD_MOVE_CASES,['earlier','later','promote','deny-walk']))
 MOVE_SUPPLIES=dict(zip(CARRIED_MOVE_CASES,['worn-bag','nested-bag','nested-bag','nested-bag']))
+MOVE_SUPPLIES.update(zip(WORLD_MOVE_CASES,['world-container','world-bag','world-container','world-bag']))
 
 
 def moving(selection):
-    return any(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves'))
+    return any(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves'))
 
 
 def cancelling(case):return case.startswith('cancel-')
 
 
 def cases(selection):
+    if selection.get('options',{}).get('makeup_world_moves') is True:return WORLD_MOVE_CASES
     if selection.get('options',{}).get('makeup_carried_moves') is True:return CARRIED_MOVE_CASES
     if selection.get('options',{}).get('makeup_moves') is True:return MOVE_CASES
     supply=selection.get('options',{}).get('makeup_supplies') is True
@@ -54,18 +58,18 @@ def definitions():
     checks['cancel-waiting']={case:dict(cancelled=True,unallocated=True,tailCompleted=True) for case in ['cancel-waiting',*SUPPLY_MP_CASES[4:]]}
     checks['move-independent']={case:dict(moveVerified=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case] in ('earlier','later')}
     checks['priority-preempt']={case:dict(moveVerified=True,readerResumed=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case]=='promote'}
-    checks['move-dependent']={case:dict(moveProtected=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case]=='deny-writer'}
+    checks['move-dependent']={case:dict(moveProtected=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case] in ('deny-writer','deny-walk')}
     return {'makeup':dict(status='ready',clients=1,default_mods=list(MODS),
         scenario_actions={'native-makeup-ui':dict(checks=checks,toolkit_only=['cancel-waiting'],
-            scope='Current full selected pack, fresh macOS SP/menu Host, one EN actor. Real native makeup window/combo/apply/close and avatar model; detached preview rendering and exact root/worn/supply identity checkpoints independently read on Host. SP immediate application; Host native duration-one body behind ordinary front reader in the preview bank; optional makeup_supplies bank covers worn/nested bags and adjacent native crate/world bag with empty application queues and front-reader pending group deletion and a second preview spanning paid completion. Optional Host-only makeup_moves exercises earlier/later pending-reader moves, promotion before a real active reader with page-preserving resume, actor-equipment writer denial. Optional mutually exclusive makeup_carried_moves repeats these edits for exact worn/nested bag kit ancestry and rejects the actor writer; controls retain original execution order. Queue-disabled controls explicitly allow the source-bounded initial ready-gated preview send, exact unattached preview reference retention during location/close, displaced old root items and stale close restoration. Paid Host output must exist physically in root on both roles; the native sendAddItemToContainer(kit) defect is not waived. Programmatic native UI calls and bridge return witness; no physical input or screenshot pixel assertion implied.')},
+            scope='Current full selected pack, fresh macOS SP/menu Host, one EN actor. Real native makeup window/combo/apply/close and avatar model; detached preview rendering and exact root/worn/supply identity checkpoints independently read on Host. SP immediate application; Host native duration-one body behind ordinary front reader in the preview bank; optional makeup_supplies bank covers worn/nested bags and adjacent native crate/world bag with empty application queues and front-reader pending group deletion and a second preview spanning paid completion. Optional Host-only makeup_moves exercises earlier/later pending-reader moves, promotion before a real active reader with page-preserving resume, actor-equipment writer denial. Optional mutually exclusive makeup_carried_moves repeats these edits for exact worn/nested bag kit ancestry and rejects the actor writer; optional makeup_world_moves uses adjacent exact crate/ground-bag sources and naturally walks out of source reach and back to prove unsafe reordering is denied; controls retain original execution order. Queue-disabled controls explicitly allow the source-bounded initial ready-gated preview send, exact unattached preview reference retention during location/close, displaced old root items and stale close restoration. Paid Host output must exist physically in root on both roles; the native sendAddItemToContainer(kit) defect is not waived. Programmatic native UI calls and bridge return witness; no physical input or screenshot pixel assertion implied.')},
         cases=[dict(id=case,producer='native-makeup-ui',capability='effect',kinds=['sp','mp'] if case in SP_CASES+SUPPLY_SP_CASES else ['mp'],
-                    modes=['native','toolkit'],languages=['EN']) for case in MP_CASES+SUPPLY_MP_CASES+MOVE_CASES+CARRIED_MOVE_CASES])}
+                    modes=['native','toolkit'],languages=['EN']) for case in MP_CASES+SUPPLY_MP_CASES+MOVE_CASES+CARRIED_MOVE_CASES+WORLD_MOVE_CASES])}
 
 
 def validate(selection):
     if (selection.get('kind') not in ('sp','mp') or selection.get('cases')!=cases(selection)
-            or any(option in selection.get('options',{}) and type(selection['options'][option]) is not bool for option in ('makeup_moves','makeup_carried_moves','makeup_supplies'))
-            or sum(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves','makeup_supplies'))>1
+            or any(option in selection.get('options',{}) and type(selection['options'][option]) is not bool for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_supplies'))
+            or sum(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_supplies'))>1
             or moving(selection) and selection.get('kind')!='mp'
             or selection.get('mode') not in ('native','toolkit') or selection.get('mods')!=MODS
             or selection.get('languages')!=['EN'] or type(selection.get('clients')) is not int or selection['clients']!=1
@@ -375,10 +379,54 @@ def check_case(row,selection,prepared,receipt):
 def move_orders(case,toolkit):
     kind=MOVE_KINDS[case]
     before=['front','body','middle','tail'] if kind=='later' else ['front','writer','body','middle','tail'] if kind=='deny-writer' else ['front','middle','body','tail']
-    accepted=toolkit and kind!='deny-writer'
+    if kind=='deny-walk':before=['front','body','walk-out','walk-back','middle','tail']
+    accepted=toolkit and kind not in ('deny-writer','deny-walk')
     after=(['front','body','middle','tail'] if kind in ('earlier','promote') else ['front','middle','body','tail']) if accepted else before
     starts=['front','body','front','middle','tail'] if accepted and kind=='promote' else after
     return before,after,starts,accepted
+
+
+def check_walk(row,ids,edit,points):
+    if MOVE_KINDS[row['id']]!='deny-walk':
+        assert 'walk' not in ids and not row.get('walk'),'unexpected native walk evidence'
+        return
+    spec=ids['walk'];walk=row['walk']
+    assert type(spec) is dict and set(spec)=={'origin','via','out','source'} and spec['origin']==ids['placement']
+    for key in ('origin','via','out'):
+        tile=spec[key];assert type(tile) is dict and set(tile)=={'x','y','z'} and all(type(v) is int for v in tile.values())
+    origin,out,via=spec['origin'],spec['out'],spec['via'];source=ids['supply']['world']
+    assert spec['source']==source and source['kind']=='world-bag','walk source identity differs'
+    dx,dy=out['x']-origin['x'],out['y']-origin['y']
+    assert (abs(dx),abs(dy)) in ((2,0),(0,2)) and origin['z']==via['z']==out['z']==source['z']
+    assert via==dict(x=origin['x']+dx//2,y=origin['y']+dy//2,z=origin['z']),'native walk is not the configured cardinal two-step route'
+    assert max(abs(out['x']-source['x']),abs(out['y']-source['y']))>1,'native walk endpoint stayed in makeup source reach'
+    assert type(walk) is dict and set(walk)=={'out','back','outEndpoint','returnedOrigin'}
+    references=[]
+    for name in ('out','back'):
+        part=walk[name]
+        assert type(part) is dict and set(part)=={'duration','starts','dequeues','nativeRef','finishes','dequeuedAt'}
+        assert type(part['duration']) is int and part['duration']==-1 and type(part['starts']) is int and part['starts']==1
+        assert type(part['dequeues']) is int and part['dequeues']==1,'native walk did not dequeue exactly once'
+        assert isinstance(part['nativeRef'],str) and part['nativeRef'] not in ('','nil','false')
+        references.append(part['nativeRef'])
+        assert type(part['dequeuedAt']) is int and edit['at']<part['dequeuedAt']<=points[2]['client']['at']
+        finishes=part['finishes'];assert type(finishes) is list and len(finishes)==1
+        assert set(finishes[0])=={'phase','succeeded','at'} and finishes[0]['phase']=='perform' and finishes[0]['succeeded'] is True
+        assert type(finishes[0]['at']) is int and edit['at']<finishes[0]['at']<=part['dequeuedAt']
+    assert len(set(references+[edit['frontNativeBefore'],row['body']['nativeRef']]))==4,'native walking reused another action allocation'
+    kit=dict(ids['baseline']['kit'],uses=4)
+    for name,target in (('outEndpoint',out),('returnedOrigin',origin)):
+        witness=walk[name]
+        assert type(witness) is dict and set(witness)=={'at','placement','source','kit'}
+        assert type(witness['at']) is int and edit['at']<witness['at']<=points[2]['client']['at']
+        assert witness['placement']==dict(tile=target,square=target),'native walk endpoint/current square differs'
+        assert witness['kit']==kit,'native world walk changed paid kit charge/ownership'
+        actual=witness['source'];baseline=ids['baseline']['supply']
+        assert type(actual) is dict and set(actual)==set(baseline)
+        assert {k:v for k,v in actual.items() if k!='access'}=={k:v for k,v in baseline.items() if k!='access'},'native walk changed exact source members/identity'
+        assert type(actual['access']) is dict and set(actual['access'])=={'blocked'} and type(actual['access']['blocked']) is bool
+        if name=='returnedOrigin':assert actual==baseline,'returned source is no longer the original accessible source'
+    assert walk['out']['finishes'][0]['at']<=walk['back']['finishes'][0]['at'] and walk['outEndpoint']['at']<=walk['returnedOrigin']['at'],'native out/return completion order differs'
 
 
 def check_move_case(row,selection,prepared,receipt):
@@ -390,7 +438,7 @@ def check_move_case(row,selection,prepared,receipt):
     ids=row['ids'];case=row['id'];toolkit=selection['mode']=='toolkit';kind=MOVE_KINDS[case]
     assert case in MOVE_KINDS and ids.get('move') is True and ids==prepared and row['receipt']==receipt
     assert ('supply' in ids)==(case in MOVE_SUPPLIES) and 'wearPending' not in ids
-    if case in MOVE_SUPPLIES:assert ids['supply']['kind']==MOVE_SUPPLIES[case],'carried source topology differs from case'
+    if case in MOVE_SUPPLIES:assert ids['supply']['kind']==MOVE_SUPPLIES[case],'makeup source topology differs from case'
     names={'kit','front','middle','tail'}|({'old'} if case=='move-earlier' else set())|({'writer'} if kind=='deny-writer' else set())
     assert set(ids['items'])==set(ids['types'])==names and len(set(ids['items'].values()))==len(names)
     assert ids['types']==dict(kit='Base.MakeupEyeshadow',front='Base.BookCarpentry1',middle='Base.BookCooking1',tail='Base.BookFirstAid1',
@@ -444,6 +492,7 @@ def check_move_case(row,selection,prepared,receipt):
                 assert [w for w in point[role]['snapshot']['worn'] if w['slot']=='base:socks']==expected,'actor writer slot transition differs'
         for value in (row['beforeTail']['snapshot'],row['clientFinal'],receipt['snapshot']):
             assert [w for w in value['worn'] if w['slot']=='base:socks']==writer_socks,'actor writer did not retain exact physical worn output'
+    check_walk(row,ids,edit,points)
     # Preserve the old proof's renderer, callback, authoritative body receipt,
     # exact root/output identity, one-use charge and correct old removal checks.
     projected=copy.deepcopy(row);pid=projected['ids'];alias='apply-replace' if case=='move-earlier' else 'apply-empty'
@@ -504,6 +553,7 @@ def verify(root,selection,catalog):
     expected_authority=[point['authority'] for row in results for point in row.get('checkpoints',[])]
     if raw(text,'CLIENT_SNAPSHOT')!=expected_client:issues.append('Raw makeup client checkpoints differ')
     if raw(authority,'SNAPSHOT')!=expected_authority:issues.append('Raw makeup authority checkpoints differ')
+    if raw(text,'WALK')!=[dict(case=row['id'],label=label,evidence=(row.get('walk') if type(row.get('walk')) is dict else {}).get(label)) for row in results if MOVE_KINDS.get(row.get('id'))=='deny-walk' for label in ('outEndpoint','returnedOrigin')]:issues.append('Raw makeup native walking witnesses differ')
     if raw(text,'OUTCOME')!=[dict(case=row['id'],receipt=receipt) for row in results for receipt in row.get('outcomes',[])]:issues.append('Raw makeup native outcomes differ')
     if raw(text,'BEFORE_TAIL')!=[dict(case=row['id'],evidence=row.get('beforeTail')) for row in results]:issues.append('Raw makeup tail boundary differs')
     if raw(text,'EDIT')!=[dict(case=row['id'],evidence=row.get('edit')) for row in results if cancelling(row.get('id','')) or row.get('id') in MOVE_KINDS]:issues.append('Raw makeup pending edit differs')

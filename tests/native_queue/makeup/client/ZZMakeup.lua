@@ -3,8 +3,9 @@ require 'ISUI/ISMakeUpUI'
 require 'TimedActions/ISReadABook'
 require 'TimedActions/ISApplyMakeUp'
 require 'TimedActions/ISWearClothing'
+require 'TimedActions/WalkToTimedAction'
 local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
-local moves=config.options and(config.options.makeup_moves==true or config.options.makeup_carried_moves==true)
+local moves=config.options and(config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true)
 local Proof=require 'PZSurvivorToolkit/SourceProof';local T=PZSurvivorToolkit;local native=config.mode=='native'
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
@@ -14,6 +15,7 @@ local bodyRecord,applyQueues,transferStarts,submitting,placement
 local M={}
 function M.kind()return F.moveKind(config.cases[index])end
 function M.name(action)
+ if M.walkActions then for name,walk in pairs(M.walkActions)do if action==walk then return 'walk-'..name end end end
  if action==body then return 'body'end
  if action==M.writer then return 'writer'end
  if action and action.Type=='ISReadABook'and ids then
@@ -22,6 +24,33 @@ function M.name(action)
  return action and action.Type or false
 end
 function M.order()local names={};for _,action in ipairs(ISTimedActionQueue.getTimedActionQueue(getPlayer()).queue)do names[#names+1]=M.name(action)end;return names end
+function M.walkPart(action)
+ if M.walkActions then for name,walk in pairs(M.walkActions)do if action==walk then return M.walkRecord[name]end end end
+end
+function M.walkWitness(label)
+ local kit=assert(F.kit(state));local _,source=F.supplyState(state.player,ids.supply)
+ local row={at=getTimestampMs(),placement=F.placement(state.player),source=assert(source),
+  kit={id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=false}}
+ M.walkRecord[label]=row
+ print('[MAKEUP_TEST] WALK '..JSON.encode({case=ids.case,label=label,evidence=row}))
+end
+function M.observeWalks()
+ if not M.walkActions then return end
+ for name,action in pairs(M.walkActions)do
+  local row=M.walkRecord[name]
+  local native=M.walkNatives[action]
+  if row.starts==1 and action.action then
+   assert(not native or native==action.action,'native walk allocation changed');native=action.action;M.walkNatives[action]=native
+   local reference=tostring(native)
+   assert(not row.nativeRef or row.nativeRef==reference,'native walk allocation changed')
+   row.nativeRef=reference
+  end
+  if row.starts==1 and row.dequeues==0 and ISTimedActionQueue.getTimedActionQueue(state.player):indexOf(action)==-1
+   and native and not state.player:getCharacterActions():contains(native)then
+   assert(row.nativeRef,'native walk dequeued without allocation');row.dequeues=1;row.dequeuedAt=getTimestampMs()
+  end
+ end
+end
 local previewShotFrames,previewShotSince,previewShotTaken=0,nil,false
 local uiMethods,bodyMethods={},{}
 local observerFailure
@@ -38,6 +67,10 @@ local function preview()
   previous=ui.previousMakeUp and ui.previousMakeUp:getID()or false}or false
 end
 local function intact()
+ if M.walkMethods then
+  for name,callback in pairs(M.walkMethods)do assert(ISWalkToTimedAction[name]==callback,'native walk callback replaced '..name)end
+  assert(Proof.closure(ISWalkToTimedAction.new,'WalkToTimedAction.lua'),'native walk constructor source changed')
+ end
  assert(not observerFailure,'native makeup observer failed '..tostring(observerFailure))
  for name,callback in pairs(uiMethods)do assert(ISMakeUpUI[name]==callback,'makeup UI callback replaced '..name)end
  for name,callback in pairs(bodyMethods)do assert(ISApplyMakeUp[name]==callback,'native makeup body callback replaced '..name)end
@@ -115,7 +148,7 @@ local function apply()
  end
  if moves then
   M.middle=ISReadABook:new(state.player,state.player:getInventory():getItemById(ids.items.middle))
-  if M.kind()~='later'and M.kind()~='deny-writer'then ISTimedActionQueue.add(M.middle)end
+  if M.kind()~='later'and M.kind()~='deny-writer'and M.kind()~='deny-walk'then ISTimedActionQueue.add(M.middle)end
   if M.kind()=='deny-writer'then M.writer=ISWearClothing:new(state.player,state.player:getInventory():getItemById(ids.items.writer));ISTimedActionQueue.add(M.writer)end
  end
  if isClient()then bodyRecord={duration=1,starts=0,finishes={},nativeRef=false}end
@@ -128,7 +161,20 @@ local function apply()
   assert(body and body.maxTime==1 and body.item:getID()==ids.items.kit and body.type==ids.target,'native makeup constructor/duration changed')
   local contract,adapter=T.ActionQueuePolicy.inspect(body)
   assert(contract and adapter=='native.ISApplyMakeUp'and contract.cancelWaiting==(not native and body.action==nil),'native makeup producer receipt/allocation differs')
-  if moves and(M.kind()=='later'or M.kind()=='deny-writer')then ISTimedActionQueue.add(M.middle)end
+  if moves and M.kind()=='deny-walk'then
+   assert(ids.walk and F.atPlacement(state.player,ids.walk.origin),'world makeup walk origin changed')
+   local function square(tile)
+    local found=assert(getCell():getGridSquare(tile.x,tile.y,tile.z),'native makeup walk square unavailable')
+    return found
+   end
+   M.walkActions={out=ISWalkToTimedAction:new(state.player,square(ids.walk.out)),back=ISWalkToTimedAction:new(state.player,square(ids.walk.origin))}
+   M.walkNatives={};M.walkRecord={out={duration=-1,starts=0,dequeues=0,nativeRef=false,finishes={}},back={duration=-1,starts=0,dequeues=0,nativeRef=false,finishes={}}}
+   for _,name in ipairs({'out','back'})do
+    local action=M.walkActions[name];assert(action.maxTime==-1 and not action.onCompleteFunc and action.additionalTest==nil and action.additionalContext==nil,'native walk constructor/duration/callback changed');ISTimedActionQueue.add(action)
+   end
+   assert(M.walkActions.out.toolkitQueueOperation~=M.walkActions.back.toolkitQueueOperation,'native walk directions share an operation token')
+  end
+  if moves and(M.kind()=='later'or M.kind()=='deny-writer'or M.kind()=='deny-walk')then ISTimedActionQueue.add(M.middle)end
   addTail()
   if moves then close();phase='move-front';return end
   if case()=='apply-while-preview'then second=choose(ids.alternate);rendered('overlap-preview','wait-body')
@@ -144,6 +190,9 @@ local function completed()
  return false
 end
 local function afterBody()
+ if ids.walk and(queue():indexOf(M.walkActions.out)~=-1 or queue():indexOf(M.walkActions.back)~=-1
+  or M.walkRecord.out.dequeues~=1 or M.walkRecord.back.dequeues~=1 or not M.walkRecord.returnedOrigin
+  or not F.atPlacement(state.player,ids.walk.origin))then bodyQuiet=nil;return end
  if not empty()and queue():indexOf(body)~=-1 then bodyQuiet=nil;return end
  local cancelled=F.cancel(case())and not native
  if not cancelled and (not completed()or snapshot().kit.uses~=ids.kitUses-1)then return end
@@ -209,10 +258,22 @@ Events.OnTick.Add(function()
     and type(makeupAvatarRendered)=='function','test-only native avatar capture probe unavailable')
    for _,name in ipairs({'onSelectMakeUp','onSelectLocation','onApplyMakeUp','prerender','reinit','close'})do uiMethods[name]=ISMakeUpUI[name]end
    for _,name in ipairs({'new','isValid','start','update','stop','perform','complete','getDuration'})do bodyMethods[name]=ISApplyMakeUp[name]end
+   if config.options and config.options.makeup_world_moves==true then
+    M.walkMethods={};for _,name in ipairs({'new','isValid','start','update','stop','perform'})do M.walkMethods[name]=ISWalkToTimedAction[name]end
+   end
    assert(T.ActionQueueLifecycle.registerObserver('fixture.makeup',{
     started=observe(function(action)
      if moves then
       local name=M.name(action);M.startOrder[#M.startOrder+1]=name
+      local walk=M.walkPart(action)
+      if walk then walk.starts=walk.starts+1;assert(walk.starts==1,'native walk started twice')end
+      if name=='walk-back'then
+       assert(F.atPlacement(state.player,ids.walk.out)and queue():indexOf(M.walkActions.out)==-1,'native outbound walk did not reach its exact endpoint')
+       M.walkWitness('outEndpoint')
+      elseif name=='middle'and ids.walk then
+       assert(F.atPlacement(state.player,ids.walk.origin)and queue():indexOf(M.walkActions.out)==-1 and queue():indexOf(M.walkActions.back)==-1,'native return walk did not restore the exact origin')
+       M.walkWitness('returnedOrigin')
+      end
       if name=='front'then
        local pages=state.player:getAlreadyReadPages(ids.types.front)
        if M.readerResume then assert(pages>=M.readerResume.pages,'promoted native reader lost checkpoint pages');M.readerResume.resumedPages=pages;M.resumedAction=action end
@@ -226,10 +287,14 @@ Events.OnTick.Add(function()
      if action==tail then assert(not beforeTail,'tail began twice');beforeTail={at=now(),snapshot=snapshot()};raw('BEFORE_TAIL',{case=case(),evidence=beforeTail})end
     end),
     begin=observe(function(action,step)
+     local walk=M.walkPart(action);if walk then
+      assert(action.action,'native walk completion has no allocated action');M.walkNatives[action]=action.action;walk.nativeRef=tostring(action.action);return step=='perform'
+     end
      if action~=body then return false end
      bodyRecord.nativeRef=tostring(action.action);return step=='perform'or step=='complete'
     end),
     finish=observe(function(action,step,succeeded)
+     local walk=M.walkPart(action);if walk then walk.finishes[#walk.finishes+1]={phase=step,succeeded=succeeded==true,at=now()}end
      if action==body then bodyRecord.finishes[#bodyRecord.finishes+1]={phase=step,succeeded=succeeded==true,at=now()}end
     end)}),'native makeup lifecycle observer unavailable')
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
@@ -237,6 +302,7 @@ Events.OnTick.Add(function()
   end
   assert(now()-since<180000,'makeup timeout '..tostring(case())..' phase='..phase)
   intact()
+  M.observeWalks()
   if moves and M.resumedAction and M.resumedAction.action and M.resumedAction:isStarted()then
    M.readerResume.native=tostring(M.resumedAction.action)
   end
@@ -282,12 +348,27 @@ Events.OnTick.Add(function()
    assert(not body.action and bodyRecord.starts==0,'move test body allocated before edit')
    local before=M.order();local physical=snapshot();local token=body.toolkitQueueOperation
    assert(token and token~=front.toolkitQueueOperation and token~=M.middle.toolkitQueueOperation and token~=tail.toolkitQueueOperation
-    and(not M.writer or token~=M.writer.toolkitQueueOperation),'native makeup shares an unrelated operation token')
+    and(not M.writer or token~=M.writer.toolkitQueueOperation)
+    and(not M.walkActions or token~=M.walkActions.out.toolkitQueueOperation and token~=M.walkActions.back.toolkitQueueOperation),'native makeup shares an unrelated operation token')
    local frontNative=tostring(front.action);local pages=physical.frontPages;local delta=front:getJobDelta()
-   local target=M.kind()=='promote'and front or M.kind()=='deny-writer'and M.writer or M.middle
+   local target=M.kind()=='promote'and front or M.kind()=='deny-writer'and M.writer or M.kind()=='deny-walk'and M.walkActions.out or M.middle
    local accepted,reason=false,false
-   if not native then accepted,reason=T.ActionQueue.move(queue(),body,target,M.kind()=='later')end
-   local expected=not native and M.kind()~='deny-writer'
+   if not native then accepted,reason=T.ActionQueue.move(queue(),body,target,M.kind()=='later'or M.kind()=='deny-walk')end
+   local expected=not native and M.kind()~='deny-writer'and M.kind()~='deny-walk'
+   if accepted~=expected then
+    local kit,source=F.kit(state);local bag=source and source:getContainingItem()
+    local view=bag and bag:getContainer();local world=bag and bag:getWorldItem()
+    local caches=ISInventoryPage and ISInventoryPage.floorContainer
+    local contract=T.ActionQueuePolicy.inspect(body)
+    raw('MOVE_SOURCE',{case=case(),knownInputs=contract and contract.knownInputs or false,
+     sourceClass=source and getClassSimpleName(source)or false,sourceType=source and source:getType()or false,
+     sourceExists=source and source:isExistYet()or false,outerIsSource=kit and kit:getOutermostContainer()==source or false,
+     viewClass=view and getClassSimpleName(view)or false,viewType=view and view:getType()or false,
+     actorFloorView=view~=nil and type(caches)=='table'and caches[state.player:getPlayerNum()+1]==view or false,
+     bagComponents=bag and bag:hasComponents()or false,worldComponents=world and world:hasComponents()or false,
+     worldObjects=world and world:getSquare()and world:getSquare():getWorldObjects():contains(world)or false,
+     objects=world and world:getSquare()and world:getSquare():getObjects():contains(world)or false})
+   end
    assert(accepted==expected,'makeup move admission differs '..tostring(reason))
    assert(F.same(physical,snapshot())and token==body.toolkitQueueOperation and not body.action,'move mutated paid state or operation ownership')
    edit={at=now(),accepted=accepted,reason=reason or false,before=before,after=M.order(),bodyUnallocated=true,
@@ -317,10 +398,10 @@ Events.OnTick.Add(function()
    local final=snapshot();local output=F.output(verified.snapshot,ids)
    emit({event='case',id=case(),status='passed',ids=ids,checkpoints=checkpoints,receipt=verified,clientFinal=final,
     submitted=submitted,second=second or false,output=output,body=bodyRecord or false,outcomes=outcomes,
-    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true,applyQueues=applyQueues,supplyTransferStarts=(ids.supply or moves)and transferStarts or nil,startOrder=moves and M.startOrder or nil,readerResume=M.readerResume or nil})
+    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true,applyQueues=applyQueues,supplyTransferStarts=(ids.supply or moves)and transferStarts or nil,startOrder=moves and M.startOrder or nil,readerResume=M.readerResume or nil,walk=M.walkRecord or nil})
    previous=ids;index=index+1
    state,ids,ui,front,tail,body,submitted,second,beforeTail,edit,verified,pending,authority=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord,applyQueues=nil,nil,nil,nil,nil,nil,nil;M.middle,M.writer,M.readerResume,M.wearReady,M.resumedAction=nil,nil,nil,nil,nil;since=now();phase='prepare'
+   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord,applyQueues=nil,nil,nil,nil,nil,nil,nil;M.middle,M.writer,M.readerResume,M.wearReady,M.resumedAction,M.walkActions,M.walkRecord,M.walkNatives=nil,nil,nil,nil,nil,nil,nil,nil;since=now();phase='prepare'
    if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
   end
  end)
