@@ -32,6 +32,13 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.292
+
+- Derive Experience and Recipe tags independently from each recording. Combined lessons retain both tags, recipe-only recordings are supported, and container previews use real combinations without inventing content. Keep manual tag corrections and saved exact categories.
+- Add Disassembly for the consumed subjects of supported native dismantling recipes and scrap furniture, with skill tags from their XP rewards. Exclude kept tools and unrelated craft inputs; inspect live item restrictions without executing recipes. Unknown recipe callbacks remain unclassified.
+- Add Can Eat separately from Food using native Eat/Open and Eat behavior. Exclude Smoke/Drink and inedible ingredients; preserve Container and Liquid on fluid vessels regardless of their current contents.
+- Project warehouse entries through an explicit snapshot API, preserving recorded content and manual assignments without passing snapshot tables to native InventoryItem predicates.
+
 ### 0.1.291
 
 - Fixed: a native successful petting animation no longer clears unrelated queued work. The original animal effect and stop cleanup are retained; continuation waits for the exact native action to leave and for Host stop acknowledgement. Manual cancellation, invalid targets and unsupported handlers retain native behavior.
@@ -1329,6 +1336,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.67
+
+- Expose read-only native Eat-menu and recipe item-test metadata for accurate tag previews. Unsupported bytecode returns unknown; neither helper creates items or executes recipe callbacks.
 
 ### 0.1.66
 
