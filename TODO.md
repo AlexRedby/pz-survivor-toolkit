@@ -1,3 +1,9 @@
+# Publish completed freshness and battery fixes
+
+- [ ] Merge current `origin/main` into this worktree, preserving concurrent changes and reconciling Toolkit/Java release versions and changelog entries.
+- [ ] Run focused merged freshness, dependency preparation, packet and makeup regressions; confirm packaging and remove this completed plan before committing the integration.
+- [ ] Push the integrated commit to `main` with an ordinary fast-forward push and verify the remote tip.
+
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
