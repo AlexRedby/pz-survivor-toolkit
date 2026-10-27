@@ -13,7 +13,7 @@ SOURCE_MANIFEST = 'META-INF/pztoolkit-build-inputs.json'
 
 def source_fingerprints(root):
     """Portable fingerprints for the ordinary runtime and its build tools, without local paths."""
-    sources = list((root / 'src/net/alexredby/pztoolkitjavapatches').rglob('*'))
+    sources = list((root / 'src').rglob('*'))
     sources = [path for path in sources if path.suffix in ('.java', '.kt') and path.is_file()]
     sources += [path for path in (root / 'build.py', root / 'tools/RelocateKotlin.java') if path.is_file()]
     return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -114,6 +114,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.RadioDeviceLookupChecks': 'RADIO_DEVICE_LOOKUP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.WormCompostChecks': 'WORM_COMPOST_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.AlarmClockChecks': 'ALARM_CLOCK_CHECKS_PASS',
+          'net.alexredby.pztoolkitbootstrap.LotLocksChecks': 'LOT_LOCKS_CHECKS_PASS',
           'zombie.vehicles.VehicleInventoryOrderingChecks': 'VEHICLE_INVENTORY_ORDERING_CHECKS_PASS',
           'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
           'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
@@ -505,13 +506,14 @@ def main(argv=None):
                             (runtime_classes / relative).parent.mkdir(parents=True)
                             shutil.copy2(testclasses / relative, runtime_classes / relative)
                         cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
+                        cold_bootstrap = cold_fonts or name == 'net.alexredby.pztoolkitbootstrap.LotLocksChecks'
                         cold_kotlin = name == 'net.alexredby.javapatchfixture.KotlinRuntimeChecks'
-                        testpath = [str(testclasses), classpath] if cold_fonts or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
+                        testpath = [str(testclasses), classpath] if cold_bootstrap or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
                         log = log_path(name, trace)
                         timeout = args.test_timeout if args.test_timeout is not None else CHECK_TIMEOUTS.get(name, 120)
                         try:
                             with log.open('w') as output:
-                                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.project=' + str(ROOT.parent), '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
+                                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_bootstrap else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.project=' + str(ROOT.parent), '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
                         except subprocess.TimeoutExpired as error:
                             print(log.read_text(errors='replace'))
                             raise RuntimeError(f'{name} timed out after {timeout} seconds; output saved to {log}') from error
