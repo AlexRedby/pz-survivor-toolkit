@@ -2,6 +2,7 @@ local config=require 'QueueTestSelection'
 if config.suite~='lot-streaming'or not isServer()then return end
 local F=require 'LotStreamingFixture'
 local actors,ready,failed={},{},false
+local beforeReleased=false
 local phases={'before','away','returned'}
 Events.OnClientCommand.Add(function(module,command,player,args)
  if module~=F.module or failed then return end
@@ -23,11 +24,18 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   elseif command=='Probe'then
    local state=assert(actors[role]);assert(ready.client1 and ready.client2,'Peers not ready')
    assert(args.phase==phases[state.nextPhase],'Reordered/duplicate authority phase')
+   assert(args.phase=='before'or beforeReleased,'Initial authority snapshots not captured for both peers')
    assert(F.near(player,args.phase=='away'and F.away or F.start),'Authority streaming position differs')
    local snapshot=F.snapshot(role,args.phase)
-   if args.phase=='returned'then F.store(snapshot)end
+   if args.phase=='returned'then F.store(snapshot,role)end
    state.nextPhase=state.nextPhase+1
-   sendServerCommand(player,F.module,'Probe',{phase=args.phase})
+   if args.phase=='before'then
+    state.beforeCaptured=true
+    if actors.client1.beforeCaptured and actors.client2.beforeCaptured then
+     beforeReleased=true
+     for _,actor in pairs(actors)do sendServerCommand(actor.player,F.module,'Probe',{phase='before'})end
+    end
+   else sendServerCommand(player,F.module,'Probe',{phase=args.phase})end
   else error('Unexpected native fixture command '..tostring(command))end
  end)
  if not ok then failed=true;F.emit('FAIL',{role='server',error=tostring(err)})end
