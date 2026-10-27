@@ -12,20 +12,22 @@ local function getFreshness(item)
     if not (item and instanceof(item, "Food")) then return nil end
     local maxAge = item:getOffAgeMax()
     if not maxAge or maxAge <= 0 or maxAge >= 1000000000 then return nil end
-    return clamp01(1 - (item:getAge() or 0) / maxAge), clamp01(1 - (item:getOffAge() or 0) / maxAge)
+    return clamp01(1 - (item:getAge() or 0) / maxAge), maxAge
 end
 
 local function leastFresh(items)
-    local selected, minimum
+    local selected, minimum, selectedMax
     for _, item in ipairs(items) do
-        local value = getFreshness(item)
-        if value and (minimum == nil or value < minimum) then selected, minimum = item, value end
+        local value, maxAge = getFreshness(item)
+        if value and (minimum == nil or value < minimum) then
+            selected, minimum, selectedMax = item, value, maxAge
+        end
     end
-    return selected
+    -- Only the least-fresh member supplies the stale marker drawn for the group.
+    if selected then return minimum, clamp01(1 - (selected:getOffAge() or 0) / selectedMax) end
 end
 
-local function drawIndicator(pane, item, index, child)
-    local value, stale = getFreshness(item)
+local function drawIndicator(pane, value, stale, index, child)
     if value == nil then return end
     local top = pane.headerHgt + (index - 1) * pane.itemHgt
     local font = pane.font or UIFont.Medium
@@ -65,9 +67,17 @@ local function drawRows(pane, first, last)
         local separator = type(entry) == "table" and (entry.type == "separator" or entry._bcEquippedAttachedSeparator)
         if not dragging and not separator then
             if type(entry) == "table" and entry.items then
-                drawIndicator(pane, leastFresh(entry.items), index, false)
+                local bar = Options.showFoodFreshnessBar and pane.column3 - pane.column2 - 16 >= 48
+                local percentage = Options.showFoodFreshnessPercentage and pane.mouseOverOption == index
+                if bar or percentage then
+                    local value, stale = leastFresh(entry.items)
+                    drawIndicator(pane, value, stale, index, false)
+                end
             else
-                drawIndicator(pane, entry, index, true)
+                local value, maxAge = getFreshness(entry)
+                if value ~= nil then
+                    drawIndicator(pane, value, clamp01(1 - (entry:getOffAge() or 0) / maxAge), index, true)
+                end
             end
         end
     end
@@ -84,8 +94,8 @@ function Freshness.draw(pane, class)
     local clipHeight = pane.height - header - 1
     local last = math.min(#pane.items, math.ceil((clipHeight - scroll) / height))
     if first > last or clipHeight <= 0 then return end
-    -- All item reads happen inside the visible interval. A visible group still
-    -- examines every member: no freshness cache and no change to food ageing.
+    -- A group that draws an indicator examines every member's current freshness.
+    -- There is no cross-frame cache and no change to food ageing.
     pane:setStencilRect(0, header, pane.width - 1, clipHeight)
     local ok, err = pcall(drawRows, pane, first, last)
     pane:clearStencilRect()

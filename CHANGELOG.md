@@ -34,6 +34,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.308
+
+- Reduce native item reads when drawing a collapsed food stack's freshness indicator. Read every member's current freshness, then calculate the stale marker only for the least-fresh member; preserve ties, live changes and native food ageing.
+- Skip freshness scans for stack headers that draw neither a bar nor a percentage, including unhovered percentage-only headers and bars below the minimum width. Preserve child percentages and existing pane ownership.
+
 ### 0.1.307
 
 - Allow moving unstarted hair/beard dye and supported gel/spray hairstyles around independent queued work. Preserve exact dye identity, native late styling selectors and costs, including GreasedBack double use; keep shared materials, unsupported replacements and active bodies protected.
