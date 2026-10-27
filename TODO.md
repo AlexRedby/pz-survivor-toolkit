@@ -1,9 +1,3 @@
-# Finish container-tag work
-
-- [ ] Finish integration as Toolkit 0.1.311 after concurrent main took 0.1.309 and 0.1.310, resolving the changelog/mod.info rebase conflicts and verifying the merged checks and pushed tip.
-- [ ] Check task-owned ignored/untracked files, saved catalogue assets, stashes and temporary resources; preserve needed results outside the managed worktree.
-- [ ] Remove only integrated task branches, complete memory, then archive this chat with its current managed worktree left for app cleanup.
-
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
