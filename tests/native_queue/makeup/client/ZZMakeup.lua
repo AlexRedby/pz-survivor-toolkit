@@ -4,7 +4,7 @@ require 'TimedActions/ISReadABook'
 require 'TimedActions/ISApplyMakeUp'
 require 'TimedActions/ISWearClothing'
 local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
-local moves=config.options and config.options.makeup_moves==true
+local moves=config.options and(config.options.makeup_moves==true or config.options.makeup_carried_moves==true)
 local Proof=require 'PZSurvivorToolkit/SourceProof';local T=PZSurvivorToolkit;local native=config.mode=='native'
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
@@ -12,6 +12,7 @@ local state,ids,previous,ui,front,tail,body,submitted,second,beforeTail,edit,ver
 local checkpoints,sequence,outcomes,renderWitness,renderLabel,renderNext,bodyQuiet,finalQuiet
 local bodyRecord,applyQueues,transferStarts,submitting,placement
 local M={}
+function M.kind()return F.moveKind(config.cases[index])end
 function M.name(action)
  if action==body then return 'body'end
  if action==M.writer then return 'writer'end
@@ -114,8 +115,8 @@ local function apply()
  end
  if moves then
   M.middle=ISReadABook:new(state.player,state.player:getInventory():getItemById(ids.items.middle))
-  if case()~='move-later'and case()~='move-deny-writer'then ISTimedActionQueue.add(M.middle)end
-  if case()=='move-deny-writer'then M.writer=ISWearClothing:new(state.player,state.player:getInventory():getItemById(ids.items.writer));ISTimedActionQueue.add(M.writer)end
+  if M.kind()~='later'and M.kind()~='deny-writer'then ISTimedActionQueue.add(M.middle)end
+  if M.kind()=='deny-writer'then M.writer=ISWearClothing:new(state.player,state.player:getInventory():getItemById(ids.items.writer));ISTimedActionQueue.add(M.writer)end
  end
  if isClient()then bodyRecord={duration=1,starts=0,finishes={},nativeRef=false}end
  submitting=true;ui:onApplyMakeUp();submitting=false
@@ -127,7 +128,7 @@ local function apply()
   assert(body and body.maxTime==1 and body.item:getID()==ids.items.kit and body.type==ids.target,'native makeup constructor/duration changed')
   local contract,adapter=T.ActionQueuePolicy.inspect(body)
   assert(contract and adapter=='native.ISApplyMakeUp'and contract.cancelWaiting==(not native and body.action==nil),'native makeup producer receipt/allocation differs')
-  if moves and(case()=='move-later'or case()=='move-deny-writer')then ISTimedActionQueue.add(M.middle)end
+  if moves and(M.kind()=='later'or M.kind()=='deny-writer')then ISTimedActionQueue.add(M.middle)end
   addTail()
   if moves then close();phase='move-front';return end
   if case()=='apply-while-preview'then second=choose(ids.alternate);rendered('overlap-preview','wait-body')
@@ -283,16 +284,16 @@ Events.OnTick.Add(function()
    assert(token and token~=front.toolkitQueueOperation and token~=M.middle.toolkitQueueOperation and token~=tail.toolkitQueueOperation
     and(not M.writer or token~=M.writer.toolkitQueueOperation),'native makeup shares an unrelated operation token')
    local frontNative=tostring(front.action);local pages=physical.frontPages;local delta=front:getJobDelta()
-   local target=case()=='move-promote'and front or case()=='move-deny-writer'and M.writer or M.middle
+   local target=M.kind()=='promote'and front or M.kind()=='deny-writer'and M.writer or M.middle
    local accepted,reason=false,false
-   if not native then accepted,reason=T.ActionQueue.move(queue(),body,target,case()=='move-later')end
-   local expected=not native and case()~='move-deny-writer'and case()~='move-deny-nested'
+   if not native then accepted,reason=T.ActionQueue.move(queue(),body,target,M.kind()=='later')end
+   local expected=not native and M.kind()~='deny-writer'
    assert(accepted==expected,'makeup move admission differs '..tostring(reason))
    assert(F.same(physical,snapshot())and token==body.toolkitQueueOperation and not body.action,'move mutated paid state or operation ownership')
    edit={at=now(),accepted=accepted,reason=reason or false,before=before,after=M.order(),bodyUnallocated=true,
     ownershipPreserved=true,frontPages=pages,frontDelta=delta,frontNativeBefore=frontNative,
     frontNativeAfter=tostring(front.action),frontRetained=queue():indexOf(front)~=-1,tailRetained=queue():indexOf(tail)~=-1}
-   if expected and case()=='move-promote'then M.readerResume={pages=pages}end
+   if expected and M.kind()=='promote'then M.readerResume={pages=pages}end
    raw('EDIT',{case=case(),evidence=edit});phase='wait-body'
   elseif phase=='wait-front'then
    if queue().current~=front or not front.action or not front:isStarted()or front:getJobDelta()<=0 then return end

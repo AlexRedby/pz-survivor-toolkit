@@ -10,8 +10,15 @@ function F.same(a,b)
  for k in pairs(b)do if a[k]==nil then return false end end
  return true
 end
-F.moves={'move-earlier','move-later','move-promote','move-deny-writer','move-deny-nested'}
-function F.moveCase(case)for _,value in ipairs(F.moves)do if case==value then return true end end;return false end
+F.moves={'move-earlier','move-later','move-promote','move-deny-writer'}
+F.carriedMoves={'move-worn-earlier','move-nested-later','move-nested-promote','move-nested-deny-writer'}
+local moveSpecs={
+ ['move-earlier']={kind='earlier'},['move-later']={kind='later'},['move-promote']={kind='promote'},['move-deny-writer']={kind='deny-writer'},
+ ['move-worn-earlier']={kind='earlier',supply='worn-bag'},['move-nested-later']={kind='later',supply='nested-bag'},
+ ['move-nested-promote']={kind='promote',supply='nested-bag'},['move-nested-deny-writer']={kind='deny-writer',supply='nested-bag'}}
+function F.moveCase(case)return moveSpecs[case]~=nil end
+function F.moveKind(case)return moveSpecs[case]and moveSpecs[case].kind end
+function F.moveSupply(case)return moveSpecs[case]and moveSpecs[case].supply end
 function F.placed(case)return F.supplyCase(case)or F.moveCase(case)end
 F.supplySP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag'}
 F.supplyMP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag','cancel-nested-bag','cancel-world-container'}
@@ -217,9 +224,9 @@ function F.prepare(player,case,previous,placement)
  end
  -- Native Eyes supports both Eyes and EyesShadow; no fabricated All kit.
  local source,object,worldBag=root,nil,nil
- if F.supplyCase(case)or case=='move-deny-nested'then
+ if F.supplyCase(case)or F.moveSupply(case)then
   ids.placement={x=placement.x,y=placement.y,z=placement.z}
-  source,ids.supply,object,worldBag=supply(player,case=='move-deny-nested'and'apply-nested-bag'or case)
+  source,ids.supply,object,worldBag=supply(player,F.moveSupply(case)and'apply-'..F.moveSupply(case)or case)
  end
  local kit=seed('kit','Base.MakeupEyeshadow',source)
  if ids.supply then assert(source:AddItem('Base.Pencil'),'native source sentinel missing')end
@@ -235,10 +242,10 @@ function F.prepare(player,case,previous,placement)
   and getScriptManager():FindItem(ids.different):getBodyLocation()==ItemBodyLocation.MAKE_UP_EYES_SHADOW,'native cosmetic slots changed')
  for _,name in ipairs(ids.move and {'front','middle','tail'}or {'front','tail'})do
   local book=seed(name,name=='front'and'Base.BookCarpentry1'or name=='middle'and'Base.BookCooking1'or'Base.BookFirstAid1')
-  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and(ids.move and 8 or 3)or 1)
+  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and(ids.move and not F.moveSupply(case)and 8 or 3)or 1)
   book:setAlreadyReadPages(ids[name..'Initial']);player:setAlreadyReadPages(book:getFullType(),ids[name..'Initial'])
  end
- if case=='move-deny-writer'then seed('writer','Base.Socks_Ankle')end
+ if F.moveKind(case)=='deny-writer'then seed('writer','Base.Socks_Ankle')end
  if case~='apply-empty'and not ids.move then local old=seed('old',ids.oldType);player:setWornItem(ItemBodyLocation.MAKE_UP_EYES,old)end
  -- Native root packet acknowledgement precedes authoritative wearing. This
  -- avoids manufacturing a same-ID unattached clothing proxy on the client.

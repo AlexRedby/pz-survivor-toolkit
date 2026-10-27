@@ -36,6 +36,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.314
+
+- Allow moving supported unstarted Host makeup while its kit remains in a carried or nested bag. Track exact ancestor membership and shared container dependencies without extracting or reserving supplies; keep world sources, depletion, equipment writers and uncertain callbacks protected.
+
 ### 0.1.313
 
 - Reduce native item reads when drawing a collapsed food stack's freshness indicator. Read every member's current freshness, then calculate the stale marker only for the least-fresh member; preserve ties, live changes and native food ageing.
