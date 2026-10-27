@@ -517,6 +517,13 @@ $final=Get-TrialWprStatus $c
 """)
         self.assertEqual(result, {'ready': 'Ready', 'final': 'Complete', 'gates': 2, 'verb': 'RunAs', 'startUnchanged': True, 'stopUnchanged': True, 'bound': 240})
 
+    def test_header_validation_exception_after_stop_still_cleans_owned_instance(self):
+        result = self.worker("function Test-TrialWprTrace { param($Path); throw 'fixture header API failure' }")
+        self.assertEqual(result['receipt']['status'], 'Incomplete')
+        self.assertEqual(result['receipt']['reason'], 'OwnedSessionSaveOrValidationFailed')
+        self.assertEqual(result['receipt']['cleanupState'], 'Absent')
+        self.assertTrue(any(c[0]=='-cancel' for c in result['commands']))
+
     def test_successful_stop_with_active_or_unknown_collector_still_cleans_owned_instance(self):
         for code, expected in ((0, 'Active'), (5, 'Unknown')):
             result = self.worker("function Get-TrialWprCollectorQueryCode { param($Name); return " + str(code) + " }")
