@@ -18,6 +18,7 @@ local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Categories = require "PZSurvivorToolkit/ItemCategories"
 local AppearanceControls = require "PZSurvivorToolkit/ContainerAppearanceControls"
+local GroupControls = require "PZSurvivorToolkit/ContainerGroupControls"
 
 LootSorter = LootSorter or {}
 LootSorter.toolkitTagPicker = true
@@ -298,6 +299,7 @@ function Picker:createChildren()
                          self.listbox, self.btnAll, self.btnClear, self.btnSave }) do
         b:initialise(); b:instantiate(); self:addChild(b)
     end
+    GroupControls.create(self)
 
     -- Dim overlay shown over THIS window only while its preset editor is open: it greys the picker and
     -- eats clicks to it (so it can't be touched behind the editor) WITHOUT dimming the rest of the
@@ -333,6 +335,7 @@ function Picker:layout()
     local halfW = (innerW - gap) / 2
     local rightX = pad + halfW + gap
     local top = self:titleBarHeight() + 8
+    top = GroupControls.layout(self, top)
     top = AppearanceControls.layout(self, top)
     self.sortingHeading:setY(top); self.sortingHeading:setHeight(rowH)
     self.sortingHint:setY(top + rowH); self.sortingHint:setHeight(hintH)
@@ -515,6 +518,7 @@ function Picker.prerenderList(list)
 end
 
 function Picker:prerender()
+    GroupControls.refresh(self)
     self:resolvePresetSelection()
     local tagRevision = Tags.revision and Tags.revision() or 0
     if self.toolkitTagRevision ~= tagRevision then
@@ -866,9 +870,15 @@ function Picker:configJoypad()
     self.joypadButtons = {}
     self.allJoypadButtons = {}   -- reset too: insertNewLineOfButtons APPENDS to this (else it leaks)
     self.joypadConfigured = true
+    if self.groupSelect then
+        self:insertNewLineOfButtons(self.groupSelect)
+        if self.containerGroupRecord then self:insertNewLineOfButtons(self.groupScope) end
+    end
     if self.appearanceName then
         self:insertNewLineOfButtons(self.appearanceName)
-        self:insertNewLineOfButtons(self.appearanceIcon, self.appearanceColor, self.appearanceReset)
+        if self.appearanceIcon then
+            self:insertNewLineOfButtons(self.appearanceIcon, self.appearanceColor, self.appearanceReset)
+        else self:insertNewLineOfButtons(self.appearanceReset) end
     end
     self:insertNewLineOfButtons(self.filter)                            -- filter (A = keyboard)
     if self.targetKind == "preset" then
@@ -1022,6 +1032,11 @@ function Picker:onSave()
         presets = self.selectedPresets, priority = self.priority, noDuplicates = self.noDuplicates,
         pzstTagRule = self.toolkitTagRule})
     snapshot.appearance = AppearanceControls.value(self)
+    local prepared, message = GroupControls.prepare(self, snapshot)
+    if not prepared then
+        LootSorter.notify(getSpecificPlayer(self.playerNum or 0), message)
+        return
+    end
     self.toolkitTagSaving = true
     TagRules.saveBox(obj, ci, snapshot.pzstTagRule, getSpecificPlayer(self.playerNum or 0),
         function(verdict, revision)
@@ -1036,8 +1051,10 @@ function Picker:onSave()
                 self.noDuplicates = snapshot.noDuplicates
                 self:closePicker()
             elseif LootSorter.notify then
-                LootSorter.notify(getSpecificPlayer(self.playerNum or 0), getText(verdict == "stale"
-                    and "UI_PZST_QMTagRuleStale" or "UI_PZST_QMTagRuleFailed", tostring(verdict)))
+                local groupError = ({staleGroup = "Stale", missingGroup = "Missing", deniedGroup = "CannotEdit"})[verdict]
+                LootSorter.notify(getSpecificPlayer(self.playerNum or 0), groupError
+                    and getText("UI_PZST_ContainerGroup" .. groupError) or getText(verdict == "stale"
+                        and "UI_PZST_QMTagRuleStale" or "UI_PZST_QMTagRuleFailed", tostring(verdict)))
             end
         end, self.toolkitTagRuleRevision, snapshot)
 end

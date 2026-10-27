@@ -38,7 +38,7 @@ function LootSorter.DepositAction:lsCanDeposit()
     local ok, valid = pcall(function()
         local box = self.lsDestinationBox
         if box and Duplicates.enabled(box.obj, box.ci)
-            and not Duplicates.accepts(self.destContainer, self.item) then return false end
+            and not Duplicates.accepts(self.destContainer, self.item, box) then return false end
         return ISInventoryTransferAction.isValid(self)
     end)
     return ok and valid == true

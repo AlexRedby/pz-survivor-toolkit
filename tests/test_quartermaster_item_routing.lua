@@ -135,6 +135,33 @@ do
     assert(cut == 1 and #kept == 1 and kept[1].perBox[trash][1].item == second)
 end
 local seeds = box(seedRule)
+do
+    local one = item('Base.BookCooking1', 'Literature', 'Cooking Vol. 1')
+    local extra = item('Base.BookCooking1', 'Literature', 'Cooking Vol. 1')
+    local otherVolume = item('Base.BookCooking2', 'Literature', 'Cooking Vol. 2')
+    local a, b, trash = box(nil, {Literature = true}), box(nil, {Literature = true}), box(nil, {Literature = true})
+    a.noDuplicates, b.noDuplicates, a.duplicateScope, b.duplicateScope = true, true, 'library', 'library'
+    a.priority, b.priority, trash.priority = 10, 9, -1
+    a.container, b.container = {}, {}
+    a.existingTypes, b.existingTypes = {}, {}
+    a.capacity = 0
+    local routed = checkPlan({one, extra, otherVolume}, {trash, a, b})
+    assert(routed[one] == b and routed[extra] == trash and routed[otherVolume] == b,
+        'full first member should overflow within group, duplicate should overflow out of group')
+    a.capacity = 100
+    a.existingTypes[one.fullType], b.existingTypes[one.fullType] = one.ref, one.ref
+    one.container = b.container
+    routed = checkPlan({extra, one}, {a, b, trash})
+    assert(routed[extra] == trash and routed[one] == b,
+        'group occupancy must preserve an existing copy in a different-priority member')
+    local other = box(nil, {Literature = true})
+    other.noDuplicates, other.duplicateScope, other.priority = true, 'other-library', 1
+    routed = checkPlan({extra}, {a, b, other, trash})
+    assert(routed[extra] == other, 'independent library was blocked by a different group')
+    a.noDuplicates, b.noDuplicates = false, false
+    routed = checkPlan({one, extra}, {a, b, trash})
+    assert(routed[one] == a and routed[extra] == a, 'group membership imposed duplicate exclusion when disabled')
+end
 local destinations, plan = checkPlan({sunflower, candy, potato, full, empty}, {seeds})
 assert(destinations[sunflower] == seeds and destinations[potato] == seeds and destinations[full] == seeds,
     'native item-aware seed rule missed planting inputs')

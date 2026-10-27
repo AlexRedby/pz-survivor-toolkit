@@ -78,7 +78,9 @@ return function(control, rules, options)
     local contextMenu
     ISContextMenu = {get = function()
         contextMenu = {options = {}, addOption = function(self, title, target, callback, key)
-            self.options[#self.options + 1] = {title = title, target = target, callback = callback, key = key}
+            local option = {title = title, target = target, callback = callback, key = key}
+            self.options[#self.options + 1] = option
+            return option
         end}
         return contextMenu
     end}

@@ -1,5 +1,6 @@
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Presets = require "PZSurvivorToolkit/QuartermasterPresets"
+local Groups = require "PZSurvivorToolkit/ContainerGroups"
 
 local Rules = {}
 PZSurvivorToolkit.QuartermasterTagRules = Rules
@@ -11,6 +12,8 @@ local function copy(rule)
 end
 
 function Rules.getBox(obj, ci)
+    local group = Groups.resolve(obj, ci)
+    if group then return copy(group.rule) end
     local md = obj and obj:getModData()
     return copy(md and type(md[FIELD]) == "table" and md[FIELD][tostring(ci)])
 end

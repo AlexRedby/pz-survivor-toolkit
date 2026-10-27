@@ -148,5 +148,17 @@ end
 saved={};p=picker();p.appearanceName:setText('Typed before selection');Controls.select(p,'items','Hammer')
 assert(Controls.value(p).name=='Typed before selection','item erased a manually typed name')
 assert(not picker('preset').appearanceName,'sorting preset acquired a chest appearance')
-enabled=false;assert(not picker().appearanceName,'BC-free picker created appearance controls')
+enabled=false;local plain=picker()
+assert(plain.appearanceName and not plain.appearanceIcon and not plain.appearanceColor,
+    'BC-free picker must retain the native name field without unsupported controls')
+Controls.layout(plain,28);plain.appearanceName:setText('Plain shelf')
+assert(Controls.value(plain).name=='Plain shelf' and plain.appearanceReset.y>plain.appearanceName.y)
+Controls.reset(plain);Controls.select(plain,'tag','food')
+assert(Controls.value(plain).name=='Label food' and not plain.toolkitAppearance.icon and not plain.toolkitAppearance.color,
+    'BC-free selection changed hidden icon/color fields')
+local groupAppearance={name='Shared',icon={kind='item',value='Base.Book'},color={r=.1,g=.2,b=.3,a=1}}
+Controls.setValue(plain,groupAppearance);groupAppearance.color.r=.9
+local complete=Controls.snapshot(plain);complete.color.g=.8
+assert(complete.name=='Shared' and complete.color.r==.1 and plain.toolkitAppearance.color.g==.2,
+    'group appearance is not detached on both load and capture')
 print('PASS appearance draft, first tag/item suggestions, independent preservation, reset/cancel and native color callbacks')

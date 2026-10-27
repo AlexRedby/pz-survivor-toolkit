@@ -2,6 +2,8 @@ if not isServer()then return end
 local Fixture=require 'QuartermasterDistributionFixture'
 local JSON=require 'QueueHealthEvents'
 local Books=require 'QuartermasterBooksFixture'
+local GroupFixture=require 'QuartermasterGroupsFixture'
+local groupTransfersPending
 local bookPacket,bookPending
 local state,pending,preparing
 Events.OnClientCommand.Add(function(module,command,player,args)
@@ -21,11 +23,23 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    bookPacket=Books.prepare(state)
    print('[QM_DISTRIBUTION] BOOKS_PREPARED_AUTHORITY '..JSON.encode(bookPacket))
    sendServerCommand(player,module,'BooksPrepared',bookPacket)
+  elseif command=='PrepareGroups'then
+   assert(state and state.booksVerified,'group preparation before books verified')
+   local packet=GroupFixture.prepare(state)
+   print('[QM_DISTRIBUTION] GROUP_PREPARED_AUTHORITY '..JSON.encode(packet))
+   sendServerCommand(player,module,'GroupsPrepared',packet)
+  elseif command=='VerifyGroup'then
+   local result=GroupFixture.configurationReceipt(state,args.stage)
+   print('[QM_DISTRIBUTION] GROUP_AUTHORITY '..JSON.encode(result))
+   sendServerCommand(player,module,'GroupVerified',result)
+  elseif command=='VerifyGroupTransfers'then
+   assert(state.groupStage==6 and not groupTransfersPending,'invalid group transfer verification')
+   groupTransfersPending=getTimestampMs()
   elseif command=='VerifyBooks'then
    assert(bookPacket and not bookPending,'invalid book verification');bookPending=getTimestampMs()
   elseif command=='Verify'then assert(state and not pending,'invalid distribution verification');pending=getTimestampMs()
   else
-   assert(command=='Cleanup'and state.verified and state.booksVerified,'cleanup before verified effects')
+   assert(command=='Cleanup'and state.verified and state.booksVerified and state.groupsVerified,'cleanup before verified effects')
    Fixture.cleanup(state);sendServerCommand(player,module,'Cleaned',{})
   end
  end)
@@ -43,6 +57,16 @@ Events.OnTick.Add(function()
    if not ok then print('[QUEUE_TEST] FAIL distribution preparation '..tostring(problem))end
   elseif getTimestampMs()-request.since>20000 then
    print('[QUEUE_TEST] FAIL distribution positioning timeout');preparing=nil
+  end
+ end
+ if groupTransfersPending then
+  local ok,result=pcall(GroupFixture.transferReceipt,state.player,state.boxes,state.groupPacket)
+  if ok and result then
+   print('[QM_DISTRIBUTION] GROUP_TRANSFERS_AUTHORITY '..JSON.encode(result))
+   state.groupsVerified=true;sendServerCommand(state.player,'QuartermasterDistributionTest','GroupTransfersVerified',result)
+   groupTransfersPending=nil
+  elseif not ok or getTimestampMs()-groupTransfersPending>20000 then
+   print('[QUEUE_TEST] FAIL group transfers '..tostring(result));groupTransfersPending=nil
   end
  end
  if bookPending then

@@ -79,16 +79,17 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
     -- Only items with a roomy, accepting carrier may reserve destination space.
     -- Otherwise an impossible haul can block later items or force them into overflow boxes.
     local byBox, boxUsed, leftover, carrierChoices, reservedTypes = {}, {}, {}, {}, {}
+    local function scope(box) return box.duplicateScope or box end
     local function existingKeeper(box, item)
         return box.noDuplicates and item.fullType and box.existingTypes
-            and box.existingTypes[item.fullType] == item.ref
+            and box.existingTypes[item.fullType] == item.ref and box.container == item.container
     end
     local function admits(box, item)
         if box.noDuplicates then
             if not item.fullType then return false end
             local existing = box.existingTypes and box.existingTypes[item.fullType]
-            if (existing and existing ~= item.ref)
-                or (reservedTypes[box] and reservedTypes[box][item.fullType]) then return false end
+            if (existing and not existingKeeper(box, item))
+                or (reservedTypes[scope(box)] and reservedTypes[scope(box)][item.fullType]) then return false end
             -- Sorting this very shelf must keep its first copy, even when the shelf is full.
             if existingKeeper(box, item) then return true end
         end
@@ -133,8 +134,9 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
         if dest then
             if not existingKeeper(dest, it) then boxUsed[dest] = boxUsed[dest] + it.weight end
             if dest.noDuplicates then
-                reservedTypes[dest] = reservedTypes[dest] or {}
-                reservedTypes[dest][it.fullType] = true
+                local key = scope(dest)
+                reservedTypes[key] = reservedTypes[key] or {}
+                reservedTypes[key][it.fullType] = true
             end
             byBox[dest] = byBox[dest] or {}
             table.insert(byBox[dest], it)

@@ -4,6 +4,7 @@ local Fixture=require 'QuartermasterDistributionFixture'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
 local JSON=require 'QueueHealthEvents'
 local Books=require 'QuartermasterBooksFixture'
+local GroupClient=require 'QuartermasterGroupsClient'
 local bookPacket,bookReceipt,bookPicker,bookWalked,bookTransferred
 local started,done,since,phase=false,false,0,'prepare'
 local state,packet,boxes,point,saved,receipt,cleaned,arrived,designatedAt
@@ -228,12 +229,17 @@ local function tick()
   phase='books-verified'
  elseif phase=='books-verified'then
   if not bookReceipt then return end
+  GroupClient.begin(boxes,point,state);phase='groups'
+ elseif phase=='groups'then
+  if not GroupClient.tick()then return end
+  phase='after-groups'
+ elseif phase=='after-groups'then
   -- Respect native delayed registry-add grace before removing designations.
   if getTimestampMs()-designatedAt<LootSorter.ADD_GRACE_MS+1000 then return end
   LootSorter.setBoxItems(boxes[2],0,{})
   saved=false;Rules.saveBox(boxes[3],0,{mode='all',include={},exclude={}},player,function(verdict)
    assert(verdict=='ok','tag cleanup rejected');saved=true
-  end,nil,{cats={},items={},presets={},priority=0,noDuplicates=false})
+  end,nil,{cats={},items={},presets={},priority=0,noDuplicates=false,appearance={},groupOperation={mode='detach'}})
   phase='cleanup'
  elseif phase=='cleanup'then
   if not saved then return end
@@ -257,6 +263,6 @@ local function tick()
 end
 Events.OnTick.Add(function()
  if not started or done then return end
- local ok,problem=pcall(function()assert(getTimestampMs()-since<240000,'distribution timeout phase='..phase);tick()end)
+ local ok,problem=pcall(function()assert(getTimestampMs()-since<420000,'distribution timeout phase='..phase);tick()end)
  if not ok then done=true;print('[QUEUE_TEST] FAIL distribution '..tostring(problem))end
 end)

@@ -25,7 +25,8 @@ for _, name in ipairs({'OnGameStart','OnCreatePlayer','OnObjectAdded','OnInitGlo
     end
 end
 local moddata = {}
-ModData = {getOrCreate = function(key) moddata[key] = moddata[key] or {}; return moddata[key] end,
+ModData = {get = function(key) return moddata[key] end,
+    getOrCreate = function(key) moddata[key] = moddata[key] or {}; return moddata[key] end,
     transmit = function() end, request = function() end}
 getFileReader = function(path, create)
     if create and disk[path] == nil then disk[path] = '' end
@@ -50,7 +51,7 @@ local current = {getX = function() return 10 end, getY = function() return 19 en
     isBlockedTo = function(self) return self.blocked end}
 local player = {getCurrentSquare = function() return current end, getUsername = function() return 'survivor' end}
 getSpecificPlayer = function() return player end
-local container = {isLockedToCharacter = function(self) return self.locked end}
+local container = {isLockedToCharacter = function(self) return self.locked end, getType = function() return 'crate' end}
 local object = {md = {}, getSquare = function() return square end, getObjectIndex = function() return 0 end,
     getContainerCount = function() return 1 end, getContainerByIndex = function() return container end,
     transmitModData = function(self) self.transmits = (self.transmits or 0) + 1 end}
@@ -161,6 +162,7 @@ assert(#boxes == 1 and Rules.matches(boxes[1],record('Food')), 'sorter gather mi
 local Presets = require 'PZSurvivorToolkit/QuartermasterPresets'
 mode='client'; LootSorter._receivedRegistry=moddata.LootSorter_Registry
 assert(Presets.receive({schema=1,revision=0,presets=presets(),rules={}}))
+assert(require('PZSurvivorToolkit/ContainerGroups').receive({schema=1,revision=0,nextId=0,groups={}}))
 safe=false
 boxes=LootSorter.gatherBoxes(player)
 assert(#boxes==0 and not object.md.LSBox, 'rule lookup touched forbidden safehouse before permission gate')
@@ -312,6 +314,53 @@ do
     object.md, LootSorter.clipboard, LootSorter.addCoord = originalData, originalClipboard, originalAdd
 end
 -- Client commands carry the selected authenticated player; failures and timeouts leave caller in control.
+do
+    local Groups = require 'PZSurvivorToolkit/ContainerGroups'
+    local Config = require 'PZSurvivorToolkit/QuartermasterContainerConfig'
+    local Appearance = require 'PZSurvivorToolkit/ContainerAppearance'
+    local Discovery = require 'PZSurvivorToolkit/ManifestDiscovery'
+    local originalData, originalObjects, originalInstanceof = object.md, square.getObjects, instanceof
+    object.md = {}
+    local peer = {md = {}, getSquare = object.getSquare, getContainerCount = object.getContainerCount,
+        getContainerByIndex = object.getContainerByIndex, getModData = object.getModData,
+        hasModData = object.hasModData, transmitModData = object.transmitModData, getObjectIndex = function() return 1 end}
+    square.getObjects = function() return list({object, peer}) end
+    instanceof = function(value, kind) return (value == object or value == peer) and kind == 'IsoObject' end
+    local function save(obj, config, selectedRule)
+        local request = args(selectedRule)
+        request.object, request.baseRevision, request.configuration = obj:getObjectIndex(), Rules.getBoxRevision(obj, 0), config
+        assert(Rules.applyBox(player, request) == 'ok')
+    end
+    save(object, {cats = {Food = true}, items = {Beans = true}, presets = {}, priority = 4, noDuplicates = false,
+        appearance = {name = 'Pantry'}, groupOperation = {mode = 'create'}}, rule)
+    local id = Groups.link(object, 0)
+    save(peer, {groupOperation = {mode = 'join', id = id}}, rule)
+    local draft = Groups.resolve(object, 0).configuration
+    draft.cats, draft.items, draft.priority, draft.noDuplicates = {Electronics = true}, {Radio = true}, 12, true
+    draft.appearance = {name = 'Devices', icon = {kind = 'item', value = 'Base.RadioBlack'}}
+    draft.groupOperation = {mode = 'update', id = id, baseRevision = 1}
+    save(object, draft, {mode = 'all', include = {'electrical'}, exclude = {}})
+    assert(peer.md.LSBox['0'].Food and peer.md.LSBoxPriority['0'] == 4, 'group update unexpectedly rewrote peer storage')
+    assert(LootSorter.getBoxCats(peer, 0).Electronics and not LootSorter.getBoxCats(peer, 0).Food
+        and LootSorter.getBoxItems(peer, 0).Radio and LootSorter.getBoxPriority(peer, 0) == 12
+        and LootSorter.getBoxNoDuplicates(peer, 0) and Rules.getBox(peer, 0).include[1] == 'electrical'
+        and Config.read(peer, 0, player).priority == 12 and Appearance.read(peer, 0, player).name == 'Devices',
+        'a linked reader used the stale materialized configuration')
+    local discovered = LootSorter.findDesignatedOnSquare(square, player)
+    assert(#discovered == 2 and discovered[2].groupId == id and discovered[2].priority == 12
+        and discovered[2].noDuplicates and discovered[2].cats.Electronics and not discovered[2].cats.Food
+        and Discovery.designated(peer, 0), 'sort/manifest discovery lost effective group settings')
+    LootSorter.setBoxCats(peer, 0, {Medical = true})
+    assert(not Groups.link(peer, 0) and LootSorter.getBoxCats(peer, 0).Medical
+        and LootSorter.getBoxPriority(peer, 0) == 12 and Appearance.read(peer, 0, player).name == 'Devices'
+        and LootSorter.getBoxCats(object, 0).Electronics and Groups.resolve(object, 0).rev == 2,
+        'legacy local edit stayed linked or lost the current inherited configuration')
+    save(peer, {groupOperation = {mode = 'join', id = id}}, rule)
+    LootSorter.setBoxDesignation(peer, 0, {cats = {Medical = true}})
+    assert(not Groups.link(peer, 0) and LootSorter.getBoxCats(peer, 0).Medical
+        and Appearance.read(peer, 0, player).name == 'Devices', 'complete local designation lost shared appearance on detach')
+    object.md, square.getObjects, instanceof = originalData, originalObjects, originalInstanceof
+end
 mode='client'; local sent, callback
 -- A fresh client process installs the shared transport's client sweep.
 dofile(root .. 'shared/LootSorter_Rpc.lua')
@@ -528,6 +577,25 @@ do
         'debug sort lost its box diagnostics or the required planner snapshot')
     assert(boxLogs[1] == 'box[1] cap=10 used=2.0 dist=1 cats=[Food ] items=[Apple ]',
         'lazy diagnostics changed the debug box output')
+    -- A loaded but unreachable member still contributes occupancy before destination pruning.
+    local firstBook = {getFullType = function() return 'Base.BookCooking1' end}
+    local blockedSquare = {}
+    local peer = {square = blockedSquare, container = {getItems = function() return list({firstBook}) end},
+        cats = {Food = true}, groupId = 'library', noDuplicates = true}
+    destination.getItems = function() return list({}) end
+    LootSorter.gatherBoxesOrWarn = function()
+        return {peer, {square = square, container = destination, cats = {Food = true},
+            groupId = 'library', noDuplicates = true, dist = 1}}
+    end
+    AdjacentFreeTileFinder.Find = function(sq) return sq == square and current or nil end
+    debug = false
+    LootSorter.planTrips = function(items, gathered, ...)
+        assert(#gathered == 1 and gathered[1].duplicateScope == 'library'
+            and gathered[1].existingTypes['Base.BookCooking1'] == firstBook
+            and #gathered[1].ref.groupPeers == 2, 'sort lost group occupancy or live peer references before planning')
+        return previousPlanner(items, gathered, ...)
+    end
+    LootSorter.sort(source, 0)
     LootSorter.gatherBoxesOrWarn, LootSorter.notify, LootSorter.planTrips = previousGather, previousNotify, previousPlanner
     LootSorter.isDebug, LootSorter.DBG, LootSorter.BOX_FILL_FRACTION = previousDebug, previousLog, previousFill
     AdjacentFreeTileFinder = previousFinder

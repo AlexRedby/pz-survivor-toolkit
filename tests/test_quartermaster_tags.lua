@@ -4,6 +4,18 @@ local openedRulePicker, adapter
 local scriptCatalog = {}
 local catalogReads, tagReads = 0, 0
 local appearanceSelections={}
+local function copy(value)
+    if type(value) ~= 'table' then return value end
+    local out = {}; for key, item in pairs(value) do out[key] = copy(item) end; return out
+end
+local groupRecords, groupsSynced, groupEditable, groupControls = {}, true, true, nil
+local groupApi = {FIELD = 'PZSTContainerGroups', synced = function() return groupsSynced end,
+    link = function(obj, ci) return obj and obj.md.PZSTContainerGroups and obj.md.PZSTContainerGroups[tostring(ci)] end,
+    canEdit = function() return groupEditable end}
+groupApi.resolve = function(obj, ci) return groupsSynced and copy(groupRecords[groupApi.link(obj, ci)]) or nil end
+groupApi.list = function()
+    local records = {}; for _, record in pairs(groupRecords) do records[#records + 1] = copy(record) end; return records
+end
 local ruleApi = {getBoxRevision = function(obj) return obj and obj.md.ruleRevision or 0 end,
     getBox = function() end, getPreset = function() end,
     presetsSynced = function() return true end}
@@ -17,10 +29,18 @@ require = function(name)
     if name == 'PZSurvivorToolkit/ContainerAppearanceControls' then
         return {create=function() end, layout=function(_, top) return top end,
             close=function() end, value=function() end,
+            snapshot=function(picker) return copy(picker.toolkitAppearance or {}) end,
+            setValue=function(picker, value) picker.toolkitAppearance = copy(value) end,
             select=function(picker,kind,key)
                 if key then appearanceSelections[#appearanceSelections+1]={picker=picker,kind=kind,key=key} end
             end}
     end
+    if name == 'PZSurvivorToolkit/ContainerGroups' then return groupApi end
+    if name == 'PZSurvivorToolkit/ContainerGroupControls' then
+        groupControls = groupControls or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+        return groupControls
+    end
+    if name == 'PZSurvivorToolkit/UIStyle' then return {fit = function(value) return value end} end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
     if name == 'PZSurvivorToolkit/ItemRetention' or name == 'PZSurvivorToolkit/ItemAccess' then
         return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
@@ -130,8 +150,9 @@ assert(p.minimumHeight > 380 and p.height >= p.minimumHeight
 getTextManager().getFontHeight = originalFontHeight
 p:setHeight(580);p:layout()
 
-assert(p.joypadButtonsY[4][1] == p.chkNoDuplicates and p.joypadButtonsY[5][1] == p.toolkitTagSwitch
-    and p.joypadButtonsY[6][1] == p.toolkitTagRuleButton, 'container policy has no controller row')
+assert(p.joypadButtonsY[1][1] == p.groupSelect and p.joypadButtonsY[5][1] == p.chkNoDuplicates
+    and p.joypadButtonsY[6][1] == p.toolkitTagSwitch
+    and p.joypadButtonsY[7][1] == p.toolkitTagRuleButton, 'container policy has no controller row')
 local function assertLayout(picker)
     assert(picker.sortingHeading.y + picker.sortingHeading.height <= picker.sortingHint.y
         and picker.sortingHint.y + picker.sortingHint.height < picker.filterLabel.y
@@ -262,9 +283,9 @@ assert(openedDisabled.toolkitTagSwitch and not openedDisabled.toolkitTagSwitch.v
 enabled = true; openedDisabled:prerender()
 assert(openedDisabled.toolkitTagSwitch.visible and find(openedDisabled, 'food'),
     'picker opened while disabled did not enable tags without reopening')
-assert(openedDisabled.joypadButtonsY[4][1] == openedDisabled.chkNoDuplicates
-    and openedDisabled.joypadButtonsY[5][1] == openedDisabled.toolkitTagSwitch
-    and openedDisabled.joypadButtonsY[6][1] == openedDisabled.toolkitTagRuleButton, 'live enable did not add controller navigation')
+assert(openedDisabled.joypadButtonsY[5][1] == openedDisabled.chkNoDuplicates
+    and openedDisabled.joypadButtonsY[6][1] == openedDisabled.toolkitTagSwitch
+    and openedDisabled.joypadButtonsY[7][1] == openedDisabled.toolkitTagRuleButton, 'live enable did not add controller navigation')
 reopened:prerender()
 assert(reopened.toolkitTagSwitch.visible and find(reopened, 'food'), 'setting toggle left a stale list')
 openedDisabled.toolkitTagRuleButton.onclick(openedDisabled)
@@ -485,8 +506,9 @@ local function checkSaveContract()
         and p.toolkitTagRuleButton.cachedOnclick == p.onTagRule, 'owned tag dispatch was replaced')
     assert(p.children[#p.children] == p.dimmer and not p.dimmer.visible)
     local rows = p.joypadButtonsY
-    assert(rows[4][1] == p.chkNoDuplicates and rows[5][1] == p.toolkitTagSwitch and rows[6][1] == p.toolkitTagRuleButton
-        and rows[7][1] == p.listbox, 'native controller rows omitted container/tag controls')
+    assert(rows[1][1] == p.groupSelect and rows[5][1] == p.chkNoDuplicates
+        and rows[6][1] == p.toolkitTagSwitch and rows[7][1] == p.toolkitTagRuleButton
+        and rows[8][1] == p.listbox, 'native controller rows omitted container/tag controls')
     assert(p.listbox.vscroll.x == p.listbox.width - 16 and p.listbox.vscroll.height == p.listbox.height)
     assert(find(p, 'food') and find(p, 'MissingModCategory'), 'actual picker did not build tag/saved-category rows')
     local createRule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}
@@ -663,3 +685,94 @@ do
     isClient = originalIsClient
 end
 print('Quartermaster preset-link view passed: delayed sync, generations, checked/count/save consistency, read-only projection and lossless Copy.')
+
+-- Group selection owns a complete detached draft; Save scope never follows checkbox state.
+do
+    groupRecords = {books = {id = 'books', rev = 7, createdBy = 'survivor',
+        configuration = {cats = {OC_Electrical = true}, items = {Hammer = true}, presets = {}, priority = 12,
+            noDuplicates = false, appearance = {name = 'Books', icon = {kind = 'item', value = 'Base.Book'},
+                color = {r = .2, g = .3, b = .4, a = 1}}},
+        rule = {mode = 'all', include = {'electrical'}, exclude = {'perishable'}}}}
+    local Controls = require 'PZSurvivorToolkit/ContainerGroupControls'
+    local fixture = createFixture(control, ruleApi)
+    local p = fixture.open()
+    assert(p.groupSelect and not p.groupScope.visible and not p.containerGroupRecord,
+        'fresh container did not start with own settings')
+    p.groupSelect.onclick(p)
+    local menu = fixture.contextMenu()
+    assert(menu.origin == p and menu.options[1].callback == Controls.select
+        and menu.options[2].callback == Controls.createGroup and menu.options[3].title == 'Books',
+        'group selector lacks own/new/existing choices or controller return focus')
+    menu.options[3].callback(menu.options[3].target, menu.options[3].key)
+    assert(p.selectedCats.OC_Electrical and not p.selectedCats.OC_Food and p.selectedItems.Hammer
+        and p.priority == 12 and not p.noDuplicates and p.toolkitTagRule.include[1] == 'electrical'
+        and p.toolkitAppearance.name == 'Books' and p.toolkitAppearance.icon.value == 'Base.Book'
+        and p.toolkitAppearance.color.g == .3, 'joining group did not load every sorting/appearance field')
+    assert(p.groupScope.visible and p.containerGroupScope == 'local' and p.joypadButtonsY[2][1] == p.groupScope
+        and p.groupHint.y + p.groupHint.height <= p.sortingHeading.y,
+        'group scope default, layout or controller row is missing')
+    p:setWidth(420);p:setHeight(600);p:layout()
+    assert(p.groupSelect.x + p.groupSelect.width <= 410 and p.groupScope.x + p.groupScope.width <= 410
+        and p.listbox.y + p.listbox.height < p.btnSave.y, 'group controls overlap minimum-width layout')
+    fixture.save(p)
+    local pending = assert(fixture.pendingRule()).configuration
+    assert(pending.groupOperation.mode == 'join' and pending.groupOperation.id == 'books',
+        'unchanged selection detached instead of joining group')
+    Controls.select(p, nil)
+    assert(p.containerGroupRecord.id == 'books', 'pending save allowed group retargeting')
+    fixture.reply('denied')
+    p.selectedCats.Local = true
+    fixture.save(p)
+    pending = fixture.pendingRule().configuration
+    assert(pending.groupOperation.mode == 'detach' and pending.cats.Local and pending.appearance.name == 'Books',
+        'local edit failed to detach with a complete copy')
+    assert(not groupRecords.books.configuration.cats.Local, 'local draft edited the shared group')
+    fixture.reply('denied')
+    Controls.setScope(p, 'group')
+    fixture.save(p)
+    pending = fixture.pendingRule().configuration
+    assert(pending.groupOperation.mode == 'update' and pending.groupOperation.id == 'books'
+        and pending.groupOperation.baseRevision == 7 and pending.cats.Local and not pending.noDuplicates,
+        'explicit whole-group save lost revision or depended on noDuplicates')
+    p.toolkitAppearance.color.g, p.selectedCats.Local = .9, nil
+    assert(pending.appearance.color.g == .3 and pending.cats.Local, 'in-flight group save aliased later UI edits')
+    fixture.reply('staleGroup')
+    assert(not p.removed and p.containerGroupScope == 'group' and p.toolkitAppearance.color.g == .9,
+        'stale group response discarded retry draft')
+    groupEditable = false
+    p.groupScope.onclick(p)
+    assert(fixture.contextMenu().options[2].notAvailable, 'non-owner can choose whole-group edits')
+    fixture.save(p)
+    assert(not fixture.pendingRule(), 'non-owner submitted whole-group update')
+    groupEditable = true
+    Controls.createGroup(p)
+    p.toolkitAppearance.name = ''
+    fixture.save(p)
+    assert(not fixture.pendingRule(), 'unnamed group was submitted')
+    p.toolkitAppearance.name = 'New books'
+    fixture.save(p)
+    pending = fixture.pendingRule().configuration
+    assert(pending.groupOperation.mode == 'create' and pending.appearance.name == 'New books'
+        and pending.appearance.icon.value == 'Base.Book' and pending.priority == 12 and not pending.noDuplicates,
+        'create group lost appearance or required duplicate mode')
+    fixture.reply('denied')
+
+    fixture.object.md.PZSTContainerGroups = {['0'] = 'books'}
+    p = fixture.open()
+    assert(p.containerGroupRecord.id == 'books' and p.containerGroupScope == 'local'
+        and p.toolkitAppearance.name == 'Books', 'reopened member did not resolve group')
+    Controls.select(p, nil); fixture.save(p)
+    assert(fixture.pendingRule().configuration.groupOperation.mode == 'detach', 'own settings kept group membership')
+    fixture.reply('denied')
+    groupsSynced = false
+    p = fixture.open(); fixture.save(p)
+    assert(not fixture.pendingRule(), 'unsynchronized member draft was saved as local settings')
+    groupsSynced = true; p:prerender()
+    assert(p.containerGroupRecord.id == 'books' and p.toolkitAppearance.name == 'Books',
+        'late group synchronization did not hydrate an untouched draft')
+    local editor = fixture.edit(p)
+    assert(not editor.groupSelect and not editor.groupScope, 'legacy preset acquired container-group controls')
+    editor:closePicker(); p:closePicker()
+    groupRecords = {}
+end
+print('Quartermaster group draft checks passed: complete inheritance, join/create, local detach, scoped CAS, pending snapshots, permissions and late sync.')

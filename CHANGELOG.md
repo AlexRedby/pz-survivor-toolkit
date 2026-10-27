@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.293
+
+- **Added:** Container groups share a name, icon, color, sorting filters, tag rules and priority. Create a group from the container editor or select an existing one to inherit its settings. Save changes for the whole group or only the current container; a local edit detaches that container. Groups work with duplicate exclusion disabled.
+- **Improved:** No-duplicates distribution checks all discovered members of a group and reserves one copy per item type across the whole batch. Extra copies keep following the existing priority order to other matching destinations. Group settings persist in the world and synchronize through the existing revisioned Host authority; concurrent transfers from different players still require coordination.
+
 ### 0.1.292
 
 - **Added:** Container sorting has an optional **No duplicates** setting. Distribution skips containers already holding the same item type and reserves only one copy per destination across the whole batch. Skill-book volumes remain distinct. Extra copies continue to the next matching container in the existing priority order, so a high-priority bookshelf can send duplicates to lower-priority storage. The setting is saved per compartment and included in copy/paste. Concurrent Host transfers by different players are not coordinated and can still add duplicate copies.

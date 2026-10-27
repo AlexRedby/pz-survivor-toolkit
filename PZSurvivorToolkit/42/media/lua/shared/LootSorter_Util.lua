@@ -51,6 +51,10 @@ end
 -- client-only -- so the server can use this too.
 function LootSorter.modDataHasDesignation(modData)
     if type(modData) ~= "table" then return false end
+    -- Preserve linked coordinates even before the complete group snapshot arrives.
+    for _, id in pairs(type(modData.PZSTContainerGroups) == "table" and modData.PZSTContainerGroups or {}) do
+        if type(id) == "string" and id ~= "" then return true end
+    end
     for _, field in ipairs({ "LSBox", "LSBoxItems", "LSBoxPresets" }) do
         local perContainer = modData[field]
         if type(perContainer) == "table" then

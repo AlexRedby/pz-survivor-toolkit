@@ -38,10 +38,28 @@ function Config.normalize(value)
         out.appearance = Appearance.normalize(value.appearance)
         if not out.appearance then return nil end
     end
+    if value.groupOperation ~= nil then
+        local op = value.groupOperation
+        if type(op) ~= "table" or (op.mode ~= "create" and op.mode ~= "join"
+            and op.mode ~= "update" and op.mode ~= "detach") then return nil end
+        local clean = {mode = op.mode}
+        if op.mode == "join" or op.mode == "update" then
+            if type(op.id) ~= "string" or #op.id == 0 or #op.id > 128 then return nil end
+            clean.id = op.id
+        end
+        if op.mode == "update" then
+            if type(op.baseRevision) ~= "number" or op.baseRevision < 0
+                or op.baseRevision % 1 ~= 0 or op.baseRevision == math.huge then return nil end
+            clean.baseRevision = op.baseRevision
+        end
+        out.groupOperation = clean
+    end
     return out
 end
 
 function Config.read(obj, ci, player)
+    local group = require("PZSurvivorToolkit/ContainerGroups").resolve(obj, ci)
+    if group then return group.configuration end
     local md, key = obj:getModData(), tostring(ci)
     local out = Config.normalize({cats = md.LSBox and md.LSBox[key], items = md.LSBoxItems and md.LSBoxItems[key],
         presets = md.LSBoxPresets and md.LSBoxPresets[key], priority = md.LSBoxPriority and md.LSBoxPriority[key],

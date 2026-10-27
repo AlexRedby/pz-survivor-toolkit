@@ -3,7 +3,10 @@ if not NativeActionRoot then
     print('Quartermaster deposit checks skipped (pass --game or --native-action-root).')
     return
 end
-local duplicates = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/QuartermasterDuplicates.lua')
+package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
+PZSurvivorToolkit = {}
+ModData = {get = function() return nil end}
+local duplicates = require 'PZSurvivorToolkit/QuartermasterDuplicates'
 require = function(name)
     if name == 'PZSurvivorToolkit/QuartermasterDuplicates' then return duplicates end
 end
@@ -228,6 +231,19 @@ for _, host in ipairs({false, true}) do
     local one, two, last = item(701, source), item(702, source), item(703, source)
     local md = {LSBoxNoDuplicates = {['0'] = true}}
     local box = {obj = {getModData = function() return md end}, ci = 0, noDuplicates = true}
+    local peerMd = {PZSTContainerGroups = {['0'] = 'library'}}
+    md.PZSTContainerGroups = {['0'] = 'library'}
+    local peer = container(10)
+    local peerBox = {obj = {getModData = function() return peerMd end}, ci = 0, container = peer}
+    box.container, box.groupPeers = destination, {peerBox}
+    local existing = item(700, peer)
+    assert(not duplicates.accepts(destination, one, box), 'occupied group peer admitted another copy')
+    peerMd.PZSTContainerGroups['0'] = nil
+    assert(duplicates.accepts(destination, one, box), 'detached peer still blocked the old group')
+    peerMd.PZSTContainerGroups['0'] = 'different-library'
+    assert(duplicates.accepts(destination, one, box), 'independent group shared duplicate occupancy')
+    peer:DoRemoveItem(existing)
+    peerMd.PZSTContainerGroups['0'] = 'library'
     local first, second, tail = action(LootSorter.DepositAction, one, source, destination),
         action(LootSorter.DepositAction, two, source, destination), action(LootSorter.DepositAction, last, source, other)
     first.lsDestinationBox, second.lsDestinationBox = box, box
@@ -254,8 +270,9 @@ for _, host in ipairs({false, true}) do
         local late = action(LootSorter.DepositAction, two, source, destination)
         late.lsDestinationBox = box
         queue.queue, queue.current = {late}, late
-        late:start(); destination:AddItem(one); late:perform()
-        assert(source:contains(two) and #destination.items == 1 and #queue.queue == 0)
+        late:start(); peer:AddItem(one); late:perform()
+        assert(source:contains(two) and #destination.items == 0 and peer:contains(one) and #queue.queue == 0,
+            'late duplicate in another group member reached the native effect')
         md.LSBoxNoDuplicates['0'] = nil
         assert(late:lsCanDeposit(), 'disabling restriction did not restore ordinary transfer admission')
     end

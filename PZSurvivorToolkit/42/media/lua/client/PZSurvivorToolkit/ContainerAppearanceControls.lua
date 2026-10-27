@@ -6,6 +6,10 @@ local Appearance = require "PZSurvivorToolkit/ContainerAppearance"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Controls = {}
 local function text(key) return getText("UI_PZST_Container" .. key) end
+local function copy(value)
+    if type(value) ~= "table" then return value end
+    local result = {}; for key, item in pairs(value) do result[key] = copy(item) end; return result
+end
 
 -- Use the real compartment type even when the appearance draft has a custom name/icon.
 function Controls.identity(picker)
@@ -16,6 +20,7 @@ function Controls.identity(picker)
 end
 
 function Controls.refresh(picker)
+    if not picker.appearanceIcon then return end
     local draft = picker.toolkitAppearance
     local _, defaultIcon = Controls.identity(picker)
     local texture = draft.icon and require("BetterContainers/Helpers").getIconTexture(draft.icon) or defaultIcon
@@ -85,11 +90,11 @@ function Controls.select(picker, kind, key)
         and not (picker.appearanceName:getInternalText() or ""):find("%S") then
         picker.appearanceName:setText(Tags.label(tag)); changed = true
     end
-    if not draft.icon and (fullType or tag) then
+    if picker.appearanceIcon and not draft.icon and (fullType or tag) then
         draft.icon = {kind = fullType and "item" or "pzst-tag", value = fullType or tag}
         changed = true
     end
-    if not draft.color and tag then
+    if picker.appearanceColor and not draft.color and tag then
         local style = require("PZSurvivorToolkit/TagVisuals").get(tag)
         draft.color = {r = style.r, g = style.g, b = style.b, a = 1}
         changed = true
@@ -98,8 +103,9 @@ function Controls.select(picker, kind, key)
 end
 
 function Controls.create(picker)
-    if picker.targetKind == "preset" or not Appearance.available() then return end
-    require("PZSurvivorToolkit/ContainerTagIcons").install()
+    if picker.targetKind == "preset" then return end
+    local extended = Appearance.available()
+    if extended then require("PZSurvivorToolkit/ContainerTagIcons").install() end
     picker.toolkitAppearance = Appearance.read(picker.targetObj, picker.targetCI, getSpecificPlayer(picker.playerNum or 0)) or {}
     local color = picker.toolkitAppearance.color
     if color then
@@ -119,16 +125,22 @@ function Controls.create(picker)
     picker.appearanceName = ISTextEntryBox:new(picker.toolkitAppearanceInitialName, 82, 0, 240, 24)
     picker.appearanceName:setFont(UIFont.Medium)
     picker.appearanceName:setTooltip(text("NameHint"))
-    picker.appearanceIcon = ISButton:new(10, 0, 64, 64, text("Icon"), picker, Controls.chooseIcon)
-    picker.appearanceIcon:forceImageSize(44, 44)
-    picker.appearanceIcon:setTooltip(text("Icon"))
-    picker.appearanceIconLabel = ISLabel:new(10, 0, 20, text("IconLabel"), 0.8, 0.8, 0.8, 1, UIFont.Small, true)
-    picker.appearanceColor = ISButton:new(120, 0, 100, 26, text("Color"), picker, Controls.chooseColor)
+    if extended then
+        picker.appearanceIcon = ISButton:new(10, 0, 64, 64, text("Icon"), picker, Controls.chooseIcon)
+        picker.appearanceIcon:forceImageSize(44, 44)
+        picker.appearanceIcon:setTooltip(text("Icon"))
+        picker.appearanceIconLabel = ISLabel:new(10, 0, 20, text("IconLabel"), 0.8, 0.8, 0.8, 1, UIFont.Small, true)
+        picker.appearanceColor = ISButton:new(120, 0, 100, 26, text("Color"), picker, Controls.chooseColor)
+    end
     picker.appearanceReset = ISButton:new(230, 0, 100, 26, text("ResetAppearance"), picker, Controls.reset)
     for _, child in ipairs({picker.appearanceHeading, picker.appearanceLabel, picker.appearanceName,
-        picker.appearanceIcon, picker.appearanceIconLabel,
-        picker.appearanceColor, picker.appearanceReset}) do
+        picker.appearanceReset}) do
         child:initialise(); child:instantiate(); picker:addChild(child)
+    end
+    if extended then
+        for _, child in ipairs({picker.appearanceIcon, picker.appearanceIconLabel, picker.appearanceColor}) do
+            child:initialise(); child:instantiate(); picker:addChild(child)
+        end
     end
     picker.appearanceName:setMaxTextLength(80)
     Controls.refresh(picker)
@@ -143,6 +155,15 @@ function Controls.layout(picker, top)
     picker.appearanceHeading:setName(UIStyle.fit(text("Target") .. ": " .. identity, w, UIFont.Medium))
     picker.appearanceHeading:setY(top); picker.appearanceHeading:setHeight(rowH)
     top = top + rowH + gap
+    if not picker.appearanceIcon then
+        local labelW = getTextManager():MeasureStringX(UIFont.Small, text("Name")) + 12
+        picker.appearanceLabel:setX(10); picker.appearanceLabel:setY(top); picker.appearanceLabel:setHeight(rowH)
+        picker.appearanceName:setX(10 + labelW); picker.appearanceName:setY(top)
+        picker.appearanceName:setWidth(w - labelW); picker.appearanceName:setHeight(rowH)
+        picker.appearanceReset:setX(10); picker.appearanceReset:setY(top + rowH + gap)
+        picker.appearanceReset:setWidth(w); picker.appearanceReset:setHeight(rowH)
+        return top + (rowH + gap) * 2
+    end
     picker.appearanceIcon:setX(10); picker.appearanceIcon:setY(top)
     picker.appearanceIcon:setWidth(iconSize); picker.appearanceIcon:setHeight(iconSize)
     picker.appearanceIconLabel:setY(top + iconSize)
@@ -164,8 +185,22 @@ function Controls.value(picker)
     if not picker.appearanceName then return nil end
     local name = picker.appearanceName:getInternalText() or ""
     if not picker.toolkitAppearanceTouched and name == picker.toolkitAppearanceInitialName then return nil end
-    local value = picker.toolkitAppearance
-    return {name = name, icon = value.icon, color = value.color}
+    return Controls.snapshot(picker)
+end
+
+-- Complete detached appearance is needed when joining/creating a reusable container group.
+function Controls.snapshot(picker)
+    local value = copy(picker.toolkitAppearance or {})
+    value.name = picker.appearanceName and picker.appearanceName:getInternalText() or value.name
+    return value
+end
+
+function Controls.setValue(picker, value)
+    Controls.close(picker)
+    picker.toolkitAppearance = copy(value or {})
+    picker.toolkitAppearanceTouched, picker.toolkitAppearanceSuggested = true, true
+    if picker.appearanceName then picker.appearanceName:setText(picker.toolkitAppearance.name or "") end
+    Controls.refresh(picker)
 end
 
 function Controls.close(picker)

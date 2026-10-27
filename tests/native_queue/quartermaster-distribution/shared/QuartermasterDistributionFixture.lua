@@ -12,7 +12,7 @@ function Fixture.place(player)
   if math.abs(dx)==radius or math.abs(dy)==radius then
    local x,y,z=origin:getX()+dx,origin:getY()+dy,origin:getZ()
    local clear=true
-   for a=-2,6 do for b=-1,1 do
+   for a=-2,8 do for b=-1,1 do
     local sq=getCell():getGridSquare(x+a,y+b,z)
     if not sq or not sq:canStand() or not sq:isFree(false) or sq:getRoom() or sq:getObjects():size()>1 then clear=false end
    end end

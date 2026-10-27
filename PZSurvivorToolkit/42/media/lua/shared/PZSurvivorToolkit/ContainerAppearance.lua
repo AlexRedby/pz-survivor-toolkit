@@ -1,6 +1,7 @@
 -- World-container appearance uses Better Containers' existing user/global storage.
 -- Keep access here pure: its vanilla-name setter transmits the entire object ModData.
 local Appearance = {}
+local Groups = require "PZSurvivorToolkit/ContainerGroups"
 PZSurvivorToolkit.ContainerAppearance = Appearance
 
 local function text(value)
@@ -61,6 +62,8 @@ local function backend()
 end
 
 function Appearance.read(obj, ci, player)
+    local group = Groups.resolve(obj, ci)
+    if group then return group.configuration.appearance or {} end
     local md = obj and obj:getModData()
     if not md then return {} end
     local api, out = backend()
