@@ -122,10 +122,21 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     local presenter=require 'PZSurvivorToolkit/InventoryPresentation'
     assert(#callbacks==1)
     local freshnessClass=ISInventoryPane
+    local freshnessDraws=0
+    local freshnessPresenter=modules['PZSurvivorToolkit/InventoryFreshness']
+    local originalFreshnessDraw=freshnessPresenter.draw
+    freshnessPresenter.draw=function(value,class)
+        assert(#value.items==#value.rows,'freshness ran before native row publication')
+        freshnessDraws=freshnessDraws+1
+        return originalFreshnessDraw(value,class)
+    end
     if withFreshness then freshness.install() end
     local rects={}
-    local pane={rows={a,'separator',b,magazine,weapon},height=500,headerHgt=20,itemHgt=46,iconSize=44,player=1,column3=330,font='Small',
+    local pane={rows={a,'separator',b,magazine,weapon},mode='details',height=500,width=400,headerHgt=20,itemHgt=46,iconSize=44,player=1,column3=330,font='Small',
         items={a},firstSelect=1,getYScroll=function(self) return self.scroll or 0 end,
+        isReallyVisible=function() return true end,
+        getIsVisible=function() return true end,
+        setStencilRect=function() end,clearStencilRect=function() end,repaintStencilRect=function() end,
         getHeight=function(self) return self.height end,getWidth=function() return 400 end,
         drawRect=function(_,...) rects[#rects+1]={...} end,
         drawRectBorder=function(_,x,y,w,h,alpha,r,g,b)
@@ -145,8 +156,10 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         rects={}
         local before=nativeCalls
         local retainedBefore=retentionDraws
+        local freshnessBefore=freshnessDraws
         assert(pane:renderdetails(false)=='rendered' and nativeCalls==before+1)
         assert(retentionDraws==retainedBefore+1, 'retention markers missing or duplicated across UI class changes')
+        assert(freshnessDraws==freshnessBefore+1,'freshness missing or duplicated across UI class changes')
         local bars=backgrounds()
         assert(#bars==3,'bag/magazine indicator missing or duplicated')
         assert(bars[1][1]==27 and bars[1][2]==60 and bars[1][3]==42,'actual scaled icon geometry lost')
@@ -169,10 +182,11 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         local invalidated=retentionInvalidations
         assert(pane:refreshContainer()=='refreshed' and sorts==sorted+1)
         assert(retentionInvalidations==invalidated+1, 'retention cache survived refresh')
-        retainedBefore=retentionDraws
+        retainedBefore=retentionDraws;freshnessBefore=freshnessDraws
         rects={}; pane:renderdetails(true); assert(#rects==0,'drag preview decorated')
         rects={}; pane:rendericons(); assert(#backgrounds()==3,'icon view lost overlays')
         assert(retentionDraws==retainedBefore, 'drag/icon grid received retention row markers')
+        assert(freshnessDraws==freshnessBefore,'drag/icon grid received freshness rows')
     end
     -- Native dirty rendering clears row identities before it invokes refresh.
     local beforeSort=sorts; pane.dirty=true; pane:renderdetails(false)
@@ -227,7 +241,9 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         assert(button.rects[1][1]==2 and button.rects[1][2]==26 and button.rects[2][3]==23)
         assert(button.toolkitCapacityPlayer==1)
     end
+    local freshnessBefore=freshnessDraws
     pane.fail=true; assert(not pcall(pane.renderdetails,pane,false)); pane.fail=false
+    assert(freshnessDraws==freshnessBefore,'failed native render decorated stale freshness rows')
     rects={}; ISInventoryItem.renderItemIcon(pane,a,0,0); assert(alpha==1 and #rects==0,'render context leaked')
     ISInventoryItem.renderItemIcon(pane,a,0,0,0); assert(alpha==0)
     -- The same physical item can be a stack representative and its first child.

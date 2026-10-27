@@ -27,7 +27,8 @@
   "failure_marker": "[STORAGE_PROFILE] FAIL",
   "cases": [
     "walk",
-    "inventory-work"
+    "inventory-work",
+    "inventory-freshness"
   ],
   "feature_controls": [
     "off-empty",

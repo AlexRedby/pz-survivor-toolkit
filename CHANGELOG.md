@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.287
+
+- **Performance:** Better Containers freshness indicators read only visible inventory rows and skip hidden panels and dragged rows. Visible stacks still use their least-fresh member with current values; bar/percentage options and the original inventory-mode scope are preserved. Partial rows are clipped to the inventory contents.
+
 ### 0.1.286
 
 - **Performance:** Reuse unchanged action-queue rows and groups with matching Toolkit Java Patches, including expanded batches. Direct queue edits remain visible immediately; current action, progress, titles and controls stay live. Unsupported action tables and installations without the helper retain exact Lua scanning. Hidden panels no longer rebuild cleared snapshots and rows.

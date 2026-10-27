@@ -64,6 +64,7 @@ class ModIntegrations(unittest.TestCase):
                 ('_IO/_IO.lua', 'INI IO')):
             self.write(root / relative, text)
         if full:
+            self.write(root / 'Upgrades/FoodFreshness.lua', 'BC freshness')
             self.write(root / 'Proximity/Proximity_SmartDeposit.lua', 'BC smart deposit')
             self.write(root / 'Proximity.lua', 'BC proximity')
             self.write(root / 'Proximity/Proximity_ISInventoryPane.lua', 'BC proximity pane')
@@ -262,7 +263,8 @@ class ModIntegrations(unittest.TestCase):
         self.lock_sources()
         args, requested = self.configure(['EURY_CONTAINERS'])
         self.assertEqual({'test_bc_filter_compat.lua', 'test_smart_deposit.lua', 'test_container_configuration_menus.lua',
-                          'test_inventory_refresh.lua', 'test_bc_inventory_classes.lua'}, requested)
+                          'test_inventory_refresh.lua', 'test_bc_inventory_classes.lua', 'test_inventory_freshness.lua'}, requested)
+        self.assertEqual({'NativeBCFreshnessSource': 'BC freshness'}, self.bound(args, 'test_inventory_freshness.lua'))
         self.assertEqual({'NativeBCFilterSource': 'category filters',
                           'NativeBCInventoryCategorySource': 'inventory category',
                           'NativeBCCategoryStoreSource': 'category store',
