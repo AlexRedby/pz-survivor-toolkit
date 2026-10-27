@@ -188,8 +188,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Finish stabilization delivery: validate the merged queue panel against current policy/denial behavior, verify the final version and native queue projection gates, preserve ignored evidence and the old investigation snapshot outside the worktree, then confirm remote main integration and clean only owned temporary resources and refs before archiving this chat.
-
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
 
 - [ ] Repair the isolated fixture in `test_queue_native_snapshot.py::test_selected_adapter_helpers_are_sealed_without_unrelated_adapters`: its temporary craft UI project omits the required `craft_ui_water.py`, causing `FileNotFoundError` while the recovery subcase passes. Copy the declared helper and rerun the focused snapshot tests; do not relax source sealing.
