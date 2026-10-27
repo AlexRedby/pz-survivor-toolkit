@@ -3,15 +3,15 @@ if config.suite~='torch-refill'then return end
 local F=require 'TorchRefillFixture'
 local JSON=require 'QueueHealthEvents'
 local Return=require 'PZSurvivorToolkit/TorchRefillReturn'
-local started,done,packet,state,authority,since,craft,seenCraft,placed,settleAt,drainedAt,returnWait,returnEntry,waitSeen,lastReceipt
+local Session=require 'TorchRefillSession'
+local function factory(context)
+assert(#ISTimedActionQueue.getTimedActionQueue(getPlayer()).queue==0,'preexisting actions prevent clean fixture baseline')
+local baseline=F.clientBaseline(getPlayer())
+local started,done,packet,state,authority,since,craft,seenCraft,placed,settleAt,drainedAt,returnWait,returnEntry,waitSeen,lastReceipt,localReceipt,restored,baselineAck
 local phase='prepare'
 local function emit(event,data)print('[TORCH_REFILL] '..event..' '..JSON.encode(data))end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
-local function request(command)
- if isClient()then sendClientCommand(F.module,command,{});return end
- if command=='Prepare'then state=F.prepare(getPlayer());packet=state.packet;emit('PREPARED',packet)
- else authority=assert(F.receipt(state));emit('AUTHORITY',authority)end
-end
+local function request(command)context.send(command,{})end
 local function find(context,item)
  for _,option in ipairs(context.options or {})do
   if option.onSelect==ISInventoryPaneContextMenu.OnNewCraft and option.target==item
@@ -19,18 +19,37 @@ local function find(context,item)
   if option.subOption then local sub=context:getSubMenu(option.subOption);local found=sub and find(sub,item);if found then return found end end
  end
 end
-Events.OnServerCommand.Add(function(module,command,args)
- if module=='PZSurvivorToolkitTorchRefill'and command=='Refilled'then
-  lastReceipt=args;emit('REFILLED',args);return
+context.observeProduct=function(module,command,args)
+ if module=='PZSurvivorToolkitTorchRefill'and command=='Refilled'and packet and args.sourceID==packet.sourceID then
+  lastReceipt=args;emit('REFILLED',args)
  end
- if module~=F.module then return end
- if command=='Prepared'then packet=args elseif command=='Verified'then authority=args end
+end
+context.events.OnServerCommand.Add(function(module,command,args)
+ if command=='Prepared'then
+  assert(not packet and args.case==context.case and args.epoch==context.epoch,'unexpected prepared phase');packet=args
+ elseif command=='BaselineRestored'then
+  assert(restored and not baselineAck,'unexpected baseline acknowledgement');baselineAck=true
+ elseif command=='Verified'then
+  assert(phase=='verify'and not authority,'unexpected authority receipt');authority=args
+ else error('unexpected fixture reply '..tostring(command))end
 end)
-Events.OnGameStart.Add(function()
- started=true;getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
- if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
-end)
-Events.OnTick.Add(function()
+context.events.OnGameStart.Add(function()started=true end)
+context.readyToClean=function()return #queue().queue==0 and authority~=nil and baselineAck==true end
+context.cleanup=function()
+ assert(context.readyToClean(),'actions or authority RPC pending')
+ return F.restore(baseline)
+end
+local cleaned=false
+context.clean=function(receipt)
+ local ready,reason=F.clean(receipt,state,baseline.items)
+ if ready and not cleaned then
+  F.restore(baseline)
+  cleaned=true;emit('CLEANUP',{case=context.case,epoch=context.epoch,role='client1',ownedRemoved=true,baselineRestored=true})
+  emit('COMPLETE',{case=context.case,epoch=context.epoch,role='client1'})
+ end
+ return ready,reason
+end
+context.events.OnTick.Add(function()
  if not started or done or not getPlayer()or not getPlayer():getCurrentSquare()then return end
  local ok,reason=pcall(function()
   if phase=='prepare'then
@@ -47,7 +66,7 @@ Events.OnTick.Add(function()
     end
     placed=true
    end
-   state=state or(packet and F.resolve(packet,getPlayer()))
+   state=state or(packet and F.resolve(packet,getPlayer(),baseline.items,Session.localState and Session.localState()))
    assert(getTimestampMs()-since<30000,'fixture replication timeout')
    if not state then return end
    if not settleAt then settleAt=getTimestampMs()+1500 end
@@ -74,6 +93,18 @@ Events.OnTick.Add(function()
    end
    assert(option,'native refill menu option missing')
    assert(not option.notAvailable,'native refill unavailable')
+   -- Use the native selector before invoking its callback: foreign fuel must never be consumed.
+   local logic=HandcraftLogic.new(getPlayer(),nil,nil)
+   logic:setIsoObject(logic:findCraftSurface(getPlayer(),2));logic:setContainers(containers)
+   logic:setRecipeFromContextClick(option.param1,torch)
+   assert(logic:canPerformCurrentRecipe(),'native input selection unavailable')
+   local inputs=logic:getRecipeData():getAllInputItems();local selected={}
+   for index=0,inputs:size()-1 do
+    local id=inputs:get(index):getID()
+    assert((id==packet.sourceID or id==packet.tankID)and not selected[id],'native selector would borrow unrelated/repeated input')
+    selected[id]=true
+   end
+   assert(inputs:size()==2 and selected[packet.sourceID]and selected[packet.tankID],'native selector changed fixture identities')
    option.onSelect(option.target,option.param1,option.param2,option.param3,option.param4,option.param5,option.param6)
    context:hideAndChildren()
    local rows={}
@@ -107,7 +138,7 @@ Events.OnTick.Add(function()
     drainedAt=drainedAt or getTimestampMs()
     if getTimestampMs()-drainedAt<10000 then return end
     local area=state.vehicle and state.vehicle:getAreaCenter(state.vehicle:getPartById('TruckBed'):getArea())
-    emit('RETURN_DIAGNOSTIC',{items=F.diagnostic(state),problem=problem,refilled=lastReceipt or {},
+    emit('RETURN_DIAGNOSTIC',{problem=problem,refilled=lastReceipt or {},
      sourceAccess=getPlayer():canAccessContainer(state.source),actorX=getPlayer():getX(),actorY=getPlayer():getY(),
      trunkX=area and area:getX()or -1,trunkY=area and area:getY()or -1,
      captured=returnWait~=nil,outputID=returnEntry and returnEntry.outputID or -1,
@@ -117,14 +148,39 @@ Events.OnTick.Add(function()
     error(problem)
    end
    assert(seenCraft,'native crafting was never observed running')
-   emit('LOCAL',receipt)
-   emit('NATIVE',{selectedID=packet.sourceID,recipe='Base.RefillBlowTorch',
+   localReceipt=receipt;emit('LOCAL',receipt)
+   emit('NATIVE',{case=context.case,epoch=context.epoch,selectedID=packet.sourceID,recipe='Base.RefillBlowTorch',
     nativeDuration=true,craftObserved=true,queueDrained=true,duration=craft:getDuration()})
    phase='verify';since=getTimestampMs();request('Verify')
   elseif phase=='verify'then
    assert(getTimestampMs()-since<25000,'authority timeout')
-   if authority then done=true;emit('COMPLETE',{case=config.cases[1],role='client1'})end
+   if authority then
+    for key,value in pairs(localReceipt)do assert(authority[key]==value,'authority mismatch '..key)end
+    if isClient()then assert(lastReceipt and lastReceipt.outputID==localReceipt.outputID,'product RPC not drained')end
+    F.restore(baseline);restored=true;phase='restore';since=getTimestampMs()
+    context.send('RestoreBaseline',{x=baseline.x,y=baseline.y,z=baseline.z,
+     primaryID=baseline.primary and baseline.primary:getID()or -1,secondaryID=baseline.secondary and baseline.secondary:getID()or -1})
+   end
+  elseif phase=='restore'then
+   assert(getTimestampMs()-since<15000,'authority baseline acknowledgement timeout')
+   if baselineAck then done=true;context.finish(true)end
   end
  end)
- if not ok then done=true;emit('FAIL',{phase=phase,error=tostring(reason)})end
+ if not ok then done=true;error('torch '..phase..' '..tostring(reason))end
 end)
+
+end
+local tick,session
+Events.OnGameStart.Add(function()
+ if config.kind=='sp'then tick=Session.singleplayer(config,factory)
+ else
+  session=Session.create(config,factory,false);session.prepare();tick=session.tick
+ end
+end)
+Events.OnServerCommand.Add(function(module,command,args)
+ if session then
+  local ok,reason=pcall(session.command,module,command,nil,args)
+  if not ok then session.quarantine(reason)end
+ end
+end)
+Events.OnTick.Add(function()if tick then tick()end end)

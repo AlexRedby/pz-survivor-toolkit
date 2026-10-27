@@ -1,0 +1,20 @@
+{
+  "game": "/path/to/game/Java",
+  "jdk": "/path/to/jdk",
+  "options": {
+    "pack_lock": "/path/to/current-full-pack.lock.json"
+  },
+  "jobs": [
+    {"id": "torch-sp-trunk", "suite": "torch-refill", "case": "trunk-retained", "kind": "sp", "language": "EN", "session": "torch-sp"},
+    {"id": "torch-sp-root", "suite": "torch-refill", "case": "root-retained", "kind": "sp", "language": "EN", "session": "torch-sp"},
+    {"id": "torch-sp-unmarked", "suite": "torch-refill", "case": "trunk-unmarked", "kind": "sp", "language": "EN", "session": "torch-sp"},
+    {"id": "torch-host-trunk", "suite": "torch-refill", "case": "trunk-retained", "kind": "mp", "language": "EN", "options": {"mp_host": true}, "session": "torch-host"},
+    {"id": "torch-host-root", "suite": "torch-refill", "case": "root-retained", "kind": "mp", "language": "EN", "options": {"mp_host": true}, "session": "torch-host"},
+    {"id": "torch-host-unmarked", "suite": "torch-refill", "case": "trunk-unmarked", "kind": "mp", "language": "EN", "options": {"mp_host": true}, "session": "torch-host"}
+  ],
+  "sets": {
+    "sp": ["torch-sp-trunk", "torch-sp-root", "torch-sp-unmarked"],
+    "host": ["torch-host-trunk", "torch-host-root", "torch-host-unmarked"],
+    "full": ["torch-sp-trunk", "torch-sp-root", "torch-sp-unmarked", "torch-host-trunk", "torch-host-root", "torch-host-unmarked"]
+  }
+}
