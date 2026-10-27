@@ -60,7 +60,7 @@ class PlasticBatteryCaptureTests(unittest.TestCase):
         self.assertTrue(verify(duplicate)['issues'])
 
 
-def fixed_receipts(kind='sp'):
+def fixed_receipts():
     local, authority, native = [], [], []
     for operation in ('insert', 'remove'):
         for charge in (0, .37, 1):
@@ -86,16 +86,10 @@ def fixed_receipts(kind='sp'):
             recipe = 'Base.InsertBattery' if operation == 'insert' else 'Base.RemoveBattery'
             row = dict(index=index, operation=operation, requestedCharge=charge,
                        gunID=gun_id, batteryID=battery_id, recipe=recipe, before=before, after=after,
-                       gunUseDelta=adapter._float32(.0009),effectRole='authority',
-                       nativeTransferUses=source * (1111 if operation == 'insert' else 142) // (142 if operation == 'insert' else 1111),
-                       stockStatsCodec='none')
-            row['expectedObservedUses'] = row['nativeTransferUses']
+                       gunUseDelta=adapter._GUN_USE_DELTA, effectRole='authority',
+                       nativeTransferUses=source * (1111 if operation == 'insert' else 142) // (142 if operation == 'insert' else 1111))
             local.append(copy.deepcopy(row))
             local[-1]['effectRole'] = 'local'
-            if kind == 'mp' and operation == 'insert' and charge:
-                observed = adapter._stock_stats_uses(row['nativeTransferUses'], row['gunUseDelta'], 1111)
-                local[-1]['after'][0]['uses'] = observed
-                local[-1].update(expectedObservedUses=observed,stockStatsCodec='native-item-stats')
             authority.append(dict(copy.deepcopy(row), performCalls=int(charge > 0),
                                   inputIDs=inputs if charge else [], nativeDuration=charge > 0,
                                   observerIntact=True))
@@ -107,7 +101,7 @@ def fixed_receipts(kind='sp'):
 
 
 def fixed_verify(values=None, kind='sp', recipes=None, complete=True):
-    values = values or fixed_receipts(kind)
+    values = values or fixed_receipts()
     def line(event, row):
         return adapter.MARKER + event + ' ' + json.dumps(row) + '\n'
     def registry(role):
@@ -141,7 +135,7 @@ class PlasticBatteryNativeTests(unittest.TestCase):
     def test_authoritative_inputs_observer_and_native_lifecycle_are_required(self):
         for key, value in [('performCalls', 0), ('performCalls', 2), ('inputIDs', [999]),
                            ('inputIDs', [20, 21, 21]), ('nativeDuration', False), ('observerIntact', False)]:
-            data = fixed_receipts('mp'); data['authority'][1][key] = value
+            data = fixed_receipts(); data['authority'][1][key] = value
             with self.subTest(key=key, value=value):
                 self.assertTrue(fixed_verify(data, kind='mp')['issues'])
         for key, value in [('queueDrained', False), ('craftObserved', False), ('nativeDuration', False),
@@ -163,7 +157,7 @@ class PlasticBatteryNativeTests(unittest.TestCase):
             (4, lambda row: row['after'].append(dict(id=999, type='Base.Battery', uses=52, maxUses=142))),
             (0, lambda row: row['after'].append(dict(id=999, type='Base.Battery', uses=0, maxUses=142))),
         ]:
-            data = fixed_receipts('mp')
+            data = fixed_receipts()
             mutate(data['local'][index])
             # Mutate both roles: a client/server agreement must not conceal a bad effect.
             for key in adapter._EFFECT_KEYS:
@@ -172,11 +166,14 @@ class PlasticBatteryNativeTests(unittest.TestCase):
                 self.assertTrue(fixed_verify(data, kind='mp')['issues'])
 
     def test_authoritative_effects_cannot_be_replaced_with_client_claims(self):
-        data = fixed_receipts('mp'); data['authority'][1]['after'][0]['uses'] += 1
+        data = fixed_receipts(); data['authority'][1]['after'][0]['uses'] += 1
         self.assertTrue(fixed_verify(data, kind='mp')['issues'])
-        data = fixed_receipts('mp'); data['authority'].clear()
+        data = fixed_receipts(); data['authority'][4]['after'][1]['id'] = 999
+        result = fixed_verify(data, kind='mp')
+        self.assertEqual(result['issues'], ['Battery client/server effect identities or charges differ'])
+        data = fixed_receipts(); data['authority'].clear()
         self.assertTrue(fixed_verify(data, kind='mp')['issues'])
-        data = fixed_receipts('mp'); data['authority'][1] = copy.deepcopy(data['local'][1])
+        data = fixed_receipts(); data['authority'][1] = copy.deepcopy(data['local'][1])
         self.assertTrue(fixed_verify(data, kind='mp')['issues'])
 
     def test_custom_registry_or_menu_paths_and_missing_phases_are_rejected(self):
@@ -193,32 +190,33 @@ class PlasticBatteryNativeTests(unittest.TestCase):
         data = fixed_receipts(); data['native'][4]['menu'] *= 2
         self.assertTrue(fixed_verify(data)['issues'])
 
-    def test_stock_codec_is_exact_and_limited_to_mp_kept_gun_insert(self):
-        self.assertEqual(adapter._stock_stats_uses(414, adapter._float32(.0009), 1111), 413)
-        self.assertEqual(adapter._stock_stats_uses(1111, adapter._float32(.0009), 1111), 1110)
-        result = fixed_verify(kind='mp')
-        self.assertEqual([(r['authorityUses'], r['clientUses'], r['chargeMismatch'])
-                          for r in result['evidence']['stockStatsReplication']],
-                         [(414, 413, True), (1111, 1110, True)])
-        for kind, index, section, delta in [
-            ('sp', 1, 'local', -1), ('sp', 2, 'local', -1),
-            ('mp', 1, 'local', -1), ('mp', 1, 'local', 1),
-            ('mp', 2, 'local', -1), ('mp', 2, 'local', 1),
-            ('mp', 1, 'authority', -1), ('mp', 2, 'authority', -1),
-            ('mp', 4, 'local', -1), ('mp', 5, 'local', -1),
-        ]:
-            data = fixed_receipts(kind)
-            item = -1 if index >= 4 else 0
-            data[section][index]['after'][item]['uses'] += delta
-            with self.subTest(kind=kind, index=index, section=section, delta=delta):
-                self.assertTrue(fixed_verify(data, kind=kind)['issues'])
-        for field, value in [('effectRole', 'authority'), ('stockStatsCodec', 'none'),
-                             ('nativeTransferUses', 413), ('expectedObservedUses', 414),
+    def test_one_unit_charge_loss_fails_for_each_positive_sp_and_host_effect(self):
+        for kind in ('sp', 'mp'):
+            for index in (1, 2, 4, 5):
+                for sections in (('local',), ('authority',), ('local', 'authority')):
+                    for delta in (-1, 1):
+                        data = fixed_receipts()
+                        for section in sections:
+                            item = 0 if index < 3 else 1
+                            data[section][index]['after'][item]['uses'] += delta
+                        with self.subTest(kind=kind, index=index, sections=sections, delta=delta):
+                            self.assertTrue(fixed_verify(data, kind=kind)['issues'])
+
+    def test_legacy_stock_packet_losses_cannot_pass_as_expected_charge(self):
+        for index, lost_uses in ((1, 413), (2, 1110)):
+            data = fixed_receipts()
+            data['local'][index]['after'][0]['uses'] = lost_uses
+            data['local'][index].update(expectedObservedUses=lost_uses, stockStatsCodec='native-item-stats')
+            with self.subTest(index=index):
+                self.assertTrue(fixed_verify(data, kind='mp')['issues'])
+
+    def test_exact_transfer_provenance_is_required(self):
+        for field, value in [('effectRole', 'authority'), ('nativeTransferUses', 413),
                              ('gunUseDelta', .0009)]:
-            data = fixed_receipts('mp'); data['local'][1][field] = value
+            data = fixed_receipts(); data['local'][1][field] = value
             with self.subTest(field=field):
                 self.assertTrue(fixed_verify(data, kind='mp')['issues'])
-        data = fixed_receipts('mp'); del data['local'][1]['stockStatsCodec']
+        data = fixed_receipts(); del data['local'][1]['nativeTransferUses']
         self.assertTrue(fixed_verify(data, kind='mp')['issues'])
 
     def test_fresh_sp_host_selection_and_capabilities(self):
@@ -261,24 +259,28 @@ class PlasticBatteryNativeTests(unittest.TestCase):
             self.assertIn(project / 'tests/native_queue/plastic-battery/shared/PlasticBatteryFixture.lua', sources)
             self.assertIn(project / 'tests/native_queue/plastic-battery/server/ZZPlasticBatteryServer.lua', sources)
 
-    def test_lua_bounded_codec_constants_match_independent_ieee32_verifier(self):
+    def test_lua_exact_transfer_and_effect_readiness_reject_one_unit_loss(self):
         from lupa.lua51 import LuaRuntime
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.execute("require=function()end;ISHandcraftAction={performRecipe=function()end};mp=false;isClient=function()return mp end")
+        lua.execute("require=function()end;ISHandcraftAction={performRecipe=function()end}")
         fixture = Path(__file__).parent / 'native_queue/plastic-battery/shared/PlasticBatteryFixture.lua'
         helper = lua.execute(fixture.read_text())
-        for kind in ('sp', 'mp'):
-            lua.globals().mp = kind == 'mp'
-            for row in fixed_receipts(kind)['local']:
-                packet = lua.table_from({k: v for k, v in row.items() if k not in ('before', 'after')})
-                packet.before = lua.table_from([lua.table_from(item) for item in row['before']])
-                expected = helper.expected(lua.table_from(dict(packet=packet)), 'local')
-                self.assertEqual(expected.nativeTransferUses, row['nativeTransferUses'])
-                self.assertEqual(expected.expectedObservedUses, row['expectedObservedUses'])
-                self.assertEqual(expected.stockStatsCodec, row['stockStatsCodec'])
-                authority = helper.expected(lua.table_from(dict(packet=packet)), 'authority')
-                self.assertEqual(authority.expectedObservedUses, row['nativeTransferUses'])
-                self.assertEqual(authority.stockStatsCodec, 'none')
+        helper.snapshot = lua.eval('function()return observed end')
+        for row in fixed_receipts()['local']:
+            packet = lua.table_from({k: v for k, v in row.items() if k not in ('before', 'after')})
+            packet.before = lua.table_from([lua.table_from(item) for item in row['before']])
+            state = lua.table_from(dict(packet=packet))
+            expected = helper.expected(state)
+            self.assertEqual(expected.nativeTransferUses, row['nativeTransferUses'])
+            lua.globals().observed = lua.table_from([lua.table_from(item) for item in row['after']])
+            ready, reason = helper.effectReady(state)
+            with self.subTest(index=row['index']):
+                self.assertTrue(ready, reason)
+                if row['requestedCharge'] > 0:
+                    item = 1 if row['operation'] == 'insert' else 2
+                    lua.globals().observed[item].uses -= 1
+                    ready, _ = helper.effectReady(state)
+                    self.assertFalse(ready)
 
     def test_scoped_fixture_lua_syntax(self):
         from lupa.lua51 import LuaRuntime

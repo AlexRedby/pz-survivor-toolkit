@@ -1,7 +1,6 @@
 """Capture original recipes and verify the fixed native battery paths in SP/Host."""
 from pathlib import Path
 import shutil
-import struct
 
 from .. import receipts
 
@@ -101,6 +100,7 @@ def verify(root, selection, catalog):
 _CUSTOM = ('Base.damnCraftInsertBatteryIntoPlasticWeldingGun',
            'Base.damnCraftRemoveBatteryFromPlasticWeldingGun')
 _GUN = 'damnCraft.PlasticWeldingGun'
+_GUN_USE_DELTA = 0.0008999999845400453
 _EFFECT_KEYS = ('index', 'operation', 'requestedCharge', 'recipe', 'gunID', 'batteryID', 'gunUseDelta', 'before', 'after')
 
 
@@ -120,24 +120,14 @@ def _items(rows):
     return result
 
 
-def _float32(value):
-    return struct.unpack('!f', struct.pack('!f', value))[0]
-
-
-def _stock_stats_uses(uses, use_delta, maximum):
-    # B42.21 ItemStatsPacket: setData stores float(uses*useDelta); applyItemStats
-    # calls setCurrentUses((int)(maxUses*usedDelta)), with a second float multiply.
-    return int(_float32(_float32(maximum) * _float32(_float32(uses) * use_delta)))
-
-
-def _effect(row, index, operation, charge, *, role='authority', mp=False):
+def _effect(row, index, operation, charge, *, role='authority'):
     if not isinstance(row, dict):
         raise ValueError('Invalid fixed battery phase receipt')
     recipe = 'Base.InsertBattery' if operation == 'insert' else 'Base.RemoveBattery'
     if (row.get('index') != index or row.get('operation') != operation
             or row.get('requestedCharge') != charge or row.get('recipe') != recipe
             or type(row.get('gunID')) is not int or type(row.get('batteryID')) is not int
-            or row.get('gunUseDelta') != _float32(.0009)):
+            or row.get('gunUseDelta') != _GUN_USE_DELTA):
         raise ValueError('Invalid fixed battery phase provenance')
     gun_id, battery_id = row['gunID'], row['batteryID']
     before, after = _items(row.get('before')), _items(row.get('after'))
@@ -158,14 +148,10 @@ def _effect(row, index, operation, charge, *, role='authority', mp=False):
     if source['uses'] != int(source['maxUses'] * charge + .5):
         raise ValueError('Unexpected battery source charge')
     transferred = source['uses'] * target_max // source['maxUses']
-    codec = mp and role == 'local' and operation == 'insert' and charge > 0
-    observed = _stock_stats_uses(transferred, row['gunUseDelta'], 1111) if codec else transferred
-    if (row.get('effectRole') != role or row.get('nativeTransferUses') != transferred
-            or row.get('expectedObservedUses') != observed
-            or row.get('stockStatsCodec') != ('native-item-stats' if codec else 'none')):
-        raise ValueError('Invalid explicit native transfer/stock packet receipt semantics')
+    if row.get('effectRole') != role or row.get('nativeTransferUses') != transferred:
+        raise ValueError('Invalid exact native transfer receipt semantics')
     if operation == 'insert':
-        if set(after) != {gun_id} or after[gun_id]['uses'] != observed:
+        if set(after) != {gun_id} or after[gun_id]['uses'] != transferred:
             raise ValueError('Battery insertion did not consume input or transfer exact native uses')
     else:
         outputs = [item for item in after.values() if item['type'] == 'Base.Battery']
@@ -195,11 +181,9 @@ def verify_native(root, selection):
         plans = [(operation, charge) for operation in ('insert', 'remove') for charge in (0, .37, 1)]
         fixture_ids = set()
         for index, ((operation, charge), effect, actual, action) in enumerate(zip(plans, local, authority, native), 1):
-            _effect(effect, index, operation, charge, role='local', mp=mp)
-            _effect(actual, index, operation, charge, role='authority', mp=mp)
-            if (any(effect.get(key) != actual.get(key) for key in _EFFECT_KEYS if key != 'after')
-                    or [{k: v for k, v in item.items() if k != 'uses'} for item in effect['after']]
-                    != [{k: v for k, v in item.items() if k != 'uses'} for item in actual['after']]):
+            _effect(effect, index, operation, charge, role='local')
+            _effect(actual, index, operation, charge, role='authority')
+            if any(effect.get(key) != actual.get(key) for key in _EFFECT_KEYS):
                 raise ValueError('Battery client/server effect identities or charges differ')
             ids = {item['id'] for item in effect['before'] + effect['after']}
             if fixture_ids & ids:
@@ -225,14 +209,9 @@ def verify_native(root, selection):
                     or type(action.get('duration')) not in (int, float)
                     or (action['duration'] <= 1 if positive else action['duration'] != 0)):
                 raise ValueError('Invalid standard battery menu/native duration/queue evidence')
-        replication = [dict(index=l['index'], gunID=l['gunID'], authorityUses=a['after'][0]['uses'],
-                            clientUses=l['after'][0]['uses'], nativeTransferUses=a['nativeTransferUses'],
-                            expectedClientUses=l['expectedObservedUses'], codec=l['stockStatsCodec'],
-                            chargeMismatch=l['after'][0]['uses'] != a['after'][0]['uses'])
-                       for l, a in zip(local, authority) if l['operation'] == 'insert' and l['requestedCharge'] > 0]
-        evidence = dict(local=local, authority=authority, native=native, stockStatsReplication=replication, limits=[
+        evidence = dict(local=local, authority=authority, native=native, limits=[
             'Native context-menu callback with ordinary durations; no physical input claim.',
-            'Authority uses exact native integer transfer. MP kept-gun insertion uses exact stock IEEE754 float stats normalization, which loses charge (414 -> 413 and 1111 -> 1110); no idealized charge or client/server equality claim.'])
+            'Client and authority retain identical raw native integer charges, item identities and output counts in all six phases.'])
     except (OSError, KeyError, ValueError, TypeError) as error:
         issues.append(str(error))
     return {'issues': issues, 'evidence': evidence,

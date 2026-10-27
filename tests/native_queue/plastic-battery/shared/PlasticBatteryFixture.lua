@@ -78,34 +78,20 @@ function F.prepare(owner,index)
   gunID=gun:getID(),batteryID=battery and battery:getID()or -1,gunUseDelta=gun:getUseDelta(),before=F.snapshot(player)}
  return {owner=owner,player=player,packet=packet,performCalls=0,inputIDs={},nativeDuration=false}
 end
-function F.expected(state,role)
+function F.expected(state)
  local p=state.packet;local source
  for _,item in ipairs(p.before)do
   if item.id==(p.operation=='insert'and p.batteryID or p.gunID)then source=item end
  end
  assert(source,'missing exact source input')
- local transfer=math.floor(source.uses/source.maxUses*(p.operation=='insert'and 1111 or 142))
- local codec=isClient()and role~='authority'and p.operation=='insert'and p.requestedCharge>0
- local observed=transfer
- if codec then
-  -- B42.21 ItemStatsPacket.setData stores getCurrentUsesFloat() (float uses*useDelta).
-  -- applyItemStats sets integer uses=(int)(float(maxUses)*usedDelta), without rounding.
-  -- Source-checked constants cover only this fixture's bounded insertion matrix;
-  -- Python independently calculates both IEEE754 binary32 operations from metadata.
-  assert(p.gunUseDelta==0.0008999999845400453,'native gun useDelta changed')
-  local targets={[414]=413,[1111]=1110}
-  observed=assert(targets[transfer],'unreviewed native packet charge case')
- end
- return {nativeTransferUses=transfer,expectedObservedUses=observed,
-  stockStatsCodec=codec and 'native-item-stats'or 'none'}
+ return {nativeTransferUses=math.floor(source.uses*(p.operation=='insert'and 1111 or 142)/source.maxUses)}
 end
 function F.receipt(state,role)
- local packet=state.packet;role=role or 'authority';local expected=F.expected(state,role)
+ local packet=state.packet;role=role or 'authority';local expected=F.expected(state)
  return {index=packet.index,operation=packet.operation,requestedCharge=packet.requestedCharge,
   recipe=packet.recipe,gunID=packet.gunID,batteryID=packet.batteryID,gunUseDelta=packet.gunUseDelta,
   before=packet.before,after=F.snapshot(state.player),effectRole=role,
-  nativeTransferUses=expected.nativeTransferUses,expectedObservedUses=expected.expectedObservedUses,
-  stockStatsCodec=expected.stockStatsCodec}
+  nativeTransferUses=expected.nativeTransferUses}
 end
 function F.effectReady(state)
  local p=state.packet;local after=F.snapshot(state.player);local gun,batteries
@@ -115,7 +101,7 @@ function F.effectReady(state)
   else batteries[#batteries+1]=item end
  end
  if not gun or gun.id~=p.gunID then return false,'gun identity differs' end
- local expected=F.expected(state,isClient()and 'local'or 'authority').expectedObservedUses
+ local expected=F.expected(state).nativeTransferUses
  if p.operation=='insert'then
   return #batteries==0 and gun.uses==expected,
    'insert expected gun uses '..expected..', observed '..gun.uses..', battery count '..#batteries
@@ -127,7 +113,7 @@ end
 function F.diagnostic(state)
  local ready,reason=F.effectReady(state)
  return {index=state.packet.index,packet=state.packet,after=F.snapshot(state.player),
-  expectation=F.expected(state,isClient()and 'local'or 'authority'),
+  expectation=F.expected(state),
   effectReady=ready,effectReason=reason or '',performCalls=state.performCalls or -1,
   inputIDs=state.inputIDs or {},nativeDuration=state.nativeDuration==true}
 end

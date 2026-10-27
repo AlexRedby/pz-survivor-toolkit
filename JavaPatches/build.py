@@ -116,6 +116,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'zombie.vehicles.VehicleInventoryOrderingChecks': 'VEHICLE_INVENTORY_ORDERING_CHECKS_PASS',
           'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
           'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
+          'zombie.network.packets.DrainableChargeChecks': 'DRAINABLE_CHARGE_CHECKS_PASS',
           'net.alexredby.javapatchfixture.KotlinRuntimeChecks': 'KOTLIN_RUNTIME_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
@@ -341,7 +342,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.71',
+    'version': '0.1.73',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

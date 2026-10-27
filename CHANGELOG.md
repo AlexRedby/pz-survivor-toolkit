@@ -1425,6 +1425,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.73
+
+- Preserve exact drainable charge during multiplayer item-stat synchronization, including native rounded-full values. Batteries and other drainable items no longer lose charge through the receiver's float conversion; invalid payloads and unsupported game versions retain native handling.
+
 ### 0.1.71
 
 - Expose current covered-part laundry stains without initializing item visuals, drawing random values or changing item state. Unsupported native metadata remains unknown.
