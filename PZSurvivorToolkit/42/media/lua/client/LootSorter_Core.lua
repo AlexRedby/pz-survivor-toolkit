@@ -6,6 +6,8 @@ local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Categories = require "PZSurvivorToolkit/ItemCategories"
 local TransferProtection = require "PZSurvivorToolkit/InventoryTransferProtection"
+local Duplicates = require "PZSurvivorToolkit/QuartermasterDuplicates"
+local Groups = require "PZSurvivorToolkit/ContainerGroups"
 
 LootSorter = LootSorter or {}
 -- diagnostic trace: silent unless LootSorter.DEBUG is set or the game runs in -debug mode
@@ -109,6 +111,8 @@ end
 -- read path). A container may use any combination.
 function LootSorter.getBoxCats(obj, ci)
     if not obj then return nil end
+    local group = Groups.resolve(obj, ci)
+    if group then return group.configuration.cats end
     local md = obj:getModData()
     if not md.LSBox then return nil end
     return md.LSBox[tostring(ci)]
@@ -116,6 +120,8 @@ end
 
 function LootSorter.getBoxItems(obj, ci)
     if not obj then return nil end
+    local group = Groups.resolve(obj, ci)
+    if group then return group.configuration.items end
     local md = obj:getModData()
     if not md.LSBoxItems then return nil end
     return md.LSBoxItems[tostring(ci)]
@@ -124,6 +130,8 @@ end
 -- which PRESETS this container uses: md.LSBoxPresets[ci] = { [presetName]=generation }
 function LootSorter.getBoxPresets(obj, ci)
     if not obj then return nil end
+    local group = Groups.resolve(obj, ci)
+    if group then return group.configuration.presets end
     local md = obj:getModData()
     if not md.LSBoxPresets then return nil end
     return md.LSBoxPresets[tostring(ci)]
@@ -149,8 +157,24 @@ local function writeBoxSet(md, ci, set, field)
     if set and tableHasAny(set) then md[field][tostring(ci)] = set else md[field][tostring(ci)] = nil end
 end
 
+-- Legacy setters still edit one container. Materialize/detach through the same
+-- authority as the editor, so a raw field write cannot disappear behind a link.
+local function editGroupedBox(obj, ci, field, value)
+    local group = Groups.resolve(obj, ci)
+    if not group then return false end
+    local config = group.configuration
+    config[field] = value
+    config.groupOperation = {mode = "detach"}
+    TagRules.saveBox(obj, ci, group.rule, getSpecificPlayer(0), function(verdict)
+        if verdict ~= "ok" then LootSorter.notify(getSpecificPlayer(0), getText("UI_PZST_QMTagRuleFailed", tostring(verdict))) end
+    end, TagRules.getBoxRevision(obj, ci), config)
+    return true
+end
+
 local function setBoxSet(obj, ci, set, field)
     if not obj or ci == nil then return end
+    local name = ({LSBox = "cats", LSBoxItems = "items", LSBoxPresets = "presets"})[field]
+    if editGroupedBox(obj, ci, name, set or {}) then return end
     writeBoxSet(obj:getModData(), ci, set, field)
     if obj.transmitModData then obj:transmitModData() end
     syncCoord(obj)
@@ -160,9 +184,22 @@ end
 -- when 0 so a box that never mentions priority carries no field at all.
 function LootSorter.getBoxPriority(obj, ci)
     if not obj then return 0 end
+    local group = Groups.resolve(obj, ci)
+    if group then return group.configuration.priority end
     local md = obj:getModData()
     if not md.LSBoxPriority then return 0 end
     return tonumber(md.LSBoxPriority[tostring(ci)]) or 0
+end
+
+LootSorter.getBoxNoDuplicates = Duplicates.enabled
+
+local function writeBoxNoDuplicates(md, ci, enabled)
+    if enabled then
+        md.LSBoxNoDuplicates = md.LSBoxNoDuplicates or {}
+        md.LSBoxNoDuplicates[tostring(ci)] = true
+    elseif md.LSBoxNoDuplicates then
+        md.LSBoxNoDuplicates[tostring(ci)] = nil
+    end
 end
 
 local function writeBoxPriority(md, ci, priority)
@@ -179,6 +216,7 @@ end
 
 function LootSorter.setBoxPriority(obj, ci, priority)
     if not obj or ci == nil then return end
+    if editGroupedBox(obj, ci, "priority", priority) then return end
     writeBoxPriority(obj:getModData(), ci, priority)
     if obj.transmitModData then obj:transmitModData() end
 end
@@ -209,6 +247,7 @@ function LootSorter.snapshotDesignation(value)
     return {
         cats = copySet(value.cats), items = copySet(value.items), presets = copySet(value.presets),
         priority = tonumber(value.priority) or 0,
+        noDuplicates = value.noDuplicates == true,
         pzstTagRule = value.pzstTagRule and Tags.normalizeRule(value.pzstTagRule) or nil,
     }
 end
@@ -218,10 +257,17 @@ end
 function LootSorter.setBoxDesignation(obj, ci, value)
     if not obj or ci == nil then return end
     local snapshot, md = LootSorter.snapshotDesignation(value), obj:getModData()
+    if Groups.link(obj, ci) then
+        TagRules.saveBox(obj, ci, snapshot.pzstTagRule, getSpecificPlayer(0), function(verdict)
+            if verdict ~= "ok" then LootSorter.notify(getSpecificPlayer(0), getText("UI_PZST_QMTagRuleFailed", tostring(verdict))) end
+        end, TagRules.getBoxRevision(obj, ci), snapshot)
+        return
+    end
     writeBoxSet(md, ci, snapshot.cats, "LSBox")
     writeBoxSet(md, ci, snapshot.items, "LSBoxItems")
     writeBoxSet(md, ci, snapshot.presets, "LSBoxPresets")
     writeBoxPriority(md, ci, snapshot.priority)
+    writeBoxNoDuplicates(md, ci, snapshot.noDuplicates)
     if obj.transmitModData then obj:transmitModData() end
     syncCoord(obj)
 end
@@ -230,6 +276,7 @@ function LootSorter.copyDesignation(obj, ci)
     LootSorter.clipboard = LootSorter.snapshotDesignation({
         cats = LootSorter.getBoxCats(obj, ci), items = LootSorter.getBoxItems(obj, ci),
         presets = LootSorter.getBoxPresets(obj, ci), priority = LootSorter.getBoxPriority(obj, ci),
+        noDuplicates = LootSorter.getBoxNoDuplicates(obj, ci),
         pzstTagRule = TagRules.getBox(obj, ci),
     })
     return LootSorter.clipboard
@@ -256,7 +303,7 @@ end
 function LootSorter.hasClipboardContent()
     local clipboard = LootSorter.clipboard
     if not clipboard then return false end
-    if (clipboard.priority or 0) ~= 0 or Tags.ruleActive(clipboard.pzstTagRule) then return true end
+    if clipboard.noDuplicates or (clipboard.priority or 0) ~= 0 or Tags.ruleActive(clipboard.pzstTagRule) then return true end
     return countSet(clipboard.cats) + countSet(clipboard.items) + countSet(clipboard.presets) > 0
 end
 
@@ -277,6 +324,7 @@ function LootSorter.describeClipboard()
         parts[#parts + 1] = "priority " .. tostring(clipboard.priority)
     end
     if Tags.ruleActive(clipboard.pzstTagRule) then parts[#parts + 1] = getText("UI_PZST_QMTagRule") end
+    if clipboard.noDuplicates then parts[#parts + 1] = getText("UI_PZST_ContainerNoDuplicates") end
     if #parts == 0 then return "empty" end
     return table.concat(parts, ", ")
 end
@@ -316,23 +364,32 @@ findDesignatedOnSquare = function(sq, player)
         -- empty ModData table to every wall/floor/furniture it touches (memory + save bloat).
         if o and o.hasModData and o:hasModData() then
             local md = o:getModData()
-            if md.LSBox or md.LSBoxItems or md.LSBoxPresets or md[TagRules.FIELD] then
+            if md.LSBox or md.LSBoxItems or md.LSBoxPresets or md[TagRules.FIELD] or md[Groups.FIELD] then
                 local store = LootSorter.getPresetStore()
                 local n = o:getContainerCount() or 0
                 for ci = 0, n - 1 do
                     local key = tostring(ci)
+                    local group = Groups.resolve(o, ci)
+                    -- A new membership may arrive before its global snapshot. Never
+                    -- route using the stale materialized copy as an independent box.
+                    if isClient() and not Groups.ready(o, ci) then return {}, false end
+                    local config = group and group.configuration
+                    local manualCats = config and config.cats or (md.LSBox and md.LSBox[key])
+                    local manualItems = config and config.items or (md.LSBoxItems and md.LSBoxItems[key])
+                    local links = config and config.presets or (md.LSBoxPresets and md.LSBoxPresets[key])
                     -- EFFECTIVE designation = manual categories/items UNION every used preset's contents
                     -- (linked presets, resolved live). A box configured purely via presets counts too.
                     local cats, items = LootSorter.resolveEffective(
-                        md.LSBox and md.LSBox[key], md.LSBoxItems and md.LSBoxItems[key],
-                        md.LSBoxPresets and md.LSBoxPresets[key], store)
-                    local rules = TagRules.forBox(o, ci, md.LSBoxPresets and md.LSBoxPresets[key], store)
+                        manualCats, manualItems, links, store)
+                    local rules = TagRules.forBox(o, ci, links, store)
                     if tableHasAny(cats) or tableHasAny(items) or #rules > 0 then
-                        -- read here, where the ModData and the container index are both in scope:
-                        -- the records below carry no ci to look it up with later
-                        out[#out + 1] = { obj = o, container = o:getContainerByIndex(ci),
+                        -- Snapshot routing settings and retain the compartment index for the
+                        -- deposit's live duplicate-policy check.
+                        out[#out + 1] = { obj = o, ci = ci, container = o:getContainerByIndex(ci),
                                           cats = cats, items = items, rules = rules,
-                                          priority = tonumber(md.LSBoxPriority
+                                          groupId = group and group.id,
+                                          noDuplicates = Duplicates.enabled(o, ci),
+                                          priority = config and config.priority or tonumber(md.LSBoxPriority
                                               and md.LSBoxPriority[key]) or 0 }
                     end
                 end
@@ -382,15 +439,16 @@ end
 -- Returns boxes, synced. An unsynced client sees an empty registry, which is indistinguishable from
 -- owning no boxes -- so the flag is what callers must branch on, not #boxes.
 local function gatherBoxes(player)
-    if not LootSorter.isRegistrySynced() or not LootSorter.arePresetsSynced() then
-        LootSorter.DBG(("not yet synced: registry=%s presets=%s"):format(
-            tostring(LootSorter.isRegistrySynced()), tostring(LootSorter.arePresetsSynced())))
+    if not LootSorter.isRegistrySynced() or not LootSorter.arePresetsSynced() or not Groups.synced() then
+        LootSorter.DBG(("not yet synced: registry=%s presets=%s groups=%s"):format(
+            tostring(LootSorter.isRegistrySynced()), tostring(LootSorter.arePresetsSynced()), tostring(Groups.synced())))
         if not LootSorter.isRegistrySynced() then
             pcall(function() ModData.request("LootSorter_Registry") end)
         end
         if not LootSorter.arePresetsSynced() and LootSorter.requestPresets then
             LootSorter.requestPresets()
         end
+        if not Groups.synced() then ModData.request(Groups.STORE) end
         return {}, false
     end
     local psq = player:getCurrentSquare()
@@ -425,13 +483,19 @@ local function gatherBoxes(player)
                 end
                 if sq then                         -- loaded -> verify the box is still there
                     checked = checked + 1
-                    local found = findDesignatedOnSquare(sq, player)
+                    local found, groupsReady = findDesignatedOnSquare(sq, player)
+                    if groupsReady == false then
+                        ModData.request(Groups.STORE)
+                        return {}, false
+                    end
                     if #found > 0 then
                         local dist = adz * zPenalty + cheb
                         for _, f in ipairs(found) do
                             if f.container then
-                                table.insert(boxes, { obj = f.obj, square = sq, cats = f.cats, items = f.items,
+                                table.insert(boxes, { obj = f.obj, ci = f.ci, square = sq, cats = f.cats, items = f.items,
                                                       container = f.container, rules = f.rules, dist = dist,
+                                                      noDuplicates = f.noDuplicates,
+                                                      groupId = f.groupId,
                                                       priority = f.priority })
                             end
                         end
@@ -542,7 +606,7 @@ function LootSorter.sort(sourceContainer, playerNum)
                 local origin = sourceContainer
                 pcall(function() local realContainer = it:getContainer(); if realContainer then origin = realContainer end end)
                 itemRecs[#itemRecs + 1] = { ref = it, cat = it:getDisplayCategory(),
-                    name = it:getDisplayName(), weight = w, container = origin }
+                    name = it:getDisplayName(), fullType = it:getFullType(), weight = w, container = origin }
             elseif it and LootSorter.isDebug() then
                 local nm = "?"; pcall(function() nm = it:getDisplayName() end)
                 skippedInUse[#skippedInUse + 1] = nm
@@ -567,10 +631,30 @@ function LootSorter.sort(sourceContainer, playerNum)
             end
         end
         local boxRecs = {}
+        -- Occupancy spans every discovered member, including a full/unreachable member
+        -- which is not a candidate for this haul. Group appearance/settings are independent.
+        local groupContents, groupPeers = {}, {}
+        for _, b in ipairs(boxes) do
+            if b.groupId then
+                groupPeers[b.groupId] = groupPeers[b.groupId] or {}
+                table.insert(groupPeers[b.groupId], b)
+                if b.noDuplicates then
+                    local existing = groupContents[b.groupId] or {}
+                    groupContents[b.groupId] = existing
+                    for fullType, item in pairs(Duplicates.contents(b.container)) do
+                        if existing[fullType] == nil then existing[fullType] = item end
+                    end
+                end
+            end
+        end
         for _, b in ipairs(boxes) do                              -- boxes are nearest-first
+            b.groupPeers = b.groupId and groupPeers[b.groupId] or nil
             local stand = AdjacentFreeTileFinder.Find(b.square, player)
             if stand then
                 boxRecs[#boxRecs + 1] = { ref = b, container = b.container, cats = b.cats, items = b.items, rules = b.rules, stand = stand,
+                    noDuplicates = b.noDuplicates,
+                    duplicateScope = b.groupId,
+                    existingTypes = b.noDuplicates and (groupContents[b.groupId] or Duplicates.contents(b.container)) or nil,
                     capacity = effectiveCapacity(b.container) * LootSorter.BOX_FILL_FRACTION,
                     used = b.container:getCapacityWeight(), dist = b.dist, priority = b.priority }
             else
@@ -642,12 +726,13 @@ function LootSorter.sort(sourceContainer, playerNum)
         end
         local depSeq = 0
         local depLog = {}    -- one consolidated "queued deposits" line instead of one print per item
-        local function queueDeposit(item, from, to, phase)
+        local function queueDeposit(item, from, to, phase, box)
             depSeq = depSeq + 1
             local d = LootSorter.DepositAction:new(player, item, from, to)
             d.lsRunId = runId
             d.lsSeq = depSeq
             d.lsPhase = phase
+            d.lsDestinationBox = box
             if LootSorter.isDebug() then
                 local nm = "?"; pcall(function() nm = item and item:getName() end)
                 depLog[#depLog + 1] = ("#%d %s %s"):format(depSeq, phase, tostring(nm))
@@ -685,7 +770,7 @@ function LootSorter.sort(sourceContainer, playerNum)
                 queueWalk(b.stand)
                 for _, e in ipairs(trip.perBox[b]) do
                     local from = onPlayer and sourceContainer or e.carrier.ref  -- deposit straight from the bag if on-player
-                    queueDeposit(e.item.ref, from, b.container, "box")
+                    queueDeposit(e.item.ref, from, b.container, "box", b.ref)
                     queued = queued + 1
                 end
             end

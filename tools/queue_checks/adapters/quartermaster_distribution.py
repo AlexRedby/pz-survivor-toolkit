@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import struct
 
 from .. import receipts
 
@@ -286,6 +287,86 @@ def _barricaded_door(root, selection):
                          'limits': ['Native toolbar callback in SP or one-client menu Host; no physical input or second client.']}}
 
 
+def _group_configuration(stage, names):
+    if stage == 'blank':
+        return dict(cats=[], items=[], presets=[], priority=0, noDuplicates=False, appearance=[])
+    first, local = stage in ('created', 'joined'), stage == 'detached'
+    return dict(cats=[], items={name: True for name in (names[:1] if local else names)},
+                presets=[], priority=4 if local else 6 if first else 9 if stage == 'unique' else 11,
+                noDuplicates=stage == 'unique',
+                appearance=dict(name='PZST local cooking' if local else 'PZST cooking group' if first else 'PZST shared cooking',
+                                icon=dict(kind='item', value='Base.BookCooking1' if first else 'Base.BookCooking2'),
+                                color=dict(zip(('r', 'g', 'b', 'a'),
+                                               (.5, .75, .25, 1) if local else (.25, .5, .75, 1) if first else (.75, .25, .5, 1)))))
+
+
+def _group_rule(stage):
+    return dict(mode='all', include=['readable'] if stage in ('created', 'joined') else ['experience', 'readable'],
+                exclude=['writeable'])
+
+
+def _groups(root, selection, text, authority, earlier_ids):
+    packet = _one(text, 'GROUP_PREPARED')
+    ids, names = packet['ids'], packet['names']
+    types = ['Base.BookCooking1', 'Base.BookCooking1', 'Base.BookCooking2', 'Base.BookCooking2', 'Base.BookCooking1']
+    if (set(packet) != {'ids', 'types', 'names', 'creator', 'member'} or not _exact(packet['types'], types)
+            or type(ids) is not list or len(ids) != 5 or any(type(value) is not int for value in ids)
+            or len(set(ids)) != 5 or set(ids) & set(earlier_ids)
+            or type(names) is not list or len(names) != 2 or any(type(name) is not str or not name for name in names)
+            or len(set(names)) != 2 or type(packet['creator']) is not str or not packet['creator']
+            or selection['kind'] == 'mp' and packet['creator'] != 'client1'):
+        raise ValueError('Grouped books preparation identities/actor differ')
+    member = packet['member']
+    if (type(member) is not dict or set(member) != {'x', 'y', 'z', 'index'}
+            or any(type(value) is not int for value in member.values()) or member['index'] < 0):
+        raise ValueError('Invalid grouped world member descriptor')
+    if selection['kind'] == 'mp' and not _exact(_one(authority, 'GROUP_PREPARED_AUTHORITY'), packet):
+        raise ValueError('Group preparation differs from authority')
+    def rows(body, event):
+        return [receipts.decode_object(value) for value in re.findall(
+            r'\[QM_DISTRIBUTION\] ' + event + r' (\{[^\r\n]+\})', body)]
+    local, remote = rows(text, 'GROUP_LOCAL'), rows(authority, 'GROUP_AUTHORITY')
+    stages = ['created', 'joined', 'updated', 'detached', 'rejoined', 'unique']
+    if len(local) != 6 or len(remote) != 6:
+        raise ValueError('Group creation/join/update/detach/unique authority stages missing or duplicated')
+    group = local[0]['groupId']
+    if type(group) is not str or not group or len(group) > 128:
+        raise ValueError('Invalid stable group identity')
+    for own, server, stage in zip(local, remote, stages):
+        first, detached = stage in ('created', 'joined'), stage in ('created', 'detached')
+        source = 'updated' if stage in ('detached', 'rejoined') else stage
+        target = 'blank' if stage == 'created' else stage
+        expected = dict(stage=stage, groupId=group, revision=1 if first else 3 if stage == 'unique' else 2,
+                        creator=packet['creator'], links=[group, False if detached else group],
+                        configurations=[_group_configuration(source, names), _group_configuration(target, names)],
+                        rules=[_group_rule(source), dict(mode='all', include=[], exclude=[]) if stage == 'created'
+                               else _group_rule(target)])
+        if not _exact(own, expected) or not _exact(server, expected):
+            raise ValueError('Group effective appearance/filter/scope/authority differs: ' + stage)
+    result = _one(text, 'GROUP_TRANSFERS_LOCAL')
+    destinations = [row['container'] for row in result['items']]
+    if destinations not in ([2, 2, 2, 3, 3], [2, 2, 3, 2, 3], [2, 2, 2, 4, 3], [2, 2, 4, 2, 3]):
+        raise ValueError('Grouped exact book destinations violate group uniqueness/fallback')
+    expected = dict(ids=ids, items=[dict(id=value, fullType=kind, container=dest)
+                                   for value, kind, dest in zip(ids, types, destinations)],
+                    groupId=group, groupRevision=3, memberCount=2, noDuplicates=True, priorities=[9, 5],
+                    existingGroupCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
+    if not _exact(result, expected) or not _exact(_one(authority, 'GROUP_TRANSFERS_AUTHORITY'), expected):
+        raise ValueError('Grouped book transfer conservation/authority differs')
+    if not _exact(_one(text, 'GROUP_COMPLETE'), dict(stages=6, members=2, localDetached=True, groupDuplicates=True)):
+        raise ValueError('Group cleanup/completion gate missing')
+    shot = _one(text, 'GROUP_SHOT')
+    if (set(shot) != {'name', 'width', 'height'} or shot['name'] != 'quartermaster-group-editor'
+            or any(type(shot[key]) is not int or shot[key] < 100 for key in ('width', 'height'))):
+        raise ValueError('Group editor screenshot receipt differs')
+    screenshot = root / 'client1/Screenshots/quartermaster-group-editor.png'
+    data = screenshot.read_bytes()
+    if (len(data) < 33 or data[:8] != b'\x89PNG\r\n\x1a\n' or data[12:16] != b'IHDR'
+            or any(value < 300 for value in struct.unpack('>II', data[16:24]))):
+        raise ValueError('Group editor native screenshot missing or invalid')
+    return dict(stages=local, transfers=result, screenshot=str(screenshot))
+
+
 def verify(root, selection, catalog):
     if selection.get('cases') == ['barricaded-door']:
         return _barricaded_door(root, selection)
@@ -295,7 +376,7 @@ def verify(root, selection, catalog):
         return _deposit(root, selection)
     if selection.get('cases') == ['backpack']:
         return _backpack(root, selection)
-    issues, receipt = [], None
+    issues, receipt, book_result, groups = [], None, None, None
     try:
         root = Path(root)
         text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -309,6 +390,29 @@ def verify(root, selection, catalog):
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
         if receipt != expected or _one(authority, 'AUTHORITY') != expected:
             raise ValueError('Client/server distribution effects differ from exact designated destinations')
+        books = _one(text, 'BOOKS_PREPARED')
+        book_ids = books['ids']
+        types = ['Base.BookCarpentry1', 'Base.BookCarpentry1', 'Base.BookCarpentry2',
+                 'Base.BookCarpentry2', 'Base.BookCarpentry1']
+        if (not _exact(books, dict(ids=book_ids, types=types)) or type(book_ids) is not list
+                or len(book_ids) != 5 or any(type(value) is not int for value in book_ids)
+                or len(set(book_ids)) != 5 or set(book_ids) & set(ids)):
+            raise ValueError('Skill-book exact preparation identities differ')
+        if selection['kind'] == 'mp' and not _exact(_one(authority, 'BOOKS_PREPARED_AUTHORITY'), books):
+            raise ValueError('Skill-book preparation differs from Host authority')
+        book_result = _one(text, 'BOOKS_LOCAL')
+        destinations = [row['container'] for row in book_result['items']]
+        if destinations not in ([2, 2, 2, 3, 3], [2, 2, 3, 2, 3]):
+            raise ValueError('Skill-book direct destination uniqueness/fallback differs')
+        expected_books = dict(ids=book_ids,
+                              items=[dict(id=value, fullType=kind, container=dest)
+                                     for value, kind, dest in zip(book_ids, types, destinations)],
+                              noDuplicates=True, fallbackNoDuplicates=False, priorities=[7, 5],
+                              existingCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
+        if (not _exact(book_result, expected_books)
+                or not _exact(_one(authority, 'BOOKS_AUTHORITY'), expected_books)):
+            raise ValueError('Skill-book authoritative configuration/transfer effects differ')
+        groups = _groups(root, selection, text, authority, ids + book_ids)
         marker = '[QM_DISTRIBUTION] COMPLETE moved=2 retained=2 walking=true pickup=true destinations=2 favorite=true'
         if not complete(selection, 'client1', text) or text.count(marker) != 1:
             raise ValueError('Distribution movement/transfer/cleanup gate missing')
@@ -316,4 +420,5 @@ def verify(root, selection, catalog):
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'sort',
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
-            'evidence': {'receipt': receipt, 'limits': ['Programmatic native button callback; no physical input or second client.']}}
+            'evidence': {'receipt': receipt, 'books': book_result, 'groups': groups,
+                         'limits': ['Programmatic native button callback; no physical input or second client.']}}

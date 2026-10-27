@@ -42,7 +42,7 @@ local function item(fullType, category, name, weight, doubleClick)
     local ref = {getFullType = function() return fullType end,
         getDisplayCategory = function() return category end,
         getScriptItem = function() return script end}
-    return {ref = ref, cat = category, name = name, weight = weight or 1}, script
+    return {ref = ref, fullType = fullType, cat = category, name = name, weight = weight or 1}, script
 end
 local sunflower = item('base.SunflowerSeeds', 'foodNonPerishable_candySnack', 'Sunflower seeds')
 local candy = item('Base.Candy', 'foodNonPerishable_candySnack', 'Candy')
@@ -87,7 +87,81 @@ local function checkPlan(items, boxes, carriers, budget, accepts, acceptsDestina
     for _, record in ipairs(plan.leftover) do assert(knownItems[record], 'planner cloned a leftover record') end
     return destinations, plan
 end
+-- No-duplicates restrictions apply after matching, with reservations across all trips.
+do
+    local first = item('Base.BookCarpentry1', 'Literature', 'Carpentry Vol. 1')
+    local second = item('Base.BookCarpentry1', 'Literature', 'Renamed copy')
+    local nextVolume = item('Base.BookCarpentry2', 'Literature', 'Carpentry Vol. 2')
+    local shelf, trash = box(nil, {Literature = true}), box(nil, {Literature = true})
+    shelf.noDuplicates, shelf.priority, shelf.dist = true, 10, 20
+    trash.priority, trash.dist = -1, 1
+    shelf.existingTypes = {}
+    local destinations, plan = checkPlan({first, second, nextVolume}, {trash, shelf},
+        {{ref = {}, factor = 1, space = 1}}, 1)
+    assert(destinations[first] == shelf and destinations[second] == trash and destinations[nextVolume] == shelf,
+        'empty unique shelf must keep one of each full type across multiple trips')
+    assert(#plan.trips == 3 and shelf.existingTypes[first.fullType] == nil,
+        'duplicate reservations must not mutate the content snapshot')
+    shelf.existingTypes[first.fullType] = {}
+    destinations = checkPlan({first, second, nextVolume}, {trash, shelf})
+    assert(destinations[first] == trash and destinations[second] == trash and destinations[nextVolume] == shelf,
+        'existing copy must send duplicates to lower priority without rejecting a different volume')
+    shelf.items[first.name], shelf.cats = true, {}
+    destinations = checkPlan({first}, {trash, shelf})
+    assert(destinations[first] == trash, 'explicit-name match bypassed duplicate exclusion')
+    shelf.noDuplicates = false
+    destinations = checkPlan({first, second}, {shelf, trash})
+    assert(destinations[first] == shelf and destinations[second] == trash,
+        'disabled restriction changed name/category matching')
+    shelf.noDuplicates, shelf.cats = true, {Literature = true}
+    destinations, plan = checkPlan({first}, {shelf})
+    assert(not destinations[first] and #plan.leftover == 1 and plan.leftoverReasons.full == 1,
+        'duplicate without fallback should remain in source')
+    shelf.existingTypes = {}
+    destinations = checkPlan({first, second}, {shelf, trash}, nil, nil,
+        function(_, ref) return ref ~= first.ref end)
+    assert(not destinations[first] and destinations[second] == shelf,
+        'uncarryable item reserved the only unique slot')
+    destinations = checkPlan({first, second}, {shelf, trash}, nil, nil, nil,
+        function(dest, record) return dest ~= shelf or record ~= first end)
+    assert(destinations[first] == trash and destinations[second] == shelf,
+        'native-rejected item reserved the only unique slot')
+    -- Sort the shelf itself: retain its first copy, route only extras, even when full.
+    shelf.existingTypes[first.fullType], shelf.used, shelf.capacity = first.ref, 100, 100
+    local source = {}; shelf.container, first.container, second.container = source, source, source
+    destinations, plan = checkPlan({second, first}, {shelf, trash})
+    assert(destinations[first] == shelf and destinations[second] == trash, 'sorting shelf evacuated its last copy')
+    local kept, cut = LootSorter.stripSelfPlacements(plan.trips, source)
+    assert(cut == 1 and #kept == 1 and kept[1].perBox[trash][1].item == second)
+end
 local seeds = box(seedRule)
+do
+    local one = item('Base.BookCooking1', 'Literature', 'Cooking Vol. 1')
+    local extra = item('Base.BookCooking1', 'Literature', 'Cooking Vol. 1')
+    local otherVolume = item('Base.BookCooking2', 'Literature', 'Cooking Vol. 2')
+    local a, b, trash = box(nil, {Literature = true}), box(nil, {Literature = true}), box(nil, {Literature = true})
+    a.noDuplicates, b.noDuplicates, a.duplicateScope, b.duplicateScope = true, true, 'library', 'library'
+    a.priority, b.priority, trash.priority = 10, 9, -1
+    a.container, b.container = {}, {}
+    a.existingTypes, b.existingTypes = {}, {}
+    a.capacity = 0
+    local routed = checkPlan({one, extra, otherVolume}, {trash, a, b})
+    assert(routed[one] == b and routed[extra] == trash and routed[otherVolume] == b,
+        'full first member should overflow within group, duplicate should overflow out of group')
+    a.capacity = 100
+    a.existingTypes[one.fullType], b.existingTypes[one.fullType] = one.ref, one.ref
+    one.container = b.container
+    routed = checkPlan({extra, one}, {a, b, trash})
+    assert(routed[extra] == trash and routed[one] == b,
+        'group occupancy must preserve an existing copy in a different-priority member')
+    local other = box(nil, {Literature = true})
+    other.noDuplicates, other.duplicateScope, other.priority = true, 'other-library', 1
+    routed = checkPlan({extra}, {a, b, other, trash})
+    assert(routed[extra] == other, 'independent library was blocked by a different group')
+    a.noDuplicates, b.noDuplicates = false, false
+    routed = checkPlan({one, extra}, {a, b, trash})
+    assert(routed[one] == a and routed[extra] == a, 'group membership imposed duplicate exclusion when disabled')
+end
 local destinations, plan = checkPlan({sunflower, candy, potato, full, empty}, {seeds})
 assert(destinations[sunflower] == seeds and destinations[potato] == seeds and destinations[full] == seeds,
     'native item-aware seed rule missed planting inputs')

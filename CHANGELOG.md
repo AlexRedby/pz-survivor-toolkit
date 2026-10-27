@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.295
+
+- **Added:** Container groups share a name, icon, color, sorting filters, tag rules and priority. Create a group from the container editor or select an existing one to inherit its settings. Save changes for the whole group or only the current container; a local edit detaches that container. Groups work with duplicate exclusion disabled and synchronize through the existing revisioned Host authority.
+- **Added:** Optional **No duplicates** sorting reserves one copy of each item type across the whole batch, per container or across all discovered members of its group. Skill-book volumes remain distinct, and extra copies continue to other matching destinations in the existing priority order. The setting is included in copy/paste. Ordinary manual transfers are unchanged; concurrent Host transfers by different players still require coordination.
+
 ### 0.1.294
 
 - Replace the visible broad Food tag with concrete, overlapping roles: Can Eat, Cooking Ingredient, existing meat/vegetable/fruit/beverage/alcohol tags, and Feed for pet food. Saved Food rules and manual assignments retain their previous membership without reappearing as new tag choices.

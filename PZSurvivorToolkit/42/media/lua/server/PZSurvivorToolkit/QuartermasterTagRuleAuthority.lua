@@ -2,6 +2,7 @@ require "LootSorter_Rpc"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Config = require "PZSurvivorToolkit/QuartermasterContainerConfig"
+local Groups = require "PZSurvivorToolkit/ContainerGroups"
 
 local function integer(value)
     return type(value) == "number" and value == math.floor(value) and math.abs(value) < 10000000
@@ -34,7 +35,7 @@ function Rules.applyBox(player, args)
     if not obj or obj:getSquare() ~= square or args.ci >= obj:getContainerCount() then return "missing" end
     local container = obj:getContainerByIndex(args.ci)
     if not container or container:isLockedToCharacter(player) then return "denied" end
-    if configuration then
+    if configuration or Groups.link(obj, args.ci) then
         if not instanceof(obj, "IsoObject") or instanceof(obj, "BaseVehicle")
             or instanceof(obj, "IsoDeadBody") or instanceof(obj, "IsoWorldInventoryObject")
             or (container.getContainingItem and container:getContainingItem())
@@ -45,7 +46,11 @@ function Rules.applyBox(player, args)
     local md, key = obj:getModData(), tostring(args.ci)
     local revision = Rules.getBoxRevision(obj, args.ci)
     if args.baseRevision ~= revision then return "stale" end
+    local verdict, plan = Groups.prepare(obj, args.ci, player, configuration, rule)
+    if verdict ~= "ok" then return verdict end
+    configuration, rule = plan.configuration, plan.rule
     if configuration then Config.apply(obj, args.ci, player, configuration) end
+    Groups.commit(obj, args.ci, plan)
     md[Rules.REVISIONS] = md[Rules.REVISIONS] or {}
     md[Rules.REVISIONS][key] = revision + 1
     md[Rules.FIELD] = md[Rules.FIELD] or {}
@@ -56,11 +61,20 @@ function Rules.applyBox(player, args)
     local coord = args.x .. "," .. args.y .. "," .. args.z
     registry.boxes[coord] = LootSorter.squareHasDesignation(square) and true or nil
     if isServer() then ModData.transmit("LootSorter_Registry") end
-    return "ok", revision + 1
+    return "ok", revision + 1, {configuration = configuration, rule = rule,
+        groupLink = plan.link or false, groups = Groups.snapshot()}
 end
 
 LootSorter.serverFn("saveBox", function(player, args)
-    local ok, verdict, revision = pcall(Rules.applyBox, player, args)
-    return ok and verdict or "invalid", {revision = revision}
+    local ok, verdict, revision, detail = pcall(Rules.applyBox, player, args)
+    detail = detail or {}
+    detail.revision = revision
+    return ok and verdict or "invalid", detail
 end)
+if not isClient() and Events.OnInitGlobalModData then
+    LootSorter.addOrReplaceHandler(Events.OnInitGlobalModData, "_containerGroupStoreInit", function()
+        Groups.initialize()
+        Groups.publish()
+    end)
+end
 return Rules

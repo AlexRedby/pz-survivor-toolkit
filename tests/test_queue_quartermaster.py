@@ -1,5 +1,6 @@
 """Quartermaster store provenance and exact native distribution evidence."""
 import json
+import copy
 from pathlib import Path
 import sys
 import tempfile
@@ -11,6 +12,90 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import quartermaster as adapter
 from queue_checks.adapters import quartermaster_distribution as distribution
 from queue_checks.adapters import quartermaster_crafting as crafting
+
+
+def group_evidence(root):
+    """Native receipt fixture; mutations below must fail even with matching client claims."""
+    packet = dict(ids=[31, 32, 33, 34, 35], types=['Base.BookCooking1', 'Base.BookCooking1',
+                  'Base.BookCooking2', 'Base.BookCooking2', 'Base.BookCooking1'], names=['Cooking I', 'Cooking II'],
+                  creator='client1', member=dict(x=18, y=10, z=0, index=1))
+    created = dict(cats=[], items={'Cooking I': True, 'Cooking II': True}, presets=[], priority=6, noDuplicates=False,
+                   appearance=dict(name='PZST cooking group', icon=dict(kind='item', value='Base.BookCooking1'),
+                                   color=dict(r=.25, g=.5, b=.75, a=1)))
+    updated = copy.deepcopy(created)
+    updated.update(priority=11, appearance=dict(name='PZST shared cooking', icon=dict(kind='item', value='Base.BookCooking2'),
+                                              color=dict(r=.75, g=.25, b=.5, a=1)))
+    detached = copy.deepcopy(updated)
+    detached.update(items={'Cooking I': True}, priority=4,
+                    appearance=dict(name='PZST local cooking', icon=dict(kind='item', value='Base.BookCooking2'),
+                                    color=dict(r=.5, g=.75, b=.25, a=1)))
+    unique = copy.deepcopy(updated)
+    unique.update(priority=9, noDuplicates=True)
+    blank = dict(cats=[], items=[], presets=[], priority=0, noDuplicates=False, appearance=[])
+    first_rule = dict(mode='all', include=['readable'], exclude=['writeable'])
+    updated_rule = dict(mode='all', include=['experience', 'readable'], exclude=['writeable'])
+    stages = [dict(stage=stage, groupId='group-7', revision=revision, creator='client1', links=['group-7', link],
+                   configurations=configs, rules=rules)
+              for stage, revision, link, configs, rules in [
+                  ('created', 1, False, [created, blank], [first_rule, dict(mode='all', include=[], exclude=[])]),
+                  ('joined', 1, 'group-7', [created, created], [first_rule, first_rule]),
+                  ('updated', 2, 'group-7', [updated, updated], [updated_rule, updated_rule]),
+                  ('detached', 2, False, [updated, detached], [updated_rule, updated_rule]),
+                  ('rejoined', 2, 'group-7', [updated, updated], [updated_rule, updated_rule]),
+                  ('unique', 3, 'group-7', [unique, unique], [updated_rule, updated_rule])]]
+    result = dict(ids=packet['ids'], items=[dict(id=value, fullType=kind, container=dest)
+                  for value, kind, dest in zip(packet['ids'], packet['types'], [2, 2, 4, 2, 3])],
+                  groupId='group-7', groupRevision=3, memberCount=2, noDuplicates=True, priorities=[9, 5],
+                  existingGroupCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
+    def row(event, value):
+        return '[QM_DISTRIBUTION] GROUP_' + event + ' ' + json.dumps(value) + '\n'
+    client = row('PREPARED', packet) + ''.join(row('LOCAL', stage) for stage in stages)
+    client += row('SHOT', dict(name='quartermaster-group-editor', width=520, height=850))
+    client += row('TRANSFERS_LOCAL', result) + row('COMPLETE', dict(stages=6, members=2, localDetached=True, groupDuplicates=True))
+    server = row('PREPARED_AUTHORITY', packet) + ''.join(row('AUTHORITY', stage) for stage in stages)
+    server += row('TRANSFERS_AUTHORITY', result)
+    screenshot = root / 'client1/Screenshots/quartermaster-group-editor.png'
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(b'\x89PNG\r\n\x1a\n\0\0\0\rIHDR' + (1600).to_bytes(4, 'big')
+                           + (900).to_bytes(4, 'big') + b'\0' * 9)
+    return client, server
+
+
+class QuartermasterGroupReceipts(unittest.TestCase):
+    def test_group_receipts_require_authority_scope_and_exact_book_effects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, authority = group_evidence(root)
+            selection = dict(kind='mp')
+            self.assertEqual(len(distribution._groups(root, selection, client, authority, [11, 12])['stages']), 6)
+            invalid = []
+            rows = authority.splitlines(keepends=True)
+            invalid.extend(authority.replace(row, '') for row in rows)
+            invalid.extend(authority + row for row in rows)
+            invalid += [authority.replace('"revision": 2', '"revision": 1'),
+                        authority.replace('"creator": "client1"', '"creator": "client2"'),
+                        authority.replace('"links": ["group-7", false]', '"links": ["group-7", "group-7"]'),
+                        authority.replace('"name": "PZST shared cooking"', '"name": "old name"'),
+                        authority.replace('"priority": 11', '"priority": 6'),
+                        authority.replace('"noDuplicates": false', '"noDuplicates": true'),
+                        authority.replace('"include": ["experience", "readable"]', '"include": ["readable"]'),
+                        authority.replace('"container": 4', '"container": 2'),
+                        authority.replace('"conserved": 5', '"conserved": 4')]
+            for wrong in invalid:
+                with self.subTest(authority=wrong), self.assertRaises((ValueError, KeyError)):
+                    distribution._groups(root, selection, client, wrong, [11, 12])
+            # A matching client/server claim must still meet the contract.
+            for original, replacement in [('"noDuplicates": false', '"noDuplicates": true'),
+                                           ('"priority": 11', '"priority": 6'),
+                                           ('"container": 4', '"container": 2'),
+                                           ('"ids": [31, 32, 33, 34, 35]', '"ids": [31, 32, 33, 34, 34]')]:
+                with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                    distribution._groups(root, selection, client.replace(original, replacement),
+                                         authority.replace(original, replacement), [11, 12])
+            screenshot = root / 'client1/Screenshots/quartermaster-group-editor.png'
+            screenshot.unlink()
+            with self.assertRaises(OSError):
+                distribution._groups(root, selection, client, authority, [11, 12])
 
 
 class QuartermasterPresets(unittest.TestCase):
@@ -343,14 +428,40 @@ class QuartermasterBackpack(unittest.TestCase):
         prepared = {'ids': [11, 12, 13, 14]}
         result = {'items': [{'id': value, 'container': dest} for value, dest in zip(prepared['ids'], [2, 3, 1, 1])],
                   'moved': 2, 'retained': 2, 'favorite': True}
+        books = dict(ids=[21, 22, 23, 24, 25], types=['Base.BookCarpentry1', 'Base.BookCarpentry1',
+                     'Base.BookCarpentry2', 'Base.BookCarpentry2', 'Base.BookCarpentry1'])
+        book_result = dict(ids=books['ids'], items=[dict(id=value, fullType=kind, container=dest)
+                           for value, kind, dest in zip(books['ids'], books['types'], [2, 2, 3, 2, 3])],
+                           noDuplicates=True, fallbackNoDuplicates=False, priorities=[7, 5],
+                           existingCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
+        group_client, group_server = group_evidence(self.root)
         text = ('[QM_DISTRIBUTION] PREPARED ' + json.dumps(prepared) + '\n'
                 '[QM_DISTRIBUTION] LOCAL ' + json.dumps(result) + '\n'
                 '[QM_DISTRIBUTION] AUTHORITY ' + json.dumps(result) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_PREPARED ' + json.dumps(books) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_LOCAL ' + json.dumps(book_result) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n'
+                + group_client + group_server +
                 '[QM_DISTRIBUTION] COMPLETE moved=2 retained=2 walking=true pickup=true destinations=2 favorite=true\n')
         (self.root / 'client1-launch.log').write_text(text)
         self.assertEqual(distribution.verify(self.root, selection, {})['issues'], [])
         self.assertTrue(distribution.complete(selection, 'client1', text))
         self.assertFalse(distribution.complete(self.selection, 'client1', text))
+        server = ('[QM_DISTRIBUTION] AUTHORITY ' + json.dumps(result) + '\n'
+                  '[QM_DISTRIBUTION] BOOKS_PREPARED_AUTHORITY ' + json.dumps(books) + '\n'
+                  '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n' + group_server)
+        (self.root / 'server-launch.log').write_text(server)
+        host = dict(selection, kind='mp')
+        self.assertEqual(distribution.verify(self.root, host, {})['issues'], [])
+        for invalid in (server.replace('"noDuplicates": true', '"noDuplicates": false'),
+                        server.replace('"priorities": [7, 5]', '"priorities": [5, 7]'),
+                        server.replace('"container": 3', '"container": 2'),
+                        server.replace('Base.BookCarpentry2', 'Base.BookCarpentry1'),
+                        server.replace('BOOKS_AUTHORITY ', 'BOOKS_MISSING '),
+                        server + '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n'):
+            with self.subTest(server=invalid):
+                (self.root / 'server-launch.log').write_text(invalid)
+                self.assertTrue(distribution.verify(self.root, host, {})['issues'])
 
 
 class QuartermasterBatch(unittest.TestCase):

@@ -78,7 +78,9 @@ return function(control, rules, options)
     local contextMenu
     ISContextMenu = {get = function()
         contextMenu = {options = {}, addOption = function(self, title, target, callback, key)
-            self.options[#self.options + 1] = {title = title, target = target, callback = callback, key = key}
+            local option = {title = title, target = target, callback = callback, key = key}
+            self.options[#self.options + 1] = option
+            return option
         end}
         return contextMenu
     end}
@@ -122,7 +124,7 @@ return function(control, rules, options)
     LootSorter.notify = function(_, message) failures[#failures + 1] = message end
     local obj = {md = {LSBox = {['0'] = (options.cats or {OC_Food = true, MissingModCategory = true})},
         LSBoxItems = {['0'] = (options.items or {Beans = true})}, LSBoxPresets = {['0'] = {Pantry = 'generation'}},
-        LSBoxPriority = {['0'] = 4}}}
+        LSBoxPriority = {['0'] = 4}, LSBoxNoDuplicates = {['0'] = options.noDuplicates or nil}}}
     local square = {getX = function() return 10 end, getY = function() return 20 end, getZ = function() return 0 end,
         getObjects = function() return {size = function() return 1 end, get = function() return obj end} end}
     obj.getModData, obj.hasModData = function(self) return self.md end, function() return true end
@@ -139,6 +141,7 @@ return function(control, rules, options)
     function obj:transmitModData()
         publications[#publications + 1] = LootSorter.snapshotDesignation({cats = self.md.LSBox['0'],
             items = self.md.LSBoxItems['0'], presets = self.md.LSBoxPresets['0'], priority = self.md.LSBoxPriority['0'],
+            noDuplicates = self.md.LSBoxNoDuplicates and self.md.LSBoxNoDuplicates['0'],
             pzstTagRule = self.md.PZSTQuartermasterTagRules and self.md.PZSTQuartermasterTagRules['0']})
     end
     rules.saveBox = function(obj, ci, rule, _, callback, revision, configuration)

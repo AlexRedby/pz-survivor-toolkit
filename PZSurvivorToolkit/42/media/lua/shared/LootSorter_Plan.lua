@@ -9,6 +9,8 @@
 --   carriers = { {ref, factor=<num 0..1>, space=<num>}, ... }  (bags-first = lowest factor first)
 --   budget   = <num>  effective-weight room before overburden
 --   Designations are read-only snapshots for this plan; callbacks must not rewrite them.
+--   noDuplicates boxes supply existingTypes[fullType] = first existing item ref.
+--   Item records supply fullType. Reservations apply across the whole haul, not per trip.
 --   matches  = optional function(box, item) -> bool : category/tag match; explicit item names still win.
 --   accepts  = optional function(carrierRef, itemRef) -> bool : may this carrier hold this item?
 --              Injected so the pure planner never calls the engine directly -- in-game it wraps
@@ -76,7 +78,23 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
     -- 1) assign each item to a same-category box WITH ROOM, cascading to further same-cat boxes.
     -- Only items with a roomy, accepting carrier may reserve destination space.
     -- Otherwise an impossible haul can block later items or force them into overflow boxes.
-    local byBox, boxUsed, leftover, carrierChoices = {}, {}, {}, {}
+    local byBox, boxUsed, leftover, carrierChoices, reservedTypes = {}, {}, {}, {}, {}
+    local function scope(box) return box.duplicateScope or box end
+    local function existingKeeper(box, item)
+        return box.noDuplicates and item.fullType and box.existingTypes
+            and box.existingTypes[item.fullType] == item.ref and box.container == item.container
+    end
+    local function admits(box, item)
+        if box.noDuplicates then
+            if not item.fullType then return false end
+            local existing = box.existingTypes and box.existingTypes[item.fullType]
+            if (existing and not existingKeeper(box, item))
+                or (reservedTypes[scope(box)] and reservedTypes[scope(box)][item.fullType]) then return false end
+            -- Sorting this very shelf must keep its first copy, even when the shelf is full.
+            if existingKeeper(box, item) then return true end
+        end
+        return (boxUsed[box] + item.weight) <= box.capacity and acceptsDestination(box, item)
+    end
     -- why leftover items couldn't be placed, so the caller can show a clear message:
     --   carry   = no carrier has both enough room and permission to hold the item
     --   full    = a box IS designated for it, but every matching box is full or rejects it
@@ -96,8 +114,7 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             if it.name then
                 for _, b in ipairs(boxesForItemName(namedBoxes, boxes, it.name)) do
                     matched = true
-                    if (boxUsed[b] + it.weight) <= b.capacity
-                        and acceptsDestination(b, it) then
+                    if admits(b, it) then
                         dest = b; break
                     end
                 end
@@ -107,7 +124,7 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
                 for _, b in ipairs(boxes) do
                     if matches(b, it) then
                         matched = true
-                        if (boxUsed[b] + it.weight) <= b.capacity and acceptsDestination(b, it) then
+                        if admits(b, it) then
                             dest = b; break
                         end
                     end
@@ -115,7 +132,12 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             end
         end
         if dest then
-            boxUsed[dest] = boxUsed[dest] + it.weight
+            if not existingKeeper(dest, it) then boxUsed[dest] = boxUsed[dest] + it.weight end
+            if dest.noDuplicates then
+                local key = scope(dest)
+                reservedTypes[key] = reservedTypes[key] or {}
+                reservedTypes[key][it.fullType] = true
+            end
             byBox[dest] = byBox[dest] or {}
             table.insert(byBox[dest], it)
         elseif #choices == 0 then
