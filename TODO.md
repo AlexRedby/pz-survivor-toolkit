@@ -1,8 +1,5 @@
 # Consolidated performance research
 
-- [ ] Consolidate the accepted renderer and early-IsoLot commits, their qualification fixtures, and WPR repair in `driving-benchmark`; retain source experiments and the separate extended-GUI/driving limits.
-- [ ] Check the combined Java/bootstrap/profile admission, packaging and diagnostic consumers, then run a proportionate full-pack native Host check from the rebased candidate.
-- [ ] Once topic work is ready, fetch current `main`, rebase the research changes, resolve interactions and component versions against that exact tip, and run affected combined checks.
 - [ ] Recheck remote `main` immediately before delivery and build one final package from the committed combined result. Do not issue intermediate packages or ask for another driving run while research is pending.
 
 # Windows capture reliability
@@ -15,7 +12,7 @@
 
 # Driving chunk integration hitches
 
-- [ ] Qualify the combined extended-profile `IsoLot` native lifecycle after the rendering track supplies valid viewport inputs. Reuse `lot-streaming` for full selected-pack SP/menu Host/reload; retain the two failed extended controls with GLFW 1600x900 versus Display/Core 3200x1800. The separate early-loader/overlay checks do not establish extended GUI compatibility. Preserve source/viewport/desktop guards and do not repeat identical failed inputs or request a new user drive.
+- [ ] Complete extended-profile `lot-streaming` SP/menu Host/reload comparisons with the full selected pack before claiming fresh-zone/parser equality for that profile. The combined awake full-pack Host now passes startup, early IsoLot activation, native child isolation and rendering resources; this is not the same fixture as lot-streaming. Retain the two earlier extended controls with GLFW 1600x900 versus Display/Core 3200x1800, and preserve source/viewport/desktop guards. Reuse the valid owned-window inputs; do not request another user drive for this qualification.
 - [ ] Complete the paired actual-source loot lookup measurement when the common exclusive slot is available. The 59 native/candidate result vectors pass, but the 900-second wait expired because a long-running `item-catalog` session holds the slot (`Legacy or exclusive native run is using the desktop`); zero timed forks started. Preserve bounded waiting and do not bypass the owner. Require a reproducible benefit before considering any runtime delivery, followed by full-pack contents/RNG/callback-order and SP/Host qualification. The isolated getBaseChance lookup covers only 16 Windows samples and is not a demonstrated hitch fix.
 - [ ] Measure the broader remaining ItemPicker classification work with bounded per-frame totals and repeated Item identities across callback boundaries. Existing Windows samples include getLootType (44) and Item.hasTag (51), with overlap; mutable tags/category and live sandbox values prevent assuming a safe persistent metadata cache. Use the existing capture and a specific same-input candidate, not another general route study.
 - [ ] Complete a full accepted native-population route before claiming driving qualification. The locked full-67-mod moving capture reached over 600 tiles with valid frame/callback telemetry, then failed the unchanged sustained-speed gate below 30 km/h after contacts; the cause of the slowdown remains unclassified. Preserve migration, no-previsit behavior and all arrival/speed gates, and coordinate the remaining route work with the rendering track.
@@ -25,7 +22,6 @@
 
 # World rendering CPU cost
 
-- [ ] Update the native snapshot test's declared craft-UI helper fixture: `test_selected_adapter_helpers_are_sealed_without_unrelated_adapters` creates only `craft.py`, while unchanged `craft_ui.sources()` also requires `craft_ui_water.py`. The broader snapshot check fails on that missing test input; include and verify the actual helper dependency without weakening source sealing.
 - [ ] Classify the early native menu-Host child exit if it recurs: the first resource-preparation Host attempt exited before creating `coop-console.txt`, leaving only `CoopMaster.readServer: Stream closed`. The launcher now preserves the exact exited child's bounded stderr and exit code; use those diagnostics to establish the cause. A fresh Host reached both resource phases, so the original cause remains unclassified.
 - [ ] Make cumulative-memory CLI recall report sandbox database restrictions clearly: read-only recall currently raises `PermissionError` while opening `agent.sqlite` read/write. The memory MCP write also returned `Memory MCP is from an older release; reconnect the server`. Reconnect the server or use approved scoped CLI execution; finish when recall/write provide useful diagnostics without an unhandled traceback.
 - [ ] Keep full-pack source locks usable after source worktrees are cleaned: the previous union lock points to a removed ImmersiveSnow download directory. Provide a stable source store or actionable missing-source diagnostic before reusing locks across worktree cleanup; sealed native snapshots currently supply the explicit replacement sources.
